@@ -3,6 +3,8 @@ import { commandArgs, extractRefs, hostPath, parseGitHubUrl, parseJiraUrl, parse
 
 const repo = { host: 'github.com', owner: 'acme', repo: 'web' }
 const full = (t: string, defaultRepo: typeof repo | null = repo) => extractRefs(t, { mode: 'full', defaultRepo })
+const fullStrict = (t: string, defaultRepo: typeof repo | null = repo) =>
+  extractRefs(t, { mode: 'full', defaultRepo, strictShortRefs: true })
 
 test('GitHub URLs: issue, pull, tails and comment anchors', () => {
   expect(parseGitHubUrl('https://github.com/cli/cli/pull/14640/files#diff-1')).toEqual({
@@ -92,6 +94,18 @@ test('bare #N without a repo stays unresolved; with a repo it resolves', () => {
 
 test('"rank #1" is accepted (documented false positive)', () => {
   expect(full('rank #1').length).toBe(1)
+})
+
+test('short refs require a keyword prefix', () => {
+  expect(fullStrict('Finding acme/web#5').length).toBe(0)
+  expect(fullStrict('step #5').length).toBe(0)
+  expect(fullStrict('issue acme/web#5').map(r => (r.category === 'github' ? r.number : 0))).toEqual([5])
+  expect(fullStrict('GitHub #5').map(r => (r.category === 'github' ? r.number : 0))).toEqual([5])
+})
+
+test('keyworded short refs are only accepted for the current repo', () => {
+  expect(fullStrict('issue #5')[0]).toMatchObject({ owner: 'acme', repo: 'web', number: 5 })
+  expect(fullStrict('issue cli/cli#5').length).toBe(0)
 })
 
 test('urls-only mode: only explicit GitHub and Jira URLs, no bare #N, no web links', () => {

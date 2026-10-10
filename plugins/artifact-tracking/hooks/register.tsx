@@ -24,6 +24,8 @@ import type {
   AutoReason,
   AutoState,
   DiscoveryApplied,
+  GitHubRef,
+  GitHubTarget,
   ItemRecord,
   Ref,
   RepoRef,
@@ -35,6 +37,7 @@ import type {
 } from './contracts'
 import { AUTO_SOURCES, isRowId, LIMITS } from './contracts'
 import { dropAuto } from './model/discovered'
+import { keyOf } from './model/keys'
 import { hydrate, mergeRefs, mergeResults, resolveBareRefs, unionRecords } from './model/registry'
 import type { Timer } from './refresh/coordinator'
 import { RefreshCoordinator } from './refresh/coordinator'
@@ -423,7 +426,13 @@ async function capture($: EngineInterface, text: string, mode: ScanMode, source:
   void ensureTick($)
   await ensureSession($)
   await ensureRepo($)
-  let refs = extractRefs(text, { mode, defaultRepo: sessionRepo ?? null, githubHosts })
+  let refs = extractRefs(text, {
+    mode,
+    defaultRepo: sessionRepo ?? null,
+    githubHosts,
+    strictShortRefs: mode === 'full',
+  })
+  if (mode === 'full') refs = await keepOpenSessionShortRefs(refs)
   if (source === 'tool' && mode === 'urls-only') refs = await filterToolRefs(refs)
   if (refs.length === 0) return
   let added: string[] = []
@@ -434,6 +443,33 @@ async function capture($: EngineInterface, text: string, mode: ScanMode, source:
   })
   if (added.length > 0) coordinator?.kick('capture', added)
   await schedule($)
+}
+
+function sameSessionRepo(ref: Ref): ref is GitHubRef & { owner: string; repo: string; type: 'unknown' } {
+  if (ref.category !== 'github' || ref.type !== 'unknown' || !ref.owner || !ref.repo || !sessionRepo) return false
+  return (
+    ref.host.toLowerCase() === sessionRepo.host.toLowerCase() &&
+    ref.owner.toLowerCase() === sessionRepo.owner.toLowerCase() &&
+    ref.repo.toLowerCase() === sessionRepo.repo.toLowerCase()
+  )
+}
+
+async function keepOpenSessionShortRefs(refs: Ref[]): Promise<Ref[]> {
+  const probe = gh
+  if (!probe) return refs
+  const candidates = refs.filter(sameSessionRepo)
+  if (candidates.length === 0) return refs
+  const targets: GitHubTarget[] = candidates.map(ref => ({
+    key: keyOf(ref),
+    host: ref.host,
+    owner: ref.owner,
+    repo: ref.repo,
+    number: ref.number,
+    type: ref.type,
+  }))
+  await probe.refreshItems(targets)
+  const keep = new Set(targets.filter(t => t.error === undefined && t.state === 'open').map(t => t.key))
+  return refs.filter(ref => !sameSessionRepo(ref) || keep.has(keyOf(ref)))
 }
 
 // ------------------------------------------------------------------ store mirror
@@ -512,7 +548,7 @@ async function fromTranscript($: EngineInterface): Promise<ItemRecord[]> {
     const text = backfillText(m.role, m.text)
     if (text !== null)
       batches.push({
-        refs: extractRefs(text, { mode: 'full', ...opts }),
+        refs: await keepOpenSessionShortRefs(extractRefs(text, { mode: 'full', strictShortRefs: true, ...opts })),
         source: m.role === 'user' ? 'prompt' : 'response',
       })
     for (const use of m.toolUses) {
