@@ -11,7 +11,8 @@ import * as ghFx from './fixtures/gh'
 
 const SESSION = 'sess-1'
 /** The session id the stub answers. A test sets it to what `/clear` would do. */
-const current = { id: SESSION }
+/** The session id the stub answers, and whether a read of the `items` state fails (needs `isolateState`). */
+const current = { id: SESSION, failItemsRead: false }
 
 // The hooks runtime has timers; tsc here has no DOM or node types.
 declare function setTimeout(fn: () => void, ms: number): unknown
@@ -108,6 +109,7 @@ function world(on: On, opts: Opts = {}) {
     return { value: undefined }
   })
   current.id = SESSION
+  current.failItemsRead = false
   on('session.id', () => ({ value: current.id }))
   on('session.messages', () => ({ value: (opts.messages ?? []) as never }))
   on('session.repo', () => ({
@@ -127,6 +129,7 @@ function world(on: On, opts: Opts = {}) {
   if (opts.isolateState) {
     const at = (e: { plugin: string; key: string; id?: string }) => `${current.id}|${e.plugin}|${e.key}|${e.id ?? ''}`
     on('state.get', (_$, e) => {
+      if (current.failItemsRead && e.key === 'items') return { deny: 'state read failed' }
       const s = states.get(at(e))
       return { value: { value: s?.value, version: s?.version ?? 0 } as never }
     })
@@ -800,5 +803,50 @@ test('band: while a survey holds the band the hook yields to the engine', async 
   }
   expect(await ui.find({ text: 'Jira 1' })).toBeUndefined()
   expect(await ui.find({ text: 'engine band' })).toBeDefined()
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------- follow-ups to #1
+
+test('pane: a failing state read draws a short notice, never throws to the engine', async ($, on) => {
+  const { clock, calls } = world(on, { isolateState: true })
+  await $.session.append(response('https://one.example/'))
+  await clock.advance(LIMITS.captureDebounceMs + 10)
+  await quiet(calls)
+  current.failItemsRead = true
+  const ui = await mountPane($)
+  expect(await ui.find({ text: 'Tracking is unavailable' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('band: a failing state read yields to the engine band', async ($, on) => {
+  const { clock, calls } = world(on, { isolateState: true })
+  on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine band'] }))
+  await $.session.append(response('https://one.example/'))
+  await clock.advance(LIMITS.captureDebounceMs + 10)
+  await quiet(calls)
+  current.failItemsRead = true
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' } as never) as unknown as {
+    find(q: unknown): Promise<unknown>
+    unmount(): Promise<void>
+  }
+  expect(await ui.find({ text: 'engine band' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('after /clear the tick brings items back with short #N keys for the session repo', async ($, on) => {
+  const { clock, calls } = world(on, { isolateState: true })
+  await $.session.append(prompt('check #5'))
+  await clock.advance(LIMITS.captureDebounceMs + 10)
+  await quiet(calls)
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await track($) // opens the pane and starts the tick
+  current.id = 'sess-2' // /clear: new id, empty state, session repo forgotten
+  await clock.advance(LIMITS.tickMs + 10)
+  await quiet(calls)
+  const ui = await mountPane($)
+  expect(await ui.find({ text: 'Web five' })).toBeDefined()
+  expect(await ui.find({ text: 'acme/web#5' })).toBeUndefined()
   await ui.unmount()
 })
