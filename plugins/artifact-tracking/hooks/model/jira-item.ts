@@ -1,12 +1,12 @@
 // A Jira work item. AcliTool fills the status fields and the child tree in place.
 
-import { JIRA_KEY } from '../contracts'
 import type { JiraNode, JiraRecord, JiraTarget, JiraToolApi } from '../contracts'
+import { JIRA_KEY } from '../contracts'
 import { omitUndefined, TrackedItem } from './tracked-item'
 
 /** Deep copy of a child tree. */
 export function cloneNodes(nodes: readonly JiraNode[]): JiraNode[] {
-  return nodes.map((n) => omitUndefined({ ...n, children: cloneNodes(n.children) }))
+  return nodes.map(n => omitUndefined({ ...n, children: cloneNodes(n.children) }))
 }
 
 export class JiraItem extends TrackedItem implements JiraTarget {
@@ -20,7 +20,10 @@ export class JiraItem extends TrackedItem implements JiraTarget {
   statusCategory?: string
   children: JiraNode[]
 
-  constructor(rec: JiraRecord, private readonly tool: JiraToolApi) {
+  constructor(
+    rec: JiraRecord,
+    private readonly tool: JiraToolApi,
+  ) {
     super(rec)
     this.site = rec.site
     this.issueKey = rec.issueKey

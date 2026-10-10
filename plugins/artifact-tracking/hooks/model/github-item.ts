@@ -1,7 +1,7 @@
 // A GitHub issue or pull request. GhTool fills the status fields in place.
 
-import { LIMITS } from '../contracts'
 import type { Checks, GitHubRecord, GitHubState, GitHubTarget, GitHubToolApi, GitHubType } from '../contracts'
+import { LIMITS } from '../contracts'
 import { omitUndefined, TrackedItem } from './tracked-item'
 
 export class GitHubItem extends TrackedItem implements GitHubTarget {
@@ -18,7 +18,10 @@ export class GitHubItem extends TrackedItem implements GitHubTarget {
   reviewDecision?: string
   checks?: Checks
 
-  constructor(rec: GitHubRecord, private readonly tool: GitHubToolApi) {
+  constructor(
+    rec: GitHubRecord,
+    private readonly tool: GitHubToolApi,
+  ) {
     super(rec)
     this.host = rec.host
     this.owner = rec.owner

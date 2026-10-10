@@ -1,8 +1,8 @@
 // Base class for a CLI tool (spec sections 5 and 8). No `$`: it gets a Runner and a clock.
 // Subclasses build argv, parse output, classify each outcome, and update the items.
 
+import type { Now, RefreshTool, RunInit, Runner, RunResult, ToolName, ToolStatus } from '../contracts'
 import { LIMITS } from '../contracts'
-import type { Now, RefreshTool, RunInit, RunResult, Runner, ToolName, ToolStatus } from '../contracts'
 import { CircuitBreaker } from './circuit-breaker'
 
 /**
@@ -59,7 +59,12 @@ export abstract class Tool<T> implements RefreshTool<T> {
   }
 
   status(): ToolStatus {
-    const s: ToolStatus = { name: this.name, available: this.available, loggedIn: this.loggedIn, breaker: this.breaker.state }
+    const s: ToolStatus = {
+      name: this.name,
+      available: this.available,
+      loggedIn: this.loggedIn,
+      breaker: this.breaker.state,
+    }
     if (this.version !== undefined) s.version = this.version
     if (this.breaker.openUntil !== undefined) s.openUntil = this.breaker.openUntil
     if (this.lastError !== undefined) s.lastError = this.lastError

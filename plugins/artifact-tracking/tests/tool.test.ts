@@ -1,8 +1,8 @@
 // Tool base class: probe cache, exec rejection, outcome bookkeeping. Pure, fake Runner.
 import { expect, test } from 'claude-code/testing'
-import type { RunResult, Runner } from '../hooks/contracts'
-import { Tool } from '../hooks/tools/tool'
+import type { Runner, RunResult } from '../hooks/contracts'
 import type { Outcome } from '../hooks/tools/tool'
+import { Tool } from '../hooks/tools/tool'
 
 const ok = (stdout = '', exitCode = 0, stderr = ''): RunResult => ({ exitCode, stdout, stderr })
 
@@ -17,7 +17,7 @@ class FakeTool extends Tool<string> {
 
 function runner(answer: (argv: readonly string[]) => RunResult | Error) {
   const calls: string[][] = []
-  const run: Runner = async (argv) => {
+  const run: Runner = async argv => {
     calls.push([...argv])
     const a = answer(argv)
     if (a instanceof Error) throw a
@@ -38,7 +38,10 @@ test('probe runs --version once and caches the answer', async () => {
 })
 
 test('probe: a missing executable means not available, never a rejection', async () => {
-  const { run } = runner(() => new Error('artifact-tracking: $.process.run(gh) failed to start: ENOENT: Executable not found in $PATH: "gh"'))
+  const { run } = runner(
+    () =>
+      new Error('artifact-tracking: $.process.run(gh) failed to start: ENOENT: Executable not found in $PATH: "gh"'),
+  )
   const t = new FakeTool('gh', run, () => 0)
   expect(await t.probe()).toBe(false)
   expect(t.canCall(0)).toBe(false)
@@ -48,7 +51,7 @@ test('probe: a missing executable means not available, never a rejection', async
 
 test('exec rejection counts as a tool failure; three open the breaker', async () => {
   let fail = false
-  const { run } = runner((argv) => (argv[1] === '--version' ? ok('v') : fail ? new Error('timeout') : ok()))
+  const { run } = runner(argv => (argv[1] === '--version' ? ok('v') : fail ? new Error('timeout') : ok()))
   const t = new FakeTool('acli', run, () => 1000)
   await t.probe()
   fail = true
@@ -59,7 +62,7 @@ test('exec rejection counts as a tool failure; three open the breaker', async ()
 
 test('an open breaker blocks exec without running the command', async () => {
   let fail = true
-  const { run, calls } = runner((argv) => (argv[1] === '--version' ? ok('v') : fail ? new Error('down') : ok()))
+  const { run, calls } = runner(argv => (argv[1] === '--version' ? ok('v') : fail ? new Error('down') : ok()))
   let t0 = 0
   const t = new FakeTool('gh', run, () => t0)
   await t.probe()

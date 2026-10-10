@@ -1,0 +1,43 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Title: state the symptom in sentence case, no type prefix, no trailing period.
+        Example: "Pane shows a stale PR state after /track refresh".
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The wrong behavior. Paste errors as text, not screenshots.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start `claude --plugin-dir plugins/artifact-tracking`
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Other context
+      description: OS, `gh` and `acli` versions, logs.

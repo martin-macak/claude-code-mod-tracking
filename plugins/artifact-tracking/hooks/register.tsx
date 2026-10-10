@@ -1,21 +1,22 @@
 // Wiring for the artifact-tracking mod. The only file that touches `$`.
 // Capture hooks observe rows. A coordinator refreshes the items with gh and acli. A pane and a band draw them.
 // Spec: docs/superpowers/specs/2026-10-10-artifact-tracking-design.md sections 6 to 10.
-import { atom, read, update } from 'claude-code'
+
 import type { EngineInterface, Register } from 'claude-code'
-import { LIMITS } from './contracts'
+import { atom, read, update } from 'claude-code'
 import type { ItemRecord, Ref, RepoRef, Runner, ScanMode, Source, ToolStatus, UiState } from './contracts'
+import { LIMITS } from './contracts'
 import { hydrate, mergeRefs, mergeResults, resolveBareRefs, unionRecords } from './model/registry'
-import { RefreshCoordinator } from './refresh/coordinator'
 import type { Timer } from './refresh/coordinator'
+import { RefreshCoordinator } from './refresh/coordinator'
 import { textOfContent } from './scan/links'
 import { commandArgs, extractRefs, parseRemote } from './scan/refs'
 import { AcliTool } from './tools/acli-tool'
 import { GhTool } from './tools/gh-tool'
 import { renderBand } from './ui/band'
 import { renderPane } from './ui/pane'
-import { bandText, buildPane, columnsFor, commandText } from './ui/view'
 import type { ViewContext } from './ui/view'
+import { bandText, buildPane, columnsFor, commandText } from './ui/view'
 
 // ------------------------------------------------------------------ state
 
@@ -70,10 +71,10 @@ function ensureRuntime($: EngineInterface): void {
   coordinator = new RefreshCoordinator({
     now: Date.now,
     load: () => read($, items),
-    save: async (refreshed) => {
-      await setItems($, (list) => mergeResults(list, refreshed))
+    save: async refreshed => {
+      await setItems($, list => mergeResults(list, refreshed))
     },
-    hydrate: (rec) => hydrate(rec, { gh: g, acli: a }),
+    hydrate: rec => hydrate(rec, { gh: g, acli: a }),
     tools: { gh: g, acli: a },
     after: (ms, fn) => $.clock.after(ms, fn),
     onRun: async () => {
@@ -92,12 +93,12 @@ async function publishTools($: EngineInterface): Promise<void> {
   const a = acli
   if (!g || !a) return
   const next = { gh: g.status(), acli: a.status() }
-  await update($, tools, (cur) => (JSON.stringify(cur) === JSON.stringify(next) ? (cur as typeof next) : next))
+  await update($, tools, cur => (JSON.stringify(cur) === JSON.stringify(next) ? (cur as typeof next) : next))
 }
 
 /** Change the list in $.state and remember the result in `mirror`. Every write to `items` goes through here. */
 async function setItems($: EngineInterface, change: (list: ItemRecord[]) => ItemRecord[]): Promise<void> {
-  const next = await update($, items, (list) => change(list ?? []))
+  const next = await update($, items, list => change(list ?? []))
   const id = await $.session.id()
   // A write that lands after /clear but before the id change is seen belongs to the old session. Keep the old mirror.
   if (knownId !== undefined && id === knownId) mirror = { id, items: next }
@@ -129,7 +130,7 @@ async function ensureSession($: EngineInterface): Promise<void> {
   if (own?.items) {
     await restore($)
   } else if (left.length > 0) {
-    await setItems($, (list) => unionRecords(left, list))
+    await setItems($, list => unionRecords(left, list))
   }
   await publishTools($) // the tools atom was reset too
 }
@@ -172,7 +173,7 @@ async function resolveRepo($: EngineInterface): Promise<void> {
   if (repo) {
     const known = repo
     try {
-      await setItems($, (list) => resolveBareRefs(list, known))
+      await setItems($, list => resolveBareRefs(list, known))
     } catch {
       // A refused write must not poison `repoTask`. Every later capture awaits it.
     }
@@ -191,7 +192,7 @@ async function capture($: EngineInterface, text: string, mode: ScanMode, source:
   const refs = extractRefs(text, { mode, defaultRepo: sessionRepo ?? null, githubHosts })
   if (refs.length === 0) return
   let added: string[] = []
-  await setItems($, (list) => {
+  await setItems($, list => {
     const r = mergeRefs(list, refs, { source, at: Date.now() })
     added = r.added
     return r.list
@@ -241,7 +242,7 @@ async function flush($: EngineInterface): Promise<void> {
 async function writeStore($: EngineInterface, id: string, list: ItemRecord[]): Promise<void> {
   await $.store.set('s:' + id, { items: list })
   const index = ((await $.store.get('index')) as string[] | undefined) ?? []
-  const next = [id, ...index.filter((x) => x !== id)]
+  const next = [id, ...index.filter(x => x !== id)]
   for (const old of next.slice(LIMITS.keepSessions)) await $.store.delete('s:' + old)
   await $.store.set('index', next.slice(0, LIMITS.keepSessions))
 }
@@ -258,7 +259,7 @@ const NOT_TYPED = ['<local-command-stdout>', '<task-notification>', '<system-rem
 function backfillText(role: 'user' | 'assistant', text: string): string | null {
   if (text === '') return null
   if (role === 'assistant') return text
-  if (NOT_TYPED.some((tag) => text.includes(tag))) return null
+  if (NOT_TYPED.some(tag => text.includes(tag))) return null
   return text.includes('<command-args>') ? commandArgs(text) : text
 }
 
@@ -270,7 +271,11 @@ async function fromTranscript($: EngineInterface): Promise<ItemRecord[]> {
   const opts = { defaultRepo: sessionRepo ?? null, githubHosts }
   for (const m of messages) {
     const text = backfillText(m.role, m.text)
-    if (text !== null) batches.push({ refs: extractRefs(text, { mode: 'full', ...opts }), source: m.role === 'user' ? 'prompt' : 'response' })
+    if (text !== null)
+      batches.push({
+        refs: extractRefs(text, { mode: 'full', ...opts }),
+        source: m.role === 'user' ? 'prompt' : 'response',
+      })
     for (const use of m.toolUses) {
       if (use.text) batches.push({ refs: extractRefs(use.text, { mode: 'urls-only', ...opts }), source: 'tool' })
     }
@@ -297,15 +302,15 @@ async function restore($: EngineInterface): Promise<void> {
   // No gate on the index: two sessions that flush together can drop each other's id from it.
   const copy = (await $.store.get('s:' + id)) as { items?: ItemRecord[] } | undefined
   const stored = (copy?.items ?? []).map(due)
-  const have = new Set(stored.map((r) => r.key))
-  const fresh = (await fromTranscript($)).filter((r) => !have.has(r.key))
+  const have = new Set(stored.map(r => r.key))
+  const fresh = (await fromTranscript($)).filter(r => !have.has(r.key))
   const all = unionRecords(stored, fresh)
   if (all.length === 0) return
-  await setItems($, (list) => unionRecords(list, all))
+  await setItems($, list => unionRecords(list, all))
   void repoReady
     .then(async () => {
       const repo = sessionRepo
-      if (repo) await setItems($, (list) => resolveBareRefs(list, repo))
+      if (repo) await setItems($, list => resolveBareRefs(list, repo))
     })
     .catch(() => {})
   coordinator?.kick('capture')
@@ -333,7 +338,7 @@ async function settleProbes($: EngineInterface): Promise<void> {
 async function openPane($: EngineInterface): Promise<void> {
   const opened = await $.ui.open({ id: PANE, title: 'Tracking', focus: true, closeOnEscape: true })
   if (!opened.isPlaced) $.ui.toast('Widen the terminal to see the tracking pane')
-  await update($, ui, (u) => ({ folded: u?.folded ?? [], paneOpen: true }))
+  await update($, ui, u => ({ folded: u?.folded ?? [], paneOpen: true }))
   startTick($)
 }
 
@@ -360,12 +365,15 @@ async function clearAll($: EngineInterface): Promise<void> {
   const id = await $.session.id()
   await $.store.delete('s:' + id)
   const index = ((await $.store.get('index')) as string[] | undefined) ?? []
-  await $.store.set('index', index.filter((x) => x !== id))
+  await $.store.set(
+    'index',
+    index.filter(x => x !== id),
+  )
 }
 
 // ------------------------------------------------------------------ hooks
 
-export const register: Register = (on) => {
+export const register: Register = on => {
   // The person's typed prompt. Machines and notifications are not the person's text (D3).
   on('session.append', { door: 'prompt' }, async ($, e, next) => {
     const stored = await next(e)
@@ -377,7 +385,7 @@ export const register: Register = (on) => {
       // A scanner or state fault must not touch the row.
     }
     return stored
-  }).catch(($, e, next) => next(e))
+  }).catch((_$, e, next) => next(e))
 
   // The person's slash command. Only the arguments count. Our own `/track` output has origin `engine`.
   on('session.append', { door: 'command' }, async ($, e, next) => {
@@ -390,7 +398,7 @@ export const register: Register = (on) => {
       // See above.
     }
     return stored
-  }).catch(($, e, next) => next(e))
+  }).catch((_$, e, next) => next(e))
 
   // Claude's text, also from subagents.
   on('session.append', { door: 'response' }, async ($, e, next) => {
@@ -401,7 +409,7 @@ export const register: Register = (on) => {
       // See above.
     }
     return stored
-  }).catch(($, e, next) => next(e))
+  }).catch((_$, e, next) => next(e))
 
   // Tool output. Explicit GitHub and Jira URLs only.
   on('session.append', { door: 'tool-result' }, async ($, e, next) => {
@@ -412,12 +420,16 @@ export const register: Register = (on) => {
       // See above.
     }
     return stored
-  }).catch(($, e, next) => next(e))
+  }).catch((_$, e, next) => next(e))
 
   // Once per process: register the command and load what a resume brought in.
   on('session.start', async ($, e, next) => {
     try {
-      await $.command.register({ name: 'track', description: 'Show tracked GitHub, Jira and web links', argumentHint: '[refresh|clear]' })
+      await $.command.register({
+        name: 'track',
+        description: 'Show tracked GitHub, Jira and web links',
+        argumentHint: '[refresh|clear]',
+      })
     } catch {
       // The command may be refused. Capture and restore still work.
     }
@@ -430,12 +442,12 @@ export const register: Register = (on) => {
     }
     try {
       // A reload keeps the pane open but drops our timers. Start the tick again.
-      if ((await $.ui.panes()).some((p) => p.id === PANE)) startTick($)
+      if ((await $.ui.panes()).some(p => p.id === PANE)) startTick($)
     } catch {
       // No tick until the pane is opened again.
     }
     return next(e)
-  }).catch(($, e, next) => next(e))
+  }).catch((_$, e, next) => next(e))
 
   on('command.run', { command: 'track' }, async ($, e) => {
     ensureRuntime($)
@@ -477,25 +489,33 @@ export const register: Register = (on) => {
 
   on('ui.close', { id: PANE }, async ($, e, next) => {
     try {
-      await update($, ui, (u) => ({ folded: u?.folded ?? [], paneOpen: false }))
+      await update($, ui, u => ({ folded: u?.folded ?? [], paneOpen: false }))
       tick?.cancel()
       tick = null
     } catch {
       // Closing must not fail.
     }
     return next(e)
-  }).catch(($, e, next) => next(e))
+  }).catch((_$, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const el = $.ui.resolve(e)
     const list = await read($, items)
     const state = await read($, ui)
-    const sections = buildPane(list, { now: Date.now(), folded: state.folded, tools: await read($, tools), sessionRepo })
+    const sections = buildPane(list, {
+      now: Date.now(),
+      folded: state.folded,
+      tools: await read($, tools),
+      sessionRepo,
+    })
     return renderPane(el, sections, columnsFor(e.props.bodyColumns), {
-      fold: (id) => {
-        void update($, ui, (u) => {
+      fold: id => {
+        void update($, ui, u => {
           const folded = u?.folded ?? []
-          return { folded: folded.includes(id) ? folded.filter((x) => x !== id) : [...folded, id], paneOpen: u?.paneOpen ?? true }
+          return {
+            folded: folded.includes(id) ? folded.filter(x => x !== id) : [...folded, id],
+            paneOpen: u?.paneOpen ?? true,
+          }
         })
       },
       refresh: () => {
@@ -521,5 +541,5 @@ export const register: Register = (on) => {
         {await next(e)}
       </Box>
     )
-  }).catch(($, e, next) => next(e)) // a failed read leaves the band to the engine
+  }).catch((_$, e, next) => next(e)) // a failed read leaves the band to the engine
 }

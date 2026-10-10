@@ -1,0 +1,22 @@
+name: Task
+description: Maintenance, tooling, CI, docs or refactoring. No change in behavior.
+labels: [chore]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Title: state the work in sentence case, imperative mood, no type prefix, no trailing period.
+        Example: "Pin TypeScript in the lint workflow". Add the `documentation` label for docs-only work.
+  - type: textarea
+    id: work
+    attributes:
+      label: Work
+      description: What to do and why.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+      placeholder: |
+        - [ ] ...

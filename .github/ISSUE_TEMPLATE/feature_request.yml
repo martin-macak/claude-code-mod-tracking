@@ -1,0 +1,33 @@
+name: Feature request
+description: A new capability or a change in behavior.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Title: state the outcome in sentence case, imperative mood, no type prefix, no trailing period.
+        Example: "Show Jira assignee in the /track pane".
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Who needs this and why. What fails today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should happen.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] ...
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

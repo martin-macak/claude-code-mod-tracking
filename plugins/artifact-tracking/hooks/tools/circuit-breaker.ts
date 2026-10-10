@@ -2,8 +2,8 @@
 //   closed --3rd failure in a row--> open --openMs passed--> half-open (one call) --ok--> closed
 //                                                                     \--fail--> open
 
-import { LIMITS } from '../contracts'
 import type { BreakerState } from '../contracts'
+import { LIMITS } from '../contracts'
 
 export class CircuitBreaker {
   private st: BreakerState = 'closed'

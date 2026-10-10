@@ -1,10 +1,10 @@
 // GhTool: refreshes GitHub issues and PRs with `gh` (spec section 7.2, KB github.md).
 // One batched GraphQL call per host and chunk. No `$`: it gets a Runner and a clock.
 
+import type { Checks, GitHubState, GitHubTarget, GitHubToolApi, Now, RepoRef, Runner, RunResult } from '../contracts'
 import { LIMITS } from '../contracts'
-import type { Checks, GitHubState, GitHubTarget, GitHubToolApi, Now, RepoRef, RunResult, Runner } from '../contracts'
-import { CircuitBreaker } from './circuit-breaker'
-import { Tool, firstLine } from './tool'
+import type { CircuitBreaker } from './circuit-breaker'
+import { firstLine, Tool } from './tool'
 
 /** Aliases per GraphQL call. 50 aliases cost 1 rate point (KB github.md section 5). */
 const CHUNK = 50
@@ -165,7 +165,7 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubToolApi {
     }
 
     // A null item or repository: GitHub says it does not exist (or we have no access).
-    const found = errors.find((e) => isRecord(e) && Array.isArray(e.path) && e.path[0] === alias)
+    const found = errors.find(e => isRecord(e) && Array.isArray(e.path) && e.path[0] === alias)
     const explicitNull = data[alias] === null || dig(data, alias, 'issueOrPullRequest') === null
     if (!found && !explicitNull) return
     const text = dig(found, 'message')

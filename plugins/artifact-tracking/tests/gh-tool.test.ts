@@ -1,8 +1,8 @@
 // GhTool: batched GraphQL refresh, outcome classification, host and repo probes. Pure, fake Runner.
 import { expect, test } from 'claude-code/testing'
-import type { GitHubTarget, RunResult, Runner } from '../hooks/contracts'
+import type { GitHubTarget, Runner, RunResult } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
-import { GhTool, buildQuery, rollupToChecks } from '../hooks/tools/gh-tool'
+import { buildQuery, GhTool, rollupToChecks } from '../hooks/tools/gh-tool'
 import * as fx from './fixtures/gh'
 
 const NOW = 1_000_000
@@ -21,14 +21,18 @@ function item(owner: string | undefined, repo: string | undefined, number: numbe
  * They are renamed, in order, to the aliases found in the query that was sent.
  */
 function remap(fixture: string, query: string): string {
-  const sent = [...query.matchAll(/\b(a\d+): repository\(/g)].map((m) => m[1] as string)
+  const sent = [...query.matchAll(/\b(a\d+): repository\(/g)].map(m => m[1] as string)
   const parsed = JSON.parse(fixture) as { data: Record<string, unknown>; errors?: { path: string[] }[] }
-  const names = Object.keys(parsed.data).filter((k) => k !== 'rateLimit')
+  const names = Object.keys(parsed.data).filter(k => k !== 'rateLimit')
   const rename = new Map(names.map((n, i) => [n, sent[i] as string]))
   const data: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(parsed.data)) data[rename.get(k) ?? k] = v
   const out: Record<string, unknown> = { data }
-  if (parsed.errors) out.errors = parsed.errors.map((e) => ({ ...e, path: [rename.get(e.path[0] as string) ?? e.path[0], ...e.path.slice(1)] }))
+  if (parsed.errors)
+    out.errors = parsed.errors.map(e => ({
+      ...e,
+      path: [rename.get(e.path[0] as string) ?? e.path[0], ...e.path.slice(1)],
+    }))
   return JSON.stringify(out)
 }
 
@@ -36,30 +40,35 @@ type Graphql = (query: string, argv: readonly string[]) => RunResult | Error
 
 function rig(graphql: Graphql, extra: (argv: readonly string[]) => RunResult | Error | undefined = () => undefined) {
   const calls: string[][] = []
-  const run: Runner = async (argv) => {
+  const run: Runner = async argv => {
     calls.push([...argv])
     let a: RunResult | Error | undefined
     if (argv[1] === '--version') a = ok('gh version 2.102.0 (2026-09-30)')
     else if (argv[1] === 'api' && argv[2] === 'graphql') {
-      const q = argv.find((x) => x.startsWith('query='))?.slice('query='.length) ?? ''
+      const q = argv.find(x => x.startsWith('query='))?.slice('query='.length) ?? ''
       a = graphql(q, argv)
     } else a = extra(argv)
     if (a === undefined) throw new Error(`unexpected call: ${argv.join(' ')}`)
     if (a instanceof Error) throw a
     return a
   }
-  const graphqlCalls = () => calls.filter((c) => c[1] === 'api')
+  const graphqlCalls = () => calls.filter(c => c[1] === 'api')
   return { run, calls, graphqlCalls }
 }
 
 test('fixtures: every JSON fixture parses', () => {
-  for (const json of [fx.BATCH_SAMPLE_OUTPUT, fx.BATCH_50_PROBE_OUTPUT, fx.AUTH_BAD_TOKEN_STDOUT, fx.REPO_RESOLUTION_STDOUT]) {
+  for (const json of [
+    fx.BATCH_SAMPLE_OUTPUT,
+    fx.BATCH_50_PROBE_OUTPUT,
+    fx.AUTH_BAD_TOKEN_STDOUT,
+    fx.REPO_RESOLUTION_STDOUT,
+  ]) {
     expect(() => JSON.parse(json)).not.toThrow()
   }
 })
 
 test('three items in two repos make one graphql call and update every field', async () => {
-  const { run, graphqlCalls } = rig((q) => ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)))
+  const { run, graphqlCalls } = rig(q => ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)))
   const tool = new GhTool(run, () => NOW)
   const [issue, pr, merged] = [item('cli', 'cli', 14622), item('cli', 'cli', 14640), item('other', 'repo', 14633)]
   await tool.refreshItems([issue!, pr!, merged!])
@@ -68,7 +77,14 @@ test('three items in two repos make one graphql call and update every field', as
   expect(issue).toMatchObject({ type: 'issue', state: 'closed', stateReason: 'DUPLICATE', refreshedAt: NOW })
   expect(issue!.title).toContain('gh pr edit fails')
   expect(issue!.checks).toBeUndefined()
-  expect(pr).toMatchObject({ type: 'pr', state: 'open', isDraft: false, reviewDecision: 'REVIEW_REQUIRED', checks: 'failure', refreshedAt: NOW })
+  expect(pr).toMatchObject({
+    type: 'pr',
+    state: 'open',
+    isDraft: false,
+    reviewDecision: 'REVIEW_REQUIRED',
+    checks: 'failure',
+    refreshedAt: NOW,
+  })
   expect(pr!.stateReason).toBeUndefined()
   expect(merged).toMatchObject({ type: 'pr', state: 'merged', checks: 'none' })
   expect(tool.status().breaker).toBe('closed')
@@ -76,7 +92,7 @@ test('three items in two repos make one graphql call and update every field', as
 })
 
 test('the call carries the query, rateLimit and always a --hostname, also for github.com', async () => {
-  const { run, graphqlCalls } = rig((q) => ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)))
+  const { run, graphqlCalls } = rig(q => ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)))
   const tool = new GhTool(run, () => NOW)
   await tool.refreshItems([item('cli', 'cli', 1), item('cli', 'cli', 2), item('cli', 'cli', 3)])
   const argv = graphqlCalls()[0]!
@@ -90,7 +106,7 @@ test('the call carries the query, rateLimit and always a --hostname, also for gi
 })
 
 test('a NOT_FOUND alias returns exit 1 with JSON: that item errors, the others update, breaker stays closed', async () => {
-  const { run } = rig((q) => ok(remap(fx.BATCH_50_PROBE_OUTPUT, q), 1, fx.BATCH_50_PROBE_STDERR))
+  const { run } = rig(q => ok(remap(fx.BATCH_50_PROBE_OUTPUT, q), 1, fx.BATCH_50_PROBE_STDERR))
   const tool = new GhTool(run, () => NOW)
   const items = [item('cli', 'cli', 14600), item('cli', 'cli', 14601), item('cli', 'cli', 14602)]
   await tool.refreshItems(items)
@@ -105,7 +121,7 @@ test('a NOT_FOUND alias returns exit 1 with JSON: that item errors, the others u
 
 test('a later good answer clears the not-found error', async () => {
   let n = 0
-  const { run } = rig((q) => ok(remap(n++ === 0 ? fx.BATCH_50_PROBE_OUTPUT : fx.BATCH_SAMPLE_OUTPUT, q), n === 1 ? 1 : 0))
+  const { run } = rig(q => ok(remap(n++ === 0 ? fx.BATCH_50_PROBE_OUTPUT : fx.BATCH_SAMPLE_OUTPUT, q), n === 1 ? 1 : 0))
   const tool = new GhTool(run, () => NOW)
   const [a] = [item('cli', 'cli', 14600)]
   await tool.refreshItems([a!, item('cli', 'cli', 2), item('cli', 'cli', 3)])
@@ -188,7 +204,7 @@ test('an invalid owner or repo gets an error and no call', async () => {
 })
 
 test('a valid item next to an invalid one is still refreshed', async () => {
-  const { run, graphqlCalls } = rig((q) => ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)))
+  const { run, graphqlCalls } = rig(q => ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)))
   const tool = new GhTool(run, () => NOW)
   const good = item('cli', 'cli', 14622)
   await tool.refreshItems([item('b d', 'x', 1), good])
@@ -198,19 +214,19 @@ test('a valid item next to an invalid one is still refreshed', async () => {
 })
 
 test('a GHE item call carries --hostname ghe.corp; hosts never share a call', async () => {
-  const { run, graphqlCalls } = rig((q) => ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)))
+  const { run, graphqlCalls } = rig(q => ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)))
   const tool = new GhTool(run, () => NOW)
   await tool.refreshItems([item('o', 'r', 1, 'ghe.corp'), item('cli', 'cli', 2)])
   const calls = graphqlCalls()
   expect(calls.length).toBe(2)
-  const ghe = calls.find((c) => c.includes('ghe.corp'))!
+  const ghe = calls.find(c => c.includes('ghe.corp'))!
   expect(ghe.slice(3, 5)).toEqual(['--hostname', 'ghe.corp'])
   expect(ghe.at(-1)).toContain('number: 1')
   expect(ghe.at(-1)).not.toContain('number: 2')
 })
 
 test('duplicate keys in one call share one alias and both objects update', async () => {
-  const { run, graphqlCalls } = rig((q) => ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)))
+  const { run, graphqlCalls } = rig(q => ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)))
   const tool = new GhTool(run, () => NOW)
   const x = item('cli', 'cli', 14622)
   const y = item('CLI', 'cli', 14622) // same key after lower-casing is what the model builds
@@ -237,25 +253,29 @@ test('buildQuery groups by key and escapes with JSON.stringify', () => {
 })
 
 test('more than 50 distinct items split into chunks of 50 aliases', async () => {
-  const { run, graphqlCalls } = rig((q) => {
+  const { run, graphqlCalls } = rig(q => {
     const data: Record<string, unknown> = {}
-    for (const m of q.matchAll(/\b(a\d+): repository\(/g)) data[m[1] as string] = { issueOrPullRequest: { __typename: 'Issue', title: 't', state: 'OPEN', stateReason: null } }
+    for (const m of q.matchAll(/\b(a\d+): repository\(/g))
+      data[m[1] as string] = {
+        issueOrPullRequest: { __typename: 'Issue', title: 't', state: 'OPEN', stateReason: null },
+      }
     return ok(JSON.stringify({ data }))
   })
   const tool = new GhTool(run, () => NOW)
   const items = Array.from({ length: 120 }, (_, i) => item('cli', 'cli', i + 1))
   await tool.refreshItems(items)
-  const sizes = graphqlCalls().map((c) => [...c.at(-1)!.matchAll(/\ba\d+: repository\(/g)].length)
+  const sizes = graphqlCalls().map(c => [...c.at(-1)!.matchAll(/\ba\d+: repository\(/g)].length)
   expect(sizes).toEqual([50, 50, 20])
-  expect(items.every((i) => i.state === 'open' && i.type === 'issue')).toBe(true)
+  expect(items.every(i => i.state === 'open' && i.type === 'issue')).toBe(true)
 })
 
 test('a failed chunk leaves its items unchanged; later chunks still run', async () => {
   let n = 0
-  const { run, graphqlCalls } = rig((q) => {
+  const { run, graphqlCalls } = rig(q => {
     if (n++ === 0) return ok('', 1, 'boom')
     const data: Record<string, unknown> = {}
-    for (const m of q.matchAll(/\b(a\d+): repository\(/g)) data[m[1] as string] = { issueOrPullRequest: { __typename: 'Issue', title: 't', state: 'OPEN' } }
+    for (const m of q.matchAll(/\b(a\d+): repository\(/g))
+      data[m[1] as string] = { issueOrPullRequest: { __typename: 'Issue', title: 't', state: 'OPEN' } }
     return ok(JSON.stringify({ data }))
   })
   const tool = new GhTool(run, () => NOW)
@@ -278,43 +298,72 @@ test('rollupToChecks maps every listed value', () => {
 })
 
 test('defaultRepo parses nameWithOwner and url once, even when called twice', async () => {
-  const { run, calls } = rig(() => ok(), (argv) => (argv[1] === 'repo' ? ok('{ "nameWithOwner": "acme/web", "url": "https://github.com/acme/web" }') : undefined))
+  const { run, calls } = rig(
+    () => ok(),
+    argv =>
+      argv[1] === 'repo' ? ok('{ "nameWithOwner": "acme/web", "url": "https://github.com/acme/web" }') : undefined,
+  )
   const tool = new GhTool(run, () => NOW)
   const [a, b] = await Promise.all([tool.defaultRepo(), tool.defaultRepo()])
   expect(a).toEqual({ host: 'github.com', owner: 'acme', repo: 'web' })
   expect(b).toEqual(a)
   await tool.defaultRepo()
-  expect(calls.filter((c) => c[1] === 'repo')).toEqual([['gh', 'repo', 'view', '--json', 'nameWithOwner,url']])
+  expect(calls.filter(c => c[1] === 'repo')).toEqual([['gh', 'repo', 'view', '--json', 'nameWithOwner,url']])
 })
 
 test('defaultRepo takes the host from the url (GHE)', async () => {
-  const { run } = rig(() => ok(), () => ok('{"nameWithOwner":"o/r","url":"https://ghe.corp/o/r"}'))
+  const { run } = rig(
+    () => ok(),
+    () => ok('{"nameWithOwner":"o/r","url":"https://ghe.corp/o/r"}'),
+  )
   expect(await new GhTool(run, () => NOW).defaultRepo()).toEqual({ host: 'ghe.corp', owner: 'o', repo: 'r' })
 })
 
 test('defaultRepo falls back to github.com when the url is missing (recorded sample)', async () => {
-  const { run } = rig(() => ok(), () => ok(fx.REPO_RESOLUTION_STDOUT))
-  expect(await new GhTool(run, () => NOW).defaultRepo()).toEqual({ host: 'github.com', owner: '<owner>', repo: 'claude-code-mod-tracking' })
+  const { run } = rig(
+    () => ok(),
+    () => ok(fx.REPO_RESOLUTION_STDOUT),
+  )
+  expect(await new GhTool(run, () => NOW).defaultRepo()).toEqual({
+    host: 'github.com',
+    owner: '<owner>',
+    repo: 'claude-code-mod-tracking',
+  })
 })
 
 test('defaultRepo returns null on failure or rejection, and asks once', async () => {
-  const bad = rig(() => ok(), () => ok('', 1, 'no git remotes found'))
+  const bad = rig(
+    () => ok(),
+    () => ok('', 1, 'no git remotes found'),
+  )
   const t1 = new GhTool(bad.run, () => NOW)
   expect(await t1.defaultRepo()).toBe(null)
   expect(await t1.defaultRepo()).toBe(null)
   expect(bad.calls.length).toBe(1)
 
-  const rejecting = rig(() => ok(), () => new Error('ENOENT'))
+  const rejecting = rig(
+    () => ok(),
+    () => new Error('ENOENT'),
+  )
   expect(await new GhTool(rejecting.run, () => NOW).defaultRepo()).toBe(null)
 
-  const junk = rig(() => ok(), () => ok('not json'))
+  const junk = rig(
+    () => ok(),
+    () => ok('not json'),
+  )
   expect(await new GhTool(junk.run, () => NOW).defaultRepo()).toBe(null)
-  const noSlash = rig(() => ok(), () => ok('{"nameWithOwner":"nope"}'))
+  const noSlash = rig(
+    () => ok(),
+    () => ok('{"nameWithOwner":"nope"}'),
+  )
   expect(await new GhTool(noSlash.run, () => NOW).defaultRepo()).toBe(null)
 })
 
 test('defaultRepo and checkHost do not feed the breaker', async () => {
-  const { run } = rig(() => ok(), () => new Error('timeout'))
+  const { run } = rig(
+    () => ok(),
+    () => new Error('timeout'),
+  )
   const tool = new GhTool(run, () => NOW)
   for (let i = 0; i < 5; i++) {
     await tool.checkHost(`h${i}.corp`)
@@ -325,7 +374,15 @@ test('defaultRepo and checkHost do not feed the breaker', async () => {
 })
 
 test('checkHost: exit 0 is true, cached per host', async () => {
-  const { run, calls } = rig(() => ok(), (argv) => (argv[1] === 'auth' ? (argv.includes('ghe.corp') ? ok('Logged in') : ok('', 1, fx.GHE_AUTH_STATUS_STDERR)) : undefined))
+  const { run, calls } = rig(
+    () => ok(),
+    argv =>
+      argv[1] === 'auth'
+        ? argv.includes('ghe.corp')
+          ? ok('Logged in')
+          : ok('', 1, fx.GHE_AUTH_STATUS_STDERR)
+        : undefined,
+  )
   const tool = new GhTool(run, () => NOW)
   expect(tool.isHostAuthed('ghe.corp')).toBeUndefined()
   expect(await tool.checkHost('ghe.corp')).toBe(true)
@@ -334,7 +391,7 @@ test('checkHost: exit 0 is true, cached per host', async () => {
   expect(await tool.checkHost('other.corp')).toBe(false)
   expect(tool.isHostAuthed('ghe.corp')).toBe(true)
   expect(tool.isHostAuthed('other.corp')).toBe(false)
-  expect(calls.filter((c) => c[1] === 'auth')).toEqual([
+  expect(calls.filter(c => c[1] === 'auth')).toEqual([
     ['gh', 'auth', 'status', '--hostname', 'ghe.corp'],
     ['gh', 'auth', 'status', '--hostname', 'other.corp'],
   ])
@@ -342,7 +399,10 @@ test('checkHost: exit 0 is true, cached per host', async () => {
 
 test('checkHost: a runner rejection answers false and is not cached', async () => {
   let fail = true
-  const { run } = rig(() => ok(), (argv) => (argv[1] === 'auth' ? (fail ? new Error('timeout') : ok('ok')) : undefined))
+  const { run } = rig(
+    () => ok(),
+    argv => (argv[1] === 'auth' ? (fail ? new Error('timeout') : ok('ok')) : undefined),
+  )
   const tool = new GhTool(run, () => NOW)
   expect(await tool.checkHost('ghe.corp')).toBe(false)
   expect(tool.isHostAuthed('ghe.corp')).toBeUndefined()
@@ -352,7 +412,10 @@ test('checkHost: a runner rejection answers false and is not cached', async () =
 
 test('reset forgets a cached host denial, so a manual refresh can see a new login', async () => {
   let loggedIn = false
-  const { run } = rig(() => ok(), (argv) => (argv[1] === 'auth' ? (loggedIn ? ok('ok') : ok('', 1, 'no')) : undefined))
+  const { run } = rig(
+    () => ok(),
+    argv => (argv[1] === 'auth' ? (loggedIn ? ok('ok') : ok('', 1, 'no')) : undefined),
+  )
   const tool = new GhTool(run, () => NOW)
   expect(await tool.checkHost('ghe.corp')).toBe(false)
   loggedIn = true

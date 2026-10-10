@@ -133,7 +133,6 @@ Hooked by name or by `telemetry.*`. `*` does not select a telemetry event ([d.ts
 | `skill.prompt` | `SkillPromptInput` → `SkillPromptResult` | No | No | Fires when a skill prompt is expanded (`/name`, Skill tool, preload). `next(e)` resolves `{ text }`. Return `{ text }` to give the model different text. Matcher: `skill`. | [d.ts:4311](../sources/claude-code-2.1.295/types/claude-code.d.ts#L4311) |
 | `attribution.text` | `AttributionTextInput` → `AttributionTextResult` | No | No | Fires when a git text the model writes is composed (`kind`: `commit`, `pr`, `exemption`, `remedy`). Return `{ text }` to replace it. Matcher: `kind`. | [d.ts:4322](../sources/claude-code-2.1.295/types/claude-code.d.ts#L4322) |
 
-
 ### Notes on the engine events
 
 - Typed inputs: `ToolCallInput = ToolCallEnvelope & AgentLoop & ToolRequestMeta` ([d.ts:12665](../sources/claude-code-2.1.295/types/claude-code.d.ts#L12665)). The `e` of `tool.call` narrows by `e.tool` for each built-in tool (`BuiltinToolInputs`, [d.ts:15987](../sources/claude-code-2.1.295/types/claude-code.d.ts#L15987)).

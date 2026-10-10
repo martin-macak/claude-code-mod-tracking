@@ -1,0 +1,18 @@
+// markdownlint-cli2 config. Docs: https://github.com/DavidAnson/markdownlint-cli2
+{
+  "config": {
+    "default": true,
+    // Prose is one sentence or paragraph per line. Do not wrap.
+    "MD013": false,
+    // Tables use compact pipes. Aligned columns churn on every edit.
+    "MD060": false
+  },
+  // Verbatim snapshots and vendored skills. Never edit them.
+  "ignores": [
+    "docs/knowledge-base/**/sources/**",
+    ".agents/**",
+    ".claude/**",
+    ".projectatlas/**",
+    "**/node_modules/**"
+  ]
+}

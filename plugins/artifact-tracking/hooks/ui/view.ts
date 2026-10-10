@@ -2,7 +2,14 @@
 // Spec: docs/superpowers/specs/2026-10-10-artifact-tracking-design.md section 9.
 
 import type {
-  Category, GitHubRecord, ItemRecord, JiraNode, JiraRecord, RepoRef, ToolStatus, WebRecord,
+  Category,
+  GitHubRecord,
+  ItemRecord,
+  JiraNode,
+  JiraRecord,
+  RepoRef,
+  ToolStatus,
+  WebRecord,
 } from '../contracts'
 
 export type Tone = 'plain' | 'ok' | 'warn' | 'bad' | 'dim'
@@ -97,16 +104,27 @@ function categoryTone(statusCategory: string | undefined): Tone {
 }
 
 function nodeRows(
-  parentId: string, nodes: readonly JiraNode[], depth: number, site: string,
-  folded: ReadonlySet<string>, out: PaneRow[],
+  parentId: string,
+  nodes: readonly JiraNode[],
+  depth: number,
+  site: string,
+  folded: ReadonlySet<string>,
+  out: PaneRow[],
 ): void {
   for (const n of nodes) {
     const id = parentId + '/' + n.key
     const isFolded = n.children.length > 0 && folded.has(id)
     out.push({
-      id, depth, key: n.key, href: `https://${site}/browse/${n.key}`, title: n.summary, type: n.issueType,
-      status: n.status, tone: categoryTone(n.statusCategory),
-      foldable: n.children.length > 0, folded: isFolded,
+      id,
+      depth,
+      key: n.key,
+      href: `https://${site}/browse/${n.key}`,
+      title: n.summary,
+      type: n.issueType,
+      status: n.status,
+      tone: categoryTone(n.statusCategory),
+      foldable: n.children.length > 0,
+      folded: isFolded,
     })
     if (!isFolded) nodeRows(id, n.children, depth + 1, site, folded, out)
   }
@@ -129,9 +147,16 @@ function jiraRows(item: JiraRecord, ctx: ViewContext, folded: ReadonlySet<string
   const id = item.key
   const isFolded = item.children.length > 0 && folded.has(id)
   out.push({
-    id, depth: 0, key: item.issueKey, href: item.url, title: item.summary ?? item.label,
-    type: item.issueType ?? '', status, tone,
-    foldable: item.children.length > 0, folded: isFolded,
+    id,
+    depth: 0,
+    key: item.issueKey,
+    href: item.url,
+    title: item.summary ?? item.label,
+    type: item.issueType ?? '',
+    status,
+    tone,
+    foldable: item.children.length > 0,
+    folded: isFolded,
   })
   if (!isFolded) nodeRows(id, item.children, 1, item.site, folded, out)
 }
@@ -146,9 +171,12 @@ const CHECKS: Record<NonNullable<GitHubRecord['checks']>, { extra?: string; extr
 function githubRow(item: GitHubRecord, ctx: ViewContext): PaneRow {
   const unresolved = !item.owner || !item.repo
   const s = ctx.sessionRepo
-  const inSession = !unresolved && !!s
-    && lower(item.owner) === lower(s.owner) && lower(item.repo) === lower(s.repo)
-    && lower(item.host) === lower(s.host)
+  const inSession =
+    !unresolved &&
+    !!s &&
+    lower(item.owner) === lower(s.owner) &&
+    lower(item.repo) === lower(s.repo) &&
+    lower(item.host) === lower(s.host)
   const key = unresolved || inSession ? `#${item.number}` : `${item.owner}/${item.repo}#${item.number}`
 
   let status: string
@@ -166,17 +194,32 @@ function githubRow(item: GitHubRecord, ctx: ViewContext): PaneRow {
 
   const checks = CHECKS[item.checks ?? 'none']
   return {
-    id: item.key, depth: 0, key, href: item.url,
+    id: item.key,
+    depth: 0,
+    key,
+    href: item.url,
     title: item.title ?? (unresolved ? 'unresolved: no repo' : ''),
     type: item.type === 'pr' ? 'PR' : item.type === 'issue' ? 'Issue' : '',
-    status, tone, ...checks, foldable: false, folded: false,
+    status,
+    tone,
+    ...checks,
+    foldable: false,
+    folded: false,
   }
 }
 
 function webRow(item: WebRecord): PaneRow {
   return {
-    id: item.key, depth: 0, key: item.label, href: item.url, title: hostPath(item.url),
-    type: '', status: '', tone: 'plain', foldable: false, folded: false,
+    id: item.key,
+    depth: 0,
+    key: item.label,
+    href: item.url,
+    title: hostPath(item.url),
+    type: '',
+    status: '',
+    tone: 'plain',
+    foldable: false,
+    folded: false,
   }
 }
 
@@ -188,7 +231,8 @@ const SECTIONS: { category: Category; title: string }[] = [
 
 function lastRefreshOf(items: readonly ItemRecord[]): number | undefined {
   let last: number | undefined
-  for (const i of items) if (i.refreshedAt !== undefined && (last === undefined || i.refreshedAt > last)) last = i.refreshedAt
+  for (const i of items)
+    if (i.refreshedAt !== undefined && (last === undefined || i.refreshedAt > last)) last = i.refreshedAt
   return last
 }
 
@@ -205,7 +249,7 @@ export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneS
   const folded = new Set(ctx.folded)
   const sections: PaneSection[] = []
   for (const { category, title } of SECTIONS) {
-    const own = items.filter((i) => i.category === category).sort((a, b) => a.firstSeen - b.firstSeen)
+    const own = items.filter(i => i.category === category).sort((a, b) => a.firstSeen - b.firstSeen)
     if (own.length === 0) continue
     const rows: PaneRow[] = []
     for (const item of own) {
@@ -249,7 +293,7 @@ export function commandText(items: readonly ItemRecord[], ctx: ViewContext): str
     if (lines.length > 0) lines.push('')
     lines.push(`${s.title}  ${s.note}`)
     for (const r of s.rows) {
-      const cells = [r.key, r.title, r.type, r.status, r.extra ?? ''].filter((c) => c !== '')
+      const cells = [r.key, r.title, r.type, r.status, r.extra ?? ''].filter(c => c !== '')
       lines.push('  '.repeat(r.depth + 1) + cells.join('  '))
     }
   }

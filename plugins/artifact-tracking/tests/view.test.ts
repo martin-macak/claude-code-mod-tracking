@@ -1,58 +1,95 @@
 // View model: pure functions over ItemRecord[]. No engine, no files.
 import { expect, test } from 'claude-code/testing'
 import type { GitHubRecord, ItemRecord, JiraNode, JiraRecord, ToolStatus, WebRecord } from '../hooks/contracts'
-import {
-  ago, bandText, buildPane, columnsFor, commandText, toolNote, type ViewContext,
-} from '../hooks/ui/view'
+import { ago, bandText, buildPane, columnsFor, commandText, toolNote, type ViewContext } from '../hooks/ui/view'
 
 const NOW = 1_000_000
 
 const gh = (over: Partial<ToolStatus> = {}): ToolStatus => ({
-  name: 'gh', available: true, loggedIn: true, breaker: 'closed', ...over,
+  name: 'gh',
+  available: true,
+  loggedIn: true,
+  breaker: 'closed',
+  ...over,
 })
 const acli = (over: Partial<ToolStatus> = {}): ToolStatus => ({
-  name: 'acli', available: true, loggedIn: true, breaker: 'closed', site: 'acme.atlassian.net', ...over,
+  name: 'acli',
+  available: true,
+  loggedIn: true,
+  breaker: 'closed',
+  site: 'acme.atlassian.net',
+  ...over,
 })
 const ctx = (over: Partial<ViewContext> = {}): ViewContext => ({
-  now: NOW, folded: [], tools: { gh: gh(), acli: acli() }, sessionRepo: null, ...over,
+  now: NOW,
+  folded: [],
+  tools: { gh: gh(), acli: acli() },
+  sessionRepo: null,
+  ...over,
 })
 
 const base = (key: string, url: string, label: string, firstSeen: number) => ({
-  key, url, label, sources: ['prompt' as const], firstSeen, lastSeen: firstSeen, seenCount: 1,
+  key,
+  url,
+  label,
+  sources: ['prompt' as const],
+  firstSeen,
+  lastSeen: firstSeen,
+  seenCount: 1,
 })
 
 const node = (key: string, status: string, statusCategory: string, children: JiraNode[] = []): JiraNode => ({
-  key, summary: 'S ' + key, issueType: 'Story', status, statusCategory, children,
+  key,
+  summary: 'S ' + key,
+  issueType: 'Story',
+  status,
+  statusCategory,
+  children,
 })
 
 const jira = (issueKey: string, over: Partial<JiraRecord> = {}): JiraRecord => ({
   ...base('jira:acme.atlassian.net/' + issueKey, `https://acme.atlassian.net/browse/${issueKey}`, issueKey, 10),
-  category: 'jira', site: 'acme.atlassian.net', issueKey, trackOnly: false, children: [], ...over,
+  category: 'jira',
+  site: 'acme.atlassian.net',
+  issueKey,
+  trackOnly: false,
+  children: [],
+  ...over,
 })
 
 const pr = (number: number, over: Partial<GitHubRecord> = {}): GitHubRecord => ({
   ...base(`gh:github.com/o/r#${number}`, `https://github.com/o/r/pull/${number}`, `#${number}`, 20),
-  category: 'github', host: 'github.com', owner: 'o', repo: 'r', number, type: 'pr', ...over,
+  category: 'github',
+  host: 'github.com',
+  owner: 'o',
+  repo: 'r',
+  number,
+  type: 'pr',
+  ...over,
 })
 
 const web = (url: string, label: string, firstSeen = 30): WebRecord => ({
-  ...base('web:' + url, url, label, firstSeen), category: 'web',
+  ...base('web:' + url, url, label, firstSeen),
+  category: 'web',
 })
 
 test('sections come in order jira, github, web and empty ones are omitted', () => {
   const items: ItemRecord[] = [web('https://a.dev/x', 'A', 1), pr(1), jira('ISS-1')]
-  expect(buildPane(items, ctx()).map((s) => s.category)).toEqual(['jira', 'github', 'web'])
-  expect(buildPane([pr(1)], ctx()).map((s) => s.title)).toEqual(['GitHub'])
+  expect(buildPane(items, ctx()).map(s => s.category)).toEqual(['jira', 'github', 'web'])
+  expect(buildPane([pr(1)], ctx()).map(s => s.title)).toEqual(['GitHub'])
   expect(buildPane([], ctx())).toEqual([])
 })
 
 test('rows sort by firstSeen inside a section', () => {
   const rows = buildPane([pr(2, { firstSeen: 50 }), pr(1, { firstSeen: 5 })], ctx())[0]!.rows
-  expect(rows.map((r) => r.key)).toEqual(['o/r#1', 'o/r#2'])
+  expect(rows.map(r => r.key)).toEqual(['o/r#1', 'o/r#2'])
 })
 
 const epic = jira('ISS-101', {
-  summary: 'Onboarding', issueType: 'Epic', status: 'In Progress', statusCategory: 'indeterminate',
+  summary: 'Onboarding',
+  issueType: 'Epic',
+  status: 'In Progress',
+  statusCategory: 'indeterminate',
   children: [
     node('ISS-102', 'In Progress', 'indeterminate', [node('ISS-103', 'Done', 'done')]),
     node('ISS-110', 'To Do', 'new'),
@@ -61,14 +98,22 @@ const epic = jira('ISS-101', {
 
 test('jira tree: root, children and subtasks with depth, ids, links and tones', () => {
   const rows = buildPane([epic], ctx())[0]!.rows
-  expect(rows.map((r) => [r.id, r.depth])).toEqual([
+  expect(rows.map(r => [r.id, r.depth])).toEqual([
     ['jira:acme.atlassian.net/ISS-101', 0],
     ['jira:acme.atlassian.net/ISS-101/ISS-102', 1],
     ['jira:acme.atlassian.net/ISS-101/ISS-102/ISS-103', 2],
     ['jira:acme.atlassian.net/ISS-101/ISS-110', 1],
   ])
   const [root, child, sub, leaf] = rows
-  expect(root).toMatchObject({ key: 'ISS-101', title: 'Onboarding', type: 'Epic', status: 'In Progress', tone: 'warn', foldable: true, folded: false })
+  expect(root).toMatchObject({
+    key: 'ISS-101',
+    title: 'Onboarding',
+    type: 'Epic',
+    status: 'In Progress',
+    tone: 'warn',
+    foldable: true,
+    folded: false,
+  })
   expect(root!.href).toBe('https://acme.atlassian.net/browse/ISS-101')
   expect(child!.href).toBe('https://acme.atlassian.net/browse/ISS-102')
   expect(sub).toMatchObject({ status: 'Done', tone: 'ok', foldable: false })
@@ -81,7 +126,7 @@ test('a folded jira row hides its descendants and says so', () => {
   expect(rows).toHaveLength(1)
   expect(rows[0]).toMatchObject({ foldable: true, folded: true })
   const inner = buildPane([epic], ctx({ folded: [rootId + '/ISS-102'] }))[0]!.rows
-  expect(inner.map((r) => r.key)).toEqual(['ISS-101', 'ISS-102', 'ISS-110'])
+  expect(inner.map(r => r.key)).toEqual(['ISS-101', 'ISS-102', 'ISS-110'])
   expect(inner[1]).toMatchObject({ folded: true })
 })
 
@@ -108,7 +153,7 @@ test('github keys: #N for the session repo, o/r#N otherwise, #N when unresolved'
     pr(3, { firstSeen: 3, owner: undefined, repo: undefined, type: 'unknown', key: 'gh:?#3' }),
   ]
   const rows = buildPane(items, ctx({ sessionRepo: sess }))[0]!.rows
-  expect(rows.map((r) => r.key)).toEqual(['#14', 'x/y#15', '#3'])
+  expect(rows.map(r => r.key)).toEqual(['#14', 'x/y#15', '#3'])
   expect(rows[2]).toMatchObject({ title: 'unresolved: no repo', type: '' })
   expect(rows[0]).toMatchObject({ type: 'PR', title: '' })
   const noSession = buildPane([pr(14)], ctx())[0]!.rows[0]!
@@ -135,17 +180,25 @@ test('failing checks show a red extra; pending yellow; success green; none nothi
 })
 
 test('web rows: label as key, link href, host and path as title', () => {
-  const r = buildPane([web('https://code.claude.com/docs/en/plugins/mods?x=1#top', 'Mods overview')], ctx())[0]!.rows[0]!
+  const r = buildPane([web('https://code.claude.com/docs/en/plugins/mods?x=1#top', 'Mods overview')], ctx())[0]!
+    .rows[0]!
   expect(r).toMatchObject({
-    key: 'Mods overview', href: 'https://code.claude.com/docs/en/plugins/mods?x=1#top',
-    title: 'code.claude.com/docs/en/plugins/mods', type: '', status: '', depth: 0, foldable: false,
+    key: 'Mods overview',
+    href: 'https://code.claude.com/docs/en/plugins/mods?x=1#top',
+    title: 'code.claude.com/docs/en/plugins/mods',
+    type: '',
+    status: '',
+    depth: 0,
+    foldable: false,
   })
 })
 
 test('section notes', () => {
   const items: ItemRecord[] = [
-    jira('ISS-1', { refreshedAt: NOW - 60_000 }), pr(1, { refreshedAt: NOW - 20_000 }),
-    web('https://a.dev', 'A', 1), web('https://b.dev', 'B', 2),
+    jira('ISS-1', { refreshedAt: NOW - 60_000 }),
+    pr(1, { refreshedAt: NOW - 20_000 }),
+    web('https://a.dev', 'A', 1),
+    web('https://b.dev', 'B', 2),
   ]
   const s = buildPane(items, ctx())
   expect(s[0]!.note).toBe('acli · acme.atlassian.net · refreshed 1m ago')
@@ -193,8 +246,11 @@ test('ago steps', () => {
 
 test('bandText counts categories and failing PRs; null when empty', () => {
   const items: ItemRecord[] = [
-    jira('ISS-1'), jira('ISS-2'),
-    pr(1, { checks: 'failure' }), pr(2, { checks: 'success' }), pr(3, { checks: 'failure' }),
+    jira('ISS-1'),
+    jira('ISS-2'),
+    pr(1, { checks: 'failure' }),
+    pr(2, { checks: 'success' }),
+    pr(3, { checks: 'failure' }),
     web('https://a.dev', 'A'),
   ]
   expect(bandText(items)).toBe('Jira 2 · GitHub 3 (2 ✗) · Links 1')
@@ -211,10 +267,10 @@ test('commandText: empty text and an indented tree', () => {
   )
   const lines = text.split('\n')
   expect(lines[0]).toContain('Jira work items')
-  expect(lines.some((l) => l.startsWith('  ISS-101'))).toBe(true)
+  expect(lines.some(l => l.startsWith('  ISS-101'))).toBe(true)
   // plain text shows the whole tree, folded or not
-  expect(lines.some((l) => l.startsWith('    ISS-102'))).toBe(true)
-  expect(lines.some((l) => l.startsWith('      ISS-103'))).toBe(true)
+  expect(lines.some(l => l.startsWith('    ISS-102'))).toBe(true)
+  expect(lines.some(l => l.startsWith('      ISS-103'))).toBe(true)
   expect(text).toContain('✗ checks')
   expect(text).toContain('GitHub')
 })
