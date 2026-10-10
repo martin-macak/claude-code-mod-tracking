@@ -1,0 +1,50 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Mods are in early access and change between releases. Bump these by hand.
+  CLAUDE_CODE_VERSION: 2.1.296
+  TYPESCRIPT_VERSION: 7.0.2
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Full checkout: tsconfig includes a d.ts from docs/knowledge-base.
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Cache the npm download cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-claude-${{ env.CLAUDE_CODE_VERSION }}-tsc-${{ env.TYPESCRIPT_VERSION }}
+
+      - name: Install Claude Code
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Show versions
+        run: |
+          claude --version
+          node --version
+
+      # claude plugin validate and claude plugin test need no login and no API key.
+      # make test runs: plugin validate, tsc -p ., plugin test.
+      - name: Test the artifact-tracking mod
+        run: make test TSC="npx -y -p typescript@${TYPESCRIPT_VERSION} tsc"

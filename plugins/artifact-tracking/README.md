@@ -97,6 +97,10 @@ claude plugin test .
 | `hooks/ui/` | The view model, the pane and the band. |
 | `tests/` | Unit tests, fixtures, and the kit tests of the wiring (`register.test.tsx`). |
 
+## CI
+
+`.github/workflows/test.yml` runs on every pull request, on each push to `main`, and by hand. It installs Claude Code 2.1.296 and TypeScript 7.0.2 at fixed versions. Then it runs `make test`: `claude plugin validate`, `tsc -p .`, `claude plugin test`. No login or secret is needed.
+
 ## Make targets
 
 Run `make` from the repo root. `make help` lists the targets. Set `PLUGIN=<dir>` to use another plugin folder.

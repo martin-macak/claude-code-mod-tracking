@@ -24,7 +24,9 @@ LOCAL_DIR    := $(ROOT)/.claude/skills
 LOCAL_LINK   := $(LOCAL_DIR)/$(NAME)
 EXCLUDE_LINE := /.claude/skills/$(NAME)
 
-TSC = mise exec $(NODE) -- npx -y -p typescript tsc
+# TypeScript runner. Override it where mise is absent, for example in CI:
+#   make test TSC="npx -y -p typescript@7.0.2 tsc"
+TSC ?= mise exec $(NODE) -- npx -y -p typescript tsc
 
 .DEFAULT_GOAL := help
 .PHONY: help init build test check install uninstall install-local uninstall-local clean
