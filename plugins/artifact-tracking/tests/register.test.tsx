@@ -594,12 +594,12 @@ test('a refused flush timer does not stop the store mirror for good', async ($, 
 
 test('/track refresh during a run in flight waits for it and prints the refreshed list', async ($, on) => {
   const { clock, calls } = world(on, { ghDelayMs: 150 })
-  await $.session.append(prompt('check issue #5'))
+  await $.session.append(prompt('check https://github.com/acme/web/issues/5'))
   await clock.advance(LIMITS.captureDebounceMs + 10) // the capture run starts; its gh call takes 150 ms
-  expect(graphqlCalls(calls).length).toBe(2) // the capture run is in flight
+  expect(graphqlCalls(calls).length).toBe(1) // the capture run is in flight
   const text = (await track($, 'refresh')).text ?? ''
-  expect(graphqlCalls(calls).length).toBe(3) // the forced run ran before the command printed
-  expect(text).toContain('#5')
+  expect(graphqlCalls(calls).length).toBe(2) // the forced run ran before the command printed
+  expect(text).toContain('Web five')
   await quiet(calls)
 })
 

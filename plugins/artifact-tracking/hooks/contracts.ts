@@ -54,6 +54,8 @@ export type GitHubRef = {
   type: 'issue' | 'pr' | 'unknown'
   /** The URL as written, when the reference was a URL. */
   url?: string
+  /** True when a ref came from short `#N` text matching (not from a full GitHub URL). */
+  short?: true
 }
 
 export type JiraRef = {

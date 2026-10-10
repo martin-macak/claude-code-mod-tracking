@@ -101,6 +101,9 @@ test('short refs require a keyword prefix', () => {
   expect(fullStrict('step #5').length).toBe(0)
   expect(fullStrict('issue acme/web#5').map(r => (r.category === 'github' ? r.number : 0))).toEqual([5])
   expect(fullStrict('GitHub #5').map(r => (r.category === 'github' ? r.number : 0))).toEqual([5])
+  expect(fullStrict('bug #5').map(r => (r.category === 'github' ? r.number : 0))).toEqual([5])
+  expect(fullStrict('enhancement #5').map(r => (r.category === 'github' ? r.number : 0))).toEqual([5])
+  expect(fullStrict('chore #5').map(r => (r.category === 'github' ? r.number : 0))).toEqual([5])
 })
 
 test('keyworded short refs are only accepted for the current repo', () => {

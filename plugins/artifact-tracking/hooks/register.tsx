@@ -446,7 +446,15 @@ async function capture($: EngineInterface, text: string, mode: ScanMode, source:
 }
 
 function sameSessionRepo(ref: Ref): ref is GitHubRef & { owner: string; repo: string; type: 'unknown' } {
-  if (ref.category !== 'github' || ref.type !== 'unknown' || !ref.owner || !ref.repo || !sessionRepo) return false
+  if (
+    ref.category !== 'github' ||
+    ref.short !== true ||
+    ref.type !== 'unknown' ||
+    !ref.owner ||
+    !ref.repo ||
+    !sessionRepo
+  )
+    return false
   return (
     ref.host.toLowerCase() === sessionRepo.host.toLowerCase() &&
     ref.owner.toLowerCase() === sessionRepo.owner.toLowerCase() &&
@@ -456,7 +464,7 @@ function sameSessionRepo(ref: Ref): ref is GitHubRef & { owner: string; repo: st
 
 async function keepOpenSessionShortRefs(refs: Ref[]): Promise<Ref[]> {
   const probe = gh
-  if (!probe) return refs
+  if (!probe) return refs.filter(ref => !sameSessionRepo(ref))
   const candidates = refs.filter(sameSessionRepo)
   if (candidates.length === 0) return refs
   const targets: GitHubTarget[] = candidates.map(ref => ({
@@ -468,6 +476,7 @@ async function keepOpenSessionShortRefs(refs: Ref[]): Promise<Ref[]> {
     type: ref.type,
   }))
   await probe.refreshItems(targets)
+  // GhTool sets either `error` or a normalized lower-case `state` for each queried item.
   const keep = new Set(targets.filter(t => t.error === undefined && t.state === 'open').map(t => t.key))
   return refs.filter(ref => !sameSessionRepo(ref) || keep.has(keyOf(ref)))
 }
@@ -548,7 +557,7 @@ async function fromTranscript($: EngineInterface): Promise<ItemRecord[]> {
     const text = backfillText(m.role, m.text)
     if (text !== null)
       batches.push({
-        refs: await keepOpenSessionShortRefs(extractRefs(text, { mode: 'full', strictShortRefs: true, ...opts })),
+        refs: await keepOpenSessionShortRefs(extractRefs(text, { mode: 'full', ...opts, strictShortRefs: true })),
         source: m.role === 'user' ? 'prompt' : 'response',
       })
     for (const use of m.toolUses) {
