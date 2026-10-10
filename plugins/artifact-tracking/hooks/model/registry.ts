@@ -1,0 +1,214 @@
+// Pure functions over lists of ItemRecord: keys, conversion, merge, dedupe, caps, re-key (spec 6.2, 10).
+// No input list or record is mutated.
+
+import { LIMITS } from '../contracts'
+import type {
+  GitHubRecord, GitHubRef, HydratedItem, ItemRecord, JiraRecord, JiraRef, RepoRef, Ref, Sighting, Source, Tools, WebRecord, WebRef,
+} from '../contracts'
+import { normalizeUrl } from '../scan/links'
+import { GitHubItem } from './github-item'
+import { cloneNodes, JiraItem } from './jira-item'
+import { WebLink } from './web-link'
+
+// ---------------------------------------------------------------- keys
+
+const withoutFragment = (url: string): string => {
+  const i = url.indexOf('#')
+  return i < 0 ? url : url.slice(0, i)
+}
+
+export function keyOf(ref: Ref): string {
+  switch (ref.category) {
+    case 'github':
+      return ref.owner && ref.repo
+        ? `gh:${ref.host.toLowerCase()}/${ref.owner.toLowerCase()}/${ref.repo.toLowerCase()}#${ref.number}`
+        : `gh:?#${ref.number}`
+    case 'jira':
+      return `jira:${ref.site.toLowerCase()}/${ref.issueKey}`
+    case 'web':
+      return `web:${withoutFragment(normalizeUrl(ref.url))}`
+  }
+}
+
+// ---------------------------------------------------------------- record from ref
+
+const githubUrl = (host: string, owner: string, repo: string, type: string, n: number): string =>
+  `https://${host}/${owner}/${repo}/${type === 'pr' ? 'pull' : 'issues'}/${n}`
+
+function githubRecord(ref: GitHubRef, s: Sighting): GitHubRecord {
+  const base = { sources: [s.source], firstSeen: s.at, lastSeen: s.at, seenCount: 1 }
+  const host = ref.host.toLowerCase()
+  if (!ref.owner || !ref.repo) {
+    return { key: keyOf(ref), category: 'github', url: ref.url ?? '', label: `#${ref.number}`, ...base, host, number: ref.number, type: ref.type }
+  }
+  const owner = ref.owner.toLowerCase()
+  const repo = ref.repo.toLowerCase()
+  return {
+    key: keyOf(ref), category: 'github', url: ref.url ?? githubUrl(host, owner, repo, ref.type, ref.number),
+    label: `${owner}/${repo}#${ref.number}`, ...base, host, owner, repo, number: ref.number, type: ref.type,
+  }
+}
+
+function jiraRecord(ref: JiraRef, s: Sighting): JiraRecord {
+  return {
+    key: keyOf(ref), category: 'jira', url: ref.url, label: ref.issueKey, sources: [s.source], firstSeen: s.at, lastSeen: s.at, seenCount: 1,
+    site: ref.site, issueKey: ref.issueKey, trackOnly: ref.trackOnly, children: [],
+  }
+}
+
+function webRecord(ref: WebRef, s: Sighting): WebRecord {
+  return { key: keyOf(ref), category: 'web', url: ref.url, label: ref.label, sources: [s.source], firstSeen: s.at, lastSeen: s.at, seenCount: 1 }
+}
+
+export function recordFromRef(ref: Ref, s: Sighting): ItemRecord {
+  switch (ref.category) {
+    case 'github': return githubRecord(ref, s)
+    case 'jira': return jiraRecord(ref, s)
+    case 'web': return webRecord(ref, s)
+  }
+}
+
+// ---------------------------------------------------------------- helpers
+
+function cloneRecord<R extends ItemRecord>(rec: R): R {
+  const out = { ...rec, sources: [...rec.sources] } as R
+  if (rec.error) out.error = { ...rec.error }
+  if (out.category === 'jira') out.children = cloneNodes((rec as JiraRecord).children)
+  return out
+}
+
+const unionSources = (a: readonly Source[], b: readonly Source[]): Source[] => [...new Set([...a, ...b])]
+
+/** Drops the records with the smallest lastSeen until `cap` is met. Keys in `keep` never go. */
+function enforceCap(list: ItemRecord[], cap: number, keep: ReadonlySet<string> = new Set()): ItemRecord[] {
+  let excess = list.length - cap
+  if (excess <= 0) return list
+  const victims = list
+    .map((rec, i) => ({ rec, i }))
+    .filter(({ rec }) => !keep.has(rec.key))
+    .sort((x, y) => x.rec.lastSeen - y.rec.lastSeen || x.i - y.i)
+    .slice(0, excess)
+    .map(({ i }) => i)
+  const drop = new Set(victims)
+  return list.filter((_, i) => !drop.has(i))
+}
+
+/**
+ * Folds sightings of `b` into `a`: union of sources (a first), sum of seenCount, min firstSeen, max lastSeen.
+ * Status fields come from the record with the newer `refreshedAt`. A tie keeps `a`.
+ */
+function fold(a: ItemRecord, b: ItemRecord): ItemRecord {
+  const winner = (b.refreshedAt ?? -Infinity) > (a.refreshedAt ?? -Infinity) ? b : a
+  const loser = winner === a ? b : a
+  const out = cloneRecord(winner)
+  out.sources = unionSources(a.sources, b.sources)
+  out.seenCount = a.seenCount + b.seenCount
+  out.firstSeen = Math.min(a.firstSeen, b.firstSeen)
+  out.lastSeen = Math.max(a.lastSeen, b.lastSeen)
+  if (out.category === 'github' && out.type === 'unknown' && loser.category === 'github') out.type = loser.type
+  return out
+}
+
+// ---------------------------------------------------------------- merge
+
+export function mergeRefs(
+  list: readonly ItemRecord[], refs: readonly Ref[], s: Sighting, cap: number = LIMITS.maxItems,
+): { list: ItemRecord[]; added: string[] } {
+  const out: ItemRecord[] = list.map(cloneRecord)
+  const index = new Map<string, number>(out.map((r, i) => [r.key, i]))
+  const added: string[] = []
+  for (const ref of refs) {
+    const key = keyOf(ref)
+    const at = index.get(key)
+    if (at === undefined) {
+      index.set(key, out.length)
+      out.push(recordFromRef(ref, s))
+      added.push(key)
+      continue
+    }
+    const rec = out[at]!
+    if (!rec.sources.includes(s.source)) rec.sources.push(s.source)
+    rec.seenCount += 1
+    rec.lastSeen = s.at
+    if (rec.category === 'github' && ref.category === 'github' && rec.type === 'unknown') rec.type = ref.type
+  }
+  return { list: enforceCap(out, cap, new Set(added)), added }
+}
+
+/** Status fields a refresh writes, per category. */
+const STATUS_FIELDS = {
+  github: ['title', 'state', 'stateReason', 'isDraft', 'reviewDecision', 'checks'],
+  jira: ['summary', 'issueType', 'status', 'statusCategory'],
+  web: [],
+} as const
+
+export function mergeResults(list: readonly ItemRecord[], refreshed: readonly ItemRecord[]): ItemRecord[] {
+  const byKey = new Map(refreshed.map((r) => [r.key, r]))
+  return list.map((rec) => {
+    const fresh = byKey.get(rec.key)
+    const out = cloneRecord(rec)
+    if (!fresh) return out
+    const dst = out as unknown as Record<string, unknown>
+    const src = fresh as unknown as Record<string, unknown>
+    for (const f of STATUS_FIELDS[out.category]) if (src[f] !== undefined) dst[f] = src[f]
+    if (out.category === 'github' && fresh.category === 'github' && (out.type === 'unknown' || fresh.type !== 'unknown')) out.type = fresh.type
+    if (out.category === 'jira' && fresh.category === 'jira') out.children = cloneNodes(fresh.children)
+    if (fresh.refreshedAt !== undefined) out.refreshedAt = fresh.refreshedAt
+    if (fresh.error) out.error = { ...fresh.error }
+    else delete out.error
+    return out
+  })
+}
+
+// ---------------------------------------------------------------- bare #N
+
+export function resolveBareRefs(list: readonly ItemRecord[], repo: RepoRef): ItemRecord[] {
+  const host = repo.host.toLowerCase()
+  const owner = repo.owner.toLowerCase()
+  const name = repo.repo.toLowerCase()
+  const out: (ItemRecord | null)[] = list.map(cloneRecord)
+  const index = new Map<string, number>()
+  out.forEach((r, i) => { if (r && !r.key.startsWith('gh:?#')) index.set(r.key, i) })
+  out.forEach((rec, i) => {
+    if (!rec || rec.category !== 'github' || !rec.key.startsWith('gh:?#')) return
+    const key = `gh:${host}/${owner}/${name}#${rec.number}`
+    const moved: GitHubRecord = {
+      ...rec, key, host, owner, repo: name, label: `${owner}/${name}#${rec.number}`, url: githubUrl(host, owner, name, rec.type, rec.number),
+    }
+    const at = index.get(key)
+    if (at === undefined) {
+      out[i] = moved
+      index.set(key, i)
+    } else {
+      out[at] = fold(out[at]!, moved)
+      out[i] = null
+    }
+  })
+  return out.filter((r): r is ItemRecord => r !== null)
+}
+
+/** Merge for `/clear` carry-over: fold records with the same key, then cap. */
+export function unionRecords(a: readonly ItemRecord[], b: readonly ItemRecord[], cap: number = LIMITS.maxItems): ItemRecord[] {
+  const out: ItemRecord[] = []
+  const index = new Map<string, number>()
+  for (const rec of [...a, ...b]) {
+    const at = index.get(rec.key)
+    if (at === undefined) {
+      index.set(rec.key, out.length)
+      out.push(cloneRecord(rec))
+    } else {
+      out[at] = fold(out[at]!, rec)
+    }
+  }
+  return enforceCap(out, cap)
+}
+
+// ---------------------------------------------------------------- classes
+
+export function hydrate(rec: ItemRecord, tools: Tools): HydratedItem {
+  switch (rec.category) {
+    case 'github': return new GitHubItem(rec, tools.gh)
+    case 'jira': return new JiraItem(rec, tools.acli)
+    case 'web': return new WebLink(rec)
+  }
+}
