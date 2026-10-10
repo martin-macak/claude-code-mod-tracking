@@ -29,7 +29,7 @@ EXCLUDE_LINE := /.claude/skills/$(NAME)
 TSC ?= mise exec $(NODE) -- npx -y -p typescript tsc
 
 .DEFAULT_GOAL := help
-.PHONY: help init build test check install uninstall install-local uninstall-local clean
+.PHONY: help init build typecheck test check lint hooks install uninstall install-local uninstall-local clean
 
 help: ## List the targets
 	@echo "Targets (PLUGIN=$(PLUGIN)):"
@@ -48,6 +48,8 @@ init: ## Check the tools, print versions, warm the TypeScript cache
 	  if command -v $$t >/dev/null 2>&1; then printf '%-9s: present (optional)\n' "$$t"; \
 	  else printf '%-9s: missing (optional, the mod still works)\n' "$$t"; fi; \
 	done; \
+	if command -v pre-commit >/dev/null 2>&1; then printf 'pre-commit: %s\n' "$$(pre-commit --version)"; \
+	else echo 'pre-commit: missing (needed by make hooks and make lint)'; fi; \
 	[ "$$ok" = 1 ] || { echo 'init failed: a required tool is missing.'; exit 1; }; \
 	echo 'Warming the TypeScript npx cache...'; \
 	printf 'tsc      : %s\n' "$$($(TSC) --version)"
@@ -56,6 +58,9 @@ init: ## Check the tools, print versions, warm the TypeScript cache
 # so "build" only validates the plugin and type-checks it.
 build: ## Validate the plugin, then type-check (no output files)
 	cd $(PLUGIN) && claude plugin validate .
+	@$(MAKE) --no-print-directory typecheck
+
+typecheck: ## Type-check the plugin with tsc (no claude needed)
 	cd $(PLUGIN) && $(TSC) -p .
 
 # The suite takes about 3 s, so test depends on build.
@@ -63,6 +68,13 @@ test: build ## Run the plugin tests (after build)
 	cd $(PLUGIN) && claude plugin test .
 
 check: test ## Alias of test (validate, type-check, test)
+
+# Linters and hooks live in .pre-commit-config.yaml. Rules: AGENTS.md.
+lint: ## Run every pre-commit hook on all files
+	pre-commit run --all-files
+
+hooks: ## Install the pre-commit and commit-msg git hooks
+	pre-commit install --install-hooks
 
 # install: make the mod load in every session of this config dir, no marketplace.
 # Mechanism: the "skills folder". A plugin folder (with .claude-plugin/plugin.json)

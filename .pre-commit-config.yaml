@@ -1,0 +1,75 @@
+# pre-commit hooks. Install once per clone: `make hooks`. Run all: `make lint`.
+# Docs: https://pre-commit.com
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit, manual]
+
+# Verbatim source snapshots, vendored skills and tool state. Never edit them.
+exclude: ^(docs/knowledge-base/.*/sources/|\.agents/|\.claude/|\.projectatlas/)
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-symlinks
+      - id: check-executables-have-shebangs
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: [--branch, main]
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.23.3
+    hooks:
+      - id: markdownlint-cli2
+
+  - repo: https://github.com/biomejs/pre-commit
+    rev: v2.5.15
+    hooks:
+      - id: biome-check
+        args: [--error-on-warnings]
+        additional_dependencies: ["@biomejs/biome@2.5.15"]
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1-1
+    hooks:
+      - id: shellcheck
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
+  # Commit messages: Conventional Commits. Rules: AGENTS.md, "Commits".
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        args: [--strict, feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert]
+
+  - repo: local
+    hooks:
+      # The subject starts with a capital letter and has no trailing period.
+      - id: commit-subject-case
+        name: commit subject is sentence case
+        language: pygrep
+        entry: '\A[a-z]+(\([a-z0-9-]+\))?!?: [A-Z][^\n]*[^.\n]$'
+        args: [--negate, --multiline]
+        stages: [commit-msg]
+
+      # Type-check the mod. CI skips it: test.yml runs `make test`.
+      - id: typecheck
+        name: tsc (plugins)
+        language: system
+        entry: make typecheck
+        files: ^plugins/.*\.(ts|tsx|json)$
+        pass_filenames: false

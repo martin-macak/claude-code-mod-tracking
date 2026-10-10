@@ -107,8 +107,11 @@ Run `make` from the repo root. `make help` lists the targets. Set `PLUGIN=<dir>`
 
 | Target | Action |
 | --- | --- |
-| `init` | Checks `claude`, `mise` and node. Reports `gh` and `acli` as present or missing. A missing `gh` or `acli` does not fail. Warms the TypeScript cache for offline runs. |
-| `build` | Runs `claude plugin validate`, then `tsc`. Nothing is emitted. Claude Code loads the `.ts` and `.tsx` files as they are. |
+| `init` | Checks `claude`, `mise` and node. Reports `gh`, `acli` and `pre-commit` as present or missing. A missing optional tool does not fail. Warms the TypeScript cache for offline runs. |
+| `build` | Runs `claude plugin validate`, then `typecheck`. Nothing is emitted. Claude Code loads the `.ts` and `.tsx` files as they are. |
+| `typecheck` | Runs `tsc` only. The `typecheck` pre-commit hook calls it. |
+| `lint` | Runs every pre-commit hook on all files. |
+| `hooks` | Installs the `pre-commit` and `commit-msg` git hooks. |
 | `test` | Runs `build`, then `claude plugin test`. `check` is an alias. |
 | `install` | Links the mod into `$CLAUDE_CONFIG_DIR/skills/`. Without that variable, it uses `~/.claude/skills/`. |
 | `uninstall` | Removes that link. It removes only a link that points at this plugin. |

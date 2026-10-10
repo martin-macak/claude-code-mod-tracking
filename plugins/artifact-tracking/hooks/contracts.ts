@@ -1,9 +1,7 @@
 // Shared contracts between the modules of the mod. No `$` here: only register.tsx touches it.
 // Spec: docs/superpowers/specs/2026-10-10-artifact-tracking-design.md
 
-import type {
-  Category, GitHubFields, ItemError, ItemRecord, JiraFields, Source, ToolName, ToolStatus,
-} from '../types'
+import type { Category, GitHubFields, ItemError, ItemRecord, JiraFields, Source, ToolName, ToolStatus } from '../types'
 
 export type * from '../types'
 

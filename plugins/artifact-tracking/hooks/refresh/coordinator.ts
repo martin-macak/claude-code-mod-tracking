@@ -1,8 +1,8 @@
 // Refresh coordinator (spec sections 7 and 7.1). No `$`: it gets plain functions.
 // It picks the due items, hands them to the tools in one batch each, and saves the result.
 
-import { LIMITS } from '../contracts'
 import type { GitHubTarget, HydratedItem, ItemRecord, JiraTarget, Now, Tools } from '../contracts'
+import { LIMITS } from '../contracts'
 
 export type Timer = { cancel(): void }
 
@@ -115,7 +115,7 @@ export class RefreshCoordinator {
    */
   idle(): Promise<void> {
     if (!this.running) return Promise.resolve()
-    return new Promise<void>((resolve) => {
+    return new Promise<void>(resolve => {
       this.waiters.push(resolve)
     })
   }
@@ -126,7 +126,7 @@ export class RefreshCoordinator {
       const { tools, now } = this.deps
       const at = now()
       const wanted = opts.keys ? new Set(opts.keys) : undefined
-      const items = (await this.deps.load()).map((r) => this.deps.hydrate(r))
+      const items = (await this.deps.load()).map(r => this.deps.hydrate(r))
       const selected: HydratedItem[] = []
       for (const item of items) {
         if (item.category === 'web') continue
@@ -138,7 +138,9 @@ export class RefreshCoordinator {
         if (!tool.canCall(at)) continue
         selected.push(item)
       }
-      const github = selected.filter((i): i is HydratedItem & GitHubTarget & { category: 'github' } => i.category === 'github')
+      const github = selected.filter(
+        (i): i is HydratedItem & GitHubTarget & { category: 'github' } => i.category === 'github',
+      )
       const jira = selected.filter((i): i is HydratedItem & JiraTarget & { category: 'jira' } => i.category === 'jira')
       // Run both tools to the end, then report the first failure. A failing tool must not hide the other one.
       const results = await Promise.allSettled([
@@ -147,7 +149,7 @@ export class RefreshCoordinator {
       ])
       for (const r of results) if (r.status === 'rejected') this.fail(r.reason)
       if (selected.length > 0) {
-        await this.deps.save(selected.map((i) => i.toRecord()))
+        await this.deps.save(selected.map(i => i.toRecord()))
         refreshed = selected.length
       }
     } catch (err) {

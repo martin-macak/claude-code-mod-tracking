@@ -69,18 +69,20 @@ export function emittedUrl(href: string): string | null {
   return 'file:///' + out.join('/') + tail
 }
 
-function isPunct(c: string | undefined): boolean {
-  return c !== undefined && /[!-/:-@[-`{-~]/.test(c)
-}
-
 // ---------------------------------------------------------------- block pass
 
 /**
  * Cut the blocks the renderer does not read for links: fenced code, indented code, HTML blocks.
  * Returns the remaining text, with the cut lines emptied.
  */
-const HTML_BLOCK_TAGS = 'address|article|aside|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul'
-const HTML_BLOCK_OPEN = new RegExp('^ {0,3}(?:</?(?:' + HTML_BLOCK_TAGS + ')(?:[\\s/>]|$)|<(?:script|pre|style|textarea)(?:[\\s>]|$)|<!--|<\\?|<![A-Z]|<!\\[CDATA\\[)', 'i')
+const HTML_BLOCK_TAGS =
+  'address|article|aside|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul'
+const HTML_BLOCK_OPEN = new RegExp(
+  '^ {0,3}(?:</?(?:' +
+    HTML_BLOCK_TAGS +
+    ')(?:[\\s/>]|$)|<(?:script|pre|style|textarea)(?:[\\s>]|$)|<!--|<\\?|<![A-Z]|<!\\[CDATA\\[)',
+  'i',
+)
 const HTML_BLOCK_END: Array<[RegExp, RegExp]> = [
   [/^ {0,3}<(?:script|pre|style|textarea)(?:[\s>]|$)/i, /<\/(?:script|pre|style|textarea)>/i],
   [/^ {0,3}<!--/, /-->/],
@@ -142,7 +144,7 @@ function stripCodeBlocks(text: string): string {
     if (indent < 4 && HTML_BLOCK_OPEN.test(line)) {
       const end = HTML_BLOCK_END.find(([start]) => start.test(line))
       html = end ? end[1] : 'blank'
-      if (end && end[1].test(line.replace(end[0], ''))) html = null // opened and closed on one line
+      if (end?.[1].test(line.replace(end[0], ''))) html = null // opened and closed on one line
       out.push('')
       prevBlank = false
       continue
@@ -166,9 +168,13 @@ function at(re: RegExp, s: string, i: number): RegExpExecArray | null {
 }
 
 const AUTOLINK = sticky(/<([a-zA-Z][a-zA-Z0-9+.-]{1,31}:[^\s<>]*)>/)
-const EMAIL_AUTOLINK = sticky(/<([a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*)>/)
+const EMAIL_AUTOLINK = sticky(
+  /<([a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*)>/,
+)
 // Inline HTML: a tag with quoted attributes, a closing tag, or a comment. The renderer prints it as text.
-const HTML_TAG = sticky(/(?:<!--[\s\S]*?-->|<\/[a-zA-Z][\w:-]*\s*>|<[a-zA-Z][\w-]*(?:\s+[a-zA-Z_:][\w:.-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>)/)
+const HTML_TAG = sticky(
+  /(?:<!--[\s\S]*?-->|<\/[a-zA-Z][\w:-]*\s*>|<[a-zA-Z][\w-]*(?:\s+[a-zA-Z_:][\w:.-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>)/,
+)
 // Bare URL start, as the GFM literal rule has it: lower-case scheme or `www.`.
 const BARE = sticky(/(?:(?:ftp|https?):\/\/|www\.)(?:[a-zA-Z0-9-]+\.?)+[^\s<]*/)
 // Trailing-punctuation trim. Applied until the result stops changing.
@@ -302,7 +308,8 @@ function parseInlineLink(s: string, from: number, marks: Marks): LinkParse | nul
 /** Reference definitions the text holds: `[id]: url`. The renderer ignores them. */
 function collectDefinitions(text: string): Map<string, string> {
   const defs = new Map<string, string>()
-  for (const m of text.matchAll(/^ {0,3}\[([^\]\n]+)\]:[ \t]*<?([^\s>]+)>?/gm)) defs.set(m[1]!.toLowerCase().replace(/\s+/g, ' '), m[2]!)
+  for (const m of text.matchAll(/^ {0,3}\[([^\]\n]+)\]:[ \t]*<?([^\s>]+)>?/gm))
+    defs.set(m[1]!.toLowerCase().replace(/\s+/g, ' '), m[2]!)
   return defs
 }
 
@@ -394,7 +401,9 @@ function scanInline(src: string, opts: ScanOptions): Found[] {
       if (close !== undefined && defs.size > 0 && src[close + 1] !== ':') {
         const label = src.slice(i + 1, close)
         const second = src[close + 1] === '[' ? marks.pair.get(close + 1) : undefined
-        const id = (second === undefined ? label : second === close + 2 ? label : src.slice(close + 2, second)).toLowerCase().replace(/\s+/g, ' ')
+        const id = (second === undefined ? label : second === close + 2 ? label : src.slice(close + 2, second))
+          .toLowerCase()
+          .replace(/\s+/g, ' ')
         const target = defs.get(id)
         if (target !== undefined) {
           const end = (second ?? close) + 1
@@ -428,10 +437,18 @@ function scanInline(src: string, opts: ScanOptions): Found[] {
     const plain = mask.join('')
     const sep = host === 'gitlab.com' ? '/-/issues/' : '/issues/'
     for (const m of plain.matchAll(ISSUE_REF)) {
-      add(m.index! + m[1]!.length, { url: `https://${host}/${m[2]}${sep}${m[3]}`, label: `${m[2]}#${m[3]}`, via: 'issue-ref', kind: 'link' })
+      add(m.index! + m[1]!.length, {
+        url: `https://${host}/${m[2]}${sep}${m[3]}`,
+        label: `${m[2]}#${m[3]}`,
+        via: 'issue-ref',
+        kind: 'link',
+      })
     }
   }
-  return found.map((f, k) => ({ f, k })).sort((x, y) => starts[x.k]! - starts[y.k]!).map((x) => x.f)
+  return found
+    .map((f, k) => ({ f, k }))
+    .sort((x, y) => starts[x.k]! - starts[y.k]!)
+    .map(x => x.f)
 }
 
 /** Links the engine's renderer makes out of Markdown text, in order of appearance. */
@@ -481,12 +498,18 @@ export function scanOsc8(text: string): Osc8Found[] {
   const out: Osc8Found[] = []
   for (const s of spans) {
     const label = s.label.replace(/[\x00-\x1f\x7f]/g, '').trim()
-    const same = s.id === undefined ? undefined : out.find((o) => o.id === s.id && o.url === s.url)
+    const same = s.id === undefined ? undefined : out.find(o => o.id === s.id && o.url === s.url)
     if (same) {
       if (label !== '') same.label = (same.label ?? '') + label
       continue
     }
-    out.push({ url: s.url, label: label === '' || label === s.url ? undefined : label, via: 'osc8', kind: 'link', id: s.id })
+    out.push({
+      url: s.url,
+      label: label === '' || label === s.url ? undefined : label,
+      via: 'osc8',
+      kind: 'link',
+      id: s.id,
+    })
   }
   return out
 }
@@ -514,8 +537,13 @@ export type Source = { door: string; uuid: string; agentId?: string }
  * Add `found` to `list`. A URL already there only counts up. The list keeps the newest `cap`
  * entries. Returns the new list and how many entries fell off the front.
  */
-export function mergeLinks(list: readonly Captured[], found: readonly Found[], src: Source, cap: number): { list: Captured[]; dropped: number } {
-  const next = list.map((c) => ({ ...c }))
+export function mergeLinks(
+  list: readonly Captured[],
+  found: readonly Found[],
+  src: Source,
+  cap: number,
+): { list: Captured[]; dropped: number } {
+  const next = list.map(c => ({ ...c }))
   const index = new Map(next.map((c, k) => [c.url + '\u0000' + c.kind, k]))
   for (const f of found) {
     const url = normalizeUrl(f.url)

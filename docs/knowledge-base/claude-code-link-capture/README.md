@@ -289,7 +289,7 @@ Commands run from the repo path (`docs/knowledge-base/claude-code-link-capture/e
 | --- | --- |
 | `~/.local/share/claude/versions/2.1.295 plugin validate link-capture` | `✔ Validation passed`. Hooks: `session.append{door=response}`, `session.append{door=tool-result}`, `session.start`, `command.run{command=links}`. State: `link-capture.links`, `link-capture.dropped`. |
 | `mise exec node@25.5.0 -- npx -y -p typescript tsc -p .` (TypeScript 7.0.2) | exit 0, no output |
-| `~/.local/share/claude/versions/2.1.295 plugin test link-capture` | ` 48 pass`, ` 0 fail`, `Ran 48 tests across 2 files.` |
+| `~/.local/share/claude/versions/2.1.295 plugin test link-capture` | `48 pass`, `0 fail`, `Ran 48 tests across 2 files.` |
 
 `git status --short` shows no generated file under `example/` after these commands. `validate`, `test` and `tsc` lay no `.claude-plugin/types/`. Only a real session load does.
 

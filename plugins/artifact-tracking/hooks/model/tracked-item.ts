@@ -1,8 +1,8 @@
 // Base class of a tracked item (spec section 5). Plain TypeScript: no `$`.
 // An item is rebuilt from an ItemRecord for each operation and turned back into a record afterwards.
 
-import { LIMITS } from '../contracts'
 import type { Category, ItemError, ItemRecord, ItemRecordBase, Refreshable, Source } from '../contracts'
+import { LIMITS } from '../contracts'
 
 /** A copy of `obj` without the keys whose value is undefined. */
 export function omitUndefined<T extends object>(obj: T): T {

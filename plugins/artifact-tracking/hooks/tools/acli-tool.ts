@@ -1,11 +1,11 @@
 // AcliTool: Jira work items through the Atlassian CLI (spec section 7.3, KB jira.md).
 // No `$`: it gets a Runner and a clock. It never runs `acli jira auth switch`, `login` or `logout`.
 
+import type { JiraNode, JiraTarget, JiraToolApi, Now, Runner, ToolStatus } from '../contracts'
 import { JIRA_KEY, LIMITS } from '../contracts'
 import type { CircuitBreaker } from './circuit-breaker'
-import type { JiraNode, JiraTarget, JiraToolApi, Now, Runner, ToolStatus } from '../contracts'
-import { Tool, firstLine } from './tool'
 import type { Outcome } from './tool'
+import { firstLine, Tool } from './tool'
 
 const VIEW_FIELDS = 'issuetype,status,summary,parent,subtasks'
 const SEARCH_FIELDS = 'issuetype,status,summary'
@@ -16,7 +16,10 @@ const SEARCH_FIELDS = 'issuetype,status,summary'
 export function parseAuthStatus(stdout: string): string | null {
   const m = /^\s*Site:\s*(\S+)/im.exec(stdout)
   if (!m?.[1]) return null
-  const host = m[1].replace(/^https?:\/\//i, '').replace(/\/+$/, '').toLowerCase()
+  const host = m[1]
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/+$/, '')
+    .toLowerCase()
   return host || null
 }
 
@@ -66,7 +69,7 @@ export function limit(n: number): <T>(fn: () => Promise<T>) => Promise<T> {
   const waiting: Array<() => void> = []
   return async <T>(fn: () => Promise<T>): Promise<T> => {
     if (active < n) active++
-    else await new Promise<void>((resolve) => waiting.push(resolve)) // the finishing task hands its slot over
+    else await new Promise<void>(resolve => waiting.push(resolve)) // the finishing task hands its slot over
     try {
       return await fn()
     } finally {
@@ -225,10 +228,16 @@ export class AcliTool extends Tool<JiraTarget> implements JiraToolApi {
   /** Children of an Epic, each with its subtasks. undefined when the search failed. */
   private async epicChildren(epicKey: string): Promise<JiraNode[] | undefined> {
     const r = await this.call([
-      'acli', 'jira', 'workitem', 'search',
-      '--jql', `parent = ${epicKey}`,
-      '--fields', SEARCH_FIELDS,
-      '--limit', String(LIMITS.epicChildLimit),
+      'acli',
+      'jira',
+      'workitem',
+      'search',
+      '--jql',
+      `parent = ${epicKey}`,
+      '--fields',
+      SEARCH_FIELDS,
+      '--limit',
+      String(LIMITS.epicChildLimit),
       '--json',
     ])
     if (!r) return undefined
@@ -247,7 +256,7 @@ export class AcliTool extends Tool<JiraTarget> implements JiraToolApi {
       const c = nodeFromIssue(j)
       if (c) children.push(c)
     }
-    await Promise.all(children.map((c) => this.fillSubtasks(c)))
+    await Promise.all(children.map(c => this.fillSubtasks(c)))
     return children
   }
 

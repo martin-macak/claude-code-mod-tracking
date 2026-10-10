@@ -1,11 +1,12 @@
 // Wiring tests: rows in, `/track` text, pane and band out. The kit stubs sit beneath the mod.
 // The kit does not reset `$.state` on a new session id. A test that needs it passes `isolateState`: the stub then keeps
 // the state per id, which is what a real /clear does. The live smoke run covers the rest.
-import { expect, mock, test } from 'claude-code/testing'
-import type { Engine } from 'claude-code/testing'
+
 import type { On, SessionAppendInput } from 'claude-code'
-import { LIMITS } from '../hooks/contracts'
+import type { Engine } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 import type { ItemRecord } from '../hooks/contracts'
+import { LIMITS } from '../hooks/contracts'
 import * as acliFx from './fixtures/acli'
 import * as ghFx from './fixtures/gh'
 
@@ -16,14 +17,22 @@ const current = { id: SESSION, failItemsRead: false }
 
 // The hooks runtime has timers; tsc here has no DOM or node types.
 declare function setTimeout(fn: () => void, ms: number): unknown
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
 type Res = { exitCode: number; stdout: string; stderr: string; isStdoutTruncated: boolean; isStderrTruncated: boolean }
-const res = (stdout = '', exitCode = 0, stderr = ''): Res => ({ exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false })
+const res = (stdout = '', exitCode = 0, stderr = ''): Res => ({
+  exitCode,
+  stdout,
+  stderr,
+  isStdoutTruncated: false,
+  isStderrTruncated: false,
+})
 
 // ---------------------------------------------------------------- fake gh and acli
 
-const SAMPLE = (JSON.parse(ghFx.BATCH_SAMPLE_OUTPUT) as { data: Record<string, { issueOrPullRequest: Record<string, unknown> }> }).data
+const SAMPLE = (
+  JSON.parse(ghFx.BATCH_SAMPLE_OUTPUT) as { data: Record<string, { issueOrPullRequest: Record<string, unknown> }> }
+).data
 const ISSUE = SAMPLE.a!.issueOrPullRequest
 /** What the fake GraphQL answers, by `owner/repo#N` (lower case). */
 const NODES: Record<string, unknown> = {
@@ -83,7 +92,8 @@ function world(on: On, opts: Opts = {}) {
   let refused = false
   const clockOn = ((name: string, ...rest: unknown[]) => {
     const h = rest[rest.length - 1] as (...a: unknown[]) => unknown
-    if (name !== 'clock.after' || opts.refuseAfter === undefined) return (on as (...a: unknown[]) => unknown)(name, ...rest)
+    if (name !== 'clock.after' || opts.refuseAfter === undefined)
+      return (on as (...a: unknown[]) => unknown)(name, ...rest)
     return (on as (...a: unknown[]) => unknown)(name, ...rest.slice(0, -1), (...a: unknown[]) => {
       if (!refused && (a[1] as { ms: number }).ms === opts.refuseAfter) {
         refused = true
@@ -113,7 +123,10 @@ function world(on: On, opts: Opts = {}) {
   on('session.id', () => ({ value: current.id }))
   on('session.messages', () => ({ value: (opts.messages ?? []) as never }))
   on('session.repo', () => ({
-    value: opts.remote === null ? null : { root: '/r', remote: opts.remote ?? 'git@github.com:acme/web.git', internal: false, name: null },
+    value:
+      opts.remote === null
+        ? null
+        : { root: '/r', remote: opts.remote ?? 'git@github.com:acme/web.git', internal: false, name: null },
   }))
   on('command.register', (_$, e) => {
     if (opts.denyRegister) return { deny: 'refused' }
@@ -121,7 +134,9 @@ function world(on: On, opts: Opts = {}) {
     return { value: { command: e.name } }
   })
   if (opts.panes) {
-    on('ui.panes', () => ({ value: opts.panes!.map((id) => ({ id, title: id, isShown: true, isFocused: false })) as never }))
+    on('ui.panes', () => ({
+      value: opts.panes!.map(id => ({ id, title: id, isShown: true, isFocused: false })) as never,
+    }))
   }
   // The real engine resets `$.state` on /clear. Here a state lives under the session id the stub answers.
   const states = new Map<string, { value: unknown; version: number }>()
@@ -166,10 +181,11 @@ function world(on: On, opts: Opts = {}) {
     const [tool, a1, a2, a3, a4] = argv
     if (tool === 'acli' && a1 === '--version' && opts.acliProbeMs) await sleep(opts.acliProbeMs)
     if (opts.missing?.includes(tool!)) return { deny: 'ENOENT: Executable not found in $PATH' }
-    if (a1 === '--version') return { value: res(tool === 'gh' ? 'gh version 2.102.0 (2026-09-30)' : 'acli version 1.3.19-stable') }
+    if (a1 === '--version')
+      return { value: res(tool === 'gh' ? 'gh version 2.102.0 (2026-09-30)' : 'acli version 1.3.19-stable') }
     if (tool === 'gh' && a1 === 'api' && a2 === 'graphql') {
       if (opts.ghDelayMs) await sleep(opts.ghDelayMs)
-      return { value: graphql(argv.find((x) => x.startsWith('query='))?.slice('query='.length) ?? '') }
+      return { value: graphql(argv.find(x => x.startsWith('query='))?.slice('query='.length) ?? '') }
     }
     if (tool === 'gh' && a1 === 'auth') {
       if (opts.authMs) await sleep(opts.authMs)
@@ -184,8 +200,8 @@ function world(on: On, opts: Opts = {}) {
   return { clock, store, calls, state, registered, opened, states }
 }
 
-const graphqlCalls = (calls: string[][]) => calls.filter((c) => c[0] === 'gh' && c[1] === 'api')
-const viewCalls = (calls: string[][]) => calls.filter((c) => c[0] === 'acli' && c[3] === 'view')
+const graphqlCalls = (calls: string[][]) => calls.filter(c => c[0] === 'gh' && c[1] === 'api')
+const viewCalls = (calls: string[][]) => calls.filter(c => c[0] === 'acli' && c[3] === 'view')
 
 /** Waits until no new process.run call has come for a while: the refresh and its save are done. */
 async function quiet(calls: unknown[]): Promise<void> {
@@ -199,21 +215,29 @@ async function quiet(calls: unknown[]): Promise<void> {
 }
 
 const track = ($: Engine, args = '') =>
-  $.command.run({ command: 'track', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
+  $.command.run({
+    command: 'track',
+    args,
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 80 },
+  })
 
 // ---------------------------------------------------------------- rows
 
 let seq = 0
 const uuid = () => 'u' + ++seq
 
-const prompt = (text: string, kind = 'composer', extra: { isMeta?: true; agentId?: string } = {}): SessionAppendInput =>
-  ({
-    door: 'prompt',
-    origin: { kind } as never,
-    uuid: uuid(),
-    agentId: extra.agentId,
-    message: { type: 'user', role: 'user', isMeta: extra.isMeta, content: [{ type: 'text', text }] },
-  })
+const prompt = (
+  text: string,
+  kind = 'composer',
+  extra: { isMeta?: true; agentId?: string } = {},
+): SessionAppendInput => ({
+  door: 'prompt',
+  origin: { kind } as never,
+  uuid: uuid(),
+  agentId: extra.agentId,
+  message: { type: 'user', role: 'user', isMeta: extra.isMeta, content: [{ type: 'text', text }] },
+})
 
 const commandRow = (text: string, kind: 'composer' | 'engine'): SessionAppendInput =>
   ({
@@ -223,21 +247,19 @@ const commandRow = (text: string, kind: 'composer' | 'engine'): SessionAppendInp
     message: { type: kind === 'engine' ? 'system' : 'user', role: 'user', content: [{ type: 'text', text }] },
   }) as SessionAppendInput
 
-const response = (text: string): SessionAppendInput =>
-  ({
-    door: 'response',
-    origin: { kind: 'model', model: 'm' },
-    uuid: uuid(),
-    message: { type: 'assistant', role: 'assistant', content: [{ type: 'text', text }] },
-  })
+const response = (text: string): SessionAppendInput => ({
+  door: 'response',
+  origin: { kind: 'model', model: 'm' },
+  uuid: uuid(),
+  message: { type: 'assistant', role: 'assistant', content: [{ type: 'text', text }] },
+})
 
-const toolResult = (content: unknown): SessionAppendInput =>
-  ({
-    door: 'tool-result',
-    origin: { kind: 'tool', tool: 'Bash' },
-    uuid: uuid(),
-    message: { type: 'user', role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content }] },
-  })
+const toolResult = (content: unknown): SessionAppendInput => ({
+  door: 'tool-result',
+  origin: { kind: 'tool', tool: 'Bash' },
+  uuid: uuid(),
+  message: { type: 'user', role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content }] },
+})
 
 const START = { cwd: '/work', surface: null, isInteractive: false } as const
 
@@ -246,14 +268,28 @@ const PANE = {
   component: 'Pane',
   requestId: 'track',
   viewport: { columns: 100, rows: 30 },
-  props: { title: 'Tracking', isFocused: false, bodyColumns: 96, placement: 'dock', scroll: { offset: 0, bodyRows: 28 }, view: {} },
+  props: {
+    title: 'Tracking',
+    isFocused: false,
+    bodyColumns: 96,
+    placement: 'dock',
+    scroll: { offset: 0, bodyRows: 28 },
+    view: {},
+  },
 } as const
 
 const BAND = {
   plugin: 'artifact-tracking',
   component: 'AbovePrompt',
   viewport: { columns: 100, rows: 30 },
-  props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 90, scroll: { offset: 0, bodyRows: 6 }, view: {} },
+  props: {
+    hasSurvey: false,
+    isWorking: false,
+    maxRows: 6,
+    bodyColumns: 90,
+    scroll: { offset: 0, bodyRows: 6 },
+    view: {},
+  },
 } as const
 
 // ---------------------------------------------------------------- capture and refresh
@@ -269,7 +305,7 @@ test('prompt row: #5 and a Jira URL are listed by /track with refreshed status',
   expect(text).toContain('ISS-1')
   expect(text).toContain('Draft')
   expect(graphqlCalls(calls).length).toBe(1)
-  expect(viewCalls(calls).map((c) => c[4])).toEqual(['ISS-1'])
+  expect(viewCalls(calls).map(c => c[4])).toEqual(['ISS-1'])
 })
 
 test('a later row with a new item refreshes it after the capture debounce', async ($, on) => {
@@ -300,14 +336,15 @@ test('rows of other makers are not captured: task notification, isMeta, subagent
 
 test('command rows: our own engine output is skipped, a composer command is read from its args', async ($, on) => {
   const { clock, calls } = world(on)
-  await $.session.append(
-    commandRow('<command-name>/track</command-name>\n<command-args>#77</command-args>', 'engine'),
-  )
+  await $.session.append(commandRow('<command-name>/track</command-name>\n<command-args>#77</command-args>', 'engine'))
   await $.session.append(
     commandRow('<local-command-stdout>Jira  ISS-77  #77 https://leak.example/x</local-command-stdout>', 'engine'),
   )
   await $.session.append(
-    commandRow('<command-message>foo</command-message>\n<command-name>/foo https://outside.example/o</command-name>\n<command-args>#9</command-args>', 'composer'),
+    commandRow(
+      '<command-message>foo</command-message>\n<command-name>/foo https://outside.example/o</command-name>\n<command-args>#9</command-args>',
+      'composer',
+    ),
   )
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
@@ -337,7 +374,9 @@ test('tool-result row: only explicit GitHub and Jira URLs count, never bare #N o
 
 test('response row: a web link and a PR URL are captured; the row is stored as made', async ($, on) => {
   const { clock, calls } = world(on)
-  const row = response('See [the docs](https://code.claude.com/docs/en/plugins) and https://github.com/cli/cli/pull/14640.')
+  const row = response(
+    'See [the docs](https://code.claude.com/docs/en/plugins) and https://github.com/cli/cli/pull/14640.',
+  )
   const stored = await $.session.append(row)
   expect(stored.message?.content).toEqual(row.message.content)
   await clock.advance(LIMITS.captureDebounceMs + 10)
@@ -359,10 +398,32 @@ test('a URL and a bare #N for the same item make one item', async ($, on) => {
 
 test('/clear carry-over, store path: the items of the session just left come back', async ($, on) => {
   const old: ItemRecord[] = [
-    { key: 'web:https://old.example/x', category: 'web', url: 'https://old.example/x', label: 'Old page', sources: ['response'], firstSeen: 1, lastSeen: 1, seenCount: 1 },
     {
-      key: 'gh:github.com/acme/web#3', category: 'github', url: 'https://github.com/acme/web/issues/3', label: 'acme/web#3', sources: ['prompt'],
-      firstSeen: 2, lastSeen: 2, seenCount: 1, host: 'github.com', owner: 'acme', repo: 'web', number: 3, type: 'issue', title: 'Old three', state: 'closed',
+      key: 'web:https://old.example/x',
+      category: 'web',
+      url: 'https://old.example/x',
+      label: 'Old page',
+      sources: ['response'],
+      firstSeen: 1,
+      lastSeen: 1,
+      seenCount: 1,
+    },
+    {
+      key: 'gh:github.com/acme/web#3',
+      category: 'github',
+      url: 'https://github.com/acme/web/issues/3',
+      label: 'acme/web#3',
+      sources: ['prompt'],
+      firstSeen: 2,
+      lastSeen: 2,
+      seenCount: 1,
+      host: 'github.com',
+      owner: 'acme',
+      repo: 'web',
+      number: 3,
+      type: 'issue',
+      title: 'Old three',
+      state: 'closed',
       refreshedAt: Date.now(),
     },
   ]
@@ -381,7 +442,16 @@ test('/clear carry-over, store path: the items of the session just left come bac
 
 test('/clear carry-over also happens on /track alone', async ($, on) => {
   const old: ItemRecord[] = [
-    { key: 'web:https://old.example/x', category: 'web', url: 'https://old.example/x', label: 'Old page', sources: ['response'], firstSeen: 1, lastSeen: 1, seenCount: 1 },
+    {
+      key: 'web:https://old.example/x',
+      category: 'web',
+      url: 'https://old.example/x',
+      label: 'Old page',
+      sources: ['response'],
+      firstSeen: 1,
+      lastSeen: 1,
+      seenCount: 1,
+    },
   ]
   world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { items: old } } })
   await $.session.append(prompt('first https://example.org/a'))
@@ -421,7 +491,7 @@ test('tool-result row of 1 MB settles fast, is stored whole, and a URL near its 
   const t0 = Date.now()
   const stored = await $.session.append(toolResult(big))
   expect(Date.now() - t0).toBeLessThan(3000)
-  const block = (stored.message?.content as unknown as { content: string }[])[0]!
+  const block = (stored.message!.content as unknown as { content: string }[])[0]!
   expect(block.content.length).toBe(big.length)
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
@@ -441,11 +511,23 @@ test('session.start backfills from the transcript with the same rules per role',
     messages: [
       { role: 'user', text: 'please look at #5', toolUses: [] },
       { role: 'user', text: '<local-command-stdout>ISS-88 #88</local-command-stdout>', toolUses: [] },
-      { role: 'user', text: '<command-message>foo</command-message>\n<command-name>/foo https://outside.example/o</command-name>\n<command-args>#9 and #10</command-args>', toolUses: [] },
+      {
+        role: 'user',
+        text: '<command-message>foo</command-message>\n<command-name>/foo https://outside.example/o</command-name>\n<command-args>#9 and #10</command-args>',
+        toolUses: [],
+      },
       { role: 'assistant', text: 'It is in [docs](https://docs.example/a) and #6', toolUses: [] },
       {
-        role: 'assistant', text: '',
-        toolUses: [{ tool_use_id: 't', tool: 'Bash', input: {}, text: 'https://github.com/cli/cli/pull/14640 and #11 and https://tool.example/w' }],
+        role: 'assistant',
+        text: '',
+        toolUses: [
+          {
+            tool_use_id: 't',
+            tool: 'Bash',
+            input: {},
+            text: 'https://github.com/cli/cli/pull/14640 and #11 and https://tool.example/w',
+          },
+        ],
       },
     ],
   })
@@ -465,7 +547,14 @@ test('session.start backfills from the transcript with the same rules per role',
 
 test('session.start restores the stored copy of a session it knows', async ($, on) => {
   const stored: ItemRecord = {
-    key: 'web:https://kept.example/', category: 'web', url: 'https://kept.example/', label: 'Kept page', sources: ['response'], firstSeen: 1, lastSeen: 1, seenCount: 1,
+    key: 'web:https://kept.example/',
+    category: 'web',
+    url: 'https://kept.example/',
+    label: 'Kept page',
+    sources: ['response'],
+    firstSeen: 1,
+    lastSeen: 1,
+    seenCount: 1,
   }
   world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { items: [stored] } } })
   await $.session.start(START)
@@ -550,7 +639,14 @@ test('the tick refreshes while the pane is open (ui.close cannot be raised in th
 // ---------------------------------------------------------------- review fixes
 
 const webRec = (url: string, label: string): ItemRecord => ({
-  key: 'web:' + url, category: 'web', url, label, sources: ['response'], firstSeen: 1, lastSeen: 1, seenCount: 1,
+  key: 'web:' + url,
+  category: 'web',
+  url,
+  label,
+  sources: ['response'],
+  firstSeen: 1,
+  lastSeen: 1,
+  seenCount: 1,
 })
 const KEPT = webRec('https://kept.example/', 'Kept page')
 
@@ -608,7 +704,9 @@ test('after /clear the tool statuses are published again', async ($, on) => {
   await quiet(calls)
   current.id = 'sess-2'
   await $.session.append(prompt('hello'))
-  const tools = states.get('sess-2|artifact-tracking|tools|')?.value as { gh: { available: boolean | null } } | undefined
+  const tools = states.get('sess-2|artifact-tracking|tools|')?.value as
+    | { gh: { available: boolean | null } }
+    | undefined
   expect(tools?.gh.available).toBe(true)
 })
 
@@ -629,7 +727,11 @@ test('an ssh host alias is not kept as the session repo: gh resolves it and #N m
 })
 
 test('session.start does not wait for the check of a non-github host', async ($, on) => {
-  world(on, { remote: 'git@ghe.corp:acme/web.git', authMs: 400, seed: { index: [SESSION], ['s:' + SESSION]: { items: [KEPT] } } })
+  world(on, {
+    remote: 'git@ghe.corp:acme/web.git',
+    authMs: 400,
+    seed: { index: [SESSION], ['s:' + SESSION]: { items: [KEPT] } },
+  })
   const t0 = Date.now()
   await $.session.start(START)
   expect(Date.now() - t0).toBeLessThan(250)
@@ -726,7 +828,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await quiet(calls)
     await track($)
     await quiet(calls)
-    const ui = await $.ui.mount({ ...PANE, surface } as never) as Awaited<ReturnType<Engine['ui']['mount']>> & {
+    const ui = (await $.ui.mount({ ...PANE, surface } as never)) as Awaited<ReturnType<Engine['ui']['mount']>> & {
       find(q: unknown): Promise<unknown>
       press(q: unknown): Promise<void>
       unmount(): Promise<void>
@@ -751,7 +853,7 @@ test('pane: the Refresh button asks the coordinator for a manual refresh', async
   await quiet(calls)
   await track($)
   expect(graphqlCalls(calls).length).toBe(1)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' } as never) as unknown as {
+  const ui = (await $.ui.mount({ ...PANE, surface: 'terminal' } as never)) as unknown as {
     press(q: unknown): Promise<void>
     unmount(): Promise<void>
   }
@@ -769,7 +871,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await $.session.append(prompt('see https://acme.atlassian.net/browse/ISS-1'))
     await clock.advance(LIMITS.captureDebounceMs + 10)
     await quiet(calls)
-    const ui = await $.ui.mount({ ...BAND, surface } as never) as unknown as {
+    const ui = (await $.ui.mount({ ...BAND, surface } as never)) as unknown as {
       find(q: unknown): Promise<unknown>
       unmount(): Promise<void>
     }
@@ -782,7 +884,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 test('band: with nothing tracked the hook yields to the engine', async ($, on) => {
   world(on)
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine band'] }))
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' } as never) as unknown as {
+  const ui = (await $.ui.mount({ ...BAND, surface: 'terminal' } as never)) as unknown as {
     find(q: unknown): Promise<unknown>
     unmount(): Promise<void>
   }
@@ -797,7 +899,11 @@ test('band: while a survey holds the band the hook yields to the engine', async 
   await $.session.append(prompt('see https://acme.atlassian.net/browse/ISS-1'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
-  const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, hasSurvey: true }, surface: 'terminal' } as never) as unknown as {
+  const ui = (await $.ui.mount({
+    ...BAND,
+    props: { ...BAND.props, hasSurvey: true },
+    surface: 'terminal',
+  } as never)) as unknown as {
     find(q: unknown): Promise<unknown>
     unmount(): Promise<void>
   }
@@ -826,7 +932,7 @@ test('band: a failing state read yields to the engine band', async ($, on) => {
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
   current.failItemsRead = true
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' } as never) as unknown as {
+  const ui = (await $.ui.mount({ ...BAND, surface: 'terminal' } as never)) as unknown as {
     find(q: unknown): Promise<unknown>
     unmount(): Promise<void>
   }

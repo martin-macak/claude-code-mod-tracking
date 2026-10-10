@@ -1,8 +1,8 @@
 // Reference extraction: text -> GitHub, Jira and web refs (spec section 6.1).
 // Pure code. No `$`, no I/O. Every regex is linear. Input is capped at MAX_TEXT before any regex runs.
 
-import { JIRA_KEY } from '../contracts'
 import type { ExtractOptions, GitHubRef, JiraRef, Ref, RepoRef, WebRef } from '../contracts'
+import { JIRA_KEY } from '../contracts'
 import { MAX_TEXT, normalizeUrl, scanMarkdown, schemeOf } from './links'
 
 const MAX_REMOTE = 2048
@@ -10,7 +10,7 @@ const MAX_LABEL = 60
 const FILE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|md|py|go|rs|java|kt|rb|json|ya?ml|toml|txt|html|css|sh)$/i
 const GH_PATH = /^\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/(issues|pull)\/(\d+)(?:[/?#].*)?$/
 const BARE_REF = /(?<![\w/&#])#(\d{1,7})\b/g
-const URL_RUN = /https?:\/\/[^\s<>"'`\]\[(){}]+/g
+const URL_RUN = /https?:\/\/[^\s<>"'`\][(){}]+/g
 const TRAILING = '.,;:!?*_~'
 /** A web URL longer than this is not tracked. It would bloat $.state and $.store. */
 const MAX_WEB_URL = 2048
@@ -52,7 +52,7 @@ export function parseGitHubUrl(url: string, githubHosts: readonly string[] = [])
   if (!u || (u.protocol !== 'https:' && u.protocol !== 'http:')) return null
   const seen = u.hostname.toLowerCase()
   const host = seen === 'www.github.com' ? 'github.com' : seen
-  const known = host === 'github.com' || githubHosts.some((h) => h.toLowerCase() === host)
+  const known = host === 'github.com' || githubHosts.some(h => h.toLowerCase() === host)
   if (!known) return null
   const m = GH_PATH.exec(u.pathname + u.search + u.hash)
   if (!m) return null
@@ -60,7 +60,11 @@ export function parseGitHubUrl(url: string, githubHosts: readonly string[] = [])
   const number = Number(n)
   if (!Number.isSafeInteger(number)) return null
   return {
-    category: 'github', host, owner: owner!, repo: repo!, number,
+    category: 'github',
+    host,
+    owner: owner!,
+    repo: repo!,
+    number,
     type: kind === 'pull' ? 'pr' : 'issue',
     url: `https://${host}/${owner}/${repo}/${kind}/${n}`,
   }
@@ -247,11 +251,12 @@ function uniqueKey(r: Ref): string {
 export function extractRefs(text: string, opts: ExtractOptions): Ref[] {
   const t = cap(text)
   const hosts = opts.githubHosts ?? []
-  const all = opts.mode === 'urls-only'
-    ? urlsOnly(t, hosts)
-    : [...fromMarkdown(t, hosts), ...bareRefs(t, opts.defaultRepo)].sort((a, b) => a.pos - b.pos).map((x) => x.ref)
+  const all =
+    opts.mode === 'urls-only'
+      ? urlsOnly(t, hosts)
+      : [...fromMarkdown(t, hosts), ...bareRefs(t, opts.defaultRepo)].sort((a, b) => a.pos - b.pos).map(x => x.ref)
   const seen = new Set<string>()
-  return all.filter((r) => {
+  return all.filter(r => {
     const k = uniqueKey(r)
     if (seen.has(k)) return false
     seen.add(k)

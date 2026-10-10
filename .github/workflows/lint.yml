@@ -1,0 +1,83 @@
+name: lint
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pre-commit:
+    # A title edit does not change the files.
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Cache the pre-commit environments
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      # typecheck needs the TypeScript setup of test.yml, which runs it already.
+      # no-commit-to-branch fails by design on a push to main.
+      - name: Run the hooks
+        env:
+          SKIP: typecheck,no-commit-to-branch
+        run: pre-commit run --all-files --show-diff-on-failure --color=always
+
+  # PR title and branch name. Rules: AGENTS.md, "Pull requests" and "Branches".
+  pr-conventions:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Check the PR title
+        uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+          subjectPattern: ^[A-Z].*[^.]$
+          subjectPatternError: |
+            The subject "{subject}" of the PR title "{title}" must start with a capital letter
+            and must not end with a period. Example: "feat(track): Add a Jira column".
+
+      - name: Check the branch name
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          if ! printf '%s\n' "$BRANCH" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)/[a-z0-9][a-z0-9._-]*$'; then
+            echo "::error::Branch '$BRANCH' must be <type>/<kebab-case-summary>, e.g. feat/jira-column."
+            exit 1
+          fi
