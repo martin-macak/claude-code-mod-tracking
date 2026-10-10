@@ -87,6 +87,7 @@ The prose false positives (`rank #1`) are the main risk. Fallback rule (decision
 ## 4. Jira URLs
 
 Only explicit URLs count (the spec). Bare `ABC-123` in text is not tracked. *inference* from the spec.
+For `tool-result` rows, keep a Jira URL only when its host matches acli's active site.
 
 | URL form | Key from | Tag |
 | --- | --- | --- |
@@ -94,6 +95,8 @@ Only explicit URLs count (the spec). Bare `ABC-123` in text is not tracked. *inf
 | `…/jira/software/projects/ABC/boards/7?selectedIssue=ABC-123` (also `/jira/core/…`, `/jira/servicedesk/…`, `/jira/software/c/projects/…`) | `selectedIssue` query | *inference*, not tested ([open N18](open-questions.md#3-not-yet-observed)) |
 | `…/issues/?jql=…`, `…/issues/?filter=…` | none: a search, not an item | *inference* |
 | `https://jira.example.com/browse/ABC-123` (not `*.atlassian.net`) | path; track-only (D14) | *inference* |
+
+In `tool-result` rows, URLs from another Jira site are ignored to avoid tracking placeholder fixtures from file listings and test output.
 
 Key rule: `^[A-Z][A-Z0-9_]+-\d+$` on the extracted part. Item key: `jira:<host>/<KEY>`. Link: `https://<host>/browse/<KEY>`. *inference*
 

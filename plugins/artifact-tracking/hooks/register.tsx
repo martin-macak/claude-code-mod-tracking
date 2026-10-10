@@ -177,6 +177,35 @@ const shown = (x: { gh: ToolStatus; acli: ToolStatus }): string =>
   ])
 
 /**
+ * Active Jira site state:
+ * - `undefined`: no acli runtime (do not filter Jira refs)
+ * - `null`: acli runtime exists, but no active site could be loaded
+ * - `<host>`: active Jira site host
+ */
+async function activeJiraSite(): Promise<string | null | undefined> {
+  const a = acli
+  if (!a) return undefined
+  if (a.activeSite !== undefined) return a.activeSite
+  try {
+    return await a.loadActiveSite()
+  } catch {
+    return null
+  }
+}
+
+function filterToolRefsForSite(refs: Ref[], site: string | null | undefined): Ref[] {
+  if (!refs.some(r => r.category === 'jira')) return refs
+  if (site === undefined) return refs
+  if (site === null) return refs.filter(r => r.category !== 'jira')
+  const active = site.toLowerCase()
+  return refs.filter(r => r.category !== 'jira' || r.site.toLowerCase() === active)
+}
+
+async function filterToolRefs(refs: Ref[]): Promise<Ref[]> {
+  return filterToolRefsForSite(refs, await activeJiraSite())
+}
+
+/**
  * Copies the tool statuses to $.state for the pane. Reads first and writes nothing when nothing the pane shows
  * changed, so a quiet tick makes no write (A22).
  */
@@ -394,7 +423,8 @@ async function capture($: EngineInterface, text: string, mode: ScanMode, source:
   void ensureTick($)
   await ensureSession($)
   await ensureRepo($)
-  const refs = extractRefs(text, { mode, defaultRepo: sessionRepo ?? null, githubHosts })
+  let refs = extractRefs(text, { mode, defaultRepo: sessionRepo ?? null, githubHosts })
+  if (source === 'tool' && mode === 'urls-only') refs = await filterToolRefs(refs)
   if (refs.length === 0) return
   let added: string[] = []
   await setItems($, list => {
@@ -477,6 +507,7 @@ async function fromTranscript($: EngineInterface): Promise<ItemRecord[]> {
   if (!Array.isArray(messages)) return []
   const batches: { refs: Ref[]; source: Source }[] = []
   const opts = { defaultRepo: sessionRepo ?? null, githubHosts }
+  const toolSite = await activeJiraSite()
   for (const m of messages) {
     const text = backfillText(m.role, m.text)
     if (text !== null)
@@ -485,7 +516,9 @@ async function fromTranscript($: EngineInterface): Promise<ItemRecord[]> {
         source: m.role === 'user' ? 'prompt' : 'response',
       })
     for (const use of m.toolUses) {
-      if (use.text) batches.push({ refs: extractRefs(use.text, { mode: 'urls-only', ...opts }), source: 'tool' })
+      if (!use.text) continue
+      const refs = filterToolRefsForSite(extractRefs(use.text, { mode: 'urls-only', ...opts }), toolSite)
+      if (refs.length > 0) batches.push({ refs, source: 'tool' })
     }
   }
   let list: ItemRecord[] = []
@@ -509,6 +542,13 @@ function withoutAuto(list: ItemRecord[]): ItemRecord[] {
   return dropAuto(list, keys)
 }
 
+function keepStored(rec: ItemRecord, activeSite: string | null | undefined): boolean {
+  if (rec.category !== 'jira') return true
+  if (activeSite === undefined) return true
+  if (rec.sources.length !== 1 || rec.sources[0] !== 'tool') return true
+  return activeSite !== null && rec.site.toLowerCase() === activeSite.toLowerCase()
+}
+
 /** Fill the list again at startup: the stored copy of this session, then what the transcript adds. */
 async function restore($: EngineInterface): Promise<void> {
   if ((await read($, items)).length > 0) return // a hot reload keeps $.state; nothing to restore
@@ -517,7 +557,10 @@ async function restore($: EngineInterface): Promise<void> {
   const id = await $.session.id()
   // No gate on the index: two sessions that flush together can drop each other's id from it.
   const copy = (await $.store.get('s:' + id)) as { items?: ItemRecord[] } | undefined
-  const stored = withoutAuto(copy?.items ?? []).map(due)
+  const activeSite = await activeJiraSite()
+  const stored = withoutAuto(copy?.items ?? [])
+    .filter(rec => keepStored(rec, activeSite))
+    .map(due)
   const have = new Set(stored.map(r => r.key))
   const fresh = (await fromTranscript($)).filter(r => !have.has(r.key))
   const all = unionRecords(stored, fresh)

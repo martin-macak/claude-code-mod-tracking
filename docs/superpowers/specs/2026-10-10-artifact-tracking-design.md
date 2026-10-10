@@ -26,7 +26,7 @@ Research and evidence: [knowledge base `claude-code-artifact-tracking`](../../kn
 
 | # | Topic | Decision |
 | --- | --- | --- |
-| D1 | Rows that count as "mentioned" | Prompt and response rows: all patterns. Tool-result rows: explicit GitHub issue/PR URLs and Jira URLs only. |
+| D1 | Rows that count as "mentioned" | Prompt and response rows: all patterns. Tool-result rows: explicit GitHub issue/PR URLs and Jira URLs only when the Jira site matches acli's active site. |
 | D2 | Bare `#N` | Match outside code and URLs with `(?<![\w/&#])#(\d{1,7})\b`. |
 | D3 | Prompt origins | `composer`, `bridge`, `sdk`, `unclassified`; never `isMeta`; never with `agentId`. |
 | D4 | Hook for the person's text | `session.append` door `prompt`, plus door `command` with origin `composer` (`<command-args>`). |
@@ -175,7 +175,7 @@ All capture hooks only observe. Each hook calls `next(e)` first, scans the store
 | `session.append` door `prompt` | D3 origins, no `isMeta`, no `agentId` | All patterns |
 | door `command` | origin `composer` only. Our own `/track` output has origin `engine` and is skipped. | All patterns, from `<command-args>…</command-args>` |
 | door `response` | main loop and subagents | All patterns |
-| door `tool-result` | any tool | Explicit GitHub issue/PR URLs and Jira URLs only |
+| door `tool-result` | any tool | Explicit GitHub issue/PR URLs and Jira URLs only when the Jira site matches acli's active site |
 | `session.start` | after `--resume` / `--continue` | Backfill from `$.session.messages()` with the same rules (user role = prompt rules, assistant = response rules, tool uses = tool rules) |
 
 ### 6.1 Reference classification (`scan/refs.ts`)

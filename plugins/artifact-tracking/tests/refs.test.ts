@@ -104,6 +104,12 @@ test('urls-only mode: only explicit GitHub and Jira URLs, no bare #N, no web lin
   ).toEqual(['github:9', 'jira:ISS-4'])
 })
 
+test('bare Jira keys never create refs in full or urls-only mode', () => {
+  const text = 'Fix ISS-101, then ISS-1 and OPS-9.'
+  expect(extractRefs(text, { mode: 'full', defaultRepo: repo })).toEqual([])
+  expect(extractRefs(text, { mode: 'urls-only', defaultRepo: repo })).toEqual([])
+})
+
 test('duplicates collapse, first occurrence wins the position', () => {
   expect(full('#5 https://github.com/ACME/Web/issues/5 #5').length).toBe(1)
 })
