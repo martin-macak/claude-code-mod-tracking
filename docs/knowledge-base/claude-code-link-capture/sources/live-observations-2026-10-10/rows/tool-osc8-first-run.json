@@ -1,0 +1,232 @@
+[
+ {
+  "sessionStart": {
+   "surface": null,
+   "isInteractive": false,
+   "loaded": 0,
+   "messages": []
+  }
+ },
+ {
+  "door": "prompt",
+  "origin": {
+   "kind": "unclassified"
+  },
+  "uuid": "8054fcd3-7023-47bd-92e6-0135ae528313",
+  "type": "user",
+  "role": "user",
+  "content": [
+   {
+    "type": "text",
+    "text": "go"
+   }
+  ]
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "81a22f1c-d9f6-43aa-b5e8-14ae866fbc75",
+  "type": "attachment",
+  "name": "environment",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "5adf479b-ea16-4e9a-bbb0-b181dd5b8496",
+  "type": "attachment",
+  "name": "model",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "34662b1a-8c76-4c39-90a2-08f08611010c",
+  "type": "attachment",
+  "name": "agent_listing_delta",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "363b4c7f-11f9-4db1-a5dd-73c08935ec1c",
+  "type": "attachment",
+  "name": "skill_listing",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "9c66ef8f-446a-4f03-a9ee-b65b10701b58",
+  "type": "attachment",
+  "name": "auto_mode",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "90b143f8-f2ef-449e-95e5-2cbb92df9104",
+  "type": "attachment",
+  "name": "total_tokens_reminder",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "e63e14a0-ded5-461e-a226-bea43406886c",
+  "type": "attachment",
+  "name": "session_context",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "0150d9e5-9e61-4022-8840-ad790277bc05",
+  "type": "attachment",
+  "name": "date",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "6d2667ac-6173-4696-8ed4-b08913d1ba35",
+  "type": "attachment",
+  "name": "remote_session_change",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "55d17768-26b7-4d00-b4db-68b3c25858eb",
+  "type": "attachment",
+  "name": "prompt_snapshot",
+  "content": "(omitted)"
+ },
+ {
+  "door": "response",
+  "origin": {
+   "kind": "model",
+   "model": "claude-opus-5-5"
+  },
+  "uuid": "135ae366-2564-45ea-b7ee-e8c7fea3e019",
+  "type": "assistant",
+  "role": "assistant",
+  "content": [
+   {
+    "type": "text",
+    "text": "First: [one](https://one.example/a \"T\") and\n\n```\nhttps://fenced.example/x\n```\nend."
+   }
+  ]
+ },
+ {
+  "door": "response",
+  "origin": {
+   "kind": "model",
+   "model": "claude-opus-5-5"
+  },
+  "uuid": "1c044fc7-9b13-4715-9bda-338e8246ce7c",
+  "type": "assistant",
+  "role": "assistant",
+  "content": [
+   {
+    "type": "tool_use",
+    "id": "toolu_01",
+    "name": "Bash",
+    "input": {
+     "command": "printf '\\033]8;id=k1;https://tool.example/bel\\007bel label\\033]8;;\\007 and \\033]8;;https://tool.example/st\\033\\\\st label\\033]8;;\\033\\\\ \\033[1mbold\\033[0m plain https://plain.example/p\\n'",
+     "description": "osc8"
+    }
+   }
+  ]
+ },
+ {
+  "door": "tool-result",
+  "origin": {
+   "kind": "tool",
+   "tool": "Bash"
+  },
+  "uuid": "d448cb50-3539-430e-8172-ed5322762b48",
+  "type": "user",
+  "role": "user",
+  "content": [
+   {
+    "tool_use_id": "toolu_01",
+    "type": "tool_result",
+    "content": "\u001b]8;id=k1;https://tool.example/bel\u0007bel label\u001b]8;;\u0007 and \u001b]8;;https://tool.example/st\u001b\\st label\u001b]8;;\u001b\\ \u001b[1mbold\u001b[0m plain https://plain.example/p",
+    "is_error": false
+   }
+  ]
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "c30050a5-a0fc-41dd-9f31-9bdec75d8982",
+  "type": "attachment",
+  "name": "prompt_snapshot",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "70c075dd-dd24-4aa4-b864-47b72bc44a99",
+  "type": "attachment",
+  "name": "total_tokens_reminder",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "response",
+  "origin": {
+   "kind": "model",
+   "model": "claude-opus-5-5"
+  },
+  "uuid": "28fa861f-0452-4080-929e-c35ace58a37e",
+  "type": "assistant",
+  "role": "assistant",
+  "content": [
+   {
+    "type": "text",
+    "text": "Done: https://two.example/x. Bye [two](https://two.example/y)."
+   }
+  ]
+ },
+ {
+  "turnComplete": {
+   "answer": "Done: https://two.example/x. Bye [two](https://two.example/y).",
+   "reason": "answer"
+  }
+ }
+]

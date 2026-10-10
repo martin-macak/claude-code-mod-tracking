@@ -1,0 +1,5 @@
+Sequence typed in the REPL: hi | /links | /clear | /links
+The model reply was: Here: [docs](https://docs.example/a) and https://bare.example/b. Issue acme/widgets#5.
+
+link-capture: 3 links:     1. docs - https://docs.example/a (inline)     2. https://bare.example/b (bare)3. acme/widgets#5 - https://github.com/acme/widgets/issues/5 (issue-ref)
+link-capture: 3 links:     1. docs - https://docs.example/a (inline)     2. https://bare.example/b (bare)3. acme/widgets#5 - https://github.com/acme/widgets/issues/5 (issue-ref)

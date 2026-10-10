@@ -7,6 +7,7 @@ Research knowledge bases. One folder per problem, named by a kebab-case slug.
 | Slug | Topic |
 | --- | --- |
 | [`claude-code-mods`](claude-code-mods/) | Claude Code mods: the function-hooks plugin API |
+| [`claude-code-link-capture`](claude-code-link-capture/) | Capture every link Claude shows (Markdown, OSC 8) with a mod |
 
 ## Convention for a slug folder
 

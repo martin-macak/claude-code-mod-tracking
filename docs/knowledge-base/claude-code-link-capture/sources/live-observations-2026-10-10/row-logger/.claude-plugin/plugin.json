@@ -1,0 +1,1 @@
+{ "name": "row-logger", "version": "0.0.1", "description": "Scratch tool: logs session.append rows to /tmp/row-logger.json", "author": { "name": "claude-code-mod-tracking" } }

@@ -1,0 +1,5 @@
+[
+ [ {"type":"text","text":"First: [one](https://one.example/a \"T\") and\n\n```\nhttps://fenced.example/x\n```\nend."},
+   {"type":"tool_use","id":"toolu_01","name":"Bash","input":{"command":"printf '\\033]8;id=k1;https://tool.example/bel\\007bel label\\033]8;;\\007 and \\033]8;;https://tool.example/st\\033\\\\st label\\033]8;;\\033\\\\ \\033[1mbold\\033[0m plain https://plain.example/p\\n'","description":"osc8"}} ],
+ [ {"type":"text","text":"Done: https://two.example/x. Bye [two](https://two.example/y)."} ]
+]

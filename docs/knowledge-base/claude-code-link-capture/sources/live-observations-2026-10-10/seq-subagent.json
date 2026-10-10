@@ -1,0 +1,6 @@
+[
+ [ {"type":"text","text":"Delegating."},
+   {"type":"tool_use","id":"toolu_A1","name":"Agent","input":{"description":"find link","prompt":"Reply with a link.","subagent_type":"Explore"}} ],
+ [ {"type":"text","text":"Sub answer: [sublink](https://sub.example/s) and https://sub.example/bare"} ],
+ [ {"type":"text","text":"Main final, relaying [sublink](https://sub.example/s)."} ]
+]

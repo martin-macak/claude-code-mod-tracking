@@ -1,0 +1,408 @@
+[
+ {
+  "sessionStart": {
+   "surface": null,
+   "isInteractive": false,
+   "loaded": 0,
+   "messages": []
+  }
+ },
+ {
+  "door": "prompt",
+  "origin": {
+   "kind": "unclassified"
+  },
+  "uuid": "42a30283-7bba-4b71-851a-4364b3ab8903",
+  "type": "user",
+  "role": "user",
+  "content": [
+   {
+    "type": "text",
+    "text": "go2"
+   }
+  ]
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "3b74cd0d-0dbf-44e3-aa28-4bb5a1f7c9b2",
+  "type": "attachment",
+  "name": "environment",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "d6fdf018-6da5-4019-91be-a70b040dc470",
+  "type": "attachment",
+  "name": "model",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "e5afa9f0-4e85-4c22-ae1c-0fb85fca9404",
+  "type": "attachment",
+  "name": "agent_listing_delta",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "2dd3fcc6-0b89-4bc2-8138-d42a42f9a638",
+  "type": "attachment",
+  "name": "skill_listing",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "d89e26f7-4c69-4a9c-938e-93de08aaa4ff",
+  "type": "attachment",
+  "name": "auto_mode",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "9e50a650-00cf-4cc9-ad32-1be14e67584c",
+  "type": "attachment",
+  "name": "total_tokens_reminder",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "d463b0b8-326c-4f4e-9ee5-41b4142e8105",
+  "type": "attachment",
+  "name": "session_context",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "06e50b2e-f5c6-487a-ba5a-d3a38bbf9050",
+  "type": "attachment",
+  "name": "date",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "8fc89f0f-9002-44d0-995f-95a52d7282a6",
+  "type": "attachment",
+  "name": "remote_session_change",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "cf4b61c2-1dc2-4edf-aa9a-d83613223822",
+  "type": "attachment",
+  "name": "prompt_snapshot",
+  "content": "(omitted)"
+ },
+ {
+  "door": "response",
+  "origin": {
+   "kind": "model",
+   "model": "claude-opus-5-5"
+  },
+  "uuid": "8d3395c4-7373-4d8e-ad14-d26768470a33",
+  "type": "assistant",
+  "role": "assistant",
+  "content": [
+   {
+    "type": "text",
+    "text": "Delegating."
+   }
+  ]
+ },
+ {
+  "door": "response",
+  "origin": {
+   "kind": "model",
+   "model": "claude-opus-5-5"
+  },
+  "uuid": "bf3598a4-b4a6-446a-a5a7-4b8b1bc62064",
+  "type": "assistant",
+  "role": "assistant",
+  "content": [
+   {
+    "type": "tool_use",
+    "id": "toolu_A1",
+    "name": "Agent",
+    "input": {
+     "description": "find link",
+     "prompt": "Reply with a link.",
+     "subagent_type": "Explore"
+    }
+   }
+  ]
+ },
+ {
+  "door": "prompt",
+  "origin": {
+   "kind": "coordinator"
+  },
+  "agentId": "a5cd7d441b84000fb",
+  "uuid": "b99e727f-7e13-43c1-9e90-898660c5d586",
+  "type": "user",
+  "role": "user",
+  "content": [
+   {
+    "type": "text",
+    "text": "Reply with a link."
+   }
+  ]
+ },
+ {
+  "door": "tool-result",
+  "origin": {
+   "kind": "tool",
+   "tool": "Agent"
+  },
+  "uuid": "3702ef91-a783-4ae2-be1a-f658a9210ab0",
+  "type": "user",
+  "role": "user",
+  "content": [
+   {
+    "tool_use_id": "toolu_A1",
+    "type": "tool_result",
+    "content": [
+     {
+      "type": "text",
+      "text": "Async agent launched successfully. (This tool result is internal metadata — never quote or paste any part of it, including the agentId below, into a user-facing reply.)\nagentId: a5cd7d441b84000fb (internal ID - do not mention to user. Use SendMessage with to: 'a5cd7d441b84000fb', summary: '<5-10 word recap>' to continue this agent.)\nThe agent is working in the background. You will be notified automatically when it completes. You know nothing about its results until that notification arrives — do not report, assume, or predict them; continue other work or respond to the user in the meantime.\nDo not duplicate this agent's work — avoid working with the same files or topics it is using.\noutput_file: /private/tmp/claude-501/-private-tmp-claude-501--Users-martinmacak-projects-claude-code-mod-tracking-28aec9ca-1c32-4681-b720-288f715cabde-scratchpad-harness-proj/127f644b-5250-4247-9a86-5c46d4cf4746/tasks/a5cd7d441b84000fb.output\nDo NOT Read or tail this file via the shell tool — it is the full subagent JSONL transcript and reading it will overflow your context. If the user asks for progress, say the agent is still running; you'll get a completion notification."
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "96da00bf-349a-481c-98bc-01b89be69594",
+  "type": "attachment",
+  "name": "prompt_snapshot",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "agentId": "a5cd7d441b84000fb",
+  "uuid": "69d8a7d5-772b-4bb4-8a80-7ad501e967c9",
+  "type": "attachment",
+  "name": "environment",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "agentId": "a5cd7d441b84000fb",
+  "uuid": "57a79001-8222-4f4a-b194-062befbbf24f",
+  "type": "attachment",
+  "name": "model",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "6338ce7c-cec3-4523-a7ba-2d79668a0fc0",
+  "type": "attachment",
+  "name": "total_tokens_reminder",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "agentId": "a5cd7d441b84000fb",
+  "uuid": "62e30de5-f72e-4ffa-8740-4547be17e0eb",
+  "type": "attachment",
+  "name": "skill_listing",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "agentId": "a5cd7d441b84000fb",
+  "uuid": "1b8f2f52-d724-4427-9d0e-81613005c6d5",
+  "type": "attachment",
+  "name": "session_context",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "response",
+  "origin": {
+   "kind": "model",
+   "model": "claude-opus-5-5"
+  },
+  "uuid": "298f5200-6a48-4f76-8982-790a3ae61f93",
+  "type": "assistant",
+  "role": "assistant",
+  "content": [
+   {
+    "type": "text",
+    "text": "Sub answer: [sublink](https://sub.example/s) and https://sub.example/bare"
+   }
+  ]
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "agentId": "a5cd7d441b84000fb",
+  "uuid": "12c0c597-ef48-4101-b2ce-5b7a2d06ca17",
+  "type": "attachment",
+  "name": "date",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "turnComplete": {
+   "answer": "Sub answer: [sublink](https://sub.example/s) and https://sub.example/bare",
+   "reason": "answer"
+  }
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "agentId": "a5cd7d441b84000fb",
+  "uuid": "832da157-3052-4865-840b-1fdeb7821c20",
+  "type": "attachment",
+  "name": "remote_session_change",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "agentId": "a5cd7d441b84000fb",
+  "uuid": "3f97de0e-f199-49f4-9f2d-dab1522e4853",
+  "type": "attachment",
+  "name": "prompt_snapshot",
+  "content": "(omitted)"
+ },
+ {
+  "door": "response",
+  "origin": {
+   "kind": "model",
+   "model": "claude-opus-5-5"
+  },
+  "agentId": "a5cd7d441b84000fb",
+  "uuid": "bd858304-4c68-414b-b1e1-3d4cb7ae4552",
+  "type": "assistant",
+  "role": "assistant",
+  "content": [
+   {
+    "type": "text",
+    "text": "Main final, relaying [sublink](https://sub.example/s)."
+   }
+  ]
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "agentId": "a5cd7d441b84000fb",
+  "uuid": "543c60a8-9b49-4887-87d5-ba1f6ee3fdbc",
+  "type": "attachment",
+  "name": "prompt_snapshot",
+  "content": "(omitted)"
+ },
+ {
+  "turnComplete": {
+   "answer": "Main final, relaying [sublink](https://sub.example/s).",
+   "reason": "answer",
+   "agentId": "a5cd7d441b84000fb"
+  }
+ },
+ {
+  "door": "prompt",
+  "origin": {
+   "kind": "task-notification"
+  },
+  "uuid": "6bd2286b-0e1e-4766-99ae-8faf5477eb5e",
+  "type": "user",
+  "role": "user",
+  "content": [
+   {
+    "type": "text",
+    "text": "<task-notification>\n<task-id>a5cd7d441b84000fb</task-id>\n<tool-use-id>toolu_A1</tool-use-id>\n<output-file>/private/tmp/claude-501/-private-tmp-claude-501--Users-martinmacak-projects-claude-code-mod-tracking-28aec9ca-1c32-4681-b720-288f715cabde-scratchpad-harness-proj/127f644b-5250-4247-9a86-5c46d4cf4746/tasks/a5cd7d441b84000fb.output</output-file>\n<status>completed</status>\n<summary>Agent \"find link\" finished</summary>\n<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>\n<result>Main final, relaying [sublink](https://sub.example/s).</result>\n<usage><subagent_tokens>30</subagent_tokens><tool_uses>0</tool_uses><duration_ms>43</duration_ms></usage>\n</task-notification>"
+   }
+  ]
+ },
+ {
+  "door": "response",
+  "origin": {
+   "kind": "model",
+   "model": "claude-opus-5-5"
+  },
+  "uuid": "8ebef2d8-47f7-4bd7-aed0-f49eb6a5c69b",
+  "type": "assistant",
+  "role": "assistant",
+  "content": [
+   {
+    "type": "text",
+    "text": "Main final, relaying [sublink](https://sub.example/s)."
+   }
+  ]
+ },
+ {
+  "turnComplete": {
+   "answer": "Main final, relaying [sublink](https://sub.example/s).",
+   "reason": "answer"
+  }
+ }
+]

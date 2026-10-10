@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "es2023", "lib": ["es2023"], "types": [],
+    "module": "esnext", "moduleResolution": "bundler",
+    "strict": true, "noUncheckedIndexedAccess": true,
+    "noEmit": true, "skipLibCheck": true,
+    "jsx": "react", "jsxFactory": "h", "jsxFragmentFactory": "Fragment"
+  },
+  "include": [
+    "../../claude-code-mods/sources/claude-code-2.1.295/types/claude-code.d.ts",
+    "link-capture/hooks/**/*.ts",
+    "link-capture/types/**/*.d.ts",
+    "link-capture/tests/**/*.ts"
+  ]
+}

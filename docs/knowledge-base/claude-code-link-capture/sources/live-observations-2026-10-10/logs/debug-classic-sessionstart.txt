@@ -1,0 +1,4 @@
+2026-10-10T08:18:51.121Z [DEBUG] hooks module cc-plugin-sec-default@builtin loaded (native, environment 1, tier prepend); events: classic.*,prompt.section,prompt.context,prompt.compose,skill.prompt,attribution.text,settings.read,tool.describe,command.describe,
+2026-10-10T08:18:51.143Z [DEBUG] hooks module logmod@inline loaded (worker, environment 2, tier user); events: session.append,turn.complete,session.start,classic.SessionStart
+2026-10-10T08:18:51.194Z [DEBUG] logmod: classic.SessionStart bypassed by cc-plugin-sec-default (tier user); beneath runs
+2026-10-10T08:19:09.221Z [DEBUG] logmod: classic.SessionStart bypassed by cc-plugin-sec-default (tier user); beneath runs

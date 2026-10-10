@@ -1,0 +1,85 @@
+[
+ {
+  "sessionStart": {
+   "surface": null,
+   "isInteractive": false,
+   "loaded": 5,
+   "messages": [
+    {
+     "role": "user",
+     "text": "go",
+     "toolUses": 0
+    },
+    {
+     "role": "assistant",
+     "text": "First: [one](https://one.example/a \"T\") and\n\n```\nhttps://fenced.example/x\n```\nend.",
+     "toolUses": 0
+    },
+    {
+     "role": "assistant",
+     "text": "",
+     "toolUses": 1
+    },
+    {
+     "role": "user",
+     "text": "",
+     "toolUses": 0,
+     "toolResults": 1
+    },
+    {
+     "role": "assistant",
+     "text": "Done: https://two.example/x. Bye [two](https://two.example/y).",
+     "toolUses": 0
+    }
+   ]
+  }
+ },
+ {
+  "door": "prompt",
+  "origin": {
+   "kind": "unclassified"
+  },
+  "uuid": "320075f3-038b-4378-b493-5e6331c9fb72",
+  "type": "user",
+  "role": "user",
+  "content": [
+   {
+    "type": "text",
+    "text": "again"
+   }
+  ]
+ },
+ {
+  "door": "attachment",
+  "origin": {
+   "kind": "engine"
+  },
+  "uuid": "09cb8943-8f61-4b58-bad0-10ae540bd213",
+  "type": "attachment",
+  "name": "total_tokens_reminder",
+  "role": "user",
+  "content": "(omitted)"
+ },
+ {
+  "door": "response",
+  "origin": {
+   "kind": "model",
+   "model": "claude-opus-5-5"
+  },
+  "uuid": "a99caf96-2df0-4cd9-866f-facf17dd1021",
+  "type": "assistant",
+  "role": "assistant",
+  "content": [
+   {
+    "type": "text",
+    "text": "Done: https://two.example/x. Bye [two](https://two.example/y)."
+   }
+  ]
+ },
+ {
+  "turnComplete": {
+   "answer": "Done: https://two.example/x. Bye [two](https://two.example/y).",
+   "reason": "answer"
+  }
+ }
+]
