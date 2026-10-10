@@ -114,14 +114,19 @@ function ensureRuntime($: EngineInterface): void {
     now: Date.now,
     load: () => read($, items),
     save: async refreshed => {
-      const dropped = refreshed.filter(rec => rec.error?.kind === 'not-found').map(rec => rec.key)
-      await setItems($, list => mergeResults(list, refreshed))
+      let dropped: string[] = []
+      await setItems($, list => {
+        const merged = mergeResults(list, refreshed)
+        const kept = new Set(merged.map(rec => rec.key))
+        dropped = list.filter(rec => !kept.has(rec.key)).map(rec => rec.key)
+        return merged
+      })
       if (dropped.length > 0) {
         // Keep discarded keys in this run's dismiss list, so transcript replay does not bring them back on /resume.
         try {
           await setAuto($, s => dismiss(s, dropped))
         } catch {
-          // The item is already removed from the list.
+          // The list is already merged; dismissal tracking is best-effort.
         }
       }
     },
