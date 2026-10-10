@@ -1,0 +1,58 @@
+# Throwaway repo layout (see exp1.sh in report). git git version 2.56.0
+
+$ git log --oneline --graph --all
+* c3b71b3 (feat/sibling-of-main) s1
+| * b816863 (HEAD -> feat/parent, preexisting-hhh, locked-fff, gone-ggg) p3
+| | * 236736e (grandchild-ddd) d1
+| | * b042697 (worktree-child-ccc) c1
+| | * 3720b54 (worktree-agent-aaa) a1
+| |/  
+| | * 99f0d9b (wf-bbb) b1
+| |/  
+| * 82e354a p2
+| * fa3613d p1
+|/  
+* d38bb53 (main, feat/unrelated) m2
+* 07827de m1
+
+## reflog "Created from" per branch: git reflog show --no-abbrev-commit --format="%gs" <branch> | tail -1
+feat/parent                branch: Created from HEAD
+feat/sibling-of-main       branch: Created from main
+feat/unrelated             branch: Created from main
+gone-ggg                   branch: Created from feat/parent
+grandchild-ddd             branch: Created from HEAD
+locked-fff                 branch: Created from feat/parent
+main                       commit (initial): m1
+preexisting-hhh            branch: Created from feat/parent
+wf-bbb                     branch: Created from HEAD
+worktree-agent-aaa         branch: Created from feat/parent
+worktree-child-ccc         branch: Created from HEAD
+
+## one call: git for-each-ref --format="%(refname:short) %(upstream:short)" (upstream config)
+feat/parent|upstream=
+feat/sibling-of-main|upstream=
+feat/unrelated|upstream=
+gone-ggg|upstream=
+grandchild-ddd|upstream=
+locked-fff|upstream=
+main|upstream=
+preexisting-hhh|upstream=
+wf-bbb|upstream=
+worktree-agent-aaa|upstream=
+worktree-child-ccc|upstream=
+
+## merge-base / is-ancestor vs parent tip feat/parent (A) tip-is-ancestor-of-parent, (B) parent-is-ancestor-of-tip, (C) merge-base==parent tip(same as B)
+feat/parent                tip-anc-of-parent=yes parent-anc-of-tip=yes merge-base=b816863 ahead=0
+feat/sibling-of-main       tip-anc-of-parent=no  parent-anc-of-tip=no  merge-base=d38bb53 ahead=1
+feat/unrelated             tip-anc-of-parent=yes parent-anc-of-tip=no  merge-base=d38bb53 ahead=0
+gone-ggg                   tip-anc-of-parent=yes parent-anc-of-tip=yes merge-base=b816863 ahead=0
+grandchild-ddd             tip-anc-of-parent=no  parent-anc-of-tip=no  merge-base=82e354a ahead=3
+locked-fff                 tip-anc-of-parent=yes parent-anc-of-tip=yes merge-base=b816863 ahead=0
+main                       tip-anc-of-parent=yes parent-anc-of-tip=no  merge-base=d38bb53 ahead=0
+preexisting-hhh            tip-anc-of-parent=yes parent-anc-of-tip=yes merge-base=b816863 ahead=0
+wf-bbb                     tip-anc-of-parent=no  parent-anc-of-tip=no  merge-base=82e354a ahead=1
+worktree-agent-aaa         tip-anc-of-parent=no  parent-anc-of-tip=no  merge-base=82e354a ahead=1
+worktree-child-ccc         tip-anc-of-parent=no  parent-anc-of-tip=no  merge-base=82e354a ahead=2
+
+## git config --get-regexp branch (no upstream recorded for local-start-point)
+(none)

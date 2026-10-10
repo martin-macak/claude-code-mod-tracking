@@ -1,8 +1,20 @@
 // GhTool: refreshes GitHub issues and PRs with `gh` (spec section 7.2, KB github.md).
 // One batched GraphQL call per host and chunk. No `$`: it gets a Runner and a clock.
 
-import type { Checks, GitHubState, GitHubTarget, GitHubToolApi, Now, RepoRef, Runner, RunResult } from '../contracts'
+import type {
+  Checks,
+  GitHubDiscoveryApi,
+  GitHubState,
+  GitHubTarget,
+  GraphqlOutcome,
+  Now,
+  ReplyClass,
+  RepoRef,
+  Runner,
+  RunResult,
+} from '../contracts'
 import { LIMITS } from '../contracts'
+import { dig, isRecord, type Json } from '../json'
 import type { CircuitBreaker } from './circuit-breaker'
 import { firstLine, Tool } from './tool'
 
@@ -12,12 +24,6 @@ const NAME_OK = /^[A-Za-z0-9_.-]+$/
 // Exit 4 and the "gh auth login" hint mean logged out. HTTP 401 is a plain failure for the breaker (spec section 8).
 const AUTH_TEXT = /gh auth login/
 const DEFAULT_HOST = 'github.com'
-
-type Json = Record<string, unknown>
-
-function isRecord(v: unknown): v is Json {
-  return typeof v === 'object' && v !== null && !Array.isArray(v)
-}
 
 function parseJson(text: string): unknown {
   try {
@@ -40,6 +46,25 @@ export function rollupToChecks(state: string | null | undefined): Checks {
     default:
       return 'none'
   }
+}
+
+/**
+ * One classifier for `graphql` and `refreshChunk` (spec A21). The order matters:
+ * data (alias errors ride along), auth, truncated, query-error, unparsable.
+ */
+export function classifyReply(r: RunResult): ReplyClass {
+  const parsed = parseJson(r.stdout)
+  if (isRecord(parsed) && isRecord(parsed.data)) {
+    return { kind: 'data', data: parsed.data, errors: Array.isArray(parsed.errors) ? parsed.errors : [] }
+  }
+  if (r.exitCode === 4 || AUTH_TEXT.test(r.stderr)) return { kind: 'auth', detail: firstLine(r.stderr) }
+  if (r.isStdoutTruncated) return { kind: 'truncated' }
+  if (isRecord(parsed) && Array.isArray(parsed.errors)) {
+    const m = dig(parsed.errors, 0, 'message')
+    return { kind: 'query-error', ...(typeof m === 'string' ? { detail: firstLine(m) } : {}) }
+  }
+  const detail = firstLine(r.stderr)
+  return { kind: 'unparsable', ...(detail ? { detail } : {}) }
 }
 
 /** One alias per distinct item key. Items with the same key share an alias. */
@@ -71,23 +96,13 @@ export function buildQuery(items: readonly GitHubTarget[]): { query: string; ali
   return { query: `query {\n  rateLimit { cost remaining }\n${fields.join('\n')}\n}`, aliases }
 }
 
-/** Reads `obj.a.b.c`, with array indexes as numbers. undefined when any step is missing. */
-function dig(obj: unknown, ...path: (string | number)[]): unknown {
-  let cur = obj
-  for (const step of path) {
-    if (typeof step === 'number') cur = Array.isArray(cur) ? cur[step] : undefined
-    else cur = isRecord(cur) ? cur[step] : undefined
-  }
-  return cur
-}
-
 /** Sets an optional field, or removes it when the value is not usable. */
 function put<K extends keyof GitHubTarget>(it: GitHubTarget, key: K, value: GitHubTarget[K] | undefined): void {
   if (value === undefined) delete it[key]
   else it[key] = value
 }
 
-export class GhTool extends Tool<GitHubTarget> implements GitHubToolApi {
+export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
   private readonly hosts = new Map<string, boolean>()
   private readonly asking = new Map<string, Promise<boolean>>()
   private repo?: Promise<RepoRef | null>
@@ -130,20 +145,52 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubToolApi {
     const r = await this.exec(['gh', 'api', 'graphql', '--hostname', host, '-f', 'query=' + query])
     if (!r) return this.breaker.peek(this.now()) // blocked, or rejected and already recorded
 
-    const parsed = parseJson(r.stdout)
-    const data = isRecord(parsed) && isRecord(parsed.data) ? parsed.data : undefined
-    if (data) {
+    const c = classifyReply(r)
+    if (c.kind === 'data') {
       this.record('ok')
-      const errors = isRecord(parsed) && Array.isArray(parsed.errors) ? parsed.errors : []
-      for (const [alias, group] of aliases) for (const it of group) this.apply(it, alias, data, errors)
+      for (const [alias, group] of aliases) for (const it of group) this.apply(it, alias, c.data, c.errors)
       return true
     }
-    if (r.exitCode === 4 || AUTH_TEXT.test(r.stderr)) {
-      this.record('auth', firstLine(r.stderr))
+    if (c.kind === 'auth') {
+      this.record('auth', c.detail)
       return false
     }
     this.record('tool-failure', firstLine(r.stderr) || 'unparsable gh output')
     return this.breaker.peek(this.now())
+  }
+
+  /**
+   * One discovery call (spec A21). `available`, `breaker` and `exec` are protected in `Tool`, so `tool.ts` does not change.
+   * Only auth and transport failures count against the breaker. A query-level error or a cut reply is an item error:
+   * the tool worked, the answer was not usable.
+   */
+  async graphql(host: string, query: string): Promise<GraphqlOutcome> {
+    if (this.available !== true) return { ok: false, kind: 'no-gh' }
+    if (!this.breaker.peek(this.now())) return { ok: false, kind: 'blocked' }
+    const r = await this.exec(['gh', 'api', 'graphql', '--hostname', host, '-f', 'query=' + query], {
+      timeoutMs: LIMITS.discoveryTimeoutMs,
+    })
+    // A null after `peek` said yes is a rejected run, which `exec` recorded as a tool failure.
+    // A lost half-open slot also gives null; it reads as transport too, which is harmless.
+    if (!r) return { ok: false, kind: 'transport', ...(this.lastError ? { error: this.lastError } : {}) }
+    const c = classifyReply(r)
+    switch (c.kind) {
+      case 'data':
+        this.record('ok')
+        return { ok: true, reply: { data: c.data, errors: c.errors } }
+      case 'auth':
+        this.record('auth', c.detail)
+        return { ok: false, kind: 'auth', ...(c.detail ? { error: c.detail } : {}) }
+      case 'truncated':
+        this.record('item-error')
+        return { ok: false, kind: 'truncated' }
+      case 'query-error':
+        this.record('item-error')
+        return { ok: false, kind: 'query-error', ...(c.detail ? { error: c.detail } : {}) }
+      case 'unparsable':
+        this.record('tool-failure', c.detail || 'unparsable gh output')
+        return { ok: false, kind: 'transport', error: c.detail || 'unparsable gh output' }
+    }
   }
 
   private apply(it: GitHubTarget, alias: string, data: Json, errors: unknown[]): void {

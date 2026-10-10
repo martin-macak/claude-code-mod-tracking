@@ -1,0 +1,8 @@
+HTTP/2.0 304 Not Modified
+HTTP/2.0 200 OK
+Etag: W/"903c338ffb0ad58f799c1ee10d0b44281716c00b2f48263fdfbff2e095a7d7dd"
+X-Ratelimit-Limit: 5000
+X-Ratelimit-Remaining: 4995
+X-Ratelimit-Reset: 1791652620
+X-Ratelimit-Resource: core
+X-Ratelimit-Used: 5

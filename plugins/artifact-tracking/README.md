@@ -44,9 +44,36 @@ The same item written as a URL and as `#N` is one item. The session repo comes f
 | `/track refresh` | Forgets "not logged in" and "not found", closes open circuit breakers, refreshes every item, waits, and prints the list. Use it in `claude -p`. |
 | `/track clear` | Removes all items of this session and its stored copy. |
 
-The pane has one section for each of Jira, GitHub and web links. A Jira row with children has a `[-]` or `[+]` button. The `Refresh` button (key `r`) does what `/track refresh` does. Esc closes the pane. While it is open, a 30 s tick refreshes the stale items. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
+The pane has one section for each of Jira, GitHub and web links. A Jira row with children has a `[-]` or `[+]` button. The `Refresh` button (key `r`) does what `/track refresh` does. Esc closes the pane. A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
 
 The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Links 2  /track`. `(n ✗)` counts PRs with failing checks. The band is empty when nothing is tracked.
+
+## Auto tracking
+
+The mod also tracks the work around the session, with no mention:
+
+| Section | Content |
+| --- | --- |
+| Worktrees | The root (the cwd at session start, pinned) and the worktrees that this session or its agents made. Only proven children show. A removed one stays, dimmed. |
+| Agents | The main loop, its subagents and its workflow agents, each with branch and worktree. An ended agent stays, dimmed. |
+| Pull requests | PRs whose head is a tracked branch, or whose base is a tracked branch (stacked PRs). One GraphQL query for each 30 s tick. |
+
+The refs in a PR body become items with a `↳#N` prefix. HTML comments are skipped. The items go when the PR leaves the tracked set. The band adds `Worktrees n · Agents n · PRs n`.
+
+```mermaid
+flowchart LR
+  E[tool.call and agent.spawn events] --> S[AutoScheduler 750 ms window]
+  T[30 s tick] --> S
+  S --> R[AutoRound]
+  R --> G[git worktree list]
+  R --> A[agent.list]
+  R --> Q[one GraphQL query]
+  R --> U[pane and band]
+```
+
+Press `x` on an auto row to hide it for the run. `/track clear` hides every auto row that is on screen. A gh failure trips the same circuit breaker as item refresh. It never stops worktree or agent tracking.
+
+Limits: peer sessions in other processes are not tracked. A worktree that git created without this session is not shown. Design: [`docs/superpowers/specs/2026-10-10-auto-tracking-design.md`](../../docs/superpowers/specs/2026-10-10-auto-tracking-design.md).
 
 ## Requirements
 
@@ -70,7 +97,7 @@ A tool that fails three times in a row is paused for 5 minutes (circuit breaker)
 - **GitHub Enterprise.** A GHE issue URL is a web link, unless the host is the host of the session repo and `gh` is logged in to it.
 - **Other github.com URLs** (repo pages, commits, files) are web links.
 - **Bare `#N` without a repo** stays unresolved. It has no link and no status.
-- **`/clear`.** The items come back at the next hook, command or 30 s tick, not at the `/clear` itself. The tick runs only while the pane is open. A `/resume` of a session that the store knows restores that session only, not the one you left.
+- **`/clear`.** The items come back at the next hook, command or 30 s tick, not at the `/clear` itself. The tick runs from session.start. A `/resume` of a session that the store knows restores that session only, not the one you left.
 - **`--resume` backfill.** The transcript has no `isMeta` or origin flags. The backfill skips the wrappers it knows (`<system-reminder>`, `<teammate-message>`, command output, task notifications). Other meta rows, for example a skill body or a coordinator message, may add items that the live session did not track.
 - **`claude -p "/track"`** ends before its background refresh finishes. Use `/track refresh`.
 - **A narrow terminal.** The pane may wait until you widen the terminal. The mod shows a toast.
@@ -94,6 +121,7 @@ claude plugin test .
 | `hooks/model/` | Items, keys, merge, dedupe, caps. |
 | `hooks/tools/` | `GhTool`, `AcliTool`, the base `Tool` and the circuit breaker. |
 | `hooks/refresh/` | The refresh coordinator. |
+| `hooks/auto/` | Ledger, worktrees, agents, events, scheduler and round of auto tracking. |
 | `hooks/ui/` | The view model, the pane and the band. |
 | `tests/` | Unit tests, fixtures, and the kit tests of the wiring (`register.test.tsx`). |
 

@@ -1,11 +1,40 @@
 // Wiring for the artifact-tracking mod. The only file that touches `$`.
 // Capture hooks observe rows. A coordinator refreshes the items with gh and acli. A pane and a band draw them.
-// Spec: docs/superpowers/specs/2026-10-10-artifact-tracking-design.md sections 6 to 10.
+// Specs: docs/superpowers/specs/2026-10-10-artifact-tracking-design.md sections 6 to 10, and
+// docs/superpowers/specs/2026-10-10-auto-tracking-design.md (the `auto` atom, the tick, the round, the hooks of spec 7).
 
 import type { EngineInterface, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
-import type { ItemRecord, Ref, RepoRef, Runner, ScanMode, Source, ToolStatus, UiState } from './contracts'
-import { LIMITS } from './contracts'
+import { autoIds, dismiss } from './auto/dismiss'
+import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from './auto/events'
+import {
+  carryAuto,
+  emptyAuto,
+  pinRoot,
+  recordActivity,
+  recordAgentBranch,
+  recordAgentResult,
+  recordEnter,
+  recordSpawn,
+  recordTurnEnd,
+} from './auto/ledger'
+import { AutoRound } from './auto/round'
+import { AutoScheduler } from './auto/scheduler'
+import type {
+  AutoReason,
+  AutoState,
+  DiscoveryApplied,
+  ItemRecord,
+  Ref,
+  RepoRef,
+  Runner,
+  ScanMode,
+  Source,
+  ToolStatus,
+  UiState,
+} from './contracts'
+import { AUTO_SOURCES, isRowId, LIMITS } from './contracts'
+import { dropAuto } from './model/discovered'
 import { hydrate, mergeRefs, mergeResults, resolveBareRefs, unionRecords } from './model/registry'
 import type { Timer } from './refresh/coordinator'
 import { RefreshCoordinator } from './refresh/coordinator'
@@ -13,10 +42,10 @@ import { textOfContent } from './scan/links'
 import { commandArgs, extractRefs, parseRemote } from './scan/refs'
 import { AcliTool } from './tools/acli-tool'
 import { GhTool } from './tools/gh-tool'
+import { composeBand, composeCommandText, composePane } from './ui/auto-view'
 import { renderBand } from './ui/band'
-import { renderPane } from './ui/pane'
+import { renderSections } from './ui/pane'
 import type { ViewContext } from './ui/view'
-import { bandText, buildPane, columnsFor, commandText } from './ui/view'
 
 // ------------------------------------------------------------------ state
 
@@ -30,6 +59,8 @@ const tools = atom(
   } as { gh: ToolStatus; acli: ToolStatus },
 )
 const ui = atom({ plugin: 'artifact-tracking', key: 'ui' } as const, { folded: [], paneOpen: false } as UiState)
+/** The run: root, proofs, agents, dismiss list and the last snapshot (spec 6.2). Never goes to $.store. */
+const auto = atom({ plugin: 'artifact-tracking', key: 'auto' } as const, emptyAuto() as AutoState)
 
 const PANE = 'track'
 const USAGE = 'Usage: /track [refresh|clear]'
@@ -55,12 +86,22 @@ let flushArmedAt = 0
  * So a /clear still finds what was captured in the last moments (D10).
  */
 let mirror: { id: string; items: ItemRecord[] } | undefined
+let scheduler: AutoScheduler | undefined
+let round: AutoRound | undefined
+/** `$.clock.now()` when the tick was armed, and at each beat (A1). */
+let lastBeatAt = 0
+/** The `auto` atom as last written. A module variable outlives /clear, `$.state` does not (A18). */
+let autoMirror: AutoState | undefined
+/** When the last round ended. The Worktrees note reads it before `snapshot.at` (A22). */
+let lastRoundAt: number | undefined
+/** The last list written to $.store: id and JSON. A flush of an equal list writes nothing (A22). */
+let flushed: { id: string; json: string } | undefined
 
 // ------------------------------------------------------------------ runtime
 
 /** Builds the tools and the coordinator once. `$` only appears in calls, never as a value. */
 function ensureRuntime($: EngineInterface): void {
-  if (gh && acli && coordinator) return
+  if (gh && acli && coordinator && scheduler && round) return
   const run: Runner = (argv, init) => $.process.run(argv, init)
   const g = new GhTool(run, Date.now)
   const a = new AcliTool(run, Date.now)
@@ -85,7 +126,55 @@ function ensureRuntime($: EngineInterface): void {
       // The tools record their own failures. A run must not break the session.
     },
   })
+  const git = (argv: readonly string[], cwd: string) => run(['git', ...argv], { cwd, timeoutMs: LIMITS.gitTimeoutMs })
+  const autoRound = new AutoRound({
+    now: Date.now,
+    load: async () => {
+      const s = await currentAuto($)
+      autoMirror = s
+      return s
+    },
+    save: change => setAuto($, change),
+    git,
+    listAgents: async () =>
+      (await $.agent.list()).map(a => ({
+        id: a.id,
+        status: a.status,
+        ...(a.teammateId !== undefined ? { teammateId: a.teammateId } : {}),
+      })),
+    sessionCwd: () => $.session.cwd(),
+    repo: async () => {
+      await ensureRepo($)
+      return sessionRepo ?? null
+    },
+    gh: g,
+    ghReady: async () => {
+      await g.probe()
+      return g.isAvailable
+    },
+    githubHosts: () => githubHosts,
+    applyItems: change => applyItems($, change),
+    onAdded: keys => {
+      if (keys.length > 0) coordinator?.kick('capture', keys)
+    },
+  })
+  round = autoRound
+  scheduler = new AutoScheduler({
+    now: Date.now,
+    after: (ms, fn) => $.clock.after(ms, fn),
+    run: async reasons => {
+      await autoRound.run(reasons)
+      lastRoundAt = Date.now()
+    },
+  })
 }
+
+/** The status as the pane sees it. `lastRunAt` moves on every call and no view shows it, so it is not compared (A22). */
+const shown = (x: { gh: ToolStatus; acli: ToolStatus }): string =>
+  JSON.stringify([
+    { ...x.gh, lastRunAt: undefined },
+    { ...x.acli, lastRunAt: undefined },
+  ])
 
 /**
  * Active Jira site state:
@@ -116,13 +205,17 @@ async function filterToolRefs(refs: Ref[]): Promise<Ref[]> {
   return filterToolRefsForSite(refs, await activeJiraSite())
 }
 
-/** Copies the tool statuses to $.state for the pane. Skips the write when nothing changed. */
+/**
+ * Copies the tool statuses to $.state for the pane. Reads first and writes nothing when nothing the pane shows
+ * changed, so a quiet tick makes no write (A22).
+ */
 async function publishTools($: EngineInterface): Promise<void> {
   const g = gh
   const a = acli
   if (!g || !a) return
   const next = { gh: g.status(), acli: a.status() }
-  await update($, tools, cur => (JSON.stringify(cur) === JSON.stringify(next) ? (cur as typeof next) : next))
+  if (shown(await read($, tools)) === shown(next)) return
+  await update($, tools, () => next)
 }
 
 /** Change the list in $.state and remember the result in `mirror`. Every write to `items` goes through here. */
@@ -131,6 +224,115 @@ async function setItems($: EngineInterface, change: (list: ItemRecord[]) => Item
   const id = await $.session.id()
   // A write that lands after /clear but before the id change is seen belongs to the old session. Keep the old mirror.
   if (knownId !== undefined && id === knownId) mirror = { id, items: next }
+}
+
+/**
+ * Change the `auto` atom. Every write goes through here (A18, A22). It reads first and stops when the change
+ * returns its input: no write. Else `update` runs the change on the current value, with the module copy as the
+ * fallback after /clear, and retries on a version miss.
+ */
+async function setAuto($: EngineInterface, change: (cur: AutoState) => AutoState): Promise<AutoState> {
+  const cur = await read($, auto)
+  if (change(carryAuto(autoMirror, cur)) === cur) {
+    autoMirror = cur
+    return cur
+  }
+  const next = await update($, auto, c => change(carryAuto(autoMirror, c)))
+  autoMirror = next
+  return next
+}
+
+/** The `auto` atom, or the module copy when /clear reset it. */
+async function currentAuto($: EngineInterface): Promise<AutoState> {
+  return carryAuto(autoMirror, await read($, auto))
+}
+
+/**
+ * The item write of a round. `change` also gets the dismiss list, read inside the change from `autoMirror` (A20).
+ * Reads first and skips `update` when the change returns the input list itself (A22).
+ * Like `capture`, it looks at the session id first: a PR step that was in flight over /resume must not fill the new,
+ * empty list before `restore` has loaded the stored copy.
+ */
+async function applyItems(
+  $: EngineInterface,
+  change: (list: ItemRecord[], dismissed: ReadonlySet<string>) => DiscoveryApplied,
+): Promise<DiscoveryApplied> {
+  await ensureSession($)
+  const dismissed = (): ReadonlySet<string> => new Set((autoMirror ?? emptyAuto()).dismissed)
+  const cur = await read($, items)
+  let result = change(cur, dismissed())
+  if (result.list === cur) return result
+  await setItems($, list => {
+    result = change(list, dismissed())
+    return result.list
+  })
+  return result
+}
+
+/** A sign of life for a workflow agent (A7). A main-loop call has no agent id and does nothing. */
+async function touch($: EngineInterface, agentId: string | undefined): Promise<void> {
+  if (agentId !== undefined) await setAuto($, s => recordActivity(s, agentId, Date.now()))
+}
+
+/**
+ * Arms the 30 s tick, or arms it again when the last beat is over two periods old (A1). One refused period ends a
+ * `clock.every` for good, so every hook, kick, command and button press calls this. `now` and `lastBeatAt` both come
+ * from `$.clock.now()`. Render hooks do not call it: a render must not start timers. Never rejects.
+ */
+async function ensureTick($: EngineInterface): Promise<void> {
+  try {
+    const now = await $.clock.now()
+    if (tick && now - lastBeatAt <= 2 * LIMITS.tickMs) return
+    tick?.cancel()
+    lastBeatAt = now
+    tick = $.clock.every(LIMITS.tickMs, async () => {
+      try {
+        lastBeatAt = await $.clock.now()
+      } catch {
+        // Keep the old beat: the watchdog will arm the interval again.
+      }
+      await beat($)
+    })
+  } catch {
+    // No tick this time. The next hook tries again.
+  }
+}
+
+/** One beat: find the session and the repo again (after /clear), then one round and one refresh. */
+async function beat($: EngineInterface): Promise<void> {
+  try {
+    ensureRuntime($)
+    await ensureSession($)
+    await ensureRepo($)
+  } catch {
+    // The beat still kicks what it can.
+  }
+  scheduler?.kick('tick')
+  coordinator?.kick('tick')
+}
+
+/** Builds the runtime if needed and looks at the tick. The first step of every event hook. */
+function arm($: EngineInterface): void {
+  ensureRuntime($)
+  void ensureTick($)
+}
+
+/** An event reason for the round, and a look at the tick. */
+function kickAuto($: EngineInterface, reason: AutoReason): void {
+  void ensureTick($)
+  scheduler?.kick(reason)
+}
+
+/** The x button: the `auto` atom first, the items second. The order matters (spec 8, 10.5). */
+async function dismissOne($: EngineInterface, id: string): Promise<void> {
+  try {
+    ensureRuntime($)
+    void ensureTick($)
+    await setAuto($, s => dismiss(s, [id]))
+    if (!isRowId(id)) await setItems($, list => dropAuto(list, new Set([id])))
+  } catch {
+    // The row stays. The person can press again.
+  }
 }
 
 // ------------------------------------------------------------------ session id and repo
@@ -150,6 +352,8 @@ async function ensureSession($: EngineInterface): Promise<void> {
   sessionRepo = undefined
   repoTask = undefined
   if (prev === undefined) return
+  // The `auto` atom belongs to the run, not to a session id. After /clear $.state is empty; the module copy fills it.
+  await setAuto($, s => s)
   const stored = (await $.store.get('s:' + prev)) as { items?: ItemRecord[] } | undefined
   const held = mirror?.id === prev ? mirror.items : []
   mirror = undefined
@@ -216,6 +420,7 @@ async function resolveRepo($: EngineInterface): Promise<void> {
 async function capture($: EngineInterface, text: string, mode: ScanMode, source: Source): Promise<void> {
   if (text === '') return
   ensureRuntime($)
+  void ensureTick($)
   await ensureSession($)
   await ensureRepo($)
   let refs = extractRefs(text, { mode, defaultRepo: sessionRepo ?? null, githubHosts })
@@ -270,11 +475,14 @@ async function flush($: EngineInterface): Promise<void> {
 
 /** One session's copy, the index of copies (newest first) and the cap on how many copies stay. */
 async function writeStore($: EngineInterface, id: string, list: ItemRecord[]): Promise<void> {
+  const json = JSON.stringify(list)
+  if (flushed?.id === id && flushed.json === json) return
   await $.store.set('s:' + id, { items: list })
   const index = ((await $.store.get('index')) as string[] | undefined) ?? []
   const next = [id, ...index.filter(x => x !== id)]
   for (const old of next.slice(LIMITS.keepSessions)) await $.store.delete('s:' + old)
   await $.store.set('index', next.slice(0, LIMITS.keepSessions))
+  flushed = { id, json }
 }
 
 // ------------------------------------------------------------------ restore
@@ -326,6 +534,14 @@ function due(rec: ItemRecord): ItemRecord {
   return out
 }
 
+/** A stored copy comes back without auto sources: a new process has no proofs, so the first complete PR step adds back what is still tracked. */
+function withoutAuto(list: ItemRecord[]): ItemRecord[] {
+  const keys = new Set(
+    list.filter(r => r.via !== undefined || r.sources.some(s => AUTO_SOURCES.has(s))).map(r => r.key),
+  )
+  return dropAuto(list, keys)
+}
+
 function keepStored(rec: ItemRecord, activeSite: string | null | undefined): boolean {
   if (rec.category !== 'jira') return true
   if (activeSite === undefined) return true
@@ -342,7 +558,9 @@ async function restore($: EngineInterface): Promise<void> {
   // No gate on the index: two sessions that flush together can drop each other's id from it.
   const copy = (await $.store.get('s:' + id)) as { items?: ItemRecord[] } | undefined
   const activeSite = await activeJiraSite()
-  const stored = (copy?.items ?? []).filter(rec => keepStored(rec, activeSite)).map(due)
+  const stored = withoutAuto(copy?.items ?? [])
+    .filter(rec => keepStored(rec, activeSite))
+    .map(due)
   const have = new Set(stored.map(r => r.key))
   const fresh = (await fromTranscript($)).filter(r => !have.has(r.key))
   const all = unionRecords(stored, fresh)
@@ -360,13 +578,27 @@ async function restore($: EngineInterface): Promise<void> {
 
 // ------------------------------------------------------------------ /track
 
+/** The view context from what is known now. It does not wait for the repo: a render must not wait on `gh`. */
+async function contextOf($: EngineInterface, bodyColumns?: number): Promise<ViewContext> {
+  return {
+    now: Date.now(),
+    folded: (await read($, ui)).folded,
+    tools: await read($, tools),
+    sessionRepo,
+    auto: await currentAuto($),
+    ...(lastRoundAt !== undefined ? { autoCheckedAt: lastRoundAt } : {}),
+    ...(bodyColumns !== undefined ? { bodyColumns } : {}),
+  }
+}
+
+/** The context of the `/track` text: waits for the repo first, so `#N` keys are right. */
 async function viewContext($: EngineInterface): Promise<ViewContext> {
   await ensureRepo($)
-  return { now: Date.now(), folded: (await read($, ui)).folded, tools: await read($, tools), sessionRepo }
+  return contextOf($)
 }
 
 async function listText($: EngineInterface): Promise<string> {
-  return commandText(await read($, items), await viewContext($))
+  return composeCommandText(await read($, items), await viewContext($))
 }
 
 /** Waits for both `--version` probes (cached, so cheap) and publishes the statuses for the sections. */
@@ -380,28 +612,10 @@ async function openPane($: EngineInterface): Promise<void> {
   const opened = await $.ui.open({ id: PANE, title: 'Tracking', focus: true, closeOnEscape: true })
   if (!opened.isPlaced) $.ui.toast('Widen the terminal to see the tracking pane')
   await update($, ui, u => ({ folded: u?.folded ?? [], paneOpen: true }))
-  startTick($)
-}
-
-/**
- * The 30 s tick. It also checks the session id: after /clear no hook may run for a long time,
- * and the open pane would stay empty (D10).
- */
-function startTick($: EngineInterface): void {
-  tick ??= $.clock.every(LIMITS.tickMs, async () => {
-    try {
-      ensureRuntime($)
-      await ensureSession($)
-      // /clear forgets the session repo. Find it again, so the pane keeps short `#N` keys.
-      await ensureRepo($)
-    } catch {
-      // The tick still refreshes what it can.
-    }
-    coordinator?.kick('tick')
-  })
 }
 
 async function clearAll($: EngineInterface): Promise<void> {
+  flushed = undefined
   await setItems($, () => [])
   const id = await $.session.id()
   await $.store.delete('s:' + id)
@@ -477,22 +691,24 @@ export const register: Register = on => {
     try {
       ensureRuntime($)
       knownId = await $.session.id()
+      await setAuto($, s => pinRoot(s, e.cwd, Date.now())) // A3: a later session.start (reload) keeps the pinned root
+    } catch {
+      // No root this time. The next session.start pins it.
+    }
+    try {
       await restore($)
     } catch {
       // The list stays empty. New rows still land.
     }
-    try {
-      // A reload keeps the pane open but drops our timers. Start the tick again.
-      if ((await $.ui.panes()).some(p => p.id === PANE)) startTick($)
-    } catch {
-      // No tick until the pane is opened again.
-    }
+    await ensureTick($) // A1: from the start, with the pane open or closed
+    scheduler?.kick('start')
     return next(e)
   }).catch((_$, e, next) => next(e))
 
   on('command.run', { command: 'track' }, async ($, e) => {
     ensureRuntime($)
     await ensureSession($)
+    await ensureTick($)
     const g = gh
     const a = acli
     const c = coordinator
@@ -511,6 +727,7 @@ export const register: Register = on => {
       await settleProbes($)
       g.reset()
       a.reset()
+      scheduler?.kick('manual')
       const run = await c.runDue({ force: true })
       if (run.skipped) {
         // A run was in flight: the forced run is queued behind it. Wait, then publish the tool status again.
@@ -519,9 +736,13 @@ export const register: Register = on => {
         await c.idle()
         await publishTools($)
       }
+      await scheduler?.idle()
+      await round?.idle()
       return { text: await listText($) }
     }
     if (arg === 'clear') {
+      const ids = autoIds(await currentAuto($), await read($, items))
+      await setAuto($, s => dismiss(s, ids)) // so the next tick does not bring the auto items back (A14)
       await clearAll($)
       return { text: 'Tracking list cleared.' }
     }
@@ -531,8 +752,6 @@ export const register: Register = on => {
   on('ui.close', { id: PANE }, async ($, e, next) => {
     try {
       await update($, ui, u => ({ folded: u?.folded ?? [], paneOpen: false }))
-      tick?.cancel()
-      tick = null
     } catch {
       // Closing must not fail.
     }
@@ -542,14 +761,8 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const el = $.ui.resolve(e)
     const list = await read($, items)
-    const state = await read($, ui)
-    const sections = buildPane(list, {
-      now: Date.now(),
-      folded: state.folded,
-      tools: await read($, tools),
-      sessionRepo,
-    })
-    return renderPane(el, sections, columnsFor(e.props.bodyColumns), {
+    const sections = composePane(list, await contextOf($, e.props.bodyColumns))
+    return renderSections(el, sections, e.props.bodyColumns, {
       fold: id => {
         void update($, ui, u => {
           const folded = u?.folded ?? []
@@ -561,7 +774,12 @@ export const register: Register = on => {
       },
       refresh: () => {
         ensureRuntime($)
+        void ensureTick($)
         coordinator?.kick('manual')
+        scheduler?.kick('manual')
+      },
+      dismiss: id => {
+        void dismissOne($, id)
       },
     })
   }).catch(($, e) => {
@@ -572,7 +790,7 @@ export const register: Register = on => {
 
   // One line above the prompt. The engine's own band stays inside our Box.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const text = bandText(await read($, items))
+    const text = composeBand(await read($, items), await currentAuto($))
     if (text === null || e.props.hasSurvey) return next(e)
     const el = $.ui.resolve(e)
     const { Box } = el
@@ -583,4 +801,94 @@ export const register: Register = on => {
       </Box>
     )
   }).catch((_$, e, next) => next(e)) // a failed read leaves the band to the engine
+  // ---------------------------------------------------------------- auto tracking events (spec 7)
+
+  on('tool.call', { tool: 'EnterWorktree' }, async ($, e, next) => {
+    const ran = await next(e)
+    try {
+      arm($)
+      const f = fromEnterResult(ran, e.agentId)
+      if (f) await setAuto($, s => recordEnter(s, f, Date.now()))
+      await touch($, e.agentId)
+      kickAuto($, 'worktree')
+    } catch {
+      // The tool result goes back unchanged.
+    }
+    return ran
+  }).catch((_$, e, next) => next(e))
+
+  on('tool.call', { tool: 'ExitWorktree' }, async ($, e, next) => {
+    const ran = await next(e)
+    try {
+      arm($)
+      await touch($, e.agentId)
+      kickAuto($, 'worktree') // the next round marks the child removed (remove) or keeps it live (keep)
+    } catch {
+      // See above.
+    }
+    return ran
+  }).catch((_$, e, next) => next(e))
+
+  on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
+    const ran = await next(e)
+    try {
+      arm($)
+      const f = fromAgentResult(ran)
+      if (f?.worktreePath !== undefined) await setAuto($, s => recordAgentResult(s, f, Date.now()))
+      await touch($, e.agentId)
+      kickAuto($, 'agent')
+    } catch {
+      // See above.
+    }
+    return ran
+  }).catch((_$, e, next) => next(e))
+
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const ran = await next(e)
+    try {
+      arm($)
+      const f = fromBash(String(e.command ?? ''), ran, e.agentId)
+      const { agentId, branch } = f
+      if (agentId !== undefined && branch !== undefined) await setAuto($, s => recordAgentBranch(s, agentId, branch))
+      await touch($, e.agentId)
+      if (f.kick) kickAuto($, f.kick)
+    } catch {
+      // See above.
+    }
+    return ran
+  }).catch((_$, e, next) => next(e))
+
+  // A subagent or a workflow agent starts. `next` gives its id. The master cwd is read before `next`: it is the
+  // spawn-time location of a child of the main loop (A6).
+  on('agent.spawn', async ($, e, next) => {
+    let sessionCwd: string | undefined
+    if (e.cwd === undefined && e.parentAgentId === undefined) sessionCwd = await $.session.cwd().catch(() => undefined)
+    const out = await next(e)
+    try {
+      ensureRuntime($)
+      const f = fromSpawn(e, out)
+      if (f) await setAuto($, s => recordSpawn(s, f, Date.now(), sessionCwd))
+      kickAuto($, 'agent')
+    } catch {
+      // See above.
+    }
+    return out
+  }).catch((_$, e, next) => next(e))
+
+  on('turn.complete', async ($, e, next) => {
+    const out = await next(e)
+    try {
+      ensureRuntime($)
+      void ensureTick($) // a main-loop turn has no agent id and no fact, but it is the most regular beat to re-arm on
+      const f = fromTurnEnd(e)
+      if (f) {
+        const at = Date.now()
+        await setAuto($, s => recordTurnEnd(recordActivity(s, f.agentId, at), f.agentId, f.reason, at))
+        kickAuto($, 'agent')
+      }
+    } catch {
+      // See above.
+    }
+    return out
+  }).catch((_$, e, next) => next(e))
 }

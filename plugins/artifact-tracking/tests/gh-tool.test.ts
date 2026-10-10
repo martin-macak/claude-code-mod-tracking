@@ -1,8 +1,8 @@
 // GhTool: batched GraphQL refresh, outcome classification, host and repo probes. Pure, fake Runner.
 import { expect, test } from 'claude-code/testing'
-import type { GitHubTarget, Runner, RunResult } from '../hooks/contracts'
+import type { GitHubTarget, RunInit, Runner, RunResult } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
-import { buildQuery, GhTool, rollupToChecks } from '../hooks/tools/gh-tool'
+import { buildQuery, classifyReply, GhTool, rollupToChecks } from '../hooks/tools/gh-tool'
 import * as fx from './fixtures/gh'
 
 const NOW = 1_000_000
@@ -422,4 +422,100 @@ test('reset forgets a cached host denial, so a manual refresh can see a new logi
   expect(await tool.checkHost('ghe.corp')).toBe(false) // cached
   tool.reset()
   expect(await tool.checkHost('ghe.corp')).toBe(true)
+})
+
+// ---------------------------------------------------------------- classifyReply and graphql (spec A21)
+
+const DQ = 'query { repository(owner: "o", name: "r") { h0: pullRequests(headRefName: "x") { nodes { number } } } }'
+const DATA = JSON.stringify({ data: { repository: {} } })
+
+test('classifyReply: data wins, also with alias errors in the same reply', () => {
+  const stdout = JSON.stringify({ data: { a: 1 }, errors: [{ path: ['a'] }] })
+  expect(classifyReply(ok(stdout, 1))).toEqual({ kind: 'data', data: { a: 1 }, errors: [{ path: ['a'] }] })
+})
+
+test('classifyReply: auth by exit 4 and by the login hint', () => {
+  expect(classifyReply(ok('', 4, fx.AUTH_UNAUTH_STDERR)).kind).toBe('auth')
+  expect(classifyReply(ok('', 1, 'please run: gh auth login')).kind).toBe('auth')
+})
+
+test('classifyReply: truncated, query-error with its first message, unparsable', () => {
+  expect(classifyReply({ ...ok('{"data":'), isStdoutTruncated: true }).kind).toBe('truncated')
+  expect(classifyReply(ok(JSON.stringify({ errors: [{ message: 'Field x does not exist' }] }), 1))).toEqual({
+    kind: 'query-error',
+    detail: 'Field x does not exist',
+  })
+  expect(classifyReply(ok('not json', 1, 'boom')).kind).toBe('unparsable')
+  expect(classifyReply(ok(fx.AUTH_BAD_TOKEN_STDOUT, 1, fx.AUTH_BAD_TOKEN_STDERR)).kind).toBe('unparsable')
+})
+
+test('graphql: gh not probed as available is no-gh and makes no call', async () => {
+  const { run, calls } = rig(() => ok(DATA))
+  const tool = new GhTool(run, () => NOW)
+  expect(await tool.graphql('github.com', DQ)).toEqual({ ok: false, kind: 'no-gh' })
+  expect(calls).toHaveLength(0)
+})
+
+test('graphql: ok returns the reply; the argv is fixed and the run gets the discovery timeout', async () => {
+  const seen: (RunInit | undefined)[] = []
+  const argvs: string[][] = []
+  const run: Runner = async (argv, init) => {
+    if (argv[1] === '--version') return ok('gh version 2.102.0 (2026-09-30)')
+    argvs.push([...argv])
+    seen.push(init)
+    return ok(DATA)
+  }
+  const tool = new GhTool(run, () => NOW)
+  await tool.probe()
+  expect(await tool.graphql('ghe.corp', DQ)).toEqual({ ok: true, reply: { data: { repository: {} }, errors: [] } })
+  expect(argvs[0]).toEqual(['gh', 'api', 'graphql', '--hostname', 'ghe.corp', '-f', 'query=' + DQ])
+  expect(seen[0]?.timeoutMs).toBe(LIMITS.discoveryTimeoutMs)
+  expect(tool.status()).toMatchObject({ loggedIn: true, breaker: 'closed' })
+})
+
+test('graphql: exit 4 is auth and marks the tool logged out', async () => {
+  const { run } = rig(() => ok('', 4, fx.AUTH_UNAUTH_STDERR))
+  const tool = new GhTool(run, () => NOW)
+  await tool.probe()
+  expect(await tool.graphql('github.com', DQ)).toMatchObject({ ok: false, kind: 'auth' })
+  expect(tool.status().loggedIn).toBe(false)
+})
+
+test('graphql: a rejected run is transport and counts; three open the breaker, which then blocks', async () => {
+  const { run, calls, graphqlCalls } = rig(() => new Error('spawn gh ENOENT'))
+  const tool = new GhTool(run, () => NOW)
+  await tool.probe()
+  for (let i = 0; i < 3; i++)
+    expect(await tool.graphql('github.com', DQ)).toMatchObject({ ok: false, kind: 'transport' })
+  expect(tool.status().breaker).toBe('open')
+  const before = calls.length
+  expect(await tool.graphql('github.com', DQ)).toEqual({ ok: false, kind: 'blocked' })
+  expect(calls).toHaveLength(before)
+  expect(graphqlCalls()).toHaveLength(3)
+})
+
+test('graphql: unparsable output is transport and counts; three of them also block refreshItems', async () => {
+  const { run, graphqlCalls } = rig(() => ok('<html>', 1, 'gateway'))
+  const tool = new GhTool(run, () => NOW)
+  await tool.probe()
+  for (let i = 0; i < 3; i++)
+    expect(await tool.graphql('github.com', DQ)).toMatchObject({ ok: false, kind: 'transport' })
+  expect(tool.status().breaker).toBe('open')
+  await tool.refreshItems([item('cli', 'cli', 1)])
+  expect(graphqlCalls()).toHaveLength(3)
+})
+
+test('graphql: a query-level error and a cut reply leave the breaker closed after three in a row', async () => {
+  const queryError = rig(() => ok(JSON.stringify({ errors: [{ message: 'Field x' }] }), 1))
+  const a = new GhTool(queryError.run, () => NOW)
+  await a.probe()
+  for (let i = 0; i < 3; i++)
+    expect(await a.graphql('github.com', DQ)).toEqual({ ok: false, kind: 'query-error', error: 'Field x' })
+  expect(a.status()).toMatchObject({ breaker: 'closed', loggedIn: true })
+
+  const cut = rig(() => ({ ...ok('{"data":', 0), isStdoutTruncated: true }))
+  const b = new GhTool(cut.run, () => NOW)
+  await b.probe()
+  for (let i = 0; i < 3; i++) expect(await b.graphql('github.com', DQ)).toMatchObject({ ok: false, kind: 'truncated' })
+  expect(b.status().breaker).toBe('closed')
 })

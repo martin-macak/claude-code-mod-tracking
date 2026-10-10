@@ -1,0 +1,39 @@
+# Claude Code worktree creation probes (claude -p -w <name>; Agent isolation=worktree) in scratch repo
+## porcelain after probes
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo/.claude/worktrees/agent-af150263b2f928e63
+HEAD d38bb53da03b875899a07c5e4f02e0ba7a958829
+branch refs/heads/worktree-agent-af150263b2f928e63
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo/.claude/worktrees/child-ccc
+HEAD b042697e0b5466c67b6c41d93e79c81c00cf9242
+branch refs/heads/worktree-child-ccc
+--
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo/.claude/worktrees/probe-wt
+HEAD b8168631aad3bc31d4f728ade0e9d72b2a5e9d89
+branch refs/heads/worktree-probe-wt
+locked claude session probe-wt (pid 98851 start Sat Oct 10 16:24:44 2026)
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo/.claude/worktrees/probe2
+HEAD d38bb53da03b875899a07c5e4f02e0ba7a958829
+branch refs/heads/worktree-probe2
+locked claude session probe2 (pid 259 start Sat Oct 10 16:24:56 2026)
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo/.claude/worktrees/probe3
+HEAD d38bb53da03b875899a07c5e4f02e0ba7a958829
+branch refs/heads/worktree-probe3
+locked claude session probe3 (pid 19262 start Sat Oct 10 16:28:18 2026)
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo/.claude/worktrees/wf_bbb-1
+HEAD 99f0d9b249fc2a9318f2b7078e9998b25d1107c6
+branch refs/heads/wf-bbb
+## CLAUDE_BASE and lock files
+probe-wt: CLAUDE_BASE=b8168631aad3bc31d4f728ade0e9d72b2a5e9d89 locked=claude session probe-wt (pid 98851 start Sat Oct 10 16:24:44 2026)
+probe2: CLAUDE_BASE=d38bb53da03b875899a07c5e4f02e0ba7a958829 locked=claude session probe2 (pid 259 start Sat Oct 10 16:24:56 2026)
+probe3: CLAUDE_BASE=d38bb53da03b875899a07c5e4f02e0ba7a958829 locked=claude session probe3 (pid 19262 start Sat Oct 10 16:28:18 2026)
+agent-af150263b2f928e63: CLAUDE_BASE=d38bb53da03b875899a07c5e4f02e0ba7a958829 locked=
+## reflog
+worktree-probe-wt: branch: Created from HEAD
+worktree-probe2: branch: Created from origin/main
+worktree-probe3: branch: Created from origin/main
+worktree-agent-af150263b2f928e63: branch: Created from origin/main
+## remote default branch at probe2/3 time: origin/main = d38bb53; session branch feat/parent = b816863 (p3)

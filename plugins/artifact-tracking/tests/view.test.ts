@@ -1,7 +1,8 @@
 // View model: pure functions over ItemRecord[]. No engine, no files.
 import { expect, test } from 'claude-code/testing'
 import type { GitHubRecord, ItemRecord, JiraNode, JiraRecord, ToolStatus, WebRecord } from '../hooks/contracts'
-import { ago, bandText, buildPane, columnsFor, commandText, toolNote, type ViewContext } from '../hooks/ui/view'
+import { composeBand, composeCommandText } from '../hooks/ui/auto-view'
+import { ago, bandParts, buildPane, columnsFor, EMPTY_TEXT, toolNote, type ViewContext } from '../hooks/ui/view'
 
 const NOW = 1_000_000
 
@@ -244,7 +245,7 @@ test('ago steps', () => {
   expect(ago(3 * 86_400_000)).toBe('3d')
 })
 
-test('bandText counts categories and failing PRs; null when empty', () => {
+test('composeBand counts categories and failing PRs; null when empty', () => {
   const items: ItemRecord[] = [
     jira('ISS-1'),
     jira('ISS-2'),
@@ -253,15 +254,15 @@ test('bandText counts categories and failing PRs; null when empty', () => {
     pr(3, { checks: 'failure' }),
     web('https://a.dev', 'A'),
   ]
-  expect(bandText(items)).toBe('Jira 2 · GitHub 3 (2 ✗) · Links 1')
-  expect(bandText([pr(1)])).toBe('GitHub 1')
-  expect(bandText([web('https://a.dev', 'A')])).toBe('Links 1')
-  expect(bandText([])).toBeNull()
+  expect(composeBand(items, null)).toBe('Jira 2 · GitHub 3 (2 ✗) · Links 1')
+  expect(composeBand([pr(1)], null)).toBe('GitHub 1')
+  expect(composeBand([web('https://a.dev', 'A')], null)).toBe('Links 1')
+  expect(composeBand([], null)).toBeNull()
 })
 
-test('commandText: empty text and an indented tree', () => {
-  expect(commandText([], ctx())).toBe('No tracked items yet.')
-  const text = commandText(
+test('composeCommandText: empty text and an indented tree', () => {
+  expect(composeCommandText([], ctx())).toBe(EMPTY_TEXT)
+  const text = composeCommandText(
     [epic, pr(1, { state: 'open', title: 'Fix', checks: 'failure' })],
     ctx({ folded: ['jira:acme.atlassian.net/ISS-101'] }),
   )
@@ -280,4 +281,70 @@ test('columnsFor: defaults, and a narrow pane drops the extra column', () => {
   expect(columnsFor(96)).toEqual({ key: 16, type: 9, status: 13, extra: 10 })
   expect(columnsFor(70)).toEqual({ key: 16, type: 9, status: 13, extra: 10 })
   expect(columnsFor(60)).toEqual({ key: 16, type: 6, status: 13, extra: 0 })
+})
+
+// ---------------------------------------------------------------- auto sources (spec A17)
+
+const autoPr = (n: number): GitHubRecord => ({
+  key: `gh:github.com/acme/web#${n}`,
+  category: 'github',
+  url: `https://github.com/acme/web/pull/${n}`,
+  label: `acme/web#${n}`,
+  sources: ['auto'],
+  firstSeen: n,
+  lastSeen: n,
+  seenCount: 0,
+  host: 'github.com',
+  owner: 'acme',
+  repo: 'web',
+  number: n,
+  type: 'pr',
+  state: 'open',
+  checks: 'failure',
+})
+
+test('items with source auto are not in the GitHub section; a mentioned PR with auto is not either', () => {
+  const mentioned: GitHubRecord = { ...autoPr(2), sources: ['prompt', 'auto'] }
+  const issue: GitHubRecord = { ...autoPr(3), sources: ['pr-body'], type: 'issue', via: [autoPr(7).key] }
+  const sections = buildPane([autoPr(1), mentioned, issue], ctx())
+  expect(sections).toHaveLength(1)
+  expect(sections[0]?.id).toBe('github')
+  expect(sections[0]?.category).toBe('github')
+  expect(sections[0]?.rows.map(r => r.id)).toEqual([issue.key])
+})
+
+test('a body ref gets the via prefix; only an auto-only item has a dismiss id', () => {
+  const issue: GitHubRecord = {
+    ...autoPr(3),
+    sources: ['pr-body'],
+    type: 'issue',
+    title: 'Bug',
+    via: [autoPr(7).key, autoPr(9).key],
+  }
+  const kept: GitHubRecord = {
+    ...autoPr(4),
+    sources: ['prompt', 'pr-body'],
+    type: 'issue',
+    title: 'Kept',
+    via: [autoPr(7).key],
+  }
+  const rows = buildPane([issue, kept], ctx())[0]!.rows
+  expect(rows[0]).toMatchObject({ title: '↳#7,#9 Bug', dismissId: issue.key })
+  expect(rows[1]?.title).toBe('↳#7 Kept')
+  expect(rows[1]?.dismissId).toBeUndefined()
+  expect(buildPane([issue, kept], ctx())[0]?.dismissable).toBe(true)
+})
+
+test('an item section without auto rows is not dismissable and has no via prefix', () => {
+  const plain: GitHubRecord = { ...autoPr(5), sources: ['prompt'], title: 'Plain' }
+  const section = buildPane([plain], ctx())[0]!
+  expect(section.dismissable).toBe(false)
+  expect(section.rows[0]?.title).toBe('Plain')
+})
+
+test('bandParts counts GitHub items without source auto; composeBand adds the auto PRs apart', () => {
+  const plain: GitHubRecord = { ...autoPr(5), sources: ['prompt'] }
+  expect(bandParts([autoPr(1), plain])).toEqual(['GitHub 1 (1 ✗)'])
+  expect(bandParts([autoPr(1)])).toEqual([])
+  expect(composeBand([plain], null)).toBe('GitHub 1 (1 ✗)')
 })
