@@ -165,7 +165,7 @@ test('a URL and a bare #N for the same item make one item', async ($, on) => {
 
 test('pane: the dismiss button removes a manually tracked row', async ($, on) => {
   const { clock, calls } = world(on)
-  await $.session.append(prompt('check #5'))
+  await $.session.append(prompt('check issue #5'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
   await track($)
