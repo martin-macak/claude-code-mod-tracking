@@ -40,6 +40,7 @@ One list for branches, commits and PR titles:
 ### Branches
 
 - Format: `<type>/<kebab-case-summary>`. Examples: `feat/jira-column`, `fix/render-guards`, `chore/rules-and-linters`.
+- Copilot-created PR branches may use `copilot/<summary>` with the same character rules as type branches.
 - Lowercase letters, digits, `.`, `_` and `-` only after the slash.
 - Never commit to `main` directly. The `no-commit-to-branch` hook blocks it.
 
