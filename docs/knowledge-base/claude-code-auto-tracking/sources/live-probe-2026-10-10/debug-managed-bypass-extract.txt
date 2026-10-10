@@ -1,0 +1,12 @@
+2:2026-10-10T16:28:15.458Z [DEBUG] MDM settings found: env, attribution, permissions, otelHeadersHelper, PayloadUUID
+95:2026-10-10T16:28:15.586Z [DEBUG] cc-plugin-sec-default@builtin seated outermost: this machine has managed settings
+364:2026-10-10T16:28:16.133Z [DEBUG] wtprobe: classic.PostToolUse bypassed by cc-plugin-sec-default (tier user); beneath runs
+373:2026-10-10T16:28:16.447Z [DEBUG] wtprobe: classic.PostToolUse bypassed by cc-plugin-sec-default (tier user); beneath runs
+401:2026-10-10T16:28:16.460Z [DEBUG] wtprobe: classic.WorktreeCreate bypassed by cc-plugin-sec-default (tier user); beneath runs
+413:2026-10-10T16:28:17.943Z [DEBUG] wtprobe: classic.PostToolUse bypassed by cc-plugin-sec-default (tier user); beneath runs
+454:2026-10-10T16:28:17.958Z [DEBUG] wtprobe: classic.WorktreeCreate bypassed by cc-plugin-sec-default (tier user); beneath runs
+460:2026-10-10T16:28:19.541Z [DEBUG] wtprobe: classic.PostToolUse bypassed by cc-plugin-sec-default (tier user); beneath runs
+461:2026-10-10T16:28:19.541Z [DEBUG] wtprobe: classic.SubagentStart bypassed by cc-plugin-sec-default (tier user); beneath runs
+508:2026-10-10T16:28:19.577Z [DEBUG] wtprobe: classic.SubagentStop bypassed by cc-plugin-sec-default (tier user); beneath runs
+513:2026-10-10T16:28:19.594Z [DEBUG] wtprobe: classic.PostToolUse bypassed by cc-plugin-sec-default (tier user); beneath runs
+553:2026-10-10T16:28:19.787Z [DEBUG] wtprobe: classic.PostToolUse bypassed by cc-plugin-sec-default (tier user); beneath runs

@@ -1,0 +1,21 @@
+2:2026-10-10T16:46:46.828Z [DEBUG] MDM settings found: env, attribution, permissions, otelHeadersHelper, PayloadUUID
+53:2026-10-10T16:46:46.912Z [DEBUG] cc-plugin-sec-default@builtin seated outermost: this machine has managed settings
+98:2026-10-10T16:46:46.980Z [DEBUG] hooks module wtprobe@inline loaded (worker, environment 2, tier user); events: session.start,classic.WorktreeCreate,classic.WorktreeRemove,classic.SubagentStart,classic.SubagentStop,classic.CwdChanged,classic.PostToolUse,agent.spawn,tool.call
+296:2026-10-10T16:46:47.040Z [DEBUG] wtprobe: classic.WorktreeCreate bypassed by cc-plugin-sec-default (tier user); beneath runs
+297:2026-10-10T16:46:47.040Z [DEBUG] hooks module cc-plugin-sec-default@builtin classic.WorktreeCreate settled in 0.1ms (native link, next() included)
+301:2026-10-10T16:46:48.116Z [WARN] [worktree] fetch of origin/main failed — basing worktree on local HEAD
+302:2026-10-10T16:46:48.162Z [DEBUG] Created worktree at: <scratch>/repo/.claude/worktrees/probe-wt on branch: worktree-probe-wt
+306:2026-10-10T16:46:48.182Z [DEBUG] wtprobe: classic.PostToolUse bypassed by cc-plugin-sec-default (tier user); beneath runs
+349:2026-10-10T16:46:48.201Z [DEBUG] wtprobe: classic.WorktreeCreate bypassed by cc-plugin-sec-default (tier user); beneath runs
+350:2026-10-10T16:46:48.201Z [DEBUG] hooks module cc-plugin-sec-default@builtin classic.WorktreeCreate settled in 0.1ms (native link, next() included)
+353:2026-10-10T16:46:49.166Z [WARN] [worktree] fetch of origin/main failed — basing worktree on local HEAD
+354:2026-10-10T16:46:49.212Z [DEBUG] Created agent worktree at: <scratch>/repo/.claude/worktrees/agent-af8ee55cc70942543 on branch: worktree-agent-af8ee55cc70942543
+357:2026-10-10T16:46:49.232Z [DEBUG] wtprobe: classic.PostToolUse bypassed by cc-plugin-sec-default (tier user); beneath runs
+358:2026-10-10T16:46:49.233Z [DEBUG] wtprobe: classic.SubagentStart bypassed by cc-plugin-sec-default (tier user); beneath runs
+456:2026-10-10T16:46:53.531Z [DEBUG] wtprobe: classic.PostToolUse bypassed by cc-plugin-sec-default (tier user); beneath runs
+477:2026-10-10T16:46:53.540Z [DEBUG] wtprobe: classic.SubagentStop bypassed by cc-plugin-sec-default (tier user); beneath runs
+482:2026-10-10T16:46:53.638Z [DEBUG] Removed agent worktree at: <scratch>/repo/.claude/worktrees/agent-af8ee55cc70942543
+505:2026-10-10T16:46:56.522Z [DEBUG] wtprobe: classic.PostToolUse bypassed by cc-plugin-sec-default (tier user); beneath runs
+535:2026-10-10T16:46:56.593Z [DEBUG] Removed linked worktree at: <scratch>/repo/.claude/worktrees/probe-wt
+542:2026-10-10T16:46:56.701Z [DEBUG] Deleted worktree branch: worktree-probe-wt
+545:2026-10-10T16:46:56.703Z [DEBUG] wtprobe: classic.PostToolUse bypassed by cc-plugin-sec-default (tier user); beneath runs

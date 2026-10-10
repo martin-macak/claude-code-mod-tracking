@@ -1,0 +1,9 @@
+{ "main": [
+ [ {"type":"tool_use","id":"toolu_E1","name":"EnterWorktree","input":{"name":"probe-wt"}} ],
+ [ {"type":"tool_use","id":"toolu_A1","name":"Agent","input":{"description":"iso agent","prompt":"SUBMARK run pwd","subagent_type":"general-purpose","isolation":"worktree","run_in_background":true,"name":"iso-agent"}} ],
+ [ {"type":"tool_use","id":"toolu_W1","name":"Bash","input":{"command":"sleep 7","description":"wait"}} ],
+ [ {"type":"tool_use","id":"toolu_X1","name":"ExitWorktree","input":{"action":"remove","discard_changes":true}} ],
+ [ {"type":"text","text":"All done."} ] ],
+  "sub": [
+ [ {"type":"tool_use","id":"toolu_S1","name":"Bash","input":{"command":"pwd; git branch --show-current; sleep 4","description":"pwd"}} ],
+ [ {"type":"text","text":"sub done"} ] ] }

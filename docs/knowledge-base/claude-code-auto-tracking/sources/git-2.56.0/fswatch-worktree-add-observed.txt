@@ -1,0 +1,6 @@
+714ms refs/heads rename watchtest.lock
+764ms worktrees rename watchtest
+764ms refs/heads rename watchtest.lock
+764ms refs/heads rename watchtest
+764ms logs/refs/heads rename watchtest
+866ms refs/heads rename watchtest.lock

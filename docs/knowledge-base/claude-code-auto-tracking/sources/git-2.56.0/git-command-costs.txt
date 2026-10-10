@@ -1,0 +1,14 @@
+# avg of 20 runs, scratch repo with 14 worktrees, git git version 2.56.0
+   8.8 ms/call  git worktree list --porcelain
+   7.0 ms/call  git for-each-ref refs/heads --format="%(refname:short) %(objectname) %(upstream:short)"
+   6.7 ms/call  git merge-base --is-ancestor worktree-agent-aaa feat/parent
+   6.8 ms/call  git merge-base feat/parent worktree-child-ccc
+   6.9 ms/call  git rev-list --count feat/parent..worktree-child-ccc
+   6.8 ms/call  git reflog show --format=%gs worktree-child-ccc
+   7.2 ms/call  git branch --contains worktree-agent-aaa --format="%(refname:short)"
+   7.3 ms/call  git for-each-ref --contains 82e354a refs/heads
+   5.8 ms/call  git rev-parse --git-common-dir --show-toplevel --abbrev-ref HEAD
+   7.0 ms/call  git -C .claude/worktrees/child-ccc status --porcelain=v2 --branch
+# real repo (1 worktree)
+   5.8 ms/call  git worktree list --porcelain
+   5.6 ms/call  git rev-parse --git-common-dir --show-toplevel --abbrev-ref HEAD

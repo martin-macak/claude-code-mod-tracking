@@ -1,0 +1,11 @@
+[
+ [ {"type":"text","text":"Start."},
+   {"type":"tool_use","id":"toolu_B1","name":"Bash","input":{"command":"git worktree add -q -b feat/bashwt ../wt-bash","description":"wt"}},
+   {"type":"tool_use","id":"toolu_B2","name":"Bash","input":{"command":"gh pr create --title t --body y","description":"pr"}} ],
+ [ {"type":"tool_use","id":"toolu_E1","name":"EnterWorktree","input":{"name":"probe-wt"}} ],
+ [ {"type":"tool_use","id":"toolu_A1","name":"Agent","input":{"description":"iso agent","prompt":"run pwd","subagent_type":"general-purpose","isolation":"worktree"}} ],
+ [ {"type":"tool_use","id":"toolu_S1","name":"Bash","input":{"command":"pwd; git branch --show-current","description":"pwd"}} ],
+ [ {"type":"text","text":"sub done"} ],
+ [ {"type":"tool_use","id":"toolu_X1","name":"ExitWorktree","input":{"action":"remove","discard_changes":true}} ],
+ [ {"type":"text","text":"All done."} ]
+]

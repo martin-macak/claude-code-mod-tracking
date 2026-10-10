@@ -1,0 +1,46 @@
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo
+HEAD b8168631aad3bc31d4f728ade0e9d72b2a5e9d89
+branch refs/heads/feat/parent
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo-gone
+HEAD b8168631aad3bc31d4f728ade0e9d72b2a5e9d89
+branch refs/heads/gone-ggg
+prunable gitdir file points to non-existent location
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo-locked
+HEAD b8168631aad3bc31d4f728ade0e9d72b2a5e9d89
+branch refs/heads/locked-fff
+locked claude agent running
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo-pre
+HEAD b8168631aad3bc31d4f728ade0e9d72b2a5e9d89
+branch refs/heads/preexisting-hhh
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo-sib
+HEAD c3b71b33f56bfa4cdf2523e926b368b004bb1c99
+branch refs/heads/feat/sibling-of-main
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo-unrelated
+HEAD d38bb53da03b875899a07c5e4f02e0ba7a958829
+branch refs/heads/feat/unrelated
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo/.claude/worktrees/agent-aaa
+HEAD 3720b54095fed6bb6ffe5db1f07f03e205a9a1a8
+branch refs/heads/worktree-agent-aaa
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo/.claude/worktrees/child-ccc
+HEAD b042697e0b5466c67b6c41d93e79c81c00cf9242
+branch refs/heads/worktree-child-ccc
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo/.claude/worktrees/detached-eee
+HEAD 82e354a52b568141a4e32dcb8e0eef810c2e3c46
+detached
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo/.claude/worktrees/grand-ddd
+HEAD 236736e78b155c2134228dea99984040484c6c86
+branch refs/heads/grandchild-ddd
+
+worktree /private/tmp/claude-501/-Users-user-projects-claude-code-mod-tracking/29484de1-cef4-4282-97e8-750e88984c88/scratchpad/exp/repo/.claude/worktrees/wf_bbb-1
+HEAD 99f0d9b249fc2a9318f2b7078e9998b25d1107c6
+branch refs/heads/wf-bbb
+
