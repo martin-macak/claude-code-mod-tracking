@@ -346,6 +346,8 @@ function startTick($: EngineInterface): void {
     try {
       ensureRuntime($)
       await ensureSession($)
+      // /clear forgets the session repo. Find it again, so the pane keeps short `#N` keys.
+      await ensureRepo($)
     } catch {
       // The tick still refreshes what it can.
     }
@@ -501,6 +503,10 @@ export const register: Register = (on) => {
         coordinator?.kick('manual')
       },
     })
+  }).catch(($, e) => {
+    // A failed read must not close the pane. Draw one line instead.
+    const { Text } = $.ui.resolve(e)
+    return <Text dimColor>Tracking is unavailable. Run /track to try again.</Text>
   })
 
   // One line above the prompt. The engine's own band stays inside our Box.
@@ -515,5 +521,5 @@ export const register: Register = (on) => {
         {await next(e)}
       </Box>
     )
-  })
+  }).catch(($, e, next) => next(e)) // a failed read leaves the band to the engine
 }
