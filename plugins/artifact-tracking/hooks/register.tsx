@@ -87,8 +87,12 @@ function ensureRuntime($: EngineInterface): void {
   })
 }
 
-const lower = (s: string): string => s.toLowerCase()
-
+/**
+ * Active Jira site state:
+ * - `undefined`: no acli runtime (do not filter Jira refs)
+ * - `null`: acli runtime exists, but no active site could be loaded
+ * - `<host>`: active Jira site host
+ */
 async function activeJiraSite(): Promise<string | null | undefined> {
   const a = acli
   if (!a) return undefined
@@ -96,16 +100,20 @@ async function activeJiraSite(): Promise<string | null | undefined> {
   try {
     return await a.loadActiveSite()
   } catch {
-    return a.activeSite
+    return null
   }
 }
 
-async function filterToolRefs(refs: Ref[]): Promise<Ref[]> {
+function filterToolRefsForSite(refs: Ref[], site: string | null | undefined): Ref[] {
   if (!refs.some(r => r.category === 'jira')) return refs
-  const site = await activeJiraSite()
-  if (!site) return refs.filter(r => r.category !== 'jira')
-  const active = lower(site)
-  return refs.filter(r => r.category !== 'jira' || lower(r.site) === active)
+  if (site === undefined) return refs
+  if (site === null) return refs.filter(r => r.category !== 'jira')
+  const active = site.toLowerCase()
+  return refs.filter(r => r.category !== 'jira' || r.site.toLowerCase() === active)
+}
+
+async function filterToolRefs(refs: Ref[]): Promise<Ref[]> {
+  return filterToolRefsForSite(refs, await activeJiraSite())
 }
 
 /** Copies the tool statuses to $.state for the pane. Skips the write when nothing changed. */
@@ -291,6 +299,7 @@ async function fromTranscript($: EngineInterface): Promise<ItemRecord[]> {
   if (!Array.isArray(messages)) return []
   const batches: { refs: Ref[]; source: Source }[] = []
   const opts = { defaultRepo: sessionRepo ?? null, githubHosts }
+  const toolSite = await activeJiraSite()
   for (const m of messages) {
     const text = backfillText(m.role, m.text)
     if (text !== null)
@@ -300,8 +309,8 @@ async function fromTranscript($: EngineInterface): Promise<ItemRecord[]> {
       })
     for (const use of m.toolUses) {
       if (!use.text) continue
-      const refs = await filterToolRefs(extractRefs(use.text, { mode: 'urls-only', ...opts }))
-      batches.push({ refs, source: 'tool' })
+      const refs = filterToolRefsForSite(extractRefs(use.text, { mode: 'urls-only', ...opts }), toolSite)
+      if (refs.length > 0) batches.push({ refs, source: 'tool' })
     }
   }
   let list: ItemRecord[] = []
@@ -319,8 +328,9 @@ function due(rec: ItemRecord): ItemRecord {
 
 function keepStored(rec: ItemRecord, activeSite: string | null | undefined): boolean {
   if (rec.category !== 'jira') return true
-  if (!activeSite) return true
-  return !(rec.sources.length === 1 && rec.sources[0] === 'tool' && lower(rec.site) !== lower(activeSite))
+  if (activeSite === undefined) return true
+  if (rec.sources.length !== 1 || rec.sources[0] !== 'tool') return true
+  return activeSite !== null && rec.site.toLowerCase() === activeSite.toLowerCase()
 }
 
 /** Fill the list again at startup: the stored copy of this session, then what the transcript adds. */
