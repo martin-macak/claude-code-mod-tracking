@@ -207,7 +207,7 @@ test('mergeResults: takes status fields, keeps sightings, clears an absent error
   })
   expect('error' in r).toBe(false)
 })
-test('mergeResults: takes an error, jira fields and children', () => {
+test('mergeResults: drops records refreshed as not-found', () => {
   const base = recordFromRef(jiraRef(), s(1)) as JiraRecord
   const refreshed: JiraRecord = {
     ...base,
@@ -219,15 +219,23 @@ test('mergeResults: takes an error, jira fields and children', () => {
     children: [{ key: 'ISS-2', summary: 'c', issueType: 'Story', status: 'To Do', children: [] }],
     error: { kind: 'not-found', message: 'gone', at: 5 },
   }
-  const r = mergeResults([base], [refreshed])[0] as JiraRecord
-  expect(r).toMatchObject({
+  expect(mergeResults([base], [refreshed])).toEqual([])
+})
+
+test('mergeResults: keeps non-not-found errors', () => {
+  const base = recordFromRef(jiraRef(), s(1)) as JiraRecord
+  const refreshed: JiraRecord = {
+    ...base,
     summary: 'S',
     issueType: 'Epic',
     status: 'Done',
     statusCategory: 'done',
     refreshedAt: 5,
-    error: { kind: 'not-found' },
-  })
+    children: [{ key: 'ISS-2', summary: 'c', issueType: 'Story', status: 'To Do', children: [] }],
+    error: { kind: 'failed', message: 'forbidden', at: 5 },
+  }
+  const r = mergeResults([base], [refreshed])[0] as JiraRecord
+  expect(r.error).toMatchObject({ kind: 'failed', message: 'forbidden' })
   expect(r.children.length).toBe(1)
 })
 test('mergeResults: drops refreshed records whose key is gone; keeps untouched records', () => {

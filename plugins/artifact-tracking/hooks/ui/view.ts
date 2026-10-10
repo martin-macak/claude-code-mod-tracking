@@ -12,7 +12,6 @@ import type {
   ToolStatus,
   WebRecord,
 } from '../contracts'
-import { isAutoOnly } from '../model/keys'
 
 /** The `/track` text when nothing is tracked. */
 export const EMPTY_TEXT = 'No tracked items yet.'
@@ -174,8 +173,8 @@ function hostPath(url: string): string {
   return (m[1] ?? '') + path.slice(0, e)
 }
 
-/** An item that discovery added and no conversation row backs has a dismissable row. */
-const dismissFor = (rec: ItemRecord): { dismissId?: string } => (isAutoOnly(rec) ? { dismissId: rec.key } : {})
+/** Every top-level item row can be dismissed by key. */
+const dismissFor = (rec: ItemRecord): { dismissId?: string } => ({ dismissId: rec.key })
 
 /** `↳#7,#9 ` for an item that PR bodies name (spec 10.3), else an empty string. */
 function viaPrefix(via: readonly string[] | undefined): string {
