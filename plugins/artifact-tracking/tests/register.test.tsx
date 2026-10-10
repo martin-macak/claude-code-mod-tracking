@@ -372,6 +372,20 @@ test('tool-result row: only explicit GitHub and Jira URLs count, never bare #N o
   expect(text).not.toContain('#7')
 })
 
+test('tool-result row: Jira URLs on a foreign site are skipped', async ($, on) => {
+  const { clock, calls } = world(on)
+  await $.session.append(
+    toolResult(
+      "tests/view.test.ts:117: expect(root!.href).toBe('https://acme.atlassian.net/browse/ISS-101')\nsee https://vertice.atlassian.net/browse/ISS-2",
+    ),
+  )
+  await clock.advance(LIMITS.captureDebounceMs + 10)
+  await quiet(calls)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('ISS-101')
+  expect(text).not.toContain('ISS-2')
+})
+
 test('response row: a web link and a PR URL are captured; the row is stored as made', async ($, on) => {
   const { clock, calls } = world(on)
   const row = response(
@@ -559,6 +573,42 @@ test('session.start restores the stored copy of a session it knows', async ($, o
   world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { items: [stored] } } })
   await $.session.start(START)
   expect((await track($)).text).toContain('Kept page')
+})
+
+test('session.start prunes stored tool-only Jira items from a foreign site', async ($, on) => {
+  const kept: ItemRecord = {
+    key: 'jira:acme.atlassian.net/ISS-1',
+    category: 'jira',
+    url: 'https://acme.atlassian.net/browse/ISS-1',
+    label: 'ISS-1',
+    sources: ['prompt'],
+    firstSeen: 1,
+    lastSeen: 1,
+    seenCount: 1,
+    site: 'acme.atlassian.net',
+    issueKey: 'ISS-1',
+    trackOnly: false,
+    children: [],
+  }
+  const pruned: ItemRecord = {
+    key: 'jira:vertice.atlassian.net/ISS-2',
+    category: 'jira',
+    url: 'https://vertice.atlassian.net/browse/ISS-2',
+    label: 'ISS-2',
+    sources: ['tool'],
+    firstSeen: 2,
+    lastSeen: 2,
+    seenCount: 1,
+    site: 'vertice.atlassian.net',
+    issueKey: 'ISS-2',
+    trackOnly: false,
+    children: [],
+  }
+  world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { items: [kept, pruned] } } })
+  await $.session.start(START)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('ISS-1')
+  expect(text).not.toContain('ISS-2')
 })
 
 test('a burst of rows makes one store write after the delay; an empty list never replaces a stored one', async ($, on) => {

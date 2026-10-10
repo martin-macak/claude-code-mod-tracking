@@ -87,6 +87,27 @@ function ensureRuntime($: EngineInterface): void {
   })
 }
 
+const lower = (s: string): string => s.toLowerCase()
+
+async function activeJiraSite(): Promise<string | null | undefined> {
+  const a = acli
+  if (!a) return undefined
+  if (a.activeSite !== undefined) return a.activeSite
+  try {
+    return await a.loadActiveSite()
+  } catch {
+    return a.activeSite
+  }
+}
+
+async function filterToolRefs(refs: Ref[]): Promise<Ref[]> {
+  if (!refs.some(r => r.category === 'jira')) return refs
+  const site = await activeJiraSite()
+  if (!site) return refs.filter(r => r.category !== 'jira')
+  const active = lower(site)
+  return refs.filter(r => r.category !== 'jira' || lower(r.site) === active)
+}
+
 /** Copies the tool statuses to $.state for the pane. Skips the write when nothing changed. */
 async function publishTools($: EngineInterface): Promise<void> {
   const g = gh
@@ -189,7 +210,8 @@ async function capture($: EngineInterface, text: string, mode: ScanMode, source:
   ensureRuntime($)
   await ensureSession($)
   await ensureRepo($)
-  const refs = extractRefs(text, { mode, defaultRepo: sessionRepo ?? null, githubHosts })
+  let refs = extractRefs(text, { mode, defaultRepo: sessionRepo ?? null, githubHosts })
+  if (source === 'tool' && mode === 'urls-only') refs = await filterToolRefs(refs)
   if (refs.length === 0) return
   let added: string[] = []
   await setItems($, list => {
@@ -277,7 +299,9 @@ async function fromTranscript($: EngineInterface): Promise<ItemRecord[]> {
         source: m.role === 'user' ? 'prompt' : 'response',
       })
     for (const use of m.toolUses) {
-      if (use.text) batches.push({ refs: extractRefs(use.text, { mode: 'urls-only', ...opts }), source: 'tool' })
+      if (!use.text) continue
+      const refs = await filterToolRefs(extractRefs(use.text, { mode: 'urls-only', ...opts }))
+      batches.push({ refs, source: 'tool' })
     }
   }
   let list: ItemRecord[] = []
@@ -293,6 +317,12 @@ function due(rec: ItemRecord): ItemRecord {
   return out
 }
 
+function keepStored(rec: ItemRecord, activeSite: string | null | undefined): boolean {
+  if (rec.category !== 'jira') return true
+  if (!activeSite) return true
+  return !(rec.sources.length === 1 && rec.sources[0] === 'tool' && lower(rec.site) !== lower(activeSite))
+}
+
 /** Fill the list again at startup: the stored copy of this session, then what the transcript adds. */
 async function restore($: EngineInterface): Promise<void> {
   if ((await read($, items)).length > 0) return // a hot reload keeps $.state; nothing to restore
@@ -301,7 +331,8 @@ async function restore($: EngineInterface): Promise<void> {
   const id = await $.session.id()
   // No gate on the index: two sessions that flush together can drop each other's id from it.
   const copy = (await $.store.get('s:' + id)) as { items?: ItemRecord[] } | undefined
-  const stored = (copy?.items ?? []).map(due)
+  const activeSite = await activeJiraSite()
+  const stored = (copy?.items ?? []).filter(rec => keepStored(rec, activeSite)).map(due)
   const have = new Set(stored.map(r => r.key))
   const fresh = (await fromTranscript($)).filter(r => !have.has(r.key))
   const all = unionRecords(stored, fresh)
