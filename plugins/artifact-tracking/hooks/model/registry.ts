@@ -16,31 +16,13 @@ import type {
   WebRecord,
   WebRef,
 } from '../contracts'
-import { LIMITS } from '../contracts'
-import { normalizeUrl } from '../scan/links'
+import { AUTO_SOURCES, LIMITS } from '../contracts'
 import { GitHubItem } from './github-item'
 import { cloneNodes, JiraItem } from './jira-item'
+import { keyOf } from './keys'
 import { WebLink } from './web-link'
 
 // ---------------------------------------------------------------- keys
-
-const withoutFragment = (url: string): string => {
-  const i = url.indexOf('#')
-  return i < 0 ? url : url.slice(0, i)
-}
-
-export function keyOf(ref: Ref): string {
-  switch (ref.category) {
-    case 'github':
-      return ref.owner && ref.repo
-        ? `gh:${ref.host.toLowerCase()}/${ref.owner.toLowerCase()}/${ref.repo.toLowerCase()}#${ref.number}`
-        : `gh:?#${ref.number}`
-    case 'jira':
-      return `jira:${ref.site.toLowerCase()}/${ref.issueKey}`
-    case 'web':
-      return `web:${withoutFragment(normalizeUrl(ref.url))}`
-  }
-}
 
 // ---------------------------------------------------------------- record from ref
 
@@ -124,19 +106,26 @@ export function recordFromRef(ref: Ref, s: Sighting): ItemRecord {
 function cloneRecord<R extends ItemRecord>(rec: R): R {
   const out = { ...rec, sources: [...rec.sources] } as R
   if (rec.error) out.error = { ...rec.error }
+  if (rec.via) out.via = [...rec.via]
   if (out.category === 'jira') out.children = cloneNodes((rec as JiraRecord).children)
   return out
 }
 
 const unionSources = (a: readonly Source[], b: readonly Source[]): Source[] => [...new Set([...a, ...b])]
 
-/** Drops the records with the smallest lastSeen until `cap` is met. Keys in `keep` never go. */
-function enforceCap(list: ItemRecord[], cap: number, keep: ReadonlySet<string> = new Set()): ItemRecord[] {
-  const excess = list.length - cap
+const hasAutoSource = (rec: ItemRecord): boolean => rec.sources.some(s => AUTO_SOURCES.has(s))
+
+/**
+ * Drops the records with the smallest lastSeen until `cap` is met. Keys in `keep` never go.
+ * Only records without an auto source count against `cap`, and only they are evicted (spec A11):
+ * auto-only items have their own cap, `maxAutoItems`, enforced at the source.
+ */
+export function enforceCap(list: ItemRecord[], cap: number, keep: ReadonlySet<string> = new Set()): ItemRecord[] {
+  const excess = list.filter(rec => !hasAutoSource(rec)).length - cap
   if (excess <= 0) return list
   const victims = list
     .map((rec, i) => ({ rec, i }))
-    .filter(({ rec }) => !keep.has(rec.key))
+    .filter(({ rec }) => !hasAutoSource(rec) && !keep.has(rec.key))
     .sort((x, y) => x.rec.lastSeen - y.rec.lastSeen || x.i - y.i)
     .slice(0, excess)
     .map(({ i }) => i)
@@ -153,6 +142,9 @@ function fold(a: ItemRecord, b: ItemRecord): ItemRecord {
   const loser = winner === a ? b : a
   const out = cloneRecord(winner)
   out.sources = unionSources(a.sources, b.sources)
+  const via = [...new Set([...(a.via ?? []), ...(b.via ?? [])])]
+  if (via.length > 0) out.via = via
+  else delete out.via
   out.seenCount = a.seenCount + b.seenCount
   out.firstSeen = Math.min(a.firstSeen, b.firstSeen)
   out.lastSeen = Math.max(a.lastSeen, b.lastSeen)

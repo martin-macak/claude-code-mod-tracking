@@ -1,0 +1,35 @@
+# 1. sessions/<pid>.json (live registry; removed at process exit; value of peerToken/.key files NOT read)
+$ jq keys ~/.claude-personal/sessions/73969.json
+["cwd","entrypoint","kind","messagingSocketPath","name","nameSince","nameSource","peerFeatures","peerProtocol","pid","pidDomain","procStart","sessionId","startedAt","status","statusUpdatedAt","updatedAt","version"]
+$ jq (non-secret subset)
+{"pid":<pid>,"sessionId":"29484de1-cef4-4282-97e8-750e88984c88","cwd":"~/projects/claude-code-mod-tracking","startedAt":1791648748907,"procStart":"Sat Oct 10 16:12:27 2026","version":"2.1.296","kind":"interactive","entrypoint":"cli","name":"claude-code-mod-tracking-c5","nameSource":"derived","status":"busy","pidDomain":"darwin"}
+
+# 2. claude agents --json (public CLI, 0.13 s). Other sessions redacted.
+{"id":"395666d2","cwd":"<redacted>","kind":"background","startedAt":1783847972047,"sessionId":"395666d2-dc66-4b83-bf93-9dc91300bc2e","name":"<redacted>","state":"blocked"}
+{"id":"71eaef8f","cwd":"<redacted>","kind":"background","startedAt":1787575419952,"sessionId":"71eaef8f-0bbf-4bf8-8ac8-68554c7c16f3","name":"<redacted>","state":"blocked"}
+{"id":"3c108108","cwd":"<redacted>","kind":"background","startedAt":1790694538643,"sessionId":"3c108108-f8c6-40e9-b9cb-20d52c826ad9","name":"<redacted>","state":"blocked"}
+{"pid":<pid>,"cwd":"~/projects/claude-code-mod-tracking","kind":"interactive","startedAt":1791648748907,"sessionId":"29484de1-cef4-4282-97e8-750e88984c88","name":"claude-code-mod-tracking-c5","status":"busy"}
+
+# 3. jobs/<id>/state.json keys (background sessions)
+["backend","bgIsolation","children","cliVersion","createdAt","cwd","daemonShort","detail","fan","firstTerminalAt","inFlight","intent","interactiveLineage","linkScanOffset","linkScanPath","name","nameSource","needs","output","providerEnv","respawnFlags","resumeSessionId","sessionId","sessionPermissionRules","state","template","tempo","tokens","updatedAt"]
+
+# 4. subagent meta.json (workflow subagent, no worktree)
+{"agentType":"workflow-subagent","description":"research:runtime","workflowPhase":"Research","spawnDepth":1,"requestShape":"foreground","requestNonInteractive":false,"model":"sonnet"}
+# 5. subagent meta.json (Agent tool, isolation=worktree) - desc shortened
+{"agentType":"general-purpose","worktreePath":"~/projects/claude-code-mod-tracking/.claude/worktrees/agent-ac6c12bfb77683617","spawnedWithWorktree":true,"worktreeBranch":"worktree-agent-ac6c12bfb77683617","description":"Add GitHub Action for PR tests","toolUseId":"toolu_01MsmPBoD2kaSQVAGh7CxGKj","spawnDepth":1,"requestShape":"background","requestNonInteractive":true,"model":"sonnet"}
+# 6. subagent meta.json (workflow agent with worktree)
+{"agentType":"workflow-subagent","worktreePath":"~/projects/claude-code-mod-tracking/.claude/worktrees/wf_a35565d1-fd4-21","spawnedWithWorktree":true,"description":"fix","workflowPhase":"Fix","spawnDepth":1,"requestShape":"foreground","requestNonInteractive":false,"model":"sonnet"}
+# 7. workflow journal.jsonl keys
+["agentId","key","label","phase","type"]
+["agentId","key","result","type"]
+["type"]
+# 8. transcript line metadata (main session): type,cwd,gitBranch,isSidechain,agentId,parentUuid,sessionId,uuid
+{"type":"user","cwd":"~/projects/claude-code-mod-tracking","gitBranch":"main","isSidechain":false,"agentId":null,"parentUuid":"65fe85a1-f237-4ddd-973c-a4ff38202cf6","sessionId":"29484de1-cef4-4282-97e8-750e88984c88","uuid":"9c5977b8-130f-433f-ae4b-0b7c63151a03"}
+# 9. subagent transcript line metadata
+{"type":"user","cwd":"~/projects/claude-code-mod-tracking/docs/knowledge-base/claude-code-mods","gitBranch":"main","isSidechain":true,"agentId":"a5f09f8ba21c1f163","parentUuid":null,"sessionId":"29484de1-cef4-4282-97e8-750e88984c88"}
+# 10. worktree-state transcript line (EnterWorktree / claude -w): authoritative parent branch = originalBranch
+{"type":"worktree-state","worktreeSession":{"originalCwd":"~/projects/claude-code-mod-tracking","preEnterOriginalCwd":"~/projects/claude-code-mod-tracking","worktreePath":"~/projects/claude-code-mod-tracking/.claude/worktrees/chore+rules-and-linters","worktreeName":"chore/rules-and-linters","worktreeBranch":"worktree-chore+rules-and-linters","originalBranch":"main","originalHeadCommit":"989e39f42ef3fca7456ab8bbb578398a84048145","sessionId":"968214b5-9810-4233-893d-87a8aac4d4fc"},"sessionId":"968214b5-9810-4233-893d-87a8aac4d4fc"}
+jq: error: writing output failed: Broken pipe
+# 11. Agent-tool tool_use input keys (parent transcript) and tool result keys
+{"name":"Agent","input_keys":["description","isolation","model","prompt","run_in_background","subagent_type"]}
+{"name":"Agent","input_keys":["description","model","prompt","run_in_background","subagent_type"]}

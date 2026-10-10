@@ -1,0 +1,11 @@
+feat/parent              parent=?feat/unrelated feat/sibling-of-main worktree-probe2 via AMBIGUOUS reflog-sha-match
+worktree-agent-aaa       parent=feat/parent                                          via reflog-name
+wf-bbb                   parent=?feat/parent worktree-agent-aaa                      via AMBIGUOUS reflog-sha-match
+feat/unrelated           parent=-                                                    via reflog-name(outside set: main)
+worktree-child-ccc       parent=worktree-agent-aaa                                   via reflog-sha-match
+grandchild-ddd           parent=worktree-child-ccc                                   via reflog-sha-match
+locked-fff               parent=feat/parent                                          via reflog-name
+preexisting-hhh          parent=feat/parent                                          via reflog-name
+feat/sibling-of-main     parent=-                                                    via reflog-name(outside set: main)
+worktree-probe-wt        parent=?feat/parent locked-fff preexisting-hhh              via AMBIGUOUS reflog-sha-match
+worktree-probe2          parent=-                                                    via reflog-name(outside set: origin/main)

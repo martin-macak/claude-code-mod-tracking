@@ -7,7 +7,7 @@ export function renderBand(el: PaneElements, text: string): RenderElement {
   return (
     <Box columnGap={1}>
       <Text dimColor>tracking</Text>
-      <Text>{text}</Text>
+      <Text wrap="truncate-end">{text}</Text>
       <Text dimColor>/track</Text>
     </Box>
   )

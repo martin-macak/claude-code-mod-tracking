@@ -1,0 +1,1 @@
+{"main":[[{"type":"tool_use","id":"toolu_B","name":"Bash","input":{"command":"sleep 6","description":"wait"}}],[{"type":"text","text":"B done"}]]}
