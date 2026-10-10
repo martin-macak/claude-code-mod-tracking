@@ -115,11 +115,11 @@ function ensureRuntime($: EngineInterface): void {
     load: () => read($, items),
     save: async refreshed => {
       let dropped: string[] = []
+      const refreshedKeys = new Set(refreshed.map(rec => rec.key))
       await setItems($, list => {
         const merged = mergeResults(list, refreshed)
         const kept = new Set(merged.map(rec => rec.key))
-        const candidates = new Set(refreshed.map(rec => rec.key))
-        dropped = list.filter(rec => candidates.has(rec.key) && !kept.has(rec.key)).map(rec => rec.key)
+        dropped = list.filter(rec => refreshedKeys.has(rec.key) && !kept.has(rec.key)).map(rec => rec.key)
         return merged
       })
       if (dropped.length > 0) {
