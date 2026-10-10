@@ -1,0 +1,22 @@
+15:07:24.056 +   0.0s wait:8
+15:07:32.095 +   8.0s mark:start
+15:07:32.095 +   8.0s type:Please check #14622 and tell me where the fix is.
+15:07:32.163 +   8.1s enter
+15:07:32.260 +   8.2s waitfor:Here is what I found:25
+15:07:32.314   waitfor 'Here is what I found': found
+15:07:32.315 +   8.3s wait:2
+15:07:34.345 +  10.3s snap:A1-band-after-reply
+15:07:34.675 +  10.6s type:/track
+15:07:34.740 +  10.7s enter
+15:07:34.834 +  10.8s wait:6
+15:07:40.879 +  16.8s snap:A2-pane-open
+15:07:41.186 +  17.1s mark:clear-with-pane-open
+15:07:41.186 +  17.1s type:/clear
+15:07:41.259 +  17.2s enter
+15:07:41.339 +  17.3s wait:2
+15:07:43.358 +  19.3s snap:A3-after-clear-pane-open
+15:07:43.676 +  19.6s wait:34
+15:08:17.725 +  53.7s snap:A4-after-tick-35s
+15:08:18.040 +  54.0s esc
+15:08:18.093 +  54.0s wait:1.5
+15:08:19.619 +  55.6s snap:A5-after-esc

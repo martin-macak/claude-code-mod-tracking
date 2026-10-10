@@ -1,0 +1,81 @@
+{
+  "s:971bafe9-7511-440f-9032-bb2eddb6c758": {
+    "items": [
+      {
+        "key": "gh:github.com/cli/cli#14622",
+        "category": "github",
+        "url": "https://github.com/cli/cli/issues/14622",
+        "label": "cli/cli#14622",
+        "sources": [
+          "prompt"
+        ],
+        "firstSeen": 1791642296599,
+        "lastSeen": 1791642296599,
+        "seenCount": 1,
+        "host": "github.com",
+        "owner": "cli",
+        "repo": "cli",
+        "number": 14622,
+        "type": "issue",
+        "title": "gh pr edit fails with 'GraphQL: Projects (classic) is being deprecated' on repos with classic projects",
+        "state": "closed",
+        "stateReason": "DUPLICATE",
+        "refreshedAt": 1791642298086
+      },
+      {
+        "key": "gh:github.com/cli/cli#14640",
+        "category": "github",
+        "url": "https://github.com/cli/cli/pull/14640",
+        "label": "cli/cli#14640",
+        "sources": [
+          "response"
+        ],
+        "firstSeen": 1791642296599,
+        "lastSeen": 1791642296599,
+        "seenCount": 1,
+        "host": "github.com",
+        "owner": "cli",
+        "repo": "cli",
+        "number": 14640,
+        "type": "pr",
+        "title": "`gh issue artifact` stack 11/12: Address review feedback",
+        "state": "open",
+        "isDraft": false,
+        "reviewDecision": "REVIEW_REQUIRED",
+        "checks": "failure",
+        "refreshedAt": 1791642298086
+      },
+      {
+        "key": "web:https://code.claude.com/docs/en/plugins",
+        "category": "web",
+        "url": "https://code.claude.com/docs/en/plugins",
+        "label": "the plugin docs",
+        "sources": [
+          "response"
+        ],
+        "firstSeen": 1791642296599,
+        "lastSeen": 1791642296599,
+        "seenCount": 1
+      },
+      {
+        "key": "jira:example.atlassian.net/DEMO-1",
+        "category": "jira",
+        "url": "https://example.atlassian.net/browse/DEMO-1",
+        "label": "DEMO-1",
+        "sources": [
+          "response"
+        ],
+        "firstSeen": 1791642296599,
+        "lastSeen": 1791642296599,
+        "seenCount": 1,
+        "site": "example.atlassian.net",
+        "issueKey": "DEMO-1",
+        "trackOnly": false,
+        "children": []
+      }
+    ]
+  },
+  "index": [
+    "971bafe9-7511-440f-9032-bb2eddb6c758"
+  ]
+}

@@ -1,0 +1,17 @@
+15:08:42.326 +   0.0s wait:8
+15:08:50.332 +   8.0s type:Please check #14622 and tell me where the fix is.
+15:08:50.414 +   8.1s enter
+15:08:50.508 +   8.2s waitfor:Here is what I found:25
+15:08:50.568   waitfor 'Here is what I found': found
+15:08:50.569 +   8.2s mark:clear-right-after-reply
+15:08:50.569 +   8.2s type:/clear
+15:08:50.627 +   8.3s enter
+15:08:50.707 +   8.4s wait:3
+15:08:53.721 +  11.4s snap:B1-after-clear
+15:08:54.036 +  11.7s type:/track
+15:08:54.114 +  11.8s enter
+15:08:54.209 +  11.9s wait:6
+15:09:00.215 +  17.9s snap:B2-track-after-clear
+15:09:00.538 +  18.2s esc
+15:09:00.590 +  18.3s wait:1.5
+15:09:02.104 +  19.8s snap:B3-after-esc

@@ -1,0 +1,28 @@
+== 60-debug-run1.txt
+lines with artifact-tracking and (ERROR|WARN|refus|reject|denied|unhandled|exception|threw):
+0
+[ERROR] lines of any source:
+2026-10-10T15:06:51.274Z [ERROR] NON-FATAL: Lock acquisition failed for ~/.local/share/claude/versions/2.1.296 (expected in multi-process scenarios): Lock alrea
+2026-10-10T15:06:52.120Z [ERROR] [Anthropic telemetry] Failed to check metrics opt-out status: Auth error: no credential usable for the metrics opt-out check
+== 60-debug-run2.txt
+lines with artifact-tracking and (ERROR|WARN|refus|reject|denied|unhandled|exception|threw):
+0
+[ERROR] lines of any source:
+2026-10-10T15:06:55.856Z [ERROR] NON-FATAL: Lock acquisition failed for ~/.local/share/claude/versions/2.1.296 (expected in multi-process scenarios): Lock alrea
+2026-10-10T15:06:56.431Z [ERROR] [Anthropic telemetry] Failed to check metrics opt-out status: Auth error: no credential usable for the metrics opt-out check
+== 60-debug-run3.txt
+lines with artifact-tracking and (ERROR|WARN|refus|reject|denied|unhandled|exception|threw):
+0
+[ERROR] lines of any source:
+2026-10-10T15:07:00.112Z [ERROR] NON-FATAL: Lock acquisition failed for ~/.local/share/claude/versions/2.1.296 (expected in multi-process scenarios): Lock alrea
+2026-10-10T15:07:01.532Z [ERROR] [Anthropic telemetry] Failed to check metrics opt-out status: Auth error: no credential usable for the metrics opt-out check
+== 61-debug-repl-A.txt
+lines with artifact-tracking and (ERROR|WARN|refus|reject|denied|unhandled|exception|threw):
+0
+[ERROR] lines of any source:
+2026-10-10T15:07:24.239Z [ERROR] NON-FATAL: Lock acquisition failed for ~/.local/share/claude/versions/2.1.296 (expected in multi-process scenarios): Lock alrea
+== 62-debug-repl-B.txt
+lines with artifact-tracking and (ERROR|WARN|refus|reject|denied|unhandled|exception|threw):
+0
+[ERROR] lines of any source:
+2026-10-10T15:08:42.507Z [ERROR] NON-FATAL: Lock acquisition failed for ~/.local/share/claude/versions/2.1.296 (expected in multi-process scenarios): Lock alrea

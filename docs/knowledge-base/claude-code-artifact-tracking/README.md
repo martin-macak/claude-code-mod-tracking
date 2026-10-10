@@ -30,7 +30,7 @@ Read the [mods KB](../claude-code-mods/AGENTS.md) and its [gotchas](../claude-co
 | [jira.md](jira.md) | `acli` calls: view, search, fields, subtasks and the Epic tree, errors, breaker rules, sites and versions |
 | [reference-patterns.md](reference-patterns.md) | Which text becomes an item: GitHub URLs, bare `#N` rules and false positives, Jira URLs, reuse of the link-capture scanner |
 | [open-questions.md](open-questions.md) | Source conflicts, review log, unobserved points, **decisions for the user** |
-| [`sources/`](sources/) | `gh-2.102.0/`, `acli-1.3.19/`, `acli-docs-2026-10-10/` (verbatim, redacted), `live-observations-2026-10-10/` (probe mod and recorded runs) |
+| [`sources/`](sources/) | `gh-2.102.0/`, `acli-1.3.19/`, `acli-docs-2026-10-10/` (verbatim, redacted), `live-observations-2026-10-10/` (probe mod and recorded runs), `live-smoke-2026-10-10/` (the finished mod, run live) |
 
 ## The flow in one picture
 

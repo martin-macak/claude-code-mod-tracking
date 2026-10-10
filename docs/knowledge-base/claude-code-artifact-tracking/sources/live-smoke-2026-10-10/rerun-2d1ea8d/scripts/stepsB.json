@@ -1,0 +1,2 @@
+["wait:8","type:Please check #14622 and tell me where the fix is.","enter","waitfor:Here is what I found:25","mark:clear-right-after-reply","type:/clear","enter","wait:3","snap:B1-after-clear",
+ "type:/track","enter","wait:6","snap:B2-track-after-clear","esc","wait:1.5","snap:B3-after-esc"]

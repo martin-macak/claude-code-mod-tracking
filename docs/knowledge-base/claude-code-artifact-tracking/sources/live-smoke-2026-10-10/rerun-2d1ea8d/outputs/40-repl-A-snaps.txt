@@ -1,0 +1,145 @@
+===== snap A1-band-after-reply  at 15:07:34.671 (+10.6s)
+u ▐▛███▛█  Claude Code v2.1.296
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /…/claude-501/-Users-<user>-projects-<repo>/7c6e24a2-039c-4a91-8bd8-dd7583bc0b65/scratchpad/rr/sa/proj
+
+▎ Auto mode is now Claude Code's default permission mode.
+▎ Auto mode lets Claude handle permission prompts automatically. Claude checks each tool call for risky actions and prompt injection before
+▎ executing, runs the ones it assesses as lower-risk, and blocks the rest.
+▎ https://code.claude.com/docs/en/permission-modes
+  1 more notice hidden
+
+❯ Please check #14622 and tell me where the fix is.
+
+⏺ Here is what I found. The fix is in https://github.com/cli/cli/pull/14640 and the discussion is in the plugin docs. The Jira ticket
+  https://example.atlassian.net/browse/DEMO-1 tracks it.
+
+✻ Cooked for 0s · done 5:07 PM
+tracking Jira 1 · GitHub 2 (1 ✗) · Links 1 /track                                                                                       [-]
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+
+===== snap A2-pane-open  at 15:07:41.185 (+17.1s)
+u ▐▛███▛█  Claude Code v2.1.296
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /…/claude-501/-Users-<user>-projects-<repo>/7c6e24a2-039c-4a91-8bd8-dd7583bc0b65/scratchpad/rr/sa/proj
+
+▎ Auto mode is now Claude Code's default permission mode.
+▎ Auto mode lets Claude handle permission prompts automatically. Claude checks each tool call for risky actions and prompt injection before
+▎ executing, runs the ones it assesses as lower-risk, and blocks the rest.
+▎ https://code.claude.com/docs/en/permission-modes
+  1 more notice hidden
+
+❯ Please check #14622 and tell me where the fix is.
+
+⏺ Here is what I found. The fix is in https://github.com/cli/cli/pull/14640 and the discussion is in the plugin docs. The Jira ticket
+  https://example.atlassian.net/browse/DEMO-1 tracks it.
+
+✻ Cooked for 0s · done 5:07 PM
+
+❯ /track
+  ⎿  artifact-tracking: Jira work items  acli · <site>.atlassian.net · ready
+       DEMO-1  DEMO-1  track-only
+
+     GitHub  gh · refreshed just now
+       #14622  gh pr edit fails with 'GraphQL: Projects (classic) is being deprecated' on repos with classic projects  Issue  closed
+       #14640  gh issue artifact stack 11/12: Address review feedback  PR  open  ✗ checks
+
+     Web links  1 links
+       the plugin docs  code.claude.com/docs/en/plugins
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────✕─╮
+│ Jira work items acli · <site>.atlassian.net · ready                                                                                     │
+│   DEMO-1         DEMO-1                                                                                         track-only               │
+│                                                                                                                                          │
+│ GitHub gh · refreshed just now                                                                                                           │
+│   #14622         gh pr edit fails with 'GraphQL: Projects (classic) is being deprecated' on repos wi… Issue     closed                   │
+│   #14640         `gh issue artifact` stack 11/12: Address review feedback                             PR        open          ✗ checks   │
+│                                                                                                                                          │
+│ Web links 1 links                                                                                                                        │
+│   the plugin do… code.claude.com/docs/en/plugins                                                                                         │
+│                                                                                                                                          │
+│ [ Refresh ] Esc close                                                                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+tracking Jira 1 · GitHub 2 (1 ✗) · Links 1 /track                                                                                       [-]
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+
+===== snap A3-after-clear-pane-open  at 15:07:43.673 (+19.6s)
+ ▐▛███▛█   Claude Code v2.1.296
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /…/claude-501/-Users-<user>-projects-<repo>/7c6e24a2-039c-4a91-8bd8-dd7583bc0b65/scratchpad/rr/sa/proj
+
+▎ Auto mode is now Claude Code's default permission mode.
+▎ Auto mode lets Claude handle permission prompts automatically. Claude checks each tool call for risky actions and prompt injection before
+▎ executing, runs the ones it assesses as lower-risk, and blocks the rest.
+▎ https://code.claude.com/docs/en/permission-modes
+  1 more notice hidden
+
+❯ /clear
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────✕─╮
+│ No tracked items yet.                                                                                                                    │
+│                                                                                                                                          │
+│ [ Refresh ] Esc close                                                                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+
+===== snap A4-after-tick-35s  at 15:08:18.037 (+54.0s)
+ ▐▛███▛█   Claude Code v2.1.296
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /…/claude-501/-Users-<user>-projects-<repo>/7c6e24a2-039c-4a91-8bd8-dd7583bc0b65/scratchpad/rr/sa/proj
+
+▎ Auto mode is now Claude Code's default permission mode.
+▎ Auto mode lets Claude handle permission prompts automatically. Claude checks each tool call for risky actions and prompt injection before
+▎ executing, runs the ones it assesses as lower-risk, and blocks the rest.
+▎ https://code.claude.com/docs/en/permission-modes
+  1 more notice hidden
+
+❯ /clear
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────✕─╮
+│ Jira work items acli · <site>.atlassian.net · ready                                                                                     │
+│   DEMO-1         DEMO-1                                                                                         track-only               │
+│                                                                                                                                          │
+│ GitHub gh · refreshed 30s ago                                                                                                            │
+│   cli/cli#14622  gh pr edit fails with 'GraphQL: Projects (classic) is being deprecated' on repos wi… Issue     closed                   │
+│   cli/cli#14640  `gh issue artifact` stack 11/12: Address review feedback                             PR        open          ✗ checks   │
+│                                                                                                                                          │
+│ Web links 1 links                                                                                                                        │
+│   the plugin do… code.claude.com/docs/en/plugins                                                                                         │
+│                                                                                                                                          │
+│ [ Refresh ] Esc close                                                                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+tracking Jira 1 · GitHub 2 (1 ✗) · Links 1 /track                                                                                       [-]
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+
+===== snap A5-after-esc  at 15:08:19.930 (+55.9s)
+ ▐▛███▛█   Claude Code v2.1.296
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   /…/claude-501/-Users-<user>-projects-<repo>/7c6e24a2-039c-4a91-8bd8-dd7583bc0b65/scratchpad/rr/sa/proj
+
+▎ Auto mode is now Claude Code's default permission mode.
+▎ Auto mode lets Claude handle permission prompts automatically. Claude checks each tool call for risky actions and prompt injection before
+▎ executing, runs the ones it assesses as lower-risk, and blocks the rest.
+▎ https://code.claude.com/docs/en/permission-modes
+  1 more notice hidden
+
+❯ /clear
+tracking Jira 1 · GitHub 2 (1 ✗) · Links 1 /track                                                                                       [-]
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

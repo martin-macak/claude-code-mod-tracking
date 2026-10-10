@@ -1,0 +1,59 @@
+2026-10-10T15:08:42.471Z [DEBUG] --plugin-dir <repo>/plugins/artifact-tracking is one plugin: .claude-plugin at its top marks it
+2026-10-10T15:08:42.476Z [DEBUG] Read hooks.json for plugin artifact-tracking (enabled=true): <repo>/plugins/artifact-tracking/hooks/hooks.json
+2026-10-10T15:08:42.477Z [DEBUG] Loaded inline plugin from path: artifact-tracking
+2026-10-10T15:08:42.478Z [DEBUG] Checking plugin artifact-tracking: skillsPath=none, skillsPaths=0 paths
+2026-10-10T15:08:42.507Z [ERROR] NON-FATAL: Lock acquisition failed for ~/.local/share/claude/versions/2.1.296 (expected in multi-process scenarios): Lock already held by another process
+2026-10-10T15:08:42.672Z [DEBUG] hooks module artifact-tracking@inline loaded (worker, environment 2, tier user); events: session.append,session.start,command.run,ui.close,ui.render
+2026-10-10T15:08:42.674Z [DEBUG] engine.create: no plugin-provided interfaces; $ built for cc-plugin-sec-default,artifact-tracking,cc-plugin-agents-md,cc-plugin-telemetry,cc-plugin-diff
+2026-10-10T15:08:42.675Z [DEBUG] plugin.register: artifact-tracking (user, artifact-tracking@inline), judged by cc-plugin-sec-default: admitted
+2026-10-10T15:08:42.691Z [DEBUG] plugin-dir watch: watching artifact-tracking; folders of plugins none
+2026-10-10T15:08:42.718Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 4.5ms (worker hop, next() included) key=above-prompt
+2026-10-10T15:08:42.728Z [DEBUG] type root of artifact-tracking at <repo>/plugins/artifact-tracking/.claude-plugin/types: entries claude-code, claude-code-tools, claude-code-mcp; wrote nothing
+2026-10-10T15:08:42.731Z [DEBUG] $.command.register (artifact-tracking): /track listed
+2026-10-10T15:08:42.734Z [DEBUG] $.process.run (artifact-tracking): gh with 1 args in <scratch>/sb/proj (pid 19651)
+2026-10-10T15:08:42.735Z [DEBUG] $.process.run (artifact-tracking): acli with 1 args in <scratch>/sb/proj (pid 19652)
+2026-10-10T15:08:42.742Z [DEBUG] hooks module artifact-tracking@inline session.start settled in 12.1ms (worker hop, next() included)
+2026-10-10T15:08:42.745Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 0.8ms (worker hop, next() included) key=above-prompt
+2026-10-10T15:08:42.766Z [DEBUG] $.process.run (artifact-tracking): gh exited 0 in 33ms, 81 + 0 chars
+2026-10-10T15:08:43.289Z [DEBUG] $.process.run (artifact-tracking): acli exited 0 in 555ms, 201 + 0 chars
+2026-10-10T15:08:50.442Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 6.7ms (worker hop, next() included) key=above-prompt
+2026-10-10T15:08:50.443Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 16.2ms (worker hop, next() included)
+2026-10-10T15:08:50.453Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 9.7ms (worker hop, next() included) key=above-prompt
+2026-10-10T15:08:50.500Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 3.1ms (worker hop, next() included)
+2026-10-10T15:08:50.506Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 6.5ms (worker hop, next() included) key=above-prompt
+2026-10-10T15:08:50.515Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 3.6ms (worker hop, next() included) key=above-prompt
+2026-10-10T15:08:50.643Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 9.0ms (worker hop, next() included)
+2026-10-10T15:08:50.644Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 5.0ms (worker hop, next() included) key=above-prompt
+2026-10-10T15:08:50.644Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.4ms (worker hop, next() included)
+2026-10-10T15:08:50.647Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.7ms (worker hop, next() included)
+2026-10-10T15:08:50.652Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 2.0ms (worker hop, next() included) key=above-prompt
+2026-10-10T15:08:51.950Z [DEBUG] $.store.set (artifact-tracking@inline): s:388da78c-eecf-4f3d-a3bf-2ca5de1f6574
+2026-10-10T15:08:51.953Z [DEBUG] $.store.set (artifact-tracking@inline): index
+2026-10-10T15:08:51.959Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 2.3ms (worker hop, next() included) key=above-prompt
+2026-10-10T15:08:51.965Z [DEBUG] $.store.set (artifact-tracking@inline): s:f2ae1504-5d39-44fb-ade3-f5f092fe3e14
+2026-10-10T15:08:51.968Z [DEBUG] $.store.set (artifact-tracking@inline): index
+2026-10-10T15:08:54.127Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 3.8ms (worker hop, next() included) key=above-prompt
+2026-10-10T15:08:54.130Z [DEBUG] ui.open artifact-tracking track (asked, 140 columns): placed
+2026-10-10T15:08:54.132Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 2.9ms (worker hop, next() included) key=above-prompt
+2026-10-10T15:08:54.134Z [DEBUG] $.process.run (artifact-tracking): gh with 6 args in <scratch>/sb/proj (pid 19736)
+2026-10-10T15:08:54.134Z [DEBUG] $.process.run (artifact-tracking): acli with 3 args in <scratch>/sb/proj (pid 19737)
+2026-10-10T15:08:54.136Z [DEBUG] artifact-tracking (user) answered ui.render without next() in 4.4ms; nothing beneath it ran for this dispatch
+2026-10-10T15:08:54.136Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 4.7ms (worker hop, next() included) key=track
+2026-10-10T15:08:54.137Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 4.7ms (worker hop, next() included) key=track
+2026-10-10T15:08:54.137Z [DEBUG] artifact-tracking (user) answered command.run without next() in 17.8ms; nothing beneath it ran for this dispatch
+2026-10-10T15:08:54.137Z [DEBUG] hooks module artifact-tracking@inline command.run settled in 18.8ms (worker hop, next() included)
+2026-10-10T15:08:54.144Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 6.4ms (worker hop, next() included)
+2026-10-10T15:08:54.147Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.4ms (worker hop, next() included)
+2026-10-10T15:08:54.152Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 1.7ms (worker hop, next() included) key=above-prompt
+2026-10-10T15:08:54.617Z [DEBUG] $.process.run (artifact-tracking): acli exited 0 in 482ms, 116 + 0 chars
+2026-10-10T15:08:55.073Z [DEBUG] $.process.run (artifact-tracking): gh exited 0 in 940ms, 646 + 0 chars
+2026-10-10T15:08:55.080Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 1.3ms (worker hop, next() included) key=above-prompt
+2026-10-10T15:08:55.082Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 3.2ms (worker hop, next() included) key=track
+2026-10-10T15:08:55.114Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 1.5ms (worker hop, next() included) key=track
+2026-10-10T15:08:55.150Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 2.0ms (worker hop, next() included) key=track
+2026-10-10T15:08:56.588Z [DEBUG] $.store.set (artifact-tracking@inline): s:f2ae1504-5d39-44fb-ade3-f5f092fe3e14
+2026-10-10T15:08:56.591Z [DEBUG] $.store.set (artifact-tracking@inline): index
+2026-10-10T15:09:00.603Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 7.6ms (worker hop, next() included) key=track
+2026-10-10T15:09:00.604Z [DEBUG] hooks module artifact-tracking@inline ui.close settled in 13.5ms (worker hop, next() included)
+2026-10-10T15:09:00.606Z [DEBUG] hooks module artifact-tracking@inline ui.render settled in 5.8ms (worker hop, next() included) key=track
+2026-10-10T15:09:04.137Z [DEBUG] artifact-tracking (user) answered ui.render without next() 6 more times in the last 10s (the last in 5.4ms)

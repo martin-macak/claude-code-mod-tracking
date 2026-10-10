@@ -15,6 +15,7 @@ Research for a Claude Code mod that tracks GitHub issues and PRs, Jira work item
 - Mod API: `../claude-code-mods/sources/claude-code-2.1.295/types/claude-code.d.ts`. It wins over any page here.
 - `gh` facts: `sources/gh-2.102.0/`. `acli` facts: `sources/acli-1.3.19/` and `sources/acli-docs-2026-10-10/`.
 - Live mod observations: `sources/live-observations-2026-10-10/` (a probe mod, its tests, and recorded runs).
+- Live smoke run of the finished mod: `sources/live-smoke-2026-10-10/` (headless runs, a REPL run with a real `/clear`).
 - Never edit files under `sources/`. To refresh, add a new versioned folder (for example `sources/acli-1.3.39/`).
 
 ## Rules for editing this slug

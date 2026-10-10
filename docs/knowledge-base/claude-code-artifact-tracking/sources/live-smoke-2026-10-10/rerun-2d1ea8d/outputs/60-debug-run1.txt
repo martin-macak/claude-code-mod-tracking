@@ -1,0 +1,18 @@
+2026-10-10T15:06:48.232Z [DEBUG] --plugin-dir <repo>/plugins/artifact-tracking is one plugin: .claude-plugin at its top marks it
+2026-10-10T15:06:48.236Z [DEBUG] Read hooks.json for plugin artifact-tracking (enabled=true): <repo>/plugins/artifact-tracking/hooks/hooks.json
+2026-10-10T15:06:48.237Z [DEBUG] Loaded inline plugin from path: artifact-tracking
+2026-10-10T15:06:51.240Z [DEBUG] Checking plugin artifact-tracking: skillsPath=none, skillsPaths=0 paths
+2026-10-10T15:06:51.274Z [ERROR] NON-FATAL: Lock acquisition failed for ~/.local/share/claude/versions/2.1.296 (expected in multi-process scenarios): Lock already held by another process
+2026-10-10T15:06:51.385Z [DEBUG] hooks module artifact-tracking@inline loaded (worker, environment 2, tier user); events: session.append,session.start,command.run,ui.close,ui.render
+2026-10-10T15:06:51.387Z [DEBUG] engine.create: no plugin-provided interfaces; $ built for cc-plugin-sec-default,artifact-tracking,cc-plugin-agents-md,cc-plugin-telemetry
+2026-10-10T15:06:51.388Z [DEBUG] plugin.register: artifact-tracking (user, artifact-tracking@inline), judged by cc-plugin-sec-default: admitted
+2026-10-10T15:06:51.396Z [DEBUG] $.command.register (artifact-tracking): /track listed
+2026-10-10T15:06:51.397Z [DEBUG] Checking plugin artifact-tracking: skillsPath=none, skillsPaths=0 paths
+2026-10-10T15:06:51.398Z [DEBUG] $.process.run (artifact-tracking): gh with 1 args in <scratch>/s/proj (pid 18472)
+2026-10-10T15:06:51.399Z [DEBUG] $.process.run (artifact-tracking): acli with 1 args in <scratch>/s/proj (pid 18473)
+2026-10-10T15:06:51.422Z [DEBUG] hooks module artifact-tracking@inline session.start settled in 27.4ms (worker hop, next() included)
+2026-10-10T15:06:51.433Z [DEBUG] $.process.run (artifact-tracking): gh exited 0 in 36ms, 81 + 0 chars
+2026-10-10T15:06:51.454Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.5ms (worker hop, next() included)
+2026-10-10T15:06:51.485Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.9ms (worker hop, next() included)
+2026-10-10T15:06:52.115Z [DEBUG] $.process.run (artifact-tracking): acli exited 0 in 716ms, 201 + 0 chars
+2026-10-10T15:06:52.120Z [ERROR] [Anthropic telemetry] Failed to check metrics opt-out status: Auth error: no credential usable for the metrics opt-out check
