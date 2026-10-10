@@ -77,7 +77,7 @@ jobs:
         env:
           BRANCH: ${{ github.head_ref }}
         run: |
-          if ! printf '%s\n' "$BRANCH" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|copilot)/[a-z0-9][a-z0-9._-]*$'; then
-            echo "::error::Branch '$BRANCH' must be <type>/<kebab-case-summary> or copilot/<summary>, e.g. feat/jira-column."
+          if ! printf '%s\n' "$BRANCH" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|copilot)/[a-z0-9][a-z0-9._-]*$|^add-claude-github-actions-[0-9]+$'; then
+            echo "::error::Branch '$BRANCH' must be <type>/<kebab-case-summary>, copilot/<summary>, or add-claude-github-actions-<timestamp>."
             exit 1
           fi
