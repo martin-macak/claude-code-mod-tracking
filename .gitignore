@@ -1,0 +1,5 @@
+# ProjectAtlas: keep config, ignore local index and machine-specific host configs
+.projectatlas/*.db
+.projectatlas/*.db-*
+.projectatlas/*.lock
+.projectatlas/*.json
