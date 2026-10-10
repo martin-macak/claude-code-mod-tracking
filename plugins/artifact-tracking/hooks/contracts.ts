@@ -1,7 +1,20 @@
 // Shared contracts between the modules of the mod. No `$` here: only register.tsx touches it.
 // Spec: docs/superpowers/specs/2026-10-10-artifact-tracking-design.md
 
-import type { Category, GitHubFields, ItemError, ItemRecord, JiraFields, Source, ToolName, ToolStatus } from '../types'
+import type { TurnCompleteReason } from 'claude-code'
+import type {
+  Category,
+  Checks,
+  GitHubFields,
+  GitHubState,
+  ItemError,
+  ItemRecord,
+  JiraFields,
+  PrSkip,
+  Source,
+  ToolName,
+  ToolStatus,
+} from '../types'
 
 export type * from '../types'
 
@@ -147,6 +160,108 @@ export const LIMITS = {
   toolTimeoutMs: 30_000,
   acliConcurrency: 3,
   epicChildLimit: 50,
+  autoDebounceMs: 750,
+  gitTimeoutMs: 5_000,
+  discoveryTimeoutMs: 10_000,
+  workflowIdleMs: 60 * 60_000,
+  maxBranches: 12,
+  headPrsPerBranch: 5,
+  basePrsPerBranch: 10,
+  closingRefsPerPr: 10,
+  maxBodyRefs: 50,
+  maxAutoItems: 100,
+  maxProofs: 100,
+  maxAgents: 200,
+  maxDismissed: 500,
 } as const
 
 export const JIRA_KEY = /^[A-Z][A-Z0-9_]+-\d+$/
+
+// ---------------------------------------------------------------- auto tracking (spec 5.3, 6.3)
+
+/** Sources that discovery adds. The transcript backfill and the capture hooks never write them. */
+export const AUTO_SOURCES: ReadonlySet<Source> = new Set<Source>(['auto', 'pr-body'])
+
+// Row ids of the auto sections (spec 6.2). An item key never starts with `wt:` or `ag:`. Build and test ids here only.
+export const MASTER_ID = 'ag:master'
+export const worktreeId = (path: string): string => `wt:${path}`
+export const agentRowId = (agentId: string): string => `ag:${agentId}`
+/** True for the id of a worktree or agent row, false for an item key. */
+export const isRowId = (id: string): boolean => id.startsWith('wt:') || id.startsWith('ag:')
+
+export type GitWorktree = {
+  path: string
+  head?: string
+  /** Without `refs/heads/`. Absent when detached or bare. */
+  branch?: string
+  detached: boolean
+  bare: boolean
+  /** Lock reason ('' when locked with none). */
+  locked?: string
+  prunable?: string
+}
+
+/** The part of AgentInfo the round reads. */
+export type LiveAgent = { id: string; status: string; teammateId?: string }
+
+export type DiscoveredPr = {
+  host: string
+  owner: string
+  repo: string
+  number: number
+  url: string
+  title: string
+  state: GitHubState
+  isDraft: boolean
+  reviewDecision?: string
+  checks: Checks
+  headRefName: string
+  baseRefName: string
+  body: string
+  closing: { host: string; owner: string; repo: string; number: number; url: string }[]
+  /** Which alias found it. A PR found by both keeps `head`. */
+  by: 'head' | 'base'
+}
+
+export type GraphqlReply = { data: Record<string, unknown>; errors: unknown[] }
+
+/** A21. `blocked`: breaker open; `no-gh`: the probe found no gh; `transport`: cannot start, timeout or non-JSON output. */
+export type GraphqlOutcome =
+  | { ok: true; reply: GraphqlReply }
+  | { ok: false; kind: 'blocked' | 'no-gh' | 'auth' | 'transport' | 'truncated' | 'query-error'; error?: string }
+
+/** One gh reply, classified once for `graphql` and `refreshChunk`. */
+export type ReplyClass =
+  | { kind: 'data'; data: Record<string, unknown>; errors: unknown[] }
+  | { kind: 'auth' | 'truncated' | 'query-error' | 'unparsable'; detail?: string }
+
+export type DiscoveryOutcome =
+  | { ok: true; prs: DiscoveredPr[]; complete: boolean; defaultBranch?: string }
+  | { ok: false; skipped?: PrSkip; error?: string }
+
+export type AutoReason = 'start' | 'tick' | 'worktree' | 'agent' | 'git' | 'pr-event' | 'manual'
+
+export type EnterFacts = { path: string; branch?: string; agentId?: string }
+export type AgentResultFacts = { agentId: string; worktreePath?: string; worktreeBranch?: string }
+export type BashFacts = { agentId?: string; branch?: string; kick?: 'pr-event' | 'git' }
+/** Copied from the `agent.spawn` input and its `next(e)` answer. */
+export type SpawnFacts = {
+  agentId: string
+  name?: string
+  description: string
+  subagentType: string
+  parentAgentId?: string
+  workflow?: { runId: string; agentIndex: number }
+  /** `agent.spawn` cwd. Absent: the parent's at spawn time (A6). */
+  cwd?: string
+}
+/** What `applyDiscovery` returns. `list` is the input list itself when nothing changed (A22). */
+export type DiscoveryApplied = { list: ItemRecord[]; added: string[]; untracked: number }
+
+/** A new interface, so the existing GitHubToolApi fakes in tests still compile. */
+export interface GitHubDiscoveryApi extends GitHubToolApi {
+  /** One `gh api graphql --hostname <host> -f query=<q>` through the breaker, with `LIMITS.discoveryTimeoutMs` (A21). */
+  graphql(host: string, query: string): Promise<GraphqlOutcome>
+}
+
+export type { TurnCompleteReason }

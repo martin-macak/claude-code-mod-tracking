@@ -2,6 +2,7 @@
 // Spec: docs/superpowers/specs/2026-10-10-artifact-tracking-design.md section 9.
 
 import type {
+  AutoState,
   Category,
   GitHubRecord,
   ItemRecord,
@@ -11,6 +12,10 @@ import type {
   ToolStatus,
   WebRecord,
 } from '../contracts'
+import { isAutoOnly } from '../model/keys'
+
+/** The `/track` text when nothing is tracked. */
+export const EMPTY_TEXT = 'No tracked items yet.'
 
 export type Tone = 'plain' | 'ok' | 'warn' | 'bad' | 'dim'
 
@@ -28,9 +33,30 @@ export type PaneRow = {
   extraTone?: Tone
   foldable: boolean
   folded: boolean
+  /** The whole row draws dimmed: a removed worktree, an ended agent, a merged PR. */
+  dim?: boolean
+  /** Draw an `x` button that dismisses this id (a row id or an item key). */
+  dismissId?: string
+  /** Wrap mode of the type cell for this row, when it differs from the layout. A stacked PR cuts at the end. */
+  typeWrap?: Cell['wrap']
 }
 
-export type PaneSection = { category: Category; title: string; note: string; rows: PaneRow[] }
+export type SectionId = 'worktrees' | 'agents' | 'prs' | Category
+export type Layout = 'worktrees' | 'agents' | 'prs' | 'items'
+export type CellName = 'key' | 'title' | 'type' | 'status' | 'extra' | 'x'
+/** One rendered cell. `width` absent: the cell grows. */
+export type Cell = { name: CellName; width?: number; wrap: 'truncate-end' | 'truncate-middle' }
+
+/** `category` stays set on item sections. `layout` absent: 'items'. `dismissable` absent: false. */
+export type PaneSection = {
+  id: SectionId
+  category?: Category
+  title: string
+  note: string
+  rows: PaneRow[]
+  layout?: Layout
+  dismissable?: boolean
+}
 
 export type ViewContext = {
   now: number
@@ -39,6 +65,12 @@ export type ViewContext = {
   tools: { gh: ToolStatus; acli: ToolStatus }
   /** Repo of the session. A GitHub key in this repo shows as `#N`. */
   sessionRepo?: RepoRef | null
+  /** The auto-tracking state, for the auto sections (`auto-view.ts`). */
+  auto?: AutoState | null
+  /** When the last round ran. The Worktrees note reads it before `snapshot.at` (spec A22). */
+  autoCheckedAt?: number
+  /** Body width of the pane. Absent for the `/track` text, which reads as wide. */
+  bodyColumns?: number
 }
 
 export type Columns = { key: number; type: number; status: number; extra: number }
@@ -72,14 +104,61 @@ export function toolNote(t: ToolStatus, now: number, lastRefresh?: number): stri
   return 'ready'
 }
 
+/** Wide means a body of 70 columns or more. An unknown width reads as wide. */
+export const isWide = (bodyColumns: number | undefined): boolean => (bodyColumns ?? 80) >= 70
+
 export function columnsFor(bodyColumns: number | undefined): Columns {
-  const c = bodyColumns ?? 80
   const cols: Columns = { key: 16, type: 9, status: 13, extra: 10 }
-  if (c < 70) {
+  if (!isWide(bodyColumns)) {
     cols.extra = 0
     cols.type = 6
   }
   return cols
+}
+
+/**
+ * The cells to render, left to right. This is the only source of widths: `pane.tsx` renders exactly these cells.
+ * A hidden cell is not in the list. Narrow means a body below 70 columns.
+ */
+export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismissable: boolean): Cell[] {
+  const wide = isWide(bodyColumns)
+  const x: Cell[] = dismissable ? [{ name: 'x', width: 2, wrap: 'truncate-end' }] : []
+  switch (layout) {
+    case 'worktrees':
+      return [
+        { name: 'key', width: wide ? 30 : 24, wrap: 'truncate-end' },
+        { name: 'title', wrap: 'truncate-middle' },
+        { name: 'status', width: wide ? 9 : 8, wrap: 'truncate-end' },
+        ...x,
+      ]
+    case 'agents':
+      return [
+        { name: 'key', width: wide ? 24 : 20, wrap: 'truncate-end' },
+        { name: 'title', wrap: 'truncate-middle' },
+        { name: 'type', width: wide ? 20 : 14, wrap: 'truncate-middle' },
+        ...x,
+      ]
+    case 'prs':
+      return [
+        { name: 'key', width: 8, wrap: 'truncate-end' },
+        { name: 'title', wrap: 'truncate-end' },
+        { name: 'type', width: wide ? 26 : 20, wrap: 'truncate-middle' },
+        { name: 'status', width: 8, wrap: 'truncate-end' },
+        ...(wide ? [{ name: 'extra', width: 10, wrap: 'truncate-end' } satisfies Cell] : []),
+        ...x,
+      ]
+    case 'items': {
+      const c = columnsFor(bodyColumns)
+      return [
+        { name: 'key', width: c.key, wrap: 'truncate-end' },
+        { name: 'title', wrap: 'truncate-end' },
+        { name: 'type', width: c.type, wrap: 'truncate-end' },
+        { name: 'status', width: c.status, wrap: 'truncate-end' },
+        ...(c.extra > 0 ? [{ name: 'extra', width: c.extra, wrap: 'truncate-end' } satisfies Cell] : []),
+        ...x,
+      ]
+    }
+  }
 }
 
 const lower = (s: string | undefined): string => (s ?? '').toLowerCase()
@@ -93,6 +172,18 @@ function hostPath(url: string): string {
   let e = path.length
   while (e > 0 && path[e - 1] === '/') e--
   return (m[1] ?? '') + path.slice(0, e)
+}
+
+/** An item that discovery added and no conversation row backs has a dismissable row. */
+const dismissFor = (rec: ItemRecord): { dismissId?: string } => (isAutoOnly(rec) ? { dismissId: rec.key } : {})
+
+/** `↳#7,#9 ` for an item that PR bodies name (spec 10.3), else an empty string. */
+function viaPrefix(via: readonly string[] | undefined): string {
+  const numbers = (via ?? []).flatMap(k => {
+    const n = /#(\d+)$/.exec(k)?.[1]
+    return n === undefined ? [] : [`#${n}`]
+  })
+  return numbers.length > 0 ? `↳${numbers.join(',')} ` : ''
 }
 
 // ---------------------------------------------------------------- rows
@@ -151,7 +242,8 @@ function jiraRows(item: JiraRecord, ctx: ViewContext, folded: ReadonlySet<string
     depth: 0,
     key: item.issueKey,
     href: item.url,
-    title: item.summary ?? item.label,
+    title: viaPrefix(item.via) + (item.summary ?? item.label),
+    ...dismissFor(item),
     type: item.issueType ?? '',
     status,
     tone,
@@ -168,7 +260,7 @@ const CHECKS: Record<NonNullable<GitHubRecord['checks']>, { extra?: string; extr
   none: {},
 }
 
-function githubRow(item: GitHubRecord, ctx: ViewContext): PaneRow {
+export function githubRow(item: GitHubRecord, ctx: ViewContext): PaneRow {
   const unresolved = !item.owner || !item.repo
   const s = ctx.sessionRepo
   const inSession =
@@ -198,11 +290,12 @@ function githubRow(item: GitHubRecord, ctx: ViewContext): PaneRow {
     depth: 0,
     key,
     href: item.url,
-    title: item.title ?? (unresolved ? 'unresolved: no repo' : ''),
+    title: viaPrefix(item.via) + (item.title ?? (unresolved ? 'unresolved: no repo' : '')),
     type: item.type === 'pr' ? 'PR' : item.type === 'issue' ? 'Issue' : '',
     status,
     tone,
     ...checks,
+    ...dismissFor(item),
     foldable: false,
     folded: false,
   }
@@ -214,7 +307,8 @@ function webRow(item: WebRecord): PaneRow {
     depth: 0,
     key: item.label,
     href: item.url,
-    title: hostPath(item.url),
+    title: viaPrefix(item.via) + hostPath(item.url),
+    ...dismissFor(item),
     type: '',
     status: '',
     tone: 'plain',
@@ -229,7 +323,7 @@ const SECTIONS: { category: Category; title: string }[] = [
   { category: 'web', title: 'Web links' },
 ]
 
-function lastRefreshOf(items: readonly ItemRecord[]): number | undefined {
+export function lastRefreshOf(items: readonly ItemRecord[]): number | undefined {
   let last: number | undefined
   for (const i of items)
     if (i.refreshedAt !== undefined && (last === undefined || i.refreshedAt > last)) last = i.refreshedAt
@@ -249,7 +343,9 @@ export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneS
   const folded = new Set(ctx.folded)
   const sections: PaneSection[] = []
   for (const { category, title } of SECTIONS) {
-    const own = items.filter(i => i.category === category).sort((a, b) => a.firstSeen - b.firstSeen)
+    const own = items
+      .filter(i => i.category === category && !(i.category === 'github' && i.sources.includes('auto')))
+      .sort((a, b) => a.firstSeen - b.firstSeen)
     if (own.length === 0) continue
     const rows: PaneRow[] = []
     for (const item of own) {
@@ -257,15 +353,22 @@ export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneS
       else if (item.category === 'github') rows.push(githubRow(item, ctx))
       else rows.push(webRow(item))
     }
-    sections.push({ category, title, note: noteFor(category, own, ctx), rows })
+    sections.push({
+      id: category,
+      category,
+      title,
+      note: noteFor(category, own, ctx),
+      rows,
+      dismissable: rows.some(r => r.dismissId !== undefined),
+    })
   }
   return sections
 }
 
 // ---------------------------------------------------------------- band and command text
 
-/** `Jira 6 · GitHub 4 (1 ✗) · Links 2`. null when nothing is tracked. */
-export function bandText(items: readonly ItemRecord[]): string | null {
+/** `Jira 6`, `GitHub 4 (1 ✗)`, `Links 2`. GitHub counts items without source auto. A zero part is left out. */
+export function bandParts(items: readonly ItemRecord[]): string[] {
   let j = 0
   let g = 0
   let w = 0
@@ -273,6 +376,7 @@ export function bandText(items: readonly ItemRecord[]): string | null {
   for (const i of items) {
     if (i.category === 'jira') j++
     else if (i.category === 'github') {
+      if (i.sources.includes('auto')) continue
       g++
       if (i.checks === 'failure') failing++
     } else w++
@@ -281,13 +385,11 @@ export function bandText(items: readonly ItemRecord[]): string | null {
   if (j > 0) parts.push(`Jira ${j}`)
   if (g > 0) parts.push(`GitHub ${g}${failing > 0 ? ` (${failing} ✗)` : ''}`)
   if (w > 0) parts.push(`Links ${w}`)
-  return parts.length > 0 ? parts.join(' · ') : null
+  return parts
 }
 
-/** Plain-text pane for `/track` (also in `claude -p`). It shows the whole tree: nothing is folded. */
-export function commandText(items: readonly ItemRecord[], ctx: ViewContext): string {
-  const sections = buildPane(items, { ...ctx, folded: [] })
-  if (sections.length === 0) return 'No tracked items yet.'
+/** The `/track` text of sections: a title line, then one indented line per row. Nothing is folded. */
+export function textOf(sections: readonly PaneSection[]): string {
   const lines: string[] = []
   for (const s of sections) {
     if (lines.length > 0) lines.push('')

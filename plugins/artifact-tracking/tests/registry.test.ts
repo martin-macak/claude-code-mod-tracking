@@ -15,15 +15,8 @@ import type {
 import { LIMITS } from '../hooks/contracts'
 import { GitHubItem } from '../hooks/model/github-item'
 import { JiraItem } from '../hooks/model/jira-item'
-import {
-  hydrate,
-  keyOf,
-  mergeRefs,
-  mergeResults,
-  recordFromRef,
-  resolveBareRefs,
-  unionRecords,
-} from '../hooks/model/registry'
+import { keyOf } from '../hooks/model/keys'
+import { hydrate, mergeRefs, mergeResults, recordFromRef, resolveBareRefs, unionRecords } from '../hooks/model/registry'
 import { WebLink } from '../hooks/model/web-link'
 
 const ghRef = (over: Partial<GitHubRef> = {}): GitHubRef => ({
@@ -387,4 +380,93 @@ test('hydrate: round-trips a refreshed record', () => {
     refreshedAt: 3,
   }
   expect(hydrate(rec, tools).toRecord()).toEqual(rec)
+})
+
+// ---------------------------------------------------------------- auto items (spec A11)
+
+const webAt = (i: number, sources: ItemRecord['sources'], over: Partial<WebRecord> = {}): WebRecord => ({
+  key: `web:https://e.example/${i}`,
+  category: 'web',
+  url: `https://e.example/${i}`,
+  label: `e${i}`,
+  sources,
+  firstSeen: i,
+  lastSeen: i,
+  seenCount: 1,
+  ...over,
+})
+const many = (from: number, n: number, sources: ItemRecord['sources']) =>
+  Array.from({ length: n }, (_, i) => webAt(from + i, sources))
+
+test('cap: 500 mentioned plus 100 auto-only items evict nothing', () => {
+  const r = unionRecords(many(1, LIMITS.maxItems, ['prompt']), many(1000, LIMITS.maxAutoItems, ['pr-body']))
+  expect(r).toHaveLength(LIMITS.maxItems + LIMITS.maxAutoItems)
+})
+
+test('cap: 501 mentioned plus 100 auto-only items evict one mentioned item and no auto item', () => {
+  const r = unionRecords(many(1, LIMITS.maxItems + 1, ['prompt']), many(1000, LIMITS.maxAutoItems, ['auto']))
+  expect(r).toHaveLength(LIMITS.maxItems + LIMITS.maxAutoItems)
+  expect(r.filter(x => x.sources.includes('auto'))).toHaveLength(LIMITS.maxAutoItems)
+  expect(r.find(x => x.key === 'web:https://e.example/1')).toBeUndefined()
+})
+
+test('cap: a mentioned item that also has an auto source is not counted and not evicted', () => {
+  const oldest = webAt(0, ['prompt', 'auto'])
+  const r = unionRecords([oldest, ...many(1, LIMITS.maxItems, ['prompt'])], [])
+  expect(r).toHaveLength(LIMITS.maxItems + 1)
+  expect(r.find(x => x.key === oldest.key)).toBeDefined()
+})
+
+test('mergeRefs applies the same cap rule', () => {
+  const list = [webAt(1, ['prompt']), webAt(2, ['prompt']), webAt(3, ['pr-body'])]
+  const fresh = webRef({ url: 'https://new.example/', label: 'new' })
+  const r = mergeRefs(list, [fresh], s(10), 2)
+  expect(r.list.map(x => x.key)).toEqual(['web:https://e.example/2', 'web:https://e.example/3', keyOf(fresh)])
+})
+
+test('fold and unionRecords merge via (union, a first); a record without via stays without', () => {
+  const a = webAt(1, ['pr-body'], { via: ['k1'] })
+  const b = webAt(1, ['pr-body'], { via: ['k2', 'k1'] })
+  expect(unionRecords([a], [b])[0]?.via).toEqual(['k1', 'k2'])
+  const plain = unionRecords([webAt(2, ['prompt'])], [webAt(2, ['prompt'])])
+  expect(plain[0]?.via).toBeUndefined()
+})
+
+test('mergeRefs and unionRecords copy via, so the output never shares the input array', () => {
+  const rec = webAt(1, ['pr-body'], { via: ['k1'] })
+  const out = mergeRefs([rec], [], s(5)).list[0]!
+  expect(out.via).toEqual(['k1'])
+  expect(out.via).not.toBe(rec.via)
+})
+
+test('mergeResults keeps via, headRefName and baseRefName of the stored record', () => {
+  const stored: GitHubRecord = {
+    key: 'gh:github.com/acme/web#7',
+    category: 'github',
+    url: 'https://github.com/acme/web/pull/7',
+    label: 'acme/web#7',
+    sources: ['auto'],
+    via: ['gh:github.com/acme/web#9'],
+    firstSeen: 1,
+    lastSeen: 1,
+    seenCount: 0,
+    host: 'github.com',
+    owner: 'acme',
+    repo: 'web',
+    number: 7,
+    type: 'pr',
+    headRefName: 'feat/x',
+    baseRefName: 'main',
+  }
+  const fresh: GitHubRecord = { ...stored, title: 'T', state: 'open', refreshedAt: 50 }
+  delete fresh.via
+  delete fresh.headRefName
+  delete fresh.baseRefName
+  const out = mergeResults([stored], [fresh])[0] as GitHubRecord
+  expect(out).toMatchObject({
+    title: 'T',
+    via: ['gh:github.com/acme/web#9'],
+    headRefName: 'feat/x',
+    baseRefName: 'main',
+  })
 })
