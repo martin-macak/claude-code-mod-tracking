@@ -114,14 +114,12 @@ function ensureRuntime($: EngineInterface): void {
     now: Date.now,
     load: () => read($, items),
     save: async refreshed => {
-      let dropped: string[] = []
       const refreshedKeys = new Set(refreshed.map(rec => rec.key))
-      await setItems($, list => {
-        const merged = mergeResults(list, refreshed)
-        const kept = new Set(merged.map(rec => rec.key))
-        dropped = list.filter(rec => refreshedKeys.has(rec.key) && !kept.has(rec.key)).map(rec => rec.key)
-        return merged
-      })
+      const before = await read($, items)
+      await setItems($, list => mergeResults(list, refreshed))
+      const after = await read($, items)
+      const kept = new Set(after.map(rec => rec.key))
+      const dropped = before.filter(rec => refreshedKeys.has(rec.key) && !kept.has(rec.key)).map(rec => rec.key)
       if (dropped.length > 0) {
         // Keep discarded keys in this run's dismiss list, so transcript replay does not bring them back on /resume.
         try {
