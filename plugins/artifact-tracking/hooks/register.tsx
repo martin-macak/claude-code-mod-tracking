@@ -35,6 +35,7 @@ import type {
 } from './contracts'
 import { AUTO_SOURCES, isRowId, LIMITS } from './contracts'
 import { dropAuto } from './model/discovered'
+import { keyOf } from './model/keys'
 import { hydrate, mergeRefs, mergeResults, resolveBareRefs, unionRecords } from './model/registry'
 import type { Timer } from './refresh/coordinator'
 import { RefreshCoordinator } from './refresh/coordinator'
@@ -113,7 +114,20 @@ function ensureRuntime($: EngineInterface): void {
     now: Date.now,
     load: () => read($, items),
     save: async refreshed => {
+      const refreshedKeys = new Set(refreshed.map(rec => rec.key))
+      const before = await read($, items)
       await setItems($, list => mergeResults(list, refreshed))
+      const after = await read($, items)
+      const kept = new Set(after.map(rec => rec.key))
+      const dropped = before.filter(rec => refreshedKeys.has(rec.key) && !kept.has(rec.key)).map(rec => rec.key)
+      if (dropped.length > 0) {
+        // Keep discarded keys in this run's dismiss list, so transcript replay does not bring them back on /resume.
+        try {
+          await setAuto($, s => dismiss(s, dropped))
+        } catch {
+          // The list is already merged; dismissal tracking is best-effort.
+        }
+      }
     },
     hydrate: rec => hydrate(rec, { gh: g, acli: a }),
     tools: { gh: g, acli: a },
@@ -329,7 +343,7 @@ async function dismissOne($: EngineInterface, id: string): Promise<void> {
     ensureRuntime($)
     void ensureTick($)
     await setAuto($, s => dismiss(s, [id]))
-    if (!isRowId(id)) await setItems($, list => dropAuto(list, new Set([id])))
+    if (!isRowId(id)) await setItems($, list => list.filter(rec => rec.key !== id))
   } catch {
     // The row stays. The person can press again.
   }
@@ -425,6 +439,8 @@ async function capture($: EngineInterface, text: string, mode: ScanMode, source:
   await ensureRepo($)
   let refs = extractRefs(text, { mode, defaultRepo: sessionRepo ?? null, githubHosts })
   if (source === 'tool' && mode === 'urls-only') refs = await filterToolRefs(refs)
+  const dismissed = new Set((await currentAuto($)).dismissed)
+  refs = refs.filter(ref => !dismissed.has(keyOf(ref)))
   if (refs.length === 0) return
   let added: string[] = []
   await setItems($, list => {
@@ -558,11 +574,14 @@ async function restore($: EngineInterface): Promise<void> {
   // No gate on the index: two sessions that flush together can drop each other's id from it.
   const copy = (await $.store.get('s:' + id)) as { items?: ItemRecord[] } | undefined
   const activeSite = await activeJiraSite()
+  const dismissed = new Set((autoMirror ?? emptyAuto()).dismissed)
   const stored = withoutAuto(copy?.items ?? [])
     .filter(rec => keepStored(rec, activeSite))
+    .filter(rec => rec.error?.kind !== 'not-found')
+    .filter(rec => !dismissed.has(rec.key))
     .map(due)
   const have = new Set(stored.map(r => r.key))
-  const fresh = (await fromTranscript($)).filter(r => !have.has(r.key))
+  const fresh = (await fromTranscript($)).filter(r => !have.has(r.key) && !dismissed.has(r.key))
   const all = unionRecords(stored, fresh)
   if (all.length === 0) return
   await setItems($, list => unionRecords(list, all))

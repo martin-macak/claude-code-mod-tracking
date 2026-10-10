@@ -216,7 +216,10 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
     const explicitNull = data[alias] === null || dig(data, alias, 'issueOrPullRequest') === null
     if (!found && !explicitNull) return
     const text = dig(found, 'message')
-    it.error = { kind: 'not-found', message: typeof text === 'string' ? firstLine(text) : 'not found', at }
+    const message = typeof text === 'string' ? firstLine(text) : 'not found'
+    const type = dig(found, 'type')
+    if (type === 'NOT_FOUND' || (type === undefined && explicitNull)) it.error = { kind: 'not-found', message, at }
+    else it.error = { kind: 'failed', message, at }
     it.refreshedAt = at
   }
 

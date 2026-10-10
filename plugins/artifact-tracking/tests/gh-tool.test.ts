@@ -131,6 +131,23 @@ test('a later good answer clears the not-found error', async () => {
   expect(a!.state).toBe('closed')
 })
 
+test('a FORBIDDEN alias is kept and marked failed, not not-found', async () => {
+  const { run } = rig(() =>
+    ok(
+      JSON.stringify({
+        data: { a0: null },
+        errors: [{ type: 'FORBIDDEN', path: ['a0'], message: 'Resource not accessible by integration' }],
+      }),
+      1,
+    ),
+  )
+  const tool = new GhTool(run, () => NOW)
+  const it = item('cli', 'cli', 1)
+  await tool.refreshItems([it])
+  expect(it.error).toEqual({ kind: 'failed', message: 'Resource not accessible by integration', at: NOW })
+  expect(tool.status().breaker).toBe('closed')
+})
+
 test('exit 4 with no JSON: not logged in, canCall is false (review focus 4)', async () => {
   const { run, graphqlCalls } = rig(() => ok('', 4, fx.AUTH_UNAUTH_STDERR))
   const tool = new GhTool(run, () => NOW)

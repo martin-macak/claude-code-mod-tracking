@@ -132,6 +132,17 @@ test('response row: a web link and a PR URL are captured; the row is stored as m
   expect(text).toContain('cli/cli#14640')
 })
 
+test('response row: a non-existent GitHub URL is discarded before it can be listed or stored', async ($, on) => {
+  const { clock, calls, store } = world(on, { isolateState: true })
+  await $.session.append(response('See https://github.com/no-such-owner-xyz/no-such-repo/pull/9'))
+  await clock.advance(LIMITS.captureDebounceMs + 10)
+  await quiet(calls)
+  expect((await track($)).text).toBe('No tracked items yet.')
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  expect(store.has('s:' + SESSION)).toBe(false)
+})
+
 test('a URL and a bare #N for the same item make one item', async ($, on) => {
   const { clock, calls } = world(on)
   await $.session.append(prompt('check #5'))
@@ -140,6 +151,19 @@ test('a URL and a bare #N for the same item make one item', async ($, on) => {
   await quiet(calls)
   const text = (await track($)).text ?? ''
   expect(text.match(/Web five/g)?.length).toBe(1)
+})
+
+test('pane: the dismiss button removes a manually tracked row', async ($, on) => {
+  const { clock, calls } = world(on)
+  await $.session.append(prompt('check #5'))
+  await clock.advance(LIMITS.captureDebounceMs + 10)
+  await quiet(calls)
+  await track($)
+  const ui = (await mountPane($)) as PaneUi & { press(q: unknown): Promise<void> }
+  await ui.press({ key: 'dismiss-gh:github.com/acme/web#5' })
+  await quiet(calls)
+  expect((await track($)).text).toBe('No tracked items yet.')
+  await ui.unmount()
 })
 
 test('/clear carry-over, store path: the items of the session just left come back', async ($, on) => {
