@@ -2,7 +2,7 @@ name: lint
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
@@ -45,7 +45,7 @@ jobs:
 
   # PR title and branch name. Rules: AGENTS.md, "Pull requests" and "Branches".
   pr-conventions:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
