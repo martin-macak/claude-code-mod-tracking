@@ -32,7 +32,7 @@ Research and evidence: [knowledge base `claude-code-artifact-tracking`](../../kn
 | D4 | Hook for the person's text | `session.append` door `prompt`, plus door `command` with origin `composer` (`<command-args>`). |
 | D5 | Bare `#N` with no repo | Keep as unresolved. Try `gh repo view --json nameWithOwner` once per session. |
 | D6 | Web link name | Markdown label, else host + path. No network. |
-| D7 | Refresh triggers | Capture (debounced 1 s), pane open, `/track refresh`, and a 30 s tick while the pane is open. Stale after 5 min; 60 s for a PR with pending checks. |
+| D7 | Refresh triggers | Capture (debounced 1 s), pane open, `/track refresh`, and a 30 s tick while the pane is open. Stale after 5 min; 60 s for a PR with pending checks. The tick part is superseded by [auto-tracking A1](2026-10-10-auto-tracking-design.md): the tick runs from `session.start`. |
 | D8 | Circuit breaker | Per tool. 3 tool failures in a row open it for 5 min. Then one half-open probe call. |
 | D9 | Pane | `/track` opens it. A one-line band above the prompt shows counts. |
 | D10 | Persistence | Items survive `/clear`. `--resume` restores from `$.store` and the transcript. |
