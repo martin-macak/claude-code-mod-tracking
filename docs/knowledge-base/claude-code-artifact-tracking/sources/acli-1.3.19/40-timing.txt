@@ -1,0 +1,16 @@
+# Wall-clock timings, acli 1.3.19-stable, macOS, EU Jira Cloud site, 2026-10-10
+# Measured with `time` or `/usr/bin/time -p`. Network included. Single run each unless noted.
+acli --version                                             0.42 s
+acli jira auth status                                      0.46 s
+acli jira workitem view KEY --fields issuetype,status,summary,subtasks,parent --json     1.14 s, 0.99 s, 1.00 s (3 runs)
+acli jira workitem view KEY --json (default fields)        1.01 s
+acli jira workitem view UNKNOWN-1 --json (error)           0.88 s
+acli jira workitem search --jql 'parent = KEY' --fields issuetype,status,summary --json  1.38 s, 1.35 s, 1.24 s (3 runs)
+acli jira workitem search --jql "parent in (A,B,C)" ...    1.34 s (5 results)
+acli jira workitem search --jql 'parent = EPIC' --json     1.33 s (5 results)
+acli jira workitem search ... --limit 3 --json             1.31 s
+acli jira workitem search --jql 'created >= -14d' --count  not timed separately (about 1 s)
+acli jira workitem search --jql 'created >= -14d ORDER BY created DESC' --paginate --json   60.4 s total CPU+wait for 2710 items
+HTTPS_PROXY=http://127.0.0.1:9 view (connection refused)   0.15 s (fails fast)
+# Process start itself is cheap (user+sys about 0.1 s). Nearly all time is the HTTPS round trip.
+# Note: view and search both cost about 1 s. Subtasks of one item need no second call (see 21-*.json).

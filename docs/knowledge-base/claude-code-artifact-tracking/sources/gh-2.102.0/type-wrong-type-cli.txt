@@ -1,0 +1,7 @@
+$ gh issue view 14640 -R cli/cli --json number,title,state
+{"number":14640,"state":"OPEN","title":"`gh issue artifact` stack 11/12: Address review feedback"}
+exit=0
+
+$ gh pr view 14622 -R cli/cli --json number,title,state
+GraphQL: Could not resolve to a PullRequest with the number of 14622. (repository.pullRequest)
+exit=1

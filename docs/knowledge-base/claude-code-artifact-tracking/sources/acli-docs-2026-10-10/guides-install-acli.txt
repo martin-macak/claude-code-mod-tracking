@@ -1,0 +1,71 @@
+
+        Install Atlassian Command-line Interface (ACLI)
+DeveloperDocumentation
+Resources
+News and Updates
+Get Support
+Sign in
+Developer
+Get Support
+Sign in
+DOCUMENTATION
+Cloud
+Data Center
+Resources
+News and Updates
+Get support
+Sign in
+Developer
+Sign in
+DOCUMENTATION
+Cloud
+Data Center
+Resources
+News and Updates
+Get support
+Sign in
+Atlassian CLI
+Guides
+Reference
+Commands
+Changelog
+Atlassian CLI
+Guides
+Reference
+Changelog
+Introduction
+What is Atlassian CLI?
+Benefits and use cases
+Frequently asked questions
+Cookbook
+Use Atlassian CLI on a CI pipeline
+Managing command chaining and output redirection
+Install and update
+How to install Atlassian CLI
+Install Atlassian CLI on macOS
+Install Atlassian CLI on Linux
+Install Atlassian CLI on Windows
+How to upgrade Atlassian CLI
+Download supported packages
+How-to-guide
+How to get started
+Troubleshooting guide
+How to enable Shell autocompletion 
+Last updated Jun 12, 2025
+How to install Atlassian CLI
+Atlassian CLI is installable on a variety of Linux platforms, macOS and Windows. Find your preferred operating system below:
+MacOS
+Windows
+Linux
+Before you begin
+Each Atlassian CLI version will only be supported 6 months after release. We recommend regularly updating to the latest CLI version to benefit from new features and improvements.
+Next steps
+After you successfully install Atlassian CLI, get started to authenticate and start using the commands to get started with your workflow.
+Rate this page:
+Unusable
+Poor
+Okay
+Good
+Excellent
+    ChangelogSystem statusPrivacyNotice at CollectionDeveloper TermsTrademarkCookie preferences© 2026 Atlassian
+      

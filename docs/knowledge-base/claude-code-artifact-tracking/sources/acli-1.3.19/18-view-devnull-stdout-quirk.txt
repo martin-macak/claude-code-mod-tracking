@@ -1,0 +1,5 @@
+exit=0
+--- stdout
+child-exit=1
+--- stderr
+✗ Error: failed to output command result in JSON format

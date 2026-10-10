@@ -1,0 +1,23 @@
+$ (cwd: scratch git repo with no remote) git remote get-url origin
+error: No such remote 'origin'
+exit=2
+
+$ gh repo view --json nameWithOwner
+no git remotes found
+exit=1
+
+$ gh issue view 14622 --json number
+no git remotes found
+exit=1
+
+$ GH_REPO=cli/cli gh issue view 14622 --json number,title
+{"number":14622,"title":"gh pr edit fails with 'GraphQL: Projects (classic) is being deprecated' on repos with classic projects"}
+exit=0
+
+$ gh issue view cli/cli#14622 --json number
+invalid issue format: "cli/cli#14622"
+exit=1
+
+$ gh issue view https://github.com/cli/cli/issues/14622 --json number,title (from no-remote dir)
+{"number":14622,"title":"gh pr edit fails with 'GraphQL: Projects (classic) is being deprecated' on repos with classic projects"}
+exit=0

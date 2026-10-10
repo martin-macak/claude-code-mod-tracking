@@ -1,0 +1,7 @@
+$ gh --version
+gh version 2.102.0 (2026-09-30)
+https://github.com/cli/cli/releases/tag/v2.102.0
+
+$ gh api rate_limit --jq "{core: .resources.core, graphql: .resources.graphql, rate: .rate}"
+{"core":{"limit":5000,"remaining":4948,"reset":1791630310,"used":52},"graphql":{"limit":5000,"remaining":4978,"reset":1791632849,"used":22},"rate":{"limit":5000,"remaining":4948,"reset":1791630310,"used":52}}
+exit=0

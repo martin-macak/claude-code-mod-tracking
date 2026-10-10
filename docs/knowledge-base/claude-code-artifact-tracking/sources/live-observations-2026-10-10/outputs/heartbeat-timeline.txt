@@ -1,0 +1,6 @@
+[start 13:10:57] {"loadId":"f2273n","beat":3,"sid":"37b1ce2f-af12-43f7-bde1-8fe6a0383b68","at":1791630656525}
+[after-timers 13:11:16] {"loadId":"f2273n","beat":12,"sid":"37b1ce2f-af12-43f7-bde1-8fe6a0383b68","at":1791630674539}
+[after-clear-4s 13:11:24] {"loadId":"f2273n","beat":16,"sid":"37b1ce2f-af12-43f7-bde1-8fe6a0383b68","at":1791630682546}
+[after-clear-7s 13:11:27] {"loadId":"f2273n","beat":18,"sid":"37b1ce2f-af12-43f7-bde1-8fe6a0383b68","at":1791630686548}
+[after-touch-6s 13:11:36] {"loadId":"oec50y","beat":2,"sid":"fb00bead-ace5-4a4b-9354-96227df8cf7f","at":1791630695001}
+[after-touch-10s 13:11:40] {"loadId":"oec50y","beat":4,"sid":"fb00bead-ace5-4a4b-9354-96227df8cf7f","at":1791630699005}

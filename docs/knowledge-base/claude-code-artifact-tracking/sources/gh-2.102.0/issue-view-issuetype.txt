@@ -1,0 +1,3 @@
+$ gh issue view 14622 -R cli/cli --json issueType
+{"issueType":null}
+exit=0

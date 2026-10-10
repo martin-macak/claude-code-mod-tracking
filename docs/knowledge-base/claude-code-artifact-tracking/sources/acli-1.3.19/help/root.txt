@@ -1,0 +1,24 @@
+# $ acli --help
+Work seamlessly with Atlassian from the command line.
+
+Usage:
+  acli [command]
+
+Available Commands
+  admin       Admin commands.
+  auth        Authenticate to use Atlassian CLI.
+  confluence  Confluence Cloud commands.
+  jira        Jira Cloud commands.
+  rovodev     Atlassian’s AI coding agent: Rovo Dev (Beta).
+
+Additional Commands:
+  completion  Generate the autocompletion script for the specified shell
+  config      Commands for changing configuration settings.
+  feedback    Submit a request or report a problem.
+  help        Help about any command
+
+Flags:
+  -h, --help      Show help for command
+  -v, --version   version for acli
+
+Use "acli [command] --help" for more information about a command.

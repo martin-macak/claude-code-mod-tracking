@@ -1,0 +1,9 @@
+{
+ "door": "attachment",
+ "origin": {
+  "kind": "engine"
+ },
+ "type": "attachment",
+ "name": "prompt_snapshot",
+ "content": "(omitted)"
+}

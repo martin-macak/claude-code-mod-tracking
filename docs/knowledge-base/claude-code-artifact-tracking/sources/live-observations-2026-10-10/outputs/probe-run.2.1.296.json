@@ -1,0 +1,253 @@
+[
+ {
+  "label": "A1 missing tool",
+  "ok": false,
+  "ms": 1,
+  "name": "HooksError",
+  "message": "probe: $.process.run(definitely-not-a-tool-xyz) failed to start: ENOENT: Executable not found in $PATH: \"definitely-not-a-tool-xyz\""
+ },
+ {
+  "label": "A2 gh --version",
+  "ok": true,
+  "ms": 33,
+  "value": {
+   "exitCode": 0,
+   "stdout": "gh version 2.102.0 (2026-09-30)\nhttps://github.com/cli/cli/releases/tag/v2.102.0\n",
+   "stderr": "",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A3 acli --version",
+  "ok": true,
+  "ms": 732,
+  "value": {
+   "exitCode": 0,
+   "stdout": "acli version 1.3.19-stable\nYou're using an outdated version 1.3.19-stable. Update to the latest version 1.3.39-stable.\nFollow this link: https://developer.atlassian.com/cloud/acli/guides/install-acli/\n",
+   "stderr": "",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A4 which gh",
+  "ok": true,
+  "ms": 5,
+  "value": {
+   "exitCode": 0,
+   "stdout": "/opt/homebrew/bin/gh\n",
+   "stderr": "",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A4b which missing",
+  "ok": true,
+  "ms": 3,
+  "value": {
+   "exitCode": 1,
+   "stdout": "",
+   "stderr": "",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A6 sh -c command -v gh",
+  "ok": true,
+  "ms": 4,
+  "value": {
+   "exitCode": 0,
+   "stdout": "/opt/homebrew/bin/gh\nrc=0\n",
+   "stderr": "",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A6b sh -c command -v missing",
+  "ok": true,
+  "ms": 3,
+  "value": {
+   "exitCode": 0,
+   "stdout": "rc=1\n",
+   "stderr": "",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A7 timeout 1s on sleep 5",
+  "ok": false,
+  "ms": 1035,
+  "name": "HooksError",
+  "message": "probe: $.process.run(sleep) aborted: still running after 1000ms"
+ },
+ {
+  "label": "A8 pwd default cwd",
+  "ok": true,
+  "ms": 1,
+  "value": {
+   "exitCode": 0,
+   "stdout": "~/projects/claude-code-mod-tracking\n",
+   "stderr": "",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A8b pwd cwd=/tmp",
+  "ok": true,
+  "ms": 2,
+  "value": {
+   "exitCode": 0,
+   "stdout": "/private/tmp\n",
+   "stderr": "",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A8c pwd cwd relative \"docs\"",
+  "ok": true,
+  "ms": 2,
+  "value": {
+   "exitCode": 0,
+   "stdout": "~/projects/claude-code-mod-tracking/docs\n",
+   "stderr": "",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A8d pwd cwd nonexistent",
+  "ok": false,
+  "ms": 0,
+  "name": "HooksError",
+  "message": "probe: $.process.run(pwd) failed to start: ENOENT: ENOENT: no such file or directory, posix_spawn 'pwd'"
+ },
+ {
+  "label": "A9 empty argv",
+  "ok": false,
+  "ms": 0,
+  "name": "HooksError",
+  "message": "probe: process.run: takes argv, a non-empty list of strings naming the command first (host check)"
+ },
+ {
+  "label": "A10 relative ./gh",
+  "ok": false,
+  "ms": 0,
+  "name": "HooksError",
+  "message": "probe: $.process.run(./gh) failed to start: ENOENT: ENOENT: no such file or directory, posix_spawn './gh'"
+ },
+ {
+  "label": "A10b absolute gh",
+  "ok": true,
+  "ms": 31,
+  "value": {
+   "exitCode": 0,
+   "stdout": "gh version 2.102.0 (2026-09-30)\nhttps://github.com/cli/cli/releases/tag/v2.102.0\n",
+   "stderr": "",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A11 gh with env PATH=/usr/bin",
+  "ok": false,
+  "ms": 1,
+  "name": "HooksError",
+  "message": "probe: $.process.run(gh) failed to start: ENOENT: Executable not found in $PATH: \"gh\""
+ },
+ {
+  "label": "A11b which gh with env PATH=/usr/bin",
+  "ok": true,
+  "ms": 2,
+  "value": {
+   "exitCode": 127,
+   "stdout": "",
+   "stderr": "env: sh: No such file or directory\n",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A14 non-executable file",
+  "ok": false,
+  "ms": 1,
+  "name": "HooksError",
+  "message": "probe: $.process.run(/etc/hosts) failed to start: EACCES: EACCES: permission denied, posix_spawn '/etc/hosts'"
+ },
+ {
+  "label": "A15 exit 3",
+  "ok": true,
+  "ms": 3,
+  "value": {
+   "exitCode": 3,
+   "stdout": "out\n",
+   "stderr": "err\n",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A15b killed by signal",
+  "ok": true,
+  "ms": 4,
+  "value": {
+   "exitCode": 1,
+   "stdout": "",
+   "stderr": "",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A5b env var names count",
+  "ok": true,
+  "ms": 5,
+  "value": {
+   "exitCode": 0,
+   "stdout": "     102\n",
+   "stderr": "",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A5c env has CLAUDE vars (names only)",
+  "ok": true,
+  "ms": 7,
+  "value": {
+   "exitCode": 0,
+   "stdout": "ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL CLAUDE_BIN CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC CLAUDE_CODE_ENABLE_TELEMETRY CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN CLAUDE_CONFIG_DIR CLAUDE_EFFORT CLAUDE_PID ",
+   "stderr": "",
+   "trunc": false
+  }
+ },
+ {
+  "label": "A5d child PATH equals $.env.get(PATH)",
+  "ok": true,
+  "ms": 4,
+  "value": {
+   "equal": true,
+   "entries": 50
+  }
+ },
+ {
+  "label": "A16 3x sleep 1 in parallel",
+  "ok": true,
+  "ms": 1008,
+  "value": "done"
+ },
+ {
+  "label": "A17 session.repo",
+  "ok": true,
+  "ms": 3,
+  "value": {
+   "root": "~/projects/claude-code-mod-tracking",
+   "remote": "git@github.com:<owner>/<repo>",
+   "internal": false,
+   "name": null,
+   "parsed": {
+    "host": "github.com",
+    "owner": "<owner>",
+    "repo": "<repo>"
+   }
+  }
+ },
+ {
+  "label": "A18 session.root",
+  "ok": true,
+  "ms": 1,
+  "value": "~/projects/claude-code-mod-tracking"
+ }
+]

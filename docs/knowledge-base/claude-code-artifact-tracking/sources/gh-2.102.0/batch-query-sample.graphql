@@ -1,0 +1,25 @@
+query BatchItems {
+  a: repository(owner: "cli", name: "cli") {
+    issueOrPullRequest(number: 14622) {
+      __typename
+      ... on Issue { number title state stateReason url }
+      ... on PullRequest { number title state isDraft reviewDecision url }
+    }
+  }
+  b: repository(owner: "cli", name: "cli") {
+    issueOrPullRequest(number: 14640) {
+      __typename
+      ... on Issue { number title state stateReason url }
+      ... on PullRequest {
+        number title state isDraft reviewDecision mergeStateStatus url
+        commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+      }
+    }
+  }
+  c: repository(owner: "cli", name: "cli") {
+    issueOrPullRequest(number: 14633) {
+      __typename
+      ... on PullRequest { number title state mergedAt url }
+    }
+  }
+}

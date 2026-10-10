@@ -1,0 +1,22 @@
+$ gh pr checks 14640 -R cli/cli
+govulncheck	fail	33s	https://github.com/cli/cli/actions/runs/37981739982/job/113993700082	
+CodeQL	pass	2s	https://github.com/cli/cli/runs/113994197910	
+CodeQL-Build (actions, none, security-and-quality)	pass	54s	https://github.com/cli/cli/actions/runs/37981797308/job/113993892126	
+CodeQL-Build (go, manual, ./.github/codeql/codeql-config.yml)	pass	2m51s	https://github.com/cli/cli/actions/runs/37981797308/job/113993892404	
+build (macos-latest)	pass	7m50s	https://github.com/cli/cli/actions/runs/37981740019/job/113993700229	
+build (ubuntu-latest)	pass	5m27s	https://github.com/cli/cli/actions/runs/37981740019/job/113993700595	
+build (windows-latest)	pass	13m22s	https://github.com/cli/cli/actions/runs/37981740019/job/113993700428	
+integration-tests (macos-latest)	pass	1m59s	https://github.com/cli/cli/actions/runs/37981740019/job/113993700527	
+integration-tests (ubuntu-latest)	pass	1m30s	https://github.com/cli/cli/actions/runs/37981740019/job/113993700498	
+close-from-default-branch	skipping	0	https://github.com/cli/cli/actions/runs/37984544492/job/114003127313	
+close-unmet-requirements	skipping	0	https://github.com/cli/cli/actions/runs/37984544492/job/114003173836	
+label-external	skipping	0	https://github.com/cli/cli/actions/runs/37984544492/job/114003183767	
+integration-tests (windows-latest)	pass	3m7s	https://github.com/cli/cli/actions/runs/37981740019/job/113993700440	
+check-requirements / check-requirements	skipping	0	https://github.com/cli/cli/actions/runs/37984544492/job/114003128594	
+check-requirements / close-unmet-requirements	skipping	0	https://github.com/cli/cli/actions/runs/37984544492/job/114003128411	
+ready-for-review	skipping	0	https://github.com/cli/cli/actions/runs/37984544492/job/114003127832	
+label-external / label_issues	pass	2s	https://github.com/cli/cli/actions/runs/37981740660/job/113993704295	
+lint	pass	2m43s	https://github.com/cli/cli/actions/runs/37981739982/job/113993699722	
+close-from-default-branch / close-from-default-branch	skipping	0	https://github.com/cli/cli/actions/runs/37981740660/job/113993705830	
+close-no-help-wanted	skipping	0	https://github.com/cli/cli/actions/runs/37984544492/job/114003179770	
+exit=1

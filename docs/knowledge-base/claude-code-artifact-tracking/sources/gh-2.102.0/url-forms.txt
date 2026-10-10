@@ -1,0 +1,48 @@
+$ gh pr view https://github.com/cli/cli/pull/14640/files --json number,title
+{"number":14640,"title":"`gh issue artifact` stack 11/12: Address review feedback"}
+exit=0
+
+$ gh pr view https://github.com/cli/cli/pull/14640/checks --json number
+{"number":14640}
+exit=0
+
+$ gh pr checks https://github.com/cli/cli/pull/14640/checks --json name --jq length
+20
+exit=0
+
+$ gh issue view https://github.com/cli/cli/pull/14640 --json number,title (wrong type via URL)
+{"number":14640,"title":"`gh issue artifact` stack 11/12: Address review feedback"}
+exit=0
+
+$ gh pr view https://github.com/cli/cli/issues/14622 --json number (wrong type via URL)
+failed to run git: fatal: not a git repository (or any of the parent directories): .git
+
+exit=1
+
+$ gh issue view https://github.com/cli/cli/issues/14622#issuecomment-ID --json number (comment anchor)
+no comment url found
+
+$ gh issue view https://github.com/cli/cli/issues/14622/ (trailing slash)
+{"number":14622}
+exit=0
+
+$ gh pr view 14640 -R cli/cli --json url (number form)
+{"url":"https://github.com/cli/cli/pull/14640"}
+exit=0
+$ gh pr view https://github.com/cli/cli/issues/14622 -R cli/cli --json number (wrong type via URL, with -R)
+no pull requests found for branch "https://github.com/cli/cli/issues/14622"
+exit=1
+
+$ gh pr view https://github.com/cli/cli/issues/14622 --json number (wrong type via URL, no -R, from /private/tmp which is not a git repo)
+failed to run git: fatal: not a git repository (or any of the parent directories): .git
+
+exit=1
+
+$ gh issue view https://github.com/cli/cli/issues/14622#issuecomment-6050024537 --json number,url
+{"number":14622,"url":"https://github.com/cli/cli/issues/14622"}
+exit=0
+
+$ gh issue view 14622 -R cli/cli --json number,url (control)
+{"number":14622,"url":"https://github.com/cli/cli/issues/14622"}
+exit=0
+

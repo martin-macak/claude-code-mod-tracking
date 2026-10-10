@@ -1,0 +1,8 @@
+$ gh auth status   (account login replaced with <account>)
+github.com
+  ✓ Logged in to github.com account <account> (keyring)
+  - Active account: true
+  - Git operations protocol: ssh
+  - Token: gho_************************************
+  - Token scopes: 'gist', 'read:org', 'repo'
+exit=0

@@ -1,0 +1,9 @@
+{
+ "door": "command",
+ "origin": {
+  "kind": "composer"
+ },
+ "type": "user",
+ "role": "user",
+ "content": "[{\"type\":\"text\",\"text\":\"<command-message>foo</command-message>\\n<command-name>/foo</command-name>\\n<command-args>#12 https://cmd.example/q</command-args>\"}]"
+}

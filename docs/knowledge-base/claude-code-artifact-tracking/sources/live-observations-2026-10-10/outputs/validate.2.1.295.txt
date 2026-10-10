@@ -1,0 +1,206 @@
+=== v1
+Validating plugin manifest: <scratch>/validate/v1/.claude-plugin/plugin.json
+
+⚠ Found 1 warning:
+
+  ❯ author: No author information provided. Consider adding author details for plugin attribution
+
+  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+  ❯ types ./types/index.d.ts declares state: v1.n
+
+Validating hooks: <scratch>/validate/v1/hooks/hooks.json
+
+  ❯ ./register.ts hooks: session.start
+  ❯ ./register.ts calls: $.process.run
+
+✔ Validation passed with warnings
+exit=0
+=== v2
+Validating plugin manifest: <scratch>/validate/v2/.claude-plugin/plugin.json
+
+⚠ Found 1 warning:
+
+  ❯ author: No author information provided. Consider adding author details for plugin attribution
+
+  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+  ❯ types ./types/index.d.ts declares state: v2.n
+
+Validating hooks: <scratch>/validate/v2/hooks/hooks.json
+
+✘ Found 1 error:
+
+  ❯ modules../register.ts: v2: <scratch>/validate/v2/hooks/register.ts, compiled line 4 `await probe($);`: $ is passed to "probe", imported from "./helper": $ is followed only into a function declared in this same file, never across an import; $ is always spelled $.noun.event(...) at the call site, on is always… [+61 chars]
+
+✘ Validation failed
+exit=1
+=== v3
+Validating plugin manifest: <scratch>/validate/v3/.claude-plugin/plugin.json
+
+⚠ Found 1 warning:
+
+  ❯ author: No author information provided. Consider adding author details for plugin attribution
+
+  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+  ❯ types ./types/index.d.ts declares state: v3.n
+
+Validating hooks: <scratch>/validate/v3/hooks/hooks.json
+
+✘ Found 1 error:
+
+  ❯ modules../register.ts: v3: <scratch>/validate/v3/hooks/register.ts, compiled line 4 `await new Thing($).go();`: $ itself is passed as an argument (bound, passed, spread, returned or read); $ is always spelled $.noun.event(...) at the call site, on is always on("<event>", hook), and next.to always next.to(e,… [+10 chars]
+
+✘ Validation failed
+exit=1
+=== v4
+Validating plugin manifest: <scratch>/validate/v4/.claude-plugin/plugin.json
+
+⚠ Found 1 warning:
+
+  ❯ author: No author information provided. Consider adding author details for plugin attribution
+
+  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+  ❯ types ./types/index.d.ts declares state: v4.n
+
+Validating hooks: <scratch>/validate/v4/hooks/hooks.json
+
+✘ Found 1 error:
+
+  ❯ modules../register.ts: v4: <scratch>/validate/v4/hooks/register.ts, compiled line 3 `const p = $.process;`: $.process is used as a value (a noun of $ bound, passed or read); $ is always spelled $.noun.event(...) at the call site, on is always on("<event>", hook), and next.to always next.to(e, "<tier>")
+
+✘ Validation failed
+exit=1
+=== v5
+Validating plugin manifest: <scratch>/validate/v5/.claude-plugin/plugin.json
+
+⚠ Found 1 warning:
+
+  ❯ author: No author information provided. Consider adding author details for plugin attribution
+
+  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+  ❯ types ./types/index.d.ts declares state: v5.n
+
+Validating hooks: <scratch>/validate/v5/hooks/hooks.json
+
+✘ Found 1 error:
+
+  ❯ modules../register.ts: v5: <scratch>/validate/v5/hooks/register.ts, compiled line 11 `await new Item().refresh($);`: $ itself is passed as an argument (bound, passed, spread, returned or read); $ is always spelled $.noun.event(...) at the call site, on is always on("<event>", hook), and next.to always next.… [+15 chars]
+
+✘ Validation failed
+exit=1
+=== v6
+Validating plugin manifest: <scratch>/validate/v6/.claude-plugin/plugin.json
+
+⚠ Found 1 warning:
+
+  ❯ author: No author information provided. Consider adding author details for plugin attribution
+
+  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+  ❯ types ./types/index.d.ts declares state: v6.n
+
+Validating hooks: <scratch>/validate/v6/hooks/hooks.json
+
+✘ Found 1 error:
+
+  ❯ modules../register.ts: v6: <scratch>/validate/v6/hooks/register.ts, compiled line 4 `held = $;`: $ itself is assigned (bound, passed, spread, returned or read); $ is always spelled $.noun.event(...) at the call site, on is always on("<event>", hook), and next.to always next.to(e, "<tier>")
+
+✘ Validation failed
+exit=1
+=== v7
+Validating plugin manifest: <scratch>/validate/v7/.claude-plugin/plugin.json
+
+⚠ Found 1 warning:
+
+  ❯ author: No author information provided. Consider adding author details for plugin attribution
+
+  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+  ❯ types ./types/index.d.ts declares state: v7.n
+
+Validating hooks: <scratch>/validate/v7/hooks/hooks.json
+
+✘ Found 1 error:
+
+  ❯ modules../register.ts: v7: <scratch>/validate/v7/hooks/register.ts, compiled line 3 `const run = $.process.run;`: $.process.run is used as a value (an event of $ bound, passed or read) instead of called; $ is always spelled $.noun.event(...) at the call site, on is always on("<event>", hook), and next.to al… [+25 chars]
+
+✘ Validation failed
+exit=1
+=== v8
+Validating plugin manifest: <scratch>/validate/v8/.claude-plugin/plugin.json
+
+⚠ Found 1 warning:
+
+  ❯ author: No author information provided. Consider adding author details for plugin attribution
+
+  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+  ❯ types ./types/index.d.ts declares state: v8.n
+
+Validating hooks: <scratch>/validate/v8/hooks/hooks.json
+
+  ❯ ./register.ts hooks: session.start
+  ❯ ./register.ts calls: $.clock.after, $.process.run
+
+✔ Validation passed with warnings
+exit=0
+=== v9
+Validating plugin manifest: <scratch>/validate/v9/.claude-plugin/plugin.json
+
+⚠ Found 1 warning:
+
+  ❯ author: No author information provided. Consider adding author details for plugin attribution
+
+  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+  ❯ types ./types/index.d.ts declares state: v9.n
+
+Validating hooks: <scratch>/validate/v9/hooks/hooks.json
+
+✘ Found 1 error:
+
+  ❯ modules../register.ts: v9: <scratch>/validate/v9/hooks/register.ts, compiled line 3 `on("session.append", ($, e, next) => next(e));`: on("session.append") is registered twice without a matcher; the first is at /private/tmp/claude-501/-Users-<user>-projects-claude-code-mod-tracking/7c6e24a2-039c-4a91-8b… [+189 chars]
+
+✘ Validation failed
+exit=1
+=== v10
+Validating plugin manifest: <scratch>/validate/v10/.claude-plugin/plugin.json
+
+⚠ Found 1 warning:
+
+  ❯ author: No author information provided. Consider adding author details for plugin attribution
+
+  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+  ❯ types ./types/index.d.ts declares state: v10.n
+
+Validating hooks: <scratch>/validate/v10/hooks/hooks.json
+
+  ❯ ./register.ts hooks: session.start
+  ❯ ./register.ts calls: $.process.run (via runnerOf)
+
+✔ Validation passed with warnings
+exit=0
+=== probe
+Validating plugin manifest: <scratch>/probe/.claude-plugin/plugin.json
+
+  ❯ types ./types/index.d.ts declares on $: nothing (no EngineInterface member)
+  ❯ types ./types/index.d.ts declares state: probe.log, probe.ticks, probe.rows, probe.collapsed
+
+Validating hooks: <scratch>/probe/hooks/hooks.json
+
+  ❯ ./register.tsx hooks: session.start, command.run{command=probe-run}, command.run{command=probe-avail}, command.run{command=probe-timers}, command.run{command=probe-timers2}, command.run{command=probe-status}, command.run{command=probe-repo}, command.run{command=probe-pane}, command.run{command=probe-pane-later}, command.run{command=probe-add}, ui.render{component=Pane, requestId=probe-pane}, prompt.submit, command.run, session.append
+  ❯ ./register.tsx answers its own command: command.run{command=probe-run}
+  ❯ ./register.tsx answers its own command: command.run{command=probe-avail}
+  ❯ ./register.tsx answers its own command: command.run{command=probe-timers}
+  ❯ ./register.tsx answers its own command: command.run{command=probe-timers2}
+  ❯ ./register.tsx answers its own command: command.run{command=probe-status}
+  ❯ ./register.tsx answers its own command: command.run{command=probe-repo}
+  ❯ ./register.tsx answers its own command: command.run{command=probe-pane}
+  ❯ ./register.tsx answers its own command: command.run{command=probe-pane-later}
+  ❯ ./register.tsx answers its own command: command.run{command=probe-add}
+  ❯ ./register.tsx gating hook without .catch: prompt.submit
+  ❯ ./register.tsx gating hook without .catch: command.run
+  ❯ ./register.tsx gating hook without .catch: session.append
+  ❯ ./register.tsx calls: $.clock.after, $.clock.every, $.clock.now, $.clock.sleep, $.command.register, $.env.get, $.fs.write, $.process.run, $.session.id, $.session.repo, $.session.root, $.state.get, $.state.set, $.store.get, $.store.set, $.ui.open, $.ui.resolve
+  ❯ ./register.tsx env writes: nothing
+  ❯ ./register.tsx env reads: PATH
+  ❯ ./register.tsx state writes: probe.collapsed, probe.log, probe.rows, probe.ticks
+  ❯ ./register.tsx state reads: probe.collapsed, probe.log, probe.rows, probe.ticks
+
+✔ Validation passed
+exit=0

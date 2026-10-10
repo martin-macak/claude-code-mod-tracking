@@ -1,0 +1,7 @@
+$ gh issue view 14640 -R cli/cli --json url   (PR number through issue command)
+{"url":"https://github.com/cli/cli/pull/14640"}
+exit=0
+
+$ gh issue view 14622 -R cli/cli --json url   (issue number)
+{"url":"https://github.com/cli/cli/issues/14622"}
+exit=0

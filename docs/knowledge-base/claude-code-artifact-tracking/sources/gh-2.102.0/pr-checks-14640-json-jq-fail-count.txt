@@ -1,0 +1,3 @@
+$ gh pr checks 14640 -R cli/cli --json bucket --jq "map(select(.bucket==\"fail\")) | length"
+1
+exit=0

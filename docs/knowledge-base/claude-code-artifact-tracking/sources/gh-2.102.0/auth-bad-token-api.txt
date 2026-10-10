@@ -1,0 +1,7 @@
+$ GH_TOKEN=invalid-token-for-test gh api rate_limit --jq .rate.limit
+{
+  "message": "Bad credentials",
+  "documentation_url": "https://docs.github.com/rest",
+  "status": "401"
+}gh: Bad credentials (HTTP 401)
+exit=1

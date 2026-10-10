@@ -1,0 +1,3 @@
+$ gh issue view 999999999 -R cli/cli
+GraphQL: Could not resolve to an issue or pull request with the number of 999999999. (repository.issue)
+exit=1

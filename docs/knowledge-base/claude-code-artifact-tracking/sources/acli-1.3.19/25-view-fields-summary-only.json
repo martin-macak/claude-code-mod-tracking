@@ -1,0 +1,19 @@
+{
+  "changelog": null,
+  "editmeta": null,
+  "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+  "fields": {
+    "summary": "<summary>"
+  },
+  "fieldsToInclude": null,
+  "id": "199221",
+  "key": "PROJ-101",
+  "names": null,
+  "operations": null,
+  "properties": null,
+  "renderedFields": null,
+  "schema": null,
+  "self": "https://<jira-host>/rest/api/3/issue/199221",
+  "transitions": null,
+  "versionedRepresentations": null
+}

@@ -1,0 +1,2 @@
+# Raw bytes the terminal received for the pane row of a Link (pty run, FORCE_HYPERLINK=1). Cursor moves (ESC [ n G) are the layout.
+'#1\x1b[17G\x1b]8;id=g2cfm6;https://github.com/o/r/pull/1\x07A pull request\x1b[118G\x1b]8;;\x07PR\x1b[127G\x1b[38;2;153;153;153mopen\x1b[140G\x1b[39m\x1b[2m│\x1b[22m\r\r'

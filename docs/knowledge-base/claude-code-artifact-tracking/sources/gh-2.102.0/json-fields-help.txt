@@ -1,0 +1,24 @@
+$ gh issue view --help (JSON FIELDS)
+JSON FIELDS
+  assignees, author, blockedBy, blocking, body, closed, closedAt,
+  closedByPullRequestsReferences, comments, createdAt, id, isPinned, issueType,
+  labels, milestone, number, parent, projectCards, projectItems, reactionGroups,
+  state, stateReason, subIssues, subIssuesSummary, title, updatedAt, url
+
+
+$ gh pr view --help (JSON FIELDS)
+JSON FIELDS
+  additions, assignees, author, autoMergeRequest, baseRefName, baseRefOid, body,
+  changedFiles, closed, closedAt, closingIssuesReferences, comments, commits,
+  createdAt, deletions, files, fullDatabaseId, headRefName, headRefOid,
+  headRepository, headRepositoryOwner, id, isCrossRepository, isDraft, labels,
+  latestReviews, maintainerCanModify, mergeCommit, mergeStateStatus, mergeable,
+  mergedAt, mergedBy, milestone, number, potentialMergeCommit, projectCards,
+  projectItems, reactionGroups, reviewDecision, reviewRequests, reviews, state,
+  statusCheckRollup, title, updatedAt, url
+
+
+$ gh pr checks --help (JSON FIELDS)
+JSON FIELDS
+  bucket, completedAt, description, event, link, name, startedAt, state, workflow
+

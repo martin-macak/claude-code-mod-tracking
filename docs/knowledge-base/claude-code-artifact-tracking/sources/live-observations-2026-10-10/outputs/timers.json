@@ -1,0 +1,66 @@
+{
+ "at": 1791630677083,
+ "ticks": 3,
+ "log": [
+  {
+   "label": "T1 after(300): process.run gh --version then update state",
+   "ok": true,
+   "ms": 123,
+   "value": {
+    "exitCode": 0,
+    "stdout": "gh version 2.102.0 (2026-09-30)\nhttps://github.com/cli/cli/releases/tag/v2.102.0\n",
+    "stderr": "",
+    "trunc": false
+   },
+   "at": 303
+  },
+  {
+   "label": "T6 store.set from timer",
+   "ok": true,
+   "ms": 7,
+   "value": {
+    "ok": 1
+   },
+   "at": 810
+  },
+  {
+   "label": "T2 every(1000) tick 1",
+   "ok": true,
+   "at": 1010
+  },
+  {
+   "label": "T5b after throwing timer, still runs",
+   "ok": true,
+   "at": 1502
+  },
+  {
+   "label": "T2 every(1000) tick 2",
+   "ok": true,
+   "at": 2012
+  },
+  {
+   "label": "T2 every(1000) tick 3",
+   "ok": true,
+   "at": 3018
+  },
+  {
+   "label": "T4 after(600): clock.sleep 11000",
+   "ok": true,
+   "ms": 11002,
+   "value": "slept",
+   "at": 11604
+  },
+  {
+   "label": "T3 after(500): process.run sleep 12 (> 10 s hook budget)",
+   "ok": true,
+   "ms": 12011,
+   "value": {
+    "exitCode": 0,
+    "stdout": "",
+    "stderr": "",
+    "trunc": false
+   },
+   "at": 12512
+  }
+ ]
+}

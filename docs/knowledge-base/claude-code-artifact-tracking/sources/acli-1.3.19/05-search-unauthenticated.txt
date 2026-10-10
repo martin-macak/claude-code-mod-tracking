@@ -1,0 +1,4 @@
+exit=1
+--- stdout
+--- stderr
+✗ Error: unauthorized: use 'acli [product] auth login' to authenticate

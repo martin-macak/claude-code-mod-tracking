@@ -1,0 +1,10 @@
+{
+ "door": "response",
+ "origin": {
+  "kind": "model",
+  "model": "claude-opus-5-5"
+ },
+ "type": "assistant",
+ "role": "assistant",
+ "content": "[{\"type\":\"text\",\"text\":\"fake reply\\n\"}]"
+}

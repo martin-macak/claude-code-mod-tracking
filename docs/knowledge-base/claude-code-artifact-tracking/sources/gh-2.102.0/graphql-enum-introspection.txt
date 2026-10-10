@@ -1,0 +1,17 @@
+$ gh api graphql -f query="{ __type(name:\"StatusState\"){ enumValues { name } } }"
+{"data":{"__type":{"enumValues":[{"name":"EXPECTED"},{"name":"ERROR"},{"name":"FAILURE"},{"name":"PENDING"},{"name":"SUCCESS"}]}}}exit=0
+
+$ ... __type(name:"PullRequestReviewDecision")
+{"data":{"__type":{"enumValues":[{"name":"CHANGES_REQUESTED"},{"name":"APPROVED"},{"name":"REVIEW_REQUIRED"}]}}}exit=0
+
+$ ... __type(name:"PullRequestState")
+{"data":{"__type":{"enumValues":[{"name":"OPEN"},{"name":"CLOSED"},{"name":"MERGED"}]}}}exit=0
+
+$ ... __type(name:"IssueStateReason")
+{"data":{"__type":{"enumValues":[{"name":"REOPENED"},{"name":"NOT_PLANNED"},{"name":"COMPLETED"},{"name":"DUPLICATE"}]}}}exit=0
+
+$ ... __type(name:"IssueState")
+{"data":{"__type":{"enumValues":[{"name":"OPEN"},{"name":"CLOSED"}]}}}exit=0
+
+$ ... __type(name:"MergeStateStatus")
+{"data":{"__type":{"enumValues":[{"name":"DIRTY"},{"name":"UNKNOWN"},{"name":"BLOCKED"},{"name":"BEHIND"},{"name":"UNSTABLE"},{"name":"HAS_HOOKS"},{"name":"CLEAN"}]}}}exit=0

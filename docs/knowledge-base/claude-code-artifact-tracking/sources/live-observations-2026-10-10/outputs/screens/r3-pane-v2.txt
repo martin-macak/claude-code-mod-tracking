@@ -1,0 +1,12 @@
+                                                                             │                                                            ✕
+ ▐▛███▛█   Claude Code v2.1.295                                              │Item           Title                     Type     Status
+▝▜██████▀  Opus 5.5 · API Usage Billing                                      │- J1           Parent story with a rath… story    in-progress
+ ▝▝   ▝▝   ~/projects/claude-code-mod-tracking                               │    J2         Subtask                   subtask  in-progress
+                                                                             │    J3         Bug                       bug      todo
+                                                                             │  #1           A pull request            PR       open
+❯ /probe-pane                                                                │  W1           Example page              web
+  ⎿  probe: probe-pane: {"isPlaced":true}                                    │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │

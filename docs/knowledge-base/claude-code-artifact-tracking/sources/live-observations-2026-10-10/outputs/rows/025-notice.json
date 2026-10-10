@@ -1,0 +1,9 @@
+{
+ "door": "notice",
+ "origin": {
+  "kind": "engine"
+ },
+ "type": "system",
+ "name": "turn_duration",
+ "content": "[]"
+}

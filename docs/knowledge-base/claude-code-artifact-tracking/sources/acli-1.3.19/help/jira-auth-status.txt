@@ -1,0 +1,11 @@
+# $ acli jira auth status --help
+Show account status.
+
+Usage:
+  acli jira auth status [flags]
+
+Examples:
+$ acli jira auth status
+
+Flags:
+  -h, --help   Show help for command

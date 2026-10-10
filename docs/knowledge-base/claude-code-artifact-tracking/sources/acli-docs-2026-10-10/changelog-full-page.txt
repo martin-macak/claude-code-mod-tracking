@@ -1,0 +1,146 @@
+
+        Atlassian CLI Changelog
+DeveloperDocumentation
+Resources
+News and Updates
+Get Support
+Sign in
+Developer
+Get Support
+Sign in
+DOCUMENTATION
+Cloud
+Data Center
+Resources
+News and Updates
+Get support
+Sign in
+Developer
+Sign in
+DOCUMENTATION
+Cloud
+Data Center
+Resources
+News and Updates
+Get support
+Sign in
+Atlassian CLI
+Guides
+Reference
+Commands
+Changelog
+Atlassian CLI
+Guides
+Reference
+Changelog
+Last updated Sep 26, 2026
+Changelog
+This changelog is the source of truth for all changes to Atlassian CLI.
+We're excited to share that Atlassian CLI, our command-line tool that unlocks a new way for you to interact with Atlassian products. To get started, sign up here
+Filter types
+26 September 2026
+Announcement Changes to Developer and Marketplace Support: New Platform Experience
+🛠️ Scheduled maintenance window from September 25 @ 5PM PST to Monday, September 28 @ 10AM, AEST
+Our support portal is moving to a new home. New ticket submissions and ticket access including comments via email will be unavailable during this window. Starting September 28, submit all requests at Atlassian Support and update your bookmarks. Learn what's changing.
+25 March 2026
+Announcement Atlassian CLI v1.3.15-stable: OAuth permission update requires site admins to re‑authorize connected sites
+We are releasing a new version of ACLI that introduces additional OAuth scopes required for upcoming features and platform security improvements.
+Because of these new scopes, site admins must re‑authorize ACLI for each connected site. Until re‑authorization is completed, users may see the following error when trying to use ACLI with their site:
+Your site admin must authorize this app for the site "<PLACEHOLDER_YOUR_SITE>" before the app can access your account.
+Action required
+Site admins need to re‑approve the ACLI app for all affected sites, as mentioned in the details section below.
+After re‑authorization, ACLI will work as expected with the updated permission set.
+No other behavior changes are expected in this release.
+More details
+The process is as follows :
+Since this is not a marketplace app, the admin (site-admin) needs to manually upgrade to the latest version on their machine: https://developer.atlassian.com/cloud/acli/guides/update-install-guide/ 
+The admin needs to go through the OAuth flow by running: acli jira auth login , selecting the "Web" option that opens up the OAuth consent screen, and then selecting the site they need to re-approve.
+29 October 2025
+Announcement Atlassian CLI v1.3.5-stable
+New features:
+The following are the new commands:
+🆕 acli jira board list-sprints command to get all sprints.
+🆕 acli jira board search command to search through all the boards.
+🆕 acli jira field create command to create a custom field in Jira.
+🆕 acli jira field delete command to move a custom field to trash.
+🆕 acli jira field cancel-delete command to restore the field from the trash.
+🆕 acli jira filter list command to list filter that are either my or favourite.
+🆕 acli jira filter add-favourite command to add a filter as favourite.
+🆕 acli jira sprint list-workitems command to list work items in a sprint.
+🆕 acli jira workitem attachment delete command to delete an attachment from a workitem.
+🆕 acli jira workitem comment delete command to delete a comment for a given workitem.
+🆕 acli jira workitem comment update command to update a comment on a work item.
+🆕 acli jira workitem create-bulk command to bulk create Jira issues.
+🆕 acli jira workitem watcher remove command to remove a watcher from workitem.
+19 September 2025
+Announcement Atlassian CLI v1.3.4-stable
+New features:
+The following are the new commands:
+🆕 acli jira workitem link create command to create links between work items.
+🆕 acli jira workitem link delete command to delete links between work items.
+🆕 acli jira workitem link type command to delete link types between work items.
+🆕 acli jira workitem link list command to get the available work item lists.
+🆕 acli jira workitem comment list command to list comments for a work item.
+🆕 acli jira workitem comment visibility command to get visibility options for work item comments.
+🆕 acli jira workitem attachment list command to list all the attachments of a work item.
+Bug fixes and enhancements:
+Various bug fixes and improvements have been made to enhance overall functionality and performance.
+4 September 2025
+Announcement AI assistant integration now available in Forge CLI
+Forge CLI now offers AI-powered assistance through Rovo CLI and Gemini CLI. This integration allows the AI agent to analyze errors from Forge commands or tunnels and suggest actionable fixes automatically, enhancing your development experience. It connects with the app developer's existing Rovo and Gemini accounts; Forge does not provide an AI agent account but facilitates this integration.
+This feature is experimental and opt-in. We may change or remove it at any time.
+More details
+How to get started:
+Install the latest Forge CLI (v12.5.0+): https://developer.atlassian.com/platform/forge/cli-reference/
+Set up your preferred AI Agent:
+https://rovodevagents-beta.atlassian.net/wiki/external/Yzc2NzI4MTk3YTBhNDdiYjkzZDhhZTc3MjE0ZmE4Y2Q#Install-Rovo-Dev-CLI
+https://github.com/google-gemini/gemini-cli
+Enable the feature with:forge assistant on rovoorforge assistant on gemini
+To turn off, run:forge assistant off
+For more information, run forge assistant --help.
+24 July 2025
+Announcement Atlassian CLI v1.3.0-stable
+Atlassian’s AI coding assistant; Rovo Dev can now be updated independently of Atlassian CLI
+Minor bug fixes & content improvements
+13 June 2025
+Announcement Atlassian CLI v1.2.1-stable
+🆕 Introducing Atlassian’s AI coding assistant; Rovo Dev (Beta). To start using Rovo Dev (Beta), authenticate your access by running the command acli rovodev auth login, and then launch the tool with acli rovodev.
+⚠️ acli admin auth login now requires --email for authentication.
+Minor bug fixes & content improvements
+27 May 2025
+Announcement Atlassian CLI v1.1.0
+🎉 ACLI is Generally Available from today.
+🆕 We have expanded the authentication mechanism by introducing: acli jira auth login, and acli admin auth login
+⚠️ Users need to authenticate with new commands
+🆕 Organization admin commands are now available: acli admin user --help
+🆕 Jira dashboard commands are now available: acli jira dashboard --help
+🆕 Jira filter commands are now available: acli jira filter --help
+Minor bug fixes & content improvements
+10 April 2025
+Announcement Atlassian CLI v1.0.3-beta
+This update introduces/changes the following:
+Updated acli auth login example with API token.
+Minor content changes.
+8 April 2025
+Announcement Atlassian CLI v1.0.2-beta
+This update introduces/changes the following:
+🐛 Resolved an issue where in some cases acli jira project view could not produce an error.
+Minor content changes.
+7 April 2025
+Announcement Atlassian CLI v1.0.1-beta
+This update introduces/changes the following:
+🆕 acli jira project view command has been added. Explore more
+Resolved an issue where certain errors were not being displayed.
+Minor content changes.
+1 April 2025
+Announcement Atlassian CLI v1.0.0-beta
+Initial release
+1
+Rate this page:
+Unusable
+Poor
+Okay
+Good
+Excellent
+    ChangelogSystem statusPrivacyNotice at CollectionDeveloper TermsTrademarkCookie preferences© 2026 Atlassian
+      

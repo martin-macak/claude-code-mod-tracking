@@ -1,0 +1,31 @@
+$ gh issue view 14640 -R cli/cli --json isDraft
+Unknown JSON field: "isDraft"
+Available fields:
+  assignees
+  author
+  blockedBy
+  blocking
+  body
+  closed
+  closedAt
+  closedByPullRequestsReferences
+  comments
+  createdAt
+  id
+  isPinned
+  issueType
+  labels
+  milestone
+  number
+  parent
+  projectCards
+  projectItems
+  reactionGroups
+  state
+  stateReason
+  subIssues
+  subIssuesSummary
+  title
+  updatedAt
+  url
+exit=1

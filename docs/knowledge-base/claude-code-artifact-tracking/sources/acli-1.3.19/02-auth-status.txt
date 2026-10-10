@@ -1,0 +1,7 @@
+exit=0
+--- stdout
+✓ Authenticated
+  Site: <site>.atlassian.net
+  Email: <email>
+  Authentication Type: oauth_global
+--- stderr

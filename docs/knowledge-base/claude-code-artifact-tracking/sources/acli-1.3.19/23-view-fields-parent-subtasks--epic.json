@@ -1,0 +1,43 @@
+{
+  "changelog": null,
+  "editmeta": null,
+  "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+  "fields": {
+    "issuetype": {
+      "description": "A big user story that needs to be broken down. Created by Jira Software - do not edit or delete.",
+      "hierarchyLevel": 1,
+      "iconUrl": "https://<jira-host>/images/icons/issuetypes/epic.svg",
+      "id": "10000",
+      "name": "Epic",
+      "self": "https://<jira-host>/rest/api/3/issuetype/10000",
+      "subtask": false
+    },
+    "status": {
+      "description": "This issue is being actively worked on at the moment by the assignee.",
+      "iconUrl": "https://<jira-host>/images/icons/statuses/inprogress.png",
+      "id": "3",
+      "name": "In Progress",
+      "self": "https://<jira-host>/rest/api/3/status/3",
+      "statusCategory": {
+        "colorName": "yellow",
+        "id": 4,
+        "key": "indeterminate",
+        "name": "In Progress",
+        "self": "https://<jira-host>/rest/api/3/statuscategory/4"
+      }
+    },
+    "subtasks": [],
+    "summary": "<summary>"
+  },
+  "fieldsToInclude": null,
+  "id": "198338",
+  "key": "PROJ-300",
+  "names": null,
+  "operations": null,
+  "properties": null,
+  "renderedFields": null,
+  "schema": null,
+  "self": "https://<jira-host>/rest/api/3/issue/198338",
+  "transitions": null,
+  "versionedRepresentations": null
+}
