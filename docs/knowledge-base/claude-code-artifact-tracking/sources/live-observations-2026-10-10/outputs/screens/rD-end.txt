@@ -1,0 +1,12 @@
+  @<scratch>/mention.txt
+  please
+  ⎿  Read ../../../..<session>/scrat
+     chpad/mention.txt (2 lines)
+⏺ fake reply
+✻ Baked for 0s · done 1:14 PM
+❯ /probe-repo
+  ⎿  probe: {"repo":{"remoteShape":"git@github.com:<owner>/<repo>","internal":false,"name":null}}
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

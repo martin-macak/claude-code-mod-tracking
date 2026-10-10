@@ -1,0 +1,7 @@
+# Default page size when --limit is absent. Observed.
+# cmd: acli jira workitem search --jql 'created >= -14d ORDER BY created DESC' --fields issuetype --json | jq length
+30
+# cmd: ... --count
+✓ Number of work items in the search: 2710
+# cmd: ... --limit 200 --json | jq length
+200

@@ -1,0 +1,24 @@
+# $ acli jira auth login --help
+Authenticate with an Atlassian host.
+
+Usage:
+  acli jira auth login [flags]
+
+Examples:
+# Authenticate using web browser (OAuth)
+$ acli jira auth login --web
+
+# Authenticate with your email, site name and API token without scopes
+$ acli jira auth login --site "mysite.atlassian.net" --email "user@atlassian.com" --token < token.txt
+OR
+$ echo <token> | acli jira auth login --site "mysite.atlassian.net" --email "user@atlassian.com" --token
+	
+# Authenticate with your email, site name and API token without scopes on Windows
+$ Get-Content token.txt | .\acli.exe jira auth login --site "mysite.atlassian.net" --email "user@atlassian.com" --token
+
+Flags:
+  -e, --email string   User email is required for authentication
+  -h, --help           Show help for command
+  -s, --site string    Site of the Atlassian instance is required for authentication
+      --token          Read token from standard input
+  -w, --web            Authenticate using web browser

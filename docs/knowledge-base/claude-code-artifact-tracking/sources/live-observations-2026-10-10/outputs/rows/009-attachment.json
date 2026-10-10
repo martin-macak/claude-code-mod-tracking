@@ -1,0 +1,10 @@
+{
+ "door": "attachment",
+ "origin": {
+  "kind": "engine"
+ },
+ "type": "attachment",
+ "name": "session_context",
+ "role": "user",
+ "content": "(omitted)"
+}

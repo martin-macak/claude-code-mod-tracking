@@ -1,0 +1,20 @@
+
+tests/probe.test.tsx:
+(pass) process.run stub: detection is cached; a missing tool is a rejection [30.07ms]
+(pass) session.repo stub: remote shapes [13.93ms]
+(pass) session.repo stub: null [12.71ms]
+(pass) timer callback: mock clock fires it; it calls process.run and writes $.state [20.58ms]
+(pass) pane tree table draws, collapses, and redraws when state is written (terminal) [26.68ms]
+(pass) pane tree table draws, collapses, and redraws when state is written (desktop) [20.44ms]
+(pass) parseRemote [0.45ms]
+
+tests/stubs.test.ts:
+(pass) a { deny } stub makes the mod's $.process.run reject with the reason (and a { value } stub resolves it) [37.20ms]
+(pass) process.run without a stub: the mod's call fails with "no implementation" [21.76ms]
+(pass) the stub sees argv and init exactly as the mod passed them [22.05ms]
+(pass) mock.store, mock.env, mock.clock answer the mod's $.store / $.env / $.clock; session.repo is a plain stub [18.64ms]
+(pass) the test $ has no process, store, clock, env, state, session.repo [0.19ms]
+
+ 12 pass
+ 0 fail
+Ran 12 tests across 2 files. [0.27s]

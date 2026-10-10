@@ -1,0 +1,4 @@
+exit=1
+--- stdout
+--- stderr
+✗ Error: failed to fetch work item details

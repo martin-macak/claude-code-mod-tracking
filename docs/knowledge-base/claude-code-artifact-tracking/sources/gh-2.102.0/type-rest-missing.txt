@@ -1,0 +1,3 @@
+$ gh api repos/cli/cli/issues/999999999
+{"message":"Not Found","documentation_url":"https://docs.github.com/rest/issues/issues#get-an-issue","status":"404"}gh: Not Found (HTTP 404)
+exit=1

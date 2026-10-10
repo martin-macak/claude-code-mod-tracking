@@ -1,0 +1,16 @@
+# $ acli auth --help
+Authenticate to use Atlassian CLI.
+
+Usage:
+  acli auth [command]
+
+Available Commands:
+  login       Authenticate globally with OAuth.
+  logout      Logout globally from all active OAuth accounts.
+  status      Show global account status.
+  switch      Switch globally between accounts for all products.
+
+Flags:
+  -h, --help   Show help for command
+
+Use "acli auth [command] --help" for more information about a command.

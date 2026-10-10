@@ -1,0 +1,47 @@
+{
+ "at": 1791630734683,
+ "ticks": 3,
+ "log": [
+  {
+   "label": "T1 after(300): process.run gh --version then update state",
+   "ok": true,
+   "ms": 155,
+   "value": {
+    "exitCode": 0,
+    "stdout": "gh version 2.102.0 (2026-09-30)\nhttps://github.com/cli/cli/releases/tag/v2.102.0\n",
+    "stderr": "",
+    "trunc": false
+   },
+   "at": 302
+  },
+  {
+   "label": "T6 store.set from timer",
+   "ok": true,
+   "ms": 4,
+   "value": {
+    "ok": 1
+   },
+   "at": 806
+  },
+  {
+   "label": "T2 every(1000) tick 1",
+   "ok": true,
+   "at": 1011
+  },
+  {
+   "label": "T5b after throwing timer, still runs",
+   "ok": true,
+   "at": 1502
+  },
+  {
+   "label": "T2 every(1000) tick 2",
+   "ok": true,
+   "at": 2017
+  },
+  {
+   "label": "T2 every(1000) tick 3",
+   "ok": true,
+   "at": 3019
+  }
+ ]
+}

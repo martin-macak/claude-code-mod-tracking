@@ -1,0 +1,4 @@
+exit=1
+--- stdout
+--- stderr
+✗ Error: Issue does not exist or you do not have permission to see it.

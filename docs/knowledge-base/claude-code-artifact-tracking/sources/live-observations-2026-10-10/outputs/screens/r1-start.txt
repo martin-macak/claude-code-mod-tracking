@@ -1,0 +1,10 @@
+ ▐▛███▛█   Claude Code v2.1.295
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   ~/projects/claude-code-mod-tracking
+▎ Debug mode enabled · logging to /private/tmp/claude-501/-Users-<user>-projects-claude-code-mod-tracking/7c6e24a2-039c-4a91-8bd8-dd758
+▎ 3bc0b65/scratchpad/run/debug2.log
+                                                                                                                        ◐ medium · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

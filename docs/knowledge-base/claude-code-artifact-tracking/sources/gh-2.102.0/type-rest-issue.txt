@@ -1,0 +1,3 @@
+$ gh api repos/cli/cli/issues/14622 --jq "{number,title,state,state_reason,has_pull_request_key: has(\"pull_request\"), pull_request_key_value: .pull_request}"
+{"has_pull_request_key":false,"number":14622,"pull_request_key_value":null,"state":"closed","state_reason":"duplicate","title":"gh pr edit fails with 'GraphQL: Projects (classic) is being deprecated' on repos with classic projects"}
+exit=0

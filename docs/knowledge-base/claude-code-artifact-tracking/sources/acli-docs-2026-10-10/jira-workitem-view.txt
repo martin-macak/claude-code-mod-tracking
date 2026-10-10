@@ -1,0 +1,136 @@
+
+        Atlassian CLI
+DeveloperDocumentation
+Resources
+News and Updates
+Get Support
+Sign in
+Developer
+Get Support
+Sign in
+DOCUMENTATION
+Cloud
+Data Center
+Resources
+News and Updates
+Get support
+Sign in
+Developer
+Sign in
+DOCUMENTATION
+Cloud
+Data Center
+Resources
+News and Updates
+Get support
+Sign in
+Atlassian CLI
+Guides
+Reference
+Commands
+Changelog
+Atlassian CLI
+Guides
+Reference
+Changelog
+acli
+admin
+admin auth
+admin user
+feedback
+jira
+jira auth
+jira board
+jira dashboard
+jira field
+jira filter
+jira project
+jira sprint
+jira workitem
+archive
+assign
+attachment-delete
+attachment-list
+clone
+comment-create
+comment-delete
+comment-list
+comment-update
+comment-visibility
+create
+create-bulk
+delete
+edit
+link
+search
+transition
+unarchive
+view
+watcher-remove
+rovodev
+rovodev auth
+Last updated Oct 3, 2024
+acli jira workitem view
+Retrieve information about Jira work items.
+1
+2
+acli jira workitem view [key] [flags]
+Examples
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+# View work item with work item keys
+$ acli jira workitem view KEY-123
+# View work item by reading work item keys from a JSON file
+$ acli jira workitem view KEY-123 --json
+# View work item with work item keys and a list of field to return
+$ acli jira workitem view KEY-123 --fields summary,comment
+# View work item with work item keys and view in a web browser
+$ acli jira workitem view KEY-123 --web
+Options
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+  -f, --fields string   A list of fields to return for the work item. This parameter accepts a comma-separated list. Use it to retrieve a subset of fields.
+                        Allowed values:
+                        - '*all' - returns all fields
+                        - '*navigable' - returns navigable fields
+                        Any work item field, prefixed with a minus to exclude
+                        Examples:
+                        - 'summary,comment' - returns only the summary and comments fields
+                        - '-description' - returns all (default) fields except description
+                        - '*navigable,-comment' - returns all navigable fields except comment
+                         (default "key,issuetype,summary,status,assignee,description")
+  -h, --help            Show help for command
+      --json            Generate a JSON output
+  -w, --web             View the work item in the web browser.
+SEE ALSO
+acli jira workitem	 - Jira work item commands.
+Rate this page:
+Unusable
+Poor
+Okay
+Good
+Excellent
+    ChangelogSystem statusPrivacyNotice at CollectionDeveloper TermsTrademarkCookie preferences© 2026 Atlassian
+      

@@ -1,0 +1,4 @@
+exit=1
+--- stdout
+--- stderr
+✗ Error: failed to parse JQL query: error in jql query: expecting either a value, list or function but got '='. you must surround '=' in quotation marks to use it as a value. (line 1, character 7)

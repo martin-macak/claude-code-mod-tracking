@@ -1,0 +1,31 @@
+$ gh issue view 14622 -R cli/cli --json bogusField
+Unknown JSON field: "bogusField"
+Available fields:
+  assignees
+  author
+  blockedBy
+  blocking
+  body
+  closed
+  closedAt
+  closedByPullRequestsReferences
+  comments
+  createdAt
+  id
+  isPinned
+  issueType
+  labels
+  milestone
+  number
+  parent
+  projectCards
+  projectItems
+  reactionGroups
+  state
+  stateReason
+  subIssues
+  subIssuesSummary
+  title
+  updatedAt
+  url
+exit=1

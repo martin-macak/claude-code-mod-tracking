@@ -1,0 +1,9 @@
+{
+ "door": "prompt",
+ "origin": {
+  "kind": "composer"
+ },
+ "type": "user",
+ "role": "user",
+ "content": "[{\"type\":\"text\",\"text\":\"hello #5 and https://typed.example/a\"}]"
+}

@@ -1,0 +1,3 @@
+$ gh pr view 14630 -R cli/cli --json number,title,state,isDraft,reviewDecision,mergedAt,closedAt
+{"closedAt":"2026-10-09T09:30:36Z","isDraft":false,"mergedAt":null,"number":14630,"reviewDecision":"REVIEW_REQUIRED","state":"CLOSED","title":"Bump golang.org/x/net to v0.60.0"}
+exit=0

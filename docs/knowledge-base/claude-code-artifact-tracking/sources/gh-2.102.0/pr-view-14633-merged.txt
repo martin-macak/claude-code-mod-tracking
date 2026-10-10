@@ -1,0 +1,3 @@
+$ gh pr view 14633 -R cli/cli --json number,title,state,isDraft,reviewDecision,mergedAt,closedAt
+{"closedAt":"2026-10-09T14:14:41Z","isDraft":false,"mergedAt":"2026-10-09T14:14:41Z","number":14633,"reviewDecision":"APPROVED","state":"MERGED","title":"chore(deps): bump golang.org/x/sync from 0.23.0 to 0.24.0"}
+exit=0

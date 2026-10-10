@@ -1,0 +1,11 @@
+Warning: no stdin data received in 3s, proceeding without it. If piping from a slow command, redirect stdin explicitly: < /dev/null to skip, or wait longer.
+artifact-tracking: Jira work items  acli · ready
+  DEMO-1  DEMO-1
+
+GitHub  gh · ready
+  #14622
+  #14640  PR
+
+Web links  1 links
+  the plugin docs  code.claude.com/docs/en/plugins
+exit=0

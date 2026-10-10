@@ -1,0 +1,3 @@
+We're changing auto mode to no longer charge for classifier requests in Claude Code. However, this session isn't eligible because your requests go through 127.0.0.1:8811, which isn't compatible with this update. Nothing breaks: auto mode keeps working, and its classifier requests are billed as before. To fix it and access the new version of auto mode, ask your gateway to implement: https://code.claude.com/docs/en/auto-mode-classifier-billing
+Here is what I found. The fix is in https://github.com/cli/cli/pull/14640 and the discussion is in [the plugin docs](https://code.claude.com/docs/en/plugins). The Jira ticket https://example.atlassian.net/browse/DEMO-1 tracks it.
+exit=0

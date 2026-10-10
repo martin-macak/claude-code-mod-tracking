@@ -1,0 +1,11 @@
+Warning: no stdin data received in 3s, proceeding without it. If piping from a slow command, redirect stdin explicitly: < /dev/null to skip, or wait longer.
+artifact-tracking: Jira work items  acli · <site>.atlassian.net · ready
+  DEMO-1  DEMO-1  track-only
+
+GitHub  gh · refreshed just now
+  #14622  gh pr edit fails with 'GraphQL: Projects (classic) is being deprecated' on repos with classic projects  Issue  closed
+  #14640  `gh issue artifact` stack 11/12: Address review feedback  PR  open  ✗ checks
+
+Web links  1 links
+  the plugin docs  code.claude.com/docs/en/plugins
+exit=0

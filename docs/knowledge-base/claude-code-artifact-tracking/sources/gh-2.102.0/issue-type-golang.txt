@@ -1,0 +1,3 @@
+$ gh issue list -R golang/go --state all --limit 10 --json number,issueType,state
+[{"issueType":null,"number":82128,"state":"OPEN"},{"issueType":null,"number":82127,"state":"OPEN"},{"issueType":null,"number":82126,"state":"OPEN"},{"issueType":null,"number":82125,"state":"OPEN"},{"issueType":null,"number":82124,"state":"OPEN"},{"issueType":null,"number":82121,"state":"CLOSED"},{"issueType":null,"number":82120,"state":"OPEN"},{"issueType":null,"number":82118,"state":"OPEN"},{"issueType":null,"number":82117,"state":"CLOSED"},{"issueType":null,"number":82116,"state":"OPEN"}]
+exit=0

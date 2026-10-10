@@ -1,0 +1,10 @@
+{
+ "door": "attachment",
+ "origin": {
+  "kind": "engine"
+ },
+ "type": "attachment",
+ "name": "environment",
+ "role": "user",
+ "content": "(omitted)"
+}

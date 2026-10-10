@@ -1,0 +1,50 @@
+                                                                             │                                                            ✕
+ ▐▛███▛█   Claude Code v2.1.295                                              │Item          Title                      Type     Status
+▝▜██████▀  Opus 5.5 · API Usage Billing                                      │- J1     Parent story with a rather long title …story in-prog…
+ ▝▝   ▝▝   ~/projects/claude-code-mod-tracking                               │  J2          Subtask                    subtask  in-progress
+                                                                             │  J3          Bug                        bug      todo
+▎ Debug mode enabled · logging to                                            │#1            A pull request             PR       open
+▎ /private/tmp/claude-501/-Users-<user>-projects-claude-code-mod-trackin│W1            Example page               web
+▎ g/7c6e24a2-039c-4a91-8bd8-dd7583bc0b65/scratchpad/run/debug2.log           │
+                                                                             │
+❯ hello see https://example.com/a and #12 and org/repo#7                     │
+                                                                             │
+⏺ fake reply                                                                 │
+                                                                             │
+✻ Baked for 0s · done 1:03 PM                                                │
+                                                                             │
+❯ /probe-pane                                                                │
+  ⎿  probe: probe-pane: {"isPlaced":true}                                    │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+                                                                             │
+  tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and…  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

@@ -1,0 +1,78 @@
+{
+ "at": 1791630464746,
+ "ticks": 0,
+ "log": [
+  {
+   "label": "T8 every(1000) callback 1 start",
+   "ok": true,
+   "at": 1013
+  },
+  {
+   "label": "T8 every(1000) callback 2 start",
+   "ok": true,
+   "at": 2014
+  },
+  {
+   "label": "T8 every(1000) callback 3 start",
+   "ok": true,
+   "at": 3019
+  },
+  {
+   "label": "T8 every(1000) callback 1 end",
+   "ok": true,
+   "at": 3517
+  },
+  {
+   "label": "T8 every(1000) callback 4 start",
+   "ok": true,
+   "at": 4021
+  },
+  {
+   "label": "T8 every(1000) callback 2 end",
+   "ok": true,
+   "at": 4517
+  },
+  {
+   "label": "T8 every(1000) callback 5 start",
+   "ok": true,
+   "at": 5026
+  },
+  {
+   "label": "T8 every(1000) callback 3 end",
+   "ok": true,
+   "at": 5521
+  },
+  {
+   "label": "T8 every(1000) callback 6 start",
+   "ok": true,
+   "at": 6031
+  },
+  {
+   "label": "T8 every(1000) callback 4 end",
+   "ok": true,
+   "at": 6524
+  },
+  {
+   "label": "T8 every(1000) callback 5 end",
+   "ok": true,
+   "at": 7529
+  },
+  {
+   "label": "T8 every(1000) callback 6 end",
+   "ok": true,
+   "at": 8534
+  },
+  {
+   "label": "T7 after(100): process.run sleep 45",
+   "ok": true,
+   "ms": 45004,
+   "value": {
+    "exitCode": 0,
+    "stdout": "",
+    "stderr": "",
+    "trunc": false
+   },
+   "at": 45107
+  }
+ ]
+}

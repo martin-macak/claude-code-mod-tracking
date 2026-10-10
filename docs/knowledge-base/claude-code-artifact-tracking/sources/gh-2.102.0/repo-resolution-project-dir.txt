@@ -1,0 +1,8 @@
+$ cd ~/projects/claude-code-mod-tracking
+$ git remote get-url origin
+git@github.com:<owner>/<repo>.git
+exit=0
+
+$ gh repo view --json nameWithOwner
+{"nameWithOwner":"<owner>/claude-code-mod-tracking"}
+exit=0

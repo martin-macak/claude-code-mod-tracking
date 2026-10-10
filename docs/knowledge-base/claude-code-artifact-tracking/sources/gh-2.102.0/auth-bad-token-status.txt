@@ -1,0 +1,12 @@
+$ GH_TOKEN=invalid-token-for-test gh auth status
+github.com
+  X Failed to log in to github.com using token (GH_TOKEN)
+  - Active account: true
+  - The token in GH_TOKEN is invalid.
+
+  ✓ Logged in to github.com account <account> (keyring)
+  - Active account: false
+  - Git operations protocol: ssh
+  - Token: gho_************************************
+  - Token scopes: 'gist', 'read:org', 'repo'
+exit=1

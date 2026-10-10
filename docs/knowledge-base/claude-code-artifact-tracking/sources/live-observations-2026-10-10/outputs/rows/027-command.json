@@ -1,0 +1,10 @@
+{
+ "door": "command",
+ "origin": {
+  "kind": "engine"
+ },
+ "type": "system",
+ "name": "local_command",
+ "role": "user",
+ "content": "[{\"type\":\"text\",\"text\":\"<local-command-stdout>probe: {\\\"repo\\\":{\\\"remoteShape\\\":\\\"git@github.com:<owner>/<repo>\\\",\\\"internal\\\":false,\\\"name\\\":null}}</local-command-stdout>\"}]"
+}

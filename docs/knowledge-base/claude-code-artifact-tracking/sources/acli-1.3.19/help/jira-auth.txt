@@ -1,0 +1,16 @@
+# $ acli jira auth --help
+Authenticate to use Atlassian CLI.
+
+Usage:
+  acli jira auth [command]
+
+Available Commands:
+  login       Authenticate with an Atlassian host.
+  logout      Logout from account.
+  status      Show account status.
+  switch      Switch between accounts.
+
+Flags:
+  -h, --help   Show help for command
+
+Use "acli jira auth [command] --help" for more information about a command.

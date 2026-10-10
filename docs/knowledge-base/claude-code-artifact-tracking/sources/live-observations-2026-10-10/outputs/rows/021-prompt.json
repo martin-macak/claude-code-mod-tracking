@@ -1,0 +1,9 @@
+{
+ "door": "prompt",
+ "origin": {
+  "kind": "composer"
+ },
+ "type": "user",
+ "role": "user",
+ "content": "[{\"type\":\"text\",\"text\":\"look at @<scratch>/mention.txt please\"}]"
+}

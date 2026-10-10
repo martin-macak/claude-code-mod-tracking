@@ -1,0 +1,101 @@
+
+        Atlassian CLI
+DeveloperDocumentation
+Resources
+News and Updates
+Get Support
+Sign in
+Developer
+Get Support
+Sign in
+DOCUMENTATION
+Cloud
+Data Center
+Resources
+News and Updates
+Get support
+Sign in
+Developer
+Sign in
+DOCUMENTATION
+Cloud
+Data Center
+Resources
+News and Updates
+Get support
+Sign in
+Atlassian CLI
+Guides
+Reference
+Commands
+Changelog
+Atlassian CLI
+Guides
+Reference
+Changelog
+acli
+admin
+admin auth
+admin user
+feedback
+jira
+jira auth
+login
+logout
+status
+switch
+jira board
+jira dashboard
+jira field
+jira filter
+jira project
+jira sprint
+jira workitem
+rovodev
+rovodev auth
+Last updated Oct 3, 2024
+acli jira auth switch
+Switch between Jira accounts.
+1
+2
+acli jira auth switch [flags]
+Examples
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+# Interactive mode
+$ acli jira auth switch
+# Switch to a specific site
+$ acli jira auth switch --site mysite.atlassian.net
+# Switch to a specific email
+$ acli jira auth switch --email user@atlassian.com
+# Switch to a specific site and email
+$ acli jira auth switch --site mysite.atlassian.net --email user@atlassian.com
+Options
+1
+2
+3
+4
+  -e, --email string   Atlassian account email
+  -h, --help           Show help for command
+  -s, --site string    Atlassian account site
+SEE ALSO
+acli jira auth	 - Authenticate to use Atlassian CLI.
+Rate this page:
+Unusable
+Poor
+Okay
+Good
+Excellent
+    ChangelogSystem statusPrivacyNotice at CollectionDeveloper TermsTrademarkCookie preferences© 2026 Atlassian
+      

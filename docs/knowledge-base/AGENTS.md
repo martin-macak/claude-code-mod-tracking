@@ -8,6 +8,7 @@ Research knowledge bases. One folder per problem, named by a kebab-case slug.
 | --- | --- |
 | [`claude-code-mods`](claude-code-mods/) | Claude Code mods: the function-hooks plugin API |
 | [`claude-code-link-capture`](claude-code-link-capture/) | Capture every link Claude shows (Markdown, OSC 8) with a mod |
+| [`claude-code-artifact-tracking`](claude-code-artifact-tracking/) | Track GitHub issues/PRs, Jira work items and web links in a session; enrich with `gh` and `acli`; show them in a pane |
 
 ## Convention for a slug folder
 

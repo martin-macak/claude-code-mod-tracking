@@ -1,0 +1,71 @@
+{
+  "changelog": null,
+  "editmeta": null,
+  "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+  "fields": {
+    "assignee": {
+      "accountId": "<accountId>",
+      "accountType": "atlassian",
+      "active": true,
+      "avatarUrls": "<avatar-urls>",
+      "displayName": "<displayName>",
+      "emailAddress": "<emailAddress>",
+      "self": "https://<jira-host>/rest/api/3/user?accountId=<accountId>",
+      "timeZone": "Europe/Prague"
+    },
+    "description": {
+      "content": [
+        {
+          "attrs": {
+            "localId": "80178f457bce"
+          },
+          "content": [
+            {
+              "text": "<text>",
+              "type": "text"
+            }
+          ],
+          "type": "paragraph"
+        }
+      ],
+      "type": "doc",
+      "version": 1
+    },
+    "issuetype": {
+      "avatarId": 10303,
+      "description": "A problem or error.",
+      "hierarchyLevel": 0,
+      "iconUrl": "https://<jira-host>/rest/api/2/universal_avatar/view/type/issuetype/avatar/10303?size=medium",
+      "id": "10058",
+      "name": "Bug",
+      "self": "https://<jira-host>/rest/api/3/issuetype/10058",
+      "subtask": false
+    },
+    "status": {
+      "description": "This issue is being actively worked on at the moment by the assignee.",
+      "iconUrl": "https://<jira-host>/images/icons/statuses/inprogress.png",
+      "id": "3",
+      "name": "In Progress",
+      "self": "https://<jira-host>/rest/api/3/status/3",
+      "statusCategory": {
+        "colorName": "yellow",
+        "id": 4,
+        "key": "indeterminate",
+        "name": "In Progress",
+        "self": "https://<jira-host>/rest/api/3/statuscategory/4"
+      }
+    },
+    "summary": "<summary>"
+  },
+  "fieldsToInclude": null,
+  "id": "199221",
+  "key": "PROJ-101",
+  "names": null,
+  "operations": null,
+  "properties": null,
+  "renderedFields": null,
+  "schema": null,
+  "self": "https://<jira-host>/rest/api/3/issue/199221",
+  "transitions": null,
+  "versionedRepresentations": null
+}

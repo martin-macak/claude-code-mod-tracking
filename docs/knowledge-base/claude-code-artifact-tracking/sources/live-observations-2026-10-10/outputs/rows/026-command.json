@@ -1,0 +1,10 @@
+{
+ "door": "command",
+ "origin": {
+  "kind": "engine"
+ },
+ "type": "system",
+ "name": "local_command",
+ "role": "user",
+ "content": "[{\"type\":\"text\",\"text\":\"<command-name>/probe-repo</command-name>\\n            <command-message>probe-repo</command-message>\\n            <command-args></command-args>\"}]"
+}

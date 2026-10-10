@@ -1,0 +1,22 @@
+ ▐▛███▛█   Claude Code v2.1.295
+▝▜██████▀  Opus 5.5 · API Usage Billing
+ ▝▝   ▝▝   ~/projects/claude-code-mod-tracking
+▎ Debug mode enabled · logging to /private/tmp/claude-501/-Users-<user>-projects-claude-code-mo
+▎ d-tracking/7c6e24a2-039c-4a91-8bd8-dd7583bc0b65/scratchpad/run/debug3.log
+❯ /probe-pane-later c100
+  ⎿  probe: probe-pane-later: scheduled
+❯ /probe-pane
+  ⎿  probe: probe-pane: {"isPlaced":true}
+╭────────────────────────────────────────────────────────────────────────────────────────────────✕─╮
+│ Item          Title                                                        Type     Status       │
+│ - J1          Parent story with a rather long title that must be truncated story    in-progress  │
+│   J2          Subtask                                                      subtask  in-progress  │
+│   J3          Bug                                                          bug      todo         │
+│ #1            A pull request                                               PR       open         │
+│ W1            Example page                                                 web                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+  tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and reattach for focus tra…
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents

@@ -1,0 +1,13 @@
+# $ acli config --help
+Commands for changing configuration settings.
+
+Usage:
+  acli config [command]
+
+Available Commands:
+  gov-cloud   Atlassian Government Cloud configuration command.
+
+Flags:
+  -h, --help   Show help for command
+
+Use "acli config [command] --help" for more information about a command.

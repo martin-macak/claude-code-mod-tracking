@@ -1,0 +1,3 @@
+["wait:8","mark:start","type:Please check #14622 and tell me where the fix is.","enter","waitfor:Here is what I found:25","wait:2","snap:A1-band-after-reply",
+ "type:/track","enter","wait:6","snap:A2-pane-open","mark:clear-with-pane-open","type:/clear","enter","wait:2","snap:A3-after-clear-pane-open",
+ "wait:34","snap:A4-after-tick-35s","esc","wait:1.5","snap:A5-after-esc"]

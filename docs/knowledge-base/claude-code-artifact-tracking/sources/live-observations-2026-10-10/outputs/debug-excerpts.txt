@@ -1,0 +1,3 @@
+2026-10-10T11:10:59.741Z [WARN] probe: $.clock.after: the callback threw: T5 boom
+2026-10-10T11:11:30.976Z [DEBUG] session.start: raised for probe (loaded later)
+2026-10-10T11:11:30.976Z [DEBUG] hooks module probe@inline reloaded in 6.2ms; events: session.start,command.run,ui.render,session.append

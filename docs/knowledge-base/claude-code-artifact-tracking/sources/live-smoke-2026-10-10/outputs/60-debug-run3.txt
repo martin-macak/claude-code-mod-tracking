@@ -1,0 +1,28 @@
+2026-10-10T14:24:56.417Z [DEBUG] --plugin-dir <repo>/plugins/artifact-tracking is one plugin: .claude-plugin at its top marks it
+2026-10-10T14:24:56.426Z [DEBUG] Read hooks.json for plugin artifact-tracking (enabled=true): <repo>/plugins/artifact-tracking/hooks/hooks.json
+2026-10-10T14:24:56.427Z [DEBUG] Loaded inline plugin from path: artifact-tracking
+2026-10-10T14:24:56.428Z [DEBUG] Checking plugin artifact-tracking: skillsPath=none, skillsPaths=0 paths
+2026-10-10T14:24:56.452Z [ERROR] NON-FATAL: Lock acquisition failed for ~/.local/share/claude/versions/2.1.296 (expected in multi-process scenarios): Lock already held by another process
+2026-10-10T14:24:56.563Z [DEBUG] hooks module artifact-tracking@inline loaded (worker, environment 2, tier user); events: session.append,session.start,command.run,ui.close,ui.render
+2026-10-10T14:24:56.565Z [DEBUG] engine.create: no plugin-provided interfaces; $ built for cc-plugin-sec-default,artifact-tracking,cc-plugin-agents-md,cc-plugin-telemetry
+2026-10-10T14:24:56.566Z [DEBUG] plugin.register: artifact-tracking (user, artifact-tracking@inline), judged by cc-plugin-sec-default: admitted
+2026-10-10T14:24:56.576Z [DEBUG] $.command.register (artifact-tracking): /track listed
+2026-10-10T14:24:56.576Z [DEBUG] Checking plugin artifact-tracking: skillsPath=none, skillsPaths=0 paths
+2026-10-10T14:24:56.578Z [DEBUG] $.process.run (artifact-tracking): gh with 1 args in <scratch>/smoke/proj (pid 94764)
+2026-10-10T14:24:56.579Z [DEBUG] $.process.run (artifact-tracking): acli with 1 args in <scratch>/smoke/proj (pid 94765)
+2026-10-10T14:24:56.602Z [DEBUG] hooks module artifact-tracking@inline session.start settled in 28.2ms (worker hop, next() included)
+2026-10-10T14:24:56.612Z [DEBUG] $.process.run (artifact-tracking): gh exited 0 in 35ms, 81 + 0 chars
+2026-10-10T14:24:57.227Z [DEBUG] $.process.run (artifact-tracking): acli exited 0 in 649ms, 201 + 0 chars
+2026-10-10T14:24:57.235Z [DEBUG] $.process.run (artifact-tracking): gh with 6 args in <scratch>/smoke/proj (pid 94779)
+2026-10-10T14:24:57.236Z [DEBUG] $.process.run (artifact-tracking): acli with 3 args in <scratch>/smoke/proj (pid 94780)
+2026-10-10T14:24:57.694Z [DEBUG] $.process.run (artifact-tracking): acli exited 0 in 459ms, 116 + 0 chars
+2026-10-10T14:24:58.085Z [DEBUG] $.process.run (artifact-tracking): gh exited 0 in 852ms, 646 + 0 chars
+2026-10-10T14:24:58.089Z [DEBUG] artifact-tracking (user) answered command.run without next() in 1465.7ms; nothing beneath it ran for this dispatch
+2026-10-10T14:24:58.089Z [DEBUG] hooks module artifact-tracking@inline command.run settled in 1466.0ms (worker hop, next() included)
+2026-10-10T14:24:58.092Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.9ms (worker hop, next() included)
+2026-10-10T14:24:58.093Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.3ms (worker hop, next() included)
+2026-10-10T14:24:58.093Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.3ms (worker hop, next() included)
+2026-10-10T14:24:58.101Z [ERROR] [Anthropic telemetry] Failed to check metrics opt-out status: Auth error: no credential usable for the metrics opt-out check
+2026-10-10T14:24:58.102Z [DEBUG] $.session (artifact-tracking): no session bound; id, cwd and model answered from the process
+2026-10-10T14:24:58.104Z [DEBUG] $.store.set (artifact-tracking@inline): s:971bafe9-7511-440f-9032-bb2eddb6c758
+2026-10-10T14:24:58.105Z [DEBUG] $.store.set (artifact-tracking@inline): index

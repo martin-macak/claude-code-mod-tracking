@@ -1,0 +1,4 @@
+exit=0
+--- stdout
+✓ Number of work items in the search: 5
+--- stderr

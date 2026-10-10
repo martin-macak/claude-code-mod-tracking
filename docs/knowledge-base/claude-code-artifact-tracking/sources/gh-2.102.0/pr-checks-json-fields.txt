@@ -1,0 +1,4 @@
+$ gh pr checks --help (JSON FIELDS section)
+JSON FIELDS
+  bucket, completedAt, description, event, link, name, startedAt, state, workflow
+

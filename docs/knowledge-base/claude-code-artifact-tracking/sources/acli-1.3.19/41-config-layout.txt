@@ -1,0 +1,17 @@
+# Local acli state (keys only; values withheld). Observed, not documented by Atlassian.
+# Directory: ~/.config/acli/   (override: env var ACLI_CONFIG_DIR, string found in the binary; with an empty dir acli reports "unauthorized")
+# Files (mode 0600): admin_config.yaml assets_config.yaml brie_config.yaml confluence_config.yaml
+#                    global_auth_config.yaml global_config.yaml jira_config.yaml rovodev_config.yaml
+# Structure of jira_config.yaml (and global_auth_config.yaml):
+version
+current_profile
+profiles:            # list; this machine has exactly 1 entry
+  - site
+    cloud_id
+    account_id
+    display_name
+    email
+    auth_type        # value seen: oauth_global
+# Other env vars found by `strings` in the binary: ACLI_LOG_ENABLED, ACLI_LOG_FILE, ACLI_NO_DEPRECATION_WARNINGS,
+# ACLI_ACCESSIBLE, HTTPS_PROXY/HTTP_PROXY (honoured: see 06/07/08 files), FORCE_COLOR, CLICOLOR_FORCE.
+# Not tested: ACLI_LOG_*, multi-profile behaviour (only one profile exists, and login/switch are write operations).

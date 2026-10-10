@@ -1,0 +1,10 @@
+{
+ "door": "note",
+ "origin": {
+  "kind": "engine"
+ },
+ "type": "user",
+ "role": "user",
+ "isMeta": true,
+ "content": "[{\"type\":\"text\",\"text\":\"Please look at #12 https://cmd.example/q and say ok.\\n\"}]"
+}

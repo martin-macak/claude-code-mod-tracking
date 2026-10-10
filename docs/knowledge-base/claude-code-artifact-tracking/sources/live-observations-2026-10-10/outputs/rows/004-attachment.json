@@ -1,0 +1,10 @@
+{
+ "door": "attachment",
+ "origin": {
+  "kind": "engine"
+ },
+ "type": "attachment",
+ "name": "agent_listing_delta",
+ "role": "user",
+ "content": "(omitted)"
+}

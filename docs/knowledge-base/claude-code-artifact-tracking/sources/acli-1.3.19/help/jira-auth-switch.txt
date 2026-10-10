@@ -1,0 +1,24 @@
+# $ acli jira auth switch --help
+Switch between accounts.
+
+Usage:
+  acli jira auth switch [flags]
+
+Examples:
+# Interactive mode
+$ acli jira auth switch
+
+# Switch to a specific site
+$ acli jira auth switch --site mysite.atlassian.net
+
+# Switch to a specific email
+$ acli jira auth switch --email user@atlassian.com
+
+# Switch to a specific site and email
+$ acli jira auth switch --site mysite.atlassian.net --email user@atlassian.com
+
+
+Flags:
+  -e, --email string   Atlassian account email
+  -h, --help           Show help for command
+  -s, --site string    Atlassian account site
