@@ -313,7 +313,7 @@ test('items with source auto are not in the GitHub section; a mentioned PR with 
   expect(sections[0]?.rows.map(r => r.id)).toEqual([issue.key])
 })
 
-test('a body ref gets the via prefix; only an auto-only item has a dismiss id', () => {
+test('a body ref gets the via prefix; every top-level item has a dismiss id', () => {
   const issue: GitHubRecord = {
     ...autoPr(3),
     sources: ['pr-body'],
@@ -331,15 +331,16 @@ test('a body ref gets the via prefix; only an auto-only item has a dismiss id', 
   const rows = buildPane([issue, kept], ctx())[0]!.rows
   expect(rows[0]).toMatchObject({ title: '↳#7,#9 Bug', dismissId: issue.key })
   expect(rows[1]?.title).toBe('↳#7 Kept')
-  expect(rows[1]?.dismissId).toBeUndefined()
+  expect(rows[1]?.dismissId).toBe(kept.key)
   expect(buildPane([issue, kept], ctx())[0]?.dismissable).toBe(true)
 })
 
-test('an item section without auto rows is not dismissable and has no via prefix', () => {
+test('an item section without auto rows is still dismissable and has no via prefix', () => {
   const plain: GitHubRecord = { ...autoPr(5), sources: ['prompt'], title: 'Plain' }
   const section = buildPane([plain], ctx())[0]!
-  expect(section.dismissable).toBe(false)
+  expect(section.dismissable).toBe(true)
   expect(section.rows[0]?.title).toBe('Plain')
+  expect(section.rows[0]?.dismissId).toBe(plain.key)
 })
 
 test('bandParts counts GitHub items without source auto; composeBand adds the auto PRs apart', () => {

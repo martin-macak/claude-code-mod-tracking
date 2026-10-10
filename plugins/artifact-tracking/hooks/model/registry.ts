@@ -190,7 +190,9 @@ const STATUS_FIELDS = {
 
 export function mergeResults(list: readonly ItemRecord[], refreshed: readonly ItemRecord[]): ItemRecord[] {
   const byKey = new Map(refreshed.map(r => [r.key, r]))
-  return list.map(rec => {
+  const removed = new Set(refreshed.filter(r => r.error?.kind === 'not-found').map(r => r.key))
+  return list.flatMap(rec => {
+    if (removed.has(rec.key)) return []
     const fresh = byKey.get(rec.key)
     const out = cloneRecord(rec)
     if (!fresh) return out
@@ -207,7 +209,7 @@ export function mergeResults(list: readonly ItemRecord[], refreshed: readonly It
     if (fresh.refreshedAt !== undefined) out.refreshedAt = fresh.refreshedAt
     if (fresh.error) out.error = { ...fresh.error }
     else delete out.error
-    return out
+    return [out]
   })
 }
 
