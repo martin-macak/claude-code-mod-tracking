@@ -115,6 +115,7 @@ function ensureRuntime($: EngineInterface): void {
     load: () => read($, items),
     save: async refreshed => {
       const dropped = refreshed.filter(rec => rec.error?.kind === 'not-found').map(rec => rec.key)
+      // Keep discarded keys in this run's dismiss list, so transcript replay does not bring them back on /resume.
       if (dropped.length > 0) await setAuto($, s => dismiss(s, dropped))
       await setItems($, list => mergeResults(list, refreshed))
     },
