@@ -34,12 +34,22 @@ EXCLUDE_LINE := /.claude/skills/$(NAME)
 #   make test TSC="npx -y -p typescript@7.0.2 tsc"
 TSC ?= mise exec $(NODE) -- npx -y -p typescript tsc
 
+# Node runner for the e2e harness. Override it where mise is absent, for example in CI:
+#   make e2e-unit NODE_RUN=
+NODE_RUN ?= mise exec $(NODE) --
+
+# e2e harness: Gherkin scenarios that drive a real claude in tmux. Spec:
+# docs/superpowers/specs/2026-10-11-demo-pipeline-design.md
+E2E       := e2e
+E2E_STAMP := $(E2E)/node_modules/.package-lock.json
+DEMO_GIF  := docs/assets/demo.gif
+
 .DEFAULT_GOAL := help
-.PHONY: help init build typecheck test check lint hooks dist release release-dry install uninstall install-local uninstall-local clean
+.PHONY: help init build typecheck test check e2e-deps e2e-unit e2e demo lint hooks dist release release-dry install uninstall install-local uninstall-local clean
 
 help: ## List the targets
 	@echo "Targets (PLUGIN=$(PLUGIN)):"
-	@awk -F':.*## ' '/^[a-z][a-z-]*:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk -F':.*## ' '/^[a-z][a-z0-9-]*:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 init: ## Check the tools, print versions, warm the TypeScript cache
 	@ok=1; \
@@ -53,6 +63,10 @@ init: ## Check the tools, print versions, warm the TypeScript cache
 	for t in gh acli; do \
 	  if command -v $$t >/dev/null 2>&1; then printf '%-9s: present (optional)\n' "$$t"; \
 	  else printf '%-9s: missing (optional, the mod still works)\n' "$$t"; fi; \
+	done; \
+	for t in tmux asciinema agg gifsicle; do \
+	  if command -v $$t >/dev/null 2>&1; then printf '%-9s: present (for make e2e / make demo)\n' "$$t"; \
+	  else printf '%-9s: missing (needed by make e2e / make demo, brew install %s)\n' "$$t" "$$t"; fi; \
 	done; \
 	if command -v pre-commit >/dev/null 2>&1; then printf 'pre-commit: %s\n' "$$(pre-commit --version)"; \
 	else echo 'pre-commit: missing (needed by make hooks and make lint)'; fi; \
@@ -68,14 +82,30 @@ build: ## Validate the plugin and the marketplace, then type-check (no output fi
 	cd "$(ROOT)" && claude plugin validate --strict .
 	@$(MAKE) --no-print-directory typecheck
 
-typecheck: ## Type-check the plugin with tsc (no claude needed)
+typecheck: e2e-deps ## Type-check the plugin and the e2e harness with tsc (no claude needed)
 	cd $(PLUGIN) && $(TSC) -p .
+	cd $(E2E) && $(TSC) -p .
 
 # The suite takes about 3 s, so test depends on build.
 test: build ## Run the plugin tests (after build)
 	cd $(PLUGIN) && claude plugin test .
 
 check: test ## Alias of test (validate, type-check, test)
+
+e2e-deps: $(E2E_STAMP) ## Install the e2e harness dependencies (npm ci)
+
+$(E2E_STAMP): $(E2E)/package-lock.json
+	cd $(E2E) && $(NODE_RUN) npm ci --no-audit --no-fund
+
+e2e-unit: e2e-deps ## Unit-test the e2e harness (no claude, tmux tests skip without tmux)
+	cd $(E2E) && $(NODE_RUN) node --test 'tests/**/*.test.ts'
+
+e2e: e2e-deps ## Run the Gherkin scenarios against a real claude (needs a Claude login, tmux)
+	cd $(E2E) && $(NODE_RUN) npx cucumber-js
+
+demo: e2e-deps ## Record the @demo scenario and render docs/assets/demo.gif (at most 2 MB)
+	cd $(E2E) && DEMO_RECORD=1 $(NODE_RUN) npx cucumber-js -p demo
+	cd $(E2E) && $(NODE_RUN) node bin/render.ts out/demo ../$(DEMO_GIF)
 
 # Linters and hooks live in .pre-commit-config.yaml. Rules: AGENTS.md.
 lint: ## Run every pre-commit hook on all files

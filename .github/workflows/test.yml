@@ -45,6 +45,10 @@ jobs:
           node --version
 
       # claude plugin validate and claude plugin test need no login and no API key.
-      # make test runs: plugin validate, tsc -p ., plugin test.
+      # make test runs: plugin validate, tsc on the mod and e2e/, plugin test.
+      # NODE_RUN= : CI has no mise. setup-node provides node 24.
       - name: Test the artifact-tracking mod
-        run: make test TSC="npx -y -p typescript@${TYPESCRIPT_VERSION} tsc"
+        run: make test TSC="npx -y -p typescript@${TYPESCRIPT_VERSION} tsc" NODE_RUN=
+
+      - name: Unit-test the e2e harness
+        run: make e2e-unit NODE_RUN=

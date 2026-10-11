@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["plugins/**"]
+    "includes": ["plugins/**", "e2e/**", "!e2e/package-lock.json"]
   },
   "formatter": {
     "enabled": true,
