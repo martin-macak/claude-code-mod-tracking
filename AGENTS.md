@@ -15,6 +15,11 @@ Workspace to build a Claude Code mod (function-hooks plugin).
 - Fix lint findings in the code. Change a rule in `biome.json` or `.markdownlint-cli2.jsonc` only with a reason in a comment or the PR.
 - The hooks skip `docs/knowledge-base/*/sources/`, `.agents/` and `.claude/`. Those files are verbatim or vendored.
 
+## Releases
+
+- A release is a tag `<plugin>--v<version>`. Bump `version` in `plugin.json` in a PR. After the merge, run `make release` on `main`. CI (`.github/workflows/release.yml`) publishes the GitHub release with the zip.
+- Never push a release tag from a feature branch. Steps: `plugins/artifact-tracking/README.md`, "Release". Background: `docs/knowledge-base/claude-code-mods/workflow/release.md`.
+
 ## GitHub conventions
 
 These rules apply to every agent and person. CI checks the PR title and the branch name. The `commit-msg` hook checks commits.

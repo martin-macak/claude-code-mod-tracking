@@ -1,0 +1,129 @@
+name: release
+
+# Start a release: bump "version" in plugin.json in a PR, merge it, then run
+# `make release` on main. It pushes the tag <name>--v<version>, made by
+# `claude plugin tag`. KB: docs/knowledge-base/claude-code-mods/workflow/release.md.
+on:
+  push:
+    tags: ['artifact-tracking--v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PLUGIN: plugins/artifact-tracking
+  # Keep these equal to the pins in test.yml.
+  CLAUDE_CODE_VERSION: 2.1.296
+  TYPESCRIPT_VERSION: 7.0.2
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the release, upload assets
+      id-token: write # sign the provenance attestation
+      attestations: write # store the attestation
+      artifact-metadata: write # store the artifact record
+    steps:
+      # Full history: the guard checks that the tag is on main.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # A tag made by hand skips the checks of `claude plugin tag`. Repeat them.
+      - name: Check the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          name="$(jq -r .name "$PLUGIN/.claude-plugin/plugin.json")"
+          version="$(jq -r .version "$PLUGIN/.claude-plugin/plugin.json")"
+          if [ "$TAG" != "${name}--v${version}" ]; then
+            echo "::error::Tag $TAG does not match plugin.json: expected ${name}--v${version}."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::Tag $TAG points at a commit that is not on main."
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Cache the npm download cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-claude-${{ env.CLAUDE_CODE_VERSION }}-tsc-${{ env.TYPESCRIPT_VERSION }}
+
+      - name: Install Claude Code
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      # --strict fails on warnings too. The repo root holds marketplace.json.
+      - name: Validate the plugin and the marketplace
+        run: |
+          claude plugin validate --strict "$PLUGIN"
+          claude plugin validate --strict .
+
+      - name: Test
+        run: make test TSC="npx -y -p typescript@${TYPESCRIPT_VERSION} tsc"
+
+      - name: Build the zip and SHA256SUMS
+        run: make dist
+
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/*.zip
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          zip="artifact-tracking-${VERSION}.zip"
+          url="https://github.com/${REPO}/releases/download/${TAG}/${zip}"
+          extra=()
+          case "$VERSION" in *-*) extra+=(--prerelease) ;; esac
+          # Notes start at this plugin's previous tag, not another plugin's.
+          prev="$(git describe --tags --abbrev=0 --match 'artifact-tracking--v*' "${TAG}^" 2>/dev/null || true)"
+          if [ -n "$prev" ]; then extra+=(--notes-start-tag "$prev"); fi
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          ## Install
+
+          From the marketplace, in a Claude Code session:
+
+          \`\`\`text
+          /plugin install artifact-tracking --marketplace ${REPO}
+          \`\`\`
+
+          Update an existing install: \`claude plugin update artifact-tracking@mod-tracking\`.
+
+          From this release's zip, for one session:
+
+          \`\`\`sh
+          claude --plugin-url ${url}
+          \`\`\`
+
+          Verify the zip:
+
+          \`\`\`sh
+          sha256sum -c SHA256SUMS
+          gh attestation verify ${zip} --repo ${REPO}
+          \`\`\`
+
+          Tested with Claude Code ${CLAUDE_CODE_VERSION}.
+          EOF
+          gh release create "$TAG" dist/*.zip dist/SHA256SUMS \
+            --verify-tag \
+            --title "artifact-tracking ${VERSION}" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --generate-notes \
+            "${extra[@]}"
