@@ -12,6 +12,8 @@ const GH_PATH = /^\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/(issues|pull)\/(\d+)(?:[
 const BARE_REF = /(?<![\w/&#])#(\d{1,7})\b/g
 const URL_RUN = /https?:\/\/[^\s<>"'`\][(){}]+/g
 const TRAILING = '.,;:!?*_~'
+// Conversation short refs are narrow by design (issue #8): only these lead words opt in `#N` capture.
+const SHORT_REF_PREFIX = /\b(?:github|bug|issue|issues|enhancement|chore)\s*[-:() ]*$/i
 /** A web URL longer than this is not tracked. It would bloat $.state and $.store. */
 const MAX_WEB_URL = 2048
 
@@ -197,7 +199,12 @@ function locate(text: string, needles: Array<string | undefined>, cursor: number
   return { pos: cursor, next: cursor }
 }
 
-function fromMarkdown(text: string, hosts: readonly string[]): At[] {
+function fromMarkdown(
+  text: string,
+  hosts: readonly string[],
+  repo: RepoRef | null | undefined,
+  strictShortRefs: boolean,
+): At[] {
   const refs: At[] = []
   let cursor = 0
   for (const f of scanMarkdown(text)) {
@@ -208,7 +215,13 @@ function fromMarkdown(text: string, hosts: readonly string[]): At[] {
     cursor = hit.next
     if (f.via === 'issue-ref') {
       const gh = parseGitHubUrl(f.url)
-      if (gh && !FILE_EXT.test(gh.repo!)) refs.push({ pos: hit.pos, ref: { ...gh, type: 'unknown' } })
+      const keep = gh && !FILE_EXT.test(gh.repo!) && (!strictShortRefs || shortRefAllowed(text, hit.pos, gh, repo))
+      if (keep) {
+        refs.push({
+          pos: hit.pos,
+          ref: { ...gh, type: 'unknown', ...(strictShortRefs ? { short: true as const } : {}) },
+        })
+      }
       continue
     }
     const ref = classify(f.url, f.label, hosts)
@@ -218,7 +231,27 @@ function fromMarkdown(text: string, hosts: readonly string[]): At[] {
   return refs
 }
 
-function bareRefs(text: string, repo: RepoRef | null | undefined): At[] {
+function sameRepo(a: RepoRef | null | undefined, b: { host: string; owner: string; repo: string }): boolean {
+  if (!a) return false
+  return (
+    a.host.toLowerCase() === b.host.toLowerCase() &&
+    a.owner.toLowerCase() === b.owner.toLowerCase() &&
+    a.repo.toLowerCase() === b.repo.toLowerCase()
+  )
+}
+
+function hasShortRefPrefix(text: string, at: number): boolean {
+  const from = Math.max(0, at - 64)
+  return SHORT_REF_PREFIX.test(text.slice(from, at))
+}
+
+function shortRefAllowed(text: string, at: number, ref: GitHubRef, repo: RepoRef | null | undefined): boolean {
+  if (!hasShortRefPrefix(text, at)) return false
+  if (!ref.owner || !ref.repo) return false
+  return sameRepo(repo, { host: ref.host, owner: ref.owner, repo: ref.repo })
+}
+
+function bareRefs(text: string, repo: RepoRef | null | undefined, strictShortRefs: boolean): At[] {
   const masked = maskForBare(text)
   const refs: At[] = []
   for (const m of masked.matchAll(BARE_REF)) {
@@ -226,6 +259,8 @@ function bareRefs(text: string, repo: RepoRef | null | undefined): At[] {
     const ref: GitHubRef = repo
       ? { category: 'github', host: repo.host, owner: repo.owner, repo: repo.repo, number, type: 'unknown' }
       : { category: 'github', host: 'github.com', number, type: 'unknown' }
+    if (strictShortRefs && !shortRefAllowed(text, m.index!, ref, repo)) continue
+    if (strictShortRefs) ref.short = true
     refs.push({ pos: m.index!, ref })
   }
   return refs
@@ -251,10 +286,16 @@ function uniqueKey(r: Ref): string {
 export function extractRefs(text: string, opts: ExtractOptions): Ref[] {
   const t = cap(text)
   const hosts = opts.githubHosts ?? []
+  const strictShortRefs = opts.strictShortRefs ?? false
   const all =
     opts.mode === 'urls-only'
       ? urlsOnly(t, hosts)
-      : [...fromMarkdown(t, hosts), ...bareRefs(t, opts.defaultRepo)].sort((a, b) => a.pos - b.pos).map(x => x.ref)
+      : [
+          ...fromMarkdown(t, hosts, opts.defaultRepo, strictShortRefs),
+          ...bareRefs(t, opts.defaultRepo, strictShortRefs),
+        ]
+          .sort((a, b) => a.pos - b.pos)
+          .map(x => x.ref)
   const seen = new Set<string>()
   return all.filter(r => {
     const k = uniqueKey(r)

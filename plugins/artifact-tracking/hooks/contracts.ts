@@ -54,6 +54,8 @@ export type GitHubRef = {
   type: 'issue' | 'pr' | 'unknown'
   /** The URL as written, when the reference was a URL. */
   url?: string
+  /** True when a ref came from short `#N` text matching (not from a full GitHub URL). */
+  short?: true
 }
 
 export type JiraRef = {
@@ -77,6 +79,8 @@ export type ExtractOptions = {
   defaultRepo?: RepoRef | null
   /** Hosts besides github.com whose issue and PR URLs count as GitHub (GHE hosts gh is logged in to). */
   githubHosts?: readonly string[]
+  /** In conversation text, track short GitHub refs only when a keyword prefixes them and they target the current repo. */
+  strictShortRefs?: boolean
 }
 
 // ---------------------------------------------------------------- what tools mutate

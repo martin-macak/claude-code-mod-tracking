@@ -26,9 +26,9 @@ import {
 
 // ---------------------------------------------------------------- capture and refresh
 
-test('prompt row: #5 and a Jira URL are listed by /track with refreshed status', async ($, on) => {
+test('prompt row: issue #5 and a Jira URL are listed by /track with refreshed status', async ($, on) => {
   const { clock, calls } = world(on)
-  await $.session.append(prompt('Look at #5 and https://acme.atlassian.net/browse/ISS-1'))
+  await $.session.append(prompt('Look at issue #5 and https://acme.atlassian.net/browse/ISS-1'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
   const text = (await track($)).text ?? ''
@@ -36,22 +36,32 @@ test('prompt row: #5 and a Jira URL are listed by /track with refreshed status',
   expect(text).toContain('Web five')
   expect(text).toContain('ISS-1')
   expect(text).toContain('Draft')
-  expect(graphqlCalls(calls).length).toBe(1)
+  expect(graphqlCalls(calls).length).toBe(2)
   expect(viewCalls(calls).map(c => c[4])).toEqual(['ISS-1'])
 })
 
 test('a later row with a new item refreshes it after the capture debounce', async ($, on) => {
   const { clock, calls } = world(on)
-  await $.session.append(prompt('first #5'))
-  await clock.advance(LIMITS.captureDebounceMs + 10)
-  await quiet(calls)
-  expect(graphqlCalls(calls).length).toBe(1)
-  await $.session.append(prompt('and now #9'))
-  expect(graphqlCalls(calls).length).toBe(1) // the debounce has not run yet
+  await $.session.append(prompt('first issue #5'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
   expect(graphqlCalls(calls).length).toBe(2)
+  await $.session.append(prompt('and now issue #9'))
+  expect(graphqlCalls(calls).length).toBe(3) // short-ref pre-check ran, debounce has not run yet
+  await clock.advance(LIMITS.captureDebounceMs + 10)
+  await quiet(calls)
+  expect(graphqlCalls(calls).length).toBe(4)
   expect((await track($)).text).toContain('Web nine')
+})
+
+test('prompt row: keyworded short refs are kept only when the item exists and is open', async ($, on) => {
+  const { clock, calls } = world(on)
+  await $.session.append(prompt('Check issue #5 and issue #404'))
+  await clock.advance(LIMITS.captureDebounceMs + 10)
+  await quiet(calls)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('Web five')
+  expect(text).not.toContain('#404')
 })
 
 test('rows of other makers are not captured: task notification, isMeta, subagent, coordinator', async ($, on) => {
@@ -74,7 +84,7 @@ test('command rows: our own engine output is skipped, a composer command is read
   )
   await $.session.append(
     commandRow(
-      '<command-message>foo</command-message>\n<command-name>/foo https://outside.example/o</command-name>\n<command-args>#9</command-args>',
+      '<command-message>foo</command-message>\n<command-name>/foo https://outside.example/o</command-name>\n<command-args>issue #9</command-args>',
       'composer',
     ),
   )
@@ -145,7 +155,7 @@ test('response row: a non-existent GitHub URL is discarded before it can be list
 
 test('a URL and a bare #N for the same item make one item', async ($, on) => {
   const { clock, calls } = world(on)
-  await $.session.append(prompt('check #5'))
+  await $.session.append(prompt('check issue #5'))
   await $.session.append(response('Fixed https://github.com/acme/web/issues/5 already.'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
@@ -155,7 +165,7 @@ test('a URL and a bare #N for the same item make one item', async ($, on) => {
 
 test('pane: the dismiss button removes a manually tracked row', async ($, on) => {
   const { clock, calls } = world(on)
-  await $.session.append(prompt('check #5'))
+  await $.session.append(prompt('check issue #5'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
   await track($)
@@ -200,7 +210,7 @@ test('/clear carry-over, store path: the items of the session just left come bac
   const { clock, calls } = world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { items: old } } })
   await $.session.append(prompt('first https://example.org/a')) // learns the id; no session.start, so nothing is restored
   current.id = 'sess-2' // what /clear does
-  await $.session.append(prompt('then #5'))
+  await $.session.append(prompt('then issue #5'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
   const text = (await track($)).text ?? ''
@@ -246,7 +256,7 @@ test('/track refresh clears a logged-out gh and asks again', async ($, on) => {
 
 test('a tool that is not installed is named in its section; the other tool still works', async ($, on) => {
   const { clock, calls } = world(on, { missing: ['acli'] })
-  await $.session.append(prompt('see #5 and https://acme.atlassian.net/browse/ISS-1'))
+  await $.session.append(prompt('see issue #5 and https://acme.atlassian.net/browse/ISS-1'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
   const text = (await track($)).text ?? ''
@@ -279,14 +289,14 @@ test('session.start registers /track with its hint', async ($, on) => {
 test('session.start backfills from the transcript with the same rules per role', async ($, on) => {
   world(on, {
     messages: [
-      { role: 'user', text: 'please look at #5', toolUses: [] },
+      { role: 'user', text: 'please look at issue #5', toolUses: [] },
       { role: 'user', text: '<local-command-stdout>ISS-88 #88</local-command-stdout>', toolUses: [] },
       {
         role: 'user',
-        text: '<command-message>foo</command-message>\n<command-name>/foo https://outside.example/o</command-name>\n<command-args>#9 and #10</command-args>',
+        text: '<command-message>foo</command-message>\n<command-name>/foo https://outside.example/o</command-name>\n<command-args>issue #9 and issue #10</command-args>',
         toolUses: [],
       },
-      { role: 'assistant', text: 'It is in [docs](https://docs.example/a) and #6', toolUses: [] },
+      { role: 'assistant', text: 'It is in [docs](https://docs.example/a) and issue #6', toolUses: [] },
       {
         role: 'assistant',
         text: '',
@@ -305,10 +315,10 @@ test('session.start backfills from the transcript with the same rules per role',
   const text = (await track($)).text ?? ''
   expect(text).toContain('#5')
   expect(text).toContain('docs.example/a')
-  expect(text).toContain('#6')
+  expect(text).not.toContain('#6')
   expect(text).toContain('cli/cli#14640')
   expect(text).toContain('#9')
-  expect(text).toContain('#10')
+  expect(text).not.toContain('#10')
   expect(text).not.toContain('#11')
   expect(text).not.toContain('outside.example')
   expect(text).not.toContain('tool.example')
@@ -529,7 +539,7 @@ test('an ssh host alias is not kept as the session repo: gh resolves it and #N m
     badHosts: ['github-work'],
     repoView: '{"nameWithOwner":"acme/web","url":"https://github.com/acme/web"}',
   })
-  await $.session.append(prompt('check #5'))
+  await $.session.append(prompt('check issue #5'))
   await $.session.append(response('Fixed https://github.com/acme/web/issues/5 already.'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
@@ -551,8 +561,8 @@ test('session.start does not wait for the check of a non-github host', async ($,
   expect((await track($)).text).toContain('Kept page')
 })
 
-test('session.start: bare #N from the transcript is resolved once the repo is known', async ($, on) => {
-  const { clock, calls } = world(on, { messages: [{ role: 'user', text: 'please look at #5', toolUses: [] }] })
+test('session.start: keyworded #N from the transcript is resolved once the repo is known', async ($, on) => {
+  const { clock, calls } = world(on, { messages: [{ role: 'user', text: 'please look at issue #5', toolUses: [] }] })
   await $.session.start(START)
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
@@ -585,8 +595,8 @@ test('every session.start arms the tick, with or without a pane, and one tick ma
 
 test('one refused state write does not stop capture for the rest of the session', async ($, on) => {
   const { clock, calls } = world(on, { isolateState: true, denyItemWrites: 1 })
-  await $.session.append(prompt('check #5'))
-  await $.session.append(prompt('and #9'))
+  await $.session.append(prompt('check issue #5'))
+  await $.session.append(prompt('and issue #9'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
   const text = (await track($)).text ?? ''
@@ -608,7 +618,7 @@ test('a refused flush timer does not stop the store mirror for good', async ($, 
 
 test('/track refresh during a run in flight waits for it and prints the refreshed list', async ($, on) => {
   const { clock, calls } = world(on, { ghDelayMs: 150 })
-  await $.session.append(prompt('check #5'))
+  await $.session.append(prompt('check https://github.com/acme/web/issues/5'))
   await clock.advance(LIMITS.captureDebounceMs + 10) // the capture run starts; its gh call takes 150 ms
   expect(graphqlCalls(calls).length).toBe(1) // the capture run is in flight
   const text = (await track($, 'refresh')).text ?? ''
@@ -636,7 +646,7 @@ test('the transcript backfill skips system reminders and other meta wrappers', a
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`pane: rows are drawn, the Jira fold button hides the children (${surface})`, async ($, on) => {
     const { clock, calls } = world(on)
-    await $.session.append(prompt('Look at #5 and https://acme.atlassian.net/browse/ISS-1'))
+    await $.session.append(prompt('Look at issue #5 and https://acme.atlassian.net/browse/ISS-1'))
     await clock.advance(LIMITS.captureDebounceMs + 10)
     await quiet(calls)
     await track($)
@@ -755,7 +765,7 @@ test('band: a failing state read yields to the engine band', async ($, on) => {
 
 test('after /clear the tick brings items back with short #N keys for the session repo', async ($, on) => {
   const { clock, calls } = world(on, { isolateState: true })
-  await $.session.append(prompt('check #5'))
+  await $.session.append(prompt('check issue #5'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
   await clock.advance(LIMITS.flushMs + 10)
