@@ -10,6 +10,22 @@ Design: [`docs/superpowers/specs/2026-10-10-artifact-tracking-design.md`](../../
 
 Mods are in early access. Tested on Claude Code 2.1.295 and 2.1.296.
 
+Install it from the marketplace of this repo. In a Claude Code session (2.1.275 or later):
+
+```text
+/plugin install artifact-tracking --marketplace martin-macak/claude-code-mod-tracking
+```
+
+Answer `y` to add the marketplace `mod-tracking`, then pick a scope. From a shell (2.1.292 or later): `claude plugin install artifact-tracking --marketplace martin-macak/claude-code-mod-tracking`. Get a new release with `claude plugin update artifact-tracking@mod-tracking`.
+
+Load a release zip for one session. Each [GitHub release](https://github.com/martin-macak/claude-code-mod-tracking/releases) attaches `artifact-tracking-<version>.zip`:
+
+```bash
+claude --plugin-url https://github.com/martin-macak/claude-code-mod-tracking/releases/download/artifact-tracking--v<version>/artifact-tracking-<version>.zip
+```
+
+Load the checkout for one session:
+
 ```bash
 claude --plugin-dir plugins/artifact-tracking
 ```
@@ -129,6 +145,29 @@ claude plugin test .
 
 `.github/workflows/test.yml` runs on every pull request, on each push to `main`, and by hand. It installs Claude Code 2.1.296 and TypeScript 7.0.2 at fixed versions. Then it runs `make test`: `claude plugin validate`, `tsc -p .`, `claude plugin test`. No login or secret is needed.
 
+## Release
+
+A release is a git tag `artifact-tracking--v<version>`. The `<version>` is the `version` in `.claude-plugin/plugin.json`. Marketplace users get a new copy only when that `version` changes.
+
+1. In a PR, bump `version` in `.claude-plugin/plugin.json`. Use semver. Merge the PR.
+2. On `main`, in a clean and current checkout, run `make release-dry`. Check the tag name.
+3. Run `make release`. It runs `make test`, then `claude plugin tag --push`.
+
+The tag push runs `.github/workflows/release.yml`. The workflow:
+
+- checks that the tag equals `<name>--v<version>` of `plugin.json` and that the tagged commit is on `main`,
+- runs `claude plugin validate --strict` on the plugin and the marketplace, then `make test`,
+- runs `make dist`: `artifact-tracking-<version>.zip` (the plugin folder at the tag) and `SHA256SUMS`,
+- signs a build provenance attestation for the zip,
+- creates the GitHub release with both files and notes generated from the merged PRs. A version with a `-` suffix, such as `0.3.0-rc.1`, becomes a prerelease.
+
+Verify a downloaded zip:
+
+```bash
+sha256sum -c SHA256SUMS
+gh attestation verify artifact-tracking-<version>.zip --repo martin-macak/claude-code-mod-tracking
+```
+
 ## Make targets
 
 Run `make` from the repo root. `make help` lists the targets. Set `PLUGIN=<dir>` to use another plugin folder.
@@ -136,16 +175,19 @@ Run `make` from the repo root. `make help` lists the targets. Set `PLUGIN=<dir>`
 | Target | Action |
 | --- | --- |
 | `init` | Checks `claude`, `mise` and node. Reports `gh`, `acli` and `pre-commit` as present or missing. A missing optional tool does not fail. Warms the TypeScript cache for offline runs. |
-| `build` | Runs `claude plugin validate`, then `typecheck`. Nothing is emitted. Claude Code loads the `.ts` and `.tsx` files as they are. |
+| `build` | Runs `claude plugin validate` on the plugin, and `--strict` on the repo root (the marketplace), then `typecheck`. Nothing is emitted. Claude Code loads the `.ts` and `.tsx` files as they are. |
 | `typecheck` | Runs `tsc` only. The `typecheck` pre-commit hook calls it. |
 | `lint` | Runs every pre-commit hook on all files. |
 | `hooks` | Installs the `pre-commit` and `commit-msg` git hooks. |
 | `test` | Runs `build`, then `claude plugin test`. `check` is an alias. |
+| `dist` | Builds `dist/<name>-<version>.zip` from the committed plugin folder at `HEAD`, and `dist/SHA256SUMS`. Uncommitted edits are not in the zip. |
+| `release` | On a clean `main` equal to `origin/main`: runs `test`, then `claude plugin tag --push`. See [Release](#release). |
+| `release-dry` | Prints the tag that `release` would create. |
 | `install` | Links the mod into `$CLAUDE_CONFIG_DIR/skills/`. Without that variable, it uses `~/.claude/skills/`. |
 | `uninstall` | Removes that link. It removes only a link that points at this plugin. |
 | `install-local` | Links the mod into `<repo>/.claude/skills/`. Only a session that starts in this repo loads it. The user config dir stays untouched. |
 | `uninstall-local` | Removes that link and its line in `.git/info/exclude`. |
-| `clean` | Deletes `.claude-plugin/types/`. The engine writes that folder on a real load. |
+| `clean` | Deletes `.claude-plugin/types/` and `dist/`. The engine writes that folder on a real load. |
 
 `install` makes a symlink, so Claude Code loads the mod in place as `artifact-tracking@skills-dir`. Edits reload by themselves. Run `make install` from the checkout that you keep, not from a temporary worktree. Start a new session or run `/reload-plugins` after `make install`. Running it twice is safe.
 

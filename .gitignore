@@ -3,3 +3,6 @@
 .projectatlas/*.db-*
 .projectatlas/*.lock
 .projectatlas/*.json
+
+# Release artifacts from `make dist`
+/dist/

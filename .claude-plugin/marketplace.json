@@ -1,0 +1,6 @@
+{
+  "name": "mod-tracking",
+  "description": "Claude Code mods from martin-macak/claude-code-mod-tracking.",
+  "owner": { "name": "Martin Macak" },
+  "plugins": [{ "name": "artifact-tracking", "source": "./plugins/artifact-tracking" }]
+}

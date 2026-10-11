@@ -33,6 +33,7 @@ A mod is a Claude Code plugin whose code is a **hooks module**: TypeScript or Ja
 | Workflow | [develop](workflow/develop.md) | Layout, manifest, `userConfig`, tsconfig, load paths, hot-reload lifecycle |
 | | [validate-test-debug](workflow/validate-test-debug.md) | `validate`, `tsc`, `test`, `--debug`, `-p` |
 | | [share-and-admin](workflow/share-and-admin.md) | Marketplace, install, versions, managed settings, security |
+| | [release](workflow/release.md) | `plugin tag`, version rules, zip artifact, this repo's tag-driven release pipeline |
 | Other | [examples](examples/README.md) | 3 bundled examples, 7 GitHub mods |
 | | [gotchas](gotchas.md) | Pitfalls |
 | | [open-questions](open-questions.md) | Conflicts between sources, things not yet observed |

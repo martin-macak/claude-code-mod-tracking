@@ -13,6 +13,12 @@ NAME := $(shell sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' $
 ifeq ($(NAME),)
 NAME := $(notdir $(PLUGIN_ABS))
 endif
+# Release version. Read from plugin.json. The release tag is $(NAME)--v$(VERSION).
+VERSION := $(shell sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' $(PLUGIN)/.claude-plugin/plugin.json 2>/dev/null | head -n 1)
+
+# Release artifacts. `dist` writes them, the release workflow uploads them.
+DIST := $(ROOT)/dist
+ZIP  := $(DIST)/$(NAME)-$(VERSION).zip
 
 # Config dir of Claude Code. Same rule as the CLI: $CLAUDE_CONFIG_DIR, else ~/.claude.
 CLAUDE_CONFIG_DIR ?= $(HOME)/.claude
@@ -29,7 +35,7 @@ EXCLUDE_LINE := /.claude/skills/$(NAME)
 TSC ?= mise exec $(NODE) -- npx -y -p typescript tsc
 
 .DEFAULT_GOAL := help
-.PHONY: help init build typecheck test check lint hooks install uninstall install-local uninstall-local clean
+.PHONY: help init build typecheck test check lint hooks dist release release-dry install uninstall install-local uninstall-local clean
 
 help: ## List the targets
 	@echo "Targets (PLUGIN=$(PLUGIN)):"
@@ -56,8 +62,10 @@ init: ## Check the tools, print versions, warm the TypeScript cache
 
 # Nothing is emitted. Claude Code loads the .ts and .tsx files directly,
 # so "build" only validates the plugin and type-checks it.
-build: ## Validate the plugin, then type-check (no output files)
+# The second validate reads the repo's marketplace.json, so every PR checks it.
+build: ## Validate the plugin and the marketplace, then type-check (no output files)
 	cd $(PLUGIN) && claude plugin validate .
+	cd "$(ROOT)" && claude plugin validate --strict .
 	@$(MAKE) --no-print-directory typecheck
 
 typecheck: ## Type-check the plugin with tsc (no claude needed)
@@ -75,6 +83,39 @@ lint: ## Run every pre-commit hook on all files
 
 hooks: ## Install the pre-commit and commit-msg git hooks
 	pre-commit install --install-hooks
+
+# dist: the release zip and its checksum, built from the committed tree at HEAD.
+# The zip holds one folder, $(NAME)/, with the plugin. `claude --plugin-dir <zip>`
+# and `claude --plugin-url <url>` load it. Uncommitted edits are not in the zip.
+# KB: docs/knowledge-base/claude-code-mods/workflow/release.md.
+dist: ## Build dist/<name>-<version>.zip and dist/SHA256SUMS from HEAD
+	@[ -n "$(VERSION)" ] || { echo 'dist failed: no "version" in plugin.json.'; exit 1; }
+	@[ -z "$$(git -C "$(ROOT)" status --porcelain -- "$(PLUGIN)")" ] || \
+	  echo "Warning: $(PLUGIN) has uncommitted changes. The zip holds HEAD only."
+	@rm -rf "$(DIST)" && mkdir -p "$(DIST)"
+	git -C "$(ROOT)" archive --format=zip --prefix="$(NAME)/" -o "$(ZIP)" "HEAD:$(PLUGIN)"
+	@cd "$(DIST)" && if command -v sha256sum >/dev/null 2>&1; then sha256sum -- *.zip; \
+	  else shasum -a 256 -- *.zip; fi > SHA256SUMS
+	@cat "$(DIST)/SHA256SUMS"
+
+# release: tag the version in plugin.json and push the tag. The tag push runs
+# .github/workflows/release.yml, which tests, builds and publishes the release.
+# Flow: bump "version" in plugin.json in a PR, merge it, then run this on main.
+# `claude plugin tag` names the tag $(NAME)--v$(VERSION), checks that plugin.json
+# and the marketplace entry agree, and refuses a tag that exists.
+release: ## Tag plugin.json's version on main and push it (starts the release)
+	@[ "$$(git -C "$(ROOT)" rev-parse --abbrev-ref HEAD)" = main ] || \
+	  { echo 'Refusing: release runs on main only.'; exit 1; }
+	@[ -z "$$(git -C "$(ROOT)" status --porcelain)" ] || \
+	  { echo 'Refusing: the working tree has changes.'; exit 1; }
+	git -C "$(ROOT)" fetch --quiet origin main
+	@[ "$$(git -C "$(ROOT)" rev-parse HEAD)" = "$$(git -C "$(ROOT)" rev-parse origin/main)" ] || \
+	  { echo 'Refusing: HEAD is not origin/main. Pull or push first.'; exit 1; }
+	@$(MAKE) --no-print-directory test
+	cd $(PLUGIN) && claude plugin tag --push
+
+release-dry: ## Show the tag that release would create
+	cd $(PLUGIN) && claude plugin tag --dry-run
 
 # install: make the mod load in every session of this config dir, no marketplace.
 # Mechanism: the "skills folder". A plugin folder (with .claude-plugin/plugin.json)
@@ -144,4 +185,4 @@ uninstall-local: ## Remove the project link made by install-local (idempotent)
 # clean: generated files only. .claude-plugin/types/ is laid by the engine on a real
 # load. Source and tracked files stay.
 clean: ## Remove generated files
-	rm -rf "$(PLUGIN)/.claude-plugin/types"
+	rm -rf "$(PLUGIN)/.claude-plugin/types" "$(DIST)"
