@@ -6,9 +6,13 @@ export function renderBand(el: PaneElements, text: string): RenderElement {
   const { Box, Text } = el
   return (
     <Box columnGap={1}>
-      <Text dimColor>tracking</Text>
+      <Text wrap="truncate-end" dimColor>
+        tracking
+      </Text>
       <Text wrap="truncate-end">{text}</Text>
-      <Text dimColor>/track</Text>
+      <Text wrap="truncate-end" dimColor>
+        /track
+      </Text>
     </Box>
   )
 }
