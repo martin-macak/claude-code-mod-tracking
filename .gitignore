@@ -6,3 +6,7 @@
 
 # Release artifacts from `make dist`
 /dist/
+
+# e2e harness: dependencies and run output (casts, timelines, screen dumps)
+e2e/node_modules/
+e2e/out/

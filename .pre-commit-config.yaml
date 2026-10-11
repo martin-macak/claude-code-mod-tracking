@@ -23,6 +23,12 @@ repos:
       - id: check-executables-have-shebangs
       - id: check-added-large-files
         args: [--maxkb=512]
+        exclude: ^docs/assets/demo\.gif$
+      # The README demo GIF may be up to 2 MB. make demo fails above that.
+      - id: check-added-large-files
+        name: check for added large files (demo gif)
+        args: [--maxkb=2048]
+        files: ^docs/assets/demo\.gif$
       - id: detect-private-key
       - id: no-commit-to-branch
         args: [--branch, main]
@@ -66,10 +72,10 @@ repos:
         args: [--negate, --multiline]
         stages: [commit-msg]
 
-      # Type-check the mod. CI skips it: test.yml runs `make test`.
+      # Type-check the mod and the e2e harness. CI skips it: test.yml runs `make test`.
       - id: typecheck
-        name: tsc (plugins)
+        name: tsc (plugins, e2e)
         language: system
         entry: make typecheck
-        files: ^plugins/.*\.(ts|tsx|json)$
+        files: ^(plugins|e2e)/.*\.(ts|tsx|json)$
         pass_filenames: false
