@@ -71,8 +71,9 @@ jobs:
           claude plugin validate --strict "$PLUGIN"
           claude plugin validate --strict .
 
+      # NODE_RUN= : CI has no mise. setup-node provides node 24. Same as test.yml.
       - name: Test
-        run: make test TSC="npx -y -p typescript@${TYPESCRIPT_VERSION} tsc"
+        run: make test TSC="npx -y -p typescript@${TYPESCRIPT_VERSION} tsc" NODE_RUN=
 
       - name: Build the zip and SHA256SUMS
         run: make dist
