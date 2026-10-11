@@ -11,6 +11,8 @@ Workspace to build a Claude Code mod (function-hooks plugin).
 - Run `make hooks` once per clone. It installs the `pre-commit` and `commit-msg` git hooks from `.pre-commit-config.yaml`.
 - Run `make lint` before you push. It runs every hook on all files. CI runs the same hooks (`.github/workflows/lint.yml`).
 - Run `make test` after a change in `plugins/`.
+- Run `make e2e` after a change in `plugins/` or `e2e/`, when you have a Claude login and tmux. It runs real model turns, so CI does not run it. CI runs `make e2e-unit`.
+- Refresh the README demo GIF with the `demo-scenario` skill (`.agents/skills/demo-scenario/`, `make demo`).
 - Never skip hooks (`--no-verify`). Fix the cause.
 - Fix lint findings in the code. Change a rule in `biome.json` or `.markdownlint-cli2.jsonc` only with a reason in a comment or the PR.
 - The hooks skip `docs/knowledge-base/*/sources/`, `.agents/` and `.claude/`. Those files are verbatim or vendored.
