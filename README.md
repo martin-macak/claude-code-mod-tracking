@@ -56,7 +56,7 @@ The GIF comes from a Gherkin scenario, [`e2e/features/tracking.feature`](e2e/fea
 
 ## Features
 
-- **Zero-effort capture.** Finds GitHub issue and PR URLs, `owner/repo#N`, bare `#N`, Jira URLs and web links in your prompts, Claude's replies, subagent replies and tool output.
+- **Zero-effort capture.** Finds GitHub issue and PR URLs, `owner/repo#N`, bare `#N`, Jira URLs and web links in your prompts and in Claude's replies, also from subagents. Tool output gives explicit GitHub and Jira URLs only.
 - **Live state.** Shows title, open, closed or merged, failing checks, Jira status and the Epic tree. Data comes from `gh` (one GraphQL call for each host) and `acli`.
 - **Always in view.** A one-line band above the prompt counts the items: `tracking  Jira 6 · GitHub 4 (1 ✗) · Links 2  /track`.
 - **Interactive pane.** `/track` opens a pane with one section for each source. Press `r` to refresh, `x` to hide an auto row, `Esc` to close.
