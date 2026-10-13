@@ -1,0 +1,53 @@
+name: Copilot setup steps
+
+# Prepares the Copilot cloud agent's environment before it starts. The job name
+# must be copilot-setup-steps. GitHub honors only steps, permissions, runs-on,
+# services, snapshot and timeout-minutes in it.
+# The agent session runs behind a firewall, so install and cache every tool
+# here: pre-commit hook environments, claude, TypeScript, the e2e dependencies.
+# Then `make verify` works offline. Rules: AGENTS.md, "Before you commit or push".
+on:
+  workflow_dispatch:
+  push:
+    paths: [.github/workflows/copilot-setup-steps.yml]
+  pull_request:
+    paths: [.github/workflows/copilot-setup-steps.yml]
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # Keep the versions equal to the pins in test.yml.
+      - name: Install pre-commit, Claude Code and TypeScript
+        run: |
+          pip install pre-commit
+          npm install -g @anthropic-ai/claude-code@2.1.296
+          npx -y -p typescript@7.0.2 tsc --version
+
+      # Installs the pre-commit, commit-msg and pre-push git hooks and their environments.
+      - name: Install the git hooks
+        run: make hooks
+
+      - name: Install the e2e harness dependencies
+        run: make e2e-deps
+
+      # Proves the gate works before the agent starts. Copilot starts anyway on a
+      # failure, so the log shows what was red on the base branch.
+      # no-commit-to-branch fails by design when this runs on main.
+      - name: Run make verify
+        env:
+          SKIP: no-commit-to-branch
+        run: make verify

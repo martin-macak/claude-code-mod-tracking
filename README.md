@@ -187,7 +187,7 @@ Release steps: [`plugins/artifact-tracking/README.md`](plugins/artifact-tracking
 
 ## Contributing
 
-Read [`AGENTS.md`](AGENTS.md) first. In short: branch `<type>/<summary>`, Conventional Commits with a sentence-case subject, one PR per change with `Closes #N`, squash merge. Run `make lint` and `make test` before you push.
+Read [`AGENTS.md`](AGENTS.md) first. In short: branch `<type>/<summary>`, Conventional Commits with a sentence-case subject, one PR per change with `Closes #N`, squash merge. Run `make verify` before you push.
 
 ## License
 

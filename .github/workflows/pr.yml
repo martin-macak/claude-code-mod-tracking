@@ -1,0 +1,69 @@
+name: pr
+
+# PR metadata: body, title, branch name. A title or body edit re-runs these
+# checks only. lint.yml and test.yml run on code changes and never skip a job,
+# so an edit cannot turn a red required check green. Rules: AGENTS.md, "Pull requests".
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # PR body: linked issue, ticked Requirements, no unticked box. Runs on title and
+  # body edits too. Rules: AGENTS.md, "Pull requests".
+  pr-body:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/ci
+
+      - name: Check the PR body
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$BODY" | sh scripts/ci/check-pr-body.sh
+
+  # PR title and branch name. Rules: AGENTS.md, "Pull requests" and "Branches".
+  pr-conventions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Check the PR title
+        uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+          subjectPattern: ^[A-Z].*[^.]$
+          subjectPatternError: |
+            The subject "{subject}" of the PR title "{title}" must start with a capital letter
+            and must not end with a period. Example: "feat(track): Add a Jira column".
+
+      - name: Check the branch name
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          if ! printf '%s\n' "$BRANCH" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|copilot)/[a-z0-9][a-z0-9._-]*$|^add-claude-github-actions-[0-9]+$'; then
+            echo "::error::Branch '$BRANCH' must be <type>/<kebab-case-summary>, copilot/<summary>, or add-claude-github-actions-<timestamp>."
+            exit 1
+          fi
