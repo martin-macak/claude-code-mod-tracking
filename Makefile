@@ -55,7 +55,7 @@ E2E_STAMP := $(E2E)/node_modules/.package-lock.json
 DEMO_GIF  := docs/assets/demo.gif
 
 .DEFAULT_GOAL := help
-.PHONY: help init build typecheck test check verify e2e-deps e2e-unit e2e demo lint hooks dist release release-dry install uninstall install-local uninstall-local clean
+.PHONY: help init build typecheck test test-scripts check verify e2e-deps e2e-unit e2e demo lint hooks dist release release-dry install uninstall install-local uninstall-local clean
 
 help: ## List the targets
 	@echo "Targets (PLUGIN=$(PLUGIN)):"
@@ -102,16 +102,20 @@ test: build ## Run the plugin tests (after build)
 
 check: test ## Alias of test (validate, type-check, test)
 
+test-scripts: ## Test the repo scripts (no claude needed)
+	scripts/dev/install-local-watch.test.sh
+
 # verify: the gate before every commit and push. Rules: AGENTS.md, "Before you
 # commit or push". Lint runs first: its fixers rewrite files. Then the gate fails,
 # so you review and stage the fixes before tests run on them.
-verify: ## Lint with auto-fix, test, unit-test the e2e harness (run before every push)
+verify: ## Lint with auto-fix, test, unit-test the e2e harness and the scripts (run before every push)
 	@u="$$(git ls-files -o --exclude-standard)"; [ -z "$$u" ] || { \
 	  printf 'verify failed: the hooks skip untracked files. git add them or ignore them:\n%s\n' "$$u"; exit 1; }
 	@pre-commit run --all-files || { \
 	  echo; echo 'verify failed: a hook failed or fixed files. Review the diff, stage it, run make verify again.'; exit 1; }
 	@$(MAKE) --no-print-directory test
 	@$(MAKE) --no-print-directory e2e-unit
+	@$(MAKE) --no-print-directory test-scripts
 	@echo 'verify passed: lint, test and e2e-unit are green.'
 
 e2e-deps: $(E2E_STAMP) ## Install the e2e harness dependencies (npm ci)

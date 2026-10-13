@@ -52,3 +52,7 @@ jobs:
 
       - name: Unit-test the e2e harness
         run: make e2e-unit NODE_RUN=
+
+      # Linux path of the watcher: it reads /proc instead of lsof.
+      - name: Test the repo scripts
+        run: make test-scripts

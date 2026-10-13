@@ -179,25 +179,34 @@ Run `make` from the repo root. `make help` lists the targets. Set `PLUGIN=<dir>`
 | `typecheck` | Runs `tsc` only. The `typecheck` pre-commit hook calls it. |
 | `lint` | Runs every pre-commit hook on all files. |
 | `hooks` | Installs the `pre-commit`, `commit-msg` and `pre-push` git hooks. |
-| `verify` | The gate before every push: `lint` with auto-fix, then `test` and `e2e-unit`. Fails on untracked files, because the hooks skip them. |
+| `verify` | The gate before every push: `lint` with auto-fix, then `test`, `e2e-unit` and `test-scripts`. Fails on untracked files, because the hooks skip them. |
 | `test` | Runs `build`, then `claude plugin test`. `check` is an alias. |
+| `test-scripts` | Tests `scripts/dev/install-local-watch.sh`. Needs no `claude`. |
 | `dist` | Builds `dist/<name>-<version>.zip` from the committed plugin folder at `HEAD`, and `dist/SHA256SUMS`. Uncommitted edits are not in the zip. |
 | `release` | On a clean `main` equal to `origin/main`: runs `test`, then `claude plugin tag --push`. See [Release](#release). |
 | `release-dry` | Prints the tag that `release` would create. |
 | `install` | Links the mod into `$CLAUDE_CONFIG_DIR/skills/`. Without that variable, it uses `~/.claude/skills/`. |
 | `uninstall` | Removes that link. It removes only a link that points at this plugin. |
-| `install-local` | Copies the mod into `<repo>/.claude/skills/artifact-tracking-dev/` as `artifact-tracking-dev`. Only a session that starts in this repo loads it. The user config dir stays untouched. Rerun it after code changes. |
+| `install-local` | Copies the mod into `<repo>/.claude/skills/artifact-tracking-dev/` as `artifact-tracking-dev`. Only a session that starts in this repo loads it. The user config dir stays untouched. The `.envrc` runs it for you. |
 | `uninstall-local` | Removes that copy and its line in `.git/info/exclude`. |
 | `clean` | Deletes `.claude-plugin/types/` and `dist/`. The engine writes that folder on a real load. |
 
 `install` makes a symlink, so Claude Code loads the mod in place as `artifact-tracking@skills-dir`. Edits reload by themselves. Run `make install` from the checkout that you keep, not from a temporary worktree. Start a new session or run `/reload-plugins` after `make install`. Running it twice is safe.
 
-`install-local` uses a project skills folder. Start `claude` at the repo root. A subfolder does not load the mod. Claude Code asks you to trust the folder first. `claude -p` never counts as trust. The copy is not tracked by git, because `install-local` adds it to `.git/info/exclude`. That file is shared by all worktrees of the repo.
+`install-local` uses a project skills folder. Start `claude` at the repo root. A subfolder does not load the mod. Claude Code asks you to trust the folder first. `claude -p` never counts as trust. The copy is not tracked by git: `.gitignore` lists it.
 
 The copy differs from `install` in three ways:
 
-- It is a copy, not a link. A symlinked hooks folder fails with "Path escapes plugin directory". So rerun `make install-local` after each code change, then run `/reload-plugins`.
+- It is a copy, not a link. A symlinked hooks folder fails with "Path escapes plugin directory". So the copy must be refreshed after each code change. The `.envrc` does that, see below. Run `/reload-plugins` to load the new copy.
 - It is named `artifact-tracking-dev`. A second plugin named `artifact-tracking` is refused while the released one is installed.
 - It owns its state as `artifact-tracking-dev.*`. State belongs to the plugin name, and the copy may not write `artifact-tracking.*`.
 
 The released `artifact-tracking` still loads next to the copy, and both answer `/track`. Disable it while you test: `claude plugin disable artifact-tracking@mod-tracking`, and later `claude plugin enable artifact-tracking@mod-tracking`. If `/reload-plugins` leaves `/track` unknown, restart with `claude --continue`.
+
+With [direnv](https://direnv.net/), the repo's `.envrc` keeps the copy in step with no manual step. Run `direnv allow` once in each checkout and each worktree. Then:
+
+- `cd` into the checkout runs `install-local` when the copy is missing or stale, and starts a background watcher (`scripts/dev/install-local-watch.sh`).
+- The watcher copies again when a file under `plugins/artifact-tracking/` changes, also when `claude` edits it.
+- When no process of yours (shell, `claude`) has its cwd in the checkout any more, the watcher runs `uninstall-local` and exits. A `claude` that still runs there keeps the copy.
+
+The watcher logs to `install-local-watch.log` in the checkout's git dir (`git rev-parse --git-dir`).

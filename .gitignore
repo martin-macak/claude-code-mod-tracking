@@ -10,3 +10,7 @@
 # e2e harness: dependencies and run output (casts, timelines, screen dumps)
 e2e/node_modules/
 e2e/out/
+
+# make install-local copy. The .envrc watcher installs and removes it per worktree,
+# and .git/info/exclude is shared by all worktrees, so the ignore lives here.
+/.claude/skills/artifact-tracking-dev/
