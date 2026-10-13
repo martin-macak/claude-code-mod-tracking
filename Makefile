@@ -33,8 +33,15 @@ LOCAL_NAME       := $(NAME)-dev
 LOCAL_LINK       := $(LOCAL_DIR)/$(LOCAL_NAME)
 EXCLUDE_LINE     := /.claude/skills/$(LOCAL_NAME)
 # Left by the earlier install-local (one symlink named $(NAME)). Removed on install.
-OLD_LOCAL_LINK   := $(LOCAL_DIR)/$(NAME)
+# That link still uses the name $(NAME), so it clashes with the user-scope install:
+# "the name is already taken". Each worktree can hold one, and the exclude file is
+# shared, so REMOVE_OLD_LINKS checks every worktree of the repo, not only this one.
 OLD_EXCLUDE_LINE := /.claude/skills/$(NAME)
+PLUGIN_REL       := $(patsubst $(ROOT)/%,%,$(PLUGIN_ABS))
+REMOVE_OLD_LINKS  = { echo "$(ROOT)"; git -C "$(ROOT)" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p'; } | sort -u | \
+  while IFS= read -r wt; do l="$$wt/.claude/skills/$(NAME)"; \
+    if [ -L "$$l" ] && [ "$$(readlink "$$l")" = "$$wt/$(PLUGIN_REL)" ]; then rm "$$l" && echo "Removed old link: $$l"; fi; \
+  done
 
 # TypeScript version where mise is absent. Keep it equal to the pin in test.yml.
 TYPESCRIPT_VERSION ?= 7.0.2
@@ -213,8 +220,7 @@ uninstall: ## Remove the link made by install (idempotent)
 # The link is not tracked: its path goes into the repo's .git/info/exclude (local,
 # never committed). Idempotent. uninstall-local removes only our link and our line.
 install-local: ## Load the mod in this repo only, as $(LOCAL_NAME) (copy; rerun after edits)
-	@if [ -L "$(OLD_LOCAL_LINK)" ] && [ "$$(readlink "$(OLD_LOCAL_LINK)")" = "$(PLUGIN_ABS)" ]; then \
-	  rm "$(OLD_LOCAL_LINK)" && echo "Removed old link: $(OLD_LOCAL_LINK)"; fi
+	@$(REMOVE_OLD_LINKS)
 	@if [ -e "$(LOCAL_LINK)" ] && ! grep -q '"name": "$(LOCAL_NAME)"' "$(LOCAL_LINK)/.claude-plugin/plugin.json" 2>/dev/null; then \
 	  echo "Refusing: $(LOCAL_LINK) exists and is not an install-local copy."; exit 1; fi
 	@rm -rf "$(LOCAL_LINK)"
@@ -237,8 +243,7 @@ install-local: ## Load the mod in this repo only, as $(LOCAL_NAME) (copy; rerun 
 	@echo "Expect $(LOCAL_NAME)@skills-dir in /plugin, and no 'name already taken' error."
 
 uninstall-local: ## Remove the project copy made by install-local (idempotent)
-	@if [ -L "$(OLD_LOCAL_LINK)" ] && [ "$$(readlink "$(OLD_LOCAL_LINK)")" = "$(PLUGIN_ABS)" ]; then \
-	  rm "$(OLD_LOCAL_LINK)" && echo "Removed: $(OLD_LOCAL_LINK)"; fi
+	@$(REMOVE_OLD_LINKS)
 	@if [ -f "$(LOCAL_LINK)/.claude-plugin/plugin.json" ] && grep -q '"name": "$(LOCAL_NAME)"' "$(LOCAL_LINK)/.claude-plugin/plugin.json"; then \
 	  rm -rf "$(LOCAL_LINK)" && echo "Removed: $(LOCAL_LINK)"; \
 	elif [ -e "$(LOCAL_LINK)" ] || [ -L "$(LOCAL_LINK)" ]; then echo "Skipped: $(LOCAL_LINK) is not an install-local copy."; \
