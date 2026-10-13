@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "./scripts/hooks/verify-gate.sh pre-tool",
+        "cwd": ".",
+        "timeoutSec": 900
+      }
+    ],
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "./scripts/hooks/verify-gate.sh stop",
+        "cwd": ".",
+        "timeoutSec": 900
+      }
+    ]
+  }
+}

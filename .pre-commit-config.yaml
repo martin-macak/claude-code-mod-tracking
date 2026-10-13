@@ -1,6 +1,9 @@
 # pre-commit hooks. Install once per clone: `make hooks`. Run all: `make lint`.
+# The gate before a push: `make verify`. Rules: AGENTS.md, "Before you commit or push".
+# Fixers (biome, markdownlint, whitespace) rewrite files. A hook that fixed files
+# fails the run: review the diff, stage it, commit again.
 # Docs: https://pre-commit.com
-default_install_hook_types: [pre-commit, commit-msg]
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
 default_stages: [pre-commit, manual]
 
 # Verbatim source snapshots, vendored skills and tool state. Never edit them.
@@ -37,6 +40,7 @@ repos:
     rev: v0.23.3
     hooks:
       - id: markdownlint-cli2
+        args: [--fix]
 
   - repo: https://github.com/biomejs/pre-commit
     rev: v2.5.15
@@ -79,3 +83,12 @@ repos:
         entry: make typecheck
         files: ^(plugins|e2e)/.*\.(ts|tsx|json)$
         pass_filenames: false
+
+      # Tests before every push. CI runs the same in test.yml, so lint.yml skips it.
+      - id: test-before-push
+        name: make test and make e2e-unit (pre-push)
+        language: system
+        entry: scripts/hooks/pre-push.sh
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]

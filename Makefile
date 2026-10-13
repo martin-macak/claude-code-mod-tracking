@@ -3,8 +3,6 @@
 
 PLUGIN ?= plugins/artifact-tracking
 NODE   ?= node@24
-MISE   := $(shell command -v mise 2>/dev/null || true)
-MISE_PREFIX := $(if $(MISE),mise exec $(NODE) --,)
 # Repo root: the folder that holds this Makefile.
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 
@@ -32,13 +30,17 @@ LOCAL_DIR    := $(ROOT)/.claude/skills
 LOCAL_LINK   := $(LOCAL_DIR)/$(NAME)
 EXCLUDE_LINE := /.claude/skills/$(NAME)
 
-# TypeScript runner. Override it where mise is absent, for example in CI:
-#   make test TSC="npx -y -p typescript@7.0.2 tsc"
-TSC ?= $(MISE_PREFIX)npx -y -p typescript tsc
-
-# Node runner for the e2e harness. Override it where mise is absent, for example in CI:
-#   make e2e-unit NODE_RUN=
-NODE_RUN ?= $(MISE_PREFIX)
+# TypeScript version where mise is absent. Keep it equal to the pin in test.yml.
+TYPESCRIPT_VERSION ?= 7.0.2
+# Runners. With mise, use mise's $(NODE). Without mise (CI, Copilot, the Claude
+# action), use the node on PATH. Override either one on the command line.
+ifneq ($(shell command -v mise 2>/dev/null),)
+TSC      ?= mise exec $(NODE) -- npx -y -p typescript tsc
+NODE_RUN ?= mise exec $(NODE) --
+else
+TSC      ?= npx -y -p typescript@$(TYPESCRIPT_VERSION) tsc
+NODE_RUN ?=
+endif
 
 # e2e harness: Gherkin scenarios that drive a real claude in tmux. Spec:
 # docs/superpowers/specs/2026-10-11-demo-pipeline-design.md
@@ -47,7 +49,7 @@ E2E_STAMP := $(E2E)/node_modules/.package-lock.json
 DEMO_GIF  := docs/assets/demo.gif
 
 .DEFAULT_GOAL := help
-.PHONY: help init build typecheck test check e2e-deps e2e-unit e2e demo lint hooks dist release release-dry install uninstall install-local uninstall-local clean
+.PHONY: help init build typecheck test check verify e2e-deps e2e-unit e2e demo lint hooks dist release release-dry install uninstall install-local uninstall-local clean
 
 help: ## List the targets
 	@echo "Targets (PLUGIN=$(PLUGIN)):"
@@ -94,6 +96,18 @@ test: build ## Run the plugin tests (after build)
 
 check: test ## Alias of test (validate, type-check, test)
 
+# verify: the gate before every commit and push. Rules: AGENTS.md, "Before you
+# commit or push". Lint runs first: its fixers rewrite files. Then the gate fails,
+# so you review and stage the fixes before tests run on them.
+verify: ## Lint with auto-fix, test, unit-test the e2e harness (run before every push)
+	@u="$$(git ls-files -o --exclude-standard)"; [ -z "$$u" ] || { \
+	  printf 'verify failed: the hooks skip untracked files. git add them or ignore them:\n%s\n' "$$u"; exit 1; }
+	@pre-commit run --all-files || { \
+	  echo; echo 'verify failed: a hook failed or fixed files. Review the diff, stage it, run make verify again.'; exit 1; }
+	@$(MAKE) --no-print-directory test
+	@$(MAKE) --no-print-directory e2e-unit
+	@echo 'verify passed: lint, test and e2e-unit are green.'
+
 e2e-deps: $(E2E_STAMP) ## Install the e2e harness dependencies (npm ci)
 
 $(E2E_STAMP): $(E2E)/package-lock.json
@@ -113,7 +127,7 @@ demo: e2e-deps ## Record the @demo scenario and render docs/assets/demo.gif (at 
 lint: ## Run every pre-commit hook on all files
 	pre-commit run --all-files
 
-hooks: ## Install the pre-commit and commit-msg git hooks
+hooks: ## Install the pre-commit, commit-msg and pre-push git hooks
 	pre-commit install --install-hooks
 
 # dist: the release zip and its checksum, built from the committed tree at HEAD.
