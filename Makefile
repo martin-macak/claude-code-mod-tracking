@@ -3,6 +3,8 @@
 
 PLUGIN ?= plugins/artifact-tracking
 NODE   ?= node@24
+MISE   := $(shell command -v mise 2>/dev/null || true)
+MISE_PREFIX := $(if $(MISE),mise exec $(NODE) --,)
 # Repo root: the folder that holds this Makefile.
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 
@@ -32,11 +34,11 @@ EXCLUDE_LINE := /.claude/skills/$(NAME)
 
 # TypeScript runner. Override it where mise is absent, for example in CI:
 #   make test TSC="npx -y -p typescript@7.0.2 tsc"
-TSC ?= mise exec $(NODE) -- npx -y -p typescript tsc
+TSC ?= $(MISE_PREFIX)npx -y -p typescript tsc
 
 # Node runner for the e2e harness. Override it where mise is absent, for example in CI:
 #   make e2e-unit NODE_RUN=
-NODE_RUN ?= mise exec $(NODE) --
+NODE_RUN ?= $(MISE_PREFIX)
 
 # e2e harness: Gherkin scenarios that drive a real claude in tmux. Spec:
 # docs/superpowers/specs/2026-10-11-demo-pipeline-design.md
@@ -59,7 +61,7 @@ init: ## Check the tools, print versions, warm the TypeScript cache
 	  printf 'mise     : %s\n' "$$(mise --version | head -n 1)"; \
 	  if v="$$(mise exec $(NODE) -- node --version 2>/dev/null)"; then printf 'node     : %s (via mise, %s)\n' "$$v" '$(NODE)'; \
 	  else echo 'node     : MISSING via mise $(NODE) (required). Run: mise use -g $(NODE)'; ok=0; fi; \
-	else echo 'mise     : MISSING (required)'; ok=0; fi; \
+	else echo 'mise     : MISSING (optional in this environment)'; fi; \
 	for t in gh acli; do \
 	  if command -v $$t >/dev/null 2>&1; then printf '%-9s: present (optional)\n' "$$t"; \
 	  else printf '%-9s: missing (optional, the mod still works)\n' "$$t"; fi; \
