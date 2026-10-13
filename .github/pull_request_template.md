@@ -3,6 +3,8 @@
 Title: <type>(<optional scope>): <Subject>. Example: "feat(track): Add a Jira column".
 Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
 The title becomes the squash commit on main. Rules: AGENTS.md.
+The pr-body check fails on a missing issue link, an empty Requirements section
+or any unticked box.
 -->
 
 ## Summary
@@ -17,9 +19,20 @@ The title becomes the squash commit on main. Rules: AGENTS.md.
 
 Closes #
 
+## Requirements
+
+<!--
+Re-read the issue. One item per requirement or acceptance criterion.
+Name the test or the check that proves it. Tick it only after you saw it pass.
+No issue: list what this PR promises.
+Example: - [x] Band shows "Processes n" — tests/view.test.ts, "band lists processes"
+-->
+
+- [ ]
+
 ## Test plan
 
-<!-- How you verified it. Tick what ran. -->
+<!-- Tick what ran and passed. Not applicable: tick it and write "N/A: <reason>". -->
 
-- [ ] `make lint`
-- [ ] `make test`
+- [ ] `make verify` (lint with auto-fix, test, e2e-unit)
+- [ ] `make e2e` after a change in `plugins/` or `e2e/`

@@ -178,7 +178,8 @@ Run `make` from the repo root. `make help` lists the targets. Set `PLUGIN=<dir>`
 | `build` | Runs `claude plugin validate` on the plugin, and `--strict` on the repo root (the marketplace), then `typecheck`. Nothing is emitted. Claude Code loads the `.ts` and `.tsx` files as they are. |
 | `typecheck` | Runs `tsc` only. The `typecheck` pre-commit hook calls it. |
 | `lint` | Runs every pre-commit hook on all files. |
-| `hooks` | Installs the `pre-commit` and `commit-msg` git hooks. |
+| `hooks` | Installs the `pre-commit`, `commit-msg` and `pre-push` git hooks. |
+| `verify` | The gate before every push: `lint` with auto-fix, then `test` and `e2e-unit`. Fails on untracked files, because the hooks skip them. |
 | `test` | Runs `build`, then `claude plugin test`. `check` is an alias. |
 | `dist` | Builds `dist/<name>-<version>.zip` from the committed plugin folder at `HEAD`, and `dist/SHA256SUMS`. Uncommitted edits are not in the zip. |
 | `release` | On a clean `main` equal to `origin/main`: runs `test`, then `claude plugin tag --push`. See [Release](#release). |

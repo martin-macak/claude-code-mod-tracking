@@ -6,10 +6,31 @@ Workspace to build a Claude Code mod (function-hooks plugin).
 - Knowledge base on mods: `docs/knowledge-base/claude-code-mods/`.
 - ProjectAtlas indexes this repo (`.projectatlas/`). Navigate with the `atlas_*` MCP tools or the `projectatlas` CLI before reading files. Run `projectatlas scan` after large changes.
 
+## Before you commit or push
+
+These rules are mandatory for every agent (Claude, Copilot, Codex) and every person. "MUST" means no exceptions.
+
+1. You MUST run `make hooks` once per clone. Copilot's setup steps (`.github/workflows/copilot-setup-steps.yml`) do it for Copilot.
+2. You MUST run `make verify` and see it pass before every push. It lints with auto-fix, then runs `make test` and `make e2e-unit`. Stage new files first: the hooks skip untracked files.
+3. A fixer (Biome, markdownlint, whitespace) rewrites files and fails the run. Review the diff, stage it, run `make verify` again.
+4. You MUST check the original requirements before you push and again before you mark a PR ready:
+   - Re-read the linked issue and every review comment.
+   - List each requirement and acceptance criterion.
+   - Name the test that proves each one. No test: write it first (`test-driven-development` skill). It must fail without your change.
+   - Copy the list into the PR's "Requirements" section. Tick an item only after you saw its test pass.
+5. You MUST NOT claim "done", "fixed" or "passing" without fresh output that proves it (`verification-before-completion` skill).
+6. Never bypass the gate: no `--no-verify`, no `SKIP=`, no `core.hooksPath`. Fix the cause.
+
+Enforcement, so a skipped step fails loudly:
+
+- Git hooks: `pre-commit` lints and fixes, `commit-msg` checks the message, `pre-push` runs the tests.
+- Agent hooks: `scripts/hooks/verify-gate.sh` denies `git push`, Copilot's `report_progress` and hook bypasses until `make verify` passes. Copilot calls it from `.github/hooks/verify.json`. It also blocks the end of a Copilot session with red checks or unpushed changes. Claude Code calls it from `.claude/settings.json`.
+- CI: `lint.yml` (`pre-commit`), `pr.yml` (`pr-body`, `pr-conventions`) and `test.yml` (`test`). The `main` ruleset requires them, and all review threads must be resolved.
+
 ## Lint and hooks
 
-- Run `make hooks` once per clone. It installs the `pre-commit` and `commit-msg` git hooks from `.pre-commit-config.yaml`.
-- Run `make lint` before you push. It runs every hook on all files. CI runs the same hooks (`.github/workflows/lint.yml`).
+- Run `make hooks` once per clone. It installs the `pre-commit`, `commit-msg` and `pre-push` git hooks from `.pre-commit-config.yaml`.
+- `make lint` runs every hook on all files. CI runs the same hooks (`.github/workflows/lint.yml`). `make verify` runs it too.
 - Run `make test` after a change in `plugins/`.
 - Run `make e2e` after a change in `plugins/` or `e2e/`, when you have a Claude login and tmux. It runs real model turns, so CI does not run it. CI runs `make e2e-unit`.
 - Refresh the README demo GIF with the `demo-scenario` skill (`.agents/skills/demo-scenario/`, `make demo`).
@@ -64,7 +85,8 @@ One list for branches, commits and PR titles:
 ### Pull requests
 
 - Title: the same format as a commit subject. The squash merge uses it as the commit on `main`, so it must be correct.
-- Body: use `.github/pull_request_template.md`. Sections: Summary, Linked issue, Test plan.
+- Body: use `.github/pull_request_template.md`. Sections: Summary, Linked issue, Requirements, Test plan. The `pr-body` check fails on a missing issue link, an empty Requirements section or an unticked box.
+- Shepherd a PR to ready with the `pr-shepherd` agent: `.github/agents/pr-shepherd.agent.md` for Copilot, `.claude/agents/pr-shepherd.md` for Claude Code. It triages review threads, fixes them, rebases and runs the gate. Copilot: pick it in the Agents tab, or comment `@copilot Shepherd this PR. Follow .github/agents/pr-shepherd.agent.md.` on any PR. Claude Code: ask for the `pr-shepherd` agent.
 - Link the issue with `Closes #N` (or `Fixes #N`) so the merge closes it. Use `Refs #N` for partial work.
 - Keep history linear. Rebase onto `main`; never merge `main` into the branch. Squash to the fewest commits that keep logical steps. Use `git push --force-with-lease`, never `--force`.
 - Open a draft PR for work in progress. Mark it ready when CI passes.
