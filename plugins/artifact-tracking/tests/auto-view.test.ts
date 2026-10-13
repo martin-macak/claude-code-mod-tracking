@@ -21,6 +21,7 @@ import {
 import { cellsFor, type Layout, textOf, type ViewContext } from '../hooks/ui/view'
 
 const NOW = 1_000_000
+const PROCESS_UI = { breaker: 'closed' as const }
 
 const tool = (name: 'gh' | 'acli', over: Partial<ToolStatus> = {}): ToolStatus => ({
   name,
@@ -345,7 +346,7 @@ test('Agents: zero parts are left out, a failed list is named, and folding the m
 })
 
 test('Pull requests: a discovered PR shows only here, never under GitHub', () => {
-  const sections = composePane([pr(7)], ctx({ auto: auto() }))
+  const sections = composePane([pr(7)], [], PROCESS_UI, ctx({ auto: auto() }))
   expect(sections.map(s => s.id)).toEqual(['worktrees', 'agents', 'prs'])
 })
 
@@ -445,24 +446,29 @@ test('autoBandParts counts live children, running agents and open PRs with faili
 
 test('composeBand joins the item parts and the auto parts; nothing at all is null', () => {
   const a = auto({ worktrees: [wt('repo', 0), wt('a', 1)], agents: [MASTER] })
-  expect(composeBand([web('https://x.example/')], a)).toBe('Links 1 · Worktrees 1')
-  expect(composeBand([], a)).toBe('Worktrees 1')
-  expect(composeBand([], null)).toBeNull()
-  expect(composeBand([], auto({ worktrees: [wt('repo', 0)], agents: [MASTER] }))).toBeNull()
+  expect(composeBand([web('https://x.example/')], [], a)).toBe('Links 1 · Worktrees 1')
+  expect(composeBand([], [], a)).toBe('Worktrees 1')
+  expect(composeBand([], [], null)).toBeNull()
+  expect(composeBand([], [], auto({ worktrees: [wt('repo', 0)], agents: [MASTER] }))).toBeNull()
 })
 
 test('composePane puts the auto sections first, then Jira, GitHub, Web links', () => {
-  const sections = composePane([web('https://x.example/'), { ...pr(1), sources: ['prompt'] }], ctx({ auto: auto() }))
+  const sections = composePane(
+    [web('https://x.example/'), { ...pr(1), sources: ['prompt'] }],
+    [],
+    PROCESS_UI,
+    ctx({ auto: auto() }),
+  )
   expect(sections.map(s => s.id)).toEqual(['worktrees', 'agents', 'github', 'web'])
 })
 
 test('composeCommandText lists the auto sections as text; empty is the old message', () => {
-  const text = composeCommandText([pr(7)], ctx({ auto: auto() }))
+  const text = composeCommandText([pr(7)], [], PROCESS_UI, ctx({ auto: auto() }))
   expect(text).toContain('Worktrees  git · 1 live')
   expect(text).toContain('Agents  1 running')
   expect(text).toContain('Pull requests  gh · refreshed 20s ago')
   expect(text).toContain('#7  PR 7')
-  expect(composeCommandText([], ctx())).toBe('No tracked items yet.')
+  expect(composeCommandText([], [], PROCESS_UI, ctx())).toBe('No tracked items yet.')
 })
 
 test('a body ref shows in its own section with the via prefix, and an auto-only one can be dismissed', () => {
@@ -472,7 +478,7 @@ test('a body ref shows in its own section with the via prefix, and an auto-only 
     via: ['gh:github.com/acme/web#7', 'gh:github.com/acme/web#9'],
     seenCount: 0,
   }
-  const sections = composePane([ref], ctx({ auto: auto() }))
+  const sections = composePane([ref], [], PROCESS_UI, ctx({ auto: auto() }))
   const row = sections.find(s => s.id === 'web')!.rows[0]!
   expect(row.title.startsWith('↳#7,#9 ')).toBe(true)
   expect(row.dismissId).toBe(ref.key)

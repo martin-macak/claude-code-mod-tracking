@@ -1,8 +1,9 @@
 // The auto sections of the pane (spec 10): Worktrees, Agents, Pull requests, the band parts and the composers.
 // Imports `view.ts` and the contracts. Pure: no `$`, no JSX, no clock.
 
-import type { AgentRow, AutoState, GitHubRecord, ItemRecord } from '../contracts'
+import type { AgentRow, AutoState, GitHubRecord, ItemRecord, ProcessRecord, ProcessUiState } from '../contracts'
 import { MASTER_ID } from '../contracts'
+import { processBandPart, processSection } from './process-view'
 import type { PaneRow, PaneSection, ViewContext } from './view'
 import { ago, bandParts, buildPane, EMPTY_TEXT, githubRow, isWide, lastRefreshOf, textOf, toolNote } from './view'
 
@@ -209,19 +210,35 @@ export function autoBandParts(auto: AutoState | null, items: readonly ItemRecord
   ]
 }
 
-/** Auto sections first, then `buildPane(items, ctx)`. */
-export function composePane(items: readonly ItemRecord[], ctx: ViewContext): PaneSection[] {
-  return [...buildAutoSections(ctx.auto ?? null, items, ctx), ...buildPane(items, ctx)]
+/** Auto sections first, then item sections, then the Processes section when it has rows or a note. */
+export function composePane(
+  items: readonly ItemRecord[],
+  processes: readonly ProcessRecord[],
+  processUi: ProcessUiState,
+  ctx: ViewContext,
+): PaneSection[] {
+  const proc = processSection(processes, processUi)
+  return [...buildAutoSections(ctx.auto ?? null, items, ctx), ...buildPane(items, ctx), ...(proc ? [proc] : [])]
 }
 
-/** `bandParts(items)` then `autoBandParts`; null when both are empty. */
-export function composeBand(items: readonly ItemRecord[], auto: AutoState | null): string | null {
-  const parts = [...bandParts(items), ...autoBandParts(auto, items)]
+/** `bandParts(items)`, then auto parts, then `Processes n (k ✗)`; null when all are empty. */
+export function composeBand(
+  items: readonly ItemRecord[],
+  processes: readonly ProcessRecord[],
+  auto: AutoState | null,
+): string | null {
+  const p = processBandPart(processes)
+  const parts = [...bandParts(items), ...autoBandParts(auto, items), ...(p ? [p] : [])]
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
-/** The `/track` text: the auto sections, then the item sections, nothing folded. EMPTY_TEXT when there are none. */
-export function composeCommandText(items: readonly ItemRecord[], ctx: ViewContext): string {
-  const sections = composePane(items, { ...ctx, folded: [] })
+/** The `/track` text: auto, item and process sections; nothing folded. EMPTY_TEXT when there are none. */
+export function composeCommandText(
+  items: readonly ItemRecord[],
+  processes: readonly ProcessRecord[],
+  processUi: ProcessUiState,
+  ctx: ViewContext,
+): string {
+  const sections = composePane(items, processes, processUi, { ...ctx, folded: [] })
   return sections.length === 0 ? EMPTY_TEXT : textOf(sections)
 }

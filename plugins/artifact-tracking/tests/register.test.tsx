@@ -4,7 +4,7 @@
 
 import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
-import type { ItemRecord } from '../hooks/contracts'
+import type { ItemRecord, ProcessRecord } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
 import {
   BAND,
@@ -14,6 +14,7 @@ import {
   PANE,
   prompt,
   quiet,
+  res,
   response,
   SESSION,
   START,
@@ -128,6 +129,216 @@ test('tool-result row: Jira URLs on a foreign site are skipped', async ($, on) =
   expect(text).not.toContain('ISS-2')
 })
 
+test('processes: a background Bash task appears and task-notification updates its state', async ($, on) => {
+  const { calls, fake } = world(on)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'task-bg-1' }
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev', tool_use_id: 'toolu_bg_1' } as never)
+  await quiet(calls)
+  let text = (await track($)).text ?? ''
+  expect(text).toContain('Processes')
+  expect(text).toContain('npm run dev')
+  expect(text).toContain('running')
+  await $.session.append({
+    door: 'prompt',
+    origin: { kind: 'task-notification' },
+    uuid: 'u-task-1',
+    task: { id: 'task-bg-1', status: 'completed', toolUseId: 'toolu_bg_1' },
+    message: { type: 'user', role: 'user', content: [{ type: 'text', text: 'done' }] },
+  } as never)
+  text = (await track($)).text ?? ''
+  expect(text).toContain('completed')
+  expect(text).toMatch(/Processes\s+1 tracked/)
+})
+
+test('processes: a real task-notification row (text only, no task field) completes the background task', async ($, on) => {
+  const { calls, fake } = world(on)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bcsvumhut' }
+  await $.tool.call({ tool: 'Bash', command: 'sleep 90', tool_use_id: 'toolu_01GfuArVsMsjZQPMycBmm7jG' } as never)
+  await quiet(calls)
+  expect((await track($)).text ?? '').toMatch(/sleep 90[^\n]*running/)
+  await $.session.append({
+    door: 'prompt',
+    origin: { kind: 'task-notification', producer: 'session-task' },
+    uuid: 'u-task-real',
+    message: {
+      type: 'user',
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text:
+            '<task-notification>\n<task-id>bcsvumhut</task-id>\n<tool-use-id>toolu_01GfuArVsMsjZQPMycBmm7jG</tool-use-id>\n' +
+            '<output-file>/tmp/bcsvumhut.output</output-file>\n<status>completed</status>\n' +
+            '<summary>Background command "sleep 90" completed (exit code 0)</summary>\n</task-notification>',
+        },
+      ],
+    },
+  } as never)
+  expect((await track($)).text ?? '').toMatch(/sleep 90[^\n]*completed/)
+})
+
+test('processes: notification text typed by the person does not change a task state', async ($, on) => {
+  const { calls, fake } = world(on)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bcsvumhut' }
+  await $.tool.call({ tool: 'Bash', command: 'sleep 90', tool_use_id: 'toolu_x' } as never)
+  await quiet(calls)
+  await $.session.append(
+    prompt('<task-notification><task-id>bcsvumhut</task-id><status>killed</status></task-notification>'),
+  )
+  expect((await track($)).text ?? '').toMatch(/sleep 90[^\n]*running/)
+})
+
+test('processes: docker missing shows a reason and does not break /track', async ($, on) => {
+  const { fake } = world(on, { missing: ['docker'] })
+  fake.tools.Bash = { stdout: 'a1b2c3d4e5f6\n', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'docker run -d --name api nginx:latest' } as never)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('Processes')
+  expect(text).toContain('docker not installed')
+})
+
+test('processes: docker probe errors are surfaced instead of marking containers exited', async ($, on) => {
+  const { fake } = world(on)
+  fake.tools.Bash = { stdout: 'a1b2c3d4e5f6\n', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'docker run -d --name api nginx:latest' } as never)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('unexpected call: docker ps')
+})
+
+// ---------------------------------------------------------------- processes: PR #34 manual-test findings
+
+const CID = 'c'.repeat(12) + '0123456789abcdef'.repeat(3) + 'abcd'
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** `ps -o lstart` text for a moment, in local time. */
+function lstart(ms: number): string {
+  const d = new Date(ms)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${DAYS[d.getDay()]} ${MONTHS[d.getMonth()]} ${String(d.getDate()).padStart(2, ' ')} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${d.getFullYear()}`
+}
+const argvIs = (argv: string[], ...head: string[]) => head.every((x, i) => argv[i] === x)
+
+test('processes: docker run -d after docker info in one Bash call shows the container as up', async ($, on) => {
+  const { fake } = world(on)
+  fake.run = argv =>
+    argvIs(argv, 'docker', 'ps', '-a', '--no-trunc') ? res(`${CID}\ttrack-test-sleep\tUp 3 seconds\n`) : undefined
+  fake.tools.Bash = {
+    stdout: '29.0.1\nContainerd fff62f14765df376e5fc36f5a8f8e795b5670f61\n' + CID + '\n',
+    stderr: '',
+    interrupted: false,
+  }
+  await $.tool.call({
+    tool: 'Bash',
+    command: "docker info --format '{{.ServerVersion}}'; docker run -d --name track-test-sleep alpine sleep 1800",
+  } as never)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('track-test-sleep')
+  expect(text).toContain('up')
+  expect(text).not.toContain('exited')
+})
+
+test('processes: docker compose up -d at the end of a compound command shows the project', async ($, on) => {
+  const { fake } = world(on)
+  fake.run = argv =>
+    argvIs(argv, 'docker', 'ps', '-a', '--filter', 'label=com.docker.compose.project=track-compose')
+      ? res('Up 2 seconds\n')
+      : argvIs(argv, 'docker', 'ps')
+        ? res('')
+        : undefined
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({
+    tool: 'Bash',
+    command:
+      "mkdir -p /tmp/tc && printf 'services:\\n  web:\\n    image: nginx\\n' > /tmp/tc/docker-compose.yml && docker compose -p track-compose -f /tmp/tc/docker-compose.yml up -d",
+  } as never)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('track-compose')
+  expect(text).toContain('up')
+  expect(text).not.toContain('exited')
+})
+
+test('processes: compose without -p takes its project name from the session cwd', async ($, on) => {
+  const { fake } = world(on)
+  fake.cwd = '/work/My-App'
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'docker compose up -d' } as never)
+  expect((await track($)).text ?? '').toContain('my-app')
+})
+
+test('processes: a live screen session stays running although screen -ls exits 1', async ($, on) => {
+  const { fake } = world(on)
+  fake.run = argv =>
+    argvIs(argv, 'screen', '-ls')
+      ? res('There is a screen on:\n\t7611.watch\t(Detached)\n1 Socket in /tmp/.screen.\n', 1)
+      : undefined
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd app && screen -dmS watch npm run watch' } as never)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('watch')
+  expect(text).toContain('running')
+  expect(text).not.toContain('exited')
+})
+
+test('processes: a Docker daemon error keeps docker rows and still probes tmux', async ($, on) => {
+  const { fake } = world(on)
+  fake.run = argv =>
+    argvIs(argv, 'docker', 'ps')
+      ? res('', 1, 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?')
+      : argvIs(argv, 'tmux', 'ls')
+        ? res('', 1, 'no server running on /private/tmp/tmux-501/default')
+        : undefined
+  fake.tools.Bash = { stdout: CID + '\n', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'docker run -d --name api nginx; tmux new -d -s dev' } as never)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('Cannot connect to the Docker daemon')
+  expect(text).toMatch(/api[^\n]*running/)
+  expect(text).toMatch(/dev[^\n]*exited/)
+})
+
+test('processes: a Docker daemon that stays down does not open the breaker for the tmux probe', async ($, on) => {
+  const { fake } = world(on)
+  let tmuxUp = true
+  fake.run = argv =>
+    argvIs(argv, 'docker', 'ps')
+      ? res('', 1, 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?')
+      : argvIs(argv, 'tmux', 'ls')
+        ? tmuxUp
+          ? res('dev: 1 windows (created Tue)\n')
+          : res('', 1, 'no server running on /private/tmp/tmux-501/default')
+        : undefined
+  fake.tools.Bash = { stdout: CID + '\n', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'docker run -d --name api nginx; tmux new -d -s dev' } as never)
+  for (let n = 0; n < 4; n++) await track($)
+  tmuxUp = false
+  expect((await track($)).text ?? '').toMatch(/dev[^\n]*exited/)
+})
+
+test('processes: a detached process without echo $! is found by the probe and then followed by pid', async ($, on) => {
+  const { fake, calls } = world(on)
+  let alive = true
+  fake.run = argv => {
+    if (argvIs(argv, 'ps', '-A')) return res(`  4321 ${lstart(Date.now() - 1000)} sleep 100\n`)
+    if (argvIs(argv, 'ps', '-p', '4321')) return alive ? res(`${lstart(Date.now() - 1000)} sleep 100\n`) : res('', 1)
+    return undefined
+  }
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'nohup sleep 100 > /dev/null 2>&1 &', tool_use_id: 'toolu_d' } as never)
+  let text = (await track($)).text ?? ''
+  expect(text).toMatch(/sleep 100[^\n]*running/)
+  alive = false
+  text = (await track($)).text ?? ''
+  expect(calls.some(c => argvIs(c, 'ps', '-p', '4321'))).toBe(true)
+  expect(text).toMatch(/sleep 100[^\n]*exited/)
+})
+
+test('processes: a detached process without a pid that ps cannot find is exited', async ($, on) => {
+  const { fake } = world(on)
+  fake.run = argv => (argvIs(argv, 'ps', '-A') ? res('    1 Tue Oct 13 08:00:00 2026 /sbin/launchd\n') : undefined)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'nohup sleep 100 > /dev/null 2>&1 &' } as never)
+  expect((await track($)).text ?? '').toMatch(/sleep 100[^\n]*exited/)
+})
+
 test('response row: a web link and a PR URL are captured; the row is stored as made', async ($, on) => {
   const { clock, calls } = world(on)
   const row = response(
@@ -237,6 +448,27 @@ test('/clear carry-over also happens on /track alone', async ($, on) => {
   await $.session.append(prompt('first https://example.org/a'))
   current.id = 'sess-2'
   expect((await track($)).text).toContain('Old page')
+})
+
+test('/clear carry-over also keeps tracked processes from the session just left', async ($, on) => {
+  const oldProc: ProcessRecord[] = [
+    {
+      id: 'task:task-bg-1',
+      kind: 'background-task',
+      name: 'npm run dev',
+      state: 'running',
+      firstSeen: 1,
+      lastSeen: 1,
+      taskId: 'task-bg-1',
+    },
+  ]
+  world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { processes: oldProc } } })
+  await $.session.append(prompt('first https://example.org/a'))
+  current.id = 'sess-2'
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('Processes')
+  expect(text).toContain('npm run dev')
+  expect(text).toContain('running')
 })
 
 test('/track refresh clears a logged-out gh and asks again', async ($, on) => {

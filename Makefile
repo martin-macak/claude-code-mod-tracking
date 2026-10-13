@@ -25,10 +25,16 @@ CLAUDE_CONFIG_DIR ?= $(HOME)/.claude
 SKILLS_DIR := $(CLAUDE_CONFIG_DIR)/skills
 LINK       := $(SKILLS_DIR)/$(NAME)
 
-# Project scope: <repo>/.claude/skills/<name>, see install-local.
-LOCAL_DIR    := $(ROOT)/.claude/skills
-LOCAL_LINK   := $(LOCAL_DIR)/$(NAME)
-EXCLUDE_LINE := /.claude/skills/$(NAME)
+# Project scope: <repo>/.claude/skills/<name>-dev, see install-local. The local copy
+# needs its own plugin name: the user-scope install already owns $(NAME), and a second
+# plugin with that name does not load.
+LOCAL_DIR        := $(ROOT)/.claude/skills
+LOCAL_NAME       := $(NAME)-dev
+LOCAL_LINK       := $(LOCAL_DIR)/$(LOCAL_NAME)
+EXCLUDE_LINE     := /.claude/skills/$(LOCAL_NAME)
+# Left by the earlier install-local (one symlink named $(NAME)). Removed on install.
+OLD_LOCAL_LINK   := $(LOCAL_DIR)/$(NAME)
+OLD_EXCLUDE_LINE := /.claude/skills/$(NAME)
 
 # TypeScript version where mise is absent. Keep it equal to the pin in test.yml.
 TYPESCRIPT_VERSION ?= 7.0.2
@@ -196,6 +202,9 @@ uninstall: ## Remove the link made by install (idempotent)
 # .claude/skills/ of the session's primary working directory, so start claude at the
 # repo root (a subfolder does not load it). Claude Code asks the workspace trust
 # question first, and `-p` never counts as trust.
+# The copy gets its own name, <name>-dev: a second plugin with the same name is refused
+# while the user-scope install exists. It is a real copy, not symlinks: a symlinked
+# hooks folder fails with "Path escapes plugin directory". Rerun after code edits.
 # KB: docs/knowledge-base/claude-code-mods/workflow/develop.md, "4. Skills folder";
 # sources/code-claude-com-2026-10-09/plugins/loading.md, "Plugins shared through a
 # repository" (line 73). Rejected: CLAUDE_CODE_PLUGIN_DIRS cannot be set in project or
@@ -203,30 +212,43 @@ uninstall: ## Remove the link made by install (idempotent)
 # needs a marketplace entry, so it is not used.
 # The link is not tracked: its path goes into the repo's .git/info/exclude (local,
 # never committed). Idempotent. uninstall-local removes only our link and our line.
-install-local: ## Link the mod into <repo>/.claude/skills (this repo only)
-	@mkdir -p "$(LOCAL_DIR)"
-	@if [ -e "$(LOCAL_LINK)" ] && [ ! -L "$(LOCAL_LINK)" ]; then \
-	  echo "Refusing: $(LOCAL_LINK) exists and is not a symlink."; exit 1; fi
-	ln -sfn "$(PLUGIN_ABS)" "$(LOCAL_LINK)"
+install-local: ## Load the mod in this repo only, as $(LOCAL_NAME) (copy; rerun after edits)
+	@if [ -L "$(OLD_LOCAL_LINK)" ] && [ "$$(readlink "$(OLD_LOCAL_LINK)")" = "$(PLUGIN_ABS)" ]; then \
+	  rm "$(OLD_LOCAL_LINK)" && echo "Removed old link: $(OLD_LOCAL_LINK)"; fi
+	@if [ -e "$(LOCAL_LINK)" ] && ! grep -q '"name": "$(LOCAL_NAME)"' "$(LOCAL_LINK)/.claude-plugin/plugin.json" 2>/dev/null; then \
+	  echo "Refusing: $(LOCAL_LINK) exists and is not an install-local copy."; exit 1; fi
+	@rm -rf "$(LOCAL_LINK)"
+	@cp -R "$(PLUGIN_ABS)" "$(LOCAL_LINK)"
+	@awk -v n='$(LOCAL_NAME)' '!done && /"name"[[:space:]]*:/ { sub(/"name"[[:space:]]*:[[:space:]]*"[^"]*"/, "\"name\": \"" n "\""); done = 1 } { print }' "$(PLUGIN_ABS)/.claude-plugin/plugin.json" > "$(LOCAL_LINK)/.claude-plugin/plugin.json"
+	@# State is owned by the plugin name: $(NAME).* belongs to the user-scope install, and a write to it from
+	@# the copy is refused ("only a value's owner writes it"). So the copy owns $(LOCAL_NAME).* instead.
+	@sed -i.bak "s/plugin: '$(NAME)'/plugin: '$(LOCAL_NAME)'/g" "$(LOCAL_LINK)/hooks/register.tsx"
+	@sed -i.bak "s/^    '$(NAME)': {/    '$(LOCAL_NAME)': {/" "$(LOCAL_LINK)/types/index.d.ts"
+	@rm -f "$(LOCAL_LINK)/hooks/register.tsx.bak" "$(LOCAL_LINK)/types/index.d.ts.bak"
+	@grep -q "plugin: '$(LOCAL_NAME)'" "$(LOCAL_LINK)/hooks/register.tsx" || { echo "install-local: state owner rename failed"; exit 1; }
 	@ex="$$(git -C "$(ROOT)" rev-parse --path-format=absolute --git-path info/exclude 2>/dev/null)"; \
 	if [ -n "$$ex" ]; then \
 	  mkdir -p "$$(dirname "$$ex")"; touch "$$ex"; \
 	  grep -qxF '$(EXCLUDE_LINE)' "$$ex" || echo '$(EXCLUDE_LINE)' >> "$$ex"; \
 	  echo "Excluded from git in $$ex"; \
 	else echo 'Not a git repo: no exclude line added.'; fi
-	@echo "Installed: $(LOCAL_LINK) -> $$(readlink "$(LOCAL_LINK)")"
+	@echo "Installed: $(LOCAL_LINK) as $(LOCAL_NAME), copied from $(PLUGIN_ABS). Rerun make install-local after code changes."
 	@echo "Start claude at $(ROOT), accept the trust prompt, or run /reload-plugins."
+	@echo "Expect $(LOCAL_NAME)@skills-dir in /plugin, and no 'name already taken' error."
 
-uninstall-local: ## Remove the project link made by install-local (idempotent)
-	@if [ -L "$(LOCAL_LINK)" ]; then \
-	  if [ "$$(readlink "$(LOCAL_LINK)")" = "$(PLUGIN_ABS)" ]; then rm "$(LOCAL_LINK)" && echo "Removed: $(LOCAL_LINK)"; \
-	  else echo "Skipped: $(LOCAL_LINK) points at $$(readlink "$(LOCAL_LINK)"), not at this plugin."; fi; \
-	elif [ -e "$(LOCAL_LINK)" ]; then echo "Skipped: $(LOCAL_LINK) is not a symlink."; \
+uninstall-local: ## Remove the project copy made by install-local (idempotent)
+	@if [ -L "$(OLD_LOCAL_LINK)" ] && [ "$$(readlink "$(OLD_LOCAL_LINK)")" = "$(PLUGIN_ABS)" ]; then \
+	  rm "$(OLD_LOCAL_LINK)" && echo "Removed: $(OLD_LOCAL_LINK)"; fi
+	@if [ -f "$(LOCAL_LINK)/.claude-plugin/plugin.json" ] && grep -q '"name": "$(LOCAL_NAME)"' "$(LOCAL_LINK)/.claude-plugin/plugin.json"; then \
+	  rm -rf "$(LOCAL_LINK)" && echo "Removed: $(LOCAL_LINK)"; \
+	elif [ -e "$(LOCAL_LINK)" ] || [ -L "$(LOCAL_LINK)" ]; then echo "Skipped: $(LOCAL_LINK) is not an install-local copy."; \
 	else echo "Not installed: $(LOCAL_LINK)"; fi
 	@ex="$$(git -C "$(ROOT)" rev-parse --path-format=absolute --git-path info/exclude 2>/dev/null)"; \
-	if [ -n "$$ex" ] && [ -f "$$ex" ] && grep -qxF '$(EXCLUDE_LINE)' "$$ex"; then \
-	  grep -vxF '$(EXCLUDE_LINE)' "$$ex" > "$$ex.tmp"; cat "$$ex.tmp" > "$$ex"; rm -f "$$ex.tmp"; \
-	  echo "Removed exclude line from $$ex"; fi
+	if [ -n "$$ex" ] && [ -f "$$ex" ]; then \
+	  for l in '$(EXCLUDE_LINE)' '$(OLD_EXCLUDE_LINE)'; do \
+	    if grep -qxF "$$l" "$$ex"; then grep -vxF "$$l" "$$ex" > "$$ex.tmp"; cat "$$ex.tmp" > "$$ex"; rm -f "$$ex.tmp"; \
+	    echo "Removed exclude line $$l from $$ex"; fi; \
+	  done; fi
 
 # clean: generated files only. .claude-plugin/types/ is laid by the engine on a real
 # load. Source and tracked files stay.

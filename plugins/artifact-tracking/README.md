@@ -186,10 +186,18 @@ Run `make` from the repo root. `make help` lists the targets. Set `PLUGIN=<dir>`
 | `release-dry` | Prints the tag that `release` would create. |
 | `install` | Links the mod into `$CLAUDE_CONFIG_DIR/skills/`. Without that variable, it uses `~/.claude/skills/`. |
 | `uninstall` | Removes that link. It removes only a link that points at this plugin. |
-| `install-local` | Links the mod into `<repo>/.claude/skills/`. Only a session that starts in this repo loads it. The user config dir stays untouched. |
-| `uninstall-local` | Removes that link and its line in `.git/info/exclude`. |
+| `install-local` | Copies the mod into `<repo>/.claude/skills/artifact-tracking-dev/` as `artifact-tracking-dev`. Only a session that starts in this repo loads it. The user config dir stays untouched. Rerun it after code changes. |
+| `uninstall-local` | Removes that copy and its line in `.git/info/exclude`. |
 | `clean` | Deletes `.claude-plugin/types/` and `dist/`. The engine writes that folder on a real load. |
 
 `install` makes a symlink, so Claude Code loads the mod in place as `artifact-tracking@skills-dir`. Edits reload by themselves. Run `make install` from the checkout that you keep, not from a temporary worktree. Start a new session or run `/reload-plugins` after `make install`. Running it twice is safe.
 
-`install-local` uses a project skills folder. Start `claude` at the repo root. A subfolder does not load the mod. Claude Code asks you to trust the folder first. `claude -p` never counts as trust. The link is not tracked by git, because `install-local` adds it to `.git/info/exclude`. That file is shared by all worktrees of the repo.
+`install-local` uses a project skills folder. Start `claude` at the repo root. A subfolder does not load the mod. Claude Code asks you to trust the folder first. `claude -p` never counts as trust. The copy is not tracked by git, because `install-local` adds it to `.git/info/exclude`. That file is shared by all worktrees of the repo.
+
+The copy differs from `install` in three ways:
+
+- It is a copy, not a link. A symlinked hooks folder fails with "Path escapes plugin directory". So rerun `make install-local` after each code change, then run `/reload-plugins`.
+- It is named `artifact-tracking-dev`. A second plugin named `artifact-tracking` is refused while the released one is installed.
+- It owns its state as `artifact-tracking-dev.*`. State belongs to the plugin name, and the copy may not write `artifact-tracking.*`.
+
+The released `artifact-tracking` still loads next to the copy, and both answer `/track`. Disable it while you test: `claude plugin disable artifact-tracking@mod-tracking`, and later `claude plugin enable artifact-tracking@mod-tracking`. If `/reload-plugins` leaves `/track` unknown, restart with `claude --continue`.

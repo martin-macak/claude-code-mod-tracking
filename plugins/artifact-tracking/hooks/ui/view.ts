@@ -40,7 +40,7 @@ export type PaneRow = {
   typeWrap?: Cell['wrap']
 }
 
-export type SectionId = 'worktrees' | 'agents' | 'prs' | Category
+export type SectionId = 'worktrees' | 'agents' | 'prs' | 'processes' | Category
 export type Layout = 'worktrees' | 'agents' | 'prs' | 'items'
 export type CellName = 'key' | 'title' | 'type' | 'status' | 'extra' | 'x'
 /** One rendered cell. `width` absent: the cell grows. */

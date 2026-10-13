@@ -5,6 +5,7 @@ import { composeBand, composeCommandText } from '../hooks/ui/auto-view'
 import { ago, bandParts, buildPane, columnsFor, EMPTY_TEXT, toolNote, type ViewContext } from '../hooks/ui/view'
 
 const NOW = 1_000_000
+const PROCESS_UI = { breaker: 'closed' as const }
 
 const gh = (over: Partial<ToolStatus> = {}): ToolStatus => ({
   name: 'gh',
@@ -254,16 +255,18 @@ test('composeBand counts categories and failing PRs; null when empty', () => {
     pr(3, { checks: 'failure' }),
     web('https://a.dev', 'A'),
   ]
-  expect(composeBand(items, null)).toBe('Jira 2 · GitHub 3 (2 ✗) · Links 1')
-  expect(composeBand([pr(1)], null)).toBe('GitHub 1')
-  expect(composeBand([web('https://a.dev', 'A')], null)).toBe('Links 1')
-  expect(composeBand([], null)).toBeNull()
+  expect(composeBand(items, [], null)).toBe('Jira 2 · GitHub 3 (2 ✗) · Links 1')
+  expect(composeBand([pr(1)], [], null)).toBe('GitHub 1')
+  expect(composeBand([web('https://a.dev', 'A')], [], null)).toBe('Links 1')
+  expect(composeBand([], [], null)).toBeNull()
 })
 
 test('composeCommandText: empty text and an indented tree', () => {
-  expect(composeCommandText([], ctx())).toBe(EMPTY_TEXT)
+  expect(composeCommandText([], [], PROCESS_UI, ctx())).toBe(EMPTY_TEXT)
   const text = composeCommandText(
     [epic, pr(1, { state: 'open', title: 'Fix', checks: 'failure' })],
+    [],
+    PROCESS_UI,
     ctx({ folded: ['jira:acme.atlassian.net/ISS-101'] }),
   )
   const lines = text.split('\n')
@@ -347,5 +350,5 @@ test('bandParts counts GitHub items without source auto; composeBand adds the au
   const plain: GitHubRecord = { ...autoPr(5), sources: ['prompt'] }
   expect(bandParts([autoPr(1), plain])).toEqual(['GitHub 1 (1 ✗)'])
   expect(bandParts([autoPr(1)])).toEqual([])
-  expect(composeBand([plain], null)).toBe('GitHub 1 (1 ✗)')
+  expect(composeBand([plain], [], null)).toBe('GitHub 1 (1 ✗)')
 })
