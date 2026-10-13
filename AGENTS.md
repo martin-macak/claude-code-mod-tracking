@@ -74,6 +74,7 @@ One list for branches, commits and PR titles:
 ### Issues
 
 - Use an issue form: Bug report, Feature request or Task. Blank issues are off.
+- Agents file issues with the `issue-bug` and `issue-enhancement` skills (`.agents/skills/`). They ask the user, run a short root cause analysis (RCA) for bugs, and show a preview before `gh issue create`.
 - Title: sentence case, no type prefix, no trailing period, at most 72 characters.
   - Bug: state the symptom. Example: `Pane shows a stale PR state after /track refresh`.
   - Feature or task: state the outcome in imperative mood. Example: `Show Jira assignee in the /track pane`.
