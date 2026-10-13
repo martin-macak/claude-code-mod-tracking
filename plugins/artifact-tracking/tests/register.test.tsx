@@ -150,6 +150,44 @@ test('processes: a background Bash task appears and task-notification updates it
   expect(text).toMatch(/Processes\s+1 tracked/)
 })
 
+test('processes: a real task-notification row (text only, no task field) completes the background task', async ($, on) => {
+  const { calls, fake } = world(on)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bcsvumhut' }
+  await $.tool.call({ tool: 'Bash', command: 'sleep 90', tool_use_id: 'toolu_01GfuArVsMsjZQPMycBmm7jG' } as never)
+  await quiet(calls)
+  expect((await track($)).text ?? '').toMatch(/sleep 90[^\n]*running/)
+  await $.session.append({
+    door: 'prompt',
+    origin: { kind: 'task-notification', producer: 'session-task' },
+    uuid: 'u-task-real',
+    message: {
+      type: 'user',
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text:
+            '<task-notification>\n<task-id>bcsvumhut</task-id>\n<tool-use-id>toolu_01GfuArVsMsjZQPMycBmm7jG</tool-use-id>\n' +
+            '<output-file>/tmp/bcsvumhut.output</output-file>\n<status>completed</status>\n' +
+            '<summary>Background command "sleep 90" completed (exit code 0)</summary>\n</task-notification>',
+        },
+      ],
+    },
+  } as never)
+  expect((await track($)).text ?? '').toMatch(/sleep 90[^\n]*completed/)
+})
+
+test('processes: notification text typed by the person does not change a task state', async ($, on) => {
+  const { calls, fake } = world(on)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bcsvumhut' }
+  await $.tool.call({ tool: 'Bash', command: 'sleep 90', tool_use_id: 'toolu_x' } as never)
+  await quiet(calls)
+  await $.session.append(
+    prompt('<task-notification><task-id>bcsvumhut</task-id><status>killed</status></task-notification>'),
+  )
+  expect((await track($)).text ?? '').toMatch(/sleep 90[^\n]*running/)
+})
+
 test('processes: docker missing shows a reason and does not break /track', async ($, on) => {
   const { fake } = world(on, { missing: ['docker'] })
   fake.tools.Bash = { stdout: 'a1b2c3d4e5f6\n', stderr: '', interrupted: false }

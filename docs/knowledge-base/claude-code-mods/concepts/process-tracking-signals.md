@@ -58,6 +58,20 @@ Probe facts found in manual tests:
 - On macOS `python3 x` shows in `ps` as `.../Python.app/.../Python x`. The
   match compares the program name without folder, case and version digits.
 
+Engine facts found in manual tests (Claude Code 2.1.296):
+
+- A task notification row carries no `task` field on `session.append` or
+  in the stored row. In the types `task` is a render prop only. The status
+  is in the row text: `<task-id>`, `<tool-use-id>`, `<status>`. Monitor
+  notices add an `<event>` tag; the parser ignores it.
+- At the hook boundary the row content is an array of blocks. The JSONL
+  file stores the same text as one string.
+- A subagent's Bash resets its cwd after every call. Only the main loop
+  keeps a `cd`, and `$.session.cwd()` follows it there.
+- A screen session that a subagent starts died when the subagent ended.
+  tmux sessions and Docker containers survived. The probe showed the real
+  state (`exited`).
+
 Not covered: a tmux session on another socket (`-L`, `-S`), a tmux session
 with no `-s` name, and a compose project named only by `name:` in its file.
 

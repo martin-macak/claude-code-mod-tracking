@@ -45,6 +45,7 @@ import {
   monitorRow,
   parseBashProcesses,
   processUpdateFromNotification,
+  processUpdateFromNotificationText,
   processUpdateFromTaskStop,
 } from './process/parse'
 import {
@@ -902,7 +903,12 @@ export const register: Register = on => {
   on('session.append', { door: 'prompt' }, async ($, e, next) => {
     const stored = await next(e)
     try {
-      await applyTaskUpdate($, processUpdateFromNotification((e as { task?: unknown }).task))
+      if (e.origin.kind === 'task-notification')
+        await applyTaskUpdate(
+          $,
+          processUpdateFromNotification((e as { task?: unknown }).task) ??
+            processUpdateFromNotificationText(textOfContent(stored.message?.content)),
+        )
       if (PERSON.has(e.origin.kind) && !stored.message?.isMeta && e.agentId === undefined && stored.message) {
         await capture($, textOfContent(stored.message.content), 'full', 'prompt')
       }

@@ -1,5 +1,10 @@
 import { expect, test } from 'claude-code/testing'
-import { parseBashProcesses, processUpdateFromNotification, processUpdateFromTaskStop } from '../hooks/process/parse'
+import {
+  parseBashProcesses,
+  processUpdateFromNotification,
+  processUpdateFromNotificationText,
+  processUpdateFromTaskStop,
+} from '../hooks/process/parse'
 
 test('parseBashProcesses tracks background Bash and Monitor-style task ids', () => {
   const rows = parseBashProcesses(
@@ -312,4 +317,28 @@ test('quoted, nested, remote, heredoc and commented commands are not tracked', (
 test('a heredoc does not hide the command after it', () => {
   const rows = parseBashProcesses("cat > /tmp/c.yml <<'EOF'\nservices: {}\nEOF\ndocker compose -p after up -d", out(''))
   expect(rows.map(r => r.name)).toEqual(['after'])
+})
+
+// ---------------------------------------------------------------- task notifications (manual test 1)
+
+/** A real notification row's text (Claude Code 2.1.296). The engine stores no `task` field on the row. */
+const NOTE = (status: string) =>
+  '<task-notification>\n<task-id>bcsvumhut</task-id>\n<tool-use-id>toolu_01GfuArVsMsjZQPMycBmm7jG</tool-use-id>\n' +
+  '<output-file>/private/tmp/claude-501/x/tasks/bcsvumhut.output</output-file>\n' +
+  `<status>${status}</status>\n<summary>Background command "Sleep 90 seconds" ${status} (exit code 0)</summary>\n</task-notification>`
+
+test('processUpdateFromNotificationText reads task id, tool use id and status from the row text', () => {
+  expect(processUpdateFromNotificationText(NOTE('completed'))).toEqual({
+    taskId: 'bcsvumhut',
+    toolUseId: 'toolu_01GfuArVsMsjZQPMycBmm7jG',
+    state: 'completed',
+  })
+  expect(processUpdateFromNotificationText(NOTE('failed'))?.state).toBe('failed')
+  expect(processUpdateFromNotificationText(NOTE('killed'))?.state).toBe('killed')
+})
+
+test('processUpdateFromNotificationText ignores rows that are no terminal task notification', () => {
+  expect(processUpdateFromNotificationText(NOTE('running'))).toBeNull()
+  expect(processUpdateFromNotificationText('done, see <status>completed</status>')).toBeNull()
+  expect(processUpdateFromNotificationText('')).toBeNull()
 })

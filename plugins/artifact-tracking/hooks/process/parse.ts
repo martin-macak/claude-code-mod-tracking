@@ -455,3 +455,20 @@ export function processUpdateFromTaskStop(result: unknown): TaskBackedUpdate | n
   if (!taskId) return null
   return { taskId, state: 'killed' }
 }
+
+const tag = (text: string, name: string): string | undefined =>
+  new RegExp(`<${name}>([^<\\n]+)</${name}>`).exec(text)?.[1]?.trim() || undefined
+
+/**
+ * The same update from a notification row's text. The engine stores no `task` field on the row (in the types it
+ * is a render prop only), so the text is the source: `<task-id>`, `<tool-use-id>`, `<status>`.
+ * The caller checks `origin.kind === 'task-notification'`: the person can type the same text.
+ */
+export function processUpdateFromNotificationText(text: string): TaskBackedUpdate | null {
+  if (!text.includes('<task-notification>')) return null
+  return processUpdateFromNotification({
+    id: tag(text, 'task-id'),
+    toolUseId: tag(text, 'tool-use-id'),
+    status: tag(text, 'status'),
+  })
+}
