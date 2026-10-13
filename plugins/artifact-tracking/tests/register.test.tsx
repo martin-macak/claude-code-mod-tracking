@@ -4,7 +4,7 @@
 
 import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
-import type { ItemRecord } from '../hooks/contracts'
+import type { ItemRecord, ProcessRecord } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
 import {
   BAND,
@@ -128,6 +128,44 @@ test('tool-result row: Jira URLs on a foreign site are skipped', async ($, on) =
   expect(text).not.toContain('ISS-2')
 })
 
+test('processes: a background Bash task appears and task-notification updates its state', async ($, on) => {
+  const { calls, fake } = world(on)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'task-bg-1' }
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev', tool_use_id: 'toolu_bg_1' } as never)
+  await quiet(calls)
+  let text = (await track($)).text ?? ''
+  expect(text).toContain('Processes')
+  expect(text).toContain('npm run dev')
+  expect(text).toContain('running')
+  await $.session.append({
+    door: 'prompt',
+    origin: { kind: 'task-notification' },
+    uuid: 'u-task-1',
+    task: { id: 'task-bg-1', status: 'completed', toolUseId: 'toolu_bg_1' },
+    message: { type: 'user', role: 'user', content: [{ type: 'text', text: 'done' }] },
+  } as never)
+  text = (await track($)).text ?? ''
+  expect(text).toContain('completed')
+  expect(text).toMatch(/Processes\s+1 tracked/)
+})
+
+test('processes: docker missing shows a reason and does not break /track', async ($, on) => {
+  const { fake } = world(on, { missing: ['docker'] })
+  fake.tools.Bash = { stdout: 'a1b2c3d4e5f6\n', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'docker run -d --name api nginx:latest' } as never)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('Processes')
+  expect(text).toContain('docker not installed')
+})
+
+test('processes: docker probe errors are surfaced instead of marking containers exited', async ($, on) => {
+  const { fake } = world(on)
+  fake.tools.Bash = { stdout: 'a1b2c3d4e5f6\n', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'docker run -d --name api nginx:latest' } as never)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('unexpected call: docker ps')
+})
+
 test('response row: a web link and a PR URL are captured; the row is stored as made', async ($, on) => {
   const { clock, calls } = world(on)
   const row = response(
@@ -237,6 +275,27 @@ test('/clear carry-over also happens on /track alone', async ($, on) => {
   await $.session.append(prompt('first https://example.org/a'))
   current.id = 'sess-2'
   expect((await track($)).text).toContain('Old page')
+})
+
+test('/clear carry-over also keeps tracked processes from the session just left', async ($, on) => {
+  const oldProc: ProcessRecord[] = [
+    {
+      id: 'task:task-bg-1',
+      kind: 'background-task',
+      name: 'npm run dev',
+      state: 'running',
+      firstSeen: 1,
+      lastSeen: 1,
+      taskId: 'task-bg-1',
+    },
+  ]
+  world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { processes: oldProc } } })
+  await $.session.append(prompt('first https://example.org/a'))
+  current.id = 'sess-2'
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('Processes')
+  expect(text).toContain('npm run dev')
+  expect(text).toContain('running')
 })
 
 test('/track refresh clears a logged-out gh and asks again', async ($, on) => {

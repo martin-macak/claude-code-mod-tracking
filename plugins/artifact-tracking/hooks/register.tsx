@@ -27,6 +27,8 @@ import type {
   GitHubRef,
   GitHubTarget,
   ItemRecord,
+  ProcessRecord,
+  ProcessUiState,
   Ref,
   RepoRef,
   Runner,
@@ -39,11 +41,19 @@ import { AUTO_SOURCES, isRowId, LIMITS } from './contracts'
 import { dropAuto } from './model/discovered'
 import { keyOf } from './model/keys'
 import { hydrate, mergeRefs, mergeResults, resolveBareRefs, unionRecords } from './model/registry'
+import {
+  monitorRow,
+  parseBashProcesses,
+  processUpdateFromNotification,
+  processUpdateFromTaskStop,
+} from './process/parse'
+import { dockerEntryMatchesRow, parseDockerPs, parseScreenLs, parseTmuxLs, psStillMatches } from './process/probe'
 import type { Timer } from './refresh/coordinator'
 import { RefreshCoordinator } from './refresh/coordinator'
 import { textOfContent } from './scan/links'
 import { commandArgs, extractRefs, parseRemote } from './scan/refs'
 import { AcliTool } from './tools/acli-tool'
+import { CircuitBreaker } from './tools/circuit-breaker'
 import { GhTool } from './tools/gh-tool'
 import { composeBand, composeCommandText, composePane } from './ui/auto-view'
 import { renderBand } from './ui/band'
@@ -54,6 +64,7 @@ import type { ViewContext } from './ui/view'
 
 // Working set in $.state (survives hot reload, reset by /clear). Mirror in $.store, one key per session.
 const items = atom({ plugin: 'artifact-tracking', key: 'items' } as const, [] as ItemRecord[])
+const processes = atom({ plugin: 'artifact-tracking', key: 'processes' } as const, [] as ProcessRecord[])
 const tools = atom(
   { plugin: 'artifact-tracking', key: 'tools' } as const,
   {
@@ -74,6 +85,9 @@ const PERSON = new Set(['composer', 'bridge', 'sdk', 'unclassified'])
 let gh: GhTool | undefined
 let acli: AcliTool | undefined
 let coordinator: RefreshCoordinator | undefined
+let runCmd: Runner | undefined
+const processBreaker = new CircuitBreaker()
+let processUiState: ProcessUiState = { breaker: 'closed' }
 /** undefined: not resolved yet. null: this session has no known repo. */
 let sessionRepo: RepoRef | null | undefined
 let repoTask: Promise<void> | undefined
@@ -89,6 +103,7 @@ let flushArmedAt = 0
  * So a /clear still finds what was captured in the last moments (D10).
  */
 let mirror: { id: string; items: ItemRecord[] } | undefined
+let processMirror: { id: string; rows: ProcessRecord[] } | undefined
 let scheduler: AutoScheduler | undefined
 let round: AutoRound | undefined
 /** `$.clock.now()` when the tick was armed, and at each beat (A1). */
@@ -106,6 +121,7 @@ let flushed: { id: string; json: string } | undefined
 function ensureRuntime($: EngineInterface): void {
   if (gh && acli && coordinator && scheduler && round) return
   const run: Runner = (argv, init) => $.process.run(argv, init)
+  runCmd = run
   const g = new GhTool(run, Date.now)
   const a = new AcliTool(run, Date.now)
   gh = g
@@ -242,6 +258,14 @@ async function setItems($: EngineInterface, change: (list: ItemRecord[]) => Item
   if (knownId !== undefined && id === knownId) mirror = { id, items: next }
 }
 
+/** Like setItems, for tracked background processes. */
+async function setProcesses($: EngineInterface, change: (rows: ProcessRecord[]) => ProcessRecord[]): Promise<void> {
+  const next = await update($, processes, rows => change(rows ?? []))
+  const id = await $.session.id()
+  if (knownId !== undefined && id === knownId) processMirror = { id, rows: next }
+  await schedule($)
+}
+
 /**
  * Change the `auto` atom. Every write goes through here (A18, A22). It reads first and stops when the change
  * returns its input: no write. Else `update` runs the change on the current value, with the module copy as the
@@ -325,6 +349,7 @@ async function beat($: EngineInterface): Promise<void> {
   }
   scheduler?.kick('tick')
   coordinator?.kick('tick')
+  await probeProcesses($).catch(() => {})
 }
 
 /** Builds the runtime if needed and looks at the tick. The first step of every event hook. */
@@ -370,16 +395,22 @@ async function ensureSession($: EngineInterface): Promise<void> {
   if (prev === undefined) return
   // The `auto` atom belongs to the run, not to a session id. After /clear $.state is empty; the module copy fills it.
   await setAuto($, s => s)
-  const stored = (await $.store.get('s:' + prev)) as { items?: ItemRecord[] } | undefined
+  const stored = (await $.store.get('s:' + prev)) as { items?: ItemRecord[]; processes?: ProcessRecord[] } | undefined
   const held = mirror?.id === prev ? mirror.items : []
+  const heldProc = processMirror?.id === prev ? processMirror.rows : []
   mirror = undefined
+  processMirror = undefined
   const left = unionRecords(held, stored?.items ?? [])
-  if (held.length > 0) await writeStore($, prev, left)
-  const own = (await $.store.get('s:' + id)) as { items?: ItemRecord[] } | undefined
-  if (own?.items) {
+  const leftProc = mergeProcessRows(stored?.processes ?? [], heldProc)
+  if (held.length > 0 || heldProc.length > 0) await writeStore($, prev, left, leftProc)
+  const own = (await $.store.get('s:' + id)) as { items?: ItemRecord[]; processes?: ProcessRecord[] } | undefined
+  if (own?.items || own?.processes) {
     await restore($)
   } else if (left.length > 0) {
     await setItems($, list => unionRecords(left, list))
+    if (leftProc.length > 0) await setProcesses($, rows => mergeProcessRows(leftProc, rows))
+  } else if (leftProc.length > 0) {
+    await setProcesses($, rows => mergeProcessRows(leftProc, rows))
   }
   await publishTools($) // the tools atom was reset too
 }
@@ -496,6 +527,181 @@ async function keepOpenSessionShortRefs(refs: Ref[]): Promise<Ref[]> {
   return refs.filter(ref => !sameSessionRepo(ref) || keep.has(keyOf(ref)))
 }
 
+// ------------------------------------------------------------------ process tracking
+
+function mergeProcessRows(cur: ProcessRecord[], added: ProcessRecord[]): ProcessRecord[] {
+  if (added.length === 0) return cur
+  const now = Date.now()
+  const byId = new Map(cur.map(r => [r.id, r]))
+  for (const row of added) {
+    const old = byId.get(row.id)
+    byId.set(
+      row.id,
+      old
+        ? {
+            ...old,
+            ...row,
+            firstSeen: old.firstSeen,
+            lastSeen: now,
+          }
+        : row,
+    )
+  }
+  return [...byId.values()].sort((a, b) => a.firstSeen - b.firstSeen || a.id.localeCompare(b.id))
+}
+
+async function addProcessRows($: EngineInterface, rows: ProcessRecord[]): Promise<void> {
+  if (rows.length === 0) return
+  await setProcesses($, cur => mergeProcessRows(cur, rows))
+}
+
+async function applyTaskUpdate(
+  $: EngineInterface,
+  u: { taskId?: string; toolUseId?: string; state: ProcessRecord['state'] } | null,
+): Promise<void> {
+  if (!u) return
+  await setProcesses($, rows => {
+    let changed = false
+    const next = rows.map(r => {
+      const byTask = u.taskId !== undefined && r.taskId === u.taskId
+      const byToolUse = u.toolUseId !== undefined && r.toolUseId === u.toolUseId
+      if (!byTask && !byToolUse) return r
+      changed = true
+      return { ...r, state: u.state, lastSeen: Date.now() }
+    })
+    return changed ? next : rows
+  })
+}
+
+async function probeProcesses($: EngineInterface): Promise<void> {
+  const run = runCmd
+  if (!run) return
+  const now = Date.now()
+  if (!processBreaker.allows(now)) {
+    processUiState = { ...processUiState, breaker: 'open', openUntil: processBreaker.openUntil }
+    return
+  }
+  const rows = await read($, processes)
+  const dockerRows = rows.filter(r => r.kind === 'docker-container')
+  const composeRows = rows.filter(r => r.kind === 'docker-compose')
+  const tmuxRows = rows.filter(r => r.kind === 'tmux')
+  const screenRows = rows.filter(r => r.kind === 'screen')
+  const pidRows = rows.filter(r => r.kind === 'detached-process' && r.pid !== undefined)
+  try {
+    const next = [...rows]
+    const updates = new Map<string, ProcessRecord['state']>()
+    const mark = (id: string, state: ProcessRecord['state']) => {
+      const i = next.findIndex(r => r.id === id)
+      if (i === -1) return
+      const cur = next[i]!
+      if (cur.state === state) return
+      updates.set(id, state)
+    }
+
+    if (dockerRows.length > 0 || composeRows.length > 0) {
+      const ps = await run(['docker', 'ps', '-a', '--no-trunc', '--format', '{{.ID}}\t{{.Names}}\t{{.Status}}'], {
+        timeoutMs: LIMITS.discoveryTimeoutMs,
+      })
+      if (ps.exitCode !== 0) throw new Error(ps.stderr || `docker ps failed (${ps.exitCode})`)
+      const seen = parseDockerPs(ps.stdout)
+      for (const r of dockerRows) {
+        const match = seen.find(x => dockerEntryMatchesRow(x, r))
+        mark(r.id, match ? match.state : 'exited')
+      }
+      for (const r of composeRows) {
+        const listed = await run(
+          [
+            'docker',
+            'ps',
+            '-a',
+            '--filter',
+            `label=com.docker.compose.project=${r.project ?? r.name}`,
+            '--format',
+            '{{.Status}}',
+          ],
+          { timeoutMs: LIMITS.discoveryTimeoutMs },
+        )
+        if (listed.exitCode !== 0) throw new Error(listed.stderr || `docker ps failed (${listed.exitCode})`)
+        const first = listed.stdout
+          .split('\n')
+          .map(x => x.trim())
+          .find(Boolean)
+        mark(
+          r.id,
+          first
+            ? first.toLowerCase().includes('unhealthy')
+              ? 'unhealthy'
+              : first.toLowerCase().startsWith('up ')
+                ? 'up'
+                : 'exited'
+            : 'exited',
+        )
+      }
+    }
+
+    if (tmuxRows.length > 0) {
+      const out = await run(['tmux', 'ls'], { timeoutMs: LIMITS.discoveryTimeoutMs })
+      if (out.exitCode !== 0) {
+        const err = out.stderr.toLowerCase()
+        if (!err.includes('no server running')) throw new Error(out.stderr || `tmux ls failed (${out.exitCode})`)
+      }
+      const live = new Set(out.exitCode === 0 ? parseTmuxLs(out.stdout) : [])
+      for (const r of tmuxRows) mark(r.id, live.has(r.name) ? 'running' : 'exited')
+    }
+
+    if (screenRows.length > 0) {
+      const out = await run(['screen', '-ls'], { timeoutMs: LIMITS.discoveryTimeoutMs })
+      if (out.exitCode !== 0) {
+        const err = out.stderr.toLowerCase()
+        if (!err.includes('no sockets found')) throw new Error(out.stderr || `screen -ls failed (${out.exitCode})`)
+      }
+      const live = new Set(out.exitCode === 0 ? parseScreenLs(out.stdout) : [])
+      for (const r of screenRows) mark(r.id, live.has(r.name) ? 'running' : 'exited')
+    }
+
+    for (const r of pidRows) {
+      const out = await run(['ps', '-p', String(r.pid), '-o', 'lstart=,command='], {
+        timeoutMs: LIMITS.discoveryTimeoutMs,
+      })
+      const alive = out.exitCode === 0 && psStillMatches(out.stdout, r.fingerprint ?? r.name)
+      mark(r.id, alive ? 'running' : 'exited')
+    }
+
+    if (updates.size > 0)
+      await setProcesses($, current => {
+        const seenNow = Date.now()
+        let changed = false
+        const merged = current.map(r => {
+          const state = updates.get(r.id)
+          if (state === undefined || state === r.state) return r
+          changed = true
+          return { ...r, state, lastSeen: seenNow }
+        })
+        return changed ? merged : current
+      })
+    processBreaker.success()
+    processUiState = {
+      ...processUiState,
+      breaker: processBreaker.state,
+      openUntil: processBreaker.openUntil,
+      dockerIssue: undefined,
+    }
+  } catch (e) {
+    processBreaker.failure(now)
+    const msg = e instanceof Error ? e.message : String(e)
+    processUiState = {
+      ...processUiState,
+      breaker: processBreaker.state,
+      openUntil: processBreaker.openUntil,
+      dockerIssue: msg.includes('ENOENT')
+        ? 'docker not installed'
+        : msg.toLowerCase().includes('docker')
+          ? msg
+          : processUiState.dockerIssue,
+    }
+  }
+}
+
 // ------------------------------------------------------------------ store mirror
 
 /**
@@ -529,15 +735,21 @@ async function schedule($: EngineInterface): Promise<void> {
 async function flush($: EngineInterface): Promise<void> {
   await ensureSession($) // a /clear since the last row: save the old session first, carry its items over
   const list = await read($, items)
-  if (list.length === 0) return // after /track clear: never replace a stored copy with an empty one
-  await writeStore($, await $.session.id(), list)
+  const rows = await read($, processes)
+  if (list.length === 0 && rows.length === 0) return // after /track clear: never replace a stored copy with an empty one
+  await writeStore($, await $.session.id(), list, rows)
 }
 
 /** One session's copy, the index of copies (newest first) and the cap on how many copies stay. */
-async function writeStore($: EngineInterface, id: string, list: ItemRecord[]): Promise<void> {
-  const json = JSON.stringify(list)
+async function writeStore(
+  $: EngineInterface,
+  id: string,
+  list: ItemRecord[],
+  rows: ProcessRecord[] = [],
+): Promise<void> {
+  const json = JSON.stringify([list, rows])
   if (flushed?.id === id && flushed.json === json) return
-  await $.store.set('s:' + id, { items: list })
+  await $.store.set('s:' + id, { items: list, processes: rows })
   const index = ((await $.store.get('index')) as string[] | undefined) ?? []
   const next = [id, ...index.filter(x => x !== id)]
   for (const old of next.slice(LIMITS.keepSessions)) await $.store.delete('s:' + old)
@@ -616,7 +828,7 @@ async function restore($: EngineInterface): Promise<void> {
   const repoReady = ensureRepo($).catch(() => {})
   const id = await $.session.id()
   // No gate on the index: two sessions that flush together can drop each other's id from it.
-  const copy = (await $.store.get('s:' + id)) as { items?: ItemRecord[] } | undefined
+  const copy = (await $.store.get('s:' + id)) as { items?: ItemRecord[]; processes?: ProcessRecord[] } | undefined
   const activeSite = await activeJiraSite()
   const dismissed = new Set((autoMirror ?? emptyAuto()).dismissed)
   const stored = withoutAuto(copy?.items ?? [])
@@ -627,8 +839,10 @@ async function restore($: EngineInterface): Promise<void> {
   const have = new Set(stored.map(r => r.key))
   const fresh = (await fromTranscript($)).filter(r => !have.has(r.key) && !dismissed.has(r.key))
   const all = unionRecords(stored, fresh)
-  if (all.length === 0) return
-  await setItems($, list => unionRecords(list, all))
+  const proc = copy?.processes ?? []
+  if (all.length === 0 && proc.length === 0) return
+  if (all.length > 0) await setItems($, list => unionRecords(list, all))
+  if (proc.length > 0) await setProcesses($, rows => mergeProcessRows(rows, proc))
   void repoReady
     .then(async () => {
       const repo = sessionRepo
@@ -661,7 +875,7 @@ async function viewContext($: EngineInterface): Promise<ViewContext> {
 }
 
 async function listText($: EngineInterface): Promise<string> {
-  return composeCommandText(await read($, items), await viewContext($))
+  return composeCommandText(await read($, items), await read($, processes), processUiState, await viewContext($))
 }
 
 /** Waits for both `--version` probes (cached, so cheap) and publishes the statuses for the sections. */
@@ -680,6 +894,7 @@ async function openPane($: EngineInterface): Promise<void> {
 async function clearAll($: EngineInterface): Promise<void> {
   flushed = undefined
   await setItems($, () => [])
+  await setProcesses($, () => [])
   const id = await $.session.id()
   await $.store.delete('s:' + id)
   const index = ((await $.store.get('index')) as string[] | undefined) ?? []
@@ -696,6 +911,7 @@ export const register: Register = on => {
   on('session.append', { door: 'prompt' }, async ($, e, next) => {
     const stored = await next(e)
     try {
+      await applyTaskUpdate($, processUpdateFromNotification((e as { task?: unknown }).task))
       if (PERSON.has(e.origin.kind) && !stored.message?.isMeta && e.agentId === undefined && stored.message) {
         await capture($, textOfContent(stored.message.content), 'full', 'prompt')
       }
@@ -782,6 +998,7 @@ export const register: Register = on => {
       // Wait for them and for the repo first, so the pane's first drawing is already right (also after /clear).
       await settleProbes($)
       await ensureRepo($)
+      await probeProcesses($).catch(() => {})
       await openPane($)
       c.kick('open')
       return { text: await listText($) }
@@ -801,6 +1018,8 @@ export const register: Register = on => {
       }
       await scheduler?.idle()
       await round?.idle()
+      processBreaker.reset()
+      await probeProcesses($).catch(() => {})
       return { text: await listText($) }
     }
     if (arg === 'clear') {
@@ -824,7 +1043,12 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const el = $.ui.resolve(e)
     const list = await read($, items)
-    const sections = composePane(list, await contextOf($, e.props.bodyColumns))
+    const sections = composePane(
+      list,
+      await read($, processes),
+      processUiState,
+      await contextOf($, e.props.bodyColumns),
+    )
     return renderSections(el, sections, e.props.bodyColumns, {
       fold: id => {
         void update($, ui, u => {
@@ -853,7 +1077,7 @@ export const register: Register = on => {
 
   // One line above the prompt. The engine's own band stays inside our Box.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const text = composeBand(await read($, items), await currentAuto($))
+    const text = composeBand(await read($, items), await read($, processes), await currentAuto($))
     if (text === null || e.props.hasSurvey) return next(e)
     const el = $.ui.resolve(e)
     const { Box } = el
@@ -910,11 +1134,44 @@ export const register: Register = on => {
     const ran = await next(e)
     try {
       arm($)
+      const cwd = typeof (e as { cwd?: unknown }).cwd === 'string' ? (e as { cwd?: string }).cwd : undefined
+      await addProcessRows($, parseBashProcesses(String(e.command ?? ''), ran, e.tool_use_id, Date.now(), cwd))
       const f = fromBash(String(e.command ?? ''), ran, e.agentId)
       const { agentId, branch } = f
       if (agentId !== undefined && branch !== undefined) await setAuto($, s => recordAgentBranch(s, agentId, branch))
       await touch($, e.agentId)
       if (f.kick) kickAuto($, f.kick)
+    } catch {
+      // See above.
+    }
+    return ran
+  }).catch((_$, e, next) => next(e))
+
+  on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
+    const ran = await next(e)
+    try {
+      arm($)
+      const taskId =
+        ran && typeof ran === 'object' && 'result' in ran && ran.result && typeof ran.result === 'object'
+          ? (ran.result as Record<string, unknown>).taskId
+          : undefined
+      if (typeof taskId === 'string' && taskId !== '')
+        await addProcessRows($, [monitorRow(taskId, Date.now(), e.tool_use_id)])
+      await touch($, e.agentId)
+    } catch {
+      // See above.
+    }
+    return ran
+  }).catch((_$, e, next) => next(e))
+
+  on('tool.call', { tool: 'TaskStop' }, async ($, e, next) => {
+    const ran = await next(e)
+    try {
+      arm($)
+      const result =
+        ran && typeof ran === 'object' && 'result' in ran ? (ran as { result?: unknown }).result : undefined
+      await applyTaskUpdate($, processUpdateFromTaskStop(result))
+      await touch($, e.agentId)
     } catch {
       // See above.
     }

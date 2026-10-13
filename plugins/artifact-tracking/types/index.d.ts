@@ -95,6 +95,47 @@ export type JiraRecord = ItemRecordBase & { category: 'jira' } & JiraFields
 export type WebRecord = ItemRecordBase & { category: 'web' }
 export type ItemRecord = GitHubRecord | JiraRecord | WebRecord
 
+// ---------------------------------------------------------------- tracked processes
+
+export type ProcessKind =
+  | 'background-task'
+  | 'monitor'
+  | 'docker-container'
+  | 'docker-compose'
+  | 'tmux'
+  | 'screen'
+  | 'detached-process'
+
+export type ProcessState = 'running' | 'up' | 'completed' | 'failed' | 'killed' | 'exited' | 'unhealthy'
+
+export type ProcessRecord = {
+  /** Dedupe key. */
+  id: string
+  kind: ProcessKind
+  /** Command, container, compose project or session name. */
+  name: string
+  state: ProcessState
+  firstSeen: number
+  lastSeen: number
+  /** For task-backed rows. */
+  taskId?: string
+  toolUseId?: string
+  /** Docker container id for docker rows. */
+  containerId?: string
+  /** Docker compose project for compose rows. */
+  project?: string
+  /** Pid for detached process rows. */
+  pid?: number
+  /** Command fingerprint to defend against PID reuse. */
+  fingerprint?: string
+}
+
+export type ProcessUiState = {
+  breaker: BreakerState
+  openUntil?: number
+  dockerIssue?: string
+}
+
 // ---------------------------------------------------------------- tools
 
 export type ToolName = 'gh' | 'acli'
@@ -240,6 +281,8 @@ declare module 'claude-code' {
   interface PluginState {
     'artifact-tracking': {
       items: ItemRecord[]
+      processes: ProcessRecord[]
+      processUi: ProcessUiState
       tools: { gh: ToolStatus; acli: ToolStatus }
       ui: UiState
       auto: AutoState
