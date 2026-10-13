@@ -127,6 +127,8 @@ export function world(on: On, opts: Opts = {}) {
     agents: [] as { id: string; status: string; description: string; type: string; teammateId?: string }[],
     /** The id the `agent.spawn` stub answers. */
     spawnId: 'agent-1',
+    /** Answers for process probes (docker, tmux, screen, ps). Return undefined to fall through. */
+    run: undefined as ((argv: string[]) => Res | undefined) | undefined,
     /** Tool results by tool name. */
     tools: {} as Record<string, unknown>,
     toolRuns: {} as Record<string, number>,
@@ -239,6 +241,8 @@ export function world(on: On, opts: Opts = {}) {
     const [tool, a1, a2, a3, a4] = argv
     if (tool === 'acli' && a1 === '--version' && opts.acliProbeMs) await sleep(opts.acliProbeMs)
     if (opts.missing?.includes(tool!)) return { deny: 'ENOENT: Executable not found in $PATH' }
+    const custom = fake.run?.(argv)
+    if (custom) return { value: custom }
     if (a1 === '--version')
       return { value: res(tool === 'gh' ? 'gh version 2.102.0 (2026-09-30)' : 'acli version 1.3.19-stable') }
     if (tool === 'gh' && a1 === 'api' && a2 === 'graphql') {

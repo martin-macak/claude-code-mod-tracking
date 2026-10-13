@@ -47,7 +47,15 @@ import {
   processUpdateFromNotification,
   processUpdateFromTaskStop,
 } from './process/parse'
-import { dockerEntryMatchesRow, parseDockerPs, parseScreenLs, parseTmuxLs, psStillMatches } from './process/probe'
+import {
+  composeState,
+  dockerEntryMatchesRow,
+  findDetachedPid,
+  parseDockerPs,
+  psStillMatches,
+  screenLive,
+  tmuxLive,
+} from './process/probe'
 import type { Timer } from './refresh/coordinator'
 import { RefreshCoordinator } from './refresh/coordinator'
 import { textOfContent } from './scan/links'
@@ -573,6 +581,9 @@ async function applyTaskUpdate(
   })
 }
 
+/** A probe command ran and exited non-zero. Not a breaker failure. */
+class ExitError extends Error {}
+
 async function probeProcesses($: EngineInterface): Promise<void> {
   const run = runCmd
   if (!run) return
@@ -582,123 +593,103 @@ async function probeProcesses($: EngineInterface): Promise<void> {
     return
   }
   const rows = await read($, processes)
-  const dockerRows = rows.filter(r => r.kind === 'docker-container')
-  const composeRows = rows.filter(r => r.kind === 'docker-compose')
-  const tmuxRows = rows.filter(r => r.kind === 'tmux')
-  const screenRows = rows.filter(r => r.kind === 'screen')
-  const pidRows = rows.filter(r => r.kind === 'detached-process' && r.pid !== undefined)
-  try {
-    const next = [...rows]
-    const updates = new Map<string, ProcessRecord['state']>()
-    const mark = (id: string, state: ProcessRecord['state']) => {
-      const i = next.findIndex(r => r.id === id)
-      if (i === -1) return
-      const cur = next[i]!
-      if (cur.state === state) return
-      updates.set(id, state)
+  const of = (kind: ProcessRecord['kind']) => rows.filter(r => r.kind === kind)
+  const dockerRows = of('docker-container')
+  const composeRows = of('docker-compose')
+  const tmuxRows = of('tmux')
+  const screenRows = of('screen')
+  const pidRows = of('detached-process').filter(r => r.pid !== undefined)
+  const lostRows = of('detached-process').filter(r => r.pid === undefined && r.fingerprint !== undefined)
+  const opts = { timeoutMs: LIMITS.discoveryTimeoutMs }
+  const updates = new Map<string, Partial<ProcessRecord>>()
+  const mark = (r: ProcessRecord, state: ProcessRecord['state'], pid?: number) => {
+    if (r.state === state && (pid === undefined || r.pid === pid)) return
+    updates.set(r.id, { state, ...(pid !== undefined ? { pid } : {}) })
+  }
+  // Each source is probed on its own: a Docker daemon that is down must not stop the tmux probe.
+  // A failed source leaves its rows at their last known state. Only a thrown error (timeout, no binary) counts
+  // for the breaker. A quick non-zero `docker ps` (daemon down) is shown as the reason and does not open it,
+  // else after three ticks the open breaker would stop the tmux, screen and ps probes too.
+  const failures: string[] = []
+  let dockerError: string | undefined
+  const probe = async (what: string, fn: () => Promise<void>) => {
+    try {
+      await fn()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (!(e instanceof ExitError)) failures.push(msg)
+      if (what === 'docker') dockerError = msg.includes('ENOENT') ? 'docker not installed' : msg.trim()
     }
+  }
 
-    if (dockerRows.length > 0 || composeRows.length > 0) {
-      const ps = await run(['docker', 'ps', '-a', '--no-trunc', '--format', '{{.ID}}\t{{.Names}}\t{{.Status}}'], {
-        timeoutMs: LIMITS.discoveryTimeoutMs,
-      })
-      if (ps.exitCode !== 0) throw new Error(ps.stderr || `docker ps failed (${ps.exitCode})`)
+  if (dockerRows.length > 0 || composeRows.length > 0)
+    await probe('docker', async () => {
+      const ps = await run(['docker', 'ps', '-a', '--no-trunc', '--format', '{{.ID}}\t{{.Names}}\t{{.Status}}'], opts)
+      if (ps.exitCode !== 0) throw new ExitError(ps.stderr.trim() || `docker ps failed (${ps.exitCode})`)
       const seen = parseDockerPs(ps.stdout)
-      for (const r of dockerRows) {
-        const match = seen.find(x => dockerEntryMatchesRow(x, r))
-        mark(r.id, match ? match.state : 'exited')
-      }
+      const found = new Map<string, ProcessRecord['state']>()
+      for (const r of dockerRows) found.set(r.id, seen.find(x => dockerEntryMatchesRow(x, r))?.state ?? 'exited')
       for (const r of composeRows) {
-        const listed = await run(
-          [
-            'docker',
-            'ps',
-            '-a',
-            '--filter',
-            `label=com.docker.compose.project=${r.project ?? r.name}`,
-            '--format',
-            '{{.Status}}',
-          ],
-          { timeoutMs: LIMITS.discoveryTimeoutMs },
-        )
-        if (listed.exitCode !== 0) throw new Error(listed.stderr || `docker ps failed (${listed.exitCode})`)
-        const first = listed.stdout
-          .split('\n')
-          .map(x => x.trim())
-          .find(Boolean)
-        mark(
-          r.id,
-          first
-            ? first.toLowerCase().includes('unhealthy')
-              ? 'unhealthy'
-              : first.toLowerCase().startsWith('up ')
-                ? 'up'
-                : 'exited'
-            : 'exited',
-        )
+        const label = `label=com.docker.compose.project=${r.project ?? r.name}`
+        const listed = await run(['docker', 'ps', '-a', '--filter', label, '--format', '{{.Status}}'], opts)
+        if (listed.exitCode !== 0) throw new ExitError(listed.stderr.trim() || `docker ps failed (${listed.exitCode})`)
+        found.set(r.id, composeState(listed.stdout))
       }
-    }
+      for (const r of [...dockerRows, ...composeRows]) mark(r, found.get(r.id)!)
+    })
 
-    if (tmuxRows.length > 0) {
-      const out = await run(['tmux', 'ls'], { timeoutMs: LIMITS.discoveryTimeoutMs })
-      if (out.exitCode !== 0) {
-        const err = out.stderr.toLowerCase()
-        if (!err.includes('no server running')) throw new Error(out.stderr || `tmux ls failed (${out.exitCode})`)
+  if (tmuxRows.length > 0)
+    await probe('tmux', async () => {
+      const live = new Set(tmuxLive(await run(['tmux', 'ls'], opts)))
+      for (const r of tmuxRows) mark(r, live.has(r.name) ? 'running' : 'exited')
+    })
+
+  if (screenRows.length > 0)
+    await probe('screen', async () => {
+      const live = new Set(screenLive(await run(['screen', '-ls'], opts)))
+      for (const r of screenRows) mark(r, live.has(r.name) ? 'running' : 'exited')
+    })
+
+  if (pidRows.length > 0)
+    await probe('ps', async () => {
+      for (const r of pidRows) {
+        const out = await run(['ps', '-p', String(r.pid), '-o', 'lstart=,command='], opts)
+        const alive = out.exitCode === 0 && psStillMatches(out.stdout, r.fingerprint ?? r.name, r.firstSeen)
+        mark(r, alive ? 'running' : 'exited')
       }
-      const live = new Set(out.exitCode === 0 ? parseTmuxLs(out.stdout) : [])
-      for (const r of tmuxRows) mark(r.id, live.has(r.name) ? 'running' : 'exited')
-    }
+    })
 
-    if (screenRows.length > 0) {
-      const out = await run(['screen', '-ls'], { timeoutMs: LIMITS.discoveryTimeoutMs })
-      if (out.exitCode !== 0) {
-        const err = out.stderr.toLowerCase()
-        if (!err.includes('no sockets found')) throw new Error(out.stderr || `screen -ls failed (${out.exitCode})`)
+  // A detached process with no `echo $!` in its Bash call: find it once by command and start time.
+  if (lostRows.length > 0)
+    await probe('ps', async () => {
+      const all = await run(['ps', '-A', '-o', 'pid=,lstart=,command='], opts)
+      if (all.exitCode !== 0) throw new Error(all.stderr.trim() || `ps failed (${all.exitCode})`)
+      for (const r of lostRows) {
+        const pid = findDetachedPid(all.stdout, r.fingerprint!, r.firstSeen)
+        mark(r, pid !== undefined ? 'running' : 'exited', pid)
       }
-      const live = new Set(out.exitCode === 0 ? parseScreenLs(out.stdout) : [])
-      for (const r of screenRows) mark(r.id, live.has(r.name) ? 'running' : 'exited')
-    }
+    })
 
-    for (const r of pidRows) {
-      const out = await run(['ps', '-p', String(r.pid), '-o', 'lstart=,command='], {
-        timeoutMs: LIMITS.discoveryTimeoutMs,
+  if (updates.size > 0)
+    await setProcesses($, current => {
+      const seenNow = Date.now()
+      let changed = false
+      const merged = current.map(r => {
+        const u = updates.get(r.id)
+        if (u === undefined || (u.state === r.state && (u.pid === undefined || u.pid === r.pid))) return r
+        changed = true
+        return { ...r, ...u, lastSeen: seenNow }
       })
-      const alive = out.exitCode === 0 && psStillMatches(out.stdout, r.fingerprint ?? r.name)
-      mark(r.id, alive ? 'running' : 'exited')
-    }
-
-    if (updates.size > 0)
-      await setProcesses($, current => {
-        const seenNow = Date.now()
-        let changed = false
-        const merged = current.map(r => {
-          const state = updates.get(r.id)
-          if (state === undefined || state === r.state) return r
-          changed = true
-          return { ...r, state, lastSeen: seenNow }
-        })
-        return changed ? merged : current
-      })
-    processBreaker.success()
-    processUiState = {
-      ...processUiState,
-      breaker: processBreaker.state,
-      openUntil: processBreaker.openUntil,
-      dockerIssue: undefined,
-    }
-  } catch (e) {
-    processBreaker.failure(now)
-    const msg = e instanceof Error ? e.message : String(e)
-    processUiState = {
-      ...processUiState,
-      breaker: processBreaker.state,
-      openUntil: processBreaker.openUntil,
-      dockerIssue: msg.includes('ENOENT')
-        ? 'docker not installed'
-        : msg.toLowerCase().includes('docker')
-          ? msg
-          : processUiState.dockerIssue,
-    }
+      return changed ? merged : current
+    })
+  if (failures.length > 0) processBreaker.failure(now)
+  else processBreaker.success()
+  const dockerProbed = dockerRows.length > 0 || composeRows.length > 0
+  processUiState = {
+    ...processUiState,
+    breaker: processBreaker.state,
+    openUntil: processBreaker.openUntil,
+    dockerIssue: dockerError ?? (dockerProbed ? undefined : processUiState.dockerIssue),
   }
 }
 
@@ -1134,8 +1125,10 @@ export const register: Register = on => {
     const ran = await next(e)
     try {
       arm($)
-      const cwd = typeof (e as { cwd?: unknown }).cwd === 'string' ? (e as { cwd?: string }).cwd : undefined
-      await addProcessRows($, parseBashProcesses(String(e.command ?? ''), ran, e.tool_use_id, Date.now(), cwd))
+      const command = String(e.command ?? '')
+      // The Bash input has no cwd. A compose project without -p is named after a folder, so read the session's.
+      const cwd = /compose/.test(command) ? await $.session.cwd().catch(() => undefined) : undefined
+      await addProcessRows($, parseBashProcesses(command, ran, e.tool_use_id, Date.now(), cwd ?? undefined))
       const f = fromBash(String(e.command ?? ''), ran, e.agentId)
       const { agentId, branch } = f
       if (agentId !== undefined && branch !== undefined) await setAuto($, s => recordAgentBranch(s, agentId, branch))
