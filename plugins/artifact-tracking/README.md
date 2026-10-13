@@ -201,6 +201,8 @@ The copy differs from `install` in three ways:
 - It is named `artifact-tracking-dev`. A second plugin named `artifact-tracking` is refused while the released one is installed.
 - It owns its state as `artifact-tracking-dev.*`. State belongs to the plugin name, and the copy may not write `artifact-tracking.*`.
 
+An earlier `install-local` made a symlink named `artifact-tracking` instead. `/plugin` then reports "the name "artifact-tracking" is already taken". `install-local` and `uninstall-local` remove that old link from every worktree of the repo, not only from the current one.
+
 The released `artifact-tracking` still loads next to the copy, and both answer `/track`. Disable it while you test: `claude plugin disable artifact-tracking@mod-tracking`, and later `claude plugin enable artifact-tracking@mod-tracking`. If `/reload-plugins` leaves `/track` unknown, restart with `claude --continue`.
 
 With [direnv](https://direnv.net/), the repo's `.envrc` keeps the copy in step with no manual step. Run `direnv allow` once in each checkout and each worktree. Then:
