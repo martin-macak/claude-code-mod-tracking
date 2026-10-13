@@ -33,6 +33,7 @@ import type {
   ProcessRecord,
   ProcessUiState,
   Ref,
+  RepoRecord,
   RepoRef,
   Runner,
   ScanMode,
@@ -83,6 +84,7 @@ import {
   resolvePath,
   touchFromToolResult,
 } from './scan/files'
+import { extractRepoPathsFromTool, parseRepoHintsFromBash, RepoTracker, upsertRepoRows } from './repos/tracker'
 import { textOfContent } from './scan/links'
 import { commandArgs, extractRefs, parseRemote } from './scan/refs'
 import { AcliTool } from './tools/acli-tool'
@@ -97,6 +99,7 @@ import type { ViewContext } from './ui/view'
 
 // Working set in $.state (survives hot reload, reset by /clear). Mirror in $.store, one key per session.
 const items = atom({ plugin: 'artifact-tracking', key: 'items' } as const, [] as ItemRecord[])
+const repos = atom({ plugin: 'artifact-tracking', key: 'repos' } as const, [] as RepoRecord[])
 const processes = atom({ plugin: 'artifact-tracking', key: 'processes' } as const, [] as ProcessRecord[])
 const tools = atom(
   { plugin: 'artifact-tracking', key: 'tools' } as const,
@@ -136,6 +139,7 @@ let flushArmedAt = 0
  * So a /clear still finds what was captured in the last moments (D10).
  */
 let mirror: { id: string; items: ItemRecord[] } | undefined
+let repoMirror: { id: string; rows: RepoRecord[] } | undefined
 let processMirror: { id: string; rows: ProcessRecord[] } | undefined
 let scheduler: AutoScheduler | undefined
 let round: AutoRound | undefined
@@ -147,6 +151,7 @@ let autoMirror: AutoState | undefined
 let lastRoundAt: number | undefined
 /** The last list written to $.store: id and JSON. A flush of an equal list writes nothing (A22). */
 let flushed: { id: string; json: string } | undefined
+let repoTracker: RepoTracker | undefined
 
 // ------------------------------------------------------------------ runtime
 
@@ -155,6 +160,16 @@ function ensureRuntime($: EngineInterface): void {
   if (gh && acli && coordinator && scheduler && round) return
   const run: Runner = (argv, init) => $.process.run(argv, init)
   runCmd = run
+  repoTracker = new RepoTracker({
+    run,
+    now: Date.now,
+    get rootPath() {
+      return autoMirror?.root?.top ?? (typeof autoMirror?.root?.cwd === 'string' ? autoMirror.root.cwd : undefined)
+    },
+    get rootRepo() {
+      return sessionRepo ?? null
+    },
+  })
   const g = new GhTool(run, Date.now)
   const a = new AcliTool(run, Date.now)
   gh = g
@@ -291,6 +306,14 @@ async function setItems($: EngineInterface, change: (list: ItemRecord[]) => Item
   if (knownId !== undefined && id === knownId) mirror = { id, items: next }
 }
 
+/** Like setItems, for tracked repositories. */
+async function setRepos($: EngineInterface, change: (rows: RepoRecord[]) => RepoRecord[]): Promise<void> {
+  const next = await update($, repos, rows => change(rows ?? []))
+  const id = await $.session.id()
+  if (knownId !== undefined && id === knownId) repoMirror = { id, rows: next }
+  await schedule($)
+}
+
 /** Like setItems, for tracked background processes. */
 async function setProcesses($: EngineInterface, change: (rows: ProcessRecord[]) => ProcessRecord[]): Promise<void> {
   const next = await update($, processes, rows => change(rows ?? []))
@@ -345,6 +368,62 @@ async function applyItems(
 /** A sign of life for a workflow agent (A7). A main-loop call has no agent id and does nothing. */
 async function touch($: EngineInterface, agentId: string | undefined): Promise<void> {
   if (agentId !== undefined) await setAuto($, s => recordActivity(s, agentId, Date.now()))
+}
+
+function touchedBy(agentId: string | undefined): string {
+  if (agentId === undefined) return 'main'
+  const label = autoMirror?.agents.find(a => a.id === agentId)?.label
+  return label && label !== '' ? label : `agent:${agentId.slice(0, 8)}`
+}
+
+async function trackRepoPaths(
+  $: EngineInterface,
+  paths: readonly string[],
+  agentId: string | undefined,
+): Promise<void> {
+  const tracker = repoTracker
+  if (!tracker || paths.length === 0) return
+  const who = touchedBy(agentId)
+  const at = Date.now()
+  const visits = (
+    await Promise.all(
+      paths.map(async path => {
+        try {
+          return await tracker.resolvePath(path, who)
+        } catch {
+          return null
+        }
+      }),
+    )
+  ).filter(x => x !== null)
+  if (visits.length === 0) return
+  await setRepos($, rows => {
+    let out = rows
+    for (const v of visits) out = upsertRepoRows(out, { ...v, at })
+    return out
+  })
+}
+
+async function trackRepoRefs($: EngineInterface, refs: readonly RepoRef[], agentId: string | undefined): Promise<void> {
+  const tracker = repoTracker
+  if (!tracker || refs.length === 0) return
+  const who = touchedBy(agentId)
+  const at = Date.now()
+  const visits = refs
+    .map(ref => {
+      try {
+        return tracker.fromRepoRef(ref, who)
+      } catch {
+        return null
+      }
+    })
+    .filter(x => x !== null)
+  if (visits.length === 0) return
+  await setRepos($, rows => {
+    let out = rows
+    for (const v of visits) out = upsertRepoRows(out, { ...v, at })
+    return out
+  })
 }
 
 /**
@@ -428,19 +507,31 @@ async function ensureSession($: EngineInterface): Promise<void> {
   if (prev === undefined) return
   // The `auto` atom belongs to the run, not to a session id. After /clear $.state is empty; the module copy fills it.
   await setAuto($, s => s)
-  const stored = (await $.store.get('s:' + prev)) as { items?: ItemRecord[]; processes?: ProcessRecord[] } | undefined
+  const stored = (await $.store.get('s:' + prev)) as
+    | { items?: ItemRecord[]; repos?: RepoRecord[]; processes?: ProcessRecord[] }
+    | undefined
   const held = mirror?.id === prev ? mirror.items : []
+  const heldRepos = repoMirror?.id === prev ? repoMirror.rows : []
   const heldProc = processMirror?.id === prev ? processMirror.rows : []
   mirror = undefined
+  repoMirror = undefined
   processMirror = undefined
   const left = rekeyArtifacts(unionRecords(held, stored?.items ?? []))
+  const leftRepos = mergeRepoRows(stored?.repos ?? [], heldRepos)
   const leftProc = mergeProcessRows(stored?.processes ?? [], heldProc)
-  if (held.length > 0 || heldProc.length > 0) await writeStore($, prev, left, leftProc)
-  const own = (await $.store.get('s:' + id)) as { items?: ItemRecord[]; processes?: ProcessRecord[] } | undefined
-  if (own?.items || own?.processes) {
+  if (held.length > 0 || heldRepos.length > 0 || heldProc.length > 0)
+    await writeStore($, prev, left, leftRepos, leftProc)
+  const own = (await $.store.get('s:' + id)) as
+    | { items?: ItemRecord[]; repos?: RepoRecord[]; processes?: ProcessRecord[] }
+    | undefined
+  if (own?.items || own?.repos || own?.processes) {
     await restore($)
   } else if (left.length > 0) {
     await setItems($, list => unionRecords(left, list))
+    if (leftRepos.length > 0) await setRepos($, rows => mergeRepoRows(leftRepos, rows))
+    if (leftProc.length > 0) await setProcesses($, rows => mergeProcessRows(leftProc, rows))
+  } else if (leftRepos.length > 0) {
+    await setRepos($, rows => mergeRepoRows(leftRepos, rows))
     if (leftProc.length > 0) await setProcesses($, rows => mergeProcessRows(leftProc, rows))
   } else if (leftProc.length > 0) {
     await setProcesses($, rows => mergeProcessRows(leftProc, rows))
@@ -700,6 +791,18 @@ async function onFileTool($: EngineInterface, tool: string, ran: unknown, agentI
 
 // ------------------------------------------------------------------ process tracking
 
+function mergeRepoRows(cur: RepoRecord[], added: RepoRecord[]): RepoRecord[] {
+  if (added.length === 0) return cur
+  let out = cur
+  for (const row of added)
+    out = upsertRepoRows(out, { ...row, touchedBy: row.touchedBy[0] ?? 'main', at: row.lastSeen })
+  // Carry every touching agent, not only the first one.
+  for (const row of added) {
+    out = out.map(r => (r.key !== row.key ? r : { ...r, touchedBy: [...new Set([...r.touchedBy, ...row.touchedBy])] }))
+  }
+  return out
+}
+
 function mergeProcessRows(cur: ProcessRecord[], added: ProcessRecord[]): ProcessRecord[] {
   if (added.length === 0) return cur
   const now = Date.now()
@@ -889,9 +992,10 @@ async function schedule($: EngineInterface): Promise<void> {
 async function flush($: EngineInterface): Promise<void> {
   await ensureSession($) // a /clear since the last row: save the old session first, carry its items over
   const list = await read($, items)
+  const repoRows = await read($, repos)
   const rows = await read($, processes)
-  if (list.length === 0 && rows.length === 0) return // after /track clear: never replace a stored copy with an empty one
-  await writeStore($, await $.session.id(), list, rows)
+  if (list.length === 0 && repoRows.length === 0 && rows.length === 0) return // after /track clear: never replace a stored copy with an empty one
+  await writeStore($, await $.session.id(), list, repoRows, rows)
 }
 
 /** One session's copy, the index of copies (newest first) and the cap on how many copies stay. */
@@ -899,11 +1003,12 @@ async function writeStore(
   $: EngineInterface,
   id: string,
   list: ItemRecord[],
+  repoRows: RepoRecord[] = [],
   rows: ProcessRecord[] = [],
 ): Promise<void> {
-  const json = JSON.stringify([list, rows])
+  const json = JSON.stringify([list, repoRows, rows])
   if (flushed?.id === id && flushed.json === json) return
-  await $.store.set('s:' + id, { items: list, processes: rows })
+  await $.store.set('s:' + id, { items: list, repos: repoRows, processes: rows })
   const index = ((await $.store.get('index')) as string[] | undefined) ?? []
   const next = [id, ...index.filter(x => x !== id)]
   for (const old of next.slice(LIMITS.keepSessions)) await $.store.delete('s:' + old)
@@ -1008,7 +1113,9 @@ async function restore($: EngineInterface): Promise<void> {
   const repoReady = ensureRepo($).catch(() => {})
   const id = await $.session.id()
   // No gate on the index: two sessions that flush together can drop each other's id from it.
-  const copy = (await $.store.get('s:' + id)) as { items?: ItemRecord[]; processes?: ProcessRecord[] } | undefined
+  const copy = (await $.store.get('s:' + id)) as
+    | { items?: ItemRecord[]; repos?: RepoRecord[]; processes?: ProcessRecord[] }
+    | undefined
   const activeSite = await activeJiraSite()
   const dismissed = new Set((autoMirror ?? emptyAuto()).dismissed)
   const stored = withoutAuto(rekeyArtifacts(copy?.items ?? []))
@@ -1027,9 +1134,11 @@ async function restore($: EngineInterface): Promise<void> {
   }
   const fresh = (await fromTranscript($)).filter(r => news(r) && !dismissed.has(r.key))
   const all = unionRecords(stored, fresh)
+  const repoRows = copy?.repos ?? []
   const proc = copy?.processes ?? []
-  if (all.length === 0 && proc.length === 0) return
+  if (all.length === 0 && repoRows.length === 0 && proc.length === 0) return
   if (all.length > 0) await setItems($, list => unionRecords(list, all))
+  if (repoRows.length > 0) await setRepos($, rows => mergeRepoRows(rows, repoRows))
   if (proc.length > 0) await setProcesses($, rows => mergeProcessRows(rows, proc))
   void repoReady
     .then(async () => {
@@ -1063,7 +1172,13 @@ async function viewContext($: EngineInterface): Promise<ViewContext> {
 }
 
 async function listText($: EngineInterface): Promise<string> {
-  return composeCommandText(await read($, items), await read($, processes), processUiState, await viewContext($))
+  return composeCommandText(
+    await read($, items),
+    await read($, processes),
+    processUiState,
+    await viewContext($),
+    await read($, repos),
+  )
 }
 
 /** Waits for both `--version` probes (cached, so cheap) and publishes the statuses for the sections. */
@@ -1082,6 +1197,7 @@ async function openPane($: EngineInterface): Promise<void> {
 async function clearAll($: EngineInterface): Promise<void> {
   flushed = undefined
   await setItems($, () => [])
+  await setRepos($, () => [])
   await setProcesses($, () => [])
   const id = await $.session.id()
   await $.store.delete('s:' + id)
@@ -1253,6 +1369,7 @@ export const register: Register = on => {
       await read($, processes),
       processUiState,
       await contextOf($, e.props.bodyColumns),
+      await read($, repos),
     )
     return renderSections(el, sections, e.props.bodyColumns, {
       fold: id => {
@@ -1282,7 +1399,7 @@ export const register: Register = on => {
 
   // One line above the prompt. The engine's own band stays inside our Box.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const text = composeBand(await read($, items), await read($, processes), await currentAuto($))
+    const text = composeBand(await read($, items), await read($, processes), await currentAuto($), await read($, repos))
     if (text === null || e.props.hasSurvey) return next(e)
     const el = $.ui.resolve(e)
     const { Box } = el
@@ -1361,8 +1478,12 @@ export const register: Register = on => {
       arm($)
       const command = String(e.command ?? '')
       // The Bash input has no cwd. A compose project without -p is named after a folder, so read the session's.
-      const cwd = /compose/.test(command) ? await $.session.cwd().catch(() => undefined) : undefined
+      const wantsCwd = /compose|\bcd\b|\bgit\s+-C\b/.test(command)
+      const cwd = wantsCwd ? await $.session.cwd().catch(() => undefined) : undefined
       await addProcessRows($, parseBashProcesses(command, ran, e.tool_use_id, Date.now(), cwd ?? undefined))
+      const repoHints = parseRepoHintsFromBash(command, cwd ?? undefined)
+      await trackRepoPaths($, repoHints.paths, e.agentId)
+      await trackRepoRefs($, repoHints.repos, e.agentId)
       const f = fromBash(String(e.command ?? ''), ran, e.agentId)
       const { agentId, branch } = f
       if (agentId !== undefined && branch !== undefined) await setAuto($, s => recordAgentBranch(s, agentId, branch))
@@ -1405,6 +1526,20 @@ export const register: Register = on => {
     return ran
   }).catch((_$, e, next) => next(e))
 
+  on('tool.call', async ($, e, next) => {
+    const ran = await next(e)
+    try {
+      const tool = (e as { tool?: string }).tool
+      if (!tool) return ran
+      arm($)
+      await trackRepoPaths($, extractRepoPathsFromTool(tool, e), e.agentId)
+      await touch($, e.agentId)
+    } catch {
+      // See above.
+    }
+    return ran
+  }).catch((_$, e, next) => next(e))
+
   // A subagent or a workflow agent starts. `next` gives its id. The master cwd is read before `next`: it is the
   // spawn-time location of a child of the main loop (A6).
   on('agent.spawn', async ($, e, next) => {
@@ -1414,7 +1549,10 @@ export const register: Register = on => {
     try {
       ensureRuntime($)
       const f = fromSpawn(e, out)
-      if (f) await setAuto($, s => recordSpawn(s, f, Date.now(), sessionCwd))
+      if (f) {
+        await setAuto($, s => recordSpawn(s, f, Date.now(), sessionCwd))
+        if (f.cwd) await trackRepoPaths($, [f.cwd], f.agentId)
+      }
       kickAuto($, 'agent')
     } catch {
       // See above.

@@ -1306,3 +1306,20 @@ test('after /clear the tick brings items back with short #N keys for the session
   expect(await ui.find({ text: 'acme/web#5' })).toBeUndefined()
   await ui.unmount()
 })
+
+test('repos: a repo found by a Bash cd is stored after the flush delay, without any other update', async ($, on) => {
+  const { clock, store, calls, fake } = world(on)
+  fake.run = argv => {
+    if (argv[0] !== 'git' || argv[1] !== '-C' || argv[2] !== '/x/sdk') return undefined
+    if (argv[3] === 'rev-parse') return res('/x/sdk\n')
+    if (argv[3] === 'remote') return res('git@github.com:acme/sdk.git\n')
+    return res('main\n')
+  }
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_1' } as never)
+  await quiet(calls)
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  const saved = store.get('s:' + SESSION) as { repos?: { key: string }[] } | undefined
+  expect(saved?.repos?.map(r => r.key)).toEqual(['remote:github.com/acme/sdk'])
+})

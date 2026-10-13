@@ -167,6 +167,23 @@ export type ProcessUiState = {
   dockerIssue?: string
 }
 
+// ---------------------------------------------------------------- tracked repositories
+
+export type RepoRecord = {
+  /** Group key: `remote:<host>/<owner>/<repo>`, `remote:<url>` or `local:<root>`. */
+  key: string
+  /** Repo display name. */
+  name: string
+  /** Resolved git root when known. */
+  root?: string
+  /** Last known branch. */
+  branch?: string
+  /** Agent labels that touched this repo. */
+  touchedBy: string[]
+  firstSeen: number
+  lastSeen: number
+}
+
 // ---------------------------------------------------------------- tools
 
 export type ToolName = 'gh' | 'acli'
@@ -312,6 +329,7 @@ declare module 'claude-code' {
   interface PluginState {
     'artifact-tracking': {
       items: ItemRecord[]
+      repos: RepoRecord[]
       processes: ProcessRecord[]
       processUi: ProcessUiState
       tools: { gh: ToolStatus; acli: ToolStatus }

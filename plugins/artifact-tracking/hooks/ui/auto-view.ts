@@ -1,7 +1,15 @@
 // The auto sections of the pane (spec 10): Worktrees, Agents, Pull requests, the band parts and the composers.
 // Imports `view.ts` and the contracts. Pure: no `$`, no JSX, no clock.
 
-import type { AgentRow, AutoState, GitHubRecord, ItemRecord, ProcessRecord, ProcessUiState } from '../contracts'
+import type {
+  AgentRow,
+  AutoState,
+  GitHubRecord,
+  ItemRecord,
+  ProcessRecord,
+  ProcessUiState,
+  RepoRecord,
+} from '../contracts'
 import { MASTER_ID } from '../contracts'
 import { processBandPart, processSection } from './process-view'
 import type { PaneRow, PaneSection, ViewContext } from './view'
@@ -210,15 +218,55 @@ export function autoBandParts(auto: AutoState | null, items: readonly ItemRecord
   ]
 }
 
+function repoRows(rows: readonly RepoRecord[]): PaneRow[] {
+  return rows
+    .slice()
+    .sort((a, b) => a.firstSeen - b.firstSeen)
+    .map(r => ({
+      id: r.key,
+      depth: 0,
+      key: compactIds(r.name),
+      title: compactIds(r.branch ?? ''),
+      type: compactIds(r.touchedBy.join(', ')),
+      status: '',
+      tone: 'plain' as const,
+      foldable: false,
+      folded: false,
+    }))
+}
+
+function reposSection(repos: readonly RepoRecord[]): PaneSection | null {
+  if (repos.length === 0) return null
+  return {
+    id: 'repos',
+    title: 'Repos',
+    note: `${repos.length} tracked`,
+    rows: repoRows(repos),
+  }
+}
+
+function withRepos(itemSections: PaneSection[], repos: readonly RepoRecord[]): PaneSection[] {
+  const section = reposSection(repos)
+  if (!section) return itemSections
+  const web = itemSections.findIndex(s => s.id === 'web')
+  if (web < 0) return [...itemSections, section]
+  return [...itemSections.slice(0, web), section, ...itemSections.slice(web)]
+}
+
 /** Auto sections first, then item sections, then the Processes section when it has rows or a note. */
 export function composePane(
   items: readonly ItemRecord[],
   processes: readonly ProcessRecord[],
   processUi: ProcessUiState,
   ctx: ViewContext,
+  repos: readonly RepoRecord[] = [],
 ): PaneSection[] {
   const proc = processSection(processes, processUi)
-  return [...buildAutoSections(ctx.auto ?? null, items, ctx), ...buildPane(items, ctx), ...(proc ? [proc] : [])]
+  return [
+    ...buildAutoSections(ctx.auto ?? null, items, ctx),
+    ...withRepos(buildPane(items, ctx), repos),
+    ...(proc ? [proc] : []),
+  ]
 }
 
 /** `bandParts(items)`, then auto parts, then `Processes n (k ✗)`; null when all are empty. */
@@ -226,9 +274,15 @@ export function composeBand(
   items: readonly ItemRecord[],
   processes: readonly ProcessRecord[],
   auto: AutoState | null,
+  repos: readonly RepoRecord[] = [],
 ): string | null {
   const p = processBandPart(processes)
-  const parts = [...bandParts(items), ...autoBandParts(auto, items), ...(p ? [p] : [])]
+  const parts = [
+    ...bandParts(items),
+    ...(repos.length > 0 ? [`Repos ${repos.length}`] : []),
+    ...autoBandParts(auto, items),
+    ...(p ? [p] : []),
+  ]
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
@@ -238,7 +292,8 @@ export function composeCommandText(
   processes: readonly ProcessRecord[],
   processUi: ProcessUiState,
   ctx: ViewContext,
+  repos: readonly RepoRecord[] = [],
 ): string {
-  const sections = composePane(items, processes, processUi, { ...ctx, folded: [] })
+  const sections = composePane(items, processes, processUi, { ...ctx, folded: [] }, repos)
   return sections.length === 0 ? EMPTY_TEXT : textOf(sections)
 }

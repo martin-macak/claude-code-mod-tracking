@@ -6,6 +6,7 @@ import type {
   AutoState,
   GitHubRecord,
   ItemRecord,
+  RepoRecord,
   ToolStatus,
   WebRecord,
   WorktreeRow,
@@ -119,6 +120,14 @@ const web = (url: string, over: Partial<WebRecord> = {}): WebRecord => ({
   ...over,
 })
 const byId = (sections: ReturnType<typeof buildAutoSections>, id: string) => sections.find(s => s.id === id)
+const repo = (key: string, over: Partial<RepoRecord> = {}): RepoRecord => ({
+  key,
+  name: key.split('/').slice(-2).join('/'),
+  touchedBy: ['main'],
+  firstSeen: 1,
+  lastSeen: 1,
+  ...over,
+})
 
 // ---------------------------------------------------------------- cellsFor
 
@@ -477,6 +486,18 @@ test('composePane puts the auto sections first, then Jira, GitHub, Web links', (
     ctx({ auto: auto() }),
   )
   expect(sections.map(s => s.id)).toEqual(['worktrees', 'agents', 'github', 'web'])
+})
+
+test('composePane inserts Repos between GitHub and Web links, and composeBand adds Repos n', () => {
+  const sections = composePane(
+    [web('https://x.example/'), { ...pr(1), sources: ['prompt'] }],
+    [],
+    PROCESS_UI,
+    ctx({ auto: auto() }),
+    [repo('remote:ghe.corp/acme/sdk')],
+  )
+  expect(sections.map(s => s.id)).toEqual(['worktrees', 'agents', 'github', 'repos', 'web'])
+  expect(composeBand([], [], null, [repo('remote:ghe.corp/acme/sdk')])).toBe('Repos 1')
 })
 
 test('composeCommandText lists the auto sections as text; empty is the old message', () => {

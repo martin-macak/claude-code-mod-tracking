@@ -40,6 +40,7 @@ claude --plugin-dir plugins/artifact-tracking
 | Tool output | Explicit GitHub issue and PR URLs and Jira URLs only. No bare `#N`, no web links. |
 | Artifact tool call, also from subagents | A publish, a republish, an Artifact made from a type and an asset upload: the artifact, `published`. A delete marks its row `deleted`. An error, a refusal and the other actions add nothing. |
 | `Write`, `Edit` and `Read` tool calls | A `.md` path: see [Markdown files](#markdown-files). |
+| File tools, Bash and `agent.spawn` | Other git repos that the session or subagents touch (`Read`, `Edit`, `Write`, `Grep`, `Glob`, `cd`, `git -C`, `gh -R`, spawn `cwd`). |
 
 Not captured: notifications from background tasks, meta rows, prompts that a subagent or a coordinator wrote, and our own `/track` output.
 
@@ -63,11 +64,11 @@ An artifact row shows its name: the page title from the Artifact tool, else the 
 | `/track refresh` | Forgets "not logged in" and "not found", closes open circuit breakers, refreshes every item, waits, and prints the list. Use it in `claude -p`. |
 | `/track clear` | Removes all items of this session and its stored copy. |
 
-The pane has one section for each of Jira, GitHub, Artifacts, web links and files. A Jira row with children has a `[-]` or `[+]` button. The `Refresh` button (key `r`) does what `/track refresh` does. Esc closes the pane. A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
+The pane has one section for each of Jira, GitHub, Artifacts, Repos, web links and files. A Jira row with children has a `[-]` or `[+]` button. The `Refresh` button (key `r`) does what `/track refresh` does. Esc closes the pane. A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
 
 A deleted artifact stays in its section, dim and without a link.
 
-The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Artifacts 3 · Links 2 · Files 3  /track`. `(n ✗)` counts PRs with failing checks. `Artifacts n` counts the artifacts that are not deleted. The auto parts (Worktrees, Agents, PRs) come after `Files`. The band is empty when nothing is tracked.
+The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Artifacts 3 · Links 2 · Files 3 · Repos 2  /track`. `(n ✗)` counts PRs with failing checks. `Artifacts n` counts the artifacts that are not deleted. `Repos` and the auto parts (Worktrees, Agents, PRs) come after `Files`. The band is empty when nothing is tracked.
 
 ### Markdown files
 

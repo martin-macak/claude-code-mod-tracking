@@ -47,7 +47,7 @@ export type PaneRow = {
   mark?: string
 }
 
-export type SectionId = 'worktrees' | 'agents' | 'prs' | 'processes' | Category
+export type SectionId = 'worktrees' | 'agents' | 'prs' | 'processes' | 'repos' | Category
 export type Layout = 'worktrees' | 'agents' | 'prs' | 'items' | 'files'
 export type CellName = 'key' | 'title' | 'type' | 'status' | 'extra' | 'mark' | 'x'
 /** One rendered cell. `width` absent: the cell grows. */
