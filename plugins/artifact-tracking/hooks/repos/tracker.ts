@@ -160,6 +160,14 @@ function moveTo(dir: string | undefined, target: string | undefined): string | u
   return dir ? resolvePath(dir, target) : undefined
 }
 
+/**
+ * The base directory for a relative path in a Bash command. The session cwd is the cwd of the main loop only: a
+ * subagent has its own cwd, which the hook cannot read, so a relative path there has no known base.
+ */
+export function repoBaseDir(cwd: string | undefined, agentId: string | undefined): string | undefined {
+  return agentId === undefined ? cwd : undefined
+}
+
 export function parseRepoHintsFromBash(command: string, cwd?: string): { paths: string[]; repos: RepoRef[] } {
   const paths: string[] = []
   const repos: RepoRef[] = []

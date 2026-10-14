@@ -75,13 +75,16 @@ import {
 } from './process/probe'
 import type { Timer } from './refresh/coordinator'
 import { RefreshCoordinator } from './refresh/coordinator'
+import { RepoQueue } from './repos/queue'
 import {
   capRepoRows,
   extractRepoPathsFromTool,
   mergeRepoRows,
+  PATH_TOOLS,
   parseRepoHintsFromBash,
   RepoTracker,
   type RepoVisit,
+  repoBaseDir,
   upsertRepoRows,
 } from './repos/tracker'
 import {
@@ -160,6 +163,10 @@ let lastRoundAt: number | undefined
 /** The last list written to $.store: id and JSON. A flush of an equal list writes nothing (A22). */
 let flushed: { id: string; json: string } | undefined
 let repoTracker: RepoTracker | undefined
+/** Repo lookups run here, one at a time, after the tool has returned. */
+const repoQueue = new RepoQueue()
+/** Bumped by /track clear. A job that began before it writes nothing. */
+let repoGen = 0
 
 // ------------------------------------------------------------------ runtime
 
@@ -386,55 +393,67 @@ function touchedBy(agentId: string | undefined): string {
   return label && label !== '' ? label : `agent:${agentId.slice(0, 8)}`
 }
 
-async function trackRepoPaths(
+/**
+ * Queues a repo lookup and returns at once: a lookup costs several git calls and must not hold a tool result back.
+ * Who, when, the clear count and the session id are taken now, so the row says who touched the repo even when the job
+ * runs late. The job writes nothing after /track clear or a new session id. Never rejects.
+ */
+function enqueueRepo<T>(
   $: EngineInterface,
-  paths: readonly string[],
+  key: string,
+  items: readonly T[],
   agentId: string | undefined,
-): Promise<void> {
+  resolve: (tracker: RepoTracker, item: T, who: string) => Promise<RepoVisit | null>,
+): void {
   const tracker = repoTracker
-  if (!tracker || paths.length === 0) return
+  if (!tracker || items.length === 0) return
   const who = touchedBy(agentId)
   const at = Date.now()
-  const visits = (
-    await Promise.all(
-      paths.map(async path => {
-        try {
-          return await tracker.resolvePath(path, who)
-        } catch {
-          return null
-        }
-      }),
-    )
-  ).filter(x => x !== null)
-  if (visits.length === 0) return
-  await setRepos($, rows => {
-    let out = rows
-    for (const v of visits) out = upsertRepoRows(out, { ...v, at })
-    return out
+  const gen = repoGen
+  const sid = knownId
+  repoQueue.push(`${key}\0${who}\0${items.map(String).join('\0')}`, async () => {
+    const visits: RepoVisit[] = []
+    for (const item of items) {
+      try {
+        const v = await resolve(tracker, item, who)
+        if (v) visits.push(v)
+      } catch {
+        // one bad item must not stop the others
+      }
+    }
+    if (visits.length === 0 || repoGen !== gen) return
+    if (sid !== undefined && (await $.session.id()) !== sid) return
+    if (repoGen !== gen) return
+    await setRepos($, rows => {
+      let out = rows
+      for (const v of visits) out = upsertRepoRows(out, { ...v, at })
+      return out
+    })
   })
 }
 
-async function trackRepoRefs($: EngineInterface, refs: readonly RepoRef[], agentId: string | undefined): Promise<void> {
-  const tracker = repoTracker
-  if (!tracker || refs.length === 0) return
-  const who = touchedBy(agentId)
-  const at = Date.now()
-  const visits: RepoVisit[] = []
-  for (const ref of refs) {
-    try {
-      const v = await tracker.fromRepoRef(ref, who)
-      if (v) visits.push(v)
-    } catch {
-      // one bad ref must not stop the others
-    }
-  }
-  if (visits.length === 0) return
-  await setRepos($, rows => {
-    let out = rows
-    for (const v of visits) out = upsertRepoRows(out, { ...v, at })
-    return out
-  })
+function enqueueRepoPaths($: EngineInterface, paths: readonly string[], agentId: string | undefined): void {
+  enqueueRepo($, 'path', paths, agentId, (t, path, who) => t.resolvePath(path, who))
 }
+
+function enqueueRepoRefs($: EngineInterface, refs: readonly RepoRef[], agentId: string | undefined): void {
+  enqueueRepo(
+    $,
+    'ref',
+    refs.map(r => `${r.host}/${r.owner}/${r.repo}`),
+    agentId,
+    (t, text, who) => {
+      const ref = refs.find(r => `${r.host}/${r.owner}/${r.repo}` === text)
+      return ref ? t.fromRepoRef(ref, who) : Promise.resolve(null)
+    },
+  )
+}
+
+/** A `tool.call` result of a call that was refused (`deny`) or that the tool reported as an error (`isError`). */
+const refused = (ran: unknown): boolean =>
+  !!ran && typeof ran === 'object' && (ran as { deny?: unknown }).deny !== undefined
+const failed = (ran: unknown): boolean =>
+  refused(ran) || (!!ran && typeof ran === 'object' && (ran as { isError?: unknown }).isError === true)
 
 /**
  * Arms the 30 s tick, or arms it again when the last beat is over two periods old (A1). One refused period ends a
@@ -1194,6 +1213,7 @@ async function openPane($: EngineInterface): Promise<void> {
 
 async function clearAll($: EngineInterface): Promise<void> {
   flushed = undefined
+  repoGen++
   await setItems($, () => [])
   await setRepos($, () => [])
   await setProcesses($, () => [])
@@ -1471,22 +1491,29 @@ export const register: Register = on => {
   }).catch((_$, e, next) => next(e))
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    // The Bash input has no cwd. A compose project without -p is named after a folder, and a relative `cd` or `git -C`
+    // needs a base. Read the session's cwd BEFORE the command runs: a persisted `cd` moves it.
+    const cwd = (await $.session.cwd().catch(() => undefined)) ?? undefined
     const ran = await next(e)
+    const command = String(e.command ?? '')
     try {
       arm($)
-      const command = String(e.command ?? '')
-      // The Bash input has no cwd. A compose project without -p is named after a folder, so read the session's.
-      const wantsCwd = /compose|\bcd\b|\bgit\s+-C\b/.test(command)
-      const cwd = wantsCwd ? await $.session.cwd().catch(() => undefined) : undefined
-      await addProcessRows($, parseBashProcesses(command, ran, e.tool_use_id, Date.now(), cwd ?? undefined))
-      const repoHints = parseRepoHintsFromBash(command, cwd ?? undefined)
-      await trackRepoPaths($, repoHints.paths, e.agentId)
-      await trackRepoRefs($, repoHints.repos, e.agentId)
-      const f = fromBash(String(e.command ?? ''), ran, e.agentId)
+      await addProcessRows($, parseBashProcesses(command, ran, e.tool_use_id, Date.now(), cwd))
+      const f = fromBash(command, ran, e.agentId)
       const { agentId, branch } = f
       if (agentId !== undefined && branch !== undefined) await setAuto($, s => recordAgentBranch(s, agentId, branch))
       await touch($, e.agentId)
       if (f.kick) kickAuto($, f.kick)
+    } catch {
+      // See above.
+    }
+    try {
+      // Last, and not for a denied call. A failing command still touched the repo.
+      if (!refused(ran)) {
+        const repoHints = parseRepoHintsFromBash(command, repoBaseDir(cwd, e.agentId))
+        enqueueRepoPaths($, repoHints.paths, e.agentId)
+        enqueueRepoRefs($, repoHints.repos, e.agentId)
+      }
     } catch {
       // See above.
     }
@@ -1524,19 +1551,22 @@ export const register: Register = on => {
     return ran
   }).catch((_$, e, next) => next(e))
 
-  on('tool.call', async ($, e, next) => {
-    const ran = await next(e)
-    try {
-      const tool = (e as { tool?: string }).tool
-      if (!tool) return ran
-      arm($)
-      await trackRepoPaths($, extractRepoPathsFromTool(tool, e), e.agentId)
-      await touch($, e.agentId)
-    } catch {
-      // See above.
-    }
-    return ran
-  }).catch((_$, e, next) => next(e))
+  // The file tools. A failed or denied call touched nothing. Not a sign of life: only the hooks above are (A7).
+  for (const tool of PATH_TOOLS) {
+    // The cast: the typings of this engine version do not list Grep and Glob as built-in tools.
+    on('tool.call', { tool: tool as 'Read' }, async ($, e, next) => {
+      const ran = await next(e)
+      try {
+        if (!failed(ran)) {
+          arm($)
+          enqueueRepoPaths($, extractRepoPathsFromTool(tool, e), e.agentId)
+        }
+      } catch {
+        // See above.
+      }
+      return ran
+    }).catch((_$, e, next) => next(e))
+  }
 
   // A subagent or a workflow agent starts. `next` gives its id. The master cwd is read before `next`: it is the
   // spawn-time location of a child of the main loop (A6).
@@ -1549,7 +1579,7 @@ export const register: Register = on => {
       const f = fromSpawn(e, out)
       if (f) {
         await setAuto($, s => recordSpawn(s, f, Date.now(), sessionCwd))
-        if (f.cwd) await trackRepoPaths($, [f.cwd], f.agentId)
+        if (f.cwd) enqueueRepoPaths($, [f.cwd], f.agentId)
       }
       kickAuto($, 'agent')
     } catch {

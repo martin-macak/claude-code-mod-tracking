@@ -42,6 +42,8 @@ claude --plugin-dir plugins/artifact-tracking
 | `Write`, `Edit` and `Read` tool calls | A `.md` path: see [Markdown files](#markdown-files). |
 | File tools, Bash and `agent.spawn` | Other git repos that the session or subagents touch (`Read`, `Edit`, `Write`, `NotebookEdit`, `Grep`, `Glob`, `cd`, `git -C`, `gh -R`, spawn `cwd`). |
 
+Repo tracking runs in the background, after the tool has returned. One queue runs the git lookups one at a time and drops new ones when 32 wait. A file-tool call that failed or was denied adds nothing. A denied Bash command adds nothing. A Bash command that failed still counts: it touched the repo. A relative path in a Bash command starts from the session cwd as it was before the command ran. In a subagent the cwd is unknown, so only absolute paths count.
+
 Repo tracking has two limits:
 
 - Bash is read only for `cd`, `pushd`, `git -C` and `gh -R`. Other paths in a command are not tracked. A `cd` or `-C` target with `$`, a backtick, `*` or `?`, or with `-`, `~` or `~name`, is skipped.

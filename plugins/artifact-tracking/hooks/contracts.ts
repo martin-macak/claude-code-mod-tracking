@@ -190,6 +190,7 @@ export const LIMITS = {
   maxMentionsPerRow: 20,
   maxRepos: 50,
   maxRepoAgents: 8,
+  maxRepoQueue: 32,
 } as const
 
 export const JIRA_KEY = /^[A-Z][A-Z0-9_]+-\d+$/

@@ -6,6 +6,7 @@ import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 import type { ItemRecord, ProcessRecord } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
+import * as ev from './fixtures/events'
 import {
   BAND,
   commandRow,
@@ -1357,7 +1358,11 @@ const STORED_SDK = {
 }
 type SavedRepos = { repos?: { key: string; firstSeen: number; branch?: string; touchedBy: string[] }[] }
 
-function sdkGit(fake: { run: ((argv: string[]) => ReturnType<typeof res> | undefined) | undefined }, branch = 'new') {
+type GitRes = ReturnType<typeof res>
+function sdkGit(
+  fake: { run: ((argv: string[]) => GitRes | undefined | Promise<GitRes | undefined>) | undefined },
+  branch = 'new',
+) {
   fake.run = argv => {
     if (argv[0] !== 'git' || argv[1] !== '-C' || argv[2] !== '/x/sdk') return undefined
     if (argv[3] === 'rev-parse') return res('/x/sdk\n/x/sdk/.git\n')
@@ -1446,4 +1451,264 @@ test('repos: a second visit of the same repo a moment later makes no new repos w
   await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_w2' } as never)
   await quiet(calls)
   expect(fake.stateSets.repos).toBe(writes)
+})
+
+// ---------------------------------------------------------------- repos: file tools, off the hook path
+
+type Fake = ReturnType<typeof world>['fake']
+const SDK_REMOTE = 'git@github.com:acme/sdk.git'
+const LIB_REMOTE = 'git@github.com:acme/lib.git'
+const RAN = { stdout: '', stderr: '', interrupted: false }
+
+/**
+ * Git answers for repos at the given tops (top to remote). Every git call takes a few ms, so overlapping calls show in
+ * `seen.peak`. `held` makes a rev-parse wait for a promise that the test releases.
+ */
+function gitAt(fake: Fake, tops: Record<string, string>, held?: Promise<undefined>) {
+  const seen = { revParse: [] as string[], inFlight: 0, peak: 0 }
+  fake.run = async argv => {
+    if (argv[0] !== 'git' || argv[1] !== '-C') return undefined
+    const dir = String(argv[2])
+    const top = Object.keys(tops).find(t => dir === t || dir.startsWith(t + '/'))
+    if (top === undefined) return undefined
+    if (argv[3] === 'rev-parse') {
+      seen.revParse.push(dir)
+      if (held) await held
+    }
+    seen.inFlight++
+    seen.peak = Math.max(seen.peak, seen.inFlight)
+    try {
+      await sleep(3)
+    } finally {
+      seen.inFlight--
+    }
+    if (argv[3] === 'rev-parse') return res(`${top}\n${top}/.git\n`)
+    if (argv[3] === 'remote') return res(tops[top] + '\n')
+    return res('main\n')
+  }
+  return seen
+}
+
+const holdOne = () => {
+  let release: () => void = () => {}
+  const held = new Promise<undefined>(resolve => {
+    release = () => resolve(undefined)
+  })
+  return { held, release }
+}
+
+/** Waits for the queue, the flush delay and the write. */
+async function drain(w: ReturnType<typeof world>): Promise<void> {
+  await quiet(w.calls)
+  await w.clock.advance(LIMITS.flushMs + 10)
+  await quiet(w.calls)
+  await sleep(20)
+}
+
+const savedKeys = (w: ReturnType<typeof world>): string[] =>
+  ((w.store.get('s:' + SESSION) as SavedRepos | undefined)?.repos ?? []).map(r => r.key)
+
+test('repos: a file tool returns before the repo lookup ends', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const { held, release } = holdOne()
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE }, held)
+  w.fake.tools.Read = { type: 'text' }
+  try {
+    const out = await Promise.race([
+      $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't1' } as never),
+      sleep(200).then(() => 'blocked'),
+    ])
+    expect(out).not.toBe('blocked')
+  } finally {
+    release()
+  }
+  await drain(w)
+})
+
+for (const [tool, field] of [
+  ['Read', 'file_path'],
+  ['Edit', 'file_path'],
+  ['Write', 'file_path'],
+  ['NotebookEdit', 'notebook_path'],
+] as const) {
+  test(`repos: a ${tool} of a file in another repo adds the repo row`, async ($, on) => {
+    const w = world(on)
+    await $.session.start(START)
+    gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+    w.fake.tools[tool] = RAN
+    await $.tool.call({ tool, [field]: '/x/sdk/src/a.ts', tool_use_id: 't1' } as never)
+    await drain(w)
+    expect(savedKeys(w)).toEqual([SDK_KEY])
+    expect((w.store.get('s:' + SESSION) as SavedRepos).repos?.[0]?.touchedBy).toEqual(['main'])
+  })
+}
+
+test('repos: a Read of a file in /tmp adds no row', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  gitAt(w.fake, { '/tmp': SDK_REMOTE })
+  w.fake.tools.Read = RAN
+  await $.tool.call({ tool: 'Read', file_path: '/tmp/x', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(savedKeys(w)).toEqual([])
+})
+
+test('repos: two Reads at once in one repo look it up once, and the lookups of two repos never overlap', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE, '/x/lib': LIB_REMOTE })
+  w.fake.tools.Read = RAN
+  await Promise.all([
+    $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't1' } as never),
+    $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't2' } as never),
+    $.tool.call({ tool: 'Read', file_path: '/x/lib/b.ts', tool_use_id: 't3' } as never),
+  ])
+  await drain(w)
+  expect(seen.revParse.filter(d => d.startsWith('/x/sdk'))).toHaveLength(1)
+  expect(seen.peak).toBe(1)
+  expect(savedKeys(w).sort()).toEqual(['remote:github.com/acme/lib', SDK_KEY])
+})
+
+test('repos: a denied or failed file tool adds no row', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.toolAnswers.Read = { deny: 'no' }
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't1' } as never)
+  w.fake.toolAnswers.Read = { isError: true, result: 'ENOENT', text: 'ENOENT' }
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/b.ts', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(seen.revParse).toEqual([])
+  expect(savedKeys(w)).toEqual([])
+})
+
+test('repos: a denied Bash cd adds no row, a failing one does', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.toolAnswers.Bash = { deny: 'no' }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(seen.revParse).toEqual([])
+  expect(savedKeys(w)).toEqual([])
+  w.fake.toolAnswers.Bash = { isError: true, result: 'exit 1', text: 'exit 1' }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && false', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(savedKeys(w)).toEqual([SDK_KEY])
+})
+
+test('repos: a tool outside the path tools makes no git call', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  await $.tool.call({ tool: 'Skill', file_path: '/x/sdk/a', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(seen.revParse).toEqual([])
+  expect(savedKeys(w)).toEqual([])
+})
+
+// A persisted `cd` moves the session cwd while the tool runs. The hook must resolve the command from the cwd it had before.
+test('repos: a relative cd in Bash resolves from the cwd before the command, not after it', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.cwd = '/w/repo'
+  gitAt(w.fake, { '/w/other/sdk': SDK_REMOTE })
+  Object.defineProperty(w.fake.tools, 'Bash', {
+    configurable: true,
+    get() {
+      w.fake.cwd = '/w/other/sdk' // the persisted cd
+      return RAN
+    },
+  })
+  await $.tool.call({ tool: 'Bash', command: 'cd ../other/sdk && ls', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(savedKeys(w)).toEqual([SDK_KEY])
+})
+
+test('repos: pushd and git -c .. -C with a relative path resolve from the session cwd', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.cwd = '/w/repo'
+  gitAt(w.fake, { '/w/sdk': SDK_REMOTE, '/w/lib': LIB_REMOTE })
+  w.fake.tools.Bash = RAN
+  await $.tool.call({ tool: 'Bash', command: 'pushd ../sdk', tool_use_id: 't1' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'git -c a=b -C ../lib status', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(savedKeys(w).sort()).toEqual(['remote:github.com/acme/lib', SDK_KEY])
+})
+
+// ---------------------------------------------------------------- repos: agent.spawn cwd and the touchedBy label
+
+test('repos: a workflow agent.spawn cwd in another repo adds a row labelled with the agent', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.spawnId = 'w1'
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  await $.agent.spawn({ ...ev.WORKFLOW_SPAWN_INPUT, cwd: '/x/sdk' } as never)
+  await drain(w)
+  const rows = (w.store.get('s:' + SESSION) as SavedRepos).repos ?? []
+  expect(rows.map(r => [r.key, r.touchedBy])).toEqual([[SDK_KEY, ['architect']]])
+})
+
+test('repos: a spawn with no name, description or type is labelled agent:<first 8 of the id>', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.spawnId = 'abcdefghij'
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  await $.agent.spawn({
+    ...ev.WORKFLOW_SPAWN_INPUT,
+    name: '',
+    description: '',
+    subagentType: '',
+    cwd: '/x/sdk',
+  } as never)
+  await drain(w)
+  const rows = (w.store.get('s:' + SESSION) as SavedRepos).repos ?? []
+  expect(rows.map(r => r.touchedBy)).toEqual([['agent:abcdefgh']])
+})
+
+test('repos: the main loop and a spawned agent share one row', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.spawnId = 'w1'
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Bash = RAN
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 't1' } as never)
+  await drain(w)
+  await $.agent.spawn({ ...ev.WORKFLOW_SPAWN_INPUT, cwd: '/x/sdk' } as never)
+  await drain(w)
+  const rows = (w.store.get('s:' + SESSION) as SavedRepos).repos ?? []
+  expect(rows.map(r => [r.key, r.touchedBy])).toEqual([[SDK_KEY, ['main', 'architect']]])
+})
+
+test('repos: a spawn in the root folder or with no cwd adds no row', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.spawnId = 'w1'
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  await $.agent.spawn({ ...ev.WORKFLOW_SPAWN_INPUT, cwd: '/work' } as never)
+  w.fake.spawnId = 'w2'
+  await $.agent.spawn({ ...ev.WORKFLOW_SPAWN_INPUT, cwd: undefined } as never)
+  await drain(w)
+  expect(seen.revParse).toEqual([])
+  expect(savedKeys(w)).toEqual([])
+})
+
+// ---------------------------------------------------------------- repos: /track clear while a lookup waits
+
+test('repos: a lookup that ends after /track clear leaves no row', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const { held, release } = holdOne()
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE }, held)
+  w.fake.tools.Bash = RAN
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 't1' } as never)
+  await sleep(30) // the job waits on git
+  await track($, 'clear')
+  release()
+  await drain(w)
+  expect(savedKeys(w)).toEqual([])
+  expect(w.store.has('s:' + SESSION)).toBe(false)
+  expect((await track($)).text).toBe('No tracked items yet.')
 })

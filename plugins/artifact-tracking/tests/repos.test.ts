@@ -11,6 +11,7 @@ import {
   PATH_TOOLS,
   parseRepoHintsFromBash,
   RepoTracker,
+  repoBaseDir,
   upsertRepoRows,
 } from '../hooks/repos/tracker'
 
@@ -726,4 +727,10 @@ test('an old git that echoes --path-format is probed again without it, with a re
   const t = new RepoTracker({ run, now: () => 1, rootPath: '/x/repo', rootRepo: null })
   expect(await t.resolvePath('/x/lib/a.ts', 'main')).toMatchObject({ key: 'local:/x/lib/.git', name: 'lib' })
   expect(calls.some(c => c.includes('rev-parse') && !c.includes('--path-format'))).toBe(true)
+})
+
+test('repoBaseDir: the session cwd for the main loop, none for a subagent', () => {
+  expect(repoBaseDir('/w', undefined)).toBe('/w')
+  expect(repoBaseDir('/w', 'a1')).toBeUndefined()
+  expect(repoBaseDir(undefined, undefined)).toBeUndefined()
 })
