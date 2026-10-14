@@ -28,6 +28,7 @@ jobs:
       - name: Check the PR body
         env:
           BODY: ${{ github.event.pull_request.body }}
+          TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s' "$BODY" | sh scripts/ci/check-pr-body.sh
 
   # PR title and branch name. Rules: AGENTS.md, "Pull requests" and "Branches".
@@ -51,6 +52,7 @@ jobs:
             perf
             test
             build
+            trivial
             ci
             chore
             revert
@@ -63,7 +65,7 @@ jobs:
         env:
           BRANCH: ${{ github.head_ref }}
         run: |
-          if ! printf '%s\n' "$BRANCH" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|copilot)/[a-z0-9][a-z0-9._-]*$|^add-claude-github-actions-[0-9]+$'; then
+          if ! printf '%s\n' "$BRANCH" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|trivial|ci|chore|revert|copilot)/[a-z0-9][a-z0-9._-]*$|^add-claude-github-actions-[0-9]+$'; then
             echo "::error::Branch '$BRANCH' must be <type>/<kebab-case-summary>, copilot/<summary>, or add-claude-github-actions-<timestamp>."
             exit 1
           fi

@@ -61,6 +61,7 @@ One list for branches, commits and PR titles:
 | `perf` | A performance change. |
 | `test` | Tests only. |
 | `build` | Build system, `Makefile`, dependencies. |
+| `trivial` | Small, low-risk maintenance with no issue required. |
 | `ci` | GitHub Actions and other CI config. |
 | `chore` | Maintenance that fits no other type: tooling, repo config. |
 | `revert` | Reverts an earlier commit. |
