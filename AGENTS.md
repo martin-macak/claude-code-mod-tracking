@@ -90,6 +90,7 @@ One list for branches, commits and PR titles:
   - On your machine: `/pr-shepherd <n>` in Claude Code. It shows the triage table and waits for you before it pushes or replies.
   - Claude Code subagent: ask for the `pr-shepherd` agent.
   - Copilot: pick it in the Agents tab, or comment `@copilot Shepherd this PR. Use the pr-shepherd skill.` on any PR.
+- Review a PR against its linked issue and design study with the `pr-review` skill (`.agents/skills/pr-review/`). It traces each requirement item, checks open items again for feasibility, and ranks findings by severity, each with a fix.
 - Link the issue with `Closes #N` (or `Fixes #N`) so the merge closes it. Use `Refs #N` for partial work.
 - Keep history linear. Rebase onto `main`; never merge `main` into the branch. Squash to the fewest commits that keep logical steps. Use `git push --force-with-lease`, never `--force`.
 - Open a draft PR for work in progress. Mark it ready when CI passes.

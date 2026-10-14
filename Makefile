@@ -111,6 +111,7 @@ check: test ## Alias of test (validate, type-check, test)
 
 test-scripts: ## Test the repo scripts (no claude needed)
 	scripts/dev/install-local-watch.test.sh
+	cd .agents/skills/pr-review && $(NODE_RUN) node --test 'tests/*.test.mjs'
 
 # verify: the gate before every commit and push. Rules: AGENTS.md, "Before you
 # commit or push". Lint runs first: its fixers rewrite files. Then the gate fails,
