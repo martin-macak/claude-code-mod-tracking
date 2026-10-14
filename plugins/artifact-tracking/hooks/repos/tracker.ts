@@ -1,5 +1,6 @@
 import { basename, normPath } from '../auto/porcelain'
 import type { RepoRecord, RepoRef, Runner, RunResult } from '../contracts'
+import { LIMITS } from '../contracts'
 import { splitShell, stripWrappers } from '../process/shell'
 import { parseRemote } from '../scan/refs'
 import { CircuitBreaker } from '../tools/circuit-breaker'
@@ -19,6 +20,40 @@ function remoteKey(ref: RepoRef): string {
 
 function localKey(root: string): string {
   return `local:${normPath(root)}`
+}
+
+/**
+ * Identity for a remote that `parseRemote` rejects (sub-groups, Azure DevOps, plain paths). No scheme, userinfo, port,
+ * trailing slash or `.git`, so a key never holds credentials.
+ */
+export function normalizeRemoteUrl(raw: string): { key: string; name: string } {
+  const r = raw.trim()
+  const file = /^file:\/\/[^/]*(\/.*)$/i.exec(r)
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(r)
+  const scp = hasScheme ? null : /^(?:[^@/]+@)?([^:/@]{2,}):(.*)$/.exec(r)
+  const strip = (x: string) => x.replace(/\/+$/, '').replace(/\.git$/i, '')
+  if (!hasScheme && !scp) return fileIdentity(r)
+  if (file) return fileIdentity(file[1]!)
+  let host: string
+  let path: string
+  if (scp) {
+    host = scp[1]!
+    path = scp[2]!
+  } else {
+    const rest = r.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
+    const slash = rest.indexOf('/')
+    const auth = slash < 0 ? rest : rest.slice(0, slash)
+    host = auth.slice(auth.lastIndexOf('@') + 1).replace(/:\d*$/, '')
+    path = slash < 0 ? '' : rest.slice(slash + 1)
+  }
+  const clean = lower(strip(path.replace(/^\/+/, '')))
+  const h = lower(host)
+  return { key: `remote:${h}${clean ? `/${clean}` : ''}`, name: clean || h }
+}
+
+function fileIdentity(path: string): { key: string; name: string } {
+  const p = normPath(path).replace(/\.git$/i, '')
+  return { key: `remote:file:${p}`, name: basename(p) }
 }
 
 function cleanPath(path: string): string {
@@ -130,19 +165,41 @@ export function parseRepoHintsFromBash(command: string, cwd?: string): { paths: 
   return { paths, repos }
 }
 
-export function isNoisePath(path: string): boolean {
-  const p = lower(path)
-  return (
-    p.startsWith('/tmp/') ||
-    p === '/tmp' ||
-    p.startsWith('/private/tmp/') ||
-    p.includes('/node_modules/') ||
-    p.endsWith('/node_modules') ||
-    p.includes('/scratchpad') ||
-    p.startsWith('~/.claude') ||
-    p.includes('/.claude/plugins/') ||
-    p.includes('/.claude/cache/')
-  )
+export type Env = { home: string; tmpdir?: string; configDir?: string }
+
+const TMP_ROOTS = ['/tmp', '/private/tmp', '/var/tmp', '/var/folders', '/private/var/folders']
+const CLAUDE_HOME_DIR = /^\.claude([-_.].*)?$/
+const HOME_GUESS = /^\/(?:users|home)\/[^/]+|^\/root(?=\/|$)/
+
+/** True when `base` is `p` or a parent of `p`. Whole segments only. */
+function within(p: string, base: string): boolean {
+  return p === base || p.startsWith(`${base}/`)
+}
+
+function homeOf(p: string, env: Env | undefined): string | undefined {
+  if (p === '~' || p.startsWith('~/')) return '~'
+  if (env) return lower(normPath(env.home))
+  return HOME_GUESS.exec(p)?.[0]
+}
+
+/** Noise: tmp, Claude's own config and data, node_modules, scratchpads. Compares lower-case, by whole path segment. */
+export function isNoisePath(path: string, env?: Env): boolean {
+  const p = lower(normPath(path))
+  if (TMP_ROOTS.some(t => within(p, t))) return true
+  for (const extra of [env?.tmpdir, env?.configDir]) if (extra && within(p, lower(normPath(extra)))) return true
+  const home = homeOf(p, env)
+  if (home !== undefined && within(p, home) && p !== home) {
+    const rest = p.slice(home.length + 1)
+    if (CLAUDE_HOME_DIR.test(rest.split('/')[0]!)) return true
+    if (within(rest, '.local/share/claude')) return true
+  }
+  const segs = p.split('/')
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i]!
+    if (seg === 'node_modules' || seg === 'scratchpad') return true
+    if (seg.startsWith('.claude') && (segs[i + 1] === 'plugins' || segs[i + 1] === 'cache')) return true
+  }
+  return false
 }
 
 type ResolvedRepo = {
@@ -161,15 +218,24 @@ type TrackerDeps = {
 
 export type RepoVisit = ResolvedRepo & { touchedBy: string }
 
-async function call(run: Runner, argv: readonly string[], cwd: string): Promise<RunResult> {
-  return run(argv, { cwd })
+/** Every git and sh call runs in `/`: a cwd that is a file or a missing directory would make the spawn itself fail. */
+async function call(run: Runner, argv: readonly string[]): Promise<RunResult> {
+  return run(argv, { cwd: '/', timeoutMs: LIMITS.gitTimeoutMs })
 }
+
+const MAX_WALK = 4
+const MISSING = /cannot change to/i
+
+/** A repo, null (not a repo, or the session's own repo) or 'missing' (the path does not exist or is a file). */
+type Answer = ResolvedRepo | null | 'missing'
 
 export class RepoTracker {
   private readonly breaker = new CircuitBreaker()
-  private readonly cache = new Map<string, ResolvedRepo | null>()
+  /** Repos stay for the session. null and 'missing' expire after one tick. */
+  private readonly cache = new Map<string, { value: Answer; at: number }>()
+  private readonly pending = new Map<string, Promise<Answer | 'retry'>>()
   private readonly byRoot = new Map<string, ResolvedRepo>()
-  private home: Promise<string | null> | undefined
+  private env: Promise<Env | undefined> | undefined
 
   constructor(private readonly d: TrackerDeps) {}
 
@@ -197,91 +263,143 @@ export class RepoTracker {
     return this.isOwnRepo(out) ? null : out
   }
 
-  /** `~/x` to an absolute path. `run` gets an argv, so no shell expands the tilde. Cached after the first answer. */
-  private async expandHome(path: string): Promise<string | null> {
-    if (!path.startsWith('~/')) return path
-    if (this.home === undefined) {
-      this.home = (async () => {
-        try {
-          const r = await call(this.d.run, ['sh', '-c', 'printf %s "$HOME"'], '/')
-          const h = r.exitCode === 0 ? r.stdout.trim() : ''
-          return h.startsWith('/') ? cleanPath(h) : null
-        } catch {
-          return null
-        }
-      })()
+  /** HOME, TMPDIR and CLAUDE_CONFIG_DIR of the engine. `run` gets an argv, so no shell expands a tilde. Only a success is cached. */
+  private getEnv(): Promise<Env | undefined> {
+    if (this.env === undefined) {
+      const probe = this.probeEnv()
+      this.env = probe
+      void probe.then(e => {
+        if (e === undefined && this.env === probe) this.env = undefined
+      })
     }
-    const home = await this.home
-    return home === null ? null : normPath(`${home}/${path.slice(2)}`)
+    return this.env
+  }
+
+  private async probeEnv(): Promise<Env | undefined> {
+    try {
+      const r = await call(this.d.run, ['sh', '-c', 'printf "%s\\n%s\\n%s\\n" "$HOME" "$TMPDIR" "$CLAUDE_CONFIG_DIR"'])
+      if (r.exitCode !== 0) return undefined
+      const [home = '', tmp = '', cfg = ''] = r.stdout.split('\n').map(x => x.trim())
+      if (!home.startsWith('/')) return undefined
+      const abs = (x: string): string | undefined => {
+        const c = x.startsWith('/') ? cleanPath(x) : ''
+        return c && c !== '/' ? c : undefined
+      }
+      const env: Env = { home: cleanPath(home) }
+      const tmpdir = abs(tmp)
+      const configDir = abs(cfg)
+      if (tmpdir) env.tmpdir = tmpdir
+      if (configDir) env.configDir = configDir
+      return env
+    } catch {
+      return undefined
+    }
   }
 
   async resolvePath(path: string, touchedBy: string): Promise<RepoVisit | null> {
     if (!isAbs(path) || isNoisePath(path)) return null
-    const abs = await this.expandHome(path)
-    if (abs === null) return null
-    const dir = maybeDir(abs)
-    const r = await this.lookup(dir)
-    if (r) return { ...r, touchedBy }
-    // A file without an extension (README, Makefile) looks like a directory. `git -C <file>` fails: try its parent.
-    const parent = dir.slice(0, dir.lastIndexOf('/')) || '/'
-    if (dir !== '/' && parent !== dir && this.cache.get(dir) === null) {
-      const up = await this.lookup(parent)
-      if (up) return { ...up, touchedBy }
+    const env = await this.getEnv()
+    let abs = path
+    if (path.startsWith('~/')) {
+      if (!env) return null
+      abs = normPath(`${env.home}/${path.slice(2)}`)
+    }
+    if (isNoisePath(abs, env)) return null
+    // A file (README, Makefile) or a path not created yet is not a directory. Walk up to the nearest one that is.
+    let dir = maybeDir(abs)
+    for (let up = 0; up <= MAX_WALK; up++) {
+      const r = await this.lookup(dir, env)
+      if (r !== 'missing') return r ? { ...r, touchedBy } : null
+      if (dir === '/') return null
+      dir = dir.slice(0, dir.lastIndexOf('/')) || '/'
     }
     return null
   }
 
-  /** Cached answer for a directory. An answer that is only "not now" (breaker open, git fault) is never cached. */
-  private async lookup(dir: string): Promise<ResolvedRepo | null> {
-    const cached = this.cache.get(dir)
-    if (cached !== undefined) return cached
-    const r = await this.resolveDir(dir)
-    if (r === 'retry') return null
-    this.cache.set(dir, r)
-    return r
+  /**
+   * Cached answer for a directory. Parallel calls share one lookup. A "not now" answer (breaker open, git fault) is
+   * never cached.
+   */
+  private async lookup(dir: string, env: Env | undefined): Promise<Answer> {
+    const hit = this.cache.get(dir)
+    if (hit) {
+      if (hit.value !== null && hit.value !== 'missing') return hit.value
+      if (this.d.now() - hit.at < LIMITS.tickMs) return hit.value
+      this.cache.delete(dir)
+    }
+    let p = this.pending.get(dir)
+    if (!p) {
+      p = (async () => {
+        try {
+          const r = await this.resolveDir(dir, env)
+          if (r !== 'retry') this.cache.set(dir, { value: r, at: this.d.now() })
+          return r
+        } finally {
+          this.pending.delete(dir)
+        }
+      })()
+      this.pending.set(dir, p)
+    }
+    const r = await p
+    return r === 'retry' ? null : r
   }
 
   /**
-   * A repo, null (git answered: not a repo, or the session's own repo), or 'retry' (no answer: the breaker is open or
-   * git could not run). Only an execution fault counts against the breaker. A non-zero exit is a normal answer.
+   * An answer, or 'retry' (no answer: the breaker is open or git could not run). Only an execution fault counts
+   * against the breaker. A non-zero exit is a normal answer.
    */
-  private async resolveDir(dir: string): Promise<ResolvedRepo | null | 'retry'> {
+  private async resolveDir(dir: string, env: Env | undefined): Promise<Answer | 'retry'> {
     const now = this.d.now()
     if (!this.breaker.allows(now)) return 'retry'
     let root = ''
     try {
-      const top = await call(this.d.run, ['git', '-C', dir, 'rev-parse', '--show-toplevel'], dir)
+      const top = await call(this.d.run, ['git', '-C', dir, 'rev-parse', '--show-toplevel'])
+      if (top.exitCode !== 0 && MISSING.test(top.stderr)) {
+        this.breaker.success()
+        return 'missing'
+      }
       root = top.exitCode === 0 ? normPath(top.stdout.trim()) : ''
     } catch {
       this.breaker.failure(now)
       return 'retry'
     }
-    this.breaker.success()
-    if (!root) return null
+    // rev-parse gives a real path, so this also catches a symlink into a noise directory.
+    if (!root || isNoisePath(root, env)) {
+      this.breaker.success()
+      return null
+    }
     const found = this.byRoot.get(root)
-    if (found) return found
+    if (found) {
+      this.breaker.success()
+      return found
+    }
 
     let remote = ''
-    let branch = ''
     try {
-      const r = await call(this.d.run, ['git', '-C', root, 'remote', 'get-url', 'origin'], root)
+      const r = await call(this.d.run, ['git', '-C', root, 'remote', 'get-url', 'origin'])
       if (r.exitCode === 0) remote = r.stdout.trim()
     } catch {
-      // keep local identity
+      this.breaker.failure(now) // never cache a local identity because of a fault
+      return 'retry'
     }
+    let branch = ''
+    let branchFailed = false
     try {
-      const b = await call(this.d.run, ['git', '-C', root, 'branch', '--show-current'], root)
+      const b = await call(this.d.run, ['git', '-C', root, 'branch', '--show-current'])
       if (b.exitCode === 0) branch = b.stdout.trim()
     } catch {
-      // optional field
+      branchFailed = true
+      this.breaker.failure(now) // the branch is optional: go on without it
     }
+    if (!branchFailed) this.breaker.success()
 
     const parsed = remote ? parseRemote(remote) : null
-    const resolved: ResolvedRepo = parsed
-      ? { key: remoteKey(parsed), name: `${parsed.owner}/${parsed.repo}`, root }
+    const id = parsed
+      ? { key: remoteKey(parsed), name: `${parsed.owner}/${parsed.repo}` }
       : remote
-        ? { key: `remote:${lower(remote)}`, name: basename(root), root }
-        : { key: localKey(root), name: basename(root), root }
+        ? normalizeRemoteUrl(remote)
+        : { key: localKey(root), name: basename(root) }
+    const resolved: ResolvedRepo = { ...id, root }
     if (branch) resolved.branch = branch
     if (this.isOwnRepo(resolved)) return null
     this.byRoot.set(root, resolved)
