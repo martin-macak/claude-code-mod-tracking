@@ -87,7 +87,10 @@ One list for branches, commits and PR titles:
 
 - Title: the same format as a commit subject. The squash merge uses it as the commit on `main`, so it must be correct.
 - Body: use `.github/pull_request_template.md`. Sections: Summary, Linked issue, Requirements, Test plan. The `pr-body` check fails on a missing issue link, an empty Requirements section or an unticked box.
-- Shepherd a PR to ready with the `pr-shepherd` agent: `.github/agents/pr-shepherd.agent.md` for Copilot, `.claude/agents/pr-shepherd.md` for Claude Code. It triages review threads, fixes them, rebases and runs the gate. Copilot: pick it in the Agents tab, or comment `@copilot Shepherd this PR. Follow .github/agents/pr-shepherd.agent.md.` on any PR. Claude Code: ask for the `pr-shepherd` agent.
+- Shepherd a PR to ready with the `pr-shepherd` skill (`.agents/skills/pr-shepherd/`). It triages review threads, fixes them, rebases and runs the gate. The skill holds the whole procedure. Two thin agents run it: `.github/agents/pr-shepherd.agent.md` for Copilot, `.claude/agents/pr-shepherd.md` for Claude Code.
+  - On your machine: `/pr-shepherd <n>` in Claude Code. It shows the triage table and waits for you before it pushes or replies.
+  - Claude Code subagent: ask for the `pr-shepherd` agent.
+  - Copilot: pick it in the Agents tab, or comment `@copilot Shepherd this PR. Use the pr-shepherd skill.` on any PR.
 - Link the issue with `Closes #N` (or `Fixes #N`) so the merge closes it. Use `Refs #N` for partial work.
 - Keep history linear. Rebase onto `main`; never merge `main` into the branch. Squash to the fewest commits that keep logical steps. Use `git push --force-with-lease`, never `--force`.
 - Open a draft PR for work in progress. Mark it ready when CI passes.
