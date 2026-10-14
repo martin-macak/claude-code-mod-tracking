@@ -17,6 +17,22 @@ export const TOOL_PATH_FIELDS = {
 
 export const PATH_TOOLS = Object.keys(TOOL_PATH_FIELDS) as (keyof typeof TOOL_PATH_FIELDS)[]
 
+/** How a repo was used. A heuristic: a Bash write without git (`sed -i`, `npm install`, `tee`) counts as read. */
+export type RepoMode = 'read' | 'edit'
+
+/** One path of a tool call or Bash command and how it was used. */
+export type RepoHit = { path: string; mode: RepoMode }
+
+/** What each path tool does with its path. */
+export const TOOL_MODE: Record<keyof typeof TOOL_PATH_FIELDS, RepoMode> = {
+  Read: 'read',
+  Grep: 'read',
+  Glob: 'read',
+  Edit: 'edit',
+  Write: 'edit',
+  NotebookEdit: 'edit',
+}
+
 const SLUG = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/
 const HOST_SLUG = /^([A-Za-z0-9.-]+)\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/
 
@@ -114,6 +130,45 @@ export const GIT_GLOBAL_VALUE_OPTIONS: ReadonlySet<string> = new Set([
   '--config-env',
 ])
 
+/**
+ * Git subcommands that change a repo (files, index, refs or config). The one place to tune what counts as edit.
+ * `git -C X <one of these>` marks X as edit; any other subcommand is read.
+ */
+const WRITE_GIT: ReadonlySet<string> = new Set([
+  'commit',
+  'add',
+  'rm',
+  'mv',
+  'push',
+  'pull',
+  'checkout',
+  'switch',
+  'restore',
+  'reset',
+  'merge',
+  'rebase',
+  'cherry-pick',
+  'revert',
+  'stash',
+  'tag',
+  'apply',
+  'am',
+  'clean',
+  'worktree',
+  'init',
+  'clone',
+])
+
+/** The subcommand of `git`: the first word after it that is not an option. Skips `-C <dir>` and the value options. */
+export function gitSubcommand(words: readonly string[]): string | undefined {
+  for (let i = 1; i < words.length; i++) {
+    const w = words[i]!
+    if (!w.startsWith('-')) return w
+    if (w === '-C' || GIT_GLOBAL_VALUE_OPTIONS.has(w)) i++
+  }
+  return undefined
+}
+
 /** The first `-C <path>` or `-C<path>` among the global options of `git`. Stops at the subcommand. */
 function parseGitCPath(words: readonly string[]): string | undefined {
   for (let i = 1; i < words.length; i++) {
@@ -136,14 +191,15 @@ function parseGhRepo(words: readonly string[]): RepoRef | null {
   return null
 }
 
-export function extractRepoPathsFromTool(tool: string, input: unknown): string[] {
+export function extractRepoPathsFromTool(tool: string, input: unknown): RepoHit[] {
   if (!Object.hasOwn(TOOL_PATH_FIELDS, tool)) return []
   if (!input || typeof input !== 'object') return []
   const rec = input as Record<string, unknown>
-  const out: string[] = []
-  for (const field of TOOL_PATH_FIELDS[tool as keyof typeof TOOL_PATH_FIELDS]) {
+  const out: RepoHit[] = []
+  const name = tool as keyof typeof TOOL_PATH_FIELDS
+  for (const field of TOOL_PATH_FIELDS[name]) {
     const v = rec[field]
-    if (typeof v === 'string' && v !== '') out.push(v)
+    if (typeof v === 'string' && v !== '') out.push({ path: v, mode: TOOL_MODE[name] })
   }
   return out
 }
@@ -168,8 +224,8 @@ export function repoBaseDir(cwd: string | undefined, agentId: string | undefined
   return agentId === undefined ? cwd : undefined
 }
 
-export function parseRepoHintsFromBash(command: string, cwd?: string): { paths: string[]; repos: RepoRef[] } {
-  const paths: string[] = []
+export function parseRepoHintsFromBash(command: string, cwd?: string): { paths: RepoHit[]; repos: RepoRef[] } {
+  const paths: RepoHit[] = []
   const repos: RepoRef[] = []
   let dir = cwd
   for (const seg of splitShell(command)) {
@@ -184,12 +240,20 @@ export function parseRepoHintsFromBash(command: string, cwd?: string): { paths: 
       // An option is a dash word of two or more characters. A lone `-` is the previous directory.
       const target = words.slice(1).find(w => w === '-' || !w.startsWith('-'))
       dir = moveTo(dir, target)
-      if (dir && isAbs(dir)) paths.push(dir)
+      if (dir && isAbs(dir)) paths.push({ path: dir, mode: 'read' })
       continue
     }
     if (head === 'git') {
-      const p = moveTo(dir, parseGitCPath(words))
-      if (p && isAbs(p)) paths.push(p)
+      const sub = gitSubcommand(words)
+      const mode: RepoMode = sub !== undefined && WRITE_GIT.has(sub) ? 'edit' : 'read'
+      const c = parseGitCPath(words)
+      if (c !== undefined) {
+        const p = moveTo(dir, c)
+        if (p && isAbs(p)) paths.push({ path: p, mode })
+      } else if (mode === 'edit' && dir && dir !== cwd && isAbs(dir)) {
+        // A write after `cd X`. The session repo itself (dir equal to the start) needs no lookup.
+        paths.push({ path: dir, mode })
+      }
       continue
     }
     if (head === 'gh') {
@@ -253,7 +317,7 @@ type TrackerDeps = {
   rootRepo?: RepoRef | null
 }
 
-export type RepoVisit = Omit<ResolvedRepo, 'common'> & { touchedBy: string }
+export type RepoVisit = Omit<ResolvedRepo, 'common'> & { touchedBy: string; mode: RepoMode }
 
 /** Every git and sh call runs in `/`: a cwd that is a file or a missing directory would make the spawn itself fail. */
 async function call(run: Runner, argv: readonly string[]): Promise<RunResult> {
@@ -268,8 +332,8 @@ type Answer = ResolvedRepo | null | 'missing'
 
 const isAbsolute = (p: string): boolean => p.startsWith('/')
 
-function visitOf(r: ResolvedRepo, touchedBy: string): RepoVisit {
-  const out: RepoVisit = { key: r.key, name: r.name, touchedBy }
+function visitOf(r: ResolvedRepo, touchedBy: string, mode: RepoMode): RepoVisit {
+  const out: RepoVisit = { key: r.key, name: r.name, touchedBy, mode }
   if (r.root !== undefined) out.root = r.root
   if (r.branch !== undefined) out.branch = r.branch
   return out
@@ -302,14 +366,14 @@ export class RepoTracker {
   }
 
   /** A ref is a foreign repo unless it is the session's own remote. Unknown own identity and no `rootRepo`: no answer. */
-  async fromRepoRef(ref: RepoRef, touchedBy: string): Promise<RepoVisit | null> {
+  async fromRepoRef(ref: RepoRef, touchedBy: string, mode: RepoMode = 'read'): Promise<RepoVisit | null> {
     const key = remoteKey(ref)
     const own = await this.ownIdentity()
     if (own !== null && own !== 'retry' && key === own.key) return null
     const rootKey = this.ownRemoteKey()
     if (rootKey !== undefined && key === rootKey) return null
     if (own === 'retry' && rootKey === undefined) return null
-    return { key, name: `${ref.owner}/${ref.repo}`, touchedBy }
+    return { key, name: `${ref.owner}/${ref.repo}`, touchedBy, mode }
   }
 
   /** HOME, TMPDIR and CLAUDE_CONFIG_DIR of the engine. `run` gets an argv, so no shell expands a tilde. Only a success is cached. */
@@ -345,7 +409,7 @@ export class RepoTracker {
     }
   }
 
-  async resolvePath(path: string, touchedBy: string): Promise<RepoVisit | null> {
+  async resolvePath(path: string, touchedBy: string, mode: RepoMode = 'read'): Promise<RepoVisit | null> {
     if (!isAbs(path) || isNoisePath(path)) return null
     const env = await this.getEnv()
     let abs = path
@@ -364,7 +428,7 @@ export class RepoTracker {
     for (let up = 0; up <= MAX_WALK; up++) {
       const r = await this.lookup(dir, env)
       if (r === 'retry') return null
-      if (r !== 'missing') return r && !this.isOwn(r, own) ? visitOf(r, touchedBy) : null
+      if (r !== 'missing') return r && !this.isOwn(r, own) ? visitOf(r, touchedBy, mode) : null
       if (dir === '/') return null
       dir = dir.slice(0, dir.lastIndexOf('/')) || '/'
     }
@@ -500,8 +564,12 @@ export class RepoTracker {
 const sameList = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((x, i) => x === b[i])
 
+/** A row without mode (stored by an older version) reads as read. */
+const modeOf = (r: RepoRecord): RepoMode => (r.mode === 'edit' ? 'edit' : 'read')
+
 const sameRow = (a: RepoRecord, b: RepoRecord): boolean =>
   a.name === b.name &&
+  modeOf(a) === modeOf(b) &&
   a.root === b.root &&
   a.branch === b.branch &&
   a.firstSeen === b.firstSeen &&
@@ -520,13 +588,14 @@ function mergeRow(cur: RepoRecord, other: RepoRecord): RepoRecord {
     firstSeen: Math.min(cur.firstSeen, other.firstSeen),
     lastSeen: Math.max(cur.lastSeen, other.lastSeen),
   }
+  if (modeOf(cur) === 'edit' || modeOf(other) === 'edit') next.mode = 'edit'
   return sameRow(next, cur) ? cur : next
 }
 
 /**
  * Merge stored or carried rows into the live list by key. firstSeen is the minimum, lastSeen the maximum, the agents
  * a union (cur first). The row with the greater lastSeen (tie: cur) gives name, root and branch; a missing root or
- * branch never wipes a known one. Returns `cur` itself when nothing changes.
+ * branch never wipes a known one. Edit wins over read, whatever the order. Returns `cur` itself when nothing changes.
  */
 export function mergeRepoRows(cur: RepoRecord[], added: readonly RepoRecord[]): RepoRecord[] {
   if (added.length === 0) return cur
@@ -568,7 +637,7 @@ export function capRepoRows(rows: RepoRecord[]): RepoRecord[] {
 /**
  * Record one visit. An older visit never moves the name, root, branch or lastSeen of a newer row. A visit within
  * `LIMITS.tickMs` of lastSeen leaves lastSeen alone, so a burst of tool calls is one write. A ref visit (no root)
- * does not rename a row that git already named. Returns `rows` itself when no field changes.
+ * does not rename a row that git already named. Edit wins over read, whatever the age of the visit. Returns `rows` itself when no field changes.
  */
 export function upsertRepoRows(rows: readonly RepoRecord[], visit: RepoVisit & { at: number }): RepoRecord[] {
   const i = rows.findIndex(r => r.key === visit.key)
@@ -580,6 +649,7 @@ export function upsertRepoRows(rows: readonly RepoRecord[], visit: RepoVisit & {
         name: visit.name,
         ...(visit.root !== undefined ? { root: visit.root } : {}),
         ...(visit.branch !== undefined ? { branch: visit.branch } : {}),
+        mode: visit.mode,
         touchedBy: [visit.touchedBy],
         firstSeen: visit.at,
         lastSeen: visit.at,
@@ -588,7 +658,8 @@ export function upsertRepoRows(rows: readonly RepoRecord[], visit: RepoVisit & {
   }
   const cur = rows[i]!
   const touchedBy = cur.touchedBy.includes(visit.touchedBy) ? cur.touchedBy : [...cur.touchedBy, visit.touchedBy]
-  const next: RepoRecord = { ...cur, touchedBy, firstSeen: Math.min(cur.firstSeen, visit.at) }
+  const mode: RepoMode = modeOf(cur) === 'edit' || visit.mode === 'edit' ? 'edit' : 'read'
+  const next: RepoRecord = { ...cur, touchedBy, mode, firstSeen: Math.min(cur.firstSeen, visit.at) }
   if (visit.at >= cur.lastSeen) {
     if (visit.root !== undefined) next.root = visit.root
     if (visit.branch !== undefined) next.branch = visit.branch

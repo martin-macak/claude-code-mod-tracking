@@ -82,6 +82,7 @@ import {
   mergeRepoRows,
   PATH_TOOLS,
   parseRepoHintsFromBash,
+  type RepoHit,
   RepoTracker,
   type RepoVisit,
   repoBaseDir,
@@ -412,6 +413,7 @@ function enqueueRepo<T>(
   $: EngineInterface,
   key: string,
   items: readonly T[],
+  label: (item: T) => string,
   agentId: string | undefined,
   resolve: (tracker: RepoTracker, item: T, who: string) => Promise<RepoVisit | null>,
 ): void {
@@ -421,7 +423,7 @@ function enqueueRepo<T>(
   const at = Date.now()
   const gen = repoGen
   const sid = knownId
-  repoQueue.push(`${key}\0${who}\0${items.map(String).join('\0')}`, async () => {
+  repoQueue.push(`${key}\0${who}\0${items.map(label).join('\0')}`, async () => {
     const visits: RepoVisit[] = []
     for (const item of items) {
       try {
@@ -442,20 +444,25 @@ function enqueueRepo<T>(
   })
 }
 
-function enqueueRepoPaths($: EngineInterface, paths: readonly string[], agentId: string | undefined): void {
-  enqueueRepo($, 'path', paths, agentId, (t, path, who) => t.resolvePath(path, who))
+function enqueueRepoPaths($: EngineInterface, hits: readonly RepoHit[], agentId: string | undefined): void {
+  enqueueRepo(
+    $,
+    'path',
+    hits,
+    h => `${h.mode}:${h.path}`,
+    agentId,
+    (t, h, who) => t.resolvePath(h.path, who, h.mode),
+  )
 }
 
 function enqueueRepoRefs($: EngineInterface, refs: readonly RepoRef[], agentId: string | undefined): void {
   enqueueRepo(
     $,
     'ref',
-    refs.map(r => `${r.host}/${r.owner}/${r.repo}`),
+    refs,
+    r => `${r.host}/${r.owner}/${r.repo}`,
     agentId,
-    (t, text, who) => {
-      const ref = refs.find(r => `${r.host}/${r.owner}/${r.repo}` === text)
-      return ref ? t.fromRepoRef(ref, who) : Promise.resolve(null)
-    },
+    (t, ref, who) => t.fromRepoRef(ref, who),
   )
 }
 
@@ -1591,7 +1598,7 @@ export const register: Register = on => {
       const f = fromSpawn(e, out)
       if (f) {
         await setAuto($, s => recordSpawn(s, f, Date.now(), sessionCwd))
-        if (f.cwd) enqueueRepoPaths($, [f.cwd], f.agentId)
+        if (f.cwd) enqueueRepoPaths($, [{ path: f.cwd, mode: 'read' }], f.agentId)
       }
       kickAuto($, 'agent')
     } catch {

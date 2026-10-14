@@ -1544,6 +1544,49 @@ for (const [tool, field] of [
   })
 }
 
+const savedMode = (w: ReturnType<typeof world>): string | undefined =>
+  (w.store.get('s:' + SESSION) as { repos?: { mode?: string }[] } | undefined)?.repos?.[0]?.mode
+
+test('repos: a Read then an Edit in one repo store mode edit', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Read = RAN
+  w.fake.tools.Edit = RAN
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't1' } as never)
+  await quiet(w.calls)
+  await $.tool.call({ tool: 'Edit', file_path: '/x/sdk/a.ts', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(savedMode(w)).toBe('edit')
+})
+
+test('repos: an Edit then a Read in one repo keep mode edit', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Read = RAN
+  w.fake.tools.Edit = RAN
+  await $.tool.call({ tool: 'Edit', file_path: '/x/sdk/a.ts', tool_use_id: 't1' } as never)
+  await quiet(w.calls)
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/b.ts', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(savedMode(w)).toBe('edit')
+})
+
+test('repos: a Read alone stores mode read, and a Bash git -C commit then stores edit', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Read = RAN
+  w.fake.tools.Bash = RAN
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(savedMode(w)).toBe('read')
+  await $.tool.call({ tool: 'Bash', command: 'git -C /x/sdk commit -m m', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(savedMode(w)).toBe('edit')
+})
+
 test('repos: a Read of a file in /tmp adds no row', async ($, on) => {
   const w = world(on)
   await $.session.start(START)

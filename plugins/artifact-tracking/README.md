@@ -44,6 +44,8 @@ claude --plugin-dir plugins/artifact-tracking
 
 Repo tracking runs in the background, after the tool has returned. One queue runs the git lookups one at a time and drops new ones when 32 wait. A file-tool call that failed or was denied adds nothing. A denied Bash command adds nothing. A Bash command that failed still counts: it touched the repo. A relative path in a Bash command starts from the session cwd as it was before the command ran. In a subagent the cwd is unknown, so only absolute paths count.
 
+Each Repos row shows `read` or `edit`. `Edit`, `Write`, `NotebookEdit` and a git write subcommand (`commit`, `add`, `push`, `checkout`, `reset`, `rebase` and the like, after `git -C <dir>` or `cd <dir> &&`) mark the repo `edit`. Edit wins: a later read does not lower it. Everything else is `read`. The mark is a heuristic: a Bash write without git (`sed -i`, `npm install`, `tee`) counts as read. A failed or denied call adds nothing.
+
 Repo tracking has two limits:
 
 - Bash is read only for `cd`, `pushd`, `git -C` and `gh -R`. Other paths in a command are not tracked. A `cd` or `-C` target with `$`, a backtick, `*` or `?`, or with `-`, `~` or `~name`, is skipped.

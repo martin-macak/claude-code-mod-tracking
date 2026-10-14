@@ -178,7 +178,7 @@ export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismis
         { name: 'key', width: wide ? 24 : 20, wrap: 'truncate-end' },
         { name: 'title', wrap: 'truncate-middle' },
         { name: 'type', width: wide ? 20 : 14, wrap: 'truncate-middle' },
-        // Reserved for a read/edit mark.
+        // The read/edit mark.
         { name: 'status', width: 5, wrap: 'truncate-end' },
         ...x,
       ]

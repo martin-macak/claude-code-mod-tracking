@@ -178,6 +178,8 @@ export type RepoRecord = {
   root?: string
   /** Last known branch. */
   branch?: string
+  /** How the repo was used. `edit` wins over `read`. Missing means `read` (a row from an older version). */
+  mode?: 'read' | 'edit'
   /** Agent labels that touched this repo. */
   touchedBy: string[]
   firstSeen: number

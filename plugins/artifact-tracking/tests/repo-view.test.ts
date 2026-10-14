@@ -35,7 +35,20 @@ test('repoSection: rows carry the dismiss id, the section is dismissable and use
   const key = 'remote:github.com/acme/sdk'
   const section = repoSection([repo(key)])
   expect(section).toMatchObject({ id: 'repos', title: 'Repos', note: '1 tracked', layout: 'repos', dismissable: true })
-  expect(section?.rows[0]).toMatchObject({ id: 'rp:' + key, dismissId: 'rp:' + key, status: '' })
+  expect(section?.rows[0]).toMatchObject({ id: 'rp:' + key, dismissId: 'rp:' + key, status: 'read' })
+})
+
+test('repoSection: a row shows edit or read, and a row without mode reads as read', () => {
+  const section = repoSection([
+    repo('remote:github.com/acme/a', { firstSeen: 1, mode: 'edit' }),
+    repo('remote:github.com/acme/b', { firstSeen: 2, mode: 'read' }),
+    repo('remote:github.com/acme/c', { firstSeen: 3 }),
+  ])
+  expect(section?.rows.map(r => [r.status, r.tone])).toEqual([
+    ['edit', 'ok'],
+    ['read', 'dim'],
+    ['read', 'dim'],
+  ])
 })
 
 test('repoBandPart prints the count, and null for no rows', () => {

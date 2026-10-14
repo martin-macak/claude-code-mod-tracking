@@ -17,18 +17,22 @@ import {
 
 const ROOT: RepoRef = { host: 'github.com', owner: 'acme', repo: 'web' }
 
+const hit = (path: string, mode: 'read' | 'edit' = 'read') => ({ path, mode })
+
 test('extractRepoPathsFromTool reads the path fields that each tool really has', () => {
-  expect(extractRepoPathsFromTool('Read', { file_path: '/x/other/a.ts' })).toEqual(['/x/other/a.ts'])
+  expect(extractRepoPathsFromTool('Read', { file_path: '/x/other/a.ts' })).toEqual([hit('/x/other/a.ts')])
   expect(extractRepoPathsFromTool('Edit', { file_path: '/x/other/b.ts', old_string: 'a', new_string: 'b' })).toEqual([
-    '/x/other/b.ts',
+    hit('/x/other/b.ts', 'edit'),
   ])
   expect(extractRepoPathsFromTool('Edit', { path: '/x/other/b.ts' })).toEqual([])
-  expect(extractRepoPathsFromTool('Write', { file_path: '/x/other/c.ts' })).toEqual(['/x/other/c.ts'])
-  expect(extractRepoPathsFromTool('Grep', { pattern: 'x', path: '/x/other' })).toEqual(['/x/other'])
-  expect(extractRepoPathsFromTool('Glob', { pattern: '**/*.ts', path: '/x/other' })).toEqual(['/x/other'])
+  expect(extractRepoPathsFromTool('Write', { file_path: '/x/other/c.ts' })).toEqual([hit('/x/other/c.ts', 'edit')])
+  expect(extractRepoPathsFromTool('Grep', { pattern: 'x', path: '/x/other' })).toEqual([hit('/x/other')])
+  expect(extractRepoPathsFromTool('Glob', { pattern: '**/*.ts', path: '/x/other' })).toEqual([hit('/x/other')])
   expect(extractRepoPathsFromTool('Glob', { pattern: '**/*.ts' })).toEqual([])
   expect(extractRepoPathsFromTool('Glob', { paths: ['/x/other', '/x/third'] })).toEqual([])
-  expect(extractRepoPathsFromTool('NotebookEdit', { notebook_path: '/x/other/n.ipynb' })).toEqual(['/x/other/n.ipynb'])
+  expect(extractRepoPathsFromTool('NotebookEdit', { notebook_path: '/x/other/n.ipynb' })).toEqual([
+    hit('/x/other/n.ipynb', 'edit'),
+  ])
   expect(extractRepoPathsFromTool('LSP', { filePath: '/x/a.ts' })).toEqual([])
   expect(extractRepoPathsFromTool('Bash', { path: '/x/other' })).toEqual([])
   expect(extractRepoPathsFromTool('Read', { file_path: '' })).toEqual([])
@@ -60,7 +64,7 @@ test('parseRepoHintsFromBash reads cd, git -C and gh -R in one command', () => {
     'cd ../sdk && git -C ../docs status && gh pr view -R ghe.corp/acme/docs',
     '/x/repo',
   )
-  expect(out.paths).toEqual(['/x/sdk', '/x/docs'])
+  expect(out.paths).toEqual([hit('/x/sdk'), hit('/x/docs')])
   expect(out.repos).toEqual([{ host: 'ghe.corp', owner: 'acme', repo: 'docs' }])
 })
 
@@ -105,9 +109,29 @@ const BASH_HINT_ROWS: { cmd: string; cwd?: string; paths?: string[]; repos?: Rep
 test('parseRepoHintsFromBash table: cd, pushd, popd, git -C and gh -R', () => {
   for (const row of BASH_HINT_ROWS) {
     const out = parseRepoHintsFromBash(row.cmd, row.cwd)
-    if (row.paths) expect({ cmd: row.cmd, paths: out.paths }).toEqual({ cmd: row.cmd, paths: row.paths })
+    if (row.paths)
+      expect({ cmd: row.cmd, paths: out.paths.map(h => h.path) }).toEqual({ cmd: row.cmd, paths: row.paths })
     if (row.repos) expect({ cmd: row.cmd, repos: out.repos }).toEqual({ cmd: row.cmd, repos: row.repos })
   }
+})
+
+test('parseRepoHintsFromBash marks a git write subcommand as edit and anything else as read', () => {
+  const modes = (cmd: string, cwd?: string) => parseRepoHintsFromBash(cmd, cwd).paths
+  expect(modes('git -C /x/sdk commit -m m')).toEqual([hit('/x/sdk', 'edit')])
+  expect(modes('git -C /x/sdk log')).toEqual([hit('/x/sdk')])
+  expect(modes('git -c a=b -C /x/sdk push')).toEqual([hit('/x/sdk', 'edit')])
+  expect(modes('git --no-pager -C /x/sdk checkout main')).toEqual([hit('/x/sdk', 'edit')])
+  expect(modes('git -C /x/sdk')).toEqual([hit('/x/sdk')])
+  expect(modes('git commit -C HEAD', '/w')).toEqual([])
+  expect(modes('cd /x/sdk && ls')).toEqual([hit('/x/sdk')])
+  expect(modes('cd /x/sdk && git status', '/w')).toEqual([hit('/x/sdk')])
+  expect(modes('cd /x/sdk && git push', '/w')).toEqual([hit('/x/sdk'), hit('/x/sdk', 'edit')])
+  expect(modes('cd /x/sdk && git push', undefined)).toEqual([hit('/x/sdk'), hit('/x/sdk', 'edit')])
+  expect(modes('cd sub && git commit', '/w')).toEqual([hit('/w/sub'), hit('/w/sub', 'edit')])
+  expect(modes('git commit -m m', '/w')).toEqual([])
+  expect(modes('cd /w && git commit', '/w')).toEqual([hit('/w')])
+  expect(modes('cd $D && git commit', '/w')).toEqual([])
+  expect(parseRepoHintsFromBash('gh pr create -R acme/sdk').repos).toHaveLength(1)
 })
 
 test('isNoisePath filters tmp, scratchpad, node_modules and claude config paths', () => {
@@ -123,6 +147,7 @@ test('upsertRepoRows groups by repo key and merges agents', () => {
     name: 'acme/sdk',
     branch: 'main',
     touchedBy: 'main',
+    mode: 'read',
     at,
   })
   const b = upsertRepoRows(a, {
@@ -130,6 +155,7 @@ test('upsertRepoRows groups by repo key and merges agents', () => {
     name: 'acme/sdk',
     branch: 'feat/x',
     touchedBy: 'planner',
+    mode: 'read',
     at: at + LIMITS.tickMs,
   })
   expect(b).toHaveLength(1)
@@ -186,6 +212,7 @@ test('upsertRepoRows: an older visit keeps the newer branch, root, name and last
     root: '/x/old',
     branch: 'old',
     touchedBy: 'planner',
+    mode: 'read',
     at: 100,
   })
   expect(out[0]).toMatchObject({ name: 'acme/sdk', branch: 'new', root: '/x/new', lastSeen: 500_000, firstSeen: 10 })
@@ -194,7 +221,7 @@ test('upsertRepoRows: an older visit keeps the newer branch, root, name and last
 
 test('upsertRepoRows: a repeat visit inside tickMs returns the same array, one after tickMs moves lastSeen', () => {
   const cur = [row({ branch: 'main', root: '/x/sdk', lastSeen: 1_000_000 })]
-  const visit = { key: SDK, name: 'acme/sdk', root: '/x/sdk', branch: 'main', touchedBy: 'main' }
+  const visit = { key: SDK, name: 'acme/sdk', root: '/x/sdk', branch: 'main', touchedBy: 'main', mode: 'read' as const }
   expect(upsertRepoRows(cur, { ...visit, at: 1_000_000 + LIMITS.tickMs - 1 })).toBe(cur)
   const later = upsertRepoRows(cur, { ...visit, at: 1_000_000 + LIMITS.tickMs })
   expect(later).not.toBe(cur)
@@ -203,17 +230,25 @@ test('upsertRepoRows: a repeat visit inside tickMs returns the same array, one a
 
 test('upsertRepoRows: a ref visit keeps the name case and a visit without a branch keeps the branch', () => {
   const cur = [row({ branch: 'main', root: '/x/sdk', lastSeen: 1_000_000 })]
-  const ref = upsertRepoRows(cur, { key: SDK, name: 'Acme/SDK', touchedBy: 'main', at: 1_000_001 })
+  const ref = upsertRepoRows(cur, { key: SDK, name: 'Acme/SDK', touchedBy: 'main', mode: 'read', at: 1_000_001 })
   expect(ref).toBe(cur)
   const noBranch = upsertRepoRows(cur, {
     key: SDK,
     name: 'acme/sdk',
     root: '/x/sdk',
     touchedBy: 'planner',
+    mode: 'read',
     at: 1_000_002,
   })
   expect(noBranch[0]!.branch).toBe('main')
-  const resolved = upsertRepoRows(cur, { key: SDK, name: 'Acme/SDK', root: '/x/sdk', touchedBy: 'main', at: 1_000_003 })
+  const resolved = upsertRepoRows(cur, {
+    key: SDK,
+    name: 'Acme/SDK',
+    root: '/x/sdk',
+    touchedBy: 'main',
+    mode: 'read',
+    at: 1_000_003,
+  })
   expect(resolved[0]!.name).toBe('Acme/SDK')
 })
 
@@ -222,10 +257,59 @@ test('upsertRepoRows: an earlier visit lowers firstSeen', () => {
     key: SDK,
     name: 'acme/sdk',
     touchedBy: 'main',
+    mode: 'read',
     at: 40,
   })
   expect(out[0]!.firstSeen).toBe(40)
   expect(out[0]!.lastSeen).toBe(200)
+})
+
+test('upsertRepoRows: a new row takes the visit mode, and edit wins over read in both orders', () => {
+  const visit = { key: SDK, name: 'acme/sdk', touchedBy: 'main' }
+  const read = upsertRepoRows([], { ...visit, mode: 'read', at: 100 })
+  expect(read[0]!.mode).toBe('read')
+  const edited = upsertRepoRows(read, { ...visit, mode: 'edit', at: 101 })
+  expect(edited).not.toBe(read)
+  expect(edited[0]!.mode).toBe('edit')
+  const kept = upsertRepoRows(edited, { ...visit, mode: 'read', at: 102 })
+  expect(kept).toBe(edited)
+  const first = upsertRepoRows([], { ...visit, mode: 'edit', at: 100 })
+  expect(first[0]!.mode).toBe('edit')
+  expect(upsertRepoRows(first, { ...visit, mode: 'read', at: 100 + LIMITS.tickMs })[0]!.mode).toBe('edit')
+})
+
+test('upsertRepoRows: a stored row without mode reads as read; an older edit visit still upgrades it', () => {
+  const cur = [row({ lastSeen: 1_000_000 })]
+  const visit = { key: SDK, name: 'acme/sdk', touchedBy: 'main' }
+  expect(upsertRepoRows(cur, { ...visit, mode: 'read', at: 1_000_001 })).toBe(cur)
+  const up = upsertRepoRows(cur, { ...visit, mode: 'edit', at: 1_000_001 })
+  expect(up).not.toBe(cur)
+  expect(up[0]!.mode).toBe('edit')
+  expect(upsertRepoRows(cur, { ...visit, mode: 'edit', at: 5 })[0]!.mode).toBe('edit')
+})
+
+test('mergeRepoRows: edit wins in both orders and a missing mode reads as read', () => {
+  const edit = row({ mode: 'edit', lastSeen: 50 })
+  const newerRead = row({ mode: 'read', lastSeen: 90 })
+  expect(mergeRepoRows([edit], [newerRead])[0]!.mode).toBe('edit')
+  expect(mergeRepoRows([newerRead], [edit])[0]!.mode).toBe('edit')
+  const olderNone = row({ lastSeen: 40 })
+  expect(mergeRepoRows([olderNone], [edit])[0]!.mode).toBe('edit')
+  expect(mergeRepoRows([edit], [olderNone])[0]!.mode).toBe('edit')
+  const none = row({ lastSeen: 40 })
+  const cur = [none]
+  expect(mergeRepoRows(cur, [row({ lastSeen: 40 })])).toBe(cur)
+  expect(mergeRepoRows([none], [newerRead])[0]!.mode ?? 'read').toBe('read')
+})
+
+test('RepoTracker: resolvePath and fromRepoRef put the mode in the visit, and read is the default', async () => {
+  const t = new RepoTracker({ run: worktreeRunner(), now: () => 0, rootPath: '/x/repo', rootRepo: ROOT })
+  expect(await t.resolvePath('/x/sdk/src', 'main', 'edit')).toMatchObject({ mode: 'edit' })
+  expect(await t.resolvePath('/x/sdk/src', 'main', 'read')).toMatchObject({ mode: 'read' })
+  expect(await t.resolvePath('/x/sdk/src', 'main')).toMatchObject({ mode: 'read' })
+  const ref = { host: 'github.com', owner: 'acme', repo: 'docs' }
+  expect(await t.fromRepoRef(ref, 'main')).toMatchObject({ mode: 'read' })
+  expect(await t.fromRepoRef(ref, 'main', 'edit')).toMatchObject({ mode: 'edit' })
 })
 
 test('capRepoRows keeps the maxRepos newest rows in order and the first maxRepoAgents agents', () => {

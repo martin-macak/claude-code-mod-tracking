@@ -529,6 +529,7 @@ test('composePane inserts Repos between GitHub and Web links, and composeBand ad
 test('composeCommandText lists a repo row as text, and a repos-only pane ends with the repos section', () => {
   const rows = [repo('remote:ghe.corp/acme/sdk')]
   expect(composeCommandText([], [], PROCESS_UI, ctx(), rows)).toContain('acme/sdk')
+  expect(composeCommandText([], [], PROCESS_UI, ctx(), [{ ...rows[0]!, mode: 'edit' }])).toContain('edit')
   const sections = composePane([], [], PROCESS_UI, ctx(), rows)
   expect(sections.map(s => s.id)).toEqual(['repos'])
   const withPr = composePane([{ ...pr(1), sources: ['prompt'] }], [], PROCESS_UI, ctx(), rows)
