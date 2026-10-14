@@ -15,7 +15,7 @@ or any unticked box.
 
 ## Linked issue
 
-<!-- "Closes #N" closes the issue on merge. Use "Refs #N" for partial work. Write "None" when no issue exists. -->
+<!-- "Closes #N" closes the issue on merge. Use "Refs #N" for partial work. For trivial, chore and ci PRs, "None" is allowed. -->
 
 Closes #
 

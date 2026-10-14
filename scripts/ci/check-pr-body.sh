@@ -2,6 +2,7 @@
 # Check a PR body (on stdin) against .github/pull_request_template.md.
 # pr.yml runs it as the pr-body check. Rules: AGENTS.md, "Pull requests".
 #   - A linked issue: Closes|Fixes|Resolves|Refs #N, or "None" under "Linked issue".
+#   - Trivial, chore and ci PRs may omit the issue link.
 #   - A "Requirements" section with at least one item, every item ticked.
 #   - No unticked checkbox anywhere: an unticked box is an unverified claim.
 # HTML comments (the template's hints) do not count.
@@ -23,9 +24,18 @@ section() {
     on'
 }
 
-if ! printf '%s\n' "$body" | grep -Eqi '(close[sd]?|fix(e[sd])?|resolve[sd]?|refs) #[0-9]+'; then
-  section 'Linked issue' | grep -Eqi '^[[:space:]]*none' ||
-    err 'Link the issue: "Closes #N" (or Fixes, Refs). Write "None" under "## Linked issue" when no issue exists.'
+optional_issue_for_title() {
+  printf '%s\n' "${TITLE:-}" | grep -Eq '^(trivial|chore|ci)(\([^)]+\))?:'
+}
+
+if ! optional_issue_for_title; then
+  if ! printf '%s\n' "$body" | grep -Eqi '(close[sd]?|fix(e[sd])?|resolve[sd]?|refs) #[0-9]+'; then
+    if section 'Linked issue' | grep -Eqi '^[[:space:]]*none'; then
+      err 'Issue links are required for this PR type. Replace "None" with "Closes #N" or another issue reference.'
+    else
+      err 'Link the issue: "Closes #N" (or Fixes, Refs).'
+    fi
+  fi
 fi
 
 reqs="$(section Requirements | grep -E '^[[:space:]]*- \[[ xX]\]')"
