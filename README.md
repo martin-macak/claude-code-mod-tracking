@@ -41,7 +41,7 @@
 
 This repo holds Claude Code mods (function-hooks plugins) and the research behind them.
 
-The first mod is [`artifact-tracking`](plugins/artifact-tracking/README.md). A session mentions GitHub issues and PRs, Jira work items and web links. The mod finds them, fetches their live state and shows them in a `/track` pane and in a band above the prompt. You stop losing the PR from an hour ago in the scrollback.
+The first mod is [`artifact-tracking`](plugins/artifact-tracking/README.md). A session mentions GitHub issues and PRs, Jira work items, Claude artifacts and web links. The mod finds them, fetches their live state and shows them in a `/track` pane and in a band above the prompt. You stop losing the PR from an hour ago in the scrollback.
 
 > [!NOTE]
 > Mods are in early access. The API changes between Claude Code releases. This repo needs Claude Code 2.1.295 or newer.

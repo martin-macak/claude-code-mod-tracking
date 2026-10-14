@@ -2,6 +2,7 @@
 import { expect, test } from 'claude-code/testing'
 import { emptyAuto } from '../hooks/auto/ledger'
 import type {
+  ArtifactRecord,
   FileRecord,
   GitHubRecord,
   ItemRecord,
@@ -11,7 +12,8 @@ import type {
   WebRecord,
 } from '../hooks/contracts'
 import { composeBand, composeCommandText } from '../hooks/ui/auto-view'
-import { ago, bandParts, buildPane, columnsFor, EMPTY_TEXT, toolNote, type ViewContext } from '../hooks/ui/view'
+import { ago, bandParts, buildPane, columnsFor, EMPTY_TEXT, textOf, toolNote, type ViewContext } from '../hooks/ui/view'
+import { PAGE_CODE_URL, PAGE_ID, PAGE_KEY, PAGE_URL, PAGE_UUID } from './fixtures/artifacts'
 
 const NOW = 1_000_000
 const PROCESS_UI = { breaker: 'closed' as const }
@@ -83,6 +85,14 @@ const web = (url: string, label: string, firstSeen = 30): WebRecord => ({
   ...base('web:' + url, url, label, firstSeen),
   category: 'web',
 })
+/** A mention of the observed page, without a name. */
+const artifact = (over: Partial<ArtifactRecord> = {}): ArtifactRecord => ({
+  ...base(PAGE_KEY, PAGE_URL, PAGE_ID, 35),
+  category: 'artifact',
+  sources: ['response'],
+  ...over,
+})
+const published: Partial<ArtifactRecord> = { label: 'Probe Page 29', sources: ['publish', 'response'] }
 
 const file = (path: string, over: Partial<FileRecord> = {}, firstSeen = 40): FileRecord => ({
   ...base('file:' + path, path, path, firstSeen),
@@ -95,9 +105,9 @@ const file = (path: string, over: Partial<FileRecord> = {}, firstSeen = 40): Fil
 })
 const rooted = (cwd: string): Partial<ViewContext> => ({ auto: { ...emptyAuto(), root: { cwd, at: 1 } } })
 
-test('sections come in order jira, github, web, files and empty ones are omitted', () => {
-  const items: ItemRecord[] = [web('https://a.dev/x', 'A', 1), pr(1), jira('ISS-1'), file('/work/plan.md')]
-  expect(buildPane(items, ctx()).map(s => s.category)).toEqual(['jira', 'github', 'web', 'file'])
+test('sections come in order jira, github, artifacts, web, files and empty ones are omitted', () => {
+  const items: ItemRecord[] = [web('https://a.dev/x', 'A', 1), artifact(), pr(1), jira('ISS-1'), file('/work/plan.md')]
+  expect(buildPane(items, ctx()).map(s => s.category)).toEqual(['jira', 'github', 'artifact', 'web', 'file'])
   expect(buildPane([pr(1)], ctx()).map(s => s.title)).toEqual(['GitHub'])
   expect(buildPane([], ctx())).toEqual([])
 })
@@ -254,17 +264,57 @@ test('file rows: the /track text keeps the long path whole and drops empty cells
   )
 })
 
+const artifactRow = (rec: ArtifactRecord) => buildPane([rec], ctx())[0]!.rows[0]!
+
+test('artifact rows: the name links to the page, the id is the title, the origin is the type', () => {
+  expect(artifactRow(artifact(published))).toEqual({
+    id: PAGE_KEY,
+    depth: 0,
+    key: 'Probe Page 29',
+    href: PAGE_URL,
+    title: PAGE_ID,
+    dismissId: PAGE_KEY,
+    type: 'published',
+    status: '',
+    tone: 'plain',
+    foldable: false,
+    folded: false,
+  })
+  expect(artifactRow(artifact({ url: PAGE_CODE_URL, label: 'Design notes' }))).toMatchObject({
+    key: 'Design notes',
+    href: PAGE_CODE_URL,
+    title: PAGE_UUID,
+    type: 'mentioned',
+  })
+})
+
+test('artifact rows: a row without a name shows the id once', () => {
+  expect(artifactRow(artifact())).toMatchObject({ key: PAGE_ID, title: '', type: 'mentioned' })
+  expect(textOf(buildPane([artifact()], ctx()))).toBe(`Artifacts  1 artifacts\n  ${PAGE_ID}  mentioned`)
+})
+
+test('artifact rows: a deleted row is dim, has no link and says deleted', () => {
+  const row = artifactRow(artifact({ ...published, deleted: true }))
+  expect(row).toMatchObject({ key: 'Probe Page 29', status: 'deleted', tone: 'dim', dim: true, type: 'published' })
+  expect(row.href).toBeUndefined()
+  expect(textOf(buildPane([artifact({ ...published, deleted: true })], ctx()))).toBe(
+    `Artifacts  1 artifacts\n  Probe Page 29  ${PAGE_ID}  published  deleted`,
+  )
+})
+
 test('section notes', () => {
   const items: ItemRecord[] = [
     jira('ISS-1', { refreshedAt: NOW - 60_000 }),
     pr(1, { refreshedAt: NOW - 20_000 }),
+    artifact(),
     web('https://a.dev', 'A', 1),
     web('https://b.dev', 'B', 2),
   ]
   const s = buildPane(items, ctx())
   expect(s[0]!.note).toBe('acli · acme.atlassian.net · refreshed 1m ago')
   expect(s[1]!.note).toBe('gh · refreshed 20s ago')
-  expect(s[2]!.note).toBe('2 links')
+  expect(s[2]!.note).toBe('1 artifacts')
+  expect(s[3]!.note).toBe('2 links')
   const noSite = buildPane([jira('ISS-1')], ctx({ tools: { gh: gh(), acli: acli({ site: undefined }) } }))
   expect(noSite[0]!.note).toBe('acli · ready')
 })
@@ -312,10 +362,12 @@ test('composeBand counts categories and failing PRs; null when empty', () => {
     pr(1, { checks: 'failure' }),
     pr(2, { checks: 'success' }),
     pr(3, { checks: 'failure' }),
+    artifact(),
     web('https://a.dev', 'A'),
     file('/work/docs/plan.md'),
   ]
-  expect(composeBand(items, [], null)).toBe('Jira 2 · GitHub 3 (2 ✗) · Links 1 · Files 1')
+  expect(composeBand(items, [], null)).toBe('Jira 2 · GitHub 3 (2 ✗) · Artifacts 1 · Links 1 · Files 1')
+  expect(composeBand([artifact({ deleted: true })], [], null)).toBeNull() // a deleted artifact is not counted
   expect(composeBand([pr(1)], [], null)).toBe('GitHub 1')
   expect(composeBand([web('https://a.dev', 'A')], [], null)).toBe('Links 1')
   expect(composeBand([file('/work/docs/plan.md')], [], null)).toBe('Files 1')
@@ -344,7 +396,8 @@ test('columnsFor: defaults, and a narrow pane drops the extra column', () => {
   expect(columnsFor(undefined)).toEqual({ key: 16, type: 9, status: 13, extra: 10 })
   expect(columnsFor(96)).toEqual({ key: 16, type: 9, status: 13, extra: 10 })
   expect(columnsFor(70)).toEqual({ key: 16, type: 9, status: 13, extra: 10 })
-  expect(columnsFor(60)).toEqual({ key: 16, type: 6, status: 13, extra: 0 })
+  expect(columnsFor(60)).toEqual({ key: 16, type: 9, status: 13, extra: 0 })
+  expect(columnsFor(60).type).toBeGreaterThanOrEqual('published'.length) // the artifact origin is not cut
 })
 
 // ---------------------------------------------------------------- auto sources (spec A17)
@@ -409,7 +462,10 @@ test('an item section without auto rows is still dismissable and has no via pref
 
 test('bandParts counts GitHub items without source auto; composeBand adds the auto PRs apart', () => {
   const plain: GitHubRecord = { ...autoPr(5), sources: ['prompt'] }
-  expect(bandParts([autoPr(1), plain])).toEqual(['GitHub 1 (1 ✗)'])
+  expect(bandParts([autoPr(1), plain, artifact(), artifact({ key: 'art:x', deleted: true })])).toEqual([
+    'GitHub 1 (1 ✗)',
+    'Artifacts 1',
+  ])
   expect(bandParts([autoPr(1)])).toEqual([])
   expect(composeBand([plain], [], null)).toBe('GitHub 1 (1 ✗)')
 })

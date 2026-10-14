@@ -1,8 +1,10 @@
-// Reference extraction: text -> GitHub, Jira and web refs (spec section 6.1).
+// Reference extraction: text -> GitHub, Jira, artifact and web refs (spec section 6.1).
 // Pure code. No `$`, no I/O. Every regex is linear. Input is capped at MAX_TEXT before any regex runs.
 
 import type { ExtractOptions, GitHubRef, JiraRef, Ref, RepoRef, WebRef } from '../contracts'
 import { JIRA_KEY } from '../contracts'
+import { keyOf } from '../model/keys'
+import { parseArtifactUrl } from './artifact-url'
 import { MAX_TEXT, normalizeUrl, scanMarkdown, schemeOf } from './links'
 
 const MAX_REMOTE = 2048
@@ -181,7 +183,7 @@ function webRef(url: string, label: string | undefined): WebRef {
 }
 
 function classify(url: string, label: string | undefined, hosts: readonly string[]): Ref {
-  return parseGitHubUrl(url, hosts) ?? parseJiraUrl(url) ?? webRef(url, label)
+  return parseGitHubUrl(url, hosts) ?? parseJiraUrl(url) ?? parseArtifactUrl(url, label) ?? webRef(url, label)
 }
 
 type At = { pos: number; ref: Ref }
@@ -279,6 +281,7 @@ function urlsOnly(text: string, hosts: readonly string[]): Ref[] {
 function uniqueKey(r: Ref): string {
   if (r.category === 'github') return `gh:${r.host}/${r.owner ?? ''}/${r.repo ?? ''}#${r.number}`.toLowerCase()
   if (r.category === 'jira') return `jira:${r.site}/${r.issueKey}`.toLowerCase()
+  if (r.category === 'artifact') return keyOf(r)
   return 'web:' + normalizeUrl(r.url).replace(/#.*$/s, '')
 }
 

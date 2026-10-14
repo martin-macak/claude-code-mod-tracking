@@ -195,6 +195,15 @@ test('a Markdown file item is never refreshed, not even by a manual kick', async
   expect(s.calls.acli).toEqual([])
 })
 
+test('artifacts are never refreshed, not even by a forced run; no tool is called for them', async () => {
+  // The stub item says an artifact can refresh: only the coordinator keeps it out.
+  const artifact = { ...base, category: 'artifact', key: 'art:x', url: 'https://claude.ai/artifact/x', label: 'x' }
+  const s = setup([artifact as ItemRecord, gh(1)])
+  expect(await s.c.runDue({ force: true })).toEqual({ refreshed: 1, skipped: false })
+  expect(s.calls.gh).toEqual([['gh:github.com/o/r#1']])
+  expect(s.calls.acli).toEqual([])
+})
+
 test('GitHub and Jira items go to their own tool in one call each', async () => {
   const s = setup([gh(1), jira('ISS-1'), gh(2), jira('ISS-2')])
   await s.c.runDue()
