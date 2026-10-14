@@ -475,6 +475,7 @@ test('composeBand joins the item parts and the auto parts; nothing at all is nul
   expect(composeBand([web('https://x.example/')], [], a)).toBe('Links 1 · Worktrees 1')
   expect(composeBand([], [], a)).toBe('Worktrees 1')
   expect(composeBand([], [], null)).toBeNull()
+  expect(composeBand([], [], null, [])).toBeNull()
   expect(composeBand([], [], auto({ worktrees: [wt('repo', 0)], agents: [MASTER] }))).toBeNull()
 })
 

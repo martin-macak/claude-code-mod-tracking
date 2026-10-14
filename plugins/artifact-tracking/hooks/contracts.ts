@@ -188,6 +188,8 @@ export const LIMITS = {
   maxDismissed: 500,
   /** `.md` paths read from one prompt or reply row (issue #28). Each one costs a stat. */
   maxMentionsPerRow: 20,
+  maxRepos: 50,
+  maxRepoAgents: 8,
 } as const
 
 export const JIRA_KEY = /^[A-Z][A-Z0-9_]+-\d+$/

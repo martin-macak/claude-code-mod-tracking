@@ -76,7 +76,9 @@ import {
 import type { Timer } from './refresh/coordinator'
 import { RefreshCoordinator } from './refresh/coordinator'
 import {
+  capRepoRows,
   extractRepoPathsFromTool,
+  mergeRepoRows,
   parseRepoHintsFromBash,
   RepoTracker,
   type RepoVisit,
@@ -312,9 +314,11 @@ async function setItems($: EngineInterface, change: (list: ItemRecord[]) => Item
   if (knownId !== undefined && id === knownId) mirror = { id, items: next }
 }
 
-/** Like setItems, for tracked repositories. */
+/** Like setItems, for tracked repositories. Reads first and writes nothing when the change returns its input. */
 async function setRepos($: EngineInterface, change: (rows: RepoRecord[]) => RepoRecord[]): Promise<void> {
-  const next = await update($, repos, rows => change(rows ?? []))
+  const cur = (await read($, repos)) ?? []
+  if (capRepoRows(change(cur)) === cur) return // nothing changed: no write, no flush
+  const next = await update($, repos, rows => capRepoRows(change(rows ?? [])))
   const id = await $.session.id()
   if (knownId !== undefined && id === knownId) repoMirror = { id, rows: next }
   await schedule($)
@@ -796,18 +800,6 @@ async function onFileTool($: EngineInterface, tool: string, ran: unknown, agentI
 }
 
 // ------------------------------------------------------------------ process tracking
-
-function mergeRepoRows(cur: RepoRecord[], added: RepoRecord[]): RepoRecord[] {
-  if (added.length === 0) return cur
-  let out = cur
-  for (const row of added)
-    out = upsertRepoRows(out, { ...row, touchedBy: row.touchedBy[0] ?? 'main', at: row.lastSeen })
-  // Carry every touching agent, not only the first one.
-  for (const row of added) {
-    out = out.map(r => (r.key !== row.key ? r : { ...r, touchedBy: [...new Set([...r.touchedBy, ...row.touchedBy])] }))
-  }
-  return out
-}
 
 function mergeProcessRows(cur: ProcessRecord[], added: ProcessRecord[]): ProcessRecord[] {
   if (added.length === 0) return cur

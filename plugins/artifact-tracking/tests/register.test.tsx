@@ -1342,3 +1342,108 @@ test('repos: a Bash cd inside the session root adds no Repos row', async ($, on)
   const saved = store.get('s:' + SESSION) as { repos?: { key: string }[] } | undefined
   expect(saved?.repos ?? []).toEqual([])
 })
+
+// ---------------------------------------------------------------- repos: store, restore, carry-over, clear
+
+const SDK_KEY = 'remote:github.com/acme/sdk'
+const STORED_SDK = {
+  key: SDK_KEY,
+  name: 'acme/sdk',
+  root: '/x/sdk',
+  branch: 'old',
+  touchedBy: ['main', 'planner'],
+  firstSeen: 10,
+  lastSeen: 50,
+}
+type SavedRepos = { repos?: { key: string; firstSeen: number; branch?: string; touchedBy: string[] }[] }
+
+function sdkGit(fake: { run: ((argv: string[]) => ReturnType<typeof res> | undefined) | undefined }, branch = 'new') {
+  fake.run = argv => {
+    if (argv[0] !== 'git' || argv[1] !== '-C' || argv[2] !== '/x/sdk') return undefined
+    if (argv[3] === 'rev-parse') return res('/x/sdk\n/x/sdk/.git\n')
+    if (argv[3] === 'remote') return res('git@github.com:acme/sdk.git\n')
+    return res(branch + '\n')
+  }
+}
+
+test('repos: a restored stored row keeps its firstSeen and every agent', async ($, on) => {
+  const { clock, store, calls } = world(on, {
+    seed: { index: [SESSION], ['s:' + SESSION]: { items: [], repos: [STORED_SDK] } },
+  })
+  await $.session.start(START)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('acme/sdk')
+  expect(text).toContain('main, planner')
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await sleep(20)
+  const saved = store.get('s:' + SESSION) as SavedRepos
+  expect(saved.repos?.[0]).toMatchObject({ key: SDK_KEY, firstSeen: 10, touchedBy: ['main', 'planner'] })
+})
+
+test('repos: /resume does not let the older stored branch overwrite a live row', async ($, on) => {
+  // No isolateState: the kit keeps the live rows across the id change, so the restore merges into them.
+  const { calls, fake } = world(on, {
+    seed: { index: ['sess-b'], 's:sess-b': { items: [], repos: [STORED_SDK] } },
+  })
+  await $.session.start(START)
+  sdkGit(fake, 'new')
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_r1' } as never)
+  await quiet(calls)
+  current.id = 'sess-b' // /resume: the store knows sess-b, so its copy is restored over the live rows
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('new')
+  expect(text).not.toContain('old')
+  expect(text).toContain('main, planner')
+})
+
+test('repos: /clear carries the repo rows over to the new session', async ($, on) => {
+  const { clock, store, calls, fake } = world(on, { isolateState: true })
+  await $.session.start(START)
+  sdkGit(fake)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_c1' } as never)
+  await quiet(calls)
+  current.id = 'sess-2' // /clear: new id, empty state
+  await track($)
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await sleep(20)
+  expect((await track($)).text ?? '').toContain('acme/sdk')
+  const saved = store.get('s:sess-2') as SavedRepos | undefined
+  expect(saved?.repos?.map(r => r.key)).toEqual([SDK_KEY])
+})
+
+test('repos: /track clear empties the rows, deletes the stored copy and a later flush writes nothing', async ($, on) => {
+  const { clock, store, calls, fake } = world(on)
+  await $.session.start(START)
+  sdkGit(fake)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_x1' } as never)
+  await quiet(calls)
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  expect(store.has('s:' + SESSION)).toBe(true)
+  await track($, 'clear')
+  expect(store.has('s:' + SESSION)).toBe(false)
+  expect((await track($)).text).toBe('No tracked items yet.')
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await sleep(20)
+  expect(store.has('s:' + SESSION)).toBe(false)
+})
+
+test('repos: a second visit of the same repo a moment later makes no new repos write', async ($, on) => {
+  const { calls, fake } = world(on, { isolateState: true })
+  await $.session.start(START)
+  sdkGit(fake)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_w1' } as never)
+  await quiet(calls)
+  const writes = fake.stateSets.repos
+  expect(writes).toBeGreaterThan(0)
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_w2' } as never)
+  await quiet(calls)
+  expect(fake.stateSets.repos).toBe(writes)
+})

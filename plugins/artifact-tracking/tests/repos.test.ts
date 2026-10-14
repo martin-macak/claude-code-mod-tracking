@@ -1,10 +1,12 @@
 import { expect, test } from 'claude-code/testing'
-import type { RepoRef, RunInit, RunResult } from '../hooks/contracts'
+import type { RepoRecord, RepoRef, RunInit, RunResult } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
 import { resolvePath } from '../hooks/process/shell'
 import {
+  capRepoRows,
   extractRepoPathsFromTool,
   isNoisePath,
+  mergeRepoRows,
   normalizeRemoteUrl,
   PATH_TOOLS,
   parseRepoHintsFromBash,
@@ -127,7 +129,7 @@ test('upsertRepoRows groups by repo key and merges agents', () => {
     name: 'acme/sdk',
     branch: 'feat/x',
     touchedBy: 'planner',
-    at: at + 5,
+    at: at + LIMITS.tickMs,
   })
   expect(b).toHaveLength(1)
   expect(b[0]).toMatchObject({
@@ -135,8 +137,109 @@ test('upsertRepoRows groups by repo key and merges agents', () => {
     branch: 'feat/x',
     touchedBy: ['main', 'planner'],
     firstSeen: at,
-    lastSeen: at + 5,
+    lastSeen: at + LIMITS.tickMs,
   })
+})
+
+const SDK = 'remote:github.com/acme/sdk'
+const row = (over: Partial<RepoRecord> = {}): RepoRecord => ({
+  key: SDK,
+  name: 'acme/sdk',
+  touchedBy: ['main'],
+  firstSeen: 10,
+  lastSeen: 50,
+  ...over,
+})
+
+test('mergeRepoRows keeps the oldest firstSeen and the newest lastSeen and branch, in both orders', () => {
+  const stored = row({ firstSeen: 10, lastSeen: 50, branch: 'old', root: '/old', touchedBy: ['main', 'planner'] })
+  const live = row({ firstSeen: 60, lastSeen: 90, branch: 'new', touchedBy: ['main'] })
+  for (const [a, b] of [
+    [[stored], [live]],
+    [[live], [stored]],
+  ] as const) {
+    const out = mergeRepoRows([...a], [...b])
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ firstSeen: 10, lastSeen: 90, branch: 'new', root: '/old' })
+    expect([...out[0]!.touchedBy].sort()).toEqual(['main', 'planner'])
+  }
+  expect(mergeRepoRows([stored], [live])[0]!.touchedBy).toEqual(['main', 'planner'])
+})
+
+test('mergeRepoRows appends a new key with its own firstSeen and returns cur for an empty or unchanged merge', () => {
+  const cur = [row()]
+  const other = row({ key: 'remote:github.com/acme/web', name: 'acme/web', firstSeen: 7, lastSeen: 8 })
+  expect(mergeRepoRows(cur, [other])).toEqual([cur[0], other])
+  expect(mergeRepoRows(cur, [])).toBe(cur)
+  expect(mergeRepoRows([], [])).toEqual([])
+  const empty: RepoRecord[] = []
+  expect(mergeRepoRows(empty, [])).toBe(empty)
+  expect(mergeRepoRows(cur, [{ ...cur[0]!, touchedBy: ['main'] }])).toBe(cur)
+})
+
+test('upsertRepoRows: an older visit keeps the newer branch, root, name and lastSeen', () => {
+  const cur = [row({ branch: 'new', root: '/x/new', lastSeen: 500_000 })]
+  const out = upsertRepoRows(cur, {
+    key: SDK,
+    name: 'acme/old',
+    root: '/x/old',
+    branch: 'old',
+    touchedBy: 'planner',
+    at: 100,
+  })
+  expect(out[0]).toMatchObject({ name: 'acme/sdk', branch: 'new', root: '/x/new', lastSeen: 500_000, firstSeen: 10 })
+  expect(out[0]!.touchedBy).toEqual(['main', 'planner'])
+})
+
+test('upsertRepoRows: a repeat visit inside tickMs returns the same array, one after tickMs moves lastSeen', () => {
+  const cur = [row({ branch: 'main', root: '/x/sdk', lastSeen: 1_000_000 })]
+  const visit = { key: SDK, name: 'acme/sdk', root: '/x/sdk', branch: 'main', touchedBy: 'main' }
+  expect(upsertRepoRows(cur, { ...visit, at: 1_000_000 + LIMITS.tickMs - 1 })).toBe(cur)
+  const later = upsertRepoRows(cur, { ...visit, at: 1_000_000 + LIMITS.tickMs })
+  expect(later).not.toBe(cur)
+  expect(later[0]!.lastSeen).toBe(1_000_000 + LIMITS.tickMs)
+})
+
+test('upsertRepoRows: a ref visit keeps the name case and a visit without a branch keeps the branch', () => {
+  const cur = [row({ branch: 'main', root: '/x/sdk', lastSeen: 1_000_000 })]
+  const ref = upsertRepoRows(cur, { key: SDK, name: 'Acme/SDK', touchedBy: 'main', at: 1_000_001 })
+  expect(ref).toBe(cur)
+  const noBranch = upsertRepoRows(cur, {
+    key: SDK,
+    name: 'acme/sdk',
+    root: '/x/sdk',
+    touchedBy: 'planner',
+    at: 1_000_002,
+  })
+  expect(noBranch[0]!.branch).toBe('main')
+  const resolved = upsertRepoRows(cur, { key: SDK, name: 'Acme/SDK', root: '/x/sdk', touchedBy: 'main', at: 1_000_003 })
+  expect(resolved[0]!.name).toBe('Acme/SDK')
+})
+
+test('upsertRepoRows: an earlier visit lowers firstSeen', () => {
+  const out = upsertRepoRows([row({ firstSeen: 100, lastSeen: 200 })], {
+    key: SDK,
+    name: 'acme/sdk',
+    touchedBy: 'main',
+    at: 40,
+  })
+  expect(out[0]!.firstSeen).toBe(40)
+  expect(out[0]!.lastSeen).toBe(200)
+})
+
+test('capRepoRows keeps the maxRepos newest rows in order and the first maxRepoAgents agents', () => {
+  const many = Array.from({ length: LIMITS.maxRepos + 1 }, (_, i) =>
+    row({ key: `local:/r${i}`, name: `r${i}`, lastSeen: 1000 + ((i + 7) % (LIMITS.maxRepos + 1)) }),
+  )
+  const oldest = many.reduce((a, b) => (b.lastSeen < a.lastSeen ? b : a))
+  const out = capRepoRows(many)
+  expect(out).toHaveLength(LIMITS.maxRepos)
+  expect(out.map(r => r.key)).not.toContain(oldest.key)
+  expect(out.map(r => r.key)).toEqual(many.filter(r => r.key !== oldest.key).map(r => r.key))
+  const agents = Array.from({ length: LIMITS.maxRepoAgents + 2 }, (_, i) => `a${i}`)
+  expect(capRepoRows([row({ touchedBy: agents })])[0]!.touchedBy).toEqual(agents.slice(0, LIMITS.maxRepoAgents))
+  const small = [row()]
+  expect(capRepoRows(small)).toBe(small)
 })
 
 function worktreeRunner(calls: string[] = []) {
