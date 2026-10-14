@@ -194,3 +194,22 @@ export function stripWrappers(words: readonly string[]): {
   }
   return { words: words.slice(i), env, nohup }
 }
+
+/**
+ * Joins `p` onto `cwd` and folds `.` and `..` the way a shell does. A relative path with no cwd stays relative.
+ * A `~/` path stays in `~/` form. `..` at `/` or at `~` stays there.
+ */
+export function resolvePath(cwd: string | undefined, p: string): string {
+  const abs = p.startsWith('/') || p.startsWith('~') || !cwd ? p : `${cwd}/${p}`
+  const lead = abs.startsWith('/') ? '/' : ''
+  const parts: string[] = []
+  for (const part of abs.split('/')) {
+    if (part === '' || part === '.') continue
+    if (part === '..') {
+      const top = parts.at(-1)
+      if (top !== undefined && top !== '..' && !(top === '~' && parts.length === 1 && !lead)) parts.pop()
+      else if (!lead && top !== '~') parts.push(part)
+    } else parts.push(part)
+  }
+  return lead + parts.join('/')
+}

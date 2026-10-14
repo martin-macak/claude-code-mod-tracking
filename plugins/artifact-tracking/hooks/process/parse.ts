@@ -1,6 +1,6 @@
 import type { ProcessRecord, ProcessState } from '../contracts'
 import { isRecord } from '../json'
-import { splitShell, stripWrappers } from './shell'
+import { resolvePath, splitShell, stripWrappers } from './shell'
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined)
 
@@ -14,19 +14,6 @@ const FINGERPRINT_MAX = 200
 const baseName = (w: string): string => w.slice(w.lastIndexOf('/') + 1)
 
 // ---------------------------------------------------------------- paths
-
-/** Joins `p` onto `cwd` and folds `.` and `..`. A relative path with no cwd stays relative. */
-function resolvePath(cwd: string | undefined, p: string): string {
-  const abs = p.startsWith('/') || p.startsWith('~') || !cwd ? p : `${cwd}/${p}`
-  const lead = abs.startsWith('/') ? '/' : ''
-  const parts: string[] = []
-  for (const part of abs.split('/')) {
-    if (part === '' || part === '.') continue
-    if (part === '..' && parts.length > 0 && parts.at(-1) !== '..') parts.pop()
-    else parts.push(part)
-  }
-  return lead + parts.join('/')
-}
 
 function pathBase(path: string | undefined): string | undefined {
   if (!path) return undefined

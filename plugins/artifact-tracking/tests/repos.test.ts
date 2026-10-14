@@ -1,10 +1,12 @@
 import { expect, test } from 'claude-code/testing'
 import type { RepoRef, RunInit, RunResult } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
+import { resolvePath } from '../hooks/process/shell'
 import {
   extractRepoPathsFromTool,
   isNoisePath,
   normalizeRemoteUrl,
+  PATH_TOOLS,
   parseRepoHintsFromBash,
   RepoTracker,
   upsertRepoRows,
@@ -12,13 +14,42 @@ import {
 
 const ROOT: RepoRef = { host: 'github.com', owner: 'acme', repo: 'web' }
 
-test('extractRepoPathsFromTool reads known path fields', () => {
+test('extractRepoPathsFromTool reads the path fields that each tool really has', () => {
   expect(extractRepoPathsFromTool('Read', { file_path: '/x/other/a.ts' })).toEqual(['/x/other/a.ts'])
-  expect(extractRepoPathsFromTool('Edit', { path: '/x/other/b.ts' })).toEqual(['/x/other/b.ts'])
+  expect(extractRepoPathsFromTool('Edit', { file_path: '/x/other/b.ts', old_string: 'a', new_string: 'b' })).toEqual([
+    '/x/other/b.ts',
+  ])
+  expect(extractRepoPathsFromTool('Edit', { path: '/x/other/b.ts' })).toEqual([])
   expect(extractRepoPathsFromTool('Write', { file_path: '/x/other/c.ts' })).toEqual(['/x/other/c.ts'])
-  expect(extractRepoPathsFromTool('Grep', { path: '/x/other' })).toEqual(['/x/other'])
-  expect(extractRepoPathsFromTool('Glob', { paths: ['/x/other', '/x/third'] })).toEqual(['/x/other', '/x/third'])
+  expect(extractRepoPathsFromTool('Grep', { pattern: 'x', path: '/x/other' })).toEqual(['/x/other'])
+  expect(extractRepoPathsFromTool('Glob', { pattern: '**/*.ts', path: '/x/other' })).toEqual(['/x/other'])
+  expect(extractRepoPathsFromTool('Glob', { pattern: '**/*.ts' })).toEqual([])
+  expect(extractRepoPathsFromTool('Glob', { paths: ['/x/other', '/x/third'] })).toEqual([])
+  expect(extractRepoPathsFromTool('NotebookEdit', { notebook_path: '/x/other/n.ipynb' })).toEqual(['/x/other/n.ipynb'])
+  expect(extractRepoPathsFromTool('LSP', { filePath: '/x/a.ts' })).toEqual([])
   expect(extractRepoPathsFromTool('Bash', { path: '/x/other' })).toEqual([])
+  expect(extractRepoPathsFromTool('Read', { file_path: '' })).toEqual([])
+  expect(extractRepoPathsFromTool('constructor', { file_path: '/x/a' })).toEqual([])
+})
+
+test('PATH_TOOLS lists the tools that carry a path, NotebookEdit included', () => {
+  expect(PATH_TOOLS).toContain('NotebookEdit')
+  expect([...PATH_TOOLS].sort()).toEqual(['Edit', 'Glob', 'Grep', 'NotebookEdit', 'Read', 'Write'])
+})
+
+test('resolvePath folds paths like a shell', () => {
+  const rows: [string | undefined, string, string][] = [
+    ['/a/b', '../c', '/a/c'],
+    ['/a/b', '/x/./y/', '/x/y'],
+    ['~/x', 'sub', '~/x/sub'],
+    ['~/x', '..', '~'],
+    ['/w', 'rel', '/w/rel'],
+    [undefined, 'rel/../a', 'a'],
+    [undefined, '../a', '../a'],
+    ['/', '../x', '/x'],
+    [undefined, '/../x', '/x'],
+  ]
+  for (const [base, p, want] of rows) expect(resolvePath(base, p)).toBe(want)
 })
 
 test('parseRepoHintsFromBash reads cd, git -C and gh -R in one command', () => {
@@ -28,6 +59,52 @@ test('parseRepoHintsFromBash reads cd, git -C and gh -R in one command', () => {
   )
   expect(out.paths).toEqual(['/x/sdk', '/x/docs'])
   expect(out.repos).toEqual([{ host: 'ghe.corp', owner: 'acme', repo: 'docs' }])
+})
+
+// Most rows pin behavior that already worked. Rows marked NEW failed before the shell-like parsing.
+const BASH_HINT_ROWS: { cmd: string; cwd?: string; paths?: string[]; repos?: RepoRef[]; note?: string }[] = [
+  { cmd: 'cd /abs/dir', paths: ['/abs/dir'] },
+  { cmd: 'cd ~/proj', paths: ['~/proj'] },
+  { cmd: 'cd ~', paths: [] },
+  { cmd: 'cd rel', paths: [] },
+  { cmd: 'git -C/abs/x status', paths: ['/abs/x'] },
+  { cmd: 'git -C rel status', cwd: '/w', paths: ['/w/rel'] },
+  { cmd: 'gh pr view -R acme/sdk', repos: [{ host: 'github.com', owner: 'acme', repo: 'sdk' }] },
+  { cmd: 'gh pr view --repo=acme/sdk', repos: [{ host: 'github.com', owner: 'acme', repo: 'sdk' }] },
+  { cmd: 'gh pr view -Racme/sdk', repos: [{ host: 'github.com', owner: 'acme', repo: 'sdk' }] },
+  {
+    cmd: 'gh pr view -R https://ghe.corp/acme/sdk.git/pull/1',
+    repos: [{ host: 'ghe.corp', owner: 'acme', repo: 'sdk' }],
+  },
+  { cmd: 'ls -R foo', repos: [] },
+  { cmd: 'gh pr list', repos: [] },
+  { cmd: 'gh pr view -R', repos: [] },
+  { cmd: 'cd ~/x && cd sub', paths: ['~/x', '~/x/sub'], note: 'NEW' },
+  { cmd: 'cd ~/x && git -C y status', paths: ['~/x', '~/x/y'], note: 'NEW' },
+  { cmd: 'cd $HOME/x && git -C y status', cwd: '/x/repo', paths: [], note: 'NEW' },
+  { cmd: 'cd "$DIR" && ls', cwd: '/x/repo', paths: [], note: 'NEW' },
+  { cmd: 'cd && git -C y status', cwd: '/x/repo', paths: [], note: 'NEW' },
+  { cmd: 'cd - && git -C y status', cwd: '/x/repo', paths: [], note: 'NEW' },
+  { cmd: 'cd ~bob && git -C y status', cwd: '/x/repo', paths: [], note: 'NEW' },
+  { cmd: 'cd /a/* && git -C y status', cwd: '/x/repo', paths: [], note: 'NEW' },
+  { cmd: 'git -C $D status', cwd: '/x/repo', paths: [], note: 'NEW' },
+  { cmd: 'cd -P /abs/dir', paths: ['/abs/dir'], note: 'NEW' },
+  { cmd: 'pushd /a/x; popd; git -C y status', paths: ['/a/x'], note: 'NEW' },
+  { cmd: 'git grep -C3 foo', cwd: '/w/repo', paths: [], note: 'NEW' },
+  { cmd: 'git diff -C HEAD~1', cwd: '/w/repo', paths: [], note: 'NEW' },
+  { cmd: 'git commit -C HEAD', cwd: '/w/repo', paths: [], note: 'NEW' },
+  { cmd: 'git -c a=b -C ../sdk status', cwd: '/x/repo', paths: ['/x/sdk'], note: 'NEW' },
+  { cmd: 'git --no-pager -C /abs/x log', paths: ['/abs/x'], note: 'NEW' },
+  { cmd: 'git --git-dir /g -C /abs/x log', paths: ['/abs/x'], note: 'NEW' },
+  { cmd: 'cd /../x', paths: ['/x'], note: 'NEW' },
+]
+
+test('parseRepoHintsFromBash table: cd, pushd, popd, git -C and gh -R', () => {
+  for (const row of BASH_HINT_ROWS) {
+    const out = parseRepoHintsFromBash(row.cmd, row.cwd)
+    if (row.paths) expect({ cmd: row.cmd, paths: out.paths }).toEqual({ cmd: row.cmd, paths: row.paths })
+    if (row.repos) expect({ cmd: row.cmd, repos: out.repos }).toEqual({ cmd: row.cmd, repos: row.repos })
+  }
 })
 
 test('isNoisePath filters tmp, scratchpad, node_modules and claude config paths', () => {

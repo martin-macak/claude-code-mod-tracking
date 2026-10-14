@@ -1,11 +1,21 @@
 import { basename, normPath } from '../auto/porcelain'
 import type { RepoRecord, RepoRef, Runner, RunResult } from '../contracts'
 import { LIMITS } from '../contracts'
-import { splitShell, stripWrappers } from '../process/shell'
+import { resolvePath, splitShell, stripWrappers } from '../process/shell'
 import { parseRemote } from '../scan/refs'
 import { CircuitBreaker } from '../tools/circuit-breaker'
 
-const PATH_TOOLS = new Set(['Read', 'Edit', 'Write', 'Grep', 'Glob'])
+/** The input field that holds a path, per tool. Only absolute paths count; a relative path has no known base. */
+export const TOOL_PATH_FIELDS = {
+  Read: ['file_path'],
+  Edit: ['file_path'],
+  Write: ['file_path'],
+  NotebookEdit: ['notebook_path'],
+  Grep: ['path'],
+  Glob: ['path'],
+} as const
+
+export const PATH_TOOLS = Object.keys(TOOL_PATH_FIELDS) as (keyof typeof TOOL_PATH_FIELDS)[]
 
 const SLUG = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/
 const HOST_SLUG = /^([A-Za-z0-9.-]+)\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/
@@ -70,20 +80,6 @@ function isAbs(path: string): boolean {
   return path.startsWith('/') || path.startsWith('~/')
 }
 
-function joinPath(base: string, rel: string): string {
-  if (rel.startsWith('/')) return normPath(rel)
-  const out: string[] = []
-  for (const part of `${base}/${rel}`.split('/')) {
-    if (!part || part === '.') continue
-    if (part === '..') {
-      if (out.length > 0) out.pop()
-      continue
-    }
-    out.push(part)
-  }
-  return '/' + out.join('/')
-}
-
 function maybeDir(path: string): string {
   const p = cleanPath(path)
   if (p === '/' || p.endsWith('/')) return normPath(p)
@@ -105,11 +101,27 @@ function parseGhRepoArg(text: string): RepoRef | null {
   return null
 }
 
+/**
+ * Git options that take their value as the next word. The `--opt=value` forms need no skip. A `-C` is only a path
+ * before the subcommand: `git grep -C3` and `git commit -C HEAD` use the same letter for something else.
+ */
+export const GIT_GLOBAL_VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  '-c',
+  '--git-dir',
+  '--work-tree',
+  '--namespace',
+  '--super-prefix',
+  '--config-env',
+])
+
+/** The first `-C <path>` or `-C<path>` among the global options of `git`. Stops at the subcommand. */
 function parseGitCPath(words: readonly string[]): string | undefined {
   for (let i = 1; i < words.length; i++) {
     const w = words[i]!
+    if (!w.startsWith('-')) return undefined
     if (w === '-C') return words[i + 1]
-    if (w.startsWith('-C') && w.length > 2) return w.slice(2)
+    if (w.startsWith('-C')) return w.slice(2)
+    if (GIT_GLOBAL_VALUE_OPTIONS.has(w)) i++
   }
   return undefined
 }
@@ -125,18 +137,27 @@ function parseGhRepo(words: readonly string[]): RepoRef | null {
 }
 
 export function extractRepoPathsFromTool(tool: string, input: unknown): string[] {
-  if (!PATH_TOOLS.has(tool)) return []
+  if (!Object.hasOwn(TOOL_PATH_FIELDS, tool)) return []
   if (!input || typeof input !== 'object') return []
   const rec = input as Record<string, unknown>
   const out: string[] = []
-  const push = (x: unknown) => {
-    if (typeof x === 'string' && x !== '') out.push(x)
-    else if (Array.isArray(x)) for (const v of x) if (typeof v === 'string' && v !== '') out.push(v)
+  for (const field of TOOL_PATH_FIELDS[tool as keyof typeof TOOL_PATH_FIELDS]) {
+    const v = rec[field]
+    if (typeof v === 'string' && v !== '') out.push(v)
   }
-  push(rec.file_path)
-  push(rec.path)
-  push(rec.paths)
   return out
+}
+
+/** A word that the shell expands at run time. Its value is unknown here. */
+const DYNAMIC = /[$`*?]/
+/** `~`, `~name`: a home dir that this parser cannot resolve. `~/x` is fine. */
+const HOME_FORM = /^~(?:[^/]|$)/
+
+/** Where `target` leads from `dir`. `undefined` when it cannot be known: `-`, `~`, `~name`, `$VAR`, a glob. */
+function moveTo(dir: string | undefined, target: string | undefined): string | undefined {
+  if (target === undefined || target === '-' || HOME_FORM.test(target) || DYNAMIC.test(target)) return undefined
+  if (target.startsWith('/') || target.startsWith('~/')) return resolvePath(undefined, target)
+  return dir ? resolvePath(dir, target) : undefined
 }
 
 export function parseRepoHintsFromBash(command: string, cwd?: string): { paths: string[]; repos: RepoRef[] } {
@@ -147,20 +168,20 @@ export function parseRepoHintsFromBash(command: string, cwd?: string): { paths: 
     const words = stripWrappers(seg.words).words
     if (words.length === 0) continue
     const head = words[0]!
+    if (head === 'popd') {
+      dir = undefined
+      continue
+    }
     if (head === 'cd' || head === 'pushd') {
-      const target = words.slice(1).find(w => !w.startsWith('-'))
-      if (target !== undefined) {
-        if (target === '~') dir = undefined
-        else if (target.startsWith('/') || target.startsWith('~/')) dir = target
-        else if (dir) dir = joinPath(dir, target)
-        if (dir && isAbs(dir)) paths.push(normPath(cleanPath(dir)))
-      }
+      // An option is a dash word of two or more characters. A lone `-` is the previous directory.
+      const target = words.slice(1).find(w => w === '-' || !w.startsWith('-'))
+      dir = moveTo(dir, target)
+      if (dir && isAbs(dir)) paths.push(dir)
       continue
     }
     if (head === 'git') {
-      const p = parseGitCPath(words)
-      if (p && isAbs(p)) paths.push(normPath(cleanPath(p)))
-      else if (p && dir) paths.push(joinPath(dir, p))
+      const p = moveTo(dir, parseGitCPath(words))
+      if (p && isAbs(p)) paths.push(p)
       continue
     }
     if (head === 'gh') {
@@ -403,7 +424,7 @@ export class RepoTracker {
     }
     const top = normPath(out[0]!)
     const c = out[1]
-    return { top, common: c ? (isAbsolute(c) ? normPath(c) : joinPath(dir, c)) : `${top}/.git` }
+    return { top, common: c ? (isAbsolute(c) ? normPath(c) : resolvePath(dir, c)) : `${top}/.git` }
   }
 
   /**
