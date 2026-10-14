@@ -1712,3 +1712,95 @@ test('repos: a lookup that ends after /track clear leaves no row', async ($, on)
   expect(w.store.has('s:' + SESSION)).toBe(false)
   expect((await track($)).text).toBe('No tracked items yet.')
 })
+
+// ---------------------------------------------------------------- repos: dismiss with the x button
+
+const SDK_ROW_ID = 'rp:' + SDK_KEY
+type PressUi = PaneUi & { press(q: unknown): Promise<void> }
+
+/** A Bash `cd` into the sdk repo, the queue drained. */
+async function visitSdk($: Engine, w: ReturnType<typeof world>, id: string): Promise<void> {
+  sdkGit(w.fake)
+  w.fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: id } as never)
+  await quiet(w.calls)
+}
+
+async function dismissSdk($: Engine): Promise<void> {
+  const ui = (await mountPane($)) as PressUi
+  await ui.press({ key: 'dismiss-' + SDK_ROW_ID })
+  await ui.unmount()
+}
+
+const bandHas = async ($: Engine, text: string): Promise<boolean> => {
+  const ui = (await $.ui.mount({ ...BAND, surface: 'terminal' } as never)) as unknown as {
+    find(q: unknown): Promise<unknown>
+    unmount(): Promise<void>
+  }
+  const found = (await ui.find({ text })) !== undefined
+  await ui.unmount()
+  return found
+}
+
+test('repos dismiss: the x button hides the row from /track and the band', async ($, on) => {
+  const w = world(on)
+  on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine band'] }))
+  await $.session.start(START)
+  await visitSdk($, w, 'toolu_dm_1')
+  expect((await track($)).text ?? '').toContain('acme/sdk')
+  expect(await bandHas($, 'Repos 1')).toBe(true)
+  await dismissSdk($)
+  await quiet(w.calls)
+  expect((await track($)).text ?? '').not.toContain('Repos')
+  expect(await bandHas($, 'Repos')).toBe(false)
+})
+
+test('repos dismiss: a later visit of the dismissed repo adds no row, a flush stores none', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await visitSdk($, w, 'toolu_dm_2')
+  await dismissSdk($)
+  await visitSdk($, w, 'toolu_dm_3')
+  await drain(w)
+  expect((await track($)).text ?? '').not.toContain('acme/sdk')
+  expect(savedKeys(w)).not.toContain(SDK_KEY)
+})
+
+test('repos dismiss: a restore of a stored copy that holds the dismissed repo keeps it hidden', async ($, on) => {
+  const w = world(on, { seed: { index: ['sess-b'], 's:sess-b': { items: [], repos: [STORED_SDK] } } })
+  await $.session.start(START)
+  await visitSdk($, w, 'toolu_dm_4')
+  await dismissSdk($)
+  current.id = 'sess-b' // /resume: the stored copy still holds the repo
+  expect((await track($)).text ?? '').not.toContain('acme/sdk')
+})
+
+test('repos dismiss: /clear carry-over keeps the dismissed repo hidden', async ($, on) => {
+  const w = world(on, { isolateState: true })
+  await $.session.start(START)
+  await visitSdk($, w, 'toolu_dm_5')
+  await dismissSdk($)
+  current.id = 'sess-2' // /clear
+  expect((await track($)).text ?? '').not.toContain('acme/sdk')
+})
+
+test('repos dismiss: another repo touched after the dismiss still appears', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await visitSdk($, w, 'toolu_dm_6')
+  await dismissSdk($)
+  const git = w.fake.run
+  w.fake.run = argv => {
+    if (argv[0] === 'git' && argv[2] === '/x/lib') {
+      if (argv[3] === 'rev-parse') return res('/x/lib\n/x/lib/.git\n')
+      if (argv[3] === 'remote') return res('git@github.com:acme/lib.git\n')
+      return res('main\n')
+    }
+    return git?.(argv)
+  }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/lib && ls', tool_use_id: 'toolu_dm_7' } as never)
+  await quiet(w.calls)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('acme/lib')
+  expect(text).not.toContain('acme/sdk')
+})

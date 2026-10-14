@@ -12,22 +12,24 @@ import type {
 } from '../contracts'
 import { MASTER_ID } from '../contracts'
 import { processBandPart, processSection } from './process-view'
+import { repoBandPart, repoSection } from './repo-view'
 import type { PaneRow, PaneSection, ViewContext } from './view'
-import { ago, bandParts, buildPane, EMPTY_TEXT, githubRow, isWide, lastRefreshOf, textOf, toolNote } from './view'
+import {
+  ago,
+  bandParts,
+  buildPane,
+  compactIds,
+  EMPTY_TEXT,
+  githubRow,
+  isWide,
+  lastRefreshOf,
+  textOf,
+  toolNote,
+} from './view'
 
-const AGENT_ID = /(agent-)([0-9a-f]{8})[0-9a-f]+/g
-const RUN_ID = /wf_([A-Za-z0-9-]+)-(\d+)(?![\w-])/g
+export { compactIds } // kept here for the callers that import it from the auto view
+
 const SKIPS_WITH_HEADER = new Set(['no-gh', 'not-logged-in', 'paused', 'host-not-authed'])
-
-/**
- * Agent ids compact to 8 hex after `agent-`. A workflow run id keeps 6 characters between `wf_` and the last
- * `-<digits>`, since a run id can hold `-` (spec 10.3). Any other hex string stays as it is.
- */
-export function compactIds(text: string): string {
-  return text
-    .replace(AGENT_ID, '$1$2')
-    .replace(RUN_ID, (m, body: string, n: string) => (body.length > 6 ? `wf_${body.slice(0, 6)}-${n}` : m))
-}
 
 const isDiscoveredPr = (i: ItemRecord): i is GitHubRecord =>
   i.category === 'github' && i.type === 'pr' && i.sources.includes('auto')
@@ -218,35 +220,8 @@ export function autoBandParts(auto: AutoState | null, items: readonly ItemRecord
   ]
 }
 
-function repoRows(rows: readonly RepoRecord[]): PaneRow[] {
-  return rows
-    .slice()
-    .sort((a, b) => a.firstSeen - b.firstSeen)
-    .map(r => ({
-      id: r.key,
-      depth: 0,
-      key: compactIds(r.name),
-      title: compactIds(r.branch ?? ''),
-      type: compactIds(r.touchedBy.join(', ')),
-      status: '',
-      tone: 'plain' as const,
-      foldable: false,
-      folded: false,
-    }))
-}
-
-function reposSection(repos: readonly RepoRecord[]): PaneSection | null {
-  if (repos.length === 0) return null
-  return {
-    id: 'repos',
-    title: 'Repos',
-    note: `${repos.length} tracked`,
-    rows: repoRows(repos),
-  }
-}
-
 function withRepos(itemSections: PaneSection[], repos: readonly RepoRecord[]): PaneSection[] {
-  const section = reposSection(repos)
+  const section = repoSection(repos)
   if (!section) return itemSections
   const web = itemSections.findIndex(s => s.id === 'web')
   if (web < 0) return [...itemSections, section]
@@ -277,12 +252,8 @@ export function composeBand(
   repos: readonly RepoRecord[] = [],
 ): string | null {
   const p = processBandPart(processes)
-  const parts = [
-    ...bandParts(items),
-    ...(repos.length > 0 ? [`Repos ${repos.length}`] : []),
-    ...autoBandParts(auto, items),
-    ...(p ? [p] : []),
-  ]
+  const r = repoBandPart(repos)
+  const parts = [...bandParts(items), ...(r ? [r] : []), ...autoBandParts(auto, items), ...(p ? [p] : [])]
   return parts.length > 0 ? parts.join(' · ') : null
 }
 

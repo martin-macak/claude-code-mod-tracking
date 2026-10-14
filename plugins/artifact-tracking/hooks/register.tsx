@@ -42,7 +42,7 @@ import type {
   ToolStatus,
   UiState,
 } from './contracts'
-import { AUTO_SOURCES, isRowId, LIMITS } from './contracts'
+import { AUTO_SOURCES, isRowId, LIMITS, repoRowId } from './contracts'
 import { isRecord } from './json'
 import { dropAuto } from './model/discovered'
 import { artifactOrigin, keyOf } from './model/keys'
@@ -321,11 +321,21 @@ async function setItems($: EngineInterface, change: (list: ItemRecord[]) => Item
   if (knownId !== undefined && id === knownId) mirror = { id, items: next }
 }
 
-/** Like setItems, for tracked repositories. Reads first and writes nothing when the change returns its input. */
+/**
+ * Like setItems, for tracked repositories. Every write to `repos` goes through here, so this is the one place that
+ * drops the repos the person dismissed with the x button. It drops them before the cap. Reads first and writes
+ * nothing when the result is the input list itself.
+ */
 async function setRepos($: EngineInterface, change: (rows: RepoRecord[]) => RepoRecord[]): Promise<void> {
+  const dismissed = new Set((await currentAuto($)).dismissed)
+  const apply = (rows: RepoRecord[]): RepoRecord[] => {
+    const out = change(rows)
+    const kept = dismissed.size === 0 ? out : out.filter(r => !dismissed.has(repoRowId(r.key)))
+    return capRepoRows(kept.length === out.length ? out : kept)
+  }
   const cur = (await read($, repos)) ?? []
-  if (capRepoRows(change(cur)) === cur) return // nothing changed: no write, no flush
-  const next = await update($, repos, rows => capRepoRows(change(rows ?? [])))
+  if (apply(cur) === cur) return // nothing changed: no write, no flush
+  const next = await update($, repos, rows => apply(rows ?? []))
   const id = await $.session.id()
   if (knownId !== undefined && id === knownId) repoMirror = { id, rows: next }
   await schedule($)
@@ -511,7 +521,9 @@ async function dismissOne($: EngineInterface, id: string): Promise<void> {
     ensureRuntime($)
     void ensureTick($)
     await setAuto($, s => dismiss(s, [id]))
-    if (!isRowId(id)) await setItems($, list => list.filter(rec => rec.key !== id))
+    // A repo row: setRepos is the choke point that drops it now that the id is on the dismiss list.
+    if (id.startsWith('rp:')) await setRepos($, rows => rows)
+    else if (!isRowId(id)) await setItems($, list => list.filter(rec => rec.key !== id))
   } catch {
     // The row stays. The person can press again.
   }

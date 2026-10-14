@@ -131,7 +131,7 @@ const repo = (key: string, over: Partial<RepoRecord> = {}): RepoRecord => ({
 
 // ---------------------------------------------------------------- cellsFor
 
-const LAYOUTS: Layout[] = ['worktrees', 'agents', 'prs', 'items', 'files']
+const LAYOUTS: Layout[] = ['worktrees', 'agents', 'prs', 'items', 'files', 'repos']
 
 test('cellsFor at 62 columns: the narrow cells of spec 10.1', () => {
   const names = (l: Layout, x: boolean) => cellsFor(62, l, x).map(c => [c.name, c.width])
@@ -208,6 +208,31 @@ test('cellsFor at 100 columns: the wide cells', () => {
     ['extra', 10],
     ['mark', 8],
     ['x', 2],
+  ])
+})
+
+test('cellsFor repos: key, title, type, a reserved status and the x', () => {
+  const names = (cols: number) => cellsFor(cols, 'repos', true).map(c => [c.name, c.width])
+  expect(names(80)).toEqual([
+    ['key', 24],
+    ['title', undefined],
+    ['type', 20],
+    ['status', 5],
+    ['x', 2],
+  ])
+  expect(names(60)).toEqual([
+    ['key', 20],
+    ['title', undefined],
+    ['type', 14],
+    ['status', 5],
+    ['x', 2],
+  ])
+  const wrap = (n: string) => cellsFor(80, 'repos', true).find(c => c.name === n)?.wrap
+  expect([wrap('key'), wrap('title'), wrap('type'), wrap('status')]).toEqual([
+    'truncate-end',
+    'truncate-middle',
+    'truncate-middle',
+    'truncate-end',
   ])
 })
 
@@ -499,6 +524,15 @@ test('composePane inserts Repos between GitHub and Web links, and composeBand ad
   )
   expect(sections.map(s => s.id)).toEqual(['worktrees', 'agents', 'github', 'repos', 'web'])
   expect(composeBand([], [], null, [repo('remote:ghe.corp/acme/sdk')])).toBe('Repos 1')
+})
+
+test('composeCommandText lists a repo row as text, and a repos-only pane ends with the repos section', () => {
+  const rows = [repo('remote:ghe.corp/acme/sdk')]
+  expect(composeCommandText([], [], PROCESS_UI, ctx(), rows)).toContain('acme/sdk')
+  const sections = composePane([], [], PROCESS_UI, ctx(), rows)
+  expect(sections.map(s => s.id)).toEqual(['repos'])
+  const withPr = composePane([{ ...pr(1), sources: ['prompt'] }], [], PROCESS_UI, ctx(), rows)
+  expect(withPr.at(-1)?.id).toBe('repos')
 })
 
 test('composeCommandText lists the auto sections as text; empty is the old message', () => {

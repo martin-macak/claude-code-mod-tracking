@@ -49,6 +49,8 @@ Repo tracking has two limits:
 - Bash is read only for `cd`, `pushd`, `git -C` and `gh -R`. Other paths in a command are not tracked. A `cd` or `-C` target with `$`, a backtick, `*` or `?`, or with `-`, `~` or `~name`, is skipped.
 - A relative path in a file-tool call is ignored.
 
+Each Repos row has an `x` button. It hides the repo for the rest of the run: a later visit, a restore and `/clear` do not bring it back. The dismiss list is not stored, so a new run shows the repo again. When the last repo is dismissed, the flush skips the empty list, so the stored copy may still hold it until the next write.
+
 Not captured: notifications from background tasks, meta rows, prompts that a subagent or a coordinator wrote, and our own `/track` output.
 
 The own repo never shows as a foreign repo. It is the toplevel of the session root, any worktree that shares its git common dir, and any clone with the same `origin`. A repo nested inside the root folder counts as own. A repo without a remote gets a `local:<git common dir>` key, so its worktrees share one row.
