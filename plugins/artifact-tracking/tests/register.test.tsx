@@ -1531,6 +1531,8 @@ for (const [tool, field] of [
   ['Edit', 'file_path'],
   ['Write', 'file_path'],
   ['NotebookEdit', 'notebook_path'],
+  ['Grep', 'path'],
+  ['Glob', 'path'],
 ] as const) {
   test(`repos: a ${tool} of a file in another repo adds the repo row`, async ($, on) => {
     const w = world(on)
@@ -1754,6 +1756,42 @@ test('repos: a lookup that ends after /track clear leaves no row', async ($, on)
   expect(savedKeys(w)).toEqual([])
   expect(w.store.has('s:' + SESSION)).toBe(false)
   expect((await track($)).text).toBe('No tracked items yet.')
+})
+
+test('repos: a visit that waits in the queue during /track clear does not swallow the same visit made after it', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const { held, release } = holdOne()
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE, '/x/lib': LIB_REMOTE }, held)
+  w.fake.tools.Read = RAN
+  // The lib job runs and waits on git. The first sdk visit waits behind it in the queue.
+  await $.tool.call({ tool: 'Read', file_path: '/x/lib/b.ts', tool_use_id: 't1' } as never)
+  await sleep(30)
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't2' } as never)
+  await track($, 'clear')
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't3' } as never)
+  release()
+  await drain(w)
+  expect(savedKeys(w)).toEqual([SDK_KEY])
+})
+
+test('repos: restoring more than maxRepos stored rows keeps maxRepos', async ($, on) => {
+  const rows = Array.from({ length: LIMITS.maxRepos + 1 }, (_, i) => ({
+    ...STORED_SDK,
+    key: `local:/r${i}`,
+    name: `r${i}`,
+    lastSeen: 100 + i,
+  }))
+  const { clock, store, calls } = world(on, {
+    seed: { index: [SESSION], ['s:' + SESSION]: { items: [], repos: rows } },
+  })
+  await $.session.start(START)
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await sleep(20)
+  const saved = store.get('s:' + SESSION) as SavedRepos
+  expect(saved.repos).toHaveLength(LIMITS.maxRepos)
+  expect(saved.repos?.map(r => r.key)).not.toContain('local:/r0')
 })
 
 // ---------------------------------------------------------------- repos: dismiss with the x button

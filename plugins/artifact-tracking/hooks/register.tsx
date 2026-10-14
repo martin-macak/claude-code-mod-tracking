@@ -423,7 +423,7 @@ function enqueueRepo<T>(
   const at = Date.now()
   const gen = repoGen
   const sid = knownId
-  repoQueue.push(`${key}\0${who}\0${items.map(label).join('\0')}`, async () => {
+  repoQueue.push(`${key}\0${gen}\0${sid ?? ''}\0${who}\0${items.map(label).join('\0')}`, async () => {
     const visits: RepoVisit[] = []
     for (const item of items) {
       try {

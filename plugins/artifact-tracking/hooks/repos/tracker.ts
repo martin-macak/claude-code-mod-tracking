@@ -319,9 +319,12 @@ type TrackerDeps = {
 
 export type RepoVisit = Omit<ResolvedRepo, 'common'> & { touchedBy: string; mode: RepoMode }
 
-/** Every git and sh call runs in `/`: a cwd that is a file or a missing directory would make the spawn itself fail. */
+/**
+ * Every git and sh call runs in `/`: a cwd that is a file or a missing directory would make the spawn itself fail.
+ * `LC_ALL=C` keeps git's messages in English, so `MISSING` matches under any locale.
+ */
 async function call(run: Runner, argv: readonly string[]): Promise<RunResult> {
-  return run(argv, { cwd: '/', timeoutMs: LIMITS.gitTimeoutMs })
+  return run(argv, { cwd: '/', timeoutMs: LIMITS.gitTimeoutMs, env: { LC_ALL: 'C' } })
 }
 
 const MAX_WALK = 4

@@ -603,6 +603,36 @@ test('RepoTracker: a toplevel in a noise directory gives null', async () => {
   }
 })
 
+test('RepoTracker: a toplevel in a noise directory that is not the own repo gives null', async () => {
+  const noisy = '/home/me/.claude-x/plugins/marketplaces/foo'
+  const run = async (argv: readonly string[]) => {
+    if (argv[0] === 'sh') return SH
+    if (argv[3] === 'rev-parse')
+      return argv[2] === '/x/repo' ? ok('/x/repo\n/x/repo/.git\n') : ok(`${noisy}\n${noisy}/.git\n`)
+    if (argv[3] === 'remote')
+      return ok(argv[2] === '/x/repo' ? 'git@github.com:acme/web.git\n' : 'git@github.com:acme/foo.git\n')
+    return ok('main\n')
+  }
+  const t = new RepoTracker({ run, now: () => 1, rootPath: '/x/repo', rootRepo: ROOT })
+  expect(await t.resolvePath('/x/link/a.ts', 'main')).toBeNull()
+})
+
+test('RepoTracker: every git call asks for English messages with LC_ALL=C', async () => {
+  const inits: Array<[string, RunInit | undefined]> = []
+  const run = async (argv: readonly string[], init?: RunInit) => {
+    inits.push([argv[0]!, init])
+    if (argv[0] === 'sh') return SH
+    if (argv[3] === 'rev-parse') return argv[2] === '/x/repo' ? notRepo : ok(GIT_SDK)
+    if (argv[3] === 'remote') return ok('git@github.com:acme/sdk.git\n')
+    return ok('main\n')
+  }
+  const t = new RepoTracker({ run, now: () => 1, rootPath: '/x/repo', rootRepo: ROOT })
+  expect(await t.resolvePath('/x/sdk/a.ts', 'main')).not.toBeNull()
+  const git = inits.filter(i => i[0] === 'git')
+  expect(git.length).toBeGreaterThan(0)
+  for (const [, init] of inits) expect(init?.env).toEqual({ LC_ALL: 'C' })
+})
+
 test('RepoTracker: parallel lookups of one directory run rev-parse once', async () => {
   let revParses = 0
   const run = async (argv: readonly string[]) => {

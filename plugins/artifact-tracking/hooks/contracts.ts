@@ -20,7 +20,7 @@ export type * from '../types'
 
 // ---------------------------------------------------------------- process runner
 
-export type RunInit = { timeoutMs?: number; cwd?: string }
+export type RunInit = { timeoutMs?: number; cwd?: string; env?: Record<string, string> }
 
 export type RunResult = {
   exitCode: number
