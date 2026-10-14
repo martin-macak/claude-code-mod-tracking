@@ -1309,9 +1309,10 @@ test('after /clear the tick brings items back with short #N keys for the session
 
 test('repos: a repo found by a Bash cd is stored after the flush delay, without any other update', async ($, on) => {
   const { clock, store, calls, fake } = world(on)
+  await $.session.start(START) // pins the root (/work), so the tracker knows which repo is its own
   fake.run = argv => {
     if (argv[0] !== 'git' || argv[1] !== '-C' || argv[2] !== '/x/sdk') return undefined
-    if (argv[3] === 'rev-parse') return res('/x/sdk\n')
+    if (argv[3] === 'rev-parse') return res('/x/sdk\n/x/sdk/.git\n')
     if (argv[3] === 'remote') return res('git@github.com:acme/sdk.git\n')
     return res('main\n')
   }
@@ -1322,4 +1323,22 @@ test('repos: a repo found by a Bash cd is stored after the flush delay, without 
   await quiet(calls)
   const saved = store.get('s:' + SESSION) as { repos?: { key: string }[] } | undefined
   expect(saved?.repos?.map(r => r.key)).toEqual(['remote:github.com/acme/sdk'])
+})
+
+test('repos: a Bash cd inside the session root adds no Repos row', async ($, on) => {
+  const { clock, store, calls, fake } = world(on)
+  await $.session.start(START)
+  fake.run = argv => {
+    if (argv[0] !== 'git' || argv[1] !== '-C' || !String(argv[2]).startsWith('/work')) return undefined
+    if (argv[3] === 'rev-parse') return res('/work\n/work/.git\n')
+    if (argv[3] === 'remote') return res('git@gitlab.com:grp/app.git\n')
+    return res('main\n')
+  }
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /work/src && ls', tool_use_id: 'toolu_cd_2' } as never)
+  await quiet(calls)
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  const saved = store.get('s:' + SESSION) as { repos?: { key: string }[] } | undefined
+  expect(saved?.repos ?? []).toEqual([])
 })

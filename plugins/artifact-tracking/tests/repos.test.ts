@@ -66,8 +66,8 @@ function worktreeRunner(calls: string[] = []) {
   return async (argv: readonly string[], init?: RunInit): Promise<RunResult> => {
     calls.push(`${argv.join(' ')} @ ${init?.cwd ?? ''}`)
     if (argv[0] === 'git' && argv[1] === '-C' && argv[3] === 'rev-parse') {
-      if (argv[2] === '/x/sdk/src') return { exitCode: 0, stdout: '/x/sdk\n', stderr: '' }
-      if (argv[2] === '/x/sdk/tests') return { exitCode: 0, stdout: '/x/sdk-wt\n', stderr: '' }
+      if (argv[2] === '/x/sdk/src') return { exitCode: 0, stdout: '/x/sdk\n/x/sdk/.git\n', stderr: '' }
+      if (argv[2] === '/x/sdk/tests') return { exitCode: 0, stdout: '/x/sdk-wt\n/x/sdk/.git\n', stderr: '' }
       return { exitCode: 128, stdout: '', stderr: 'not a git repository' }
     }
     if (argv[0] === 'git' && argv[1] === '-C' && argv[3] === 'remote') {
@@ -109,10 +109,12 @@ test('RepoTracker caches per directory', async () => {
 
 const ok = (stdout: string) => ({ exitCode: 0, stdout, stderr: '' })
 const notRepo = { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' }
+/** What `rev-parse --path-format=absolute --show-toplevel --git-common-dir` prints: the toplevel, then the common dir. */
+const GIT_SDK = '/x/sdk\n/x/sdk/.git\n'
 
 test('RepoTracker: non-repo paths are an expected answer and never open the breaker', async () => {
   const run = async (argv: readonly string[]) => {
-    if (argv[3] === 'rev-parse') return argv[2] === '/x/sdk/src' ? ok('/x/sdk\n') : notRepo
+    if (argv[3] === 'rev-parse') return argv[2] === '/x/sdk/src' ? ok(GIT_SDK) : notRepo
     if (argv[3] === 'remote') return ok('git@github.com:acme/sdk.git\n')
     return ok('main\n')
   }
@@ -127,7 +129,7 @@ test('RepoTracker: a path skipped while the breaker is open is looked up again a
   const run = async (argv: readonly string[]) => {
     if (argv[3] === 'rev-parse') {
       if (broken) throw new Error('spawn failed')
-      return argv[2] === '/x/sdk/src' ? ok('/x/sdk\n') : notRepo
+      return argv[2] === '/x/sdk/src' ? ok(GIT_SDK) : notRepo
     }
     if (argv[3] === 'remote') return ok('git@github.com:acme/sdk.git\n')
     return ok('main\n')
@@ -144,7 +146,7 @@ test('RepoTracker: an extensionless file (README, Makefile) resolves through its
   const run = async (argv: readonly string[]) => {
     if (argv[3] === 'rev-parse')
       return argv[2] === '/x/sdk'
-        ? ok('/x/sdk\n')
+        ? ok(GIT_SDK)
         : { exitCode: 128, stdout: '', stderr: `fatal: cannot change to '${argv[2]}': Not a directory` } // git -C <file>
     if (argv[3] === 'remote') return ok('git@github.com:acme/sdk.git\n')
     return ok('main\n')
@@ -158,7 +160,7 @@ test('RepoTracker: a ~/ path is expanded to the home directory before git sees i
   const run = async (argv: readonly string[]) => {
     seen.push(argv.join(' '))
     if (argv[0] === 'sh') return ok('/home/me')
-    if (argv[3] === 'rev-parse') return argv[2] === '/home/me/sdk' ? ok('/home/me/sdk\n') : notRepo
+    if (argv[3] === 'rev-parse') return argv[2] === '/home/me/sdk' ? ok('/home/me/sdk\n/home/me/sdk/.git\n') : notRepo
     if (argv[3] === 'remote') return ok('git@github.com:acme/sdk.git\n')
     return ok('main\n')
   }
@@ -184,7 +186,7 @@ test('RepoTracker: every runner call runs in / with the git timeout', async () =
   const run = async (argv: readonly string[], init?: RunInit) => {
     inits.push([argv[0]!, init])
     if (argv[0] === 'sh') return SH
-    if (argv[3] === 'rev-parse') return ok('/home/me/sdk\n')
+    if (argv[3] === 'rev-parse') return argv[2] === '/x/repo' ? notRepo : ok('/home/me/sdk\n/home/me/sdk/.git\n')
     if (argv[3] === 'remote') return ok('git@github.com:acme/sdk.git\n')
     return ok('main\n')
   }
@@ -206,7 +208,7 @@ test('RepoTracker: missing paths walk up to the repo and never open the breaker'
     const d = argv[2]!
     if (argv[3] === 'rev-parse') {
       if (!dirs.has(d)) return gone(d)
-      return d.startsWith('/x/sdk') ? ok('/x/sdk\n') : notRepo
+      return d.startsWith('/x/sdk') ? ok(GIT_SDK) : notRepo
     }
     if (argv[3] === 'remote') return ok('git@github.com:acme/sdk.git\n')
     return ok('main\n')
@@ -222,7 +224,11 @@ function repoRunner(over: { remote?: () => RunResult; branch?: () => RunResult }
   return async (argv: readonly string[]): Promise<RunResult> => {
     calls.push(argv.join(' '))
     if (argv[0] === 'sh') return SH
-    if (argv[3] === 'rev-parse') return ok(`${argv[2]!.replace(/\/src$/, '')}\n`)
+    if (argv[3] === 'rev-parse') {
+      if (argv[2] === '/x/repo') return notRepo // the session root
+      const top = argv[2]!.replace(/\/src$/, '')
+      return ok(`${top}\n${top}/.git\n`)
+    }
     if (argv[3] === 'remote') return over.remote ? over.remote() : ok('git@github.com:acme/sdk.git\n')
     return over.branch ? over.branch() : ok('main\n')
   }
@@ -261,7 +267,7 @@ test('RepoTracker: three remote faults open the breaker and the next lookup make
 test('RepoTracker: no origin gives a local key, a branch fault gives a row without branch', async () => {
   const noOrigin = repoRunner({ remote: () => ({ exitCode: 1, stdout: '', stderr: '' }) })
   const t = new RepoTracker({ run: noOrigin, now: () => 1, rootPath: '/x/repo', rootRepo: ROOT })
-  expect(await t.resolvePath('/x/lib/src/a.ts', 'main')).toMatchObject({ key: 'local:/x/lib', name: 'lib' })
+  expect(await t.resolvePath('/x/lib/src/a.ts', 'main')).toMatchObject({ key: 'local:/x/lib/.git', name: 'lib' })
 
   const noBranch = repoRunner({
     branch: () => {
@@ -281,7 +287,7 @@ test('RepoTracker: a failed env probe is retried on the next call', async () => 
       if (probes++ === 0) throw new Error('spawn failed')
       return SH
     }
-    if (argv[3] === 'rev-parse') return argv[2] === '/home/me/sdk' ? ok('/home/me/sdk\n') : notRepo
+    if (argv[3] === 'rev-parse') return argv[2] === '/home/me/sdk' ? ok('/home/me/sdk\n/home/me/sdk/.git\n') : notRepo
     if (argv[3] === 'remote') return ok('git@github.com:acme/sdk.git\n')
     return ok('main\n')
   }
@@ -338,8 +344,9 @@ test('RepoTracker: parallel lookups of one directory run rev-parse once', async 
     for (let i = 0; i < 5; i++) await null // yield, so the second lookup starts while the first is in flight
     if (argv[0] === 'sh') return SH
     if (argv[3] === 'rev-parse') {
+      if (argv[2] === '/x/repo') return notRepo // the session root
       revParses++
-      return ok('/x/sdk\n')
+      return ok(GIT_SDK)
     }
     if (argv[3] === 'remote') return ok('git@github.com:acme/sdk.git\n')
     return ok('main\n')
@@ -359,7 +366,10 @@ test('RepoTracker: a negative answer expires after one tick', async () => {
   let revParses = 0
   const run = async (argv: readonly string[]) => {
     if (argv[0] === 'sh') return SH
-    if (argv[3] === 'rev-parse') return revParses++ === 0 ? notRepo : ok('/x/sdk\n')
+    if (argv[3] === 'rev-parse') {
+      if (argv[2] === '/x/repo') return notRepo // the session root
+      return revParses++ === 0 ? notRepo : ok(GIT_SDK)
+    }
     if (argv[3] === 'remote') return ok('git@github.com:acme/sdk.git\n')
     return ok('main\n')
   }
@@ -388,4 +398,152 @@ test('normalizeRemoteUrl: scp and https remotes give one credential-free key', (
   expect(normalizeRemoteUrl('/srv/git/lib').key).toBe('remote:file:/srv/git/lib')
   expect(normalizeRemoteUrl('file:///srv/git/lib').key).toBe('remote:file:/srv/git/lib')
   expect(normalizeRemoteUrl('/srv/git/lib.git').name).toBe('lib')
+})
+
+// ---------------------------------------------------------------- P2: own repo by git identity
+
+type FakeRepo = { top: string; common: string; origin?: string }
+
+/** Maps a directory to its repo by longest toplevel prefix. Counts every git call in `calls`. */
+function identityRunner(repos: readonly FakeRepo[], calls: string[] = []) {
+  const byTop = (dir: string) =>
+    repos.filter(r => dir === r.top || dir.startsWith(`${r.top}/`)).sort((a, b) => b.top.length - a.top.length)[0]
+  return async (argv: readonly string[]): Promise<RunResult> => {
+    if (argv[0] === 'sh') return SH
+    calls.push(argv.join(' '))
+    const r = byTop(argv[2]!)
+    if (argv[3] === 'rev-parse') return r ? ok(`${r.top}\n${r.common}\n`) : notRepo
+    if (argv[3] === 'remote') return r?.origin ? ok(`${r.origin}\n`) : { exitCode: 2, stdout: '', stderr: 'no origin' }
+    return ok('main\n')
+  }
+}
+
+const REPOS: FakeRepo[] = [
+  { top: '/x/repo', common: '/x/repo/.git' },
+  { top: '/x/repo-wt', common: '/x/repo/.git' },
+  { top: '/x/clone', common: '/x/clone/.git', origin: 'git@gitlab.com:grp/app.git' },
+  { top: '/x/sdk', common: '/x/sdk/.git', origin: 'git@github.com:acme/sdk.git' },
+]
+const GITLAB_ROOT: FakeRepo = { top: '/x/repo', common: '/x/repo/.git', origin: 'git@gitlab.com:grp/app.git' }
+
+test('own repo: a sibling worktree of a root without a remote is not a foreign row', async () => {
+  const run = identityRunner(REPOS)
+  const t = new RepoTracker({ run, now: () => 1, rootPath: '/x/repo', rootRepo: null })
+  expect(await t.resolvePath('/x/repo-wt/a.ts', 'main')).toBeNull()
+  expect(await t.resolvePath('/x/sdk/a.ts', 'main')).toMatchObject({ key: 'remote:github.com/acme/sdk' })
+})
+
+test('own repo: a path under the root toplevel makes no git call once the identity is known', async () => {
+  const calls: string[] = []
+  const t = new RepoTracker({ run: identityRunner(REPOS, calls), now: () => 1, rootPath: '/x/repo', rootRepo: null })
+  expect(await t.resolvePath('/x/repo/src/a.ts', 'main')).toBeNull()
+  const before = calls.length
+  expect(before).toBeGreaterThan(0) // the identity probe
+  expect(await t.resolvePath('/x/repo/src/deep/b.ts', 'main')).toBeNull()
+  expect(await t.resolvePath('/x/repo/other/c.ts', 'helper')).toBeNull()
+  expect(calls.length).toBe(before)
+})
+
+test('own repo: a root on GitLab (no rootRepo) still excludes its worktree and a clone with the same origin', async () => {
+  const repos = [GITLAB_ROOT, ...REPOS.slice(1)]
+  const t = new RepoTracker({ run: identityRunner(repos), now: () => 1, rootPath: '/x/repo', rootRepo: null })
+  expect(await t.resolvePath('/x/repo-wt/a.ts', 'main')).toBeNull()
+  expect(await t.resolvePath('/x/clone/a.ts', 'main')).toBeNull()
+})
+
+test('own repo: an unknown root is no answer, and nothing is cached as foreign', async () => {
+  const deps: { run: ReturnType<typeof identityRunner>; now: () => number; rootPath?: string; rootRepo: null } = {
+    run: identityRunner(REPOS),
+    now: () => 1,
+    rootRepo: null,
+  }
+  const t = new RepoTracker(deps)
+  expect(await t.resolvePath('/x/repo/src/a.ts', 'main')).toBeNull()
+  expect(await t.resolvePath('/x/sdk/a.ts', 'main')).toBeNull()
+  deps.rootPath = '/x/repo'
+  expect(await t.resolvePath('/x/repo/src/a.ts', 'main')).toBeNull()
+  expect(await t.resolvePath('/x/sdk/a.ts', 'main')).toMatchObject({ key: 'remote:github.com/acme/sdk' })
+})
+
+test('own repo: fromRepoRef drops the root remote, the origin of a GitLab root and keeps a foreign ref', async () => {
+  const gh = new RepoTracker({
+    run: identityRunner([{ ...GITLAB_ROOT, origin: 'git@github.com:acme/web.git' }]),
+    now: () => 1,
+    rootPath: '/x/repo',
+    rootRepo: ROOT,
+  })
+  expect(await gh.fromRepoRef(ROOT, 'main')).toBeNull()
+  expect(await gh.fromRepoRef({ host: 'github.com', owner: 'acme', repo: 'docs' }, 'main')).toMatchObject({
+    key: 'remote:github.com/acme/docs',
+    name: 'acme/docs',
+    touchedBy: 'main',
+  })
+
+  const gl = new RepoTracker({ run: identityRunner([GITLAB_ROOT]), now: () => 1, rootPath: '/x/repo', rootRepo: null })
+  const ref = { host: 'gitlab.com', owner: 'grp', repo: 'app' }
+  expect(await gl.fromRepoRef(ref, 'main')).toBeNull() // only own.key matches
+  expect(await gl.fromRepoRef({ ...ref, repo: 'other' }, 'main')).not.toBeNull()
+
+  const unknown = new RepoTracker({ run: identityRunner([GITLAB_ROOT]), now: () => 1, rootRepo: null })
+  expect(await unknown.fromRepoRef({ host: 'github.com', owner: 'acme', repo: 'docs' }, 'main')).toBeNull()
+})
+
+test('own repo: a root in a subfolder of its repo excludes the whole repo', async () => {
+  const calls: string[] = []
+  const t = new RepoTracker({
+    run: identityRunner(REPOS, calls),
+    now: () => 1,
+    rootPath: '/x/repo/pkg',
+    rootRepo: null,
+  })
+  expect(await t.resolvePath('/x/repo/a.ts', 'main')).toBeNull()
+  expect(await t.resolvePath('/x/repo/other/new/file.ts', 'main')).toBeNull()
+})
+
+test('own repo: a clone of the rootRepo remote is the same repo', async () => {
+  const repos = [
+    { top: '/x/repo', common: '/x/repo/.git' },
+    { top: '/x/clone', common: '/x/clone/.git', origin: 'git@github.com:acme/web.git' },
+  ]
+  const t = new RepoTracker({ run: identityRunner(repos), now: () => 1, rootPath: '/x/repo', rootRepo: ROOT })
+  expect(await t.resolvePath('/x/clone/a.ts', 'main')).toBeNull()
+})
+
+test('local repos are keyed by their git common dir, so worktrees share one row', async () => {
+  const repos = [
+    { top: '/x/lib', common: '/x/lib/.git' },
+    { top: '/x/lib-wt', common: '/x/lib/.git' },
+    { top: '/x/bare-wt', common: '/srv/lib.git' },
+  ]
+  const t = new RepoTracker({ run: identityRunner(repos), now: () => 1, rootPath: '/x/repo', rootRepo: null })
+  expect(await t.resolvePath('/x/lib/a.ts', 'main')).toMatchObject({ key: 'local:/x/lib/.git', name: 'lib' })
+  expect(await t.resolvePath('/x/lib-wt/a.ts', 'main')).toMatchObject({ key: 'local:/x/lib/.git', name: 'lib' })
+  expect(await t.resolvePath('/x/bare-wt/a.ts', 'main')).toMatchObject({ key: 'local:/srv/lib.git', name: 'lib' })
+})
+
+test('the common dir is not stored in a repo row', async () => {
+  const t = new RepoTracker({ run: identityRunner(REPOS), now: () => 1, rootPath: '/x/repo', rootRepo: null })
+  const v = await t.resolvePath('/x/sdk/a.ts', 'main')
+  expect(v).not.toBeNull()
+  expect('common' in v!).toBe(false)
+  expect(JSON.stringify(upsertRepoRows([], { ...v!, at: 5 }))).not.toContain('.git"')
+})
+
+test('an old git that echoes --path-format is probed again without it, with a relative common dir', async () => {
+  const calls: string[] = []
+  const run = async (argv: readonly string[]): Promise<RunResult> => {
+    if (argv[0] === 'sh') return SH
+    calls.push(argv.join(' '))
+    if (argv[3] === 'rev-parse') {
+      if (argv[2] === '/x/repo') return notRepo
+      return argv.includes('--path-format=absolute')
+        ? ok('--path-format=absolute\n/x/lib\n.git\n')
+        : ok('/x/lib\n.git\n')
+    }
+    if (argv[3] === 'remote') return { exitCode: 2, stdout: '', stderr: '' }
+    return ok('main\n')
+  }
+  const t = new RepoTracker({ run, now: () => 1, rootPath: '/x/repo', rootRepo: null })
+  expect(await t.resolvePath('/x/lib/a.ts', 'main')).toMatchObject({ key: 'local:/x/lib/.git', name: 'lib' })
+  expect(calls.some(c => c.includes('rev-parse') && !c.includes('--path-format'))).toBe(true)
 })

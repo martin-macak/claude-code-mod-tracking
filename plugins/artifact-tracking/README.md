@@ -44,6 +44,8 @@ claude --plugin-dir plugins/artifact-tracking
 
 Not captured: notifications from background tasks, meta rows, prompts that a subagent or a coordinator wrote, and our own `/track` output.
 
+The own repo never shows as a foreign repo. It is the toplevel of the session root, any worktree that shares its git common dir, and any clone with the same `origin`. A repo nested inside the root folder counts as own. A repo without a remote gets a `local:<git common dir>` key, so its worktrees share one row.
+
 | Pattern | Item |
 | --- | --- |
 | `https://github.com/o/r/issues/N`, `/pull/N` | GitHub issue or PR |

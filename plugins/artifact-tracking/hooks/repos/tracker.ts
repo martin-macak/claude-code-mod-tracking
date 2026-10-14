@@ -18,8 +18,14 @@ function remoteKey(ref: RepoRef): string {
   return `remote:${lower(ref.host)}/${lower(ref.owner)}/${lower(ref.repo)}`
 }
 
-function localKey(root: string): string {
-  return `local:${normPath(root)}`
+/**
+ * Identity of a repo without a usable remote. The git common dir is shared by a repo and all its worktrees, so they get
+ * one key. The name is the folder of a normal repo (`<dir>/.git`), else the common dir without `.git` (a bare repo).
+ */
+function localIdentity(common: string): { key: string; name: string } {
+  const c = normPath(common)
+  const name = c.endsWith('/.git') ? basename(c.slice(0, -'/.git'.length) || '/') : basename(c).replace(/\.git$/i, '')
+  return { key: `local:${c}`, name }
 }
 
 /**
@@ -207,6 +213,8 @@ type ResolvedRepo = {
   name: string
   root?: string
   branch?: string
+  /** Absolute git common dir. Equal for a repo and its worktrees. Identity only: never stored in a row. */
+  common: string
 }
 
 type TrackerDeps = {
@@ -216,7 +224,7 @@ type TrackerDeps = {
   rootRepo?: RepoRef | null
 }
 
-export type RepoVisit = ResolvedRepo & { touchedBy: string }
+export type RepoVisit = Omit<ResolvedRepo, 'common'> & { touchedBy: string }
 
 /** Every git and sh call runs in `/`: a cwd that is a file or a missing directory would make the spawn itself fail. */
 async function call(run: Runner, argv: readonly string[]): Promise<RunResult> {
@@ -226,8 +234,17 @@ async function call(run: Runner, argv: readonly string[]): Promise<RunResult> {
 const MAX_WALK = 4
 const MISSING = /cannot change to/i
 
-/** A repo, null (not a repo, or the session's own repo) or 'missing' (the path does not exist or is a file). */
+/** A repo, null (not a repo) or 'missing' (the path does not exist or is a file). */
 type Answer = ResolvedRepo | null | 'missing'
+
+const isAbsolute = (p: string): boolean => p.startsWith('/')
+
+function visitOf(r: ResolvedRepo, touchedBy: string): RepoVisit {
+  const out: RepoVisit = { key: r.key, name: r.name, touchedBy }
+  if (r.root !== undefined) out.root = r.root
+  if (r.branch !== undefined) out.branch = r.branch
+  return out
+}
 
 export class RepoTracker {
   private readonly breaker = new CircuitBreaker()
@@ -243,24 +260,27 @@ export class RepoTracker {
     return this.d.rootRepo ? remoteKey(this.d.rootRepo) : undefined
   }
 
-  private isOwnRepo(r: ResolvedRepo): boolean {
-    const root = this.d.rootPath ? normPath(this.d.rootPath) : undefined
-    if (root && r.root) {
-      const here = normPath(r.root)
-      if (here === root) return true
-      if (here.startsWith(`${root}/.claude/worktrees/`)) return true
-    }
-    const own = this.ownRemoteKey()
-    return own !== undefined && r.key === own
+  /**
+   * The session's own repo, found by git from the root folder: a record, null (the root is not in a repo) or 'retry'
+   * (the root is not known yet, or git gave no answer). A definite answer is cached by `lookup`.
+   */
+  private async ownIdentity(): Promise<ResolvedRepo | null | 'retry'> {
+    const rootPath = this.d.rootPath
+    if (!rootPath) return 'retry'
+    const r = await this.lookup(normPath(rootPath), await this.getEnv())
+    if (r === 'retry') return 'retry'
+    return r === 'missing' ? null : r
   }
 
-  fromRepoRef(ref: RepoRef, touchedBy: string): RepoVisit | null {
-    const out: RepoVisit = {
-      key: remoteKey(ref),
-      name: `${ref.owner}/${ref.repo}`,
-      touchedBy,
-    }
-    return this.isOwnRepo(out) ? null : out
+  /** A ref is a foreign repo unless it is the session's own remote. Unknown own identity and no `rootRepo`: no answer. */
+  async fromRepoRef(ref: RepoRef, touchedBy: string): Promise<RepoVisit | null> {
+    const key = remoteKey(ref)
+    const own = await this.ownIdentity()
+    if (own !== null && own !== 'retry' && key === own.key) return null
+    const rootKey = this.ownRemoteKey()
+    if (rootKey !== undefined && key === rootKey) return null
+    if (own === 'retry' && rootKey === undefined) return null
+    return { key, name: `${ref.owner}/${ref.repo}`, touchedBy }
   }
 
   /** HOME, TMPDIR and CLAUDE_CONFIG_DIR of the engine. `run` gets an argv, so no shell expands a tilde. Only a success is cached. */
@@ -305,11 +325,17 @@ export class RepoTracker {
       abs = normPath(`${env.home}/${path.slice(2)}`)
     }
     if (isNoisePath(abs, env)) return null
+    // The session's own repo comes first. Without it, a path of the own repo would be cached as foreign.
+    const own = await this.ownIdentity()
+    if (own === 'retry') return null
+    const here = normPath(abs)
+    if (within(here, normPath(this.d.rootPath!)) || (own?.root !== undefined && within(here, own.root))) return null
     // A file (README, Makefile) or a path not created yet is not a directory. Walk up to the nearest one that is.
     let dir = maybeDir(abs)
     for (let up = 0; up <= MAX_WALK; up++) {
       const r = await this.lookup(dir, env)
-      if (r !== 'missing') return r ? { ...r, touchedBy } : null
+      if (r === 'retry') return null
+      if (r !== 'missing') return r && !this.isOwn(r, own) ? visitOf(r, touchedBy) : null
       if (dir === '/') return null
       dir = dir.slice(0, dir.lastIndexOf('/')) || '/'
     }
@@ -317,10 +343,20 @@ export class RepoTracker {
   }
 
   /**
-   * Cached answer for a directory. Parallel calls share one lookup. A "not now" answer (breaker open, git fault) is
-   * never cached.
+   * The own repo: same git common dir (a worktree), same key (a clone with the same origin) or the `rootRepo` remote.
+   * A repo nested inside the root folder never gets here: it is under the root path.
    */
-  private async lookup(dir: string, env: Env | undefined): Promise<Answer> {
+  private isOwn(r: ResolvedRepo, own: ResolvedRepo | null): boolean {
+    if (own && (r.common === own.common || r.key === own.key)) return true
+    const rootKey = this.ownRemoteKey()
+    return rootKey !== undefined && r.key === rootKey
+  }
+
+  /**
+   * Cached answer for a directory. Parallel calls share one lookup. A "not now" answer (breaker open, git fault) is
+   * never cached ('retry').
+   */
+  private async lookup(dir: string, env: Env | undefined): Promise<Answer | 'retry'> {
     const hit = this.cache.get(dir)
     if (hit) {
       if (hit.value !== null && hit.value !== 'missing') return hit.value
@@ -340,34 +376,60 @@ export class RepoTracker {
       })()
       this.pending.set(dir, p)
     }
-    const r = await p
-    return r === 'retry' ? null : r
+    return p
+  }
+
+  /**
+   * One `rev-parse` gives the toplevel and the git common dir. git older than 2.31 does not know `--path-format`: it
+   * echoes the option, so a line is not absolute. Then ask again without it and join a relative common dir onto `dir`.
+   * Throws when git cannot run.
+   */
+  private async probeDir(dir: string): Promise<{ top: string; common: string } | null | 'missing'> {
+    const base = ['git', '-C', dir, 'rev-parse']
+    const lines = (r: RunResult) =>
+      r.stdout
+        .split('\n')
+        .map(x => x.trim())
+        .filter(x => x !== '')
+    let r = await call(this.d.run, [...base, '--path-format=absolute', '--show-toplevel', '--git-common-dir'])
+    if (r.exitCode !== 0) return MISSING.test(r.stderr) ? 'missing' : null
+    let out = lines(r)
+    if (out.length === 0) return null
+    if (!out.every(isAbsolute)) {
+      r = await call(this.d.run, [...base, '--show-toplevel', '--git-common-dir'])
+      if (r.exitCode !== 0) return MISSING.test(r.stderr) ? 'missing' : null
+      out = lines(r)
+      if (!out[0] || !isAbsolute(out[0])) return null
+    }
+    const top = normPath(out[0]!)
+    const c = out[1]
+    return { top, common: c ? (isAbsolute(c) ? normPath(c) : joinPath(dir, c)) : `${top}/.git` }
   }
 
   /**
    * An answer, or 'retry' (no answer: the breaker is open or git could not run). Only an execution fault counts
-   * against the breaker. A non-zero exit is a normal answer.
+   * against the breaker. A non-zero exit is a normal answer. The record is raw: the caller decides what is "own".
    */
   private async resolveDir(dir: string, env: Env | undefined): Promise<Answer | 'retry'> {
     const now = this.d.now()
     if (!this.breaker.allows(now)) return 'retry'
-    let root = ''
+    let probe: Awaited<ReturnType<RepoTracker['probeDir']>>
     try {
-      const top = await call(this.d.run, ['git', '-C', dir, 'rev-parse', '--show-toplevel'])
-      if (top.exitCode !== 0 && MISSING.test(top.stderr)) {
-        this.breaker.success()
-        return 'missing'
-      }
-      root = top.exitCode === 0 ? normPath(top.stdout.trim()) : ''
+      probe = await this.probeDir(dir)
     } catch {
       this.breaker.failure(now)
       return 'retry'
     }
+    if (probe === 'missing') {
+      this.breaker.success()
+      return 'missing'
+    }
     // rev-parse gives a real path, so this also catches a symlink into a noise directory.
-    if (!root || isNoisePath(root, env)) {
+    if (!probe || isNoisePath(probe.top, env)) {
       this.breaker.success()
       return null
     }
+    const { top: root, common } = probe
     const found = this.byRoot.get(root)
     if (found) {
       this.breaker.success()
@@ -398,10 +460,9 @@ export class RepoTracker {
       ? { key: remoteKey(parsed), name: `${parsed.owner}/${parsed.repo}` }
       : remote
         ? normalizeRemoteUrl(remote)
-        : { key: localKey(root), name: basename(root) }
-    const resolved: ResolvedRepo = { ...id, root }
+        : localIdentity(common)
+    const resolved: ResolvedRepo = { ...id, root, common }
     if (branch) resolved.branch = branch
-    if (this.isOwnRepo(resolved)) return null
     this.byRoot.set(root, resolved)
     return resolved
   }

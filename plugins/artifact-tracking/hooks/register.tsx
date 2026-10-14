@@ -76,6 +76,13 @@ import {
 import type { Timer } from './refresh/coordinator'
 import { RefreshCoordinator } from './refresh/coordinator'
 import {
+  extractRepoPathsFromTool,
+  parseRepoHintsFromBash,
+  RepoTracker,
+  type RepoVisit,
+  upsertRepoRows,
+} from './repos/tracker'
+import {
   type FileTouch,
   type IgnoreContext,
   isIgnored,
@@ -84,7 +91,6 @@ import {
   resolvePath,
   touchFromToolResult,
 } from './scan/files'
-import { extractRepoPathsFromTool, parseRepoHintsFromBash, RepoTracker, upsertRepoRows } from './repos/tracker'
 import { textOfContent } from './scan/links'
 import { commandArgs, extractRefs, parseRemote } from './scan/refs'
 import { AcliTool } from './tools/acli-tool'
@@ -409,15 +415,15 @@ async function trackRepoRefs($: EngineInterface, refs: readonly RepoRef[], agent
   if (!tracker || refs.length === 0) return
   const who = touchedBy(agentId)
   const at = Date.now()
-  const visits = refs
-    .map(ref => {
-      try {
-        return tracker.fromRepoRef(ref, who)
-      } catch {
-        return null
-      }
-    })
-    .filter(x => x !== null)
+  const visits: RepoVisit[] = []
+  for (const ref of refs) {
+    try {
+      const v = await tracker.fromRepoRef(ref, who)
+      if (v) visits.push(v)
+    } catch {
+      // one bad ref must not stop the others
+    }
+  }
   if (visits.length === 0) return
   await setRepos($, rows => {
     let out = rows
