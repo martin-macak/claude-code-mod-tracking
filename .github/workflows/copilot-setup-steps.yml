@@ -37,6 +37,12 @@ jobs:
           npm install -g @anthropic-ai/claude-code@2.1.296
           npx -y -p typescript@7.0.2 tsc --version
 
+      - name: Install the TypeSafe Jev skill for GitHub Copilot
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: |
+          npx -y skills add typesafe-ai/skills --skill typesafe-ai --agent copilot -y
+
       # Installs the pre-commit, commit-msg and pre-push git hooks and their environments.
       - name: Install the git hooks
         run: make hooks
