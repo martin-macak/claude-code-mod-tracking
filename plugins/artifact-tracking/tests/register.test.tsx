@@ -1589,6 +1589,29 @@ test('repos: a Read alone stores mode read, and a Bash git -C commit then stores
   expect(savedMode(w)).toBe('edit')
 })
 
+test('repos: a main-loop Read with a relative file_path resolves from the session cwd', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.cwd = '/x/sdk'
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Read = RAN
+  await $.tool.call({ tool: 'Read', file_path: 'src/a.ts', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(savedKeys(w)).toEqual([SDK_KEY])
+})
+
+test('repos: a subagent Read with a relative file_path adds no row and runs no rev-parse', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.cwd = '/x/sdk'
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Read = RAN
+  await $.tool.call({ tool: 'Read', file_path: 'src/a.ts', agentId: 'a1', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(seen.revParse).toEqual([])
+  expect(savedKeys(w)).toEqual([])
+})
+
 test('repos: a Read of a file in /tmp adds no row', async ($, on) => {
   const w = world(on)
   await $.session.start(START)
@@ -1725,6 +1748,25 @@ test('repos: the main loop and a spawned agent share one row', async ($, on) => 
   await drain(w)
   const rows = (w.store.get('s:' + SESSION) as SavedRepos).repos ?? []
   expect(rows.map(r => [r.key, r.touchedBy])).toEqual([[SDK_KEY, ['main', 'architect']]])
+})
+
+test('repos: a nested child with no cwd gets the cwd of its parent and adds a row', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.spawnId = 'w1'
+  await $.agent.spawn({ ...ev.WORKFLOW_SPAWN_INPUT, cwd: '/x/sdk' } as never)
+  w.fake.spawnId = 'w2'
+  await $.agent.spawn({
+    ...ev.WORKFLOW_SPAWN_INPUT,
+    parentAgentId: 'w1',
+    description: 'child',
+    name: '',
+    cwd: undefined,
+  } as never)
+  await drain(w)
+  const rows = (w.store.get('s:' + SESSION) as SavedRepos).repos ?? []
+  expect(rows.map(r => [r.key, r.touchedBy])).toEqual([[SDK_KEY, ['architect', 'child']]])
 })
 
 test('repos: a spawn in the root folder or with no cwd adds no row', async ($, on) => {

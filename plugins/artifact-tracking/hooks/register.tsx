@@ -1574,11 +1574,17 @@ export const register: Register = on => {
   for (const tool of PATH_TOOLS) {
     // The cast: the typings of this engine version do not list Grep and Glob as built-in tools.
     on('tool.call', { tool: tool as 'Read' }, async ($, e, next) => {
+      // A relative path needs the session cwd, read before the call runs. Only the main loop has one.
+      let hits = extractRepoPathsFromTool(tool, e)
+      if (e.agentId === undefined && hits.some(h => !h.path.startsWith('/') && !h.path.startsWith('~'))) {
+        const cwd = (await $.session.cwd().catch(() => undefined)) ?? undefined
+        hits = extractRepoPathsFromTool(tool, e, repoBaseDir(cwd, e.agentId))
+      }
       const ran = await next(e)
       try {
         if (!failed(ran)) {
           arm($)
-          enqueueRepoPaths($, extractRepoPathsFromTool(tool, e), e.agentId)
+          enqueueRepoPaths($, hits, e.agentId)
         }
       } catch {
         // See above.
@@ -1597,8 +1603,11 @@ export const register: Register = on => {
       ensureRuntime($)
       const f = fromSpawn(e, out)
       if (f) {
-        await setAuto($, s => recordSpawn(s, f, Date.now(), sessionCwd))
-        if (f.cwd) enqueueRepoPaths($, [{ path: f.cwd, mode: 'read' }], f.agentId)
+        const state = await setAuto($, s => recordSpawn(s, f, Date.now(), sessionCwd))
+        // A nested child with no cwd of its own works where the ledger put it: in the cwd of its parent.
+        const cwd =
+          f.cwd ?? (f.parentAgentId !== undefined ? state.agents.find(a => a.id === f.agentId)?.cwd : undefined)
+        if (cwd) enqueueRepoPaths($, [{ path: cwd, mode: 'read' }], f.agentId)
       }
       kickAuto($, 'agent')
     } catch {

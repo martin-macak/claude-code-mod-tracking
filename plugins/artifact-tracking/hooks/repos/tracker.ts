@@ -5,7 +5,10 @@ import { resolvePath, splitShell, stripWrappers } from '../process/shell'
 import { parseRemote } from '../scan/refs'
 import { CircuitBreaker } from '../tools/circuit-breaker'
 
-/** The input field that holds a path, per tool. Only absolute paths count; a relative path has no known base. */
+/**
+ * The input field that holds a path, per tool. An absolute path always counts. A relative path counts only in the
+ * main loop, where the session cwd is its base. A subagent has its own cwd, which the hook cannot read.
+ */
 export const TOOL_PATH_FIELDS = {
   Read: ['file_path'],
   Edit: ['file_path'],
@@ -35,6 +38,9 @@ export const TOOL_MODE: Record<keyof typeof TOOL_PATH_FIELDS, RepoMode> = {
 
 const SLUG = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/
 const HOST_SLUG = /^([A-Za-z0-9.-]+)\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/
+
+/** A path segment with a glob character. */
+const GLOB_CHAR = /[*?[{]/
 
 const STRIPPED = /\/$/
 
@@ -191,7 +197,24 @@ function parseGhRepo(words: readonly string[]): RepoRef | null {
   return null
 }
 
-export function extractRepoPathsFromTool(tool: string, input: unknown): RepoHit[] {
+/** The literal head of an absolute glob pattern: the segments before the first one with a glob character. */
+function globPrefix(pattern: string): string | undefined {
+  if (!pattern.startsWith('/') && !pattern.startsWith('~/')) return undefined
+  const head: string[] = []
+  for (const seg of pattern.split('/')) {
+    if (GLOB_CHAR.test(seg)) break
+    head.push(seg)
+  }
+  const prefix = head.join('/')
+  return prefix === '' || prefix === '/' || prefix === '~' ? undefined : prefix
+}
+
+/**
+ * The paths of a file-tool call. A relative path resolves from `base`, the cwd of the caller. With no `base` it stays
+ * as it is, and the lookup drops it. A `Glob` with no `path` and an absolute pattern uses the literal head of the
+ * pattern: `/x/sdk/**\/*.ts` is `/x/sdk`.
+ */
+export function extractRepoPathsFromTool(tool: string, input: unknown, base?: string): RepoHit[] {
   if (!Object.hasOwn(TOOL_PATH_FIELDS, tool)) return []
   if (!input || typeof input !== 'object') return []
   const rec = input as Record<string, unknown>
@@ -199,7 +222,14 @@ export function extractRepoPathsFromTool(tool: string, input: unknown): RepoHit[
   const name = tool as keyof typeof TOOL_PATH_FIELDS
   for (const field of TOOL_PATH_FIELDS[name]) {
     const v = rec[field]
-    if (typeof v === 'string' && v !== '') out.push({ path: v, mode: TOOL_MODE[name] })
+    if (typeof v === 'string' && v !== '') {
+      const abs = v.startsWith('/') || v.startsWith('~') || base === undefined ? v : resolvePath(base, v)
+      out.push({ path: abs, mode: TOOL_MODE[name] })
+    }
+  }
+  if (name === 'Glob' && out.length === 0 && typeof rec.pattern === 'string') {
+    const prefix = globPrefix(rec.pattern)
+    if (prefix !== undefined) out.push({ path: prefix, mode: TOOL_MODE[name] })
   }
   return out
 }

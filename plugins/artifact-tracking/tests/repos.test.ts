@@ -19,6 +19,24 @@ const ROOT: RepoRef = { host: 'github.com', owner: 'acme', repo: 'web' }
 
 const hit = (path: string, mode: 'read' | 'edit' = 'read') => ({ path, mode })
 
+test('extractRepoPathsFromTool: a Glob with no path takes the literal prefix of an absolute pattern', () => {
+  expect(extractRepoPathsFromTool('Glob', { pattern: '/x/sdk/**/*.ts' })).toEqual([hit('/x/sdk')])
+  expect(extractRepoPathsFromTool('Glob', { pattern: '/x/sdk/src/*.ts' })).toEqual([hit('/x/sdk/src')])
+  expect(extractRepoPathsFromTool('Glob', { pattern: '~/sdk/{a,b}/*.ts' })).toEqual([hit('~/sdk')])
+  expect(extractRepoPathsFromTool('Glob', { pattern: '/**/*.ts' })).toEqual([])
+  expect(extractRepoPathsFromTool('Glob', { pattern: '/*.ts' })).toEqual([])
+  expect(extractRepoPathsFromTool('Glob', { pattern: '**/*.ts' })).toEqual([])
+  expect(extractRepoPathsFromTool('Glob', { pattern: '/x/sdk/**/*.ts', path: '/x/lib' })).toEqual([hit('/x/lib')])
+  expect(extractRepoPathsFromTool('Glob', { pattern: '/x/sdk/**/*.ts', path: '' })).toEqual([hit('/x/sdk')])
+})
+
+test('extractRepoPathsFromTool resolves a relative path from the base and leaves it alone with no base', () => {
+  expect(extractRepoPathsFromTool('Read', { file_path: 'src/a.ts' }, '/x/sdk')).toEqual([hit('/x/sdk/src/a.ts')])
+  expect(extractRepoPathsFromTool('Grep', { pattern: 'x', path: '../lib' }, '/x/sdk')).toEqual([hit('/x/lib')])
+  expect(extractRepoPathsFromTool('Read', { file_path: '/x/other/a.ts' }, '/x/sdk')).toEqual([hit('/x/other/a.ts')])
+  expect(extractRepoPathsFromTool('Read', { file_path: 'src/a.ts' })).toEqual([hit('src/a.ts')])
+})
+
 test('extractRepoPathsFromTool reads the path fields that each tool really has', () => {
   expect(extractRepoPathsFromTool('Read', { file_path: '/x/other/a.ts' })).toEqual([hit('/x/other/a.ts')])
   expect(extractRepoPathsFromTool('Edit', { file_path: '/x/other/b.ts', old_string: 'a', new_string: 'b' })).toEqual([
