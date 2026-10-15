@@ -47,8 +47,8 @@ export type PaneRow = {
   mark?: string
 }
 
-export type SectionId = 'worktrees' | 'agents' | 'prs' | 'processes' | Category
-export type Layout = 'worktrees' | 'agents' | 'prs' | 'items' | 'files'
+export type SectionId = 'worktrees' | 'agents' | 'prs' | 'processes' | 'repos' | Category
+export type Layout = 'worktrees' | 'agents' | 'prs' | 'items' | 'files' | 'repos'
 export type CellName = 'key' | 'title' | 'type' | 'status' | 'extra' | 'mark' | 'x'
 /** One rendered cell. `width` absent: the cell grows. */
 export type Cell = { name: CellName; width?: number; wrap: 'truncate-end' | 'truncate-middle' }
@@ -110,6 +110,19 @@ export function toolNote(t: ToolStatus, now: number, lastRefresh?: number): stri
   return 'ready'
 }
 
+const AGENT_ID = /(agent-)([0-9a-f]{8})[0-9a-f]+/g
+const RUN_ID = /wf_([A-Za-z0-9-]+)-(\d+)(?![\w-])/g
+
+/**
+ * Agent ids compact to 8 hex after `agent-`. A workflow run id keeps 6 characters between `wf_` and the last
+ * `-<digits>`, since a run id can hold `-` (spec 10.3). Any other hex string stays as it is.
+ */
+export function compactIds(text: string): string {
+  return text
+    .replace(AGENT_ID, '$1$2')
+    .replace(RUN_ID, (m, body: string, n: string) => (body.length > 6 ? `wf_${body.slice(0, 6)}-${n}` : m))
+}
+
 /** Wide means a body of 70 columns or more. An unknown width reads as wide. */
 export const isWide = (bodyColumns: number | undefined): boolean => (bodyColumns ?? 80) >= 70
 
@@ -158,6 +171,15 @@ export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismis
         { name: 'status', width: wide ? 10 : 9, wrap: 'truncate-end' },
         { name: 'extra', width: wide ? 10 : 9, wrap: 'truncate-end' },
         { name: 'mark', width: 8, wrap: 'truncate-end' },
+        ...x,
+      ]
+    case 'repos':
+      return [
+        { name: 'key', width: wide ? 24 : 20, wrap: 'truncate-end' },
+        { name: 'title', wrap: 'truncate-middle' },
+        { name: 'type', width: wide ? 20 : 14, wrap: 'truncate-middle' },
+        // The read/edit mark.
+        { name: 'status', width: 5, wrap: 'truncate-end' },
         ...x,
       ]
     case 'items': {

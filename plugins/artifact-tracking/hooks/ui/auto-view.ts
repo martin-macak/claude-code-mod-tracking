@@ -1,25 +1,35 @@
 // The auto sections of the pane (spec 10): Worktrees, Agents, Pull requests, the band parts and the composers.
 // Imports `view.ts` and the contracts. Pure: no `$`, no JSX, no clock.
 
-import type { AgentRow, AutoState, GitHubRecord, ItemRecord, ProcessRecord, ProcessUiState } from '../contracts'
+import type {
+  AgentRow,
+  AutoState,
+  GitHubRecord,
+  ItemRecord,
+  ProcessRecord,
+  ProcessUiState,
+  RepoRecord,
+} from '../contracts'
 import { MASTER_ID } from '../contracts'
 import { processBandPart, processSection } from './process-view'
+import { repoBandPart, repoSection } from './repo-view'
 import type { PaneRow, PaneSection, ViewContext } from './view'
-import { ago, bandParts, buildPane, EMPTY_TEXT, githubRow, isWide, lastRefreshOf, textOf, toolNote } from './view'
+import {
+  ago,
+  bandParts,
+  buildPane,
+  compactIds,
+  EMPTY_TEXT,
+  githubRow,
+  isWide,
+  lastRefreshOf,
+  textOf,
+  toolNote,
+} from './view'
 
-const AGENT_ID = /(agent-)([0-9a-f]{8})[0-9a-f]+/g
-const RUN_ID = /wf_([A-Za-z0-9-]+)-(\d+)(?![\w-])/g
+export { compactIds } // kept here for the callers that import it from the auto view
+
 const SKIPS_WITH_HEADER = new Set(['no-gh', 'not-logged-in', 'paused', 'host-not-authed'])
-
-/**
- * Agent ids compact to 8 hex after `agent-`. A workflow run id keeps 6 characters between `wf_` and the last
- * `-<digits>`, since a run id can hold `-` (spec 10.3). Any other hex string stays as it is.
- */
-export function compactIds(text: string): string {
-  return text
-    .replace(AGENT_ID, '$1$2')
-    .replace(RUN_ID, (m, body: string, n: string) => (body.length > 6 ? `wf_${body.slice(0, 6)}-${n}` : m))
-}
 
 const isDiscoveredPr = (i: ItemRecord): i is GitHubRecord =>
   i.category === 'github' && i.type === 'pr' && i.sources.includes('auto')
@@ -210,15 +220,28 @@ export function autoBandParts(auto: AutoState | null, items: readonly ItemRecord
   ]
 }
 
+function withRepos(itemSections: PaneSection[], repos: readonly RepoRecord[]): PaneSection[] {
+  const section = repoSection(repos)
+  if (!section) return itemSections
+  const web = itemSections.findIndex(s => s.id === 'web')
+  if (web < 0) return [...itemSections, section]
+  return [...itemSections.slice(0, web), section, ...itemSections.slice(web)]
+}
+
 /** Auto sections first, then item sections, then the Processes section when it has rows or a note. */
 export function composePane(
   items: readonly ItemRecord[],
   processes: readonly ProcessRecord[],
   processUi: ProcessUiState,
   ctx: ViewContext,
+  repos: readonly RepoRecord[] = [],
 ): PaneSection[] {
   const proc = processSection(processes, processUi)
-  return [...buildAutoSections(ctx.auto ?? null, items, ctx), ...buildPane(items, ctx), ...(proc ? [proc] : [])]
+  return [
+    ...buildAutoSections(ctx.auto ?? null, items, ctx),
+    ...withRepos(buildPane(items, ctx), repos),
+    ...(proc ? [proc] : []),
+  ]
 }
 
 /** `bandParts(items)`, then auto parts, then `Processes n (k ✗)`; null when all are empty. */
@@ -226,9 +249,11 @@ export function composeBand(
   items: readonly ItemRecord[],
   processes: readonly ProcessRecord[],
   auto: AutoState | null,
+  repos: readonly RepoRecord[] = [],
 ): string | null {
   const p = processBandPart(processes)
-  const parts = [...bandParts(items), ...autoBandParts(auto, items), ...(p ? [p] : [])]
+  const r = repoBandPart(repos)
+  const parts = [...bandParts(items), ...(r ? [r] : []), ...autoBandParts(auto, items), ...(p ? [p] : [])]
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
@@ -238,7 +263,8 @@ export function composeCommandText(
   processes: readonly ProcessRecord[],
   processUi: ProcessUiState,
   ctx: ViewContext,
+  repos: readonly RepoRecord[] = [],
 ): string {
-  const sections = composePane(items, processes, processUi, { ...ctx, folded: [] })
+  const sections = composePane(items, processes, processUi, { ...ctx, folded: [] }, repos)
   return sections.length === 0 ? EMPTY_TEXT : textOf(sections)
 }

@@ -20,7 +20,7 @@ export type * from '../types'
 
 // ---------------------------------------------------------------- process runner
 
-export type RunInit = { timeoutMs?: number; cwd?: string }
+export type RunInit = { timeoutMs?: number; cwd?: string; env?: Record<string, string> }
 
 export type RunResult = {
   exitCode: number
@@ -188,6 +188,9 @@ export const LIMITS = {
   maxDismissed: 500,
   /** `.md` paths read from one prompt or reply row (issue #28). Each one costs a stat. */
   maxMentionsPerRow: 20,
+  maxRepos: 50,
+  maxRepoAgents: 8,
+  maxRepoQueue: 32,
 } as const
 
 export const JIRA_KEY = /^[A-Z][A-Z0-9_]+-\d+$/
@@ -201,8 +204,10 @@ export const AUTO_SOURCES: ReadonlySet<Source> = new Set<Source>(['auto', 'pr-bo
 export const MASTER_ID = 'ag:master'
 export const worktreeId = (path: string): string => `wt:${path}`
 export const agentRowId = (agentId: string): string => `ag:${agentId}`
-/** True for the id of a worktree or agent row, false for an item key. */
-export const isRowId = (id: string): boolean => id.startsWith('wt:') || id.startsWith('ag:')
+/** The id of a repo row (`rp:` + the repo key). A repo key starts with `remote:` or `local:`, so it is no item key. */
+export const repoRowId = (key: string): string => `rp:${key}`
+/** True for the id of a worktree, agent or repo row, false for an item key. */
+export const isRowId = (id: string): boolean => id.startsWith('wt:') || id.startsWith('ag:') || id.startsWith('rp:')
 
 export type GitWorktree = {
   path: string

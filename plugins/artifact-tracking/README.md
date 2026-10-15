@@ -40,8 +40,22 @@ claude --plugin-dir plugins/artifact-tracking
 | Tool output | Explicit GitHub issue and PR URLs and Jira URLs only. No bare `#N`, no web links. |
 | Artifact tool call, also from subagents | A publish, a republish, an Artifact made from a type and an asset upload: the artifact, `published`. A delete marks its row `deleted`. An error, a refusal and the other actions add nothing. |
 | `Write`, `Edit` and `Read` tool calls | A `.md` path: see [Markdown files](#markdown-files). |
+| File tools, Bash and `agent.spawn` | Other git repos that the session or subagents touch (`Read`, `Edit`, `Write`, `NotebookEdit`, `Grep`, `Glob`, `cd`, `git -C`, `gh -R`, spawn `cwd`). |
+
+Repo tracking runs in the background, after the tool has returned. One queue runs the git lookups one at a time and drops new ones when 32 wait. A file-tool call that failed or was denied adds nothing. A denied Bash command adds nothing. A Bash command that failed still counts: it touched the repo. A relative path in a Bash command or a file-tool call starts from the session cwd as it was before the call ran. In a subagent the cwd is unknown, so only absolute paths count. A `Glob` with no `path` and an absolute pattern counts for the part of the pattern before the first glob character. A nested subagent with no `cwd` counts with the `cwd` of its parent.
+
+Each Repos row shows `read` or `edit`. `Edit`, `Write`, `NotebookEdit` and a git write subcommand (`commit`, `add`, `push`, `checkout`, `reset`, `rebase` and the like, after `git -C <dir>` or `cd <dir> &&`) mark the repo `edit`. Edit wins: a later read does not lower it. Everything else is `read`. The mark is a heuristic: a Bash write without git (`sed -i`, `npm install`, `tee`) counts as read. A failed or denied call adds nothing.
+
+Repo tracking has two limits:
+
+- Bash is read only for `cd`, `pushd`, `git -C` and `gh -R`. Other paths in a command are not tracked. A `cd` or `-C` target with `$`, a backtick, `*` or `?`, or with `-`, `~` or `~name`, is skipped.
+- A relative path in a file-tool call of a subagent is ignored.
+
+Each Repos row has an `x` button. It hides the repo for the rest of the run: a later visit, a restore and `/clear` do not bring it back. The dismiss list is not stored, so a new run shows the repo again. When the last repo is dismissed, the flush skips the empty list, so the stored copy may still hold it until the next write.
 
 Not captured: notifications from background tasks, meta rows, prompts that a subagent or a coordinator wrote, and our own `/track` output.
+
+The own repo never shows as a foreign repo. It is the toplevel of the session root, any worktree that shares its git common dir, and any clone with the same `origin`. A repo nested inside the root folder counts as own. A repo without a remote gets a `local:<git common dir>` key, so its worktrees share one row.
 
 | Pattern | Item |
 | --- | --- |
@@ -63,11 +77,11 @@ An artifact row shows its name: the page title from the Artifact tool, else the 
 | `/track refresh` | Forgets "not logged in" and "not found", closes open circuit breakers, refreshes every item, waits, and prints the list. Use it in `claude -p`. |
 | `/track clear` | Removes all items of this session and its stored copy. |
 
-The pane has one section for each of Jira, GitHub, Artifacts, web links and files. A Jira row with children has a `[-]` or `[+]` button. The `Refresh` button (key `r`) does what `/track refresh` does. Esc closes the pane. A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
+The pane has one section for each of Jira, GitHub, Artifacts, Repos, web links and files. A Jira row with children has a `[-]` or `[+]` button. The `Refresh` button (key `r`) does what `/track refresh` does. Esc closes the pane. A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
 
 A deleted artifact stays in its section, dim and without a link.
 
-The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Artifacts 3 · Links 2 · Files 3  /track`. `(n ✗)` counts PRs with failing checks. `Artifacts n` counts the artifacts that are not deleted. The auto parts (Worktrees, Agents, PRs) come after `Files`. The band is empty when nothing is tracked.
+The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Artifacts 3 · Links 2 · Files 3 · Repos 2  /track`. `(n ✗)` counts PRs with failing checks. `Artifacts n` counts the artifacts that are not deleted. `Repos` and the auto parts (Worktrees, Agents, PRs) come after `Files`. The band is empty when nothing is tracked.
 
 ### Markdown files
 

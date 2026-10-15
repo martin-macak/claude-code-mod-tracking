@@ -169,6 +169,29 @@ test('a Bash result with gitOperation.pr runs the discovery after the debounce, 
   expect(await textOf($)).toContain('Opened here')
 })
 
+test('a Bash that names a repo whose git never answers still kicks the PR discovery', async ($, on) => {
+  const w = world(on)
+  repo(w, ['probe-wt', 'worktree-probe-wt'])
+  await $.session.start(START)
+  await enter($, w)
+  await settle(w, WINDOW)
+  const before = queries(w.calls).length
+  w.fake.nodes['head:worktree-probe-wt'] = [prNode({ number: 7, headRefName: 'worktree-probe-wt', title: 'Opened' })]
+  let release: () => void = () => {}
+  const held = new Promise<undefined>(resolve => {
+    release = () => resolve(undefined)
+  })
+  w.fake.run = argv => (argv[0] === 'git' && argv[2] === '/x/sdk' ? held : undefined)
+  w.fake.tools.Bash = ev.BASH_PR_RAN.result
+  try {
+    await $.tool.call({ tool: 'Bash', command: 'git -C /x/sdk status && gh pr create --draft' } as never)
+    await settle(w, WINDOW)
+    expect(queries(w.calls)).toHaveLength(before + 1)
+  } finally {
+    release()
+  }
+})
+
 test('a PR added elsewhere shows within one tick; a base match shows as stacked; the default branch gets no alias', async ($, on) => {
   const w = world(on)
   repo(w, ['probe-wt', 'worktree-probe-wt'])

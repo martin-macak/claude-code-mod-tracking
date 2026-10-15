@@ -128,7 +128,7 @@ export function world(on: On, opts: Opts = {}) {
     /** The id the `agent.spawn` stub answers. */
     spawnId: 'agent-1',
     /** Answers for process probes (docker, tmux, screen, ps). Return undefined to fall through. */
-    run: undefined as ((argv: string[]) => Res | undefined) | undefined,
+    run: undefined as ((argv: string[]) => Res | undefined | Promise<Res | undefined>) | undefined,
     /** Tool results by tool name. */
     tools: {} as Record<string, unknown>,
     /** Whole tool.call replies by tool name, for shapes `{ result }` cannot carry: `{ isError, result }`, `{ deny }`. */
@@ -137,6 +137,8 @@ export function world(on: On, opts: Opts = {}) {
     toolThrows: {} as Record<string, string>,
     /** Files `$.fs.stat` finds: path → where it lands. Any other path rejects ENOENT. */
     files: {} as Record<string, string>,
+    /** The whole `tool.call` answer by tool name, returned as it stands (`{ deny }`, `{ isError: true, ... }`). */
+    toolAnswers: {} as Record<string, unknown>,
     toolRuns: {} as Record<string, number>,
     /** Discovery nodes by `head:<branch>` or `base:<branch>`. */
     nodes: {} as Record<string, unknown[]>,
@@ -230,6 +232,7 @@ export function world(on: On, opts: Opts = {}) {
     fake.toolRuns[tool] = (fake.toolRuns[tool] ?? 0) + 1
     if (tool in fake.toolThrows) throw new Error(fake.toolThrows[tool])
     if (tool in fake.toolReplies) return fake.toolReplies[tool] as never
+    if (Object.hasOwn(fake.toolAnswers, tool)) return fake.toolAnswers[tool] as never
     return { result: fake.tools[tool] as never }
   })
   on('fs.stat', (_$, e) => {
@@ -256,7 +259,7 @@ export function world(on: On, opts: Opts = {}) {
     const [tool, a1, a2, a3, a4] = argv
     if (tool === 'acli' && a1 === '--version' && opts.acliProbeMs) await sleep(opts.acliProbeMs)
     if (opts.missing?.includes(tool!)) return { deny: 'ENOENT: Executable not found in $PATH' }
-    const custom = fake.run?.(argv)
+    const custom = await fake.run?.(argv)
     if (custom) return { value: custom }
     if (a1 === '--version')
       return { value: res(tool === 'gh' ? 'gh version 2.102.0 (2026-09-30)' : 'acli version 1.3.19-stable') }
