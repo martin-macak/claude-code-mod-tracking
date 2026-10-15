@@ -93,6 +93,33 @@ test('a new PR: seenCount 0, source auto, status and refreshedAt from the reply,
   })
 })
 
+const closingRef = (owner: string, repo: string, number: number) => ({
+  host: 'github.com',
+  owner,
+  repo,
+  number,
+  url: `https://github.com/${owner}/${repo}/issues/${number}`,
+})
+
+test('a PR record keeps the issue keys its closing refs name; a PR that closes nothing has no field', () => {
+  const closing = [closingRef('Acme', 'Web', 9), closingRef('other', 'lib', 3)]
+  const r = applyDiscovery([], input({ prs: [discovered({ number: 7, closing })] }))
+  expect((r.list[0] as GitHubRecord).closes).toEqual([K9, 'gh:github.com/other/lib#3'])
+  expect('closes' in applyDiscovery([], input()).list[0]!).toBe(false)
+})
+
+test('a change in the closing refs rewrites the PR record; the same refs keep the list object', () => {
+  const nine = [closingRef('acme', 'web', 9)]
+  const first = applyDiscovery([], input({ prs: [discovered({ closing: nine })] }))
+  const same = applyDiscovery(first.list, input({ prs: [discovered({ closing: [...nine] })], at: AT + 30_000 }))
+  expect(same.list).toBe(first.list)
+  const gone = applyDiscovery(first.list, input({ prs: [discovered({ closing: [] })], at: AT + 30_000 }))
+  expect(gone.list).not.toBe(first.list)
+  expect('closes' in gone.list[0]!).toBe(false)
+  const other = applyDiscovery(first.list, input({ prs: [discovered({ closing: [closingRef('acme', 'web', 8)] })] }))
+  expect((other.list[0] as GitHubRecord).closes).toEqual(['gh:github.com/acme/web#8'])
+})
+
 test('the same reply 30 s later returns the input list object', () => {
   const first = applyDiscovery([], input())
   const second = applyDiscovery(first.list, input({ at: AT + 30_000 }))

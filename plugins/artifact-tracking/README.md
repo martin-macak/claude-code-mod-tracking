@@ -76,6 +76,7 @@ An artifact row shows its name: the page title from the Artifact tool, else the 
 | `/track` | Opens the pane and starts a refresh of the due items. Prints a short list. |
 | `/track refresh` | Forgets "not logged in" and "not found", closes open circuit breakers, refreshes every item, waits, and prints the list. Use it in `claude -p`. |
 | `/track clear` | Removes all items of this session and its stored copy. |
+| `/track prio <ref> <level>` | Sets the priority of one item: `high`, `normal`, `low`, or `auto` to remove your mark. See [Priority](#priority). |
 
 The pane has one section for each of Jira, GitHub, Artifacts, Repos, web links and files. A Jira row with children has a `[-]` or `[+]` button. The `Refresh` button (key `r`) does what `/track refresh` does. Esc closes the pane. A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
 
@@ -117,6 +118,32 @@ Rules:
 - A resume restores file rows from the stored copy, then from the `Write`, `Edit` and `Read` results and the mentions in the transcript. A subagent's writes come back from the stored copy only: its transcript holds no results.
 - Paths only. The mod never reads or stores file contents.
 
+## Priority
+
+Each row in the Jira, GitHub, Artifacts, Web links, Files and Pull requests sections starts with a mark. Worktrees, Agents and Processes rows have none.
+
+| Key | Action on the picked row |
+| --- | --- |
+| `1` | Sets `high`. The row shows `▲`. |
+| `2` | Sets `normal`. No marker. It overrides an auto level. |
+| `3` | Sets `low`. The row shows `▽`. |
+| `0` | Removes your mark. The auto level shows again, if a rule gives one. |
+
+Pick a row first: move the pane's focus ring onto its mark, its fold button or its `x`. Tab always works. The arrows move the ring only while the pane fits its window. In a taller pane they scroll. Then press the digit. The keys work while the pane has the keyboard, and the footer lists them: `1: high  2: normal  3: low  0: auto`. After a key, the ring follows the row to its new place.
+
+Sections sort by level first, then by their usual order. A Jira child row sorts inside its parent. The `/track` text shows the same marker before the key.
+
+A rule can also give a level. It draws dim. Your own mark always wins.
+
+| Rule | Level |
+| --- | --- |
+| An open PR of the session repo whose head is the current branch: the branch of the session's cwd, also after `EnterWorktree`. | `top`, shown `★` |
+| An issue that a tracked PR closes, by GitHub's closing references. | The highest level of those PRs, `low` included. |
+
+`/track prio <ref> <level>` does the same from the prompt, also in `claude -p`. `<ref>` is a Jira key (a child key too), a URL, `o/r#N` or `#N`. `<level>` is `high`, `normal`, `low` or `auto`. The command saves the list before it replies.
+
+The item cap never drops the newest 100 `high` items.
+
 ## Auto tracking
 
 The mod also tracks the work around the session, with no mention:
@@ -156,12 +183,15 @@ A tool that fails three times in a row is paused for 5 minutes (circuit breaker)
 ## Persistence
 
 - Items live in `$.state` and are copied to `$.store` 1.5 s after a change. The store keeps the newest 20 sessions, and each session keeps up to 500 items. Only the extracted fields are stored, never raw CLI output.
-- `/clear` gives a new session. The items of the old session carry over.
+- `/clear` gives a new session. The items of the old session carry over, with their priority marks. The live list wins over an older stored copy.
+- `x` and `/track clear` remove an item with its mark. An item tracked again starts with no mark. A new session starts with no marks.
 - `--resume` and `--continue` restore the stored copy, then add what the transcript holds. Restored items are due for a refresh.
 
 ## Known limits
 
 - **False positives.** `rank #1` counts as issue 1 of the session repo. The scanner cannot tell it from `fixed in #1`.
+- **Focus after a background change.** A refresh or a round can move a row while the focus ring is on it. The ring stays at its old place. Tab moves it again. The keys still act on the row you picked.
+- **Closing references.** An issue takes a PR's level only from the first 10 closing references that GitHub lists for the PR.
 - **Jira sites.** `acli` works on one site at a time. A work item on any other site is `track-only`. The mod never runs `acli jira auth switch`. A host that is not `*.atlassian.net` is also `track-only`.
 - **GitHub Enterprise.** A GHE issue URL is a web link, unless the host is the host of the session repo and `gh` is logged in to it.
 - **Other github.com URLs** (repo pages, commits, files) are web links.

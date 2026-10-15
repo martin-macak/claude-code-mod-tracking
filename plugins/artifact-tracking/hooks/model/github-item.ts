@@ -17,6 +17,8 @@ export class GitHubItem extends TrackedItem implements GitHubTarget {
   isDraft?: boolean
   reviewDecision?: string
   checks?: Checks
+  /** Discovery and a refresh set it; see `GitHubFields.closes`. */
+  closes?: string[]
 
   constructor(
     rec: GitHubRecord,
@@ -34,6 +36,7 @@ export class GitHubItem extends TrackedItem implements GitHubTarget {
     this.isDraft = rec.isDraft
     this.reviewDecision = rec.reviewDecision
     this.checks = rec.checks
+    if (rec.closes) this.closes = [...rec.closes]
   }
 
   /** Needs a resolved repo, a tool that may be called, and an authed host. GHE needs a known yes. */
@@ -67,6 +70,7 @@ export class GitHubItem extends TrackedItem implements GitHubTarget {
       isDraft: this.isDraft,
       reviewDecision: this.reviewDecision,
       checks: this.checks,
+      closes: this.closes === undefined ? undefined : [...this.closes],
     })
   }
 }

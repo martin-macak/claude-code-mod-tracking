@@ -269,6 +269,56 @@ test('buildQuery groups by key and escapes with JSON.stringify', () => {
   expect(query).toContain('statusCheckRollup { state }')
 })
 
+test('buildQuery asks a PR for the issues it closes, capped like discovery', () => {
+  const { query } = buildQuery([item('o', 'r', 2)])
+  const pr = query.slice(query.indexOf('... on PullRequest'))
+  expect(pr).toContain(
+    `closingIssuesReferences(first: ${LIMITS.closingRefsPerPr}) { nodes { number repository { nameWithOwner } } }`,
+  )
+  expect(query.slice(0, query.indexOf('... on PullRequest'))).not.toContain('closingIssuesReferences')
+})
+
+test('a PR refresh reads the issues it closes as item keys; none is an empty list; an issue gets no field', async () => {
+  const pr = (number: number, nodes: unknown[]) => ({
+    issueOrPullRequest: {
+      __typename: 'PullRequest',
+      number,
+      title: 'T',
+      state: 'OPEN',
+      isDraft: false,
+      closingIssuesReferences: { nodes },
+    },
+  })
+  const reply = JSON.stringify({
+    data: {
+      x: pr(7, [
+        { number: 9, url: 'https://github.com/Acme/Web/issues/9', repository: { nameWithOwner: 'Acme/Web' } },
+        { number: 3, repository: { nameWithOwner: 'other/lib' } },
+        { number: 4, repository: {} },
+      ]),
+      y: pr(8, []),
+      z: { issueOrPullRequest: { __typename: 'Issue', number: 9, title: 'I', state: 'OPEN' } },
+    },
+  })
+  const { run } = rig(q => ok(remap(reply, q)))
+  const tool = new GhTool(run, () => NOW)
+  const [p7, p8, i9] = [item('acme', 'web', 7), item('acme', 'web', 8), item('acme', 'web', 9)]
+  await tool.refreshItems([p7!, p8!, i9!])
+  // A ref with no repository is in the PR's own repo, as discovery reads it.
+  expect(p7!.closes).toEqual(['gh:github.com/acme/web#9', 'gh:github.com/other/lib#3', 'gh:github.com/acme/web#4'])
+  expect(p8!.closes).toEqual([])
+  expect('closes' in i9!).toBe(false)
+})
+
+test('a PR reply with no closing field leaves closes out, so the stored list stays', async () => {
+  const { run } = rig(q => ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)))
+  const tool = new GhTool(run, () => NOW)
+  const pr = { ...item('cli', 'cli', 14640)!, closes: ['gh:github.com/cli/cli#1'] }
+  await tool.refreshItems([item('cli', 'cli', 14622)!, pr])
+  expect(pr.type).toBe('pr')
+  expect('closes' in pr).toBe(false)
+})
+
 test('more than 50 distinct items split into chunks of 50 aliases', async () => {
   const { run, graphqlCalls } = rig(q => {
     const data: Record<string, unknown> = {}

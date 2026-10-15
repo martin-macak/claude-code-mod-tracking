@@ -33,6 +33,7 @@ export type ItemError = { kind: 'not-found' | 'failed'; message: string; at: num
 export type GitHubType = 'issue' | 'pr' | 'unknown'
 export type GitHubState = 'open' | 'closed' | 'merged'
 export type Checks = 'success' | 'failure' | 'pending' | 'none'
+export type Priority = 'high' | 'normal' | 'low'
 
 export type GitHubFields = {
   host: string
@@ -52,10 +53,13 @@ export type GitHubFields = {
   /** PR branches. Set by discovery only (A8). */
   headRefName?: string
   baseRefName?: string
+  /** Issue keys the PR's closing references name. Set by discovery only, like the branches. Absent when none. */
+  closes?: string[]
 }
 
 export type JiraNode = {
   key: string
+  priority?: Priority
   summary: string
   issueType: string
   status: string
@@ -91,6 +95,7 @@ export type ItemRecordBase = {
   url: string
   /** Display text: Markdown label, title, or host + path. */
   label: string
+  priority?: Priority
   sources: Source[]
   firstSeen: number
   lastSeen: number

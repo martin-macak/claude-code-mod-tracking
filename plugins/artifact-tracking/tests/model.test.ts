@@ -181,6 +181,35 @@ test('JiraItem deep-copies children and round-trips', () => {
   expect(i.children[0]!.summary).toBe('c')
 })
 
+test('every item class round-trips a high and a low mark, a Jira child mark too', () => {
+  for (const priority of ['high', 'low'] as const) {
+    expect(new GitHubItem(gh({ priority }), ghTool().t).toRecord().priority).toBe(priority)
+    const web = new WebLink({
+      key: 'web:https://x.example/',
+      category: 'web',
+      url: 'https://x.example/',
+      label: 'x.example',
+      priority,
+      sources: ['response'],
+      firstSeen: 1,
+      lastSeen: 1,
+      seenCount: 1,
+    })
+    expect(web.toRecord().priority).toBe(priority)
+    const child = { key: 'ISS-2', priority, summary: 'c', issueType: 'Story', status: 'Done', children: [] }
+    const out = new JiraItem(jira({ priority, children: [child] }), acliTool('acme.atlassian.net')).toRecord()
+    expect(out.priority).toBe(priority)
+    expect((out as JiraRecord).children[0]?.priority).toBe(priority)
+  }
+})
+
+test('GitHubItem round-trips the closing refs and never shares the array', () => {
+  const rec = gh({ closes: ['gh:github.com/acme/web#9'] })
+  const out = new GitHubItem(rec, ghTool().t).toRecord()
+  expect(out.closes).toEqual(rec.closes)
+  expect(out.closes).not.toBe(rec.closes)
+})
+
 test('pending uses the short window for a PR only', () => {
   const t = ghTool().t
   expect(new GitHubItem(gh({ type: 'issue', refreshedAt: 0, checks: 'pending' }), t).isDue(LIMITS.pendingStaleMs)).toBe(

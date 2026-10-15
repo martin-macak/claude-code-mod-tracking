@@ -30,6 +30,7 @@ import type {
   GitHubRef,
   GitHubTarget,
   ItemRecord,
+  Priority,
   ProcessRecord,
   ProcessUiState,
   Ref,
@@ -46,7 +47,9 @@ import { AUTO_SOURCES, isRowId, LIMITS, repoRowId } from './contracts'
 import { isRecord } from './json'
 import { dropAuto } from './model/discovered'
 import { artifactOrigin, keyOf } from './model/keys'
+import { rowIdOf, setPriority } from './model/priority'
 import {
+  carryOver,
   hydrate,
   markArtifactDeleted,
   mergeFiles,
@@ -97,6 +100,7 @@ import { composeBand, composeCommandText, composePane } from './ui/auto-view'
 import { renderBand } from './ui/band'
 import { renderSections } from './ui/pane'
 import type { ViewContext } from './ui/view'
+import { focusTargets, markKeys } from './ui/view'
 
 // ------------------------------------------------------------------ state
 
@@ -116,7 +120,9 @@ const ui = atom({ plugin: 'artifact-tracking', key: 'ui' } as const, { folded: [
 const auto = atom({ plugin: 'artifact-tracking', key: 'auto' } as const, emptyAuto() as AutoState)
 
 const PANE = 'track'
-const USAGE = 'Usage: /track [refresh|clear]'
+const USAGE = 'Usage: /track [refresh|clear|prio <ref> <high|normal|low|auto>]'
+/** `/track prio` levels: `auto` removes the person's mark. */
+const PRIO_WORDS = new Set(['high', 'normal', 'low', 'auto'])
 /** D3: the person's own text. Never a machine, a notification or a coordinator. */
 const PERSON = new Set(['composer', 'bridge', 'sdk', 'unclassified'])
 
@@ -159,6 +165,10 @@ let repoTracker: RepoTracker | undefined
 const repoQueue = new RepoQueue()
 /** Bumped by /track clear. A job that began before it writes nothing. */
 let repoGen = 0
+/** The row the priority keys act on. Never stored: a close, a reload or /clear forgets it. */
+let focusedRow: string | undefined
+/** Element key to row id, for the Buttons of the rows with a prio cell as last drawn (`focusTargets`). */
+let focusRows: ReadonlyMap<string, string> = new Map()
 
 // ------------------------------------------------------------------ runtime
 
@@ -521,7 +531,10 @@ async function dismissOne($: EngineInterface, id: string): Promise<void> {
     await setAuto($, s => dismiss(s, [id]))
     // A repo row: setRepos is the choke point that drops it now that the id is on the dismiss list.
     if (id.startsWith('rp:')) await setRepos($, rows => rows)
-    else if (!isRowId(id)) await setItems($, list => list.filter(rec => rec.key !== id))
+    else if (!isRowId(id)) {
+      await setItems($, list => list.filter(rec => rec.key !== id))
+      await schedule($) // the store copy must lose the item too, or /clear brings it back
+    }
   } catch {
     // The row stays. The person can press again.
   }
@@ -555,8 +568,15 @@ async function ensureSession($: EngineInterface): Promise<void> {
   mirror = undefined
   repoMirror = undefined
   processMirror = undefined
+  // The stored copy can predate the last presses: an item the person dismissed since, or a mark they changed.
+  const dismissed = new Set((await currentAuto($)).dismissed)
   const left: SessionSlices = {
-    items: rekeyArtifacts(unionRecords(held.items, stored?.items ?? [])),
+    items: rekeyArtifacts(
+      carryOver(
+        held.items,
+        (stored?.items ?? []).filter(rec => !dismissed.has(rec.key)),
+      ),
+    ),
     repos: mergeRepoRows(stored?.repos ?? [], held.repos),
     processes: mergeProcessRows(stored?.processes ?? [], held.processes),
   }
@@ -1234,6 +1254,33 @@ async function clearAll($: EngineInterface): Promise<void> {
   )
 }
 
+// ------------------------------------------------------------------ priority keys
+
+/**
+ * The priority keys act on the picked row: the row whose Button last took the pane's focus ring, or whose mark was
+ * pressed. `0` (level undefined) removes the person's mark. The row moves when it sorts again, but the ring stays at
+ * its old place (study S3). So the ring is moved to the row's new mark Button, whose key only the next drawing has
+ * (S4). In a test kit `$.ui.focus` has no implementation, and live it may be refused: the move is best effort.
+ */
+async function prioritize($: EngineInterface, level: Priority | undefined): Promise<void> {
+  const id = focusedRow
+  if (id === undefined) return
+  try {
+    arm($)
+    await setItems($, list => setPriority(list, id, level))
+    await schedule($)
+  } catch {
+    return // The mark stays. The person can press again.
+  }
+  try {
+    const sections = composePane(await read($, items), await read($, processes), processUiState, await contextOf($))
+    const key = markKeys(sections).get(id)
+    if (key !== undefined) await $.ui.focus({ requestId: PANE, key })
+  } catch {
+    // The ring stays where it is. The next Tab moves it.
+  }
+}
+
 // ------------------------------------------------------------------ hooks
 
 export const register: Register = on => {
@@ -1309,7 +1356,7 @@ export const register: Register = on => {
       await $.command.register({
         name: 'track',
         description: 'Show tracked GitHub, Jira, artifacts, web links and Markdown files',
-        argumentHint: '[refresh|clear]',
+        argumentHint: '[refresh|clear|prio <ref> <level>]',
       })
     } catch {
       // The command may be refused. Capture and restore still work.
@@ -1375,10 +1422,37 @@ export const register: Register = on => {
       await clearAll($)
       return { text: 'Tracking list cleared.' }
     }
+    // R11: the pane's keys for `claude -p`. The ref keeps its case: Jira keys and repo names need it.
+    const prio = /^prio\s+(\S+)\s+(\S+)$/i.exec(e.args.trim())
+    const word = prio?.[2]?.toLowerCase()
+    if (prio && word !== undefined && PRIO_WORDS.has(word)) {
+      const ref = prio[1] ?? ''
+      await ensureRepo($)
+      const id = rowIdOf(await read($, items), ref, { defaultRepo: sessionRepo ?? null, githubHosts })
+      if (id === undefined) return { text: `Not tracked: ${ref}` }
+      await setItems($, list => setPriority(list, id, word === 'auto' ? undefined : (word as Priority)))
+      try {
+        await flush($) // `claude -p` can exit right after the reply: save now, not after flushMs
+      } catch {
+        // The next change saves it.
+      }
+      return { text: await listText($) }
+    }
     return { text: USAGE }
   }).catch(() => ({ text: 'artifact-tracking: could not run the command.' }))
 
+  // The person moves the pane's ring. A Button of an item row picks that row; the footer keys keep the pick, so
+  // Enter on `1: high` still acts on it. Another Button, or one of the engine's own stops, drops it.
+  on('ui.focus', { requestId: PANE }, (_$, e, next) => {
+    const id = e.element === undefined ? undefined : focusRows.get(e.element)
+    if (id !== undefined) focusedRow = id
+    else if (e.element !== undefined ? !e.element.startsWith('prio-') : e.origin?.kind === 'person')
+      focusedRow = undefined
+    return next(e)
+  }).catch((_$, e, next) => next(e))
+
   on('ui.close', { id: PANE }, async ($, e, next) => {
+    focusedRow = undefined
     try {
       await update($, ui, u => ({ folded: u?.folded ?? [], paneOpen: false }))
     } catch {
@@ -1397,6 +1471,7 @@ export const register: Register = on => {
       await contextOf($, e.props.bodyColumns),
       await read($, repos),
     )
+    focusRows = focusTargets(sections)
     return renderSections(el, sections, e.props.bodyColumns, {
       fold: id => {
         void update($, ui, u => {
@@ -1415,6 +1490,12 @@ export const register: Register = on => {
       },
       dismiss: id => {
         void dismissOne($, id)
+      },
+      focus: id => {
+        focusedRow = id
+      },
+      prioritize: level => {
+        void prioritize($, level)
       },
     })
   }).catch(($, e) => {
