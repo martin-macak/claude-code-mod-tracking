@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-const ID = /^(R\d+)\b\s*(.*)$/
+const ID = /^(R\d+[a-z]*)\s*(.*)$/
 
 export function splitRow(line) {
   return line
@@ -60,7 +60,10 @@ export function parseStudy(md) {
   const items = new Map()
   for (const row of score?.rows ?? []) {
     const m = ID.exec(row.item)
-    if (!m) continue
+    if (!m) {
+      warnings.push(`Score row skipped: no item id in "${row.item}"`)
+      continue
+    }
     items.set(m[1], {
       id: m[1],
       name: m[2],
@@ -90,7 +93,7 @@ export function parseStudy(md) {
     kind: 'study',
     title: head[1].trim(),
     overall: verdict ? { verdict: verdict[1].trim(), mean: mean ? Number(mean[1]) : null } : null,
-    items: [...items.values()].sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1))),
+    items: [...items.values()].sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })),
     warnings,
   }
 }
