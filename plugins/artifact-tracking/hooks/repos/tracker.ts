@@ -305,7 +305,6 @@ type ResolvedRepo = {
   key: string
   name: string
   root?: string
-  branch?: string
   /** Absolute git common dir. Equal for a repo and its worktrees. Identity only: never stored in a row. */
   common: string
 }
@@ -317,7 +316,7 @@ type TrackerDeps = {
   rootRepo?: RepoRef | null
 }
 
-export type RepoVisit = Omit<ResolvedRepo, 'common'> & { touchedBy: string; mode: RepoMode }
+export type RepoVisit = Omit<ResolvedRepo, 'common'> & { branch?: string; touchedBy: string; mode: RepoMode }
 
 /**
  * Every git and sh call runs in `/`: a cwd that is a file or a missing directory would make the spawn itself fail.
@@ -335,10 +334,10 @@ type Answer = ResolvedRepo | null | 'missing'
 
 const isAbsolute = (p: string): boolean => p.startsWith('/')
 
-function visitOf(r: ResolvedRepo, touchedBy: string, mode: RepoMode): RepoVisit {
+function visitOf(r: ResolvedRepo, branch: string | undefined, touchedBy: string, mode: RepoMode): RepoVisit {
   const out: RepoVisit = { key: r.key, name: r.name, touchedBy, mode }
   if (r.root !== undefined) out.root = r.root
-  if (r.branch !== undefined) out.branch = r.branch
+  if (branch !== undefined) out.branch = branch
   return out
 }
 
@@ -348,6 +347,12 @@ export class RepoTracker {
   private readonly cache = new Map<string, { value: Answer; at: number }>()
   private readonly pending = new Map<string, Promise<Answer | 'retry'>>()
   private readonly byRoot = new Map<string, ResolvedRepo>()
+  /**
+   * The branch of each root, apart from the cached `ResolvedRepo`. `at` is the last good read (or the first try).
+   * A fault keeps the old value and `at`, so the next visit tries again until the breaker opens.
+   */
+  private readonly branches = new Map<string, { branch?: string; at: number }>()
+  private readonly branchPending = new Map<string, Promise<void>>()
   private env: Promise<Env | undefined> | undefined
 
   constructor(private readonly d: TrackerDeps) {}
@@ -431,7 +436,10 @@ export class RepoTracker {
     for (let up = 0; up <= MAX_WALK; up++) {
       const r = await this.lookup(dir, env)
       if (r === 'retry') return null
-      if (r !== 'missing') return r && !this.isOwn(r, own) ? visitOf(r, touchedBy, mode) : null
+      if (r !== 'missing') {
+        if (!r || this.isOwn(r, own)) return null
+        return visitOf(r, r.root === undefined ? undefined : await this.freshBranch(r.root), touchedBy, mode)
+      }
       if (dir === '/') return null
       dir = dir.slice(0, dir.lastIndexOf('/')) || '/'
     }
@@ -550,6 +558,7 @@ export class RepoTracker {
       this.breaker.failure(now) // the branch is optional: go on without it
     }
     if (!branchFailed) this.breaker.success()
+    this.branches.set(root, branch ? { branch, at: this.d.now() } : { at: this.d.now() })
 
     const parsed = remote ? parseRemote(remote) : null
     const id = parsed
@@ -558,9 +567,41 @@ export class RepoTracker {
         ? normalizeRemoteUrl(remote)
         : localIdentity(common)
     const resolved: ResolvedRepo = { ...id, root, common }
-    if (branch) resolved.branch = branch
     this.byRoot.set(root, resolved)
     return resolved
+  }
+
+  /**
+   * The branch of a known repo, re-read at most once per `LIMITS.tickMs`. It runs inside the queued job, never on the
+   * hook path. Parallel visits share one call. A fault (or an open breaker) keeps the old value and `at`.
+   * Limit: a detached HEAD prints nothing, so the visit has no branch and `upsertRepoRows` keeps the branch of the
+   * row. The row can show a stale branch until the repo is on a branch again.
+   */
+  private async freshBranch(root: string): Promise<string | undefined> {
+    const cur = this.branches.get(root)
+    if (cur && this.d.now() - cur.at < LIMITS.tickMs) return cur.branch
+    let p = this.branchPending.get(root)
+    if (!p) {
+      p = (async () => {
+        try {
+          const now = this.d.now()
+          if (!this.breaker.allows(now)) return
+          try {
+            const b = await call(this.d.run, ['git', '-C', root, 'branch', '--show-current'])
+            this.breaker.success()
+            const branch = b.exitCode === 0 ? b.stdout.trim() : ''
+            this.branches.set(root, branch ? { branch, at: now } : { at: now })
+          } catch {
+            this.breaker.failure(now)
+          }
+        } finally {
+          this.branchPending.delete(root)
+        }
+      })()
+      this.branchPending.set(root, p)
+    }
+    await p
+    return this.branches.get(root)?.branch
   }
 }
 

@@ -848,3 +848,73 @@ test('repoBaseDir: the session cwd for the main loop, none for a subagent', () =
   expect(repoBaseDir('/w', 'a1')).toBeUndefined()
   expect(repoBaseDir(undefined, undefined)).toBeUndefined()
 })
+
+// ---------------------------------------------------------------- branch refresh (m12)
+
+test('RepoTracker: the branch of a known repo is re-read after one tick, off the cached lookup', async () => {
+  let now = 5_000
+  let branch: string | Error = 'main'
+  const calls: string[] = []
+  const run = async (argv: readonly string[]): Promise<RunResult> => {
+    if (argv[0] === 'sh') return SH
+    calls.push(`${argv[2]} ${argv.slice(3).join(' ')}`)
+    if (argv[3] === 'rev-parse') return argv[2] === '/x/repo' ? ok('/x/repo\n/x/repo/.git\n') : ok(GIT_SDK)
+    if (argv[3] === 'remote')
+      return ok(argv[2] === '/x/repo' ? 'git@github.com:acme/web.git\n' : 'git@github.com:acme/sdk.git\n')
+    if (branch instanceof Error) throw branch
+    return ok(`${branch}\n`)
+  }
+  // Only the calls for the sdk repo. The session root is a repo too, so its identity stays cached.
+  const count = (what: string) => calls.filter(c => c.startsWith(`/x/sdk ${what}`)).length
+  const t = new RepoTracker({ run, now: () => now, rootPath: '/x/repo', rootRepo: ROOT })
+  const start = now
+  expect(await t.resolvePath('/x/sdk/a.ts', 'main')).toMatchObject({ branch: 'main' })
+  const revParses = count('rev-parse')
+  const remotes = count('remote')
+  expect(count('branch --show-current')).toBe(1)
+
+  branch = 'feat'
+  now = start + LIMITS.tickMs - 1
+  expect(await t.resolvePath('/x/sdk/a.ts', 'main')).toMatchObject({ branch: 'main' })
+  expect(count('branch --show-current')).toBe(1)
+
+  now = start + LIMITS.tickMs
+  expect(await t.resolvePath('/x/sdk/a.ts', 'main')).toMatchObject({ branch: 'feat' })
+  expect(count('branch --show-current')).toBe(2)
+  expect(count('rev-parse')).toBe(revParses)
+  expect(count('remote')).toBe(remotes)
+
+  // Inside the new tick no call. After it, a fault keeps the old branch and counts against the breaker.
+  now += LIMITS.tickMs - 1
+  expect(await t.resolvePath('/x/sdk/a.ts', 'main')).toMatchObject({ branch: 'feat' })
+  expect(count('branch --show-current')).toBe(2)
+  branch = new Error('timeout')
+  for (let i = 0; i < LIMITS.breakerThreshold; i++) {
+    now += LIMITS.tickMs
+    expect(await t.resolvePath('/x/sdk/a.ts', 'main')).toMatchObject({ branch: 'feat' })
+  }
+  expect(count('branch --show-current')).toBe(2 + LIMITS.breakerThreshold)
+  now += 1 // the old branch is still stale, but the open breaker allows no call
+  expect(await t.resolvePath('/x/sdk/a.ts', 'main')).toMatchObject({ branch: 'feat' })
+  expect(count('branch --show-current')).toBe(2 + LIMITS.breakerThreshold)
+})
+
+test('RepoTracker: parallel visits after a tick share one branch call', async () => {
+  let now = 1
+  let branch = 'main'
+  let branchCalls = 0
+  const run = async (argv: readonly string[]): Promise<RunResult> => {
+    if (argv[0] === 'sh') return SH
+    if (argv[3] === 'rev-parse') return argv[2] === '/x/repo' ? notRepo : ok(GIT_SDK)
+    if (argv[3] === 'remote') return ok('git@github.com:acme/sdk.git\n')
+    branchCalls++
+    return ok(`${branch}\n`)
+  }
+  const t = new RepoTracker({ run, now: () => now, rootPath: '/x/repo', rootRepo: ROOT })
+  await t.resolvePath('/x/sdk/a.ts', 'main')
+  branch = 'feat'
+  now += LIMITS.tickMs
+  const out = await Promise.all([t.resolvePath('/x/sdk/a.ts', 'main'), t.resolvePath('/x/sdk/b.ts', 'helper')])
+  expect(out.map(v => v?.branch)).toEqual(['feat', 'feat'])
+  expect(branchCalls).toBe(2)
+})
