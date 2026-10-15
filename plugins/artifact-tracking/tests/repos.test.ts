@@ -152,6 +152,18 @@ test('parseRepoHintsFromBash marks a git write subcommand as edit and anything e
   expect(parseRepoHintsFromBash('gh pr create -R acme/sdk').repos).toHaveLength(1)
 })
 
+test('parseRepoHintsFromBash keeps a cd inside a subshell out of later commands', () => {
+  const paths = (cmd: string, cwd?: string) => parseRepoHintsFromBash(cmd, cwd).paths.map(h => h.path)
+  const sub = paths('(cd /a/sdk && make); git -C rel status', '/work')
+  expect(sub).toContain('/work/rel')
+  expect(sub).not.toContain('/a/sdk/rel')
+  expect(paths('(cd /a); (git -C rel status)', '/work')).toEqual(['/a', '/work/rel'])
+  expect(paths('x=$(cd /a && pwd); git -C rel status', '/work')).toEqual(['/a', '/work/rel'])
+  expect(paths('{ cd /a/sdk; }; git -C rel status', '/work')).toEqual(['/a/sdk', '/a/sdk/rel'])
+  expect(paths('cd /a && (cd b) && git -C c status', '/work')).toEqual(['/a', '/a/b', '/a/c'])
+  expect(paths('cd /a && (cd b && (cd c); git -C d status)', '/work')).toEqual(['/a', '/a/b', '/a/b/c', '/a/b/d'])
+})
+
 test('isNoisePath filters tmp, scratchpad, node_modules and claude config paths', () => {
   for (const p of ['/tmp/x', '/private/tmp/x', '/w/node_modules/pkg/a.ts', '/x/scratchpad/run.md', '~/.claude/plugins'])
     expect(isNoisePath(p)).toBe(true)

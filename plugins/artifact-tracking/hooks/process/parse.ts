@@ -1,6 +1,6 @@
 import type { ProcessRecord, ProcessState } from '../contracts'
 import { isRecord } from '../json'
-import { resolvePath, splitShell, stripWrappers } from './shell'
+import { resolvePath, scopedDir, splitShell, stripWrappers } from './shell'
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined)
 
@@ -306,8 +306,9 @@ export function parseBashProcesses(
   const detached: Detached[] = []
   let lastBg: Detached | undefined
   const pids = pidLines(stdout)
+  // `export` stays global on purpose: a subshell scope is not tracked for env, only for the directory.
   const exported: Record<string, string> = {}
-  let dir = cwd
+  const dirs = scopedDir(cwd)
 
   for (const seg of splitShell(command)) {
     const pre = stripWrappers(seg.words)
@@ -320,7 +321,7 @@ export function parseBashProcesses(
 
     if (head === 'cd' || head === 'pushd') {
       const target = words.slice(1).find(w => !w.startsWith('-'))
-      dir = target === undefined || target === '~' ? undefined : resolvePath(dir, target)
+      dirs.set(seg.scope, target === undefined || target === '~' ? undefined : resolvePath(dirs.get(seg.scope), target))
       continue
     }
     if (head === 'export') {
@@ -347,7 +348,7 @@ export function parseBashProcesses(
     if (docker.kind === 'compose') {
       const up = composeUp(docker.args)
       if (up) {
-        const project = composeProject(up, env, dir)
+        const project = composeProject(up, env, dirs.get(seg.scope))
         rows.push({
           id: `docker:compose:${project}`,
           kind: 'docker-compose',

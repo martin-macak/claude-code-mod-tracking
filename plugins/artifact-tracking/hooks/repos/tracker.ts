@@ -1,7 +1,7 @@
 import { basename, normPath } from '../auto/porcelain'
 import type { RepoRecord, RepoRef, Runner, RunResult } from '../contracts'
 import { LIMITS } from '../contracts'
-import { resolvePath, splitShell, stripWrappers } from '../process/shell'
+import { resolvePath, scopedDir, splitShell, stripWrappers } from '../process/shell'
 import { parseRemote } from '../scan/refs'
 import { CircuitBreaker } from '../tools/circuit-breaker'
 
@@ -257,19 +257,22 @@ export function repoBaseDir(cwd: string | undefined, agentId: string | undefined
 export function parseRepoHintsFromBash(command: string, cwd?: string): { paths: RepoHit[]; repos: RepoRef[] } {
   const paths: RepoHit[] = []
   const repos: RepoRef[] = []
-  let dir = cwd
+  // A cd moves only its own subshell and the ones inside it.
+  const dirs = scopedDir(cwd)
   for (const seg of splitShell(command)) {
     const words = stripWrappers(seg.words).words
     if (words.length === 0) continue
     const head = words[0]!
+    let dir = dirs.get(seg.scope)
     if (head === 'popd') {
-      dir = undefined
+      dirs.set(seg.scope, undefined)
       continue
     }
     if (head === 'cd' || head === 'pushd') {
       // An option is a dash word of two or more characters. A lone `-` is the previous directory.
       const target = words.slice(1).find(w => w === '-' || !w.startsWith('-'))
       dir = moveTo(dir, target)
+      dirs.set(seg.scope, dir)
       if (dir && isAbs(dir)) paths.push({ path: dir, mode: 'read' })
       continue
     }
