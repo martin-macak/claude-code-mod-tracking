@@ -120,7 +120,7 @@ Rules:
 
 ## Priority
 
-Each row in the Jira, GitHub, Artifacts, Web links, Files and Pull requests sections starts with a mark. Worktrees, Agents and Processes rows have none.
+Each row in the Jira, GitHub, Artifacts, Web links, Files and Pull requests sections starts with a mark. Worktrees, Agents, Repos and Processes rows have none.
 
 | Key | Action on the picked row |
 | --- | --- |
