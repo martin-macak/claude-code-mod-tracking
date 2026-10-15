@@ -146,6 +146,7 @@ export type HydratedItem =
   | (Refreshable & GitHubTarget & { readonly category: 'github' })
   | (Refreshable & JiraTarget & { readonly category: 'jira' })
   | (Refreshable & { readonly category: 'web' })
+  | (Refreshable & { readonly category: 'file' })
 
 export type Sighting = { source: Source; at: number }
 
@@ -177,6 +178,8 @@ export const LIMITS = {
   maxProofs: 100,
   maxAgents: 200,
   maxDismissed: 500,
+  /** `.md` paths read from one prompt or reply row (issue #28). Each one costs a stat. */
+  maxMentionsPerRow: 20,
 } as const
 
 export const JIRA_KEY = /^[A-Z][A-Z0-9_]+-\d+$/

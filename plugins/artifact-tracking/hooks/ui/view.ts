@@ -4,6 +4,7 @@
 import type {
   AutoState,
   Category,
+  FileRecord,
   GitHubRecord,
   ItemRecord,
   JiraNode,
@@ -12,6 +13,7 @@ import type {
   ToolStatus,
   WebRecord,
 } from '../contracts'
+import { relativeToRoot } from '../scan/files'
 
 /** The `/track` text when nothing is tracked. */
 export const EMPTY_TEXT = 'No tracked items yet.'
@@ -38,11 +40,13 @@ export type PaneRow = {
   dismissId?: string
   /** Wrap mode of the type cell for this row, when it differs from the layout. A stacked PR cuts at the end. */
   typeWrap?: Cell['wrap']
+  /** A short marker after the other cells: `subagent` on a file row. */
+  mark?: string
 }
 
 export type SectionId = 'worktrees' | 'agents' | 'prs' | 'processes' | Category
-export type Layout = 'worktrees' | 'agents' | 'prs' | 'items'
-export type CellName = 'key' | 'title' | 'type' | 'status' | 'extra' | 'x'
+export type Layout = 'worktrees' | 'agents' | 'prs' | 'items' | 'files'
+export type CellName = 'key' | 'title' | 'type' | 'status' | 'extra' | 'mark' | 'x'
 /** One rendered cell. `width` absent: the cell grows. */
 export type Cell = { name: CellName; width?: number; wrap: 'truncate-end' | 'truncate-middle' }
 
@@ -144,6 +148,15 @@ export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismis
         { name: 'type', width: wide ? 26 : 20, wrap: 'truncate-middle' },
         { name: 'status', width: 8, wrap: 'truncate-end' },
         ...(wide ? [{ name: 'extra', width: 10, wrap: 'truncate-end' } satisfies Cell] : []),
+        ...x,
+      ]
+    case 'files':
+      return [
+        { name: 'title', wrap: 'truncate-middle' },
+        { name: 'type', width: 9, wrap: 'truncate-end' },
+        { name: 'status', width: wide ? 10 : 9, wrap: 'truncate-end' },
+        { name: 'extra', width: wide ? 10 : 9, wrap: 'truncate-end' },
+        { name: 'mark', width: 8, wrap: 'truncate-end' },
         ...x,
       ]
     case 'items': {
@@ -316,10 +329,30 @@ function webRow(item: WebRecord): PaneRow {
   }
 }
 
+/** One cell per activity, each naming itself; an activity that never happened leaves its cell empty (issue #28). */
+function fileRow(item: FileRecord, ctx: ViewContext): PaneRow {
+  const root = ctx.auto?.root?.cwd
+  return {
+    id: item.key,
+    depth: 0,
+    key: '',
+    title: root ? relativeToRoot(item.label, root) : item.label,
+    ...dismissFor(item),
+    type: item.created ? 'created' : item.mentions > 0 ? 'mentioned' : '',
+    status: item.edits > 0 ? `edited ${item.edits}` : '',
+    tone: 'plain',
+    extra: item.views > 0 ? `viewed ${item.views}` : '',
+    mark: item.bySubagent ? 'subagent' : '',
+    foldable: false,
+    folded: false,
+  }
+}
+
 const SECTIONS: { category: Category; title: string }[] = [
   { category: 'jira', title: 'Jira work items' },
   { category: 'github', title: 'GitHub' },
   { category: 'web', title: 'Web links' },
+  { category: 'file', title: 'Files' },
 ]
 
 export function lastRefreshOf(items: readonly ItemRecord[]): number | undefined {
@@ -331,13 +364,14 @@ export function lastRefreshOf(items: readonly ItemRecord[]): number | undefined 
 
 function noteFor(category: Category, items: readonly ItemRecord[], ctx: ViewContext): string {
   if (category === 'web') return `${items.length} links`
+  if (category === 'file') return `${items.length} files`
   const last = lastRefreshOf(items)
   if (category === 'github') return `gh · ${toolNote(ctx.tools.gh, ctx.now, last)}`
   const site = ctx.tools.acli.site
   return ['acli', ...(site ? [site] : []), toolNote(ctx.tools.acli, ctx.now, last)].join(' · ')
 }
 
-/** Sections in the fixed order jira, github, web. Empty sections are left out. */
+/** Sections in the fixed order jira, github, web, file. Empty sections are left out. */
 export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneSection[] {
   const folded = new Set(ctx.folded)
   const sections: PaneSection[] = []
@@ -350,7 +384,8 @@ export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneS
     for (const item of own) {
       if (item.category === 'jira') jiraRows(item, ctx, folded, rows)
       else if (item.category === 'github') rows.push(githubRow(item, ctx))
-      else rows.push(webRow(item))
+      else if (item.category === 'web') rows.push(webRow(item))
+      else if (item.category === 'file') rows.push(fileRow(item, ctx))
     }
     sections.push({
       id: category,
@@ -358,6 +393,7 @@ export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneS
       title,
       note: noteFor(category, own, ctx),
       rows,
+      ...(category === 'file' ? { layout: 'files' as const } : {}),
       dismissable: rows.some(r => r.dismissId !== undefined),
     })
   }
@@ -366,11 +402,12 @@ export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneS
 
 // ---------------------------------------------------------------- band and command text
 
-/** `Jira 6`, `GitHub 4 (1 ✗)`, `Links 2`. GitHub counts items without source auto. A zero part is left out. */
+/** `Jira 6`, `GitHub 4 (1 ✗)`, `Links 2`, `Files 3`. GitHub counts items without source auto. A zero part is left out. */
 export function bandParts(items: readonly ItemRecord[]): string[] {
   let j = 0
   let g = 0
   let w = 0
+  let f = 0
   let failing = 0
   for (const i of items) {
     if (i.category === 'jira') j++
@@ -378,12 +415,14 @@ export function bandParts(items: readonly ItemRecord[]): string[] {
       if (i.sources.includes('auto')) continue
       g++
       if (i.checks === 'failure') failing++
-    } else w++
+    } else if (i.category === 'web') w++
+    else if (i.category === 'file') f++
   }
   const parts: string[] = []
   if (j > 0) parts.push(`Jira ${j}`)
   if (g > 0) parts.push(`GitHub ${g}${failing > 0 ? ` (${failing} ✗)` : ''}`)
   if (w > 0) parts.push(`Links ${w}`)
+  if (f > 0) parts.push(`Files ${f}`)
   return parts
 }
 
@@ -394,7 +433,7 @@ export function textOf(sections: readonly PaneSection[]): string {
     if (lines.length > 0) lines.push('')
     lines.push(`${s.title}  ${s.note}`)
     for (const r of s.rows) {
-      const cells = [r.key, r.title, r.type, r.status, r.extra ?? ''].filter(c => c !== '')
+      const cells = [r.key, r.title, r.type, r.status, r.extra ?? '', r.mark ?? ''].filter(c => c !== '')
       lines.push('  '.repeat(r.depth + 1) + cells.join('  '))
     }
   }

@@ -23,6 +23,9 @@ export function keyOf(ref: Ref): string {
   }
 }
 
+/** The item key of a Markdown file, `file:<path>`, where `path` is where the file landed (issue #28). */
+export const fileKey = (path: string): string => `file:${path}`
+
 /** The item key of the PR, `gh:<host>/<owner>/<repo>#<n>`. */
 export function prKey(pr: DiscoveredPr): string {
   return keyOf({ category: 'github', host: pr.host, owner: pr.owner, repo: pr.repo, number: pr.number, type: 'pr' })

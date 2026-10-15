@@ -1,7 +1,7 @@
 {
   "name": "artifact-tracking",
   "version": "0.1.0",
-  "description": "Tracks GitHub issues and PRs, Jira work items and web links mentioned in a session. Adds /track and a live pane.",
+  "description": "Tracks GitHub issues and PRs, Jira work items and web links mentioned in a session, and the Markdown files Claude writes, edits, reads or names. Adds /track and a live pane.",
   "author": { "name": "claude-code-mod-tracking" },
   "homepage": "https://github.com/martin-macak/claude-code-mod-tracking/tree/main/plugins/artifact-tracking",
   "repository": "https://github.com/martin-macak/claude-code-mod-tracking",

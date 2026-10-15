@@ -24,6 +24,8 @@ import type {
   AutoReason,
   AutoState,
   DiscoveryApplied,
+  FileActivity,
+  FileRecord,
   GitHubRef,
   GitHubTarget,
   ItemRecord,
@@ -33,14 +35,24 @@ import type {
   RepoRef,
   Runner,
   ScanMode,
+  Sighting,
   Source,
   ToolStatus,
   UiState,
 } from './contracts'
 import { AUTO_SOURCES, isRowId, LIMITS } from './contracts'
+import { isRecord } from './json'
 import { dropAuto } from './model/discovered'
 import { keyOf } from './model/keys'
-import { hydrate, mergeRefs, mergeResults, resolveBareRefs, unionRecords } from './model/registry'
+import {
+  hydrate,
+  mergeFiles,
+  mergeRefs,
+  mergeResults,
+  recordFromFile,
+  resolveBareRefs,
+  unionRecords,
+} from './model/registry'
 import {
   monitorRow,
   parseBashProcesses,
@@ -59,6 +71,15 @@ import {
 } from './process/probe'
 import type { Timer } from './refresh/coordinator'
 import { RefreshCoordinator } from './refresh/coordinator'
+import {
+  type FileTouch,
+  type IgnoreContext,
+  isIgnored,
+  mdCandidates,
+  normalizePath,
+  resolvePath,
+  touchFromToolResult,
+} from './scan/files'
 import { textOfContent } from './scan/links'
 import { commandArgs, extractRefs, parseRemote } from './scan/refs'
 import { AcliTool } from './tools/acli-tool'
@@ -475,10 +496,10 @@ async function resolveRepo($: EngineInterface): Promise<void> {
 /** Scan text and merge the refs into the session list. Never throws into the caller. */
 async function capture($: EngineInterface, text: string, mode: ScanMode, source: Source): Promise<void> {
   if (text === '') return
-  ensureRuntime($)
-  void ensureTick($)
+  arm($)
   await ensureSession($)
   await ensureRepo($)
+  if (mode === 'full') await captureMentions($, text, source).catch(() => {}) // a file fault must not stop the refs
   let refs = extractRefs(text, {
     mode,
     defaultRepo: sessionRepo ?? null,
@@ -534,6 +555,124 @@ async function keepOpenSessionShortRefs(refs: Ref[]): Promise<Ref[]> {
   // GhTool sets either `error` or a normalized lower-case `state` for each queried item.
   const keep = new Set(targets.filter(t => t.error === undefined && t.state === 'open').map(t => t.key))
   return refs.filter(ref => !sameSessionRepo(ref) || keep.has(keyOf(ref)))
+}
+
+// ------------------------------------------------------------------ Markdown files (issue #28)
+
+type FileEnv = { home?: string; configDir?: string; memoryDir?: string }
+
+/** Read once per process: every Write, Edit, Read and mention needs it (issue #28 study, "Resolve and label"). */
+let fileEnvTask: Promise<FileEnv> | undefined
+
+function fileEnv($: EngineInterface): Promise<FileEnv> {
+  fileEnvTask ??= readFileEnv($)
+  return fileEnvTask
+}
+
+/**
+ * HOME, the Claude config dir (`CLAUDE_CONFIG_DIR`, else `$HOME/.claude`) and the `autoMemoryDirectory` setting.
+ * The setting is newer than the pinned types, so it is read as plain data. Unset or unreadable: absent.
+ */
+async function readFileEnv($: EngineInterface): Promise<FileEnv> {
+  const home = await $.env.get('HOME').catch(() => undefined)
+  const dir = await $.env.get('CLAUDE_CONFIG_DIR').catch(() => undefined)
+  const configDir = dir ? normalizePath(dir) : home ? normalizePath(`${home}/.claude`) : undefined
+  const settings: unknown = await $.settings.read().catch(() => undefined)
+  const mem = isRecord(settings) && typeof settings.autoMemoryDirectory === 'string' ? settings.autoMemoryDirectory : ''
+  const memoryDir = mem ? resolvePath(mem, configDir ?? '/', home) : null
+  return { ...(home ? { home } : {}), ...(configDir ? { configDir } : {}), ...(memoryDir ? { memoryDir } : {}) }
+}
+
+/** Where an absolute path lands: the real path from one stat, else the path itself. */
+async function landed($: EngineInterface, path: string): Promise<{ path: string; exists: boolean }> {
+  const st = await $.fs.stat(path, { resolve: true }).catch(() => undefined)
+  if (!st) return { path, exists: false }
+  return { path: st.realPath ? normalizePath(st.realPath) : path, exists: st.kind === 'file' }
+}
+
+/** What a file sighting needs: the cwd of a relative path, HOME for `~/`, and the ignore rule's root and config dir. */
+type FileCtx = IgnoreContext & { cwd: string; home?: string }
+
+/** A subagent's relative path joins its spawn cwd (A6); everything else joins the session cwd. */
+async function fileCtx($: EngineInterface, agentId?: string): Promise<FileCtx> {
+  const auto = await currentAuto($)
+  const spawn = agentId === undefined ? undefined : auto.agents.find(a => a.id === agentId)?.cwd
+  return {
+    ...(await fileEnv($)),
+    cwd: spawn ?? (await $.session.cwd()),
+    ...(auto.root ? { root: auto.root.cwd } : {}),
+  }
+}
+
+/** One sighting of a Markdown file. null: an ignored path, or a mention of a file that is not there. */
+async function sighting(
+  $: EngineInterface,
+  ctx: FileCtx,
+  spelled: string,
+  kind: FileActivity,
+  bySubagent: boolean,
+  s: Sighting,
+): Promise<FileRecord | null> {
+  const label = resolvePath(spelled, ctx.cwd, ctx.home)
+  if (label === null || isIgnored(label, ctx)) return null
+  const hit = await landed($, label)
+  if (kind === 'mentioned' && !hit.exists) return null
+  return recordFromFile({ path: hit.path, label, kind, bySubagent }, s)
+}
+
+/** Drops the views of files that no earlier sighting tracks: a Read alone never adds a row. */
+function withoutLoneViews(list: readonly ItemRecord[], recs: readonly FileRecord[]): FileRecord[] {
+  const known = new Set(list.map(i => i.key))
+  return recs.filter(r => {
+    if (r.views > 0) return known.has(r.key)
+    known.add(r.key)
+    return true
+  })
+}
+
+/** Merges file sightings into the list. A dismissed key never comes back. */
+async function addFiles($: EngineInterface, recs: readonly FileRecord[]): Promise<void> {
+  const dismissed = new Set((await currentAuto($)).dismissed)
+  const wanted = recs.filter(r => !dismissed.has(r.key))
+  if (withoutLoneViews(await read($, items), wanted).length === 0) return // only views of untracked files: no write
+  await setItems($, list => mergeFiles(list, withoutLoneViews(list, wanted)))
+  await schedule($)
+}
+
+/** A Write, Edit or Read result: one sighting of the file it touched. */
+async function captureFileTouch($: EngineInterface, t: FileTouch, agentId: string | undefined): Promise<void> {
+  await ensureSession($)
+  const ctx = await fileCtx($, agentId)
+  const rec = await sighting($, ctx, t.spelled, t.kind, agentId !== undefined, { source: 'tool', at: Date.now() })
+  if (rec) await addFiles($, [rec])
+}
+
+/** `.md` paths that a prompt or reply names and that exist: one `mentioned` sighting each (R8). */
+async function mentionRecords($: EngineInterface, ctx: FileCtx, text: string, s: Sighting): Promise<FileRecord[]> {
+  const recs: FileRecord[] = []
+  for (const name of mdCandidates(text)) {
+    const rec = await sighting($, ctx, name, 'mentioned', false, s)
+    if (rec) recs.push(rec)
+  }
+  return recs
+}
+
+async function captureMentions($: EngineInterface, text: string, source: Source): Promise<void> {
+  if (mdCandidates(text).length === 0) return // most rows name no file: no state read
+  const recs = await mentionRecords($, await fileCtx($), text, { source, at: Date.now() })
+  if (recs.length > 0) await addFiles($, recs)
+}
+
+/** The Write, Edit and Read hooks: track the Markdown file, then count the call as a sign of life (A7). */
+async function onFileTool($: EngineInterface, tool: string, ran: unknown, agentId: string | undefined): Promise<void> {
+  try {
+    arm($)
+    const t = touchFromToolResult(tool, ran)
+    if (t) await captureFileTouch($, t, agentId)
+    await touch($, agentId)
+  } catch {
+    // Tracking a file must not change the tool result.
+  }
 }
 
 // ------------------------------------------------------------------ process tracking
@@ -765,30 +904,42 @@ function backfillText(role: 'user' | 'assistant', text: string): string | null {
   return text.includes('<command-args>') ? commandArgs(text) : text
 }
 
-/** Items from `$.session.messages()`: a `--resume` load fires no append hooks. */
+/**
+ * Items from `$.session.messages()`: a `--resume` load fires no append hooks. File rows come from the Write, Edit
+ * and Read results and the mentions, in transcript order. A subagent's transcript stores no result, so its writes
+ * come back from the stored copy only.
+ */
 async function fromTranscript($: EngineInterface): Promise<ItemRecord[]> {
   const messages = await $.session.messages()
   if (!Array.isArray(messages)) return []
   const batches: { refs: Ref[]; source: Source }[] = []
+  const fileRecs: FileRecord[] = []
   const opts = { defaultRepo: sessionRepo ?? null, githubHosts }
   const toolSite = await activeJiraSite()
+  const ctx = await fileCtx($)
+  const at = Date.now()
   for (const m of messages) {
     const text = backfillText(m.role, m.text)
-    if (text !== null)
+    const source: Source = m.role === 'user' ? 'prompt' : 'response'
+    if (text !== null) {
       batches.push({
         refs: await keepOpenSessionShortRefs(extractRefs(text, { mode: 'full', ...opts, strictShortRefs: true })),
-        source: m.role === 'user' ? 'prompt' : 'response',
+        source,
       })
+      fileRecs.push(...(await mentionRecords($, ctx, text, { source, at })))
+    }
     for (const use of m.toolUses) {
+      const t = touchFromToolResult(use.tool, use)
+      const rec = t && (await sighting($, ctx, t.spelled, t.kind, false, { source: 'tool', at }))
+      if (rec) fileRecs.push(rec)
       if (!use.text) continue
       const refs = filterToolRefsForSite(extractRefs(use.text, { mode: 'urls-only', ...opts }), toolSite)
       if (refs.length > 0) batches.push({ refs, source: 'tool' })
     }
   }
   let list: ItemRecord[] = []
-  const at = Date.now()
   for (const b of batches) if (b.refs.length > 0) list = mergeRefs(list, b.refs, { source: b.source, at }).list
-  return list
+  return mergeFiles(list, withoutLoneViews(list, fileRecs))
 }
 
 /** A stored record comes back due: its status stays for display, its refresh time goes. */
@@ -958,7 +1109,7 @@ export const register: Register = on => {
     try {
       await $.command.register({
         name: 'track',
-        description: 'Show tracked GitHub, Jira and web links',
+        description: 'Show tracked GitHub, Jira, web links and Markdown files',
         argumentHint: '[refresh|clear]',
       })
     } catch {
@@ -1085,6 +1236,26 @@ export const register: Register = on => {
       </Box>
     )
   }).catch((_$, e, next) => next(e)) // a failed read leaves the band to the engine
+
+  // Markdown files that Claude writes, edits or reads (issue #28). Successful calls only; the reply goes back unchanged.
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    const ran = await next(e)
+    await onFileTool($, 'Write', ran, e.agentId)
+    return ran
+  }).catch((_$, e, next) => next(e))
+
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
+    const ran = await next(e)
+    await onFileTool($, 'Edit', ran, e.agentId)
+    return ran
+  }).catch((_$, e, next) => next(e))
+
+  on('tool.call', { tool: 'Read' }, async ($, e, next) => {
+    const ran = await next(e)
+    await onFileTool($, 'Read', ran, e.agentId)
+    return ran
+  }).catch((_$, e, next) => next(e))
+
   // ---------------------------------------------------------------- auto tracking events (spec 7)
 
   on('tool.call', { tool: 'EnterWorktree' }, async ($, e, next) => {

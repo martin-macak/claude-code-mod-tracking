@@ -131,6 +131,12 @@ export function world(on: On, opts: Opts = {}) {
     run: undefined as ((argv: string[]) => Res | undefined) | undefined,
     /** Tool results by tool name. */
     tools: {} as Record<string, unknown>,
+    /** Whole tool.call replies by tool name, for shapes `{ result }` cannot carry: `{ isError, result }`, `{ deny }`. */
+    toolReplies: {} as Record<string, unknown>,
+    /** Tools whose call throws this message, as a tool that fails before it answers. */
+    toolThrows: {} as Record<string, string>,
+    /** Files `$.fs.stat` finds: path → where it lands. Any other path rejects ENOENT. */
+    files: {} as Record<string, string>,
     toolRuns: {} as Record<string, number>,
     /** Discovery nodes by `head:<branch>` or `base:<branch>`. */
     nodes: {} as Record<string, unknown[]>,
@@ -222,7 +228,16 @@ export function world(on: On, opts: Opts = {}) {
   on('tool.call', (_$, e) => {
     const tool = (e as { tool: string }).tool
     fake.toolRuns[tool] = (fake.toolRuns[tool] ?? 0) + 1
+    if (tool in fake.toolThrows) throw new Error(fake.toolThrows[tool])
+    if (tool in fake.toolReplies) return fake.toolReplies[tool] as never
     return { result: fake.tools[tool] as never }
+  })
+  on('fs.stat', (_$, e) => {
+    const real = fake.files[e.path]
+    if (real === undefined) return { deny: `ENOENT: no such file or directory, stat '${e.path}'` }
+    return {
+      value: { kind: 'file', size: 1, mtimeMs: 0, isLink: real !== e.path, ...(e.resolve ? { realPath: real } : {}) },
+    }
   })
 
   const discoveryReply = (query: string): Res => {
@@ -332,6 +347,43 @@ export const toolResult = (content: unknown): SessionAppendInput => ({
 })
 
 export const START = { cwd: '/work', surface: null, isInteractive: false } as const
+
+// ---------------------------------------------------------------- file tool results (issue #28, observed shapes)
+
+export const writeCreated = (filePath: string) => ({
+  type: 'create',
+  filePath,
+  content: '# x',
+  structuredPatch: [],
+  originalFile: null,
+  userModified: false,
+})
+export const writeUpdated = (filePath: string) => ({ ...writeCreated(filePath), type: 'update', originalFile: '# x' })
+export const editDone = (filePath: string) => ({
+  filePath,
+  oldString: 'a',
+  newString: 'b',
+  originalFile: 'a',
+  structuredPatch: [],
+  userModified: false,
+  replaceAll: false,
+})
+export const readDone = (filePath: string) => ({
+  type: 'text',
+  file: { filePath, content: '# x', numLines: 1, startLine: 1, totalLines: 1 },
+})
+
+/** Runs one Write, Edit or Read through the mod with `result` as the tool's answer. Resolves to the reply. */
+export function fileTool(
+  $: Engine,
+  fake: { tools: Record<string, unknown> },
+  tool: 'Write' | 'Edit' | 'Read',
+  result: { filePath?: string; file?: { filePath: string } },
+): Promise<unknown> {
+  fake.tools[tool] = result
+  const file_path = result.filePath ?? result.file?.filePath
+  return $.tool.call({ tool, file_path } as never)
+}
 
 export const PANE = {
   plugin: 'artifact-tracking',

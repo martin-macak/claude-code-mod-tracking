@@ -1,6 +1,15 @@
 // View model: pure functions over ItemRecord[]. No engine, no files.
 import { expect, test } from 'claude-code/testing'
-import type { GitHubRecord, ItemRecord, JiraNode, JiraRecord, ToolStatus, WebRecord } from '../hooks/contracts'
+import { emptyAuto } from '../hooks/auto/ledger'
+import type {
+  FileRecord,
+  GitHubRecord,
+  ItemRecord,
+  JiraNode,
+  JiraRecord,
+  ToolStatus,
+  WebRecord,
+} from '../hooks/contracts'
 import { composeBand, composeCommandText } from '../hooks/ui/auto-view'
 import { ago, bandParts, buildPane, columnsFor, EMPTY_TEXT, toolNote, type ViewContext } from '../hooks/ui/view'
 
@@ -75,9 +84,20 @@ const web = (url: string, label: string, firstSeen = 30): WebRecord => ({
   category: 'web',
 })
 
-test('sections come in order jira, github, web and empty ones are omitted', () => {
-  const items: ItemRecord[] = [web('https://a.dev/x', 'A', 1), pr(1), jira('ISS-1')]
-  expect(buildPane(items, ctx()).map(s => s.category)).toEqual(['jira', 'github', 'web'])
+const file = (path: string, over: Partial<FileRecord> = {}, firstSeen = 40): FileRecord => ({
+  ...base('file:' + path, path, path, firstSeen),
+  category: 'file',
+  created: true,
+  edits: 0,
+  views: 0,
+  mentions: 0,
+  ...over,
+})
+const rooted = (cwd: string): Partial<ViewContext> => ({ auto: { ...emptyAuto(), root: { cwd, at: 1 } } })
+
+test('sections come in order jira, github, web, files and empty ones are omitted', () => {
+  const items: ItemRecord[] = [web('https://a.dev/x', 'A', 1), pr(1), jira('ISS-1'), file('/work/plan.md')]
+  expect(buildPane(items, ctx()).map(s => s.category)).toEqual(['jira', 'github', 'web', 'file'])
   expect(buildPane([pr(1)], ctx()).map(s => s.title)).toEqual(['GitHub'])
   expect(buildPane([], ctx())).toEqual([])
 })
@@ -195,6 +215,45 @@ test('web rows: label as key, link href, host and path as title', () => {
   })
 })
 
+test('file rows: the path relative to the session root in the title, one self-naming cell per activity', () => {
+  const items = [
+    file('/work/docs/plan.md', { edits: 3, views: 2, mentions: 1 }, 1),
+    file('/work/README.md', { created: false, edits: 1, views: 5 }, 2),
+    file('/work/docs/notes.md', { created: false, mentions: 2, views: 1, bySubagent: true }, 3),
+    file('/elsewhere/a.md', { created: false, edits: 1 }, 4),
+  ]
+  const s = buildPane(items, ctx(rooted('/work')))[0]!
+  expect(s).toMatchObject({ id: 'file', layout: 'files', note: '4 files', dismissable: true })
+  const cells = s.rows.map(r => [r.key, r.title, r.type, r.status, r.extra, r.mark])
+  expect(cells).toEqual([
+    ['', 'docs/plan.md', 'created', 'edited 3', 'viewed 2', ''],
+    ['', 'README.md', '', 'edited 1', 'viewed 5', ''],
+    ['', 'docs/notes.md', 'mentioned', '', 'viewed 1', 'subagent'],
+    ['', '/elsewhere/a.md', '', 'edited 1', '', ''],
+  ])
+  expect(s.rows[0]).toMatchObject({ id: 'file:/work/docs/plan.md', dismissId: 'file:/work/docs/plan.md' })
+})
+
+test('file rows: with no session root known the path stays absolute', () => {
+  const rows = buildPane([file('/work/docs/plan.md')], ctx())[0]!.rows
+  expect(rows[0]!.title).toBe('/work/docs/plan.md')
+})
+
+test('file rows: the /track text keeps the long path whole and drops empty cells', () => {
+  const long = '/work/docs/superpowers/specs/2026-10-10-artifact-tracking-design.md'
+  const text = composeCommandText(
+    [file(long, { edits: 2 }), file('/work/b.md', { created: false, mentions: 1, bySubagent: true })],
+    [],
+    PROCESS_UI,
+    ctx(rooted('/work')),
+  )
+  expect(text).toBe(
+    'Files  2 files\n' +
+      '  docs/superpowers/specs/2026-10-10-artifact-tracking-design.md  created  edited 2\n' +
+      '  b.md  mentioned  subagent',
+  )
+})
+
 test('section notes', () => {
   const items: ItemRecord[] = [
     jira('ISS-1', { refreshedAt: NOW - 60_000 }),
@@ -254,10 +313,12 @@ test('composeBand counts categories and failing PRs; null when empty', () => {
     pr(2, { checks: 'success' }),
     pr(3, { checks: 'failure' }),
     web('https://a.dev', 'A'),
+    file('/work/docs/plan.md'),
   ]
-  expect(composeBand(items, [], null)).toBe('Jira 2 · GitHub 3 (2 ✗) · Links 1')
+  expect(composeBand(items, [], null)).toBe('Jira 2 · GitHub 3 (2 ✗) · Links 1 · Files 1')
   expect(composeBand([pr(1)], [], null)).toBe('GitHub 1')
   expect(composeBand([web('https://a.dev', 'A')], [], null)).toBe('Links 1')
+  expect(composeBand([file('/work/docs/plan.md')], [], null)).toBe('Files 1')
   expect(composeBand([], [], null)).toBeNull()
 })
 

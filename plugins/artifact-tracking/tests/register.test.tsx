@@ -3,17 +3,20 @@
 // the state per id, which is what a real /clear does. The live smoke run covers the rest.
 
 import type { Engine } from 'claude-code/testing'
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 import type { ItemRecord, ProcessRecord } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
 import {
   BAND,
   commandRow,
   current,
+  editDone,
+  fileTool,
   graphqlCalls,
   PANE,
   prompt,
   quiet,
+  readDone,
   res,
   response,
   SESSION,
@@ -23,6 +26,8 @@ import {
   track,
   viewCalls,
   world,
+  writeCreated,
+  writeUpdated,
 } from './fixtures/world'
 
 // ---------------------------------------------------------------- capture and refresh
@@ -127,6 +132,287 @@ test('tool-result row: Jira URLs on a foreign site are skipped', async ($, on) =
   const text = (await track($)).text ?? ''
   expect(text).toContain('ISS-101')
   expect(text).not.toContain('ISS-2')
+})
+
+// ---------------------------------------------------------------- Markdown files (issue #28)
+
+const files = async ($: Engine) => (await track($)).text ?? ''
+
+test('files: a Write create shows the path relative to the root and created; the reply passes through', async ($, on) => {
+  const { fake } = world(on)
+  await $.session.start(START)
+  const reply = await fileTool($, fake, 'Write', writeCreated('/work/docs/plan.md'))
+  expect(reply).toEqual({ result: writeCreated('/work/docs/plan.md') })
+  expect(await files($)).toBe('Files  1 files\n  docs/plan.md  created')
+})
+
+test('files: a Write update and an Edit count as edits; a later Write create sets created', async ($, on) => {
+  const { fake } = world(on)
+  await $.session.start(START)
+  await fileTool($, fake, 'Write', writeUpdated('/work/a.md'))
+  expect(await files($)).toBe('Files  1 files\n  a.md  edited 1')
+  await fileTool($, fake, 'Edit', editDone('/work/a.md'))
+  await fileTool($, fake, 'Write', writeCreated('/work/a.md'))
+  expect(await files($)).toBe('Files  1 files\n  a.md  created  edited 2')
+})
+
+test('files: only .md paths count, in any case', async ($, on) => {
+  const { fake } = world(on)
+  await $.session.start(START)
+  for (const p of ['/work/src/a.ts', '/work/docs/plan.md.bak', '/work/README'])
+    await fileTool($, fake, 'Write', writeCreated(p))
+  expect(await files($)).toBe('No tracked items yet.')
+  await fileTool($, fake, 'Edit', editDone('/work/docs/LOUD.MD'))
+  expect(await files($)).toBe('Files  1 files\n  docs/LOUD.MD  edited 1')
+})
+
+test('files: a failed, denied, staged or thrown call adds nothing', async ($, on) => {
+  const { fake } = world(on)
+  await $.session.start(START)
+  fake.toolReplies.Write = {
+    isError: true,
+    result: "Error: Claude requested permissions to write to /work/docs/denied.md, but you haven't granted it yet.",
+  }
+  await $.tool.call({ tool: 'Write', file_path: '/work/docs/denied.md' } as never)
+  fake.toolReplies.Write = { isError: true, result: writeCreated('/work/docs/denied.md') }
+  await $.tool.call({ tool: 'Write', file_path: '/work/docs/denied.md' } as never)
+  fake.toolReplies.Edit = { isError: true, result: 'Error: String to replace not found in file.' }
+  await $.tool.call({ tool: 'Edit', file_path: '/work/docs/denied.md' } as never)
+  fake.toolReplies.Write = { deny: 'blocked by a hook' }
+  await $.tool.call({ tool: 'Write', file_path: '/work/docs/denied.md' } as never).catch(() => {})
+  await fileTool($, fake, 'Write', { ...writeCreated('/work/docs/staged.md'), staged: true } as never)
+  await fileTool($, fake, 'Edit', { ...editDone('/work/docs/staged.md'), staged: true } as never)
+  fake.toolThrows.Write = 'ENOTDIR: not a directory'
+  let thrown = false
+  await $.tool.call({ tool: 'Write', file_path: '/dev/null/x.md' } as never).catch(() => {
+    thrown = true
+  })
+  expect(thrown).toBe(true)
+  expect(await files($)).toBe('No tracked items yet.')
+})
+
+test('files: a refused state write does not change the tool reply', async ($, on) => {
+  const { fake } = world(on, { isolateState: true, denyItemWrites: 5 })
+  await $.session.start(START)
+  const reply = await fileTool($, fake, 'Write', writeCreated('/work/docs/plan.md'))
+  expect(reply).toEqual({ result: writeCreated('/work/docs/plan.md') })
+})
+
+test('files: a relative path joins the session cwd; .. and // spellings are one row', async ($, on) => {
+  const { fake } = world(on)
+  await $.session.start(START)
+  await fileTool($, fake, 'Write', writeCreated('notes.md'))
+  await fileTool($, fake, 'Write', writeUpdated('/work/docs/../notes.md'))
+  await fileTool($, fake, 'Edit', editDone('/work//./notes.md'))
+  expect(await files($)).toBe('Files  1 files\n  notes.md  created  edited 2')
+})
+
+test('files: two spellings that land on one real path are one row, labelled as first spelled', async ($, on) => {
+  const { fake } = world(on)
+  await $.session.start(START)
+  fake.files['/tmp/w/a.md'] = '/private/tmp/w/a.md'
+  fake.files['/private/tmp/w/a.md'] = '/private/tmp/w/a.md'
+  await fileTool($, fake, 'Write', writeCreated('/tmp/w/a.md'))
+  await fileTool($, fake, 'Edit', editDone('/private/tmp/w/a.md'))
+  expect(await files($)).toBe('Files  1 files\n  /tmp/w/a.md  created  edited 1')
+})
+
+test('files: .git, node_modules, auto-memory and the scratchpad are ignored; plans and CLAUDE.md stay', async ($, on) => {
+  const { fake } = world(on)
+  mock.env(on, { HOME: '/home/u' })
+  await $.session.start(START)
+  const pad = '/private/tmp/claude-501/-work/0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d/scratchpad'
+  for (const p of [
+    '/work/.git/notes.md',
+    '/work/NODE_MODULES/x/README.md',
+    '/home/u/.claude/projects/-work/memory/MEMORY.md',
+    `${pad}/notes.md`,
+  ])
+    await fileTool($, fake, 'Write', writeCreated(p))
+  expect(await files($)).toBe('No tracked items yet.')
+  for (const p of ['/home/u/.claude/plans/p.md', '/work/CLAUDE.md', '/work/docs/scratchpad/x.md'])
+    await fileTool($, fake, 'Write', writeCreated(p))
+  expect(await files($)).toBe(
+    'Files  3 files\n  /home/u/.claude/plans/p.md  created\n  CLAUDE.md  created\n  docs/scratchpad/x.md  created',
+  )
+})
+
+test('files: CLAUDE_CONFIG_DIR moves the memory rule', async ($, on) => {
+  const { fake } = world(on)
+  mock.env(on, { HOME: '/home/u', CLAUDE_CONFIG_DIR: '/cfg' })
+  await $.session.start(START)
+  await fileTool($, fake, 'Write', writeCreated('/cfg/projects/x/memory/a.md'))
+  expect(await files($)).toBe('No tracked items yet.')
+  await fileTool($, fake, 'Write', writeCreated('/home/u/.claude/projects/x/memory/b.md'))
+  expect(await files($)).toContain('/home/u/.claude/projects/x/memory/b.md  created')
+})
+
+test('files: the autoMemoryDirectory setting moves the memory rule; ~ joins HOME', async ($, on) => {
+  const { fake } = world(on)
+  mock.env(on, { HOME: '/home/u' })
+  on('settings.read', () => ({ value: { autoMemoryDirectory: '~/notes-mem' } as never }))
+  await $.session.start(START)
+  await fileTool($, fake, 'Write', writeCreated('/home/u/notes-mem/-work/MEMORY.md'))
+  expect(await files($)).toBe('No tracked items yet.')
+  await fileTool($, fake, 'Write', writeCreated('/home/u/notes/a.md'))
+  expect(await files($)).toBe('Files  1 files\n  /home/u/notes/a.md  created')
+})
+
+test('files: a project inside a folder named scratchpad or node_modules keeps its files', async ($, on) => {
+  const { fake } = world(on)
+  await $.session.start({ ...START, cwd: '/home/u/scratchpad/proj' })
+  await fileTool($, fake, 'Write', writeCreated('/home/u/scratchpad/proj/docs/plan.md'))
+  expect(await files($)).toBe('Files  1 files\n  docs/plan.md  created')
+})
+
+test('files: a Read counts a view on a tracked row and never adds a row', async ($, on) => {
+  const { fake } = world(on)
+  await $.session.start(START)
+  await fileTool($, fake, 'Read', readDone('/work/README.md'))
+  expect(await files($)).toBe('No tracked items yet.')
+  await fileTool($, fake, 'Write', writeCreated('/work/docs/plan.md'))
+  await fileTool($, fake, 'Read', readDone('/work/docs/plan.md'))
+  await fileTool($, fake, 'Read', readDone('docs/plan.md'))
+  expect(await files($)).toBe('Files  1 files\n  docs/plan.md  created  viewed 2')
+})
+
+test('files: a reply that names an existing .md adds a mentioned row; a missing one adds nothing', async ($, on) => {
+  const { fake } = world(on)
+  await $.session.start(START)
+  fake.files['/work/README.md'] = '/work/README.md'
+  await $.session.append(response('See `README.md:12` and docs/missing.md.'))
+  expect(await files($)).toBe('Files  1 files\n  README.md  mentioned')
+  await $.session.append(response('README.md again'))
+  await fileTool($, fake, 'Edit', editDone('/work/README.md'))
+  expect(await files($)).toBe('Files  1 files\n  README.md  mentioned  edited 1')
+  await fileTool($, fake, 'Write', writeCreated('/work/README.md'))
+  expect(await files($)).toBe('Files  1 files\n  README.md  created  edited 1')
+})
+
+test("files: the person's prompt and command args count; tool output and ignored paths do not", async ($, on) => {
+  const { fake } = world(on)
+  mock.env(on, { HOME: '/home/u' })
+  await $.session.start(START)
+  for (const p of ['/work/docs/a.md', '/work/docs/b.md', '/work/docs/c.md', '/home/u/notes.md']) fake.files[p] = p
+  fake.files['/work/.git/d.md'] = '/work/.git/d.md'
+  await $.session.append(toolResult('docs/b.md'))
+  await $.session.append(prompt('Check docs/a.md and .git/d.md and ~/notes.md'))
+  await $.session.append(commandRow('<command-args>docs/c.md</command-args>', 'composer'))
+  expect(await files($)).toBe(
+    'Files  3 files\n  docs/a.md  mentioned\n  /home/u/notes.md  mentioned\n  docs/c.md  mentioned',
+  )
+})
+
+test('files: a dismissed row stays dismissed after a later write, edit, read or mention', async ($, on) => {
+  const { fake, calls } = world(on)
+  await $.session.start(START)
+  fake.files['/work/docs/plan.md'] = '/work/docs/plan.md'
+  await fileTool($, fake, 'Write', writeCreated('/work/docs/plan.md'))
+  const ui = (await mountPane($)) as PaneUi & { press(q: unknown): Promise<void> }
+  await ui.press({ key: 'dismiss-file:/work/docs/plan.md' })
+  await quiet(calls)
+  expect(await files($)).toBe('No tracked items yet.')
+  await fileTool($, fake, 'Write', writeUpdated('/work/docs/plan.md'))
+  await fileTool($, fake, 'Edit', editDone('/work/docs/plan.md'))
+  await fileTool($, fake, 'Read', readDone('/work/docs/plan.md'))
+  await $.session.append(response('see docs/plan.md'))
+  expect(await files($)).toBe('No tracked items yet.')
+  await ui.unmount()
+})
+
+test('files: a file row is saved to the stored copy', async ($, on) => {
+  const { fake, clock, calls, store } = world(on)
+  await $.session.start(START)
+  await fileTool($, fake, 'Write', writeCreated('/work/docs/plan.md'))
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await sleep(20)
+  const saved = (store.get('s:' + SESSION) as { items: ItemRecord[] }).items
+  expect(saved).toHaveLength(1)
+  expect(saved[0]).toMatchObject({
+    key: 'file:/work/docs/plan.md',
+    category: 'file',
+    url: '/work/docs/plan.md',
+    label: '/work/docs/plan.md',
+    created: true,
+    edits: 0,
+  })
+})
+
+const storedFile: ItemRecord = {
+  key: 'file:/work/docs/plan.md',
+  category: 'file',
+  url: '/work/docs/plan.md',
+  label: '/work/docs/plan.md',
+  created: true,
+  edits: 2,
+  views: 1,
+  mentions: 0,
+  sources: ['tool'],
+  firstSeen: 1,
+  lastSeen: 1,
+  seenCount: 4,
+}
+
+test('files: session.start restores a file row from the stored copy', async ($, on) => {
+  world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { items: [storedFile] } } })
+  await $.session.start(START)
+  expect(await files($)).toBe('Files  1 files\n  docs/plan.md  created  edited 2  viewed 1')
+})
+
+test('files: a resume skips a file row dismissed in this run', async ($, on) => {
+  const copy = { items: [storedFile] }
+  const { calls } = world(on, {
+    isolateState: true,
+    seed: { index: [SESSION, 'sess-2'], ['s:' + SESSION]: copy, 's:sess-2': copy },
+  })
+  await $.session.start(START) // pins the root, so the dismiss list is carried over to the next id
+  expect(await files($)).toContain('docs/plan.md')
+  const ui = (await mountPane($)) as PaneUi & { press(q: unknown): Promise<void> }
+  await ui.press({ key: 'dismiss-file:/work/docs/plan.md' })
+  await quiet(calls)
+  await ui.unmount()
+  current.id = 'sess-2' // a /resume of a session whose stored copy holds the row
+  expect(await files($)).toBe('No tracked items yet.')
+})
+
+test('files: /clear carries a file row over to the new session', async ($, on) => {
+  const { fake } = world(on)
+  await $.session.start(START)
+  await fileTool($, fake, 'Write', writeCreated('/work/docs/plan.md'))
+  current.id = 'sess-2' // what /clear does
+  expect(await files($)).toBe('Files  1 files\n  docs/plan.md  created')
+})
+
+test('files: a resume rebuilds file rows from Write, Edit and Read results and mentions in the transcript', async ($, on) => {
+  const use = (tool: string, result: unknown, isError = false) => ({
+    tool_use_id: `t-${tool}`,
+    tool,
+    input: {},
+    result,
+    text: '',
+    isError,
+  })
+  const { fake } = world(on, {
+    messages: [
+      { role: 'user', text: 'Please read README.md', toolUses: [] },
+      {
+        role: 'assistant',
+        text: '',
+        toolUses: [
+          use('Read', readDone('/work/docs/old.md')),
+          use('Write', writeCreated('/work/docs/plan.md')),
+          use('Edit', editDone('/work/docs/plan.md')),
+          use('Read', readDone('/work/docs/plan.md')),
+          use('Write', 'Error: denied', true),
+          use('Write', writeCreated('/work/node_modules/x/a.md')),
+        ],
+      },
+    ],
+  })
+  fake.files['/work/README.md'] = '/work/README.md'
+  await $.session.start(START)
+  expect(await files($)).toBe('Files  2 files\n  README.md  mentioned\n  docs/plan.md  created  edited 1  viewed 1')
 })
 
 test('processes: a background Bash task appears and task-notification updates its state', async ($, on) => {
@@ -656,9 +942,18 @@ test('/track right after the first row waits for the probes, so the sections nev
 })
 
 test('/track clear empties the list; an unknown argument prints the usage', async ($, on) => {
-  const { clock, calls } = world(on)
+  const { clock, calls, fake } = world(on)
   await $.session.append(response('https://one.example/'))
+  fake.tools.Write = {
+    type: 'create',
+    filePath: '/work/docs/plan.md',
+    content: '# Plan',
+    structuredPatch: [],
+    originalFile: null,
+  }
+  await $.tool.call({ tool: 'Write', file_path: '/work/docs/plan.md', content: '# Plan' } as never)
   expect((await track($)).text).toContain('one.example')
+  expect((await track($)).text).toContain('docs/plan.md')
   expect((await track($, 'clear')).text).toBe('Tracking list cleared.')
   expect((await track($)).text).toBe('No tracked items yet.')
   expect((await track($, 'bogus')).text).toContain('Usage: /track')

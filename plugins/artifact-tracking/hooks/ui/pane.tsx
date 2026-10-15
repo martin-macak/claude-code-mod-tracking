@@ -76,6 +76,14 @@ function CellBox(el: PaneElements, row: PaneRow, cell: Cell, actions: PaneAction
           </Text>
         </Box>
       )
+    case 'mark':
+      return (
+        <Box key={key} width={cell.width} flexShrink={0}>
+          <Text wrap={cell.wrap} {...toneProps(plain ?? 'dim')}>
+            {row.mark ?? ''}
+          </Text>
+        </Box>
+      )
     case 'x': {
       const id = row.dismissId
       return (
