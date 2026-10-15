@@ -20,6 +20,7 @@ import {
 } from './auto/ledger'
 import { AutoRound } from './auto/round'
 import { AutoScheduler } from './auto/scheduler'
+import { artifactEvent } from './capture/artifact-tool'
 import type {
   AutoReason,
   AutoState,
@@ -43,13 +44,15 @@ import type {
 import { AUTO_SOURCES, isRowId, LIMITS } from './contracts'
 import { isRecord } from './json'
 import { dropAuto } from './model/discovered'
-import { keyOf } from './model/keys'
+import { artifactOrigin, keyOf } from './model/keys'
 import {
   hydrate,
+  markArtifactDeleted,
   mergeFiles,
   mergeRefs,
   mergeResults,
   recordFromFile,
+  rekeyArtifacts,
   resolveBareRefs,
   unionRecords,
 } from './model/registry'
@@ -430,7 +433,7 @@ async function ensureSession($: EngineInterface): Promise<void> {
   const heldProc = processMirror?.id === prev ? processMirror.rows : []
   mirror = undefined
   processMirror = undefined
-  const left = unionRecords(held, stored?.items ?? [])
+  const left = rekeyArtifacts(unionRecords(held, stored?.items ?? []))
   const leftProc = mergeProcessRows(stored?.processes ?? [], heldProc)
   if (held.length > 0 || heldProc.length > 0) await writeStore($, prev, left, leftProc)
   const own = (await $.store.get('s:' + id)) as { items?: ItemRecord[]; processes?: ProcessRecord[] } | undefined
@@ -508,16 +511,36 @@ async function capture($: EngineInterface, text: string, mode: ScanMode, source:
   })
   if (mode === 'full') refs = await keepOpenSessionShortRefs(refs)
   if (source === 'tool' && mode === 'urls-only') refs = await filterToolRefs(refs)
+  await trackRefs($, refs, source)
+}
+
+/** Merge refs into the session list, less the dismissed keys. The common tail of every capture. */
+async function trackRefs($: EngineInterface, refs: readonly Ref[], source: Source): Promise<void> {
   const dismissed = new Set((await currentAuto($)).dismissed)
-  refs = refs.filter(ref => !dismissed.has(keyOf(ref)))
-  if (refs.length === 0) return
+  const keep = refs.filter(ref => !dismissed.has(keyOf(ref)))
+  if (keep.length === 0) return
   let added: string[] = []
   await setItems($, list => {
-    const r = mergeRefs(list, refs, { source, at: Date.now() })
-    added = r.added
-    return r.list
+    const merged = mergeRefs(list, keep, { source, at: Date.now() })
+    added = merged.added
+    return merged.list
   })
   if (added.length > 0) coordinator?.kick('capture', added)
+  await schedule($)
+}
+
+/**
+ * An Artifact tool call (issue #29). A publish tracks the page with source `publish`. A delete marks its row;
+ * a dismissed or unknown artifact gets no row. Errors, refusals and other actions change nothing.
+ */
+async function applyArtifactCall($: EngineInterface, input: unknown, ran: unknown): Promise<void> {
+  const ev = artifactEvent(input, ran)
+  if (!ev) return
+  await ensureSession($)
+  if (ev.kind === 'published') return trackRefs($, [ev.ref], 'publish')
+  const cur = await read($, items)
+  if (markArtifactDeleted(cur, ev.key) === cur) return // no such row: a write would change nothing (A22)
+  await setItems($, list => markArtifactDeleted(list, ev.key))
   await schedule($)
 }
 
@@ -906,13 +929,14 @@ function backfillText(role: 'user' | 'assistant', text: string): string | null {
 
 /**
  * Items from `$.session.messages()`: a `--resume` load fires no append hooks. File rows come from the Write, Edit
- * and Read results and the mentions, in transcript order. A subagent's transcript stores no result, so its writes
- * come back from the stored copy only.
+ * and Read results and the mentions, artifact rows from the Artifact tool uses, in transcript order. A subagent's
+ * transcript stores no result, so its writes and publishes come back from the stored copy only.
  */
 async function fromTranscript($: EngineInterface): Promise<ItemRecord[]> {
   const messages = await $.session.messages()
   if (!Array.isArray(messages)) return []
-  const batches: { refs: Ref[]; source: Source }[] = []
+  // In transcript order, so a delete lands after the publish before it.
+  const batches: ({ refs: Ref[]; source: Source } | { deleted: string })[] = []
   const fileRecs: FileRecord[] = []
   const opts = { defaultRepo: sessionRepo ?? null, githubHosts }
   const toolSite = await activeJiraSite()
@@ -932,13 +956,21 @@ async function fromTranscript($: EngineInterface): Promise<ItemRecord[]> {
       const t = touchFromToolResult(use.tool, use)
       const rec = t && (await sighting($, ctx, t.spelled, t.kind, false, { source: 'tool', at }))
       if (rec) fileRecs.push(rec)
+      if (use.tool === 'Artifact') {
+        const ev = artifactEvent(use.input, use)
+        if (ev?.kind === 'published') batches.push({ refs: [ev.ref], source: 'publish' })
+        else if (ev?.kind === 'deleted') batches.push({ deleted: ev.key })
+      }
       if (!use.text) continue
       const refs = filterToolRefsForSite(extractRefs(use.text, { mode: 'urls-only', ...opts }), toolSite)
       if (refs.length > 0) batches.push({ refs, source: 'tool' })
     }
   }
   let list: ItemRecord[] = []
-  for (const b of batches) if (b.refs.length > 0) list = mergeRefs(list, b.refs, { source: b.source, at }).list
+  for (const b of batches) {
+    if ('deleted' in b) list = markArtifactDeleted(list, b.deleted)
+    else if (b.refs.length > 0) list = mergeRefs(list, b.refs, { source: b.source, at }).list
+  }
   return mergeFiles(list, withoutLoneViews(list, fileRecs))
 }
 
@@ -966,7 +998,12 @@ function keepStored(rec: ItemRecord, activeSite: string | null | undefined): boo
 
 /** Fill the list again at startup: the stored copy of this session, then what the transcript adds. */
 async function restore($: EngineInterface): Promise<void> {
-  if ((await read($, items)).length > 0) return // a hot reload keeps $.state; nothing to restore
+  const live = await read($, items)
+  if (live.length > 0) {
+    // A hot reload keeps $.state: nothing to restore. Rows an older version stored as web links move (R13).
+    if (rekeyArtifacts(live) !== live) await setItems($, rekeyArtifacts)
+    return
+  }
   // Do not wait for the repo: it may need `gh` calls of up to 30 s. Bare #N is re-keyed when it arrives.
   const repoReady = ensureRepo($).catch(() => {})
   const id = await $.session.id()
@@ -974,13 +1011,21 @@ async function restore($: EngineInterface): Promise<void> {
   const copy = (await $.store.get('s:' + id)) as { items?: ItemRecord[]; processes?: ProcessRecord[] } | undefined
   const activeSite = await activeJiraSite()
   const dismissed = new Set((autoMirror ?? emptyAuto()).dismissed)
-  const stored = withoutAuto(copy?.items ?? [])
+  const stored = withoutAuto(rekeyArtifacts(copy?.items ?? []))
     .filter(rec => keepStored(rec, activeSite))
     .filter(rec => rec.error?.kind !== 'not-found')
     .filter(rec => !dismissed.has(rec.key))
     .map(due)
-  const have = new Set(stored.map(r => r.key))
-  const fresh = (await fromTranscript($)).filter(r => !have.has(r.key) && !dismissed.has(r.key))
+  const have = new Map(stored.map(r => [r.key, r]))
+  // A stored key wins over the transcript, except for what only the transcript may know of an artifact:
+  // a publish or a delete that landed after the last flush.
+  const news = (r: ItemRecord): boolean => {
+    const old = have.get(r.key)
+    if (!old) return true
+    if (r.category !== 'artifact' || old.category !== 'artifact') return false
+    return (artifactOrigin(r) === 'published' && artifactOrigin(old) === 'mentioned') || (!!r.deleted && !old.deleted)
+  }
+  const fresh = (await fromTranscript($)).filter(r => news(r) && !dismissed.has(r.key))
   const all = unionRecords(stored, fresh)
   const proc = copy?.processes ?? []
   if (all.length === 0 && proc.length === 0) return
@@ -1104,12 +1149,24 @@ export const register: Register = on => {
     return stored
   }).catch((_$, e, next) => next(e))
 
+  // The Artifact tool: a publish tracks the page, a delete marks its row. The result goes back unchanged.
+  on('tool.call', { tool: 'Artifact' }, async ($, e, next) => {
+    const ran = await next(e)
+    try {
+      arm($)
+      await applyArtifactCall($, e, ran)
+    } catch {
+      // See above.
+    }
+    return ran
+  }).catch((_$, e, next) => next(e))
+
   // Once per process: register the command and load what a resume brought in.
   on('session.start', async ($, e, next) => {
     try {
       await $.command.register({
         name: 'track',
-        description: 'Show tracked GitHub, Jira, web links and Markdown files',
+        description: 'Show tracked GitHub, Jira, artifacts, web links and Markdown files',
         argumentHint: '[refresh|clear]',
       })
     } catch {

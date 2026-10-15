@@ -7,10 +7,12 @@ import { test } from 'node:test'
 import {
   claudeCommand,
   countLines,
+  DEMO_SYSTEM_PROMPT,
   prepareClone,
   READY_MARKERS,
   shellQuote,
   stopHookSettings,
+  TOOLS_SYSTEM_PROMPT,
   trustKey,
   waitForTurnEnd,
 } from '../support/session.ts'
@@ -47,6 +49,21 @@ test('claudeCommand gives claude the exact argv, prompt last', () => {
   assert.equal(argv.at(-1), "Say 'hi'; then stop")
   assert.ok(argv.includes('--settings'))
   assert.ok(argv.includes('--append-system-prompt'))
+})
+
+test('claudeCommand with tools: the tools system prompt and an allow list, prompt still last', () => {
+  const spec = { pluginDir: '/p', model: 'haiku', signalFile: '/s', prompt: 'go', tools: ['Read', 'Artifact'] }
+  const printed = execFileSync('/bin/sh', ['-c', claudeCommand(spec).replace(/^'claude'/, "printf '%s\\n'")], {
+    encoding: 'utf8',
+  })
+  const argv = printed.trimEnd().split('\n')
+  assert.equal(argv[argv.indexOf('--append-system-prompt') + 1], TOOLS_SYSTEM_PROMPT)
+  assert.equal(argv[argv.indexOf('--allowedTools') + 1], 'Read,Artifact')
+  assert.ok(argv[argv.indexOf('--allowedTools') + 2]?.startsWith('--')) // a variadic flag must not take the prompt
+  assert.equal(argv.at(-1), 'go')
+  const demo = claudeCommand({ pluginDir: '/p', model: 'haiku', signalFile: '/s' })
+  assert.ok(demo.includes(shellQuote(DEMO_SYSTEM_PROMPT)))
+  assert.ok(!demo.includes('--allowedTools'))
 })
 
 test('claudeCommand refuses a prompt that looks like a flag', () => {

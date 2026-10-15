@@ -66,9 +66,16 @@ export type JiraRef = {
   trackOnly: boolean
 }
 
+/**
+ * A Claude artifact. `uuid` is the key: both URL forms of one artifact share it. `titled`: the label is the
+ * page title from an Artifact publish, so it replaces the label of a known item. Else it is a Markdown label,
+ * a file name or the id, and a known item keeps a better one.
+ */
+export type ArtifactRef = { category: 'artifact'; uuid: string; url: string; label: string; titled?: true }
+
 export type WebRef = { category: 'web'; url: string; label: string }
 
-export type Ref = GitHubRef | JiraRef | WebRef
+export type Ref = GitHubRef | JiraRef | ArtifactRef | WebRef
 
 /** `full`: every pattern (prompt, command, response rows). `urls-only`: explicit GitHub and Jira URLs (tool-result rows). */
 export type ScanMode = 'full' | 'urls-only'
@@ -145,6 +152,7 @@ export interface Refreshable {
 export type HydratedItem =
   | (Refreshable & GitHubTarget & { readonly category: 'github' })
   | (Refreshable & JiraTarget & { readonly category: 'jira' })
+  | (Refreshable & { readonly category: 'artifact' })
   | (Refreshable & { readonly category: 'web' })
   | (Refreshable & { readonly category: 'file' })
 

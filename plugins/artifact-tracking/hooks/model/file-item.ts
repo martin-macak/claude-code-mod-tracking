@@ -1,8 +1,8 @@
 import type { FileRecord } from '../contracts'
-import { TrackedItem } from './tracked-item'
+import { StaticItem } from './tracked-item'
 
 /** A tracked Markdown file (issue #28). It is track-only: never due, never refreshed. */
-export class FileItem extends TrackedItem {
+export class FileItem extends StaticItem {
   readonly category = 'file' as const
   created: boolean
   edits: number
@@ -17,18 +17,6 @@ export class FileItem extends TrackedItem {
     this.views = rec.views
     this.mentions = rec.mentions
     if (rec.bySubagent) this.bySubagent = true
-  }
-
-  override isDue(_now: number): boolean {
-    return false
-  }
-
-  canRefresh(): boolean {
-    return false
-  }
-
-  async refresh(): Promise<void> {
-    // No-op: the counters change only through tool calls and text.
   }
 
   toRecord(): FileRecord {

@@ -2,6 +2,8 @@
 // No input list or record is mutated.
 
 import type {
+  ArtifactRecord,
+  ArtifactRef,
   FileActivity,
   FileRecord,
   GitHubRecord,
@@ -19,6 +21,9 @@ import type {
   WebRef,
 } from '../contracts'
 import { AUTO_SOURCES, LIMITS } from '../contracts'
+import { artifactIdOf, parseArtifactUrl } from '../scan/artifact-url'
+import { hostPath } from '../scan/refs'
+import { ArtifactItem } from './artifact-item'
 import { FileItem } from './file-item'
 import { GitHubItem } from './github-item'
 import { cloneNodes, JiraItem } from './jira-item'
@@ -80,6 +85,19 @@ function jiraRecord(ref: JiraRef, s: Sighting): JiraRecord {
   }
 }
 
+function artifactRecord(ref: ArtifactRef, s: Sighting): ArtifactRecord {
+  return {
+    key: keyOf(ref),
+    category: 'artifact',
+    url: ref.url,
+    label: ref.label,
+    sources: [s.source],
+    firstSeen: s.at,
+    lastSeen: s.at,
+    seenCount: 1,
+  }
+}
+
 function webRecord(ref: WebRef, s: Sighting): WebRecord {
   return {
     key: keyOf(ref),
@@ -99,6 +117,8 @@ export function recordFromRef(ref: Ref, s: Sighting): ItemRecord {
       return githubRecord(ref, s)
     case 'jira':
       return jiraRecord(ref, s)
+    case 'artifact':
+      return artifactRecord(ref, s)
     case 'web':
       return webRecord(ref, s)
   }
@@ -117,6 +137,28 @@ function cloneRecord<R extends ItemRecord>(rec: R): R {
 const unionSources = (a: readonly Source[], b: readonly Source[]): Source[] => [...new Set([...a, ...b])]
 
 const hasAutoSource = (rec: ItemRecord): boolean => rec.sources.some(s => AUTO_SOURCES.has(s))
+
+// ---------------------------------------------------------------- artifact names (design study on #29, G6)
+
+/** `rank`: 3 a publish title on a sighting, 2 a stored name of a published item, 1 any other name, 0 the id. */
+type Named = { url: string; label: string; published: boolean; rank: number }
+
+function named(rec: ArtifactRecord): Named {
+  const published = rec.sources.includes('publish')
+  const rank = rec.label === artifactIdOf(rec.url) ? 0 : published ? 2 : 1
+  return { url: rec.url, label: rec.label, published, rank }
+}
+
+/**
+ * Name and URL of one artifact seen twice. A published side gives the URL. The better name wins and a tie keeps
+ * `a`, so a mention never renames a published item, while the title of a new publish does (a rename).
+ * An id label follows the URL it came from.
+ */
+function joinNames(out: ArtifactRecord, a: Named, b: Named): void {
+  out.url = b.published && !a.published ? b.url : a.url
+  const best = b.rank > a.rank ? b : a
+  out.label = best.rank === 0 ? artifactIdOf(out.url) : best.label
+}
 
 /**
  * Drops the records with the smallest lastSeen until `cap` is met. Keys in `keep` never go.
@@ -144,6 +186,10 @@ function fold(a: ItemRecord, b: ItemRecord): ItemRecord {
   const winner = (b.refreshedAt ?? -Infinity) > (a.refreshedAt ?? -Infinity) ? b : a
   const loser = winner === a ? b : a
   const out = cloneRecord(winner)
+  if (out.category === 'artifact' && winner.category === 'artifact' && loser.category === 'artifact') {
+    joinNames(out, named(winner), named(loser))
+    if (loser.deleted) out.deleted = true
+  }
   out.sources = unionSources(a.sources, b.sources)
   const via = [...new Set([...(a.via ?? []), ...(b.via ?? [])])]
   if (via.length > 0) out.via = via
@@ -176,6 +222,10 @@ export function mergeRefs(
       continue
     }
     const rec = out[at]!
+    if (rec.category === 'artifact' && ref.category === 'artifact') {
+      const rank = ref.titled ? 3 : ref.label === artifactIdOf(ref.url) ? 0 : 1
+      joinNames(rec, named(rec), { url: ref.url, label: ref.label, published: s.source === 'publish', rank })
+    }
     if (!rec.sources.includes(s.source)) rec.sources.push(s.source)
     rec.seenCount += 1
     rec.lastSeen = s.at
@@ -248,6 +298,7 @@ export function mergeFiles(
 const STATUS_FIELDS = {
   github: ['title', 'state', 'stateReason', 'isDraft', 'reviewDecision', 'checks'],
   jira: ['summary', 'issueType', 'status', 'statusCategory'],
+  artifact: [],
   web: [],
   file: [],
 } as const
@@ -312,6 +363,45 @@ export function resolveBareRefs(list: readonly ItemRecord[], repo: RepoRef): Ite
   return out.filter((r): r is ItemRecord => r !== null)
 }
 
+// ---------------------------------------------------------------- artifacts
+
+/** Marks the artifact row `key` deleted (R12). The input list comes back when no row has the key or it is marked. */
+export function markArtifactDeleted(list: ItemRecord[], key: string): ItemRecord[] {
+  const at = list.findIndex(r => r.key === key)
+  const rec = list[at]
+  if (rec?.category !== 'artifact' || rec.deleted) return list
+  const out = [...list]
+  out[at] = { ...cloneRecord(rec), deleted: true }
+  return out
+}
+
+function artifactFromWeb(rec: WebRecord): ArtifactRecord | null {
+  // A web label without a Markdown label is host and path. The artifact row shows its id instead.
+  const ref = parseArtifactUrl(rec.url, rec.label === hostPath(rec.url) ? undefined : rec.label)
+  if (!ref) return null
+  return { ...cloneRecord(rec), key: keyOf(ref), category: 'artifact', url: ref.url, label: ref.label }
+}
+
+/**
+ * Rows that an older version stored as web links move to Artifacts (R13), folded into a twin with the same key.
+ * The input list comes back when no row moves.
+ */
+export function rekeyArtifacts(list: ItemRecord[]): ItemRecord[] {
+  const moved = list.map(rec => (rec.category === 'web' ? artifactFromWeb(rec) : null))
+  if (moved.every(m => m === null)) return list
+  const out: ItemRecord[] = []
+  const index = new Map<string, number>()
+  list.forEach((rec, i) => {
+    const next = moved[i] ?? cloneRecord(rec)
+    const at = index.get(next.key)
+    if (at === undefined) {
+      index.set(next.key, out.length)
+      out.push(next)
+    } else out[at] = fold(out[at]!, next)
+  })
+  return out
+}
+
 /** Merge for `/clear` carry-over: fold records with the same key, then cap. */
 export function unionRecords(
   a: readonly ItemRecord[],
@@ -340,6 +430,8 @@ export function hydrate(rec: ItemRecord, tools: Tools): HydratedItem {
       return new GitHubItem(rec, tools.gh)
     case 'jira':
       return new JiraItem(rec, tools.acli)
+    case 'artifact':
+      return new ArtifactItem(rec)
     case 'web':
       return new WebLink(rec)
     case 'file':

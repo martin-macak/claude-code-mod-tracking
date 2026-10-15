@@ -16,6 +16,10 @@ export const PERMISSION_MARKERS = [/do you want to (proceed|make this edit|creat
 // Keeps turns short and tool-free, so no permission dialog opens in the recording.
 export const DEMO_SYSTEM_PROMPT =
   'This session is recorded for a short product demo. Answer in one short sentence. Do not use any tools.'
+// For a scenario that must use tools: no questions, no detours.
+export const TOOLS_SYSTEM_PROMPT =
+  'This session is an automated end-to-end test. Do exactly what the prompt asks, with as few tool calls as you can. ' +
+  'Never ask a question. Answer in one short sentence.'
 
 export function shellQuote(s: string): string {
   return `'${s.replaceAll("'", `'\\''`)}'`
@@ -26,7 +30,14 @@ export function stopHookSettings(signalFile: string): string {
   return JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command }] }] } })
 }
 
-export type LaunchSpec = { pluginDir: string; model: string; signalFile: string; prompt?: string }
+export type LaunchSpec = {
+  pluginDir: string
+  model: string
+  signalFile: string
+  prompt?: string
+  /** Tools the session may use without a permission dialog. Absent: the demo session, which uses no tools. */
+  tools?: readonly string[]
+}
 
 export function claudeCommand(spec: LaunchSpec): string {
   const args = [
@@ -38,7 +49,9 @@ export function claudeCommand(spec: LaunchSpec): string {
     '--model',
     spec.model,
     '--append-system-prompt',
-    DEMO_SYSTEM_PROMPT,
+    spec.tools ? TOOLS_SYSTEM_PROMPT : DEMO_SYSTEM_PROMPT,
+    // Variadic: it takes every word up to the next flag, so a flag must follow it, never the prompt.
+    ...(spec.tools ? ['--allowedTools', spec.tools.join(',')] : []),
     '--settings',
     stopHookSettings(spec.signalFile),
   ]
@@ -84,13 +97,21 @@ export function trustKey(screen: string): 'Down' | 'Enter' | undefined {
   return TRUST_CHOSEN.test(screen) ? 'Enter' : 'Down'
 }
 
-export type LaunchContext = { tmux: Tmux; signalFile: string; pluginDir: string; model: string; timeoutMs: number }
+export type LaunchContext = {
+  tmux: Tmux
+  signalFile: string
+  pluginDir: string
+  model: string
+  timeoutMs: number
+  tools?: readonly string[]
+}
 
 // Starts claude in the pane. In the trust dialog it moves to "Yes" before Enter. Ends when the
 // prompt box is idle, or, with a first prompt, when that turn ends.
 export async function launchClaude(ctx: LaunchContext, prompt?: string): Promise<void> {
   const before = countLines(ctx.signalFile)
-  ctx.tmux.respawn(claudeCommand({ pluginDir: ctx.pluginDir, model: ctx.model, signalFile: ctx.signalFile, prompt }))
+  const { pluginDir, model, signalFile, tools } = ctx
+  ctx.tmux.respawn(claudeCommand({ pluginDir, model, signalFile, prompt, ...(tools ? { tools } : {}) }))
   await waitUntil(
     () => {
       const screen = ctx.tmux.capture()

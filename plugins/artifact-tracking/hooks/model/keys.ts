@@ -1,7 +1,7 @@
 // Item keys and the auto-only test (spec 6.2, A9). No state, no I/O. Scan, model and ui import these from here,
 // so none of them has to pull in `registry.ts` or `discovered.ts` for a key.
 
-import type { DiscoveredPr, ItemRecord, Ref } from '../contracts'
+import type { ArtifactOrigin, DiscoveredPr, ItemRecord, Ref, Source } from '../contracts'
 import { AUTO_SOURCES } from '../contracts'
 import { normalizeUrl } from '../scan/links'
 
@@ -18,6 +18,8 @@ export function keyOf(ref: Ref): string {
         : `gh:?#${ref.number}`
     case 'jira':
       return `jira:${ref.site.toLowerCase()}/${ref.issueKey}`
+    case 'artifact':
+      return `art:${ref.uuid}`
     case 'web':
       return `web:${withoutFragment(normalizeUrl(ref.url))}`
   }
@@ -34,4 +36,9 @@ export function prKey(pr: DiscoveredPr): string {
 /** Every source is an auto source: no conversation mention backs the item. */
 export function isAutoOnly(rec: ItemRecord): boolean {
   return rec.sources.length > 0 && rec.sources.every(s => AUTO_SOURCES.has(s))
+}
+
+/** An artifact is `published` once the session's Artifact tool wrote it, else `mentioned`. */
+export function artifactOrigin(rec: { sources: readonly Source[] }): ArtifactOrigin {
+  return rec.sources.includes('publish') ? 'published' : 'mentioned'
 }

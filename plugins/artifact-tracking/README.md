@@ -1,6 +1,6 @@
 # artifact-tracking
 
-A Claude Code mod. It tracks the GitHub issues and pull requests, the Jira work items and the web links that you or Claude mention in a session, and the Markdown files that Claude writes, edits, reads or names. It shows them in a `/track` pane and in a one-line band above the prompt.
+A Claude Code mod. It tracks the GitHub issues and pull requests, the Jira work items, Claude artifacts and the web links that you or Claude mention in a session, and the Markdown files that Claude writes, edits, reads or names. It shows them in a `/track` pane and in a one-line band above the prompt.
 
 `gh` and `acli` are optional. With them, the mod also shows live status: title, state, failing checks, Jira status and the Epic tree.
 
@@ -38,6 +38,7 @@ claude --plugin-dir plugins/artifact-tracking
 | Your slash command | The text inside `<command-args>`. |
 | Claude's reply, also from subagents | Every pattern below. |
 | Tool output | Explicit GitHub issue and PR URLs and Jira URLs only. No bare `#N`, no web links. |
+| Artifact tool call, also from subagents | A publish, a republish, an Artifact made from a type and an asset upload: the artifact, `published`. A delete marks its row `deleted`. An error, a refusal and the other actions add nothing. |
 | `Write`, `Edit` and `Read` tool calls | A `.md` path: see [Markdown files](#markdown-files). |
 
 Not captured: notifications from background tasks, meta rows, prompts that a subagent or a coordinator wrote, and our own `/track` output.
@@ -49,9 +50,10 @@ Not captured: notifications from background tasks, meta rows, prompts that a sub
 | `#N` outside code and URLs | GitHub item of the session repo |
 | `https://<site>.atlassian.net/browse/KEY-1`, `…?selectedIssue=KEY-1` | Jira work item |
 | `/browse/KEY-1` on another host | Jira item, track-only |
+| `https://claude.ai/artifact/<id>`, `https://claude.ai/code/artifact/<uuid>` | Claude artifact, `mentioned`. The two forms of one artifact are one item. Another path or a bad id is a web link. |
 | Any other `http` or `https` URL | Web link. The name is the Markdown label, else host and path. |
 
-The same item written as a URL and as `#N` is one item. The session repo comes from the git `origin` remote. Without a remote, the mod asks `gh repo view` once.
+An artifact row shows its name: the page title from the Artifact tool, else the Markdown label, else the file name or the id. A mention never changes a `published` row back. The same item written as a URL and as `#N` is one item. The session repo comes from the git `origin` remote. Without a remote, the mod asks `gh repo view` once.
 
 ## Commands
 
@@ -61,9 +63,11 @@ The same item written as a URL and as `#N` is one item. The session repo comes f
 | `/track refresh` | Forgets "not logged in" and "not found", closes open circuit breakers, refreshes every item, waits, and prints the list. Use it in `claude -p`. |
 | `/track clear` | Removes all items of this session and its stored copy. |
 
-The pane has one section for each of Jira, GitHub, web links and files. A Jira row with children has a `[-]` or `[+]` button. The `Refresh` button (key `r`) does what `/track refresh` does. Esc closes the pane. A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
+The pane has one section for each of Jira, GitHub, Artifacts, web links and files. A Jira row with children has a `[-]` or `[+]` button. The `Refresh` button (key `r`) does what `/track refresh` does. Esc closes the pane. A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
 
-The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Links 2 · Files 3  /track`. `(n ✗)` counts PRs with failing checks. The auto parts (Worktrees, Agents, PRs) come after `Files`. The band is empty when nothing is tracked.
+A deleted artifact stays in its section, dim and without a link.
+
+The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Artifacts 3 · Links 2 · Files 3  /track`. `(n ✗)` counts PRs with failing checks. `Artifacts n` counts the artifacts that are not deleted. The auto parts (Worktrees, Agents, PRs) come after `Files`. The band is empty when nothing is tracked.
 
 ### Markdown files
 
@@ -151,6 +155,9 @@ A tool that fails three times in a row is paused for 5 minutes (circuit breaker)
 - **`/clear`.** The items come back at the next hook, command or 30 s tick, not at the `/clear` itself. The tick runs from session.start. A `/resume` of a session that the store knows restores that session only, not the one you left.
 - **`--resume` backfill.** The transcript has no `isMeta` or origin flags. The backfill skips the wrappers it knows (`<system-reminder>`, `<teammate-message>`, command output, task notifications). Other meta rows, for example a skill body or a coordinator message, may add items that the live session did not track.
 - **`claude -p "/track"`** ends before its background refresh finishes. Use `/track refresh`.
+- **Artifact tool.** `claude -p` does not offer it, so nothing is published there. A mentioned artifact URL is still tracked.
+- **Artifacts after `--resume`.** The stored copy keeps the origin, the title and the delete mark. Without a stored copy, the transcript gives them back, except for a subagent's publish: the main transcript does not hold it, so its URL comes back `mentioned` at most. Only deletes in this session mark a row.
+- **Older versions** stored artifact URLs as web links. A session moves them to Artifacts when it loads its list.
 - **A narrow terminal.** The pane may wait until you widen the terminal. The mod shows a toast.
 - **Out of scope:** page titles of web links, switching Jira sites, Jira levels above Epic, click capture, write actions on GitHub or Jira, and surfaces other than the terminal.
 
@@ -168,13 +175,14 @@ claude plugin test .
 | Folder | Content |
 | --- | --- |
 | `hooks/register.tsx` | Hooks, command, timers, state, store, render. |
-| `hooks/scan/` | Text to references (`refs.ts`) and the link scanner (`links.ts`). |
+| `hooks/scan/` | Text to references (`refs.ts`), artifact URLs and ids (`artifact-url.ts`), Markdown paths (`files.ts`) and the link scanner (`links.ts`). |
+| `hooks/capture/` | An Artifact tool call as an event (`artifact-tool.ts`), for the hook and the resume backfill. |
 | `hooks/model/` | Items, keys, merge, dedupe, caps. |
 | `hooks/tools/` | `GhTool`, `AcliTool`, the base `Tool` and the circuit breaker. |
 | `hooks/refresh/` | The refresh coordinator. |
 | `hooks/auto/` | Ledger, worktrees, agents, events, scheduler and round of auto tracking. |
 | `hooks/ui/` | The view model, the pane and the band. |
-| `tests/` | Unit tests, fixtures, and the kit tests of the wiring (`register.test.tsx`). |
+| `tests/` | Unit tests, fixtures, and the kit tests of the wiring (`register.test.tsx`, `artifact-wiring.test.tsx`). |
 
 ## CI
 

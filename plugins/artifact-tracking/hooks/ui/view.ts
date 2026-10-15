@@ -2,6 +2,7 @@
 // Spec: docs/superpowers/specs/2026-10-10-artifact-tracking-design.md section 9.
 
 import type {
+  ArtifactRecord,
   AutoState,
   Category,
   FileRecord,
@@ -13,6 +14,8 @@ import type {
   ToolStatus,
   WebRecord,
 } from '../contracts'
+import { artifactOrigin } from '../model/keys'
+import { artifactIdOf } from '../scan/artifact-url'
 import { relativeToRoot } from '../scan/files'
 
 /** The `/track` text when nothing is tracked. */
@@ -110,12 +113,10 @@ export function toolNote(t: ToolStatus, now: number, lastRefresh?: number): stri
 /** Wide means a body of 70 columns or more. An unknown width reads as wide. */
 export const isWide = (bodyColumns: number | undefined): boolean => (bodyColumns ?? 80) >= 70
 
+/** The type cell stays 9 wide: it must hold the artifact origin words `published` and `mentioned`. */
 export function columnsFor(bodyColumns: number | undefined): Columns {
   const cols: Columns = { key: 16, type: 9, status: 13, extra: 10 }
-  if (!isWide(bodyColumns)) {
-    cols.extra = 0
-    cols.type = 6
-  }
+  if (!isWide(bodyColumns)) cols.extra = 0
   return cols
 }
 
@@ -329,6 +330,24 @@ function webRow(item: WebRecord): PaneRow {
   }
 }
 
+/** Name as key, the id as title (blank when the name is the id), the origin as type. A deleted row: dim, no link. */
+function artifactRow(item: ArtifactRecord): PaneRow {
+  const id = artifactIdOf(item.url)
+  return {
+    id: item.key,
+    depth: 0,
+    key: item.label,
+    ...(item.deleted ? { dim: true } : { href: item.url }),
+    title: item.label === id ? '' : id,
+    ...dismissFor(item),
+    type: artifactOrigin(item),
+    status: item.deleted ? 'deleted' : '',
+    tone: item.deleted ? 'dim' : 'plain',
+    foldable: false,
+    folded: false,
+  }
+}
+
 /** One cell per activity, each naming itself; an activity that never happened leaves its cell empty (issue #28). */
 function fileRow(item: FileRecord, ctx: ViewContext): PaneRow {
   const root = ctx.auto?.root?.cwd
@@ -348,11 +367,16 @@ function fileRow(item: FileRecord, ctx: ViewContext): PaneRow {
   }
 }
 
-const SECTIONS: { category: Category; title: string }[] = [
-  { category: 'jira', title: 'Jira work items' },
-  { category: 'github', title: 'GitHub' },
-  { category: 'web', title: 'Web links' },
-  { category: 'file', title: 'Files' },
+/**
+ * Order, titles, band words and layouts of the item sections. `unit`: the note counts rows; the others name their
+ * tool. `layout` absent: 'items'.
+ */
+const SECTIONS: { category: Category; title: string; band: string; unit?: string; layout?: Layout }[] = [
+  { category: 'jira', title: 'Jira work items', band: 'Jira' },
+  { category: 'github', title: 'GitHub', band: 'GitHub' },
+  { category: 'artifact', title: 'Artifacts', band: 'Artifacts', unit: 'artifacts' },
+  { category: 'web', title: 'Web links', band: 'Links', unit: 'links' },
+  { category: 'file', title: 'Files', band: 'Files', unit: 'files', layout: 'files' },
 ]
 
 export function lastRefreshOf(items: readonly ItemRecord[]): number | undefined {
@@ -362,20 +386,19 @@ export function lastRefreshOf(items: readonly ItemRecord[]): number | undefined 
   return last
 }
 
-function noteFor(category: Category, items: readonly ItemRecord[], ctx: ViewContext): string {
-  if (category === 'web') return `${items.length} links`
-  if (category === 'file') return `${items.length} files`
+function noteFor(category: Category, unit: string | undefined, items: readonly ItemRecord[], ctx: ViewContext): string {
+  if (unit) return `${items.length} ${unit}`
   const last = lastRefreshOf(items)
   if (category === 'github') return `gh · ${toolNote(ctx.tools.gh, ctx.now, last)}`
   const site = ctx.tools.acli.site
   return ['acli', ...(site ? [site] : []), toolNote(ctx.tools.acli, ctx.now, last)].join(' · ')
 }
 
-/** Sections in the fixed order jira, github, web, file. Empty sections are left out. */
+/** Sections in the fixed order jira, github, artifact, web, file. Empty sections are left out. */
 export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneSection[] {
   const folded = new Set(ctx.folded)
   const sections: PaneSection[] = []
-  for (const { category, title } of SECTIONS) {
+  for (const { category, title, unit, layout } of SECTIONS) {
     const own = items
       .filter(i => i.category === category && !(i.category === 'github' && i.sources.includes('auto')))
       .sort((a, b) => a.firstSeen - b.firstSeen)
@@ -384,6 +407,7 @@ export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneS
     for (const item of own) {
       if (item.category === 'jira') jiraRows(item, ctx, folded, rows)
       else if (item.category === 'github') rows.push(githubRow(item, ctx))
+      else if (item.category === 'artifact') rows.push(artifactRow(item))
       else if (item.category === 'web') rows.push(webRow(item))
       else if (item.category === 'file') rows.push(fileRow(item, ctx))
     }
@@ -391,9 +415,9 @@ export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneS
       id: category,
       category,
       title,
-      note: noteFor(category, own, ctx),
+      note: noteFor(category, unit, own, ctx),
       rows,
-      ...(category === 'file' ? { layout: 'files' as const } : {}),
+      ...(layout ? { layout } : {}),
       dismissable: rows.some(r => r.dismissId !== undefined),
     })
   }
@@ -402,27 +426,24 @@ export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneS
 
 // ---------------------------------------------------------------- band and command text
 
-/** `Jira 6`, `GitHub 4 (1 ✗)`, `Links 2`, `Files 3`. GitHub counts items without source auto. A zero part is left out. */
+/**
+ * `Jira 6`, `GitHub 4 (1 ✗)`, `Artifacts 2`, `Links 2`, `Files 3`. GitHub counts items without source auto,
+ * Artifacts the rows that are not deleted. A zero part is left out.
+ */
 export function bandParts(items: readonly ItemRecord[]): string[] {
-  let j = 0
-  let g = 0
-  let w = 0
-  let f = 0
+  const counts = new Map<Category, number>()
   let failing = 0
   for (const i of items) {
-    if (i.category === 'jira') j++
-    else if (i.category === 'github') {
-      if (i.sources.includes('auto')) continue
-      g++
-      if (i.checks === 'failure') failing++
-    } else if (i.category === 'web') w++
-    else if (i.category === 'file') f++
+    if (i.category === 'github' && i.sources.includes('auto')) continue
+    if (i.category === 'artifact' && i.deleted) continue
+    counts.set(i.category, (counts.get(i.category) ?? 0) + 1)
+    if (i.category === 'github' && i.checks === 'failure') failing++
   }
   const parts: string[] = []
-  if (j > 0) parts.push(`Jira ${j}`)
-  if (g > 0) parts.push(`GitHub ${g}${failing > 0 ? ` (${failing} ✗)` : ''}`)
-  if (w > 0) parts.push(`Links ${w}`)
-  if (f > 0) parts.push(`Files ${f}`)
+  for (const { category, band } of SECTIONS) {
+    const n = counts.get(category) ?? 0
+    if (n > 0) parts.push(`${band} ${n}${category === 'github' && failing > 0 ? ` (${failing} ✗)` : ''}`)
+  }
   return parts
 }
 

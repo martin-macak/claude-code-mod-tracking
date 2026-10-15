@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { commandArgs, extractRefs, hostPath, parseGitHubUrl, parseJiraUrl, parseRemote } from '../hooks/scan/refs'
+import { PAGE_CODE_URL, PAGE_ID, PAGE_URL, PAGE_UUID } from './fixtures/artifacts'
 
 const repo = { host: 'github.com', owner: 'acme', repo: 'web' }
 const full = (t: string, defaultRepo: typeof repo | null = repo) => extractRefs(t, { mode: 'full', defaultRepo })
@@ -70,6 +71,24 @@ test('full mode: links, labels, issue refs, web links', () => {
       trackOnly: false,
     },
   ])
+})
+
+test('full mode: an artifact link is an artifact, not a web link, and keeps its Markdown label', () => {
+  expect(full(`See [Design notes](${PAGE_URL}).`)).toEqual([
+    { category: 'artifact', uuid: PAGE_UUID, url: PAGE_URL, label: 'Design notes' },
+  ])
+  expect(full(`See ${PAGE_URL}.`)).toEqual([{ category: 'artifact', uuid: PAGE_UUID, url: PAGE_URL, label: PAGE_ID }])
+})
+
+test('full mode: both URL forms of one artifact are one ref; a bad id stays a web link', () => {
+  expect(full(`${PAGE_URL} and ${PAGE_CODE_URL}`)).toHaveLength(1)
+  expect(full('https://claude.ai/artifact/new')).toEqual([
+    { category: 'web', url: 'https://claude.ai/artifact/new', label: 'claude.ai/artifact/new' },
+  ])
+})
+
+test('urls-only mode ignores artifact URLs: tool output is not a mention', () => {
+  expect(extractRefs(`Published at ${PAGE_URL}`, { mode: 'urls-only', defaultRepo: null })).toEqual([])
 })
 
 test('bare #N: matches prose, skips code, colours, entities, headings, anchors, paths', () => {

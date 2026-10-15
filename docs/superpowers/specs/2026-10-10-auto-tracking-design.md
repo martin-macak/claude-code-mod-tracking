@@ -947,7 +947,9 @@ Cost [inference from GitHub's node formula; KB observed 1 point for 3 aliases]: 
 | `worktrees` | key 24 · title=branch grow (middle) · status 8 · x 2 | 24+25+8+2 + 3 gaps | key 30 · status 9 |
 | `agents` | key 20 · title=branch grow (middle) · type=worktree 14 (middle) · x 2 | 20+23+14+2 + 3 gaps | key 24 · type 20 |
 | `prs` | key 8 · title grow (end) · type=branch 20 (middle) · status 8 · x 2 | 8+20+20+8+2 + 4 gaps | type 26 · status 8 · extra 10 (checks) |
-| `items` | key 16 · title grow · type 6 · status 13 · x 2 when dismissable | 16+21+6+13+2 + 4 gaps | as today, plus x |
+| `items` | key 16 · title grow · type 9 · status 13 · x 2 when dismissable | 16+18+9+13+2 + 4 gaps | as today, plus x |
+
+The narrow `items` type cell was 6. It is 9 since issue #29: an artifact row puts `published` or `mentioned` there, and 6 cut them.
 
 Sections appear in this order: Worktrees, Agents, Pull requests, then Jira, GitHub, Web links. Visibility:
 

@@ -20,9 +20,12 @@ export type Captured = {
 
 // ---------------------------------------------------------------- tracked items
 
-export type Category = 'jira' | 'github' | 'web' | 'file'
-/** Where a reference was seen. `auto`: a PR on a tracked branch. `pr-body`: named in a discovered PR body. */
-export type Source = 'prompt' | 'response' | 'tool' | 'auto' | 'pr-body'
+export type Category = 'jira' | 'github' | 'artifact' | 'web' | 'file'
+/**
+ * Where a reference was seen. `auto`: a PR on a tracked branch. `pr-body`: named in a discovered PR body.
+ * `publish`: the session's Artifact tool published or updated it.
+ */
+export type Source = 'prompt' | 'response' | 'tool' | 'auto' | 'pr-body' | 'publish'
 
 /** `not-found`: the tool says the item does not exist (or no permission). `failed`: the last refresh failed. */
 export type ItemError = { kind: 'not-found' | 'failed'; message: string; at: number }
@@ -74,8 +77,16 @@ export type JiraFields = {
   children: JiraNode[]
 }
 
+/** Not stored: `published` when the sources hold `publish`, else `mentioned`. */
+export type ArtifactOrigin = 'published' | 'mentioned'
+
+export type ArtifactFields = {
+  /** Set when this session deleted it with the Artifact tool. Sticky. */
+  deleted?: true
+}
+
 export type ItemRecordBase = {
-  /** Dedupe key. github: `gh:<host>/<owner>/<repo>#<n>` or `gh:?#<n>`; jira: `jira:<site>/<KEY>`; web: `web:<url>`. */
+  /** Dedupe key. github: `gh:<host>/<owner>/<repo>#<n>` or `gh:?#<n>`; jira: `jira:<site>/<KEY>`; artifact: `art:<uuid>`; web: `web:<url>`. */
   key: string
   url: string
   /** Display text: Markdown label, title, or host + path. */
@@ -92,6 +103,7 @@ export type ItemRecordBase = {
 
 export type GitHubRecord = ItemRecordBase & { category: 'github' } & GitHubFields
 export type JiraRecord = ItemRecordBase & { category: 'jira' } & JiraFields
+export type ArtifactRecord = ItemRecordBase & { category: 'artifact' } & ArtifactFields
 export type WebRecord = ItemRecordBase & { category: 'web' }
 /** How a Markdown file was touched: a Write that made it, an Edit or a Write update, a Read, a name in text. */
 export type FileActivity = 'created' | 'edited' | 'viewed' | 'mentioned'
@@ -112,7 +124,7 @@ export type FileRecord = ItemRecordBase & {
   /** A subagent wrote, edited or read the file. Absent when only the main loop did. */
   bySubagent?: true
 }
-export type ItemRecord = GitHubRecord | JiraRecord | WebRecord | FileRecord
+export type ItemRecord = GitHubRecord | JiraRecord | ArtifactRecord | WebRecord | FileRecord
 
 // ---------------------------------------------------------------- tracked processes
 

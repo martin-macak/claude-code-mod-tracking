@@ -148,7 +148,7 @@ test('cellsFor at 62 columns: the narrow cells of spec 10.1', () => {
   expect(names('items', true)).toEqual([
     ['key', 16],
     ['title', undefined],
-    ['type', 6],
+    ['type', 9],
     ['status', 13],
     ['x', 2],
   ])
@@ -238,7 +238,7 @@ test('cellsFor items without x: literal widths, narrow below 70 and wide from 70
   const narrow = [
     ['key', 16],
     ['title', undefined],
-    ['type', 6],
+    ['type', 9],
     ['status', 13],
   ]
   const wide = [

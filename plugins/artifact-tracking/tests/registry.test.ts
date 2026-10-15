@@ -1,6 +1,8 @@
 // Registry: keys, record conversion, merge, dedupe, caps, re-key, carry-over, hydrate. Pure.
 import { expect, test } from 'claude-code/testing'
 import type {
+  ArtifactRecord,
+  ArtifactRef,
   FileActivity,
   FileRecord,
   GitHubRecord,
@@ -15,21 +17,25 @@ import type {
   WebRef,
 } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
+import { ArtifactItem } from '../hooks/model/artifact-item'
 import { FileItem } from '../hooks/model/file-item'
 import { GitHubItem } from '../hooks/model/github-item'
 import { JiraItem } from '../hooks/model/jira-item'
-import { fileKey, keyOf } from '../hooks/model/keys'
+import { artifactOrigin, fileKey, keyOf } from '../hooks/model/keys'
 import {
   hydrate,
+  markArtifactDeleted,
   mergeFiles,
   mergeRefs,
   mergeResults,
   recordFromFile,
   recordFromRef,
+  rekeyArtifacts,
   resolveBareRefs,
   unionRecords,
 } from '../hooks/model/registry'
 import { WebLink } from '../hooks/model/web-link'
+import { PAGE_CODE_URL, PAGE_ID, PAGE_KEY, PAGE_URL, PAGE_UUID, PAIRS } from './fixtures/artifacts'
 
 const ghRef = (over: Partial<GitHubRef> = {}): GitHubRef => ({
   category: 'github',
@@ -54,7 +60,22 @@ const webRef = (over: Partial<WebRef> = {}): WebRef => ({
   label: 'X doc',
   ...over,
 })
-const s = (at: number, source: 'prompt' | 'response' | 'tool' = 'prompt') => ({ source, at })
+/** A mention of the observed page, by its base58 URL. */
+const artifactRef = (over: Partial<ArtifactRef> = {}): ArtifactRef => ({
+  category: 'artifact',
+  uuid: PAGE_UUID,
+  url: PAGE_URL,
+  label: PAGE_ID,
+  ...over,
+})
+/** The same page by its UUID URL, as the claude.ai/code app links it. */
+const codeRef = (over: Partial<ArtifactRef> = {}): ArtifactRef =>
+  artifactRef({ url: PAGE_CODE_URL, label: PAGE_UUID, ...over })
+/** What a publish of the page gives: its title. */
+const publishRef = (over: Partial<ArtifactRef> = {}): ArtifactRef =>
+  artifactRef({ label: 'Probe Page 29', titled: true, ...over })
+const s = (at: number, source: 'prompt' | 'response' | 'tool' | 'publish' = 'prompt') => ({ source, at })
+const art = (list: readonly ItemRecord[]): ArtifactRecord => list[0] as ArtifactRecord
 const unresolved = (n: number): GitHubRef => ({ category: 'github', host: 'github.com', number: n, type: 'unknown' })
 
 test('keyOf: github resolved lower-cases host, owner, repo', () => {
@@ -69,6 +90,11 @@ test('keyOf: jira lower-cases the site only', () => {
 test('keyOf: web drops the fragment and normalizes the URL', () => {
   expect(keyOf(webRef())).toBe('web:https://x.example/a')
   expect(keyOf(webRef({ url: 'https://x.example/a' }))).toBe('web:https://x.example/a')
+})
+test('keyOf: an artifact is keyed by its UUID, so both URL forms share a key', () => {
+  expect(keyOf(artifactRef())).toBe(PAGE_KEY)
+  expect(keyOf(codeRef())).toBe(PAGE_KEY)
+  for (const [, uuid] of PAIRS) expect(keyOf(artifactRef({ uuid }))).toBe(`art:${uuid}`)
 })
 
 test('recordFromRef: github pr and issue URL fall back to host/owner/repo', () => {
@@ -115,6 +141,21 @@ test('recordFromRef: web label is ref.label', () => {
     label: 'X doc',
     sources: ['response'],
   })
+})
+test('recordFromRef: artifact keeps URL and label; the origin follows the source', () => {
+  const mention = recordFromRef(artifactRef(), s(1, 'response'))
+  expect(mention).toEqual({
+    key: PAGE_KEY,
+    category: 'artifact',
+    url: PAGE_URL,
+    label: PAGE_ID,
+    sources: ['response'],
+    firstSeen: 1,
+    lastSeen: 1,
+    seenCount: 1,
+  })
+  expect(artifactOrigin(mention)).toBe('mentioned')
+  expect(artifactOrigin(recordFromRef(publishRef(), s(1, 'publish')))).toBe('published')
 })
 
 test('mergeRefs: URL and bare #N for the same item end as one record (Review Focus 2)', () => {
@@ -234,6 +275,49 @@ test('mergeFiles: no input rows returns the list itself; the input list is never
   const before = JSON.stringify(list)
   mergeFiles(list, [fileRec('a', 2, 'edited')])
   expect(JSON.stringify(list)).toBe(before)
+})
+
+test('mergeRefs: a UUID mention, then a base58 publish of the same artifact, is one published item', () => {
+  const first = mergeRefs([], [codeRef()], s(1, 'response')).list
+  const { list, added } = mergeRefs(first, [publishRef()], s(2, 'publish'))
+  expect(added).toEqual([])
+  expect(list).toHaveLength(1)
+  expect(artifactOrigin(art(list))).toBe('published')
+  expect(art(list).label).toBe('Probe Page 29')
+  expect(art(list).url).toBe(PAGE_URL) // the URL the tool returned
+  expect(art(list).seenCount).toBe(2)
+})
+
+test('mergeRefs: a publish, then a labelled mention, keeps the title and stays published', () => {
+  const first = mergeRefs([], [publishRef()], s(1, 'publish')).list
+  const list = mergeRefs(first, [codeRef({ label: 'Design notes' })], s(2, 'response')).list
+  expect(list).toHaveLength(1)
+  expect(artifactOrigin(art(list))).toBe('published')
+  expect(art(list).label).toBe('Probe Page 29')
+  expect(art(list).url).toBe(PAGE_URL)
+})
+
+test('mergeRefs: an untitled publish keeps the title; a titled one replaces it', () => {
+  const first = mergeRefs([], [publishRef()], s(1, 'publish')).list
+  const upload = mergeRefs(first, [artifactRef()], s(2, 'publish')).list // an asset upload: no title
+  expect(art(upload).label).toBe('Probe Page 29')
+  const renamed = mergeRefs(upload, [publishRef({ label: 'Probe Page 30' })], s(3, 'publish')).list
+  expect(art(renamed).label).toBe('Probe Page 30')
+})
+
+test('mergeRefs: a Markdown label replaces the id of a mentioned artifact, never another label', () => {
+  const first = mergeRefs([], [artifactRef()], s(1, 'response')).list
+  const named = mergeRefs(first, [codeRef({ label: 'Design notes' })], s(2, 'response')).list
+  expect(art(named).label).toBe('Design notes')
+  const again = mergeRefs(named, [artifactRef({ label: 'Other words' })], s(3, 'prompt')).list
+  expect(art(again).label).toBe('Design notes')
+  expect(artifactOrigin(art(again))).toBe('mentioned')
+})
+
+test('mergeRefs: a deleted artifact stays deleted after a new sighting', () => {
+  const first = markArtifactDeleted(mergeRefs([], [publishRef()], s(1, 'publish')).list, PAGE_KEY)
+  const list = mergeRefs(first, [artifactRef()], s(2, 'response')).list
+  expect(art(list).deleted).toBe(true)
 })
 
 test('mergeResults: takes status fields, keeps sightings, clears an absent error', () => {
@@ -375,6 +459,51 @@ test('resolveBareRefs: leaves other records alone and does not mutate input', ()
   expect([w, bare]).toEqual(copy)
 })
 
+/** A row that an older version stored as a web link (R13). */
+const oldWeb = (url: string, label: string, at = 1): WebRecord => ({
+  ...(recordFromRef({ category: 'web', url, label }, s(at, 'response')) as WebRecord),
+  via: ['gh:github.com/acme/web#9'],
+})
+
+test('rekeyArtifacts: an old web row of an artifact URL becomes an artifact row', () => {
+  const [id2, uuid2] = PAIRS[1]
+  const named = oldWeb(PAGE_URL, 'Design notes')
+  const host = oldWeb(`https://claude.ai/artifact/${id2}`, `claude.ai/artifact/${id2}`)
+  const other = recordFromRef(webRef(), s(1))
+  const input = [named, other, host]
+  const copy = JSON.parse(JSON.stringify(input)) as ItemRecord[]
+  const out = rekeyArtifacts(input)
+  expect(out.map(r => r.key)).toEqual([PAGE_KEY, keyOf(webRef()), `art:${uuid2}`])
+  expect(out[0]).toEqual({
+    key: PAGE_KEY,
+    category: 'artifact',
+    url: PAGE_URL,
+    label: 'Design notes',
+    sources: ['response'],
+    firstSeen: 1,
+    lastSeen: 1,
+    seenCount: 1,
+    via: ['gh:github.com/acme/web#9'],
+  })
+  expect(out[2]!.label).toBe(id2) // the host-and-path fallback becomes the id
+  expect(out[1]).toEqual(other)
+  expect(input).toEqual(copy)
+})
+
+test('rekeyArtifacts: an old row folds into its artifact twin, which stays published', () => {
+  const twin = recordFromRef(publishRef(), s(5, 'publish'))
+  const out = rekeyArtifacts([twin, oldWeb(PAGE_CODE_URL, PAGE_CODE_URL, 2)])
+  expect(out).toHaveLength(1)
+  expect(artifactOrigin(art(out))).toBe('published')
+  expect(art(out).label).toBe('Probe Page 29')
+  expect(art(out).seenCount).toBe(2)
+})
+
+test('rekeyArtifacts: returns the input list when nothing moves', () => {
+  const list = [recordFromRef(webRef(), s(1)), recordFromRef(artifactRef(), s(1)), oldWeb('https://claude.ai/new', 'x')]
+  expect(rekeyArtifacts(list)).toBe(list)
+})
+
 test('unionRecords: folds sightings and takes status from the newer refresh', () => {
   const a = {
     ...(recordFromRef(ghRef(), s(1)) as GitHubRecord),
@@ -420,6 +549,42 @@ test('unionRecords: caps by smallest lastSeen', () => {
   expect(out.map(x => x.key).sort()).toEqual(['web:https://u1.example/', 'web:https://u3.example/'])
 })
 
+test('unionRecords: a published artifact wins over a mention in either order: origin, label and URL', () => {
+  const m = recordFromRef(codeRef({ label: 'Design notes' }), s(1, 'response'))
+  const p = recordFromRef(publishRef(), s(2, 'publish'))
+  for (const [a, b] of [
+    [m, p],
+    [p, m],
+  ] as const) {
+    const out = unionRecords([a], [b])
+    expect(out).toHaveLength(1)
+    expect(artifactOrigin(art(out))).toBe('published')
+    expect(art(out).label).toBe('Probe Page 29')
+    expect(art(out).url).toBe(PAGE_URL)
+    expect(art(out).sources.sort()).toEqual(['publish', 'response'])
+  }
+})
+
+test('unionRecords: a Markdown label beats the id of a mention; deleted survives in either order', () => {
+  const bare = recordFromRef(artifactRef(), s(1, 'response'))
+  const named = { ...(recordFromRef(codeRef({ label: 'Design notes' }), s(2, 'prompt')) as ArtifactRecord) }
+  const gone: ArtifactRecord = { ...(recordFromRef(publishRef(), s(3, 'publish')) as ArtifactRecord), deleted: true }
+  expect(art(unionRecords([bare], [named])).label).toBe('Design notes')
+  expect(art(unionRecords([named], [bare])).label).toBe('Design notes')
+  expect(art(unionRecords([bare], [gone])).deleted).toBe(true)
+  expect(art(unionRecords([gone], [bare])).deleted).toBe(true)
+})
+
+test('markArtifactDeleted: marks the row; an unknown or deleted key returns the input list', () => {
+  const list = mergeRefs([], [publishRef(), webRef()], s(1, 'publish')).list
+  const out = markArtifactDeleted(list, PAGE_KEY)
+  expect(art(out).deleted).toBe(true)
+  expect((list[0] as ArtifactRecord).deleted).toBeUndefined() // input not mutated
+  expect(markArtifactDeleted(out, PAGE_KEY)).toBe(out)
+  expect(markArtifactDeleted(list, 'art:00000000-0000-0000-0000-000000000000')).toBe(list)
+  expect(markArtifactDeleted(list, keyOf(webRef()))).toBe(list)
+})
+
 const status = (name: 'gh' | 'acli'): ToolStatus => ({ name, available: true, loggedIn: null, breaker: 'closed' })
 const tools = {
   gh: {
@@ -447,6 +612,12 @@ const tools = {
 test('hydrate: picks the class by category', () => {
   expect(hydrate(recordFromRef(ghRef(), s(1)), tools)).toBeInstanceOf(GitHubItem)
   expect(hydrate(recordFromRef(jiraRef(), s(1)), tools)).toBeInstanceOf(JiraItem)
+  const a: ArtifactRecord = { ...(recordFromRef(publishRef(), s(1, 'publish')) as ArtifactRecord), deleted: true }
+  const item = hydrate(a, tools)
+  expect(item).toBeInstanceOf(ArtifactItem)
+  expect(item.toRecord()).toEqual(a)
+  expect(item.canRefresh(0)).toBe(false)
+  expect(item.isDue(0)).toBe(false)
   const w = hydrate(recordFromRef(webRef(), s(1)), tools)
   expect(w).toBeInstanceOf(WebLink)
   expect(w.toRecord()).toEqual(recordFromRef(webRef(), s(1)) as WebRecord)
