@@ -546,34 +546,28 @@ async function ensureSession($: EngineInterface): Promise<void> {
   if (prev === undefined) return
   // The `auto` atom belongs to the run, not to a session id. After /clear $.state is empty; the module copy fills it.
   await setAuto($, s => s)
-  const stored = (await $.store.get('s:' + prev)) as
-    | { items?: ItemRecord[]; repos?: RepoRecord[]; processes?: ProcessRecord[] }
-    | undefined
-  const held = mirror?.id === prev ? mirror.items : []
-  const heldRepos = repoMirror?.id === prev ? repoMirror.rows : []
-  const heldProc = processMirror?.id === prev ? processMirror.rows : []
+  const stored = (await $.store.get('s:' + prev)) as StoredCopy | undefined
+  const held: SessionSlices = {
+    items: mirror?.id === prev ? mirror.items : [],
+    repos: repoMirror?.id === prev ? repoMirror.rows : [],
+    processes: processMirror?.id === prev ? processMirror.rows : [],
+  }
   mirror = undefined
   repoMirror = undefined
   processMirror = undefined
-  const left = rekeyArtifacts(unionRecords(held, stored?.items ?? []))
-  const leftRepos = mergeRepoRows(stored?.repos ?? [], heldRepos)
-  const leftProc = mergeProcessRows(stored?.processes ?? [], heldProc)
-  if (held.length > 0 || heldRepos.length > 0 || heldProc.length > 0)
-    await writeStore($, prev, left, leftRepos, leftProc)
-  const own = (await $.store.get('s:' + id)) as
-    | { items?: ItemRecord[]; repos?: RepoRecord[]; processes?: ProcessRecord[] }
-    | undefined
+  const left: SessionSlices = {
+    items: rekeyArtifacts(unionRecords(held.items, stored?.items ?? [])),
+    repos: mergeRepoRows(stored?.repos ?? [], held.repos),
+    processes: mergeProcessRows(stored?.processes ?? [], held.processes),
+  }
+  if (held.items.length > 0 || held.repos.length > 0 || held.processes.length > 0) await writeStore($, prev, left)
+  const own = (await $.store.get('s:' + id)) as StoredCopy | undefined
   if (own?.items || own?.repos || own?.processes) {
     await restore($)
-  } else if (left.length > 0) {
-    await setItems($, list => unionRecords(left, list))
-    if (leftRepos.length > 0) await setRepos($, rows => mergeRepoRows(leftRepos, rows))
-    if (leftProc.length > 0) await setProcesses($, rows => mergeProcessRows(leftProc, rows))
-  } else if (leftRepos.length > 0) {
-    await setRepos($, rows => mergeRepoRows(leftRepos, rows))
-    if (leftProc.length > 0) await setProcesses($, rows => mergeProcessRows(leftProc, rows))
-  } else if (leftProc.length > 0) {
-    await setProcesses($, rows => mergeProcessRows(leftProc, rows))
+  } else {
+    if (left.items.length > 0) await setItems($, list => unionRecords(left.items, list))
+    if (left.repos.length > 0) await setRepos($, rows => mergeRepoRows(left.repos, rows))
+    if (left.processes.length > 0) await setProcesses($, rows => mergeProcessRows(left.processes, rows))
   }
   await publishTools($) // the tools atom was reset too
 }
@@ -1018,24 +1012,30 @@ async function schedule($: EngineInterface): Promise<void> {
 
 async function flush($: EngineInterface): Promise<void> {
   await ensureSession($) // a /clear since the last row: save the old session first, carry its items over
-  const list = await read($, items)
-  const repoRows = await read($, repos)
-  const rows = await read($, processes)
-  if (list.length === 0 && repoRows.length === 0 && rows.length === 0) return // after /track clear: never replace a stored copy with an empty one
-  await writeStore($, await $.session.id(), list, repoRows, rows)
+  const slices: SessionSlices = {
+    items: await read($, items),
+    repos: await read($, repos),
+    processes: await read($, processes),
+  }
+  if (slices.items.length === 0 && slices.repos.length === 0 && slices.processes.length === 0) return // after /track clear: never replace a stored copy with an empty one
+  await writeStore($, await $.session.id(), slices)
 }
 
+/** The three lists that one session's stored copy holds. */
+type SessionSlices = { items: ItemRecord[]; repos: RepoRecord[]; processes: ProcessRecord[] }
+
+/** A stored copy as read back: an older copy may lack a slice. */
+type StoredCopy = Partial<SessionSlices>
+
 /** One session's copy, the index of copies (newest first) and the cap on how many copies stay. */
-async function writeStore(
-  $: EngineInterface,
-  id: string,
-  list: ItemRecord[],
-  repoRows: RepoRecord[] = [],
-  rows: ProcessRecord[] = [],
-): Promise<void> {
-  const json = JSON.stringify([list, repoRows, rows])
+async function writeStore($: EngineInterface, id: string, slices: SessionSlices): Promise<void> {
+  const json = JSON.stringify([slices.items, slices.repos, slices.processes])
   if (flushed?.id === id && flushed.json === json) return
-  await $.store.set('s:' + id, { items: list, repos: repoRows, processes: rows })
+  await $.store.set('s:' + id, {
+    items: slices.items,
+    repos: slices.repos,
+    processes: slices.processes,
+  })
   const index = ((await $.store.get('index')) as string[] | undefined) ?? []
   const next = [id, ...index.filter(x => x !== id)]
   for (const old of next.slice(LIMITS.keepSessions)) await $.store.delete('s:' + old)
@@ -1140,9 +1140,7 @@ async function restore($: EngineInterface): Promise<void> {
   const repoReady = ensureRepo($).catch(() => {})
   const id = await $.session.id()
   // No gate on the index: two sessions that flush together can drop each other's id from it.
-  const copy = (await $.store.get('s:' + id)) as
-    | { items?: ItemRecord[]; repos?: RepoRecord[]; processes?: ProcessRecord[] }
-    | undefined
+  const copy = (await $.store.get('s:' + id)) as StoredCopy | undefined
   const activeSite = await activeJiraSite()
   const dismissed = new Set((autoMirror ?? emptyAuto()).dismissed)
   const stored = withoutAuto(rekeyArtifacts(copy?.items ?? []))
