@@ -162,6 +162,62 @@ test('a folded jira row hides its descendants and says so', () => {
   expect(inner[1]).toMatchObject({ folded: true })
 })
 
+test('a jira record that is also a child of another shown root renders once, nested, with via', () => {
+  const via = ['gh:github.com/o/r#2659']
+  const parent = jira('BUG-3184', {
+    summary:
+      'Unified lists: each page of an entity with @Formula columns gets slower than the last (formulas evaluated for every OFFSET-skipped row)',
+    issueType: 'Bug',
+    status: 'In Progress',
+    statusCategory: 'indeterminate',
+    via,
+    firstSeen: 1,
+    children: [
+      {
+        ...node('BUG-3202', 'To Do', 'new'),
+        summary: 'Id-first pagination for JOINED subclasses (ConversationMetaEntity stays on the slow path)',
+        issueType: 'Sub-task',
+      },
+      {
+        ...node('BUG-3203', 'To Do', 'new'),
+        summary: 'VendorZeroLoadService pages VendorEntity with no ORDER BY',
+        issueType: 'Sub-task',
+      },
+    ],
+  })
+  const s1 = jira('BUG-3202', {
+    summary: 'Id-first pagination for JOINED subclasses (ConversationMetaEntity stays on the slow path)',
+    issueType: 'Sub-task',
+    status: 'To Do',
+    statusCategory: 'new',
+    via,
+    firstSeen: 2,
+  })
+  const s2 = jira('BUG-3203', {
+    summary: 'VendorZeroLoadService pages VendorEntity with no ORDER BY',
+    issueType: 'Sub-task',
+    status: 'To Do',
+    statusCategory: 'new',
+    via,
+    firstSeen: 3,
+  })
+  const section = buildPane([parent, s1, s2], ctx())[0]!
+  const rows = section.rows
+  expect(rows.map(r => [r.key, r.depth])).toEqual([
+    ['BUG-3184', 0],
+    ['BUG-3202', 1],
+    ['BUG-3203', 1],
+  ])
+  expect(rows[1]!.title).toMatch(/^↳#2659 /)
+  expect(new Set(rows.map(r => r.key)).size).toBe(rows.length)
+  expect(textOf([section])).toBe(
+    'Jira work items  acli · acme.atlassian.net · ready\n' +
+      '  BUG-3184  ↳#2659 Unified lists: each page of an entity with @Formula columns gets slower than the last (formulas evaluated for every OFFSET-skipped row)  Bug  In Progress\n' +
+      '    BUG-3202  ↳#2659 Id-first pagination for JOINED subclasses (ConversationMetaEntity stays on the slow path)  Sub-task  To Do\n' +
+      '    BUG-3203  ↳#2659 VendorZeroLoadService pages VendorEntity with no ORDER BY  Sub-task  To Do',
+  )
+})
+
 test('jira title falls back to the label; not-found wins over everything', () => {
   const r = buildPane([jira('ISS-5', { error: { kind: 'not-found', message: 'x', at: 1 } })], ctx())[0]!.rows[0]!
   expect(r).toMatchObject({ title: 'ISS-5', status: 'not found', tone: 'bad' })

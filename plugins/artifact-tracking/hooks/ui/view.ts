@@ -212,6 +212,7 @@ function nodeRows(
   nodes: readonly JiraNode[],
   depth: number,
   site: string,
+  viaBySiteKey: ReadonlyMap<string, readonly string[]>,
   folded: ReadonlySet<string>,
   out: PaneRow[],
 ): void {
@@ -223,18 +224,24 @@ function nodeRows(
       depth,
       key: n.key,
       href: `https://${site}/browse/${n.key}`,
-      title: n.summary,
+      title: viaPrefix(viaBySiteKey.get(jiraSiteKey(site, n.key))) + n.summary,
       type: n.issueType,
       status: n.status,
       tone: categoryTone(n.statusCategory),
       foldable: n.children.length > 0,
       folded: isFolded,
     })
-    if (!isFolded) nodeRows(id, n.children, depth + 1, site, folded, out)
+    if (!isFolded) nodeRows(id, n.children, depth + 1, site, viaBySiteKey, folded, out)
   }
 }
 
-function jiraRows(item: JiraRecord, ctx: ViewContext, folded: ReadonlySet<string>, out: PaneRow[]): void {
+function jiraRows(
+  item: JiraRecord,
+  ctx: ViewContext,
+  folded: ReadonlySet<string>,
+  viaBySiteKey: ReadonlyMap<string, readonly string[]>,
+  out: PaneRow[],
+): void {
   const activeSite = ctx.tools.acli.site
   let status: string
   let tone: Tone
@@ -263,7 +270,7 @@ function jiraRows(item: JiraRecord, ctx: ViewContext, folded: ReadonlySet<string
     foldable: item.children.length > 0,
     folded: isFolded,
   })
-  if (!isFolded) nodeRows(id, item.children, 1, item.site, folded, out)
+  if (!isFolded) nodeRows(id, item.children, 1, item.site, viaBySiteKey, folded, out)
 }
 
 const CHECKS: Record<NonNullable<GitHubRecord['checks']>, { extra?: string; extraTone?: Tone }> = {
@@ -379,6 +386,19 @@ const SECTIONS: { category: Category; title: string; band: string; unit?: string
   { category: 'file', title: 'Files', band: 'Files', unit: 'files', layout: 'files' },
 ]
 
+const jiraSiteKey = (site: string, key: string): string => `${lower(site)}/${key.toUpperCase()}`
+
+function jiraDescendants(root: JiraRecord): Set<string> {
+  const out = new Set<string>()
+  const stack = [...root.children]
+  while (stack.length > 0) {
+    const node = stack.pop()!
+    out.add(jiraSiteKey(root.site, node.key))
+    stack.push(...node.children)
+  }
+  return out
+}
+
 export function lastRefreshOf(items: readonly ItemRecord[]): number | undefined {
   let last: number | undefined
   for (const i of items)
@@ -404,9 +424,32 @@ export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneS
       .sort((a, b) => a.firstSeen - b.firstSeen)
     if (own.length === 0) continue
     const rows: PaneRow[] = []
+    const jiraViaBySiteKey = new Map<string, readonly string[]>()
+    const jiraHidden = new Set<string>()
+    if (category === 'jira') {
+      const jiraOwn = own as JiraRecord[]
+      const descendantsByRoot = new Map<string, Set<string>>()
+      for (const item of jiraOwn) {
+        descendantsByRoot.set(jiraSiteKey(item.site, item.issueKey), jiraDescendants(item))
+        jiraViaBySiteKey.set(jiraSiteKey(item.site, item.issueKey), item.via ?? [])
+      }
+      for (const item of jiraOwn) {
+        const itemId = jiraSiteKey(item.site, item.issueKey)
+        const itemTree = descendantsByRoot.get(itemId) ?? new Set<string>()
+        const hidden = jiraOwn.some(parent => {
+          if (parent === item) return false
+          const parentId = jiraSiteKey(parent.site, parent.issueKey)
+          const parentTree = descendantsByRoot.get(parentId) ?? new Set<string>()
+          return parentTree.has(itemId) && !itemTree.has(parentId)
+        })
+        if (hidden) jiraHidden.add(itemId)
+      }
+    }
     for (const item of own) {
-      if (item.category === 'jira') jiraRows(item, ctx, folded, rows)
-      else if (item.category === 'github') rows.push(githubRow(item, ctx))
+      if (item.category === 'jira') {
+        if (jiraHidden.has(jiraSiteKey(item.site, item.issueKey))) continue
+        jiraRows(item, ctx, folded, jiraViaBySiteKey, rows)
+      } else if (item.category === 'github') rows.push(githubRow(item, ctx))
       else if (item.category === 'artifact') rows.push(artifactRow(item))
       else if (item.category === 'web') rows.push(webRow(item))
       else if (item.category === 'file') rows.push(fileRow(item, ctx))
