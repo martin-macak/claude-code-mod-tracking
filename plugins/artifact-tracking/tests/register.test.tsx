@@ -1465,7 +1465,7 @@ const RAN = { stdout: '', stderr: '', interrupted: false }
  * `seen.peak`. `held` makes a rev-parse wait for a promise that the test releases.
  */
 function gitAt(fake: Fake, tops: Record<string, string>, held?: Promise<undefined>) {
-  const seen = { revParse: [] as string[], inFlight: 0, peak: 0 }
+  const seen = { revParse: [] as string[], branchCalls: 0, branch: 'main', inFlight: 0, peak: 0 }
   fake.run = async argv => {
     if (argv[0] !== 'git' || argv[1] !== '-C') return undefined
     const dir = String(argv[2])
@@ -1484,7 +1484,8 @@ function gitAt(fake: Fake, tops: Record<string, string>, held?: Promise<undefine
     }
     if (argv[3] === 'rev-parse') return res(`${top}\n${top}/.git\n`)
     if (argv[3] === 'remote') return res(tops[top] + '\n')
-    return res('main\n')
+    if (argv[3] === 'branch') seen.branchCalls++
+    return res(`${seen.branch}\n`)
   }
   return seen
 }
@@ -1587,6 +1588,29 @@ test('repos: a Read alone stores mode read, and a Bash git -C commit then stores
   await $.tool.call({ tool: 'Bash', command: 'git -C /x/sdk commit -m m', tool_use_id: 't2' } as never)
   await drain(w)
   expect(savedMode(w)).toBe('edit')
+})
+
+test('repos: a Bash git -C checkout re-reads the branch at once, a git status keeps the cached one', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Bash = RAN
+  const branchOf = () => (w.store.get('s:' + SESSION) as SavedRepos | undefined)?.repos?.[0]?.branch
+  await $.tool.call({ tool: 'Bash', command: 'git -C /x/sdk status', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(branchOf()).toBe('main')
+  expect(seen.branchCalls).toBe(1)
+
+  seen.branch = 'feat'
+  await $.tool.call({ tool: 'Bash', command: 'git -C /x/sdk log', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(branchOf()).toBe('main')
+  expect(seen.branchCalls).toBe(1)
+
+  await $.tool.call({ tool: 'Bash', command: 'git -C /x/sdk checkout feat', tool_use_id: 't3' } as never)
+  await drain(w)
+  expect(branchOf()).toBe('feat')
+  expect(seen.branchCalls).toBe(2)
 })
 
 test('repos: a main-loop Read with a relative file_path resolves from the session cwd', async ($, on) => {

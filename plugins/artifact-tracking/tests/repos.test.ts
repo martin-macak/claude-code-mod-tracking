@@ -10,6 +10,7 @@ import { RepoTracker } from '../hooks/repos/tracker'
 const ROOT: RepoRef = { host: 'github.com', owner: 'acme', repo: 'web' }
 
 const hit = (path: string, mode: 'read' | 'edit' = 'read') => ({ path, mode })
+const moved = (path: string) => ({ path, mode: 'edit' as const, branchMayChange: true as const })
 
 test('extractRepoPathsFromTool: a Glob with no path takes the literal prefix of an absolute pattern', () => {
   expect(extractRepoPathsFromTool('Glob', { pattern: '/x/sdk/**/*.ts' })).toEqual([hit('/x/sdk')])
@@ -130,7 +131,7 @@ test('parseRepoHintsFromBash marks a git write subcommand as edit and anything e
   expect(modes('git -C /x/sdk commit -m m')).toEqual([hit('/x/sdk', 'edit')])
   expect(modes('git -C /x/sdk log')).toEqual([hit('/x/sdk')])
   expect(modes('git -c a=b -C /x/sdk push')).toEqual([hit('/x/sdk', 'edit')])
-  expect(modes('git --no-pager -C /x/sdk checkout main')).toEqual([hit('/x/sdk', 'edit')])
+  expect(modes('git --no-pager -C /x/sdk checkout main')).toEqual([moved('/x/sdk')])
   expect(modes('git -C /x/sdk')).toEqual([hit('/x/sdk')])
   expect(modes('git commit -C HEAD', '/w')).toEqual([])
   expect(modes('cd /x/sdk && ls')).toEqual([hit('/x/sdk')])
@@ -142,6 +143,16 @@ test('parseRepoHintsFromBash marks a git write subcommand as edit and anything e
   expect(modes('cd /w && git commit', '/w')).toEqual([hit('/w')])
   expect(modes('cd $D && git commit', '/w')).toEqual([])
   expect(parseRepoHintsFromBash('gh pr create -R acme/sdk').repos).toHaveLength(1)
+})
+
+test('parseRepoHintsFromBash flags only checkout and switch as able to change the branch', () => {
+  const hits = (cmd: string, cwd?: string) => parseRepoHintsFromBash(cmd, cwd).paths
+  expect(hits('git -C /x/sdk checkout feat')).toEqual([moved('/x/sdk')])
+  expect(hits('git -C /x/sdk switch -c feat')).toEqual([moved('/x/sdk')])
+  expect(hits('cd /x/sdk && git switch feat', '/w')).toEqual([hit('/x/sdk'), moved('/x/sdk')])
+  expect(hits('git -C /x/sdk status')).toEqual([hit('/x/sdk')])
+  expect(hits('git -C /x/sdk commit -m m')).toEqual([hit('/x/sdk', 'edit')])
+  expect(hits('git -C /x/sdk push')).toEqual([hit('/x/sdk', 'edit')])
 })
 
 test('parseRepoHintsFromBash keeps a cd inside a subshell out of later commands', () => {
@@ -919,6 +930,35 @@ test('RepoTracker: the branch of a known repo is re-read after one tick, off the
   now += 1 // the old branch is still stale, but the open breaker allows no call
   expect(await t.resolvePath('/x/sdk/a.ts', 'main')).toMatchObject({ branch: 'feat' })
   expect(count('branch --show-current')).toBe(2 + LIMITS.breakerThreshold)
+})
+
+test('RepoTracker: a branch change hint re-reads the branch at once, a plain visit still uses the cache', async () => {
+  let now = 5_000
+  let branch = 'main'
+  const calls: string[] = []
+  const run = async (argv: readonly string[]): Promise<RunResult> => {
+    if (argv[0] === 'sh') return SH
+    calls.push(`${argv[2]} ${argv.slice(3).join(' ')}`)
+    if (argv[3] === 'rev-parse') return argv[2] === '/x/repo' ? ok('/x/repo\n/x/repo/.git\n') : ok(GIT_SDK)
+    if (argv[3] === 'remote')
+      return ok(argv[2] === '/x/repo' ? 'git@github.com:acme/web.git\n' : 'git@github.com:acme/sdk.git\n')
+    return ok(`${branch}\n`)
+  }
+  const count = () => calls.filter(c => c.startsWith('/x/sdk branch --show-current')).length
+  const t = new RepoTracker({ run, now: () => now, rootPath: '/x/repo', rootRepo: ROOT })
+  const start = now
+  expect(await t.resolvePath('/x/sdk', 'main')).toMatchObject({ branch: 'main' })
+  expect(count()).toBe(1)
+
+  branch = 'feat'
+  now = start + 10_000
+  expect(await t.resolvePath('/x/sdk', 'main', 'read')).toMatchObject({ branch: 'main' })
+  expect(count()).toBe(1)
+  expect(await t.resolvePath('/x/sdk', 'main', 'edit', { branchMayChange: true })).toMatchObject({ branch: 'feat' })
+  expect(count()).toBe(2)
+  // The forced read restarts the tick: the next plain visit uses the new value.
+  expect(await t.resolvePath('/x/sdk', 'main')).toMatchObject({ branch: 'feat' })
+  expect(count()).toBe(2)
 })
 
 test('RepoTracker: parallel visits after a tick share one branch call', async () => {

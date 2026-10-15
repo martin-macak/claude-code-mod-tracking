@@ -440,9 +440,9 @@ function enqueueRepoPaths($: EngineInterface, hits: readonly RepoHit[], agentId:
     $,
     'path',
     hits,
-    h => `${h.mode}:${h.path}`,
+    h => `${h.mode}${h.branchMayChange ? '!' : ''}:${h.path}`,
     agentId,
-    (t, h, who) => t.resolvePath(h.path, who, h.mode),
+    (t, h, who) => t.resolvePath(h.path, who, h.mode, { branchMayChange: h.branchMayChange === true }),
   )
 }
 

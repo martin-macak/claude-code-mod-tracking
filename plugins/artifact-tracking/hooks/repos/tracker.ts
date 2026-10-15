@@ -124,7 +124,12 @@ export class RepoTracker {
     }
   }
 
-  async resolvePath(path: string, touchedBy: string, mode: RepoMode = 'read'): Promise<RepoVisit | null> {
+  async resolvePath(
+    path: string,
+    touchedBy: string,
+    mode: RepoMode = 'read',
+    opts: { branchMayChange?: boolean } = {},
+  ): Promise<RepoVisit | null> {
     if (!isAbs(path) || isNoisePath(path)) return null
     const env = await this.getEnv()
     let abs = path
@@ -145,7 +150,12 @@ export class RepoTracker {
       if (r === 'retry') return null
       if (r !== 'missing') {
         if (!r || this.isOwn(r, own)) return null
-        return visitOf(r, r.root === undefined ? undefined : await this.freshBranch(r.root), touchedBy, mode)
+        return visitOf(
+          r,
+          r.root === undefined ? undefined : await this.freshBranch(r.root, opts.branchMayChange === true),
+          touchedBy,
+          mode,
+        )
       }
       if (dir === '/') return null
       dir = dir.slice(0, dir.lastIndexOf('/')) || '/'
@@ -281,12 +291,15 @@ export class RepoTracker {
   /**
    * The branch of a known repo, re-read at most once per `LIMITS.tickMs`. It runs inside the queued job, never on the
    * hook path. Parallel visits share one call. A fault (or an open breaker) keeps the old value and `at`.
+   * `force` skips the TTL: the command that caused the visit (`git checkout`) has ended and may have moved HEAD. A
+   * call that started before the command ended may be stale, so a forced read waits for it and then reads again.
    * Limit: a detached HEAD prints nothing, so the visit has no branch and `upsertRepoRows` keeps the branch of the
    * row. The row can show a stale branch until the repo is on a branch again.
    */
-  private async freshBranch(root: string): Promise<string | undefined> {
+  private async freshBranch(root: string, force = false): Promise<string | undefined> {
+    if (force) await this.branchPending.get(root)
     const cur = this.branches.get(root)
-    if (cur && this.d.now() - cur.at < LIMITS.tickMs) return cur.branch
+    if (!force && cur && this.d.now() - cur.at < LIMITS.tickMs) return cur.branch
     let p = this.branchPending.get(root)
     if (!p) {
       p = (async () => {

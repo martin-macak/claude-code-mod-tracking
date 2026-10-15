@@ -20,8 +20,11 @@ export const PATH_TOOLS = Object.keys(TOOL_PATH_FIELDS) as (keyof typeof TOOL_PA
 /** How a repo was used. A heuristic: a Bash write without git (`sed -i`, `npm install`, `tee`) counts as read. */
 export type RepoMode = 'read' | 'edit'
 
-/** One path of a tool call or Bash command and how it was used. */
-export type RepoHit = { path: string; mode: RepoMode }
+/**
+ * One path of a tool call or Bash command and how it was used. `branchMayChange` marks a command that can have moved
+ * HEAD (`git checkout`, `git switch`): the lookup must re-read the branch and skip its cache.
+ */
+export type RepoHit = { path: string; mode: RepoMode; branchMayChange?: true }
 
 /** What each path tool does with its path. */
 export const TOOL_MODE: Record<keyof typeof TOOL_PATH_FIELDS, RepoMode> = {
@@ -92,6 +95,9 @@ const WRITE_GIT: ReadonlySet<string> = new Set([
   'init',
   'clone',
 ])
+
+/** Git subcommands that move HEAD to another branch. Their repo needs a fresh branch read at once. */
+const BRANCH_GIT: ReadonlySet<string> = new Set(['checkout', 'switch'])
 
 /** The subcommand of `git`: the first word after it that is not an option. Skips `-C <dir>` and the value options. */
 export function gitSubcommand(words: readonly string[]): string | undefined {
@@ -207,13 +213,15 @@ export function parseRepoHintsFromBash(command: string, cwd?: string): { paths: 
     if (head === 'git') {
       const sub = gitSubcommand(words)
       const mode: RepoMode = sub !== undefined && WRITE_GIT.has(sub) ? 'edit' : 'read'
+      const moves = sub !== undefined && BRANCH_GIT.has(sub)
+      const hit = (path: string): RepoHit => (moves ? { path, mode, branchMayChange: true } : { path, mode })
       const c = parseGitCPath(words)
       if (c !== undefined) {
         const p = moveTo(dir, c)
-        if (p && isAbs(p)) paths.push({ path: p, mode })
+        if (p && isAbs(p)) paths.push(hit(p))
       } else if (mode === 'edit' && dir && dir !== cwd && isAbs(dir)) {
         // A write after `cd X`. The session repo itself (dir equal to the start) needs no lookup.
-        paths.push({ path: dir, mode })
+        paths.push(hit(dir))
       }
       continue
     }
