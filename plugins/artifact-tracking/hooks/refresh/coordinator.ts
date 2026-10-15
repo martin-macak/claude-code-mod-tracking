@@ -129,7 +129,7 @@ export class RefreshCoordinator {
       const items = (await this.deps.load()).map(r => this.deps.hydrate(r))
       const selected: HydratedItem[] = []
       for (const item of items) {
-        if (item.category === 'web') continue
+        if (item.category === 'web' || item.category === 'file') continue
         if (wanted && !wanted.has(item.key)) continue
         if (opts.force) delete item.error
         const ok = opts.force ? item.canRefresh(at) : item.isDue(at) && item.canRefresh(at)

@@ -1,6 +1,8 @@
 // Registry: keys, record conversion, merge, dedupe, caps, re-key, carry-over, hydrate. Pure.
 import { expect, test } from 'claude-code/testing'
 import type {
+  FileActivity,
+  FileRecord,
   GitHubRecord,
   GitHubRef,
   GitHubToolApi,
@@ -13,10 +15,20 @@ import type {
   WebRef,
 } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
+import { FileItem } from '../hooks/model/file-item'
 import { GitHubItem } from '../hooks/model/github-item'
 import { JiraItem } from '../hooks/model/jira-item'
-import { keyOf } from '../hooks/model/keys'
-import { hydrate, mergeRefs, mergeResults, recordFromRef, resolveBareRefs, unionRecords } from '../hooks/model/registry'
+import { fileKey, keyOf } from '../hooks/model/keys'
+import {
+  hydrate,
+  mergeFiles,
+  mergeRefs,
+  mergeResults,
+  recordFromFile,
+  recordFromRef,
+  resolveBareRefs,
+  unionRecords,
+} from '../hooks/model/registry'
 import { WebLink } from '../hooks/model/web-link'
 
 const ghRef = (over: Partial<GitHubRef> = {}): GitHubRef => ({
@@ -163,6 +175,65 @@ test('mergeRefs: default cap is LIMITS.maxItems', () => {
   expect(r.list.length).toBe(LIMITS.maxItems)
   expect(r.list.some(x => x.key === 'web:https://extra.example/')).toBe(true)
   expect(r.list.some(x => x.key === 'web:https://h0.example/')).toBe(false)
+})
+
+const fileRec = (name: string, at: number, kind: FileActivity = 'created', bySubagent = false): FileRecord =>
+  recordFromFile({ path: `/work/${name}.md`, label: `/work/${name}.md`, kind, bySubagent }, s(at))
+
+test('recordFromFile: one activity sets one counter; the key is file:<path>', () => {
+  expect(fileRec('a', 1)).toEqual({
+    key: 'file:/work/a.md',
+    category: 'file',
+    url: '/work/a.md',
+    label: '/work/a.md',
+    created: true,
+    edits: 0,
+    views: 0,
+    mentions: 0,
+    sources: ['prompt'],
+    firstSeen: 1,
+    lastSeen: 1,
+    seenCount: 1,
+  })
+  expect(fileRec('a', 1, 'edited')).toMatchObject({ created: false, edits: 1, views: 0, mentions: 0 })
+  expect(fileRec('a', 1, 'viewed')).toMatchObject({ created: false, edits: 0, views: 1, mentions: 0 })
+  expect(fileRec('a', 1, 'mentioned', true)).toMatchObject({ mentions: 1, bySubagent: true })
+  expect(fileKey('/work/a.md')).toBe('file:/work/a.md')
+})
+test('mergeFiles: the cap drops the smallest lastSeen and keeps the new file row', () => {
+  const old = (n: number, at: number): ItemRecord => recordFromRef(webRef({ url: `https://o${n}.example/` }), s(at))
+  const list = [old(1, 50), old(2, 10), old(3, 30)]
+  const r = mergeFiles(list, [fileRec('new', 1)], 3) // the new row has the smallest lastSeen of all
+  expect(r.map(x => x.key).sort()).toEqual(['file:/work/new.md', 'web:https://o1.example/', 'web:https://o3.example/'])
+})
+test('mergeFiles: default cap is LIMITS.maxItems', () => {
+  let list: ItemRecord[] = []
+  for (let i = 0; i < LIMITS.maxItems; i++) list = mergeFiles(list, [fileRec(`f${i}`, i + 1)])
+  const r = mergeFiles(list, [fileRec('extra', 0)])
+  expect(r.length).toBe(LIMITS.maxItems)
+  expect(r.some(x => x.key === 'file:/work/extra.md')).toBe(true)
+  expect(r.some(x => x.key === 'file:/work/f0.md')).toBe(false)
+})
+test('mergeFiles: counters add up, created stays true, first label and firstSeen stay', () => {
+  let list = mergeFiles([], [fileRec('a', 1, 'edited')])
+  list = mergeFiles(list, [fileRec('a', 3, 'created'), fileRec('a', 4, 'viewed'), fileRec('a', 5, 'edited')])
+  list = mergeFiles(list, [fileRec('a', 6, 'mentioned'), fileRec('a', 7, 'viewed')])
+  expect(list).toHaveLength(1)
+  expect(list[0]).toMatchObject({ created: true, edits: 2, views: 2, mentions: 1, firstSeen: 1, lastSeen: 7 })
+  expect(list[0]).toMatchObject({ seenCount: 6, label: '/work/a.md' })
+  expect((list[0] as FileRecord).bySubagent).toBeUndefined()
+})
+test('mergeFiles: one subagent touch marks the row for good', () => {
+  let list = mergeFiles([], [fileRec('a', 1, 'created', true)])
+  list = mergeFiles(list, [fileRec('a', 2, 'edited')])
+  expect(list[0]).toMatchObject({ bySubagent: true, edits: 1 })
+})
+test('mergeFiles: no input rows returns the list itself; the input list is never changed', () => {
+  const list = mergeFiles([], [fileRec('a', 1)])
+  expect(mergeFiles(list, [])).toBe(list)
+  const before = JSON.stringify(list)
+  mergeFiles(list, [fileRec('a', 2, 'edited')])
+  expect(JSON.stringify(list)).toBe(before)
 })
 
 test('mergeResults: takes status fields, keeps sightings, clears an absent error', () => {
@@ -379,6 +450,15 @@ test('hydrate: picks the class by category', () => {
   const w = hydrate(recordFromRef(webRef(), s(1)), tools)
   expect(w).toBeInstanceOf(WebLink)
   expect(w.toRecord()).toEqual(recordFromRef(webRef(), s(1)) as WebRecord)
+})
+test('hydrate: a file record gives a FileItem that is never due, never refreshes and round-trips', async () => {
+  const rec = mergeFiles([], [fileRec('a', 1, 'created', true), fileRec('a', 2, 'viewed')])[0] as FileRecord
+  const f = hydrate(rec, tools)
+  expect(f).toBeInstanceOf(FileItem)
+  expect(f.isDue(1e12)).toBe(false)
+  expect(f.canRefresh(0)).toBe(false)
+  await f.refresh()
+  expect(f.toRecord()).toEqual(rec)
 })
 test('hydrate: round-trips a refreshed record', () => {
   const rec = {

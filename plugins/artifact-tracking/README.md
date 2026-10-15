@@ -1,6 +1,6 @@
 # artifact-tracking
 
-A Claude Code mod. It tracks the GitHub issues and pull requests, the Jira work items and the web links that you or Claude mention in a session. It shows them in a `/track` pane and in a one-line band above the prompt.
+A Claude Code mod. It tracks the GitHub issues and pull requests, the Jira work items and the web links that you or Claude mention in a session, and the Markdown files that Claude writes, edits, reads or names. It shows them in a `/track` pane and in a one-line band above the prompt.
 
 `gh` and `acli` are optional. With them, the mod also shows live status: title, state, failing checks, Jira status and the Epic tree.
 
@@ -38,6 +38,7 @@ claude --plugin-dir plugins/artifact-tracking
 | Your slash command | The text inside `<command-args>`. |
 | Claude's reply, also from subagents | Every pattern below. |
 | Tool output | Explicit GitHub issue and PR URLs and Jira URLs only. No bare `#N`, no web links. |
+| `Write`, `Edit` and `Read` tool calls | A `.md` path: see [Markdown files](#markdown-files). |
 
 Not captured: notifications from background tasks, meta rows, prompts that a subagent or a coordinator wrote, and our own `/track` output.
 
@@ -60,9 +61,43 @@ The same item written as a URL and as `#N` is one item. The session repo comes f
 | `/track refresh` | Forgets "not logged in" and "not found", closes open circuit breakers, refreshes every item, waits, and prints the list. Use it in `claude -p`. |
 | `/track clear` | Removes all items of this session and its stored copy. |
 
-The pane has one section for each of Jira, GitHub and web links. A Jira row with children has a `[-]` or `[+]` button. The `Refresh` button (key `r`) does what `/track refresh` does. Esc closes the pane. A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
+The pane has one section for each of Jira, GitHub, web links and files. A Jira row with children has a `[-]` or `[+]` button. The `Refresh` button (key `r`) does what `/track refresh` does. Esc closes the pane. A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
 
-The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Links 2  /track`. `(n ✗)` counts PRs with failing checks. The band is empty when nothing is tracked.
+The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Links 2 · Files 3  /track`. `(n ✗)` counts PRs with failing checks. The auto parts (Worktrees, Agents, PRs) come after `Files`. The band is empty when nothing is tracked.
+
+### Markdown files
+
+The Files section has one row per Markdown file (issue #28):
+
+```text
+Files  3 files
+  docs/plan.md      created  edited 3  viewed 2
+  README.md                  edited 1  viewed 5
+  docs/notes.md     mentioned          viewed 1  subagent
+```
+
+| Cell | Counts |
+| --- | --- |
+| path | Relative to the session root when the file is below it, else absolute. |
+| `created` | A successful `Write` of type `create` made the file. It stays set. |
+| `mentioned` | Your prompt, your command arguments or Claude's reply named the path, and the file exists. Shown when the file was not created. |
+| `edited N` | Successful `Edit` calls and `Write` calls of type `update`. |
+| `viewed N` | Successful `Read` calls. A `Read` alone never adds a row: it counts only on a row that a write, an edit or a mention made. |
+| `subagent` | A subagent wrote, edited or read the file. |
+
+An empty cell means that activity did not happen. The `/track` text leaves empty cells out.
+
+Rules:
+
+- Only `.md` paths count, in any case. A failed, denied or staged call adds nothing.
+- A relative path joins the cwd: the spawn cwd of a subagent, else the session cwd. `~/` in a mention joins `HOME`.
+- A row is keyed by where the file lands (`file:<real path>`): two spellings of one file, such as `/tmp/a.md` and `/private/tmp/a.md`, are one row. A case alias or a hard link stays a second row. The row keeps the path as first spelled.
+- Mentions: at most 20 paths per prompt or reply, each checked with one stat. A URL, a missing file and tool output are not mentions. A trailing line number (`a.md:42`) or anchor (`a.md#L7`) is cut.
+- Ignored paths, fixed: a `.git` or `node_modules` folder, auto-memory under `<config dir>/projects/<project>/memory/` or under the `autoMemoryDirectory` setting, and the Claude scratchpad (`claude-<uid>/<project>/<session>/scratchpad/` under any temp folder). The config dir is `CLAUDE_CONFIG_DIR`, else `~/.claude`. Below the session root, only a `.git` or `node_modules` folder below the root counts, so a project inside such a folder keeps its files. `CLAUDE.md`, `AGENTS.md` and plans stay tracked.
+- File rows count against the 500-item session cap like other items. The oldest row goes first.
+- The `x` button dismisses a file row for the run. A later write, edit, read or mention of the same file does not bring it back.
+- A resume restores file rows from the stored copy, then from the `Write`, `Edit` and `Read` results and the mentions in the transcript. A subagent's writes come back from the stored copy only: its transcript holds no results.
+- Paths only. The mod never reads or stores file contents.
 
 ## Auto tracking
 

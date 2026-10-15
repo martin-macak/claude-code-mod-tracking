@@ -20,7 +20,7 @@ export type Captured = {
 
 // ---------------------------------------------------------------- tracked items
 
-export type Category = 'jira' | 'github' | 'web'
+export type Category = 'jira' | 'github' | 'web' | 'file'
 /** Where a reference was seen. `auto`: a PR on a tracked branch. `pr-body`: named in a discovered PR body. */
 export type Source = 'prompt' | 'response' | 'tool' | 'auto' | 'pr-body'
 
@@ -93,7 +93,26 @@ export type ItemRecordBase = {
 export type GitHubRecord = ItemRecordBase & { category: 'github' } & GitHubFields
 export type JiraRecord = ItemRecordBase & { category: 'jira' } & JiraFields
 export type WebRecord = ItemRecordBase & { category: 'web' }
-export type ItemRecord = GitHubRecord | JiraRecord | WebRecord
+/** How a Markdown file was touched: a Write that made it, an Edit or a Write update, a Read, a name in text. */
+export type FileActivity = 'created' | 'edited' | 'viewed' | 'mentioned'
+/**
+ * A Markdown file (issue #28). `key` is `file:<url>`. `url` is where the file landed (its real path, else the
+ * lexical one). `label` is the absolute path as Claude spelled it; the view shows it relative to the session root.
+ */
+export type FileRecord = ItemRecordBase & {
+  category: 'file'
+  /** A Write of type `create` made the file. Never goes back to false. */
+  created: boolean
+  /** Edit calls and Write calls of type `update`. */
+  edits: number
+  /** Read calls. A Read alone never adds a row. */
+  views: number
+  /** Prompts and replies that named the file. */
+  mentions: number
+  /** A subagent wrote, edited or read the file. Absent when only the main loop did. */
+  bySubagent?: true
+}
+export type ItemRecord = GitHubRecord | JiraRecord | WebRecord | FileRecord
 
 // ---------------------------------------------------------------- tracked processes
 

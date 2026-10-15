@@ -2,6 +2,8 @@
 // No input list or record is mutated.
 
 import type {
+  FileActivity,
+  FileRecord,
   GitHubRecord,
   GitHubRef,
   HydratedItem,
@@ -17,9 +19,10 @@ import type {
   WebRef,
 } from '../contracts'
 import { AUTO_SOURCES, LIMITS } from '../contracts'
+import { FileItem } from './file-item'
 import { GitHubItem } from './github-item'
 import { cloneNodes, JiraItem } from './jira-item'
-import { keyOf } from './keys'
+import { fileKey, keyOf } from './keys'
 import { WebLink } from './web-link'
 
 // ---------------------------------------------------------------- keys
@@ -181,11 +184,72 @@ export function mergeRefs(
   return { list: enforceCap(out, cap, new Set(added)), added }
 }
 
+/** One sighting of a Markdown file: `path` is where it landed, `label` the absolute path as spelled (issue #28). */
+export function recordFromFile(
+  hit: { path: string; label: string; kind: FileActivity; bySubagent: boolean },
+  s: Sighting,
+): FileRecord {
+  return {
+    key: fileKey(hit.path),
+    category: 'file',
+    url: hit.path,
+    label: hit.label,
+    created: hit.kind === 'created',
+    edits: hit.kind === 'edited' ? 1 : 0,
+    views: hit.kind === 'viewed' ? 1 : 0,
+    mentions: hit.kind === 'mentioned' ? 1 : 0,
+    ...(hit.bySubagent ? { bySubagent: true as const } : {}),
+    sources: [s.source],
+    firstSeen: s.at,
+    lastSeen: s.at,
+    seenCount: 1,
+  }
+}
+
+/** `fold` for two sightings of one file: the counters add up, and `created` and `bySubagent` never go back. */
+function foldFile(a: FileRecord, b: FileRecord): FileRecord {
+  const out = fold(a, b) as FileRecord // no file refreshes, so `a` wins the tie: its label and url stay
+  out.created = a.created || b.created
+  out.edits = a.edits + b.edits
+  out.views = a.views + b.views
+  out.mentions = a.mentions + b.mentions
+  if (a.bySubagent || b.bySubagent) out.bySubagent = true
+  return out
+}
+
+/**
+ * Adds file rows, or folds each into the row with the same key. The cap drops the smallest lastSeen, never a row
+ * this call added. No rows: the list itself comes back (A22).
+ */
+export function mergeFiles(
+  list: readonly ItemRecord[],
+  recs: readonly FileRecord[],
+  cap: number = LIMITS.maxItems,
+): ItemRecord[] {
+  if (recs.length === 0) return list as ItemRecord[]
+  const out: ItemRecord[] = list.map(cloneRecord)
+  const index = new Map<string, number>(out.map((r, i) => [r.key, i]))
+  const added = new Set<string>()
+  for (const rec of recs) {
+    const at = index.get(rec.key)
+    if (at === undefined) {
+      index.set(rec.key, out.length)
+      out.push(cloneRecord(rec))
+      added.add(rec.key)
+      continue
+    }
+    const old = out[at]!
+    if (old.category === 'file') out[at] = foldFile(old, rec)
+  }
+  return enforceCap(out, cap, added)
+}
+
 /** Status fields a refresh writes, per category. */
 const STATUS_FIELDS = {
   github: ['title', 'state', 'stateReason', 'isDraft', 'reviewDecision', 'checks'],
   jira: ['summary', 'issueType', 'status', 'statusCategory'],
   web: [],
+  file: [],
 } as const
 
 export function mergeResults(list: readonly ItemRecord[], refreshed: readonly ItemRecord[]): ItemRecord[] {
@@ -278,5 +342,7 @@ export function hydrate(rec: ItemRecord, tools: Tools): HydratedItem {
       return new JiraItem(rec, tools.acli)
     case 'web':
       return new WebLink(rec)
+    case 'file':
+      return new FileItem(rec)
   }
 }

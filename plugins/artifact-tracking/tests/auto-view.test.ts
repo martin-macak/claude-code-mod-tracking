@@ -122,7 +122,7 @@ const byId = (sections: ReturnType<typeof buildAutoSections>, id: string) => sec
 
 // ---------------------------------------------------------------- cellsFor
 
-const LAYOUTS: Layout[] = ['worktrees', 'agents', 'prs', 'items']
+const LAYOUTS: Layout[] = ['worktrees', 'agents', 'prs', 'items', 'files']
 
 test('cellsFor at 62 columns: the narrow cells of spec 10.1', () => {
   const names = (l: Layout, x: boolean) => cellsFor(62, l, x).map(c => [c.name, c.width])
@@ -150,6 +150,14 @@ test('cellsFor at 62 columns: the narrow cells of spec 10.1', () => {
     ['title', undefined],
     ['type', 6],
     ['status', 13],
+    ['x', 2],
+  ])
+  expect(names('files', true)).toEqual([
+    ['title', undefined],
+    ['type', 9],
+    ['status', 9],
+    ['extra', 9],
+    ['mark', 8],
     ['x', 2],
   ])
 })
@@ -184,6 +192,14 @@ test('cellsFor at 100 columns: the wide cells', () => {
     ['extra', 10],
     ['x', 2],
   ])
+  expect(names('files')).toEqual([
+    ['title', undefined],
+    ['type', 9],
+    ['status', 10],
+    ['extra', 10],
+    ['mark', 8],
+    ['x', 2],
+  ])
 })
 
 test('cellsFor: a hidden cell is not in the list, and x only when dismissable', () => {
@@ -212,6 +228,7 @@ test('cellsFor wrap modes: branches cut in the middle, titles at the end', () =>
   expect(wrap('agents', 'title')).toBe('truncate-middle')
   expect(wrap('agents', 'type')).toBe('truncate-middle')
   expect(wrap('prs', 'title')).toBe('truncate-end')
+  expect(wrap('files', 'title')).toBe('truncate-middle')
   expect(wrap('prs', 'type')).toBe('truncate-middle')
 })
 

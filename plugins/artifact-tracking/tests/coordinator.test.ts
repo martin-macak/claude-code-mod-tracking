@@ -175,6 +175,26 @@ test('only due and refreshable items are refreshed; web links never are', async 
   expect(s.saved[0]!.map(x => x.key)).toEqual(['gh:github.com/o/r#1', 'gh:github.com/o/r#3'])
 })
 
+test('a Markdown file item is never refreshed, not even by a manual kick', async () => {
+  const file = {
+    ...base,
+    category: 'file',
+    key: 'file:/work/a.md',
+    url: '/work/a.md',
+    label: '/work/a.md',
+    created: true,
+    edits: 0,
+    views: 0,
+    mentions: 0,
+  } as ItemRecord
+  const s = setup([file, gh(1)])
+  expect(await s.c.runDue()).toEqual({ refreshed: 1, skipped: false })
+  s.c.kick('manual')
+  await flush()
+  expect(s.calls.gh).toEqual([['gh:github.com/o/r#1'], ['gh:github.com/o/r#1']])
+  expect(s.calls.acli).toEqual([])
+})
+
 test('GitHub and Jira items go to their own tool in one call each', async () => {
   const s = setup([gh(1), jira('ISS-1'), gh(2), jira('ISS-2')])
   await s.c.runDue()
