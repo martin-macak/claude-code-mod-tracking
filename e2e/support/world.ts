@@ -33,6 +33,8 @@ export class DemoWorld extends World {
   outDir = ''
   signalFile = ''
   turnMark = 0
+  /** The artifact a scenario published and did not delete yet. A failed run deletes it (artifact.steps.ts). */
+  artifact: string | undefined
   private release: (() => void) | undefined
 
   get tl(): Timeline {
@@ -57,7 +59,7 @@ export class DemoWorld extends World {
     this.tl.phase('cut')
   }
 
-  async launch(prompt?: string): Promise<void> {
+  async launch(prompt?: string, tools?: readonly string[]): Promise<void> {
     this.tl.phase('cut')
     await launchClaude(
       {
@@ -66,6 +68,7 @@ export class DemoWorld extends World {
         pluginDir: PLUGIN_DIR,
         model: this.config.model,
         timeoutMs: this.config.turnTimeoutMs,
+        ...(tools ? { tools } : {}),
       },
       prompt,
     )

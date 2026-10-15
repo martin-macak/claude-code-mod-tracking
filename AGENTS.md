@@ -33,6 +33,7 @@ Enforcement, so a skipped step fails loudly:
 - `make lint` runs every hook on all files. CI runs the same hooks (`.github/workflows/lint.yml`). `make verify` runs it too.
 - Run `make test` after a change in `plugins/`.
 - Run `make e2e` after a change in `plugins/` or `e2e/`, when you have a Claude login and tmux. It runs real model turns, so CI does not run it. CI runs `make e2e-unit`.
+  - The `@artifacts` scenario publishes a private test page to claude.ai with your login and deletes it again. Skip it with `cd e2e && npx cucumber-js --tags 'not @artifacts'`.
 - Refresh the README demo GIF with the `demo-scenario` skill (`.agents/skills/demo-scenario/`, `make demo`).
 - Never skip hooks (`--no-verify`). Fix the cause.
 - Fix lint findings in the code. Change a rule in `biome.json` or `.markdownlint-cli2.jsonc` only with a reason in a comment or the PR.
