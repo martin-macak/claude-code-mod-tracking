@@ -75,19 +75,10 @@ import {
 } from './process/probe'
 import type { Timer } from './refresh/coordinator'
 import { RefreshCoordinator } from './refresh/coordinator'
+import { extractRepoPathsFromTool, PATH_TOOLS, parseRepoHintsFromBash, type RepoHit, repoBaseDir } from './repos/hints'
 import { RepoQueue } from './repos/queue'
-import {
-  capRepoRows,
-  extractRepoPathsFromTool,
-  mergeRepoRows,
-  PATH_TOOLS,
-  parseRepoHintsFromBash,
-  type RepoHit,
-  RepoTracker,
-  type RepoVisit,
-  repoBaseDir,
-  upsertRepoRows,
-} from './repos/tracker'
+import { capRepoRows, mergeRepoRows, upsertRepoRows } from './repos/rows'
+import { RepoTracker, type RepoVisit } from './repos/tracker'
 import {
   type FileTouch,
   type IgnoreContext,

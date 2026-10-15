@@ -2,18 +2,10 @@ import { expect, test } from 'claude-code/testing'
 import type { RepoRecord, RepoRef, RunInit, RunResult } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
 import { resolvePath } from '../hooks/process/shell'
-import {
-  capRepoRows,
-  extractRepoPathsFromTool,
-  isNoisePath,
-  mergeRepoRows,
-  normalizeRemoteUrl,
-  PATH_TOOLS,
-  parseRepoHintsFromBash,
-  RepoTracker,
-  repoBaseDir,
-  upsertRepoRows,
-} from '../hooks/repos/tracker'
+import { extractRepoPathsFromTool, PATH_TOOLS, parseRepoHintsFromBash, repoBaseDir } from '../hooks/repos/hints'
+import { isNoisePath, normalizeRemoteUrl } from '../hooks/repos/identity'
+import { capRepoRows, mergeRepoRows, upsertRepoRows } from '../hooks/repos/rows'
+import { RepoTracker } from '../hooks/repos/tracker'
 
 const ROOT: RepoRef = { host: 'github.com', owner: 'acme', repo: 'web' }
 
