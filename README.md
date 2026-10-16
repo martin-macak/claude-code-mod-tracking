@@ -48,9 +48,9 @@ The first mod is [`artifact-tracking`](plugins/artifact-tracking/README.md). A s
 
 ## Demo
 
-![artifact-tracking in a Claude Code session: a prompt mentions GitHub items and a link, the band counts them, and /track shows their live state](docs/assets/demo.gif)
+![artifact-tracking in a Claude Code session: a prompt mentions GitHub items and a link, the band counts them, /track shows their live state, and the 1 key moves a row to the top](docs/assets/demo.gif)
 
-You mention a PR, an issue and a docs link in a normal prompt. The mod finds them, and the band above the prompt counts them at once. A second prompt adds a PR with failing checks, and the band shows `(1 ✗)`. `/track` opens a pane with the live title, state and checks of each item from `gh`, and a section for web links. Press `r` to refresh every item and `Esc` to close the pane.
+You mention two PRs, an issue and a docs link in a normal prompt. The mod finds them, and the band above the prompt counts them, with `(1 ✗)` for the PR with failing checks. `/track` opens a pane with the live title, state and checks of each item from `gh`, and a section for web links. Tab picks a row, and `1` marks it high: the row moves to the top with `▲`. Press `r` to refresh every item and `Esc` to close the pane.
 
 The GIF comes from a Gherkin scenario, [`e2e/features/tracking.feature`](e2e/features/tracking.feature), that `make demo` records. The same scenario runs as a test under `make e2e`.
 
@@ -60,6 +60,7 @@ The GIF comes from a Gherkin scenario, [`e2e/features/tracking.feature`](e2e/fea
 - **Live state.** Shows title, open, closed or merged, failing checks, Jira status and the Epic tree. Data comes from `gh` (one GraphQL call for each host) and `acli`.
 - **Always in view.** A one-line band above the prompt counts the items: `tracking  Jira 6 · GitHub 4 (1 ✗) · Links 2  /track`.
 - **Interactive pane.** `/track` opens a pane with one section for each source. Press `r` to refresh, `x` to hide an auto row, `Esc` to close.
+- **Priority.** Pick a row and press `1` high, `2` normal, `3` low or `0` to remove your mark. Rows sort by level. The open PR of your current branch, and the issues it closes, rise on their own. `/track prio` does the same from the prompt.
 - **Auto tracking.** Tracks the worktrees, agents and pull requests of the session with no mention, also stacked PRs and the refs in a PR body.
 - **Survives restarts.** Keeps the items across `/clear`, `--resume` and `--continue`.
 - **Fails soft.** Without `gh` or `acli`, the items stay in the list and the section says why. A circuit breaker pauses a failing tool for 5 minutes.

@@ -1,25 +1,37 @@
 // The auto sections of the pane (spec 10): Worktrees, Agents, Pull requests, the band parts and the composers.
 // Imports `view.ts` and the contracts. Pure: no `$`, no JSX, no clock.
 
-import type { AgentRow, AutoState, GitHubRecord, ItemRecord, ProcessRecord, ProcessUiState } from '../contracts'
+import type {
+  AgentRow,
+  AutoState,
+  GitHubRecord,
+  ItemRecord,
+  ProcessRecord,
+  ProcessUiState,
+  RepoRecord,
+} from '../contracts'
 import { MASTER_ID } from '../contracts'
+import { byLevel } from '../model/priority'
 import { processBandPart, processSection } from './process-view'
-import type { PaneRow, PaneSection, ViewContext } from './view'
-import { ago, bandParts, buildPane, EMPTY_TEXT, githubRow, isWide, lastRefreshOf, textOf, toolNote } from './view'
+import { repoBandPart, repoSection } from './repo-view'
+import type { PaneRow, PaneSection, RowPrio, ViewContext } from './view'
+import {
+  ago,
+  bandParts,
+  buildPane,
+  compactIds,
+  EMPTY_TEXT,
+  githubRow,
+  isWide,
+  lastRefreshOf,
+  levelsOf,
+  textOf,
+  toolNote,
+} from './view'
 
-const AGENT_ID = /(agent-)([0-9a-f]{8})[0-9a-f]+/g
-const RUN_ID = /wf_([A-Za-z0-9-]+)-(\d+)(?![\w-])/g
+export { compactIds } // kept here for the callers that import it from the auto view
+
 const SKIPS_WITH_HEADER = new Set(['no-gh', 'not-logged-in', 'paused', 'host-not-authed'])
-
-/**
- * Agent ids compact to 8 hex after `agent-`. A workflow run id keeps 6 characters between `wf_` and the last
- * `-<digits>`, since a run id can hold `-` (spec 10.3). Any other hex string stays as it is.
- */
-export function compactIds(text: string): string {
-  return text
-    .replace(AGENT_ID, '$1$2')
-    .replace(RUN_ID, (m, body: string, n: string) => (body.length > 6 ? `wf_${body.slice(0, 6)}-${n}` : m))
-}
 
 const isDiscoveredPr = (i: ItemRecord): i is GitHubRecord =>
   i.category === 'github' && i.type === 'pr' && i.sources.includes('auto')
@@ -127,8 +139,8 @@ const GLYPH: Record<NonNullable<GitHubRecord['checks']>, string> = {
   none: '',
 }
 
-function prRow(rec: GitHubRecord, auto: AutoState | null, ctx: ViewContext): PaneRow {
-  const base = githubRow(rec, ctx)
+function prRow(rec: GitHubRecord, auto: AutoState | null, ctx: ViewContext, prio: RowPrio): PaneRow {
+  const base = githubRow(rec, ctx, prio)
   const baseBranch = rec.baseRefName
   const defaultBranch = auto?.snapshot?.defaultBranch
   const stacked = defaultBranch !== undefined && baseBranch !== undefined && baseBranch !== defaultBranch
@@ -165,7 +177,11 @@ function prsNote(auto: AutoState | null, prs: readonly GitHubRecord[], ctx: View
 }
 
 function prsSection(auto: AutoState | null, items: readonly ItemRecord[], ctx: ViewContext): PaneSection | null {
-  const prs = items.filter(isDiscoveredPr).sort((a, b) => a.firstSeen - b.firstSeen || a.number - b.number)
+  const levels = levelsOf(items, { ...ctx, auto })
+  const prioFor = (rec: GitHubRecord): RowPrio => levels.get(rec.key) ?? {}
+  const prs = items
+    .filter(isDiscoveredPr)
+    .sort((a, b) => byLevel(prioFor(a).level, prioFor(b).level) || a.firstSeen - b.firstSeen || a.number - b.number)
   const p = auto?.snapshot?.prs
   const hasBranches = (auto?.snapshot?.branches.length ?? 0) > 0
   const showHeader =
@@ -175,9 +191,10 @@ function prsSection(auto: AutoState | null, items: readonly ItemRecord[], ctx: V
     id: 'prs',
     title: 'Pull requests',
     note: prsNote(auto, prs, ctx),
-    rows: prs.map(rec => prRow(rec, auto, ctx)),
+    rows: prs.map(rec => prRow(rec, auto, ctx, prioFor(rec))),
     layout: 'prs',
     dismissable: true,
+    prio: true,
   }
 }
 
@@ -210,15 +227,30 @@ export function autoBandParts(auto: AutoState | null, items: readonly ItemRecord
   ]
 }
 
+function withRepos(itemSections: PaneSection[], repos: readonly RepoRecord[]): PaneSection[] {
+  const section = repoSection(repos)
+  if (!section) return itemSections
+  const web = itemSections.findIndex(s => s.id === 'web')
+  if (web < 0) return [...itemSections, section]
+  return [...itemSections.slice(0, web), section, ...itemSections.slice(web)]
+}
+
 /** Auto sections first, then item sections, then the Processes section when it has rows or a note. */
 export function composePane(
   items: readonly ItemRecord[],
   processes: readonly ProcessRecord[],
   processUi: ProcessUiState,
   ctx: ViewContext,
+  repos: readonly RepoRecord[] = [],
 ): PaneSection[] {
   const proc = processSection(processes, processUi)
-  return [...buildAutoSections(ctx.auto ?? null, items, ctx), ...buildPane(items, ctx), ...(proc ? [proc] : [])]
+  // One pass for all sections: an issue under GitHub reads the level of a PR under Pull requests (R8).
+  const withLevels: ViewContext = { ...ctx, levels: levelsOf(items, ctx) }
+  return [
+    ...buildAutoSections(ctx.auto ?? null, items, withLevels),
+    ...withRepos(buildPane(items, withLevels), repos),
+    ...(proc ? [proc] : []),
+  ]
 }
 
 /** `bandParts(items)`, then auto parts, then `Processes n (k ✗)`; null when all are empty. */
@@ -226,9 +258,11 @@ export function composeBand(
   items: readonly ItemRecord[],
   processes: readonly ProcessRecord[],
   auto: AutoState | null,
+  repos: readonly RepoRecord[] = [],
 ): string | null {
   const p = processBandPart(processes)
-  const parts = [...bandParts(items), ...autoBandParts(auto, items), ...(p ? [p] : [])]
+  const r = repoBandPart(repos)
+  const parts = [...bandParts(items), ...(r ? [r] : []), ...autoBandParts(auto, items), ...(p ? [p] : [])]
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
@@ -238,7 +272,8 @@ export function composeCommandText(
   processes: readonly ProcessRecord[],
   processUi: ProcessUiState,
   ctx: ViewContext,
+  repos: readonly RepoRecord[] = [],
 ): string {
-  const sections = composePane(items, processes, processUi, { ...ctx, folded: [] })
+  const sections = composePane(items, processes, processUi, { ...ctx, folded: [] }, repos)
   return sections.length === 0 ? EMPTY_TEXT : textOf(sections)
 }

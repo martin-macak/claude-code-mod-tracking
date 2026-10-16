@@ -6,6 +6,7 @@ import type {
   AutoState,
   GitHubRecord,
   ItemRecord,
+  RepoRecord,
   ToolStatus,
   WebRecord,
   WorktreeRow,
@@ -119,10 +120,18 @@ const web = (url: string, over: Partial<WebRecord> = {}): WebRecord => ({
   ...over,
 })
 const byId = (sections: ReturnType<typeof buildAutoSections>, id: string) => sections.find(s => s.id === id)
+const repo = (key: string, over: Partial<RepoRecord> = {}): RepoRecord => ({
+  key,
+  name: key.split('/').slice(-2).join('/'),
+  touchedBy: ['main'],
+  firstSeen: 1,
+  lastSeen: 1,
+  ...over,
+})
 
 // ---------------------------------------------------------------- cellsFor
 
-const LAYOUTS: Layout[] = ['worktrees', 'agents', 'prs', 'items', 'files']
+const LAYOUTS: Layout[] = ['worktrees', 'agents', 'prs', 'items', 'files', 'repos']
 
 test('cellsFor at 62 columns: the narrow cells of spec 10.1', () => {
   const names = (l: Layout, x: boolean) => cellsFor(62, l, x).map(c => [c.name, c.width])
@@ -202,6 +211,117 @@ test('cellsFor at 100 columns: the wide cells', () => {
   ])
 })
 
+test('cellsFor repos: key, title, type, a reserved status and the x', () => {
+  const names = (cols: number) => cellsFor(cols, 'repos', true).map(c => [c.name, c.width])
+  expect(names(80)).toEqual([
+    ['key', 24],
+    ['title', undefined],
+    ['type', 20],
+    ['status', 5],
+    ['x', 2],
+  ])
+  expect(names(60)).toEqual([
+    ['key', 20],
+    ['title', undefined],
+    ['type', 14],
+    ['status', 5],
+    ['x', 2],
+  ])
+  const wrap = (n: string) => cellsFor(80, 'repos', true).find(c => c.name === n)?.wrap
+  expect([wrap('key'), wrap('title'), wrap('type'), wrap('status')]).toEqual([
+    'truncate-end',
+    'truncate-middle',
+    'truncate-middle',
+    'truncate-end',
+  ])
+})
+
+test('cellsFor: a section with levels puts a 2-column prio cell first and keeps every other cell', () => {
+  for (const cols of [62, 100])
+    for (const layout of LAYOUTS) {
+      const plain = cellsFor(cols, layout, true)
+      const withPrio = cellsFor(cols, layout, true, true)
+      expect(withPrio[0]).toEqual({ name: 'prio', width: 2, wrap: 'truncate-end' })
+      expect(withPrio.slice(1)).toEqual(plain)
+    }
+})
+
+test('only item sections have levels: Worktrees, Agents and Processes draw no prio cell', () => {
+  const proc = { id: 'task:t1', kind: 'background-task' as const, name: 'npm run dev', state: 'running' as const }
+  const sections = composePane(
+    [pr(7), web('https://x.example/')],
+    [{ ...proc, firstSeen: 1, lastSeen: 1, taskId: 't1' }],
+    PROCESS_UI,
+    ctx({ auto: auto() }),
+  )
+  expect(sections.map(s => [s.id, s.prio === true])).toEqual([
+    ['worktrees', false],
+    ['agents', false],
+    ['prs', true],
+    ['web', true],
+    ['processes', false],
+  ])
+  expect(sections.filter(s => !s.prio).flatMap(s => s.rows.filter(r => r.prio !== undefined))).toEqual([])
+})
+
+test('Pull requests sort by level first, then firstSeen, then number', () => {
+  // On another branch than this session's, so no PR is top by rule (R7).
+  const on = (n: number, over: Partial<GitHubRecord> = {}) => pr(n, { headRefName: 'other', ...over })
+  const rows = byId(
+    buildAutoSections(
+      auto(),
+      [
+        on(1, { priority: 'low' }),
+        on(5, { firstSeen: 2 }),
+        on(3, { priority: 'high', firstSeen: 99 }),
+        on(4, { firstSeen: 2 }),
+        on(2),
+      ],
+      ctx(),
+    ),
+    'prs',
+  )!.rows
+  expect(rows.map(r => r.key)).toEqual(['#3', '#2', '#4', '#5', '#1'])
+  expect(rows.map(r => r.prio?.level)).toEqual(['high', undefined, undefined, undefined, 'low'])
+})
+
+test('R7: the open PR of the current branch sorts first in Pull requests with a dim star', () => {
+  // MASTER's branch is feat/auto-tracking; pr() is on it unless told otherwise.
+  const items = [
+    pr(1, { headRefName: 'other' }),
+    pr(2, { firstSeen: 50 }),
+    pr(3, { headRefName: 'x', priority: 'high' }),
+  ]
+  const rows = byId(buildAutoSections(auto(), items, ctx()), 'prs')!.rows
+  expect(rows.map(r => [r.key, r.prio])).toEqual([
+    ['#2', { level: 'top', auto: true }],
+    ['#3', { level: 'high' }],
+    ['#1', {}],
+  ])
+  const detached = auto({ agents: [{ ...MASTER, branch: undefined }] })
+  expect(byId(buildAutoSections(detached, items, ctx()), 'prs')!.rows.map(r => r.key)).toEqual(['#3', '#1', '#2'])
+})
+
+test('R8: an issue a PR on the current branch closes sorts first under GitHub, and the text shows the star', () => {
+  const issue = (n: number): GitHubRecord => ({
+    ...pr(n),
+    url: `https://github.com/acme/web/issues/${n}`,
+    sources: ['prompt'],
+    type: 'issue',
+    headRefName: undefined,
+  })
+  const items = [issue(8), issue(9), pr(2, { closes: ['gh:github.com/acme/web#9'] })]
+  const sections = composePane(items, [], PROCESS_UI, ctx({ auto: auto() }))
+  const github = sections.find(s => s.id === 'github')!.rows
+  expect(github.map(r => [r.key, r.prio])).toEqual([
+    ['#9', { level: 'top', auto: true }],
+    ['#8', {}],
+  ])
+  const text = composeCommandText(items, [], PROCESS_UI, ctx({ auto: auto() }))
+  expect(text).toContain('★ #9  PR 9')
+  expect(text).toContain('★ #2  PR 2')
+})
+
 test('cellsFor: a hidden cell is not in the list, and x only when dismissable', () => {
   expect(cellsFor(62, 'prs', false).map(c => c.name)).toEqual(['key', 'title', 'type', 'status'])
   expect(cellsFor(62, 'items', false).some(c => c.name === 'extra')).toBe(false)
@@ -212,7 +332,7 @@ test('cellsFor leaves the title at least 12 columns for every layout, at 62 and 
   for (const cols of [62, 100]) {
     for (const layout of LAYOUTS) {
       for (const x of [false, true]) {
-        const cells = cellsFor(cols, layout, x)
+        const cells = cellsFor(cols, layout, x, layout === 'prs' || layout === 'items' || layout === 'files')
         const fixed = cells.reduce((sum, c) => sum + (c.width ?? 0), 0)
         const room = cols - fixed - (cells.length - 1)
         expect(room).toBeGreaterThan(11)
@@ -466,6 +586,7 @@ test('composeBand joins the item parts and the auto parts; nothing at all is nul
   expect(composeBand([web('https://x.example/')], [], a)).toBe('Links 1 · Worktrees 1')
   expect(composeBand([], [], a)).toBe('Worktrees 1')
   expect(composeBand([], [], null)).toBeNull()
+  expect(composeBand([], [], null, [])).toBeNull()
   expect(composeBand([], [], auto({ worktrees: [wt('repo', 0)], agents: [MASTER] }))).toBeNull()
 })
 
@@ -477,6 +598,28 @@ test('composePane puts the auto sections first, then Jira, GitHub, Web links', (
     ctx({ auto: auto() }),
   )
   expect(sections.map(s => s.id)).toEqual(['worktrees', 'agents', 'github', 'web'])
+})
+
+test('composePane inserts Repos between GitHub and Web links, and composeBand adds Repos n', () => {
+  const sections = composePane(
+    [web('https://x.example/'), { ...pr(1), sources: ['prompt'] }],
+    [],
+    PROCESS_UI,
+    ctx({ auto: auto() }),
+    [repo('remote:ghe.corp/acme/sdk')],
+  )
+  expect(sections.map(s => s.id)).toEqual(['worktrees', 'agents', 'github', 'repos', 'web'])
+  expect(composeBand([], [], null, [repo('remote:ghe.corp/acme/sdk')])).toBe('Repos 1')
+})
+
+test('composeCommandText lists a repo row as text, and a repos-only pane ends with the repos section', () => {
+  const rows = [repo('remote:ghe.corp/acme/sdk')]
+  expect(composeCommandText([], [], PROCESS_UI, ctx(), rows)).toContain('acme/sdk')
+  expect(composeCommandText([], [], PROCESS_UI, ctx(), [{ ...rows[0]!, mode: 'edit' }])).toContain('edit')
+  const sections = composePane([], [], PROCESS_UI, ctx(), rows)
+  expect(sections.map(s => s.id)).toEqual(['repos'])
+  const withPr = composePane([{ ...pr(1), sources: ['prompt'] }], [], PROCESS_UI, ctx(), rows)
+  expect(withPr.at(-1)?.id).toBe('repos')
 })
 
 test('composeCommandText lists the auto sections as text; empty is the old message', () => {

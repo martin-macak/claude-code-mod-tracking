@@ -64,6 +64,17 @@ test('parseBashProcesses derives compose project from cwd when -p is missing', (
   })
 })
 
+test('parseBashProcesses keeps a cd inside a subshell out of later commands', () => {
+  const compose = parseBashProcesses(
+    '(cd /srv/other && true); docker compose up -d',
+    { result: { stdout: '' } },
+    undefined,
+    Date.now(),
+    '/work/app',
+  )
+  expect(compose[0]).toMatchObject({ kind: 'docker-compose', name: 'app', project: 'app' })
+})
+
 test('task-notification and TaskStop updates map to process terminal states', () => {
   expect(processUpdateFromNotification({ id: 'task-1', status: 'completed' })).toEqual({
     taskId: 'task-1',

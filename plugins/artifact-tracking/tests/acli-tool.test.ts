@@ -195,6 +195,26 @@ test('a Task view fills summary, type, status, category and subtasks', async () 
   expect(calls.length).toBe(2) // no search for a Task
 })
 
+test('a refresh keeps the priority the person set on a child, matched by key', async () => {
+  const { tool } = setup(a => (isAuth(a) ? authOk() : res(fx.TASK_VIEW_JSON)))
+  const old = (key: string, priority: 'high' | 'low' | 'normal') => ({
+    key,
+    priority,
+    summary: '',
+    issueType: '',
+    status: '',
+    children: [],
+  })
+  const it = item('PROJ-200', { children: [old('PROJ-202', 'high'), old('PROJ-999', 'low')] })
+  await tool.refreshItems([it])
+  // PROJ-201 is new: acli gives no mark, so it has none. PROJ-999 is gone, and its mark with it.
+  expect(it.children.map(c => [c.key, c.priority])).toEqual([
+    ['PROJ-201', undefined],
+    ['PROJ-202', 'high'],
+  ])
+  expect('priority' in it.children[0]!).toBe(false)
+})
+
 test('a sub-task view has no children', async () => {
   const { tool } = setup(a => (isAuth(a) ? authOk() : res(fx.SUBTASK_VIEW_JSON)))
   const it = item('PROJ-205', { children: [{ key: 'X-1', summary: '', issueType: '', status: '', children: [] }] })

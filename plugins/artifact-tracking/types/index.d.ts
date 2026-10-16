@@ -33,6 +33,7 @@ export type ItemError = { kind: 'not-found' | 'failed'; message: string; at: num
 export type GitHubType = 'issue' | 'pr' | 'unknown'
 export type GitHubState = 'open' | 'closed' | 'merged'
 export type Checks = 'success' | 'failure' | 'pending' | 'none'
+export type Priority = 'high' | 'normal' | 'low'
 
 export type GitHubFields = {
   host: string
@@ -52,10 +53,13 @@ export type GitHubFields = {
   /** PR branches. Set by discovery only (A8). */
   headRefName?: string
   baseRefName?: string
+  /** Issue keys the PR's closing references name. Set by discovery only, like the branches. Absent when none. */
+  closes?: string[]
 }
 
 export type JiraNode = {
   key: string
+  priority?: Priority
   summary: string
   issueType: string
   status: string
@@ -91,6 +95,7 @@ export type ItemRecordBase = {
   url: string
   /** Display text: Markdown label, title, or host + path. */
   label: string
+  priority?: Priority
   sources: Source[]
   firstSeen: number
   lastSeen: number
@@ -165,6 +170,25 @@ export type ProcessUiState = {
   breaker: BreakerState
   openUntil?: number
   dockerIssue?: string
+}
+
+// ---------------------------------------------------------------- tracked repositories
+
+export type RepoRecord = {
+  /** Group key: `remote:<host>/<owner>/<repo>`, `remote:<url>` or `local:<root>`. */
+  key: string
+  /** Repo display name. */
+  name: string
+  /** Resolved git root when known. */
+  root?: string
+  /** Last known branch. */
+  branch?: string
+  /** How the repo was used. `edit` wins over `read`. Missing means `read` (a row from an older version). */
+  mode?: 'read' | 'edit'
+  /** Agent labels that touched this repo. */
+  touchedBy: string[]
+  firstSeen: number
+  lastSeen: number
 }
 
 // ---------------------------------------------------------------- tools
@@ -312,6 +336,7 @@ declare module 'claude-code' {
   interface PluginState {
     'artifact-tracking': {
       items: ItemRecord[]
+      repos: RepoRecord[]
       processes: ProcessRecord[]
       processUi: ProcessUiState
       tools: { gh: ToolStatus; acli: ToolStatus }

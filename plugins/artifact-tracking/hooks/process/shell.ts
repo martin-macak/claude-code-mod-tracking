@@ -8,6 +8,11 @@ export type Segment = {
   words: string[]
   /** The segment ended with a single `&`: the shell runs it in the background. */
   bg: boolean
+  /**
+   * The subshell the segment runs in. `''` is the top level. `(`, `$(` and a backtick pair open a child scope
+   * `${parent}.${n}`. `{ }` is the same shell, so it keeps the scope.
+   */
+  scope: string
 }
 
 const OPS = ['&&', '||', '|&', ';', '|', '&', '\n', '(', ')', '`', '$(', '{', '}'] as const
@@ -21,6 +26,10 @@ export function splitShell(command: string): Segment[] {
   const heredocs: { tag: string; strip: boolean }[] = []
   let i = 0
   const s = command
+  // Open subshells, innermost last. The segment ends before a scope opens or closes, so it keeps the scope it ran in.
+  const stack: { id: string; tick: boolean }[] = []
+  let scopes = 0
+  const scope = () => stack.at(-1)?.id ?? ''
 
   const endWord = () => {
     if (inWord) words.push(word)
@@ -30,7 +39,7 @@ export function splitShell(command: string): Segment[] {
   const endSegment = (bg: boolean) => {
     endWord()
     const clean = dropRedirections(words)
-    if (clean.length > 0) out.push({ words: clean, bg })
+    if (clean.length > 0) out.push({ words: clean, bg, scope: scope() })
     words = []
   }
   const skipHeredocs = () => {
@@ -124,6 +133,13 @@ export function splitShell(command: string): Segment[] {
     }
     if (op) {
       endSegment(op === '&')
+      if (op === '(' || op === '$(') stack.push({ id: `${scope()}.${++scopes}`, tick: false })
+      else if (op === ')') {
+        if (!stack.at(-1)?.tick) stack.pop()
+      } else if (op === '`') {
+        if (stack.at(-1)?.tick) stack.pop()
+        else stack.push({ id: `${scope()}.${++scopes}`, tick: true })
+      }
       i += op.length
       if (op === '\n') skipHeredocs()
       continue
@@ -134,6 +150,26 @@ export function splitShell(command: string): Segment[] {
   }
   endSegment(false)
   return out
+}
+
+/**
+ * A working directory per subshell scope. `get` walks up to the nearest scope that set one, else `start`.
+ * `set(scope, undefined)` records an unknown directory, which hides the parent's.
+ */
+export function scopedDir(start: string | undefined): {
+  get: (scope: string) => string | undefined
+  set: (scope: string, dir: string | undefined) => void
+} {
+  const dirs = new Map<string, string | undefined>()
+  return {
+    get(scope) {
+      for (let s = scope; ; s = s.slice(0, s.lastIndexOf('.'))) {
+        if (dirs.has(s)) return dirs.get(s)
+        if (s === '') return start
+      }
+    },
+    set: (scope, dir) => void dirs.set(scope, dir),
+  }
 }
 
 const REDIRECT = /^(?:\d*|&)(?:>>?|<<?<?|>&|<&|>\|)(.*)$/
@@ -193,4 +229,23 @@ export function stripWrappers(words: readonly string[]): {
     break
   }
   return { words: words.slice(i), env, nohup }
+}
+
+/**
+ * Joins `p` onto `cwd` and folds `.` and `..` the way a shell does. A relative path with no cwd stays relative.
+ * A `~/` path stays in `~/` form. `..` at `/` or at `~` stays there.
+ */
+export function resolvePath(cwd: string | undefined, p: string): string {
+  const abs = p.startsWith('/') || p.startsWith('~') || !cwd ? p : `${cwd}/${p}`
+  const lead = abs.startsWith('/') ? '/' : ''
+  const parts: string[] = []
+  for (const part of abs.split('/')) {
+    if (part === '' || part === '.') continue
+    if (part === '..') {
+      const top = parts.at(-1)
+      if (top !== undefined && top !== '..' && !(top === '~' && parts.length === 1 && !lead)) parts.pop()
+      else if (!lead && top !== '~') parts.push(part)
+    } else parts.push(part)
+  }
+  return lead + parts.join('/')
 }

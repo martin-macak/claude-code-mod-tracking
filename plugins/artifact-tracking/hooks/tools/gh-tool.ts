@@ -13,7 +13,7 @@ import type {
   Runner,
   RunResult,
 } from '../contracts'
-import { LIMITS } from '../contracts'
+import { githubKey, LIMITS } from '../contracts'
 import { dig, isRecord, type Json } from '../json'
 import type { CircuitBreaker } from './circuit-breaker'
 import { firstLine, Tool } from './tool'
@@ -88,12 +88,29 @@ export function buildQuery(items: readonly GitHubTarget[]): { query: string; ali
       __typename
       ... on Issue { number title state stateReason url }
       ... on PullRequest { number title state isDraft reviewDecision url
-        commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } }
+        commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+        closingIssuesReferences(first: ${LIMITS.closingRefsPerPr}) { nodes { number repository { nameWithOwner } } } }
     }
   }`,
     )
   }
   return { query: `query {\n  rateLimit { cost remaining }\n${fields.join('\n')}\n}`, aliases }
+}
+
+/**
+ * The issue keys a PR's closing references name, so an issue can take the level of the PR (R8). A ref with no
+ * repository is in the PR's own repo, as discovery reads it. No `nodes` in the reply: undefined, the stored list stays.
+ */
+function closesOf(pr: GitHubTarget, nodes: unknown): string[] | undefined {
+  if (!Array.isArray(nodes) || !pr.owner || !pr.repo) return undefined
+  const out: string[] = []
+  for (const c of nodes) {
+    if (!isRecord(c) || typeof c.number !== 'number') continue
+    const nameWithOwner = dig(c, 'repository', 'nameWithOwner')
+    const [owner, name] = (typeof nameWithOwner === 'string' ? nameWithOwner : '').split('/')
+    out.push(githubKey(pr.host, owner || pr.owner, name || pr.repo, c.number))
+  }
+  return out
 }
 
 /** Sets an optional field, or removes it when the value is not usable. */
@@ -206,6 +223,7 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
       put(it, 'reviewDecision', isPr && typeof node.reviewDecision === 'string' ? node.reviewDecision : undefined)
       const rollup = dig(node, 'commits', 'nodes', 0, 'commit', 'statusCheckRollup', 'state')
       put(it, 'checks', isPr ? rollupToChecks(typeof rollup === 'string' ? rollup : null) : undefined)
+      put(it, 'closes', isPr ? closesOf(it, dig(node, 'closingIssuesReferences', 'nodes')) : undefined)
       delete it.error
       it.refreshedAt = at
       return

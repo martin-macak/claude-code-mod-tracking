@@ -2,7 +2,7 @@
 // so none of them has to pull in `registry.ts` or `discovered.ts` for a key.
 
 import type { ArtifactOrigin, DiscoveredPr, ItemRecord, Ref, Source } from '../contracts'
-import { AUTO_SOURCES } from '../contracts'
+import { AUTO_SOURCES, githubKey } from '../contracts'
 import { normalizeUrl } from '../scan/links'
 
 const withoutFragment = (url: string): string => {
@@ -13,9 +13,7 @@ const withoutFragment = (url: string): string => {
 export function keyOf(ref: Ref): string {
   switch (ref.category) {
     case 'github':
-      return ref.owner && ref.repo
-        ? `gh:${ref.host.toLowerCase()}/${ref.owner.toLowerCase()}/${ref.repo.toLowerCase()}#${ref.number}`
-        : `gh:?#${ref.number}`
+      return ref.owner && ref.repo ? githubKey(ref.host, ref.owner, ref.repo, ref.number) : `gh:?#${ref.number}`
     case 'jira':
       return `jira:${ref.site.toLowerCase()}/${ref.issueKey}`
     case 'artifact':
@@ -27,6 +25,9 @@ export function keyOf(ref: Ref): string {
 
 /** The item key of a Markdown file, `file:<path>`, where `path` is where the file landed (issue #28). */
 export const fileKey = (path: string): string => `file:${path}`
+
+/** The row id of a Jira child: its parent's row id, a slash, its own key. The fold, the mark and the pane use it. */
+export const childId = (parentId: string, nodeKey: string): string => `${parentId}/${nodeKey}`
 
 /** The item key of the PR, `gh:<host>/<owner>/<repo>#<n>`. */
 export function prKey(pr: DiscoveredPr): string {

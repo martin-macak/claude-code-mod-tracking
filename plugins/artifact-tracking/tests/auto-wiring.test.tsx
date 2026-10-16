@@ -169,6 +169,29 @@ test('a Bash result with gitOperation.pr runs the discovery after the debounce, 
   expect(await textOf($)).toContain('Opened here')
 })
 
+test('a Bash that names a repo whose git never answers still kicks the PR discovery', async ($, on) => {
+  const w = world(on)
+  repo(w, ['probe-wt', 'worktree-probe-wt'])
+  await $.session.start(START)
+  await enter($, w)
+  await settle(w, WINDOW)
+  const before = queries(w.calls).length
+  w.fake.nodes['head:worktree-probe-wt'] = [prNode({ number: 7, headRefName: 'worktree-probe-wt', title: 'Opened' })]
+  let release: () => void = () => {}
+  const held = new Promise<undefined>(resolve => {
+    release = () => resolve(undefined)
+  })
+  w.fake.run = argv => (argv[0] === 'git' && argv[2] === '/x/sdk' ? held : undefined)
+  w.fake.tools.Bash = ev.BASH_PR_RAN.result
+  try {
+    await $.tool.call({ tool: 'Bash', command: 'git -C /x/sdk status && gh pr create --draft' } as never)
+    await settle(w, WINDOW)
+    expect(queries(w.calls)).toHaveLength(before + 1)
+  } finally {
+    release()
+  }
+})
+
 test('a PR added elsewhere shows within one tick; a base match shows as stacked; the default branch gets no alias', async ($, on) => {
   const w = world(on)
   repo(w, ['probe-wt', 'worktree-probe-wt'])
@@ -357,6 +380,26 @@ test('a Bash call that kicks nothing re-arms a refused tick', async ($, on) => {
     return $.tool.call({ tool: 'Bash', command: 'ls' } as never)
   }
   expect(await rearmedBy(bash, $, on)).toBe(true)
+})
+
+test('R7 live: when the session works in the PR branch, the PR is top with a dim star; back on main it is not', async ($, on) => {
+  const w = world(on)
+  await withVisiblePr($, w)
+  expect(await textOf($)).not.toContain('★')
+  w.fake.cwd = `${MAIN}/.claude/worktrees/probe-wt` // the master loop now works on worktree-probe-wt
+  await settle(w, TICK)
+  expect(await textOf($)).toContain('★ #7  Opened here')
+  const pane = (await mountPane($, 100)) as Mounted & {
+    findAll(q: unknown): Promise<{ key?: string; text?: string; props: { dimColor?: boolean } }[]>
+  }
+  const mark = (await pane.findAll({ type: 'Button' })).find(b => b.key?.startsWith('mark:0:top:'))
+  expect(mark?.key).toBe(`mark:0:top:${PR7}`)
+  expect(mark?.text).toBe('★')
+  expect(mark?.props.dimColor).toBe(true)
+  await pane.unmount()
+  w.fake.cwd = MAIN
+  await settle(w, TICK)
+  expect(await textOf($)).not.toContain('★')
 })
 
 test('at 62 columns the pane has exactly the cell boxes that cellsFor lists, and the x button presses', async ($, on) => {
