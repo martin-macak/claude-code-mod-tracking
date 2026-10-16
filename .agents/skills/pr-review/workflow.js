@@ -159,6 +159,10 @@ const rank = (s) => SEVERITY.indexOf(s)
 const byOrder = (a, b) =>
   rank(a.severity) - rank(b.severity) || a.file.localeCompare(b.file) || (a.line ?? -1) - (b.line ?? -1)
 const near = (a, b) => (a.line == null || b.line == null ? a.line === b.line : Math.abs(a.line - b.line) <= 3)
+const normalizeItem = (finding, ids = new Set()) => ({
+  ...finding,
+  item: finding.item != null && ids.has(finding.item) ? finding.item : null,
+})
 const isDup = (a, b) => a.file === b.file && near(a, b) && (a.lens === b.lens || (a.item != null && a.item === b.item))
 const fileLine = (ref) => {
   const m = /^(.*?):(\d+)/.exec(ref ?? '')
@@ -206,7 +210,8 @@ function reassessPrompt(item, result) {
 function lensPrompt(lens) {
   return [
     `Review the PR under the "${lens}" lens only. The checklist is in ${SKILL}/lenses.md, section "${lens}".`,
-    'Report only real problems in the changed code. Each finding: severity, title, file, line, problem, evidence (quote the code), fix.',
+    'Report only real problems in the changed code. Each finding: severity, title, file, line, item, problem, evidence (quote the code), fix.',
+    '"item": the requirement id (R1, R5a, …) the finding is about, or null. Never a checklist row name or a free-text label.',
     'The fix is concrete: a code snippet, or a GitHub suggestion block in "suggestion" when the fix replaces the cited lines.',
     `Severity levels:\n${LEVELS}`,
     CONTEXT,
@@ -356,10 +361,12 @@ async function dedup(findings) {
   findings.forEach((f, i) => groups.set(root(i), [...(groups.get(root(i)) ?? []), f]))
   return [...groups.values()]
     .map((g) => {
-      const [base, ...rest] = [...g].sort((x, y) => rank(x.severity) - rank(y.severity))
+      const list = [...g].sort((x, y) => rank(x.severity) - rank(y.severity))
+      const [base, ...rest] = list
       if (!rest.length) return base
+      const item = list.find((f) => f.item != null)?.item ?? base.item ?? null
       const fixes = [base.fix, ...rest.map((f) => f.fix).filter((x) => x !== base.fix)]
-      return { ...base, lenses: [...new Set(g.map((f) => f.lens))].sort(), fix: fixes.join('\n\nAlso: ') }
+      return { ...base, item, lenses: [...new Set(g.map((f) => f.lens))].sort(), fix: fixes.join('\n\nAlso: ') }
     })
     .sort(byOrder)
 }
@@ -391,8 +398,10 @@ const reassess = settled.flatMap((s) => s.reassess)
 const verified = [...settled, ...lensed.filter(Boolean), scout]
 const kept = verified.flatMap((v) => v.kept)
 const refuted = verified.flatMap((v) => v.refuted)
+const ids = new Set(args.items.map((i) => i.id))
+const normalized = kept.map((finding) => normalizeItem(finding, ids))
 phase('Synthesis')
-const findings = await dedup(merge([...kept, ...gapFindings(args.items, results, reassess, kept)]))
+const findings = await dedup(merge([...normalized, ...gapFindings(args.items, results, reassess, normalized)]))
 const counts = Object.fromEntries(SEVERITY.map((s) => [s, findings.filter((f) => f.severity === s).length]))
 const verdict = counts.Critical ? 'Not ready' : counts.Major ? 'Ready after fixes' : 'Ready'
 const items = results.map((r) => {

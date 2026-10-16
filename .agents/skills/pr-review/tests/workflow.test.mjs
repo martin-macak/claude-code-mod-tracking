@@ -142,6 +142,35 @@ test('findings from different lenses on nearby lines stay apart', async () => {
   assert.equal(result.findings.length, 2)
 })
 
+test('a lens finding with a row label still dedups if the requirement id matches', async () => {
+  const lensFindings = {
+    quality: [finding({ line: 10, item: 'R1', title: 'goal' })],
+    architecture: [finding({ lens: 'architecture', line: 10, item: 'Edge input', title: 'edge' })],
+  }
+  const { result, calls } = await runWorkflow({
+    args: { ...noItems, items: [{ id: 'R1', text: 'one', priority: 'Must' }] },
+    agent: fake({ lensFindings, merges: [{ a: 0, b: 1 }] }),
+  })
+  assert.ok(calls.some((c) => c.opts.label === 'dedup'))
+  assert.equal(result.findings.length, 1)
+  assert.equal(result.findings[0].item, 'R1')
+})
+
+test('free-text lens item labels are normalized to null before dedup pairing', async () => {
+  const lensFindings = {
+    quality: [finding({ line: 10, item: 'Edge input' })],
+    tests: [finding({ lens: 'tests', line: 10, item: 'R1' })],
+  }
+  const { result, calls } = await runWorkflow({
+    args: { ...noItems, items: [{ id: 'R1', text: 'one', priority: 'Must' }] },
+    agent: fake({ lensFindings }),
+  })
+  const dedup = calls.find((c) => c.opts.label === 'dedup')
+  assert.ok(dedup)
+  assert.match(dedup.prompt, /"item":null/)
+  assert.ok(result.findings.some((f) => f.item === 'R1'))
+})
+
 test('findings sort by severity, then file, then line', async () => {
   const lensFindings = {
     quality: [
