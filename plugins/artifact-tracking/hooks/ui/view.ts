@@ -10,11 +10,15 @@ import type {
   ItemRecord,
   JiraNode,
   JiraRecord,
+  Priority,
   RepoRef,
   ToolStatus,
   WebRecord,
 } from '../contracts'
-import { artifactOrigin } from '../model/keys'
+import { MASTER_ID } from '../contracts'
+import { artifactOrigin, childId } from '../model/keys'
+import type { Effective, LevelContext } from '../model/priority'
+import { byLevel, effectiveLevels, markerOf } from '../model/priority'
 import { artifactIdOf } from '../scan/artifact-url'
 import { relativeToRoot } from '../scan/files'
 
@@ -45,15 +49,23 @@ export type PaneRow = {
   typeWrap?: Cell['wrap']
   /** A short marker after the other cells: `subagent` on a file row. */
   mark?: string
+  /** An item row: it draws a mark Button in the prio cell, and the priority keys act on `id`. Absent on other rows. */
+  prio?: RowPrio
 }
+
+/** The level a row shows: `level` absent, drawn blank; `auto`, from a rule, drawn dim. */
+export type RowPrio = Effective
 
 export type SectionId = 'worktrees' | 'agents' | 'prs' | 'processes' | 'repos' | Category
 export type Layout = 'worktrees' | 'agents' | 'prs' | 'items' | 'files' | 'repos'
-export type CellName = 'key' | 'title' | 'type' | 'status' | 'extra' | 'mark' | 'x'
+export type CellName = 'prio' | 'key' | 'title' | 'type' | 'status' | 'extra' | 'mark' | 'x'
 /** One rendered cell. `width` absent: the cell grows. */
 export type Cell = { name: CellName; width?: number; wrap: 'truncate-end' | 'truncate-middle' }
 
-/** `category` stays set on item sections. `layout` absent: 'items'. `dismissable` absent: false. */
+/**
+ * `category` stays set on item sections. `layout` absent: 'items'. `dismissable` absent: false.
+ * `prio`: the section draws the prio cell. Only item sections set it: the Processes section uses layout 'items' too.
+ */
 export type PaneSection = {
   id: SectionId
   category?: Category
@@ -62,6 +74,7 @@ export type PaneSection = {
   rows: PaneRow[]
   layout?: Layout
   dismissable?: boolean
+  prio?: boolean
 }
 
 export type ViewContext = {
@@ -77,6 +90,8 @@ export type ViewContext = {
   autoCheckedAt?: number
   /** Body width of the pane. Absent for the `/track` text, which reads as wide. */
   bodyColumns?: number
+  /** The level of every item, by key. `composePane` sets it once for all sections; absent, a section computes it. */
+  levels?: ReadonlyMap<string, RowPrio>
 }
 
 export type Columns = { key: number; type: number; status: number; extra: number }
@@ -135,14 +150,16 @@ export function columnsFor(bodyColumns: number | undefined): Columns {
 
 /**
  * The cells to render, left to right. This is the only source of widths: `pane.tsx` renders exactly these cells.
- * A hidden cell is not in the list. Narrow means a body below 70 columns.
+ * A hidden cell is not in the list. Narrow means a body below 70 columns. `prio` puts the 2-column prio cell first.
  */
-export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismissable: boolean): Cell[] {
+export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismissable: boolean, prio = false): Cell[] {
   const wide = isWide(bodyColumns)
   const x: Cell[] = dismissable ? [{ name: 'x', width: 2, wrap: 'truncate-end' }] : []
+  const lead: Cell[] = prio ? [{ name: 'prio', width: 2, wrap: 'truncate-end' }] : []
   switch (layout) {
     case 'worktrees':
       return [
+        ...lead,
         { name: 'key', width: wide ? 30 : 24, wrap: 'truncate-end' },
         { name: 'title', wrap: 'truncate-middle' },
         { name: 'status', width: wide ? 9 : 8, wrap: 'truncate-end' },
@@ -150,6 +167,7 @@ export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismis
       ]
     case 'agents':
       return [
+        ...lead,
         { name: 'key', width: wide ? 24 : 20, wrap: 'truncate-end' },
         { name: 'title', wrap: 'truncate-middle' },
         { name: 'type', width: wide ? 20 : 14, wrap: 'truncate-middle' },
@@ -157,6 +175,7 @@ export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismis
       ]
     case 'prs':
       return [
+        ...lead,
         { name: 'key', width: 8, wrap: 'truncate-end' },
         { name: 'title', wrap: 'truncate-end' },
         { name: 'type', width: wide ? 26 : 20, wrap: 'truncate-middle' },
@@ -166,6 +185,7 @@ export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismis
       ]
     case 'files':
       return [
+        ...lead,
         { name: 'title', wrap: 'truncate-middle' },
         { name: 'type', width: 9, wrap: 'truncate-end' },
         { name: 'status', width: wide ? 10 : 9, wrap: 'truncate-end' },
@@ -175,6 +195,7 @@ export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismis
       ]
     case 'repos':
       return [
+        ...lead,
         { name: 'key', width: wide ? 24 : 20, wrap: 'truncate-end' },
         { name: 'title', wrap: 'truncate-middle' },
         { name: 'type', width: wide ? 20 : 14, wrap: 'truncate-middle' },
@@ -185,6 +206,7 @@ export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismis
     case 'items': {
       const c = columnsFor(bodyColumns)
       return [
+        ...lead,
         { name: 'key', width: c.key, wrap: 'truncate-end' },
         { name: 'title', wrap: 'truncate-end' },
         { name: 'type', width: c.type, wrap: 'truncate-end' },
@@ -197,6 +219,19 @@ export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismis
 }
 
 const lower = (s: string | undefined): string => (s ?? '').toLowerCase()
+const byPriority = <T extends { priority?: Priority }>(a: T, b: T): number => byLevel(a.priority, b.priority)
+/** The level of a row whose level is the person's own mark: a Jira child, or an item no rule reads. */
+const prioOf = (priority: Priority | undefined): RowPrio => (priority === undefined ? {} : { level: priority })
+
+/** What the auto rules read from the view context: the session repo, and the branch of this session's cwd. */
+export function levelContext(ctx: ViewContext): LevelContext {
+  const branch = ctx.auto?.snapshot?.agents.find(a => a.id === MASTER_ID)?.branch
+  return { sessionRepo: ctx.sessionRepo ?? null, ...(branch !== undefined ? { currentBranch: branch } : {}) }
+}
+
+/** The level of every item: `ctx.levels` when the composer set it, else computed here. */
+export const levelsOf = (items: readonly ItemRecord[], ctx: ViewContext): ReadonlyMap<string, RowPrio> =>
+  ctx.levels ?? effectiveLevels(items, levelContext(ctx))
 
 /** `host/path` of a URL, without scheme, query, fragment and trailing slash. */
 function hostPath(url: string): string {
@@ -237,8 +272,8 @@ function nodeRows(
   folded: ReadonlySet<string>,
   out: PaneRow[],
 ): void {
-  for (const n of nodes) {
-    const id = parentId + '/' + n.key
+  for (const n of [...nodes].sort(byPriority)) {
+    const id = childId(parentId, n.key)
     const isFolded = n.children.length > 0 && folded.has(id)
     out.push({
       id,
@@ -251,12 +286,19 @@ function nodeRows(
       tone: categoryTone(n.statusCategory),
       foldable: n.children.length > 0,
       folded: isFolded,
+      prio: prioOf(n.priority),
     })
     if (!isFolded) nodeRows(id, n.children, depth + 1, site, folded, out)
   }
 }
 
-function jiraRows(item: JiraRecord, ctx: ViewContext, folded: ReadonlySet<string>, out: PaneRow[]): void {
+function jiraRows(
+  item: JiraRecord,
+  ctx: ViewContext,
+  folded: ReadonlySet<string>,
+  out: PaneRow[],
+  prio: RowPrio = prioOf(item.priority),
+): void {
   const activeSite = ctx.tools.acli.site
   let status: string
   let tone: Tone
@@ -284,6 +326,7 @@ function jiraRows(item: JiraRecord, ctx: ViewContext, folded: ReadonlySet<string
     tone,
     foldable: item.children.length > 0,
     folded: isFolded,
+    prio,
   })
   if (!isFolded) nodeRows(id, item.children, 1, item.site, folded, out)
 }
@@ -295,7 +338,8 @@ const CHECKS: Record<NonNullable<GitHubRecord['checks']>, { extra?: string; extr
   none: {},
 }
 
-export function githubRow(item: GitHubRecord, ctx: ViewContext): PaneRow {
+/** `prio`: the item's level as the composer found it; absent, the person's own mark. */
+export function githubRow(item: GitHubRecord, ctx: ViewContext, prio: RowPrio = prioOf(item.priority)): PaneRow {
   const unresolved = !item.owner || !item.repo
   const s = ctx.sessionRepo
   const inSession =
@@ -333,10 +377,11 @@ export function githubRow(item: GitHubRecord, ctx: ViewContext): PaneRow {
     ...dismissFor(item),
     foldable: false,
     folded: false,
+    prio,
   }
 }
 
-function webRow(item: WebRecord): PaneRow {
+function webRow(item: WebRecord, prio: RowPrio = prioOf(item.priority)): PaneRow {
   return {
     id: item.key,
     depth: 0,
@@ -349,11 +394,12 @@ function webRow(item: WebRecord): PaneRow {
     tone: 'plain',
     foldable: false,
     folded: false,
+    prio,
   }
 }
 
 /** Name as key, the id as title (blank when the name is the id), the origin as type. A deleted row: dim, no link. */
-function artifactRow(item: ArtifactRecord): PaneRow {
+function artifactRow(item: ArtifactRecord, prio: RowPrio = prioOf(item.priority)): PaneRow {
   const id = artifactIdOf(item.url)
   return {
     id: item.key,
@@ -367,11 +413,12 @@ function artifactRow(item: ArtifactRecord): PaneRow {
     tone: item.deleted ? 'dim' : 'plain',
     foldable: false,
     folded: false,
+    prio,
   }
 }
 
 /** One cell per activity, each naming itself; an activity that never happened leaves its cell empty (issue #28). */
-function fileRow(item: FileRecord, ctx: ViewContext): PaneRow {
+function fileRow(item: FileRecord, ctx: ViewContext, prio: RowPrio = prioOf(item.priority)): PaneRow {
   const root = ctx.auto?.root?.cwd
   return {
     id: item.key,
@@ -386,6 +433,7 @@ function fileRow(item: FileRecord, ctx: ViewContext): PaneRow {
     mark: item.bySubagent ? 'subagent' : '',
     foldable: false,
     folded: false,
+    prio,
   }
 }
 
@@ -419,19 +467,21 @@ function noteFor(category: Category, unit: string | undefined, items: readonly I
 /** Sections in the fixed order jira, github, artifact, web, file. Empty sections are left out. */
 export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneSection[] {
   const folded = new Set(ctx.folded)
+  const levels = levelsOf(items, ctx)
+  const prioFor = (i: ItemRecord): RowPrio => levels.get(i.key) ?? prioOf(i.priority)
   const sections: PaneSection[] = []
   for (const { category, title, unit, layout } of SECTIONS) {
     const own = items
       .filter(i => i.category === category && !(i.category === 'github' && i.sources.includes('auto')))
-      .sort((a, b) => a.firstSeen - b.firstSeen)
+      .sort((a, b) => byLevel(prioFor(a).level, prioFor(b).level) || a.firstSeen - b.firstSeen)
     if (own.length === 0) continue
     const rows: PaneRow[] = []
     for (const item of own) {
-      if (item.category === 'jira') jiraRows(item, ctx, folded, rows)
-      else if (item.category === 'github') rows.push(githubRow(item, ctx))
-      else if (item.category === 'artifact') rows.push(artifactRow(item))
-      else if (item.category === 'web') rows.push(webRow(item))
-      else if (item.category === 'file') rows.push(fileRow(item, ctx))
+      if (item.category === 'jira') jiraRows(item, ctx, folded, rows, prioFor(item))
+      else if (item.category === 'github') rows.push(githubRow(item, ctx, prioFor(item)))
+      else if (item.category === 'artifact') rows.push(artifactRow(item, prioFor(item)))
+      else if (item.category === 'web') rows.push(webRow(item, prioFor(item)))
+      else if (item.category === 'file') rows.push(fileRow(item, ctx, prioFor(item)))
     }
     sections.push({
       id: category,
@@ -441,9 +491,46 @@ export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneS
       rows,
       ...(layout ? { layout } : {}),
       dismissable: rows.some(r => r.dismissId !== undefined),
+      prio: true,
     })
   }
   return sections
+}
+
+// ---------------------------------------------------------------- element keys of a row's Buttons
+
+export const foldKey = (rowId: string): string => `fold-${rowId}`
+export const dismissKey = (id: string): string => `dismiss-${id}`
+
+/**
+ * The key of each mark Button, by row id: the row's place among the rows with a prio cell, its level, its id.
+ * A row that moved or changed level gets a key the old drawing lacks, so `$.ui.focus` waits for the new drawing
+ * and lands on that row. A stable key would resolve against the old drawing, at the old place (study S3, S4).
+ */
+export function markKeys(sections: readonly PaneSection[]): Map<string, string> {
+  const out = new Map<string, string>()
+  let i = 0
+  for (const s of sections)
+    for (const r of s.rows) if (r.prio) out.set(r.id, `mark:${i++}:${r.prio.level ?? '-'}:${r.id}`)
+  return out
+}
+
+/**
+ * Element key to row id, for every Button of a row with a prio cell: its mark, its fold and its x. A focus on any of them
+ * picks the row for the priority keys. The map is built from the drawing, so no element key is ever parsed.
+ */
+export function focusTargets(sections: readonly PaneSection[]): Map<string, string> {
+  const keys = markKeys(sections)
+  const out = new Map<string, string>()
+  for (const s of sections)
+    for (const r of s.rows) {
+      const k = keys.get(r.id)
+      if (k === undefined) continue
+      out.set(k, r.id)
+      if (r.foldable) out.set(foldKey(r.id), r.id)
+      if (r.dismissId !== undefined) out.set(dismissKey(r.dismissId), r.id)
+    }
+  return out
 }
 
 // ---------------------------------------------------------------- band and command text
@@ -476,7 +563,8 @@ export function textOf(sections: readonly PaneSection[]): string {
     if (lines.length > 0) lines.push('')
     lines.push(`${s.title}  ${s.note}`)
     for (const r of s.rows) {
-      const cells = [r.key, r.title, r.type, r.status, r.extra ?? '', r.mark ?? ''].filter(c => c !== '')
+      const lead = [markerOf(r.prio?.level), r.key].filter(c => c !== '').join(' ')
+      const cells = [lead, r.title, r.type, r.status, r.extra ?? '', r.mark ?? ''].filter(c => c !== '')
       lines.push('  '.repeat(r.depth + 1) + cells.join('  '))
     }
   }

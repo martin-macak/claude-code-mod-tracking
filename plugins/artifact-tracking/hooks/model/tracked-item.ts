@@ -1,7 +1,7 @@
 // Base class of a tracked item (spec section 5). Plain TypeScript: no `$`.
 // An item is rebuilt from an ItemRecord for each operation and turned back into a record afterwards.
 
-import type { Category, ItemError, ItemRecord, ItemRecordBase, Refreshable, Source } from '../contracts'
+import type { Category, ItemError, ItemRecord, ItemRecordBase, Priority, Refreshable, Source } from '../contracts'
 import { LIMITS } from '../contracts'
 
 /** A copy of `obj` without the keys whose value is undefined. */
@@ -16,6 +16,8 @@ export abstract class TrackedItem implements Refreshable {
   abstract readonly category: Category
   url: string
   label: string
+  /** The person's manual mark. Absent: no mark. */
+  priority?: Priority
   sources: Source[]
   firstSeen: number
   lastSeen: number
@@ -27,6 +29,7 @@ export abstract class TrackedItem implements Refreshable {
     this.key = rec.key
     this.url = rec.url
     this.label = rec.label
+    if (rec.priority !== undefined) this.priority = rec.priority
     this.sources = [...rec.sources]
     this.firstSeen = rec.firstSeen
     this.lastSeen = rec.lastSeen
@@ -56,6 +59,7 @@ export abstract class TrackedItem implements Refreshable {
       key: this.key,
       url: this.url,
       label: this.label,
+      priority: this.priority,
       sources: [...this.sources],
       firstSeen: this.firstSeen,
       lastSeen: this.lastSeen,

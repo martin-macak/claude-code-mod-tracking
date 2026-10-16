@@ -8,8 +8,15 @@ import { enforceCap, recordFromRef } from './registry'
 
 const isAuto = (s: Source): boolean => AUTO_SOURCES.has(s)
 
-/** The fields discovery writes on a PR record (spec 8.4 step 1). */
+/** The issue keys of the PR's closing references, in reply order. */
+const closesOf = (pr: DiscoveredPr): string[] =>
+  pr.closing.map(c =>
+    keyOf({ category: 'github', host: c.host, owner: c.owner, repo: c.repo, number: c.number, type: 'issue' }),
+  )
+
+/** The fields discovery writes on a PR record (spec 8.4 step 1). `closes` only when the PR closes an issue. */
 function discoveryFields(pr: DiscoveredPr) {
+  const closes = closesOf(pr)
   return {
     type: 'pr' as const,
     url: pr.url,
@@ -20,6 +27,7 @@ function discoveryFields(pr: DiscoveredPr) {
     headRefName: pr.headRefName,
     baseRefName: pr.baseRefName,
     ...(pr.reviewDecision !== undefined ? { reviewDecision: pr.reviewDecision } : {}),
+    ...(closes.length > 0 ? { closes } : {}),
   }
 }
 
@@ -36,6 +44,7 @@ function isCurrent(rec: GitHubRecord, pr: DiscoveredPr, at: number): boolean {
     rec.headRefName === pr.headRefName &&
     rec.baseRefName === pr.baseRefName &&
     rec.reviewDecision === pr.reviewDecision &&
+    (rec.closes ?? []).join(' ') === closesOf(pr).join(' ') &&
     at - (rec.refreshedAt ?? Number.NEGATIVE_INFINITY) < LIMITS.staleMs / 2
   )
 }
@@ -49,6 +58,7 @@ function withDiscovery(rec: GitHubRecord, pr: DiscoveredPr, at: number): GitHubR
   }
   delete next.error
   if (pr.reviewDecision === undefined) delete next.reviewDecision
+  if (pr.closing.length === 0) delete next.closes
   return next
 }
 

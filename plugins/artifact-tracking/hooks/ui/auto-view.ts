@@ -11,9 +11,10 @@ import type {
   RepoRecord,
 } from '../contracts'
 import { MASTER_ID } from '../contracts'
+import { byLevel } from '../model/priority'
 import { processBandPart, processSection } from './process-view'
 import { repoBandPart, repoSection } from './repo-view'
-import type { PaneRow, PaneSection, ViewContext } from './view'
+import type { PaneRow, PaneSection, RowPrio, ViewContext } from './view'
 import {
   ago,
   bandParts,
@@ -23,6 +24,7 @@ import {
   githubRow,
   isWide,
   lastRefreshOf,
+  levelsOf,
   textOf,
   toolNote,
 } from './view'
@@ -137,8 +139,8 @@ const GLYPH: Record<NonNullable<GitHubRecord['checks']>, string> = {
   none: '',
 }
 
-function prRow(rec: GitHubRecord, auto: AutoState | null, ctx: ViewContext): PaneRow {
-  const base = githubRow(rec, ctx)
+function prRow(rec: GitHubRecord, auto: AutoState | null, ctx: ViewContext, prio: RowPrio): PaneRow {
+  const base = githubRow(rec, ctx, prio)
   const baseBranch = rec.baseRefName
   const defaultBranch = auto?.snapshot?.defaultBranch
   const stacked = defaultBranch !== undefined && baseBranch !== undefined && baseBranch !== defaultBranch
@@ -175,7 +177,11 @@ function prsNote(auto: AutoState | null, prs: readonly GitHubRecord[], ctx: View
 }
 
 function prsSection(auto: AutoState | null, items: readonly ItemRecord[], ctx: ViewContext): PaneSection | null {
-  const prs = items.filter(isDiscoveredPr).sort((a, b) => a.firstSeen - b.firstSeen || a.number - b.number)
+  const levels = levelsOf(items, { ...ctx, auto })
+  const prioFor = (rec: GitHubRecord): RowPrio => levels.get(rec.key) ?? {}
+  const prs = items
+    .filter(isDiscoveredPr)
+    .sort((a, b) => byLevel(prioFor(a).level, prioFor(b).level) || a.firstSeen - b.firstSeen || a.number - b.number)
   const p = auto?.snapshot?.prs
   const hasBranches = (auto?.snapshot?.branches.length ?? 0) > 0
   const showHeader =
@@ -185,9 +191,10 @@ function prsSection(auto: AutoState | null, items: readonly ItemRecord[], ctx: V
     id: 'prs',
     title: 'Pull requests',
     note: prsNote(auto, prs, ctx),
-    rows: prs.map(rec => prRow(rec, auto, ctx)),
+    rows: prs.map(rec => prRow(rec, auto, ctx, prioFor(rec))),
     layout: 'prs',
     dismissable: true,
+    prio: true,
   }
 }
 
@@ -237,9 +244,11 @@ export function composePane(
   repos: readonly RepoRecord[] = [],
 ): PaneSection[] {
   const proc = processSection(processes, processUi)
+  // One pass for all sections: an issue under GitHub reads the level of a PR under Pull requests (R8).
+  const withLevels: ViewContext = { ...ctx, levels: levelsOf(items, ctx) }
   return [
-    ...buildAutoSections(ctx.auto ?? null, items, ctx),
-    ...withRepos(buildPane(items, ctx), repos),
+    ...buildAutoSections(ctx.auto ?? null, items, withLevels),
+    ...withRepos(buildPane(items, withLevels), repos),
     ...(proc ? [proc] : []),
   ]
 }

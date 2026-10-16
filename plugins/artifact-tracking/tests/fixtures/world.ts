@@ -210,6 +210,8 @@ export function world(on: On, opts: Opts = {}) {
     opened.push(e)
     return { value: { isPlaced: true } }
   })
+  // The engine moves the ring. The kit has nothing beneath the plugins for `ui.focus`, so answer it here.
+  on('ui.focus', () => ({}))
 
   const graphql = (query: string): Res => {
     if (state.ghAuthFails > 0) {

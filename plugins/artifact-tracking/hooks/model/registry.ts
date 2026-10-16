@@ -20,7 +20,7 @@ import type {
   WebRecord,
   WebRef,
 } from '../contracts'
-import { AUTO_SOURCES, LIMITS } from '../contracts'
+import { AUTO_SOURCES, carryPriorities, LIMITS } from '../contracts'
 import { artifactIdOf, parseArtifactUrl } from '../scan/artifact-url'
 import { hostPath } from '../scan/refs'
 import { ArtifactItem } from './artifact-item'
@@ -28,6 +28,7 @@ import { FileItem } from './file-item'
 import { GitHubItem } from './github-item'
 import { cloneNodes, JiraItem } from './jira-item'
 import { fileKey, keyOf } from './keys'
+import { mergeNodePriorities, mergePriority, withPriority } from './priority'
 import { WebLink } from './web-link'
 
 // ---------------------------------------------------------------- keys
@@ -131,6 +132,7 @@ function cloneRecord<R extends ItemRecord>(rec: R): R {
   if (rec.error) out.error = { ...rec.error }
   if (rec.via) out.via = [...rec.via]
   if (out.category === 'jira') out.children = cloneNodes((rec as JiraRecord).children)
+  if (out.category === 'github' && out.closes) out.closes = [...out.closes]
   return out
 }
 
@@ -160,17 +162,29 @@ function joinNames(out: ArtifactRecord, a: Named, b: Named): void {
   out.label = best.rank === 0 ? artifactIdOf(out.url) : best.label
 }
 
+/** R12: the keys of the newest manual-high records, at most `LIMITS.maxPinned`. The cap never drops them. */
+function pinnedKeys(list: readonly ItemRecord[]): Set<string> {
+  return new Set(
+    list
+      .filter(rec => rec.priority === 'high' && !hasAutoSource(rec))
+      .sort((a, b) => b.lastSeen - a.lastSeen)
+      .slice(0, LIMITS.maxPinned)
+      .map(rec => rec.key),
+  )
+}
+
 /**
- * Drops the records with the smallest lastSeen until `cap` is met. Keys in `keep` never go.
- * Only records without an auto source count against `cap`, and only they are evicted (spec A11):
+ * Drops the records with the smallest lastSeen until `cap` is met. Keys in `keep` never go, nor the newest manual-high
+ * records (R12). Only records without an auto source count against `cap`, and only they are evicted (spec A11):
  * auto-only items have their own cap, `maxAutoItems`, enforced at the source.
  */
 export function enforceCap(list: ItemRecord[], cap: number, keep: ReadonlySet<string> = new Set()): ItemRecord[] {
   const excess = list.filter(rec => !hasAutoSource(rec)).length - cap
   if (excess <= 0) return list
+  const pinned = pinnedKeys(list)
   const victims = list
     .map((rec, i) => ({ rec, i }))
-    .filter(({ rec }) => !hasAutoSource(rec) && !keep.has(rec.key))
+    .filter(({ rec }) => !hasAutoSource(rec) && !keep.has(rec.key) && !pinned.has(rec.key))
     .sort((x, y) => x.rec.lastSeen - y.rec.lastSeen || x.i - y.i)
     .slice(0, excess)
     .map(({ i }) => i)
@@ -181,6 +195,7 @@ export function enforceCap(list: ItemRecord[], cap: number, keep: ReadonlySet<st
 /**
  * Folds sightings of `b` into `a`: union of sources (a first), sum of seenCount, min firstSeen, max lastSeen.
  * Status fields come from the record with the newer `refreshedAt`. A tie keeps `a`.
+ * The manual marks of both merge (`mergePriority`), on the root and on each Jira child.
  */
 function fold(a: ItemRecord, b: ItemRecord): ItemRecord {
   const winner = (b.refreshedAt ?? -Infinity) > (a.refreshedAt ?? -Infinity) ? b : a
@@ -197,6 +212,11 @@ function fold(a: ItemRecord, b: ItemRecord): ItemRecord {
   out.seenCount = a.seenCount + b.seenCount
   out.firstSeen = Math.min(a.firstSeen, b.firstSeen)
   out.lastSeen = Math.max(a.lastSeen, b.lastSeen)
+  const priority = mergePriority(a.priority, b.priority)
+  if (priority === undefined) delete out.priority
+  else out.priority = priority
+  if (out.category === 'jira' && loser.category === 'jira')
+    out.children = mergeNodePriorities(out.children, loser.children)
   if (out.category === 'github' && out.type === 'unknown' && loser.category === 'github') out.type = loser.type
   return out
 }
@@ -296,7 +316,7 @@ export function mergeFiles(
 
 /** Status fields a refresh writes, per category. */
 const STATUS_FIELDS = {
-  github: ['title', 'state', 'stateReason', 'isDraft', 'reviewDecision', 'checks'],
+  github: ['title', 'state', 'stateReason', 'isDraft', 'reviewDecision', 'checks', 'closes'],
   jira: ['summary', 'issueType', 'status', 'statusCategory'],
   artifact: [],
   web: [],
@@ -320,7 +340,8 @@ export function mergeResults(list: readonly ItemRecord[], refreshed: readonly It
       (out.type === 'unknown' || fresh.type !== 'unknown')
     )
       out.type = fresh.type
-    if (out.category === 'jira' && fresh.category === 'jira') out.children = cloneNodes(fresh.children)
+    if (out.category === 'jira' && fresh.category === 'jira')
+      out.children = carryPriorities(fresh.children, out.children)
     if (fresh.refreshedAt !== undefined) out.refreshedAt = fresh.refreshedAt
     if (fresh.error) out.error = { ...fresh.error }
     else delete out.error
@@ -420,6 +441,26 @@ export function unionRecords(
     }
   }
   return enforceCap(out, cap)
+}
+
+/**
+ * Merge for `/clear` carry-over. `held` is the live list; `stored`, the copy in $.store, can be up to `flushMs` older.
+ * Records fold as in `unionRecords`, but a key that `held` has keeps its live marks, on the root and on each Jira
+ * child: a reset or a lowered level must not lose to the higher mark of the older copy.
+ */
+export function carryOver(
+  held: readonly ItemRecord[],
+  stored: readonly ItemRecord[],
+  cap: number = LIMITS.maxItems,
+): ItemRecord[] {
+  const live = new Map(held.map(r => [r.key, r]))
+  return unionRecords(held, stored, cap).map(rec => {
+    const h = live.get(rec.key)
+    if (!h) return rec
+    const out = withPriority(rec, h.priority)
+    if (out.category === 'jira' && h.category === 'jira') out.children = carryPriorities(out.children, h.children)
+    return out
+  })
 }
 
 // ---------------------------------------------------------------- classes

@@ -802,7 +802,7 @@ test('tool-result row of 1 MB settles fast, is stored whole, and a URL near its 
 test('session.start registers /track with its hint', async ($, on) => {
   const { registered } = world(on)
   await $.session.start(START)
-  expect(registered).toEqual([{ name: 'track', argumentHint: '[refresh|clear]' }])
+  expect(registered).toEqual([{ name: 'track', argumentHint: '[refresh|clear|prio <ref> <level>]' }])
 })
 
 test('session.start backfills from the transcript with the same rules per role', async ($, on) => {
@@ -1213,6 +1213,324 @@ test('pane: the Refresh button asks the coordinator for a manual refresh', async
   expect(graphqlCalls(calls).length).toBe(2)
   await ui.unmount()
 })
+
+// ---------------------------------------------------------------- priority keys
+
+type MarkUi = PaneUi & {
+  press(q: unknown): Promise<void>
+  findAll(q: unknown): Promise<{ key?: string; props: { hotkey?: string } }[]>
+}
+const ONE = 'web:https://one.example/'
+const TWO = 'web:https://two.example/'
+const JIRA_ROOT = 'jira:acme.atlassian.net/ISS-1'
+const GH5 = 'gh:github.com/acme/web#5'
+
+/** The key of the mark Button of row `id`, as last drawn. */
+async function markKeyOf(ui: MarkUi, id: string): Promise<string> {
+  const key = (await ui.findAll({ type: 'Button' }))
+    .map(b => b.key ?? '')
+    .find(k => k.startsWith('mark:') && k.endsWith(`:${id}`))
+  expect(key).toBeDefined()
+  return key ?? ''
+}
+/** The person moves the pane's ring onto the element keyed `key`, with Tab or the arrows. */
+const focusOn = ($: Engine, key: string) =>
+  $.ui.focus({
+    component: 'Pane',
+    requestId: 'track',
+    plugin: 'artifact-tracking',
+    element: key,
+    origin: { kind: 'person' },
+  } as never)
+const pick = async ($: Engine, ui: MarkUi, id: string) => focusOn($, await markKeyOf(ui, id))
+/** The line of the `/track` text that holds `s`. */
+const lineOf = (text: string, s: string) => text.split('\n').findIndex(l => l.includes(s))
+const storedItem = (store: Map<string, unknown>, key: string) =>
+  (store.get('s:' + SESSION) as { items: ItemRecord[] } | undefined)?.items.find(i => i.key === key)
+
+/**
+ * one.example, then two.example, captured, listed and flushed. `/track` kicks a run that arms a flush too, so wait
+ * that one out as well: the next store write then comes from what the test does.
+ */
+async function twoLinks($: Engine, on: Parameters<typeof world>[0], opts: Parameters<typeof world>[1] = {}) {
+  const w = world(on, opts)
+  await $.session.append(response('See https://one.example/ and https://two.example/'))
+  await w.clock.advance(LIMITS.flushMs + 10)
+  await quiet(w.calls)
+  await track($)
+  await quiet(w.calls)
+  await w.clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  return { ...w, ui: (await mountPane($)) as MarkUi }
+}
+
+test('pane: key 1 raises the focused row above its sibling and draws its marker', async ($, on) => {
+  const { ui } = await twoLinks($, on)
+  let text = (await track($)).text ?? ''
+  expect(lineOf(text, 'one.example')).toBeLessThan(lineOf(text, 'two.example'))
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-1' })
+  text = (await track($)).text ?? ''
+  expect(lineOf(text, 'two.example')).toBeLessThan(lineOf(text, 'one.example'))
+  expect(text).toContain('▲ two.example')
+  expect(await ui.find({ text: '▲' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('pane: key 3 lowers the row, key 2 stores a manual normal, key 0 removes the mark', async ($, on) => {
+  const { ui, clock, store } = await twoLinks($, on)
+  await pick($, ui, ONE)
+  await ui.press({ key: 'prio-3' })
+  let text = (await track($)).text ?? ''
+  expect(lineOf(text, 'two.example')).toBeLessThan(lineOf(text, 'one.example'))
+  expect(text).toContain('▽ one.example')
+  await ui.press({ key: 'prio-2' })
+  text = (await track($)).text ?? ''
+  expect(lineOf(text, 'one.example')).toBeLessThan(lineOf(text, 'two.example'))
+  expect(text).not.toContain('▽')
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  expect(storedItem(store, ONE)?.priority).toBe('normal')
+  await ui.press({ key: 'prio-0' })
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  expect('priority' in (storedItem(store, ONE) ?? {})).toBe(false)
+  await ui.unmount()
+})
+
+test('pane: a priority key with no focused row changes nothing', async ($, on) => {
+  const { ui } = await twoLinks($, on)
+  const before = (await track($)).text
+  await ui.press({ key: 'prio-1' })
+  expect((await track($)).text).toBe(before)
+  await ui.unmount()
+})
+
+test('pane: the ring on a footer key keeps the pick; on Refresh or off the Buttons it drops it', async ($, on) => {
+  const { ui } = await twoLinks($, on)
+  await pick($, ui, TWO)
+  await focusOn($, 'prio-1') // Tab onto the footer, then Enter or the digit
+  await ui.press({ key: 'prio-1' })
+  expect((await track($)).text).toContain('▲ two.example')
+  await focusOn($, 'refresh')
+  await ui.press({ key: 'prio-3' })
+  expect((await track($)).text).not.toContain('▽')
+  await pick($, ui, ONE)
+  await $.ui.focus({ component: 'Pane', requestId: 'track', origin: { kind: 'person' } } as never) // the close mark
+  await ui.press({ key: 'prio-3' })
+  expect((await track($)).text).not.toContain('▽')
+  await ui.unmount()
+})
+
+test('pane: the keys work on a Jira root, a Jira child and a GitHub row, by its mark, fold or x', async ($, on) => {
+  const { clock, calls, store } = world(on)
+  await $.session.append(prompt('Look at issue #5 and https://acme.atlassian.net/browse/ISS-1'))
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await sleep(20)
+  await track($)
+  await quiet(calls)
+  const ui = (await mountPane($)) as MarkUi
+  await focusOn($, `fold-${JIRA_ROOT}`) // the fold Button of the root picks the root
+  await ui.press({ key: 'prio-1' })
+  await pick($, ui, `${JIRA_ROOT}/PROJ-201`)
+  await ui.press({ key: 'prio-3' })
+  await focusOn($, `dismiss-${GH5}`) // the x of a row picks that row
+  await ui.press({ key: 'prio-1' })
+  await ui.press({ key: 'prio-0' })
+  await ui.unmount()
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  const root = storedItem(store, JIRA_ROOT) as
+    | (ItemRecord & { children: { key: string; priority?: string }[] })
+    | undefined
+  expect(root?.priority).toBe('high')
+  expect(root?.children.map(c => [c.key, c.priority])).toEqual([
+    ['PROJ-201', 'low'],
+    ['PROJ-202', undefined],
+  ])
+  expect('priority' in (storedItem(store, GH5) ?? {})).toBe(false)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('▲ ISS-1')
+  expect(lineOf(text, 'PROJ-202')).toBeLessThan(lineOf(text, 'PROJ-201')) // the child sorts inside its parent
+  expect(lineOf(text, 'ISS-1')).toBeLessThan(lineOf(text, 'PROJ-202'))
+})
+
+test('pane: a raised priority reaches the stored copy with no other change in between', async ($, on) => {
+  const { ui, clock, store } = await twoLinks($, on)
+  expect('priority' in (storedItem(store, TWO) ?? {})).toBe(false)
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-1' })
+  await ui.unmount()
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  expect(storedItem(store, TWO)?.priority).toBe('high')
+})
+
+test('pane: a refresh keeps the order the person set', async ($, on) => {
+  const { ui } = await twoLinks($, on)
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-1' })
+  await ui.unmount()
+  const text = (await track($, 'refresh')).text ?? ''
+  expect(lineOf(text, 'two.example')).toBeLessThan(lineOf(text, 'one.example'))
+})
+
+test('pane: mark Buttons claim no hotkey, and each footer key is on one Button only', async ($, on) => {
+  const { ui } = await twoLinks($, on)
+  const buttons = await ui.findAll({ type: 'Button' })
+  const marks = buttons.filter(b => b.key?.startsWith('mark:'))
+  expect(marks.length).toBe(2)
+  for (const b of marks) expect(b.props.hotkey).toBeUndefined()
+  const hotkeys = buttons.map(b => b.props.hotkey).filter((h): h is string => h !== undefined)
+  expect(hotkeys.sort()).toEqual(['0', '1', '2', '3', 'r'])
+  await ui.unmount()
+})
+
+test('pane: with no item row the footer has no priority keys', async ($, on) => {
+  world(on)
+  await track($)
+  const ui = (await mountPane($)) as MarkUi
+  expect(await ui.find({ key: 'prio-1' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('/track prio sets a level by ref and saves it before the reply, for claude -p', async ($, on) => {
+  const { clock, calls, store } = world(on)
+  await $.session.append(prompt('Look at issue #5 and https://acme.atlassian.net/browse/ISS-1'))
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await sleep(20)
+  await track($)
+  await quiet(calls)
+  let text = (await track($, 'prio #5 high')).text ?? ''
+  expect(text).toContain('▲ #5')
+  expect(storedItem(store, GH5)?.priority).toBe('high') // no clock advance: the store has it already
+  text = (await track($, 'prio ISS-1 LOW')).text ?? ''
+  expect(text).toContain('▽ ISS-1')
+  text = (await track($, 'prio proj-202 high')).text ?? '' // a Jira child, by its key, in any case
+  expect(text).toContain('▲ PROJ-202')
+  expect(lineOf(text, 'PROJ-202')).toBeLessThan(lineOf(text, 'PROJ-201'))
+  text = (await track($, 'prio https://github.com/acme/web/issues/5 auto')).text ?? ''
+  expect(text).not.toContain('▲ #5')
+  expect('priority' in (storedItem(store, GH5) ?? {})).toBe(false)
+})
+
+test('/track prio: an untracked ref says so; a bad level or a missing part prints the usage', async ($, on) => {
+  const { clock, calls } = world(on)
+  await $.session.append(prompt('Look at issue #5'))
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  expect((await track($, 'prio #99 high')).text).toBe('Not tracked: #99')
+  expect((await track($, 'prio #5 urgent')).text).toContain(
+    'Usage: /track [refresh|clear|prio <ref> <high|normal|low|auto>]',
+  )
+  expect((await track($, 'prio #5')).text).toContain('Usage: /track')
+  expect((await track($)).text).not.toContain('▲')
+})
+
+// ---------------------------------------------------------------- priority across /clear, restart and re-track
+
+test('/clear carries a mark into the new session, and the new copy holds it', async ($, on) => {
+  const { ui, clock, store } = await twoLinks($, on, { isolateState: true })
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-1' })
+  await ui.unmount()
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  current.id = 'sess-2' // /clear: a new id and an empty state
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('▲ two.example')
+  expect(lineOf(text, 'two.example')).toBeLessThan(lineOf(text, 'one.example'))
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  const copy = store.get('s:sess-2') as { items: ItemRecord[] }
+  expect(copy.items.find(i => i.key === TWO)?.priority).toBe('high')
+})
+
+test('/clear right after a reset keeps no mark: the live list wins over the older stored copy', async ($, on) => {
+  const { ui, clock, store } = await twoLinks($, on, { isolateState: true })
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-1' })
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  expect(storedItem(store, TWO)?.priority).toBe('high')
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-0' }) // the flush of this change has not run yet
+  await ui.unmount()
+  current.id = 'sess-2'
+  expect((await track($)).text).not.toContain('▲')
+})
+
+test('x then /clear: the dismissed item stays gone, also before its flush ran', async ($, on) => {
+  const w = world(on, { isolateState: true })
+  await $.session.start(START) // pins the run's root, so the dismiss list outlives /clear
+  await $.session.append(response('See https://one.example/ and https://two.example/'))
+  await w.clock.advance(LIMITS.flushMs + 10)
+  await quiet(w.calls)
+  await sleep(20)
+  await track($)
+  const ui = (await mountPane($)) as MarkUi
+  await ui.press({ key: `dismiss-${TWO}` })
+  await ui.unmount()
+  current.id = 'sess-2'
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('one.example')
+  expect(text).not.toContain('two.example')
+})
+
+test('the x button saves the shorter list soon, with no other change', async ($, on) => {
+  const { ui, clock, store } = await twoLinks($, on)
+  expect(storedItem(store, TWO)).toBeDefined()
+  await ui.press({ key: `dismiss-${TWO}` })
+  await ui.unmount()
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  expect(storedItem(store, TWO)).toBeUndefined()
+})
+
+test('session.start restores the marks of a stored copy and sorts by them', async ($, on) => {
+  const seed = { items: [webRec('https://other.example/', 'other'), { ...KEPT, priority: 'high' }] }
+  world(on, { seed: { index: [SESSION], ['s:' + SESSION]: seed } })
+  await $.session.start(START)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('▲ Kept page')
+  expect(lineOf(text, 'Kept page')).toBeLessThan(lineOf(text, 'other'))
+})
+
+test('an item tracked again after /track clear starts with no mark', async ($, on) => {
+  const { ui, clock, calls } = await twoLinks($, on)
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-1' })
+  await ui.unmount()
+  expect((await track($, 'clear')).text).toBe('Tracking list cleared.')
+  await $.session.append(response('Again https://two.example/'))
+  await clock.advance(LIMITS.captureDebounceMs + 10)
+  await quiet(calls)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('two.example')
+  expect(text).not.toContain('▲')
+})
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`pane: the marker of a high and a low row is drawn (${surface})`, async ($, on) => {
+    const { clock, calls } = world(on)
+    await $.session.append(response('See https://one.example/'))
+    await clock.advance(LIMITS.captureDebounceMs + 10)
+    await quiet(calls)
+    await track($)
+    const ui = (await $.ui.mount({ ...PANE, surface } as never)) as unknown as MarkUi
+    expect(await ui.find({ text: '▲' })).toBeUndefined()
+    await pick($, ui, ONE)
+    await ui.press({ key: 'prio-1' })
+    expect(await ui.find({ text: '▲' })).toBeDefined()
+    await pick($, ui, ONE) // the mark has a new key now: the row's level is in it
+    await ui.press({ key: 'prio-3' })
+    expect(await ui.find({ text: '▽' })).toBeDefined()
+    expect(await ui.find({ text: '▲' })).toBeUndefined()
+    await ui.unmount()
+  })
+}
 
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`band: shows the counts and keeps what the engine draws (${surface})`, async ($, on) => {
