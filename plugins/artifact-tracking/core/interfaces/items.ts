@@ -156,7 +156,10 @@ export interface ItemKind<T extends StoredItem = StoredItem> {
   replayWins?(fresh: T, stored: T): boolean
   readonly refresh?: RefreshSpec<T>
   readonly rules?: readonly PriorityRule[]
-  /** Sets or removes the mark of a row inside an item, e.g. a child node. null: no such row. */
+  /**
+   * Sets or removes the mark of a row inside an item, e.g. a child node. Core passes a level a person sets, never `top`.
+   * null: no such row, or a mark that does not change.
+   */
   setLevel?(item: T, rowId: string, level: Level | undefined): T | null
   /** The row id inside an item that a typed reference names. */
   findRow?(item: T, ref: string): string | undefined

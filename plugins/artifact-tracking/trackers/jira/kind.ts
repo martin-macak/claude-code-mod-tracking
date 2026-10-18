@@ -6,9 +6,9 @@ import { sighted } from '../../core/lib/records'
 import { acliClient } from './client'
 import type { JiraConfig } from './config'
 import { JiraItem } from './jira-item'
-import { carryPriorities, mergeNodePriorities } from './nodes'
+import { carryPriorities, childRow, mergeNodePriorities, setNode } from './nodes'
 import type { JiraRecord, JiraRef, JiraTarget } from './types'
-import { parseJiraUrl } from './urls'
+import { JIRA_KEY, parseJiraUrl } from './urls'
 
 /** The item key: the site in lower case, the issue key as written. */
 export const jiraKeyOf = (ref: Pick<JiraRef, 'site' | 'issueKey'>): string =>
@@ -60,6 +60,18 @@ export const jiraKind: ItemKind<JiraRecord> = {
     return out
   },
   keepMarks: (merged, live) => ({ ...merged, children: carryPriorities(merged.children, live.children) }),
+  // A person marks a child by its row id. `top` comes from a rule only, so it marks nothing here.
+  setLevel(item, rowId, level) {
+    if (level === 'top') return null
+    const children = setNode(item.children, item.key, rowId, level)
+    return children ? { ...item, children } : null
+  },
+  // A key in any case names the item itself or a child of its tree.
+  findRow(item, ref) {
+    const key = ref.toUpperCase()
+    if (!JIRA_KEY.test(key)) return undefined
+    return item.issueKey === key ? item.key : childRow(item.children, item.key, key)
+  },
   refresh: {
     tool: 'acli',
     fields: ['summary', 'issueType', 'status', 'statusCategory'],

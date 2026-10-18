@@ -116,6 +116,23 @@ export type AutoState = {
 
 export type AutoReason = 'start' | 'tick' | 'worktree' | 'agent' | 'git' | 'pr-event' | 'manual'
 
+/**
+ * The fact `auto.branches`: the branches of this run after a round, for the readers that cannot wait (the PR lane, the
+ * priority rule R7). A new round always gives a new value, because `seq` moves.
+ */
+export type BranchesFact = {
+  /** The number of rounds this load has run. A fact published at init or after a restore repeats the last one. */
+  seq: number
+  /** What started the round. Empty for a fact published at init or after a restore. */
+  reasons: readonly string[]
+  /** The branch of the master agent. Absent: a detached HEAD, or not known yet. */
+  current?: string
+  /** The branches the PR step polls, root first. */
+  branches: readonly string[]
+  /** Tracked branches over the cap, not polled. */
+  overflow: number
+}
+
 export type EnterFacts = { path: string; branch?: string; agentId?: string }
 export type AgentResultFacts = { agentId: string; worktreePath?: string; worktreeBranch?: string }
 export type BashFacts = { agentId?: string; branch?: string; kick?: 'pr-event' | 'git' }

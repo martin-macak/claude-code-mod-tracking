@@ -22,7 +22,7 @@ export { commandArgs, hostPath, parseGitHubUrl, parseJiraUrl }
 export const parseRemote = (remote: string): RepoRef | null => parseGitRemote(remote, HOST_ALIASES)
 
 /** A `Ref` has no file member: a Markdown file is found by its own path, not by a link. */
-const REF_KINDS = KINDS.filter(kind => kind.category !== 'file')
+export const REF_KINDS = KINDS.filter(kind => kind.category !== 'file')
 
 /** Refs found in `text`, unique, in order of appearance. */
 export function extractRefs(text: string, opts: ExtractOptions): Ref[] {

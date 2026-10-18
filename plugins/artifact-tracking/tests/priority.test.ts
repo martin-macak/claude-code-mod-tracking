@@ -143,6 +143,6 @@ test("R8: the issue's own mark wins; an issue no tracked PR closes has no auto l
 test('R9: Jira, web and a GitHub item of unknown type have no rule; a rule table can be passed in', () => {
   expect(levels([web, gh(5, 'unknown', { state: 'open', headRefName: 'feat/x' })])).toEqual({ web: {}, '#5': {} })
   expect(Object.keys(RULES).sort()).toEqual(['github-issue', 'github-pr'])
-  const custom = effectiveLevels([web], CTX, { web: () => 'high' })
+  const custom = effectiveLevels([web], CTX, [{ id: 'web', stage: 0, level: () => 'high' }])
   expect(custom.get(web.key)).toEqual({ level: 'high', auto: true })
 })

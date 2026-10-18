@@ -6,6 +6,7 @@ import { sighted } from '../../core/lib/records'
 import { ghClient } from './client'
 import type { GithubConfig } from './config'
 import { GitHubItem } from './github-item'
+import { BRANCH_PR, CLOSED_BY_PR } from './rules'
 import { githubClaim, scanGitHub } from './scan'
 import type { GitHubRecord, GitHubRef, GitHubTarget } from './types'
 import { githubKeyOf, githubUrl, parseGitHubUrl } from './urls'
@@ -81,4 +82,5 @@ export const githubKind: ItemKind<GitHubRecord> = {
     refreshItems: (items: Refreshable[], c) => clientOf(c).refreshItems(items as unknown as GitHubTarget[]),
     apply: (out, fresh) => (out.type === 'unknown' || fresh.type !== 'unknown' ? { ...out, type: fresh.type } : out),
   },
+  rules: [BRANCH_PR, CLOSED_BY_PR],
 }

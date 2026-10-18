@@ -2,7 +2,8 @@
 // tick. A round (git porcelain, the engine's agent list, then the PR step in its own lane) writes the `auto` member of
 // the state family. The slot is run-scoped (`persist: false`): the root, the proofs and the dismiss list go to
 // `v2:run`, and a session switch carries them first (plan decisions D2, D9).
-// It publishes three facts for the readers that cannot wait: `auto.root`, `auto.agents` and `auto.checkedAt`.
+// It publishes four facts for the readers that cannot wait: `auto.root`, `auto.agents`, `auto.checkedAt` and, after each
+// round, `auto.branches`.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 10.
 
 import { autoIds } from '../../core/infra/dismiss'
@@ -18,7 +19,7 @@ import type { Json } from '../../core/interfaces/items'
 import type { FactsPort, Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import type { AutoReason, AutoState, DiscoveryApplied, GitHubDiscoveryApi, RepoRef } from '../../hooks/contracts'
-import { asRecords } from '../../hooks/contracts'
+import { asRecords, MASTER_ID } from '../../hooks/contracts'
 import { type AutoConfig, autoConfig } from './config'
 import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from './events'
 import {
@@ -34,6 +35,7 @@ import {
 } from './ledger'
 import { type AutoLane, AutoRound } from './round'
 import { AutoScheduler } from './scheduler'
+import type { BranchesFact } from './types'
 
 /**
  * What the PR lane of the round needs from github. Injected, because the GitHub tool and the session repo belong to
@@ -64,6 +66,7 @@ type SlotCtx = Pick<Ctx, 'data' | 'facts'>
 export const FACT_ROOT = 'auto.root'
 export const FACT_AGENTS = 'auto.agents'
 export const FACT_CHECKED_AT = 'auto.checkedAt'
+export const FACT_BRANCHES = 'auto.branches'
 
 /** The run: root, proofs, agents, dismiss list and the last snapshot. A slot never written reads as a fresh empty one. */
 const readAuto = async (ctx: Pick<Ctx, 'data'>): Promise<AutoState> => (await ctx.data.get()) ?? emptyAuto()
@@ -72,6 +75,23 @@ const readAuto = async (ctx: Pick<Ctx, 'data'>): Promise<AutoState> => (await ct
 function publishAuto(facts: FactsPort, s: AutoState): void {
   facts.publish(FACT_ROOT, (s.root ?? undefined) as unknown as Json | undefined)
   facts.publish(FACT_AGENTS, s.agents as unknown as Json)
+}
+
+/**
+ * The branches of the last snapshot, with the master agent's branch (R7 reads it). Published after each round with a new
+ * `seq` and the round's reasons, and at init and after a restore with the last `seq` and no reasons (plan K20).
+ */
+function publishBranches(facts: FactsPort, s: AutoState, seq: number, reasons: readonly string[]): void {
+  const snap = s.snapshot
+  const current = snap?.agents.find(a => a.id === MASTER_ID)?.branch
+  const fact: BranchesFact = {
+    seq,
+    reasons,
+    ...(current !== undefined ? { current } : {}),
+    branches: snap?.branches ?? [],
+    overflow: snap?.overflow ?? 0,
+  }
+  facts.publish(FACT_BRANCHES, fact as unknown as Json)
 }
 
 /**
@@ -113,8 +133,11 @@ function soft<E>(what: string, run: H<E>): H<E> {
 
 type Services = { round: AutoRound; scheduler: AutoScheduler }
 
+/** The rounds this load has run. It lives as long as the tracker, which is built once per load. */
+type Tally = { seq: number }
+
 /** The round and its scheduler. The deps are plain closures over the context of the first hook of the load. */
-function build(ctx: Ctx, gh: AutoGithub): Services {
+function build(ctx: Ctx, gh: AutoGithub, tally: Tally): Services {
   const round = new AutoRound({
     now: () => ctx.clock.wall(),
     load: async () => {
@@ -162,6 +185,8 @@ function build(ctx: Ctx, gh: AutoGithub): Services {
     run: async reasons => {
       await round.run(reasons)
       ctx.facts.publish(FACT_CHECKED_AT, ctx.clock.wall()) // the Worktrees note reads it before `snapshot.at` (A22)
+      tally.seq++
+      publishBranches(ctx.facts, await readAuto(ctx), tally.seq, [...reasons])
     },
   })
   return { round, scheduler }
@@ -170,6 +195,7 @@ function build(ctx: Ctx, gh: AutoGithub): Services {
 /** The tracker is built once per load, so the round and the scheduler live as long as the load (plan decision D16). */
 export function autoTracker(gh: AutoGithub): Tracker<AutoConfig, AutoState> {
   let svc: Services | undefined
+  const tally: Tally = { seq: 0 }
   const kick = (why: AutoReason): void => svc?.scheduler.kick(why)
 
   // The root is pinned at the first start of the run. A lazy start has no cwd and pins nothing.
@@ -253,10 +279,12 @@ export function autoTracker(gh: AutoGithub): Tracker<AutoConfig, AutoState> {
     persist: false,
     config: autoConfig,
     init: async ctx => {
-      svc ??= build(ctx, gh)
+      svc ??= build(ctx, gh, tally)
       try {
         // A hot reload keeps the plugin state and loses the facts: publish what the slot holds.
-        publishAuto(ctx.facts, await readAuto(ctx))
+        const s = await readAuto(ctx)
+        publishAuto(ctx.facts, s)
+        publishBranches(ctx.facts, s, tally.seq, [])
       } catch {
         // The first write or the first round publishes them.
       }
@@ -265,7 +293,8 @@ export function autoTracker(gh: AutoGithub): Tracker<AutoConfig, AutoState> {
     data: {
       // A switch carries the root, the proofs and the dismiss list into the new state (A18).
       restore: async (ctx, value) => {
-        await setAuto(ctx, cur => carryAuto(value, cur))
+        const s = await setAuto(ctx, cur => carryAuto(value, cur))
+        publishBranches(ctx.facts, s, tally.seq, [])
       },
     },
     events: {

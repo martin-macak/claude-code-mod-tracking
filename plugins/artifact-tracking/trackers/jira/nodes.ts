@@ -1,6 +1,7 @@
 // The child tree of a Jira item: the marks a person sets on its nodes and how they survive a refresh and a fold.
 // Pure. Moved from `hooks/contracts.ts` and `hooks/model/priority.ts` in plan L5, Task 4; the Jira kind needs them.
 
+import type { Priority } from '../../core/interfaces/items'
 import { mergePriority, withPriority } from '../../core/lib/levels'
 import type { JiraNode } from './types'
 
@@ -32,4 +33,36 @@ export function mergeNodePriorities(a: readonly JiraNode[], b: readonly JiraNode
     const children = mergeNodePriorities(n.children, other?.children ?? [])
     return withPriority({ ...n, children }, mergePriority(n.priority, other?.priority))
   })
+}
+
+/** `nodes` with the mark of child row `id` set, or undefined when no node of the tree is `id` or nothing changes. */
+export function setNode(
+  nodes: readonly JiraNode[],
+  parentId: string,
+  id: string,
+  level: Priority | undefined,
+): JiraNode[] | undefined {
+  for (const [i, n] of nodes.entries()) {
+    const nid = childId(parentId, n.key)
+    if (nid !== id && !id.startsWith(`${nid}/`)) continue
+    let next: JiraNode | undefined
+    if (nid === id) next = n.priority === level ? undefined : withPriority(n, level)
+    else {
+      const children = setNode(n.children, nid, id, level)
+      if (children) next = { ...n, children }
+    }
+    return next ? nodes.map((x, j) => (j === i ? next : x)) : undefined
+  }
+  return undefined
+}
+
+/** The row id of the first node in a tree whose key is `key`, depth first. */
+export function childRow(nodes: readonly JiraNode[], parentId: string, key: string): string | undefined {
+  for (const n of nodes) {
+    const id = childId(parentId, n.key)
+    if (n.key === key) return id
+    const deeper = childRow(n.children, id, key)
+    if (deeper !== undefined) return deeper
+  }
+  return undefined
 }
