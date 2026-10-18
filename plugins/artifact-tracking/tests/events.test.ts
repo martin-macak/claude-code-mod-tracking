@@ -1,6 +1,6 @@
 // Raw engine events to plain facts. Pure. This file is the only automated cover of agent-scoped events (spec 13.3).
 import { expect, test } from 'claude-code/testing'
-import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd, GIT_CMD } from '../hooks/auto/events'
+import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd, GIT_CMD } from '../trackers/auto/events'
 import * as fx from './fixtures/events'
 
 test('fromEnterResult: path and branch; an agent id rides along', () => {

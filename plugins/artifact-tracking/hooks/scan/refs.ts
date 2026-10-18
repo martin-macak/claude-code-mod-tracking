@@ -1,11 +1,11 @@
 // Reference extraction: text -> GitHub, Jira, artifact and web refs (spec section 6.1).
 // Pure code. No `$`, no I/O. Every regex is linear. Input is capped at MAX_TEXT before any regex runs.
 
+import { MAX_TEXT, normalizeUrl, scanMarkdown, schemeOf } from '../../core/lib/links'
+import { parseArtifactUrl } from '../../trackers/artifact/artifact-url'
 import type { ExtractOptions, GitHubRef, JiraRef, Ref, RepoRef, WebRef } from '../contracts'
 import { JIRA_KEY } from '../contracts'
 import { keyOf } from '../model/keys'
-import { parseArtifactUrl } from './artifact-url'
-import { MAX_TEXT, normalizeUrl, scanMarkdown, schemeOf } from './links'
 
 const MAX_REMOTE = 2048
 const MAX_LABEL = 60

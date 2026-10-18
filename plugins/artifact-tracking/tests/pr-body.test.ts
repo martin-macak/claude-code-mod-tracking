@@ -2,7 +2,7 @@
 import { expect, test } from 'claude-code/testing'
 import { LIMITS } from '../hooks/contracts'
 import { keyOf } from '../hooks/model/keys'
-import { prBodyRefs, stripHtmlComments } from '../hooks/scan/pr-body'
+import { prBodyRefs, stripHtmlComments } from '../trackers/github/pr-body'
 import { BODY_WITH_COMMENT, discovered } from './fixtures/gh-discovery'
 
 const keys = (body: string, over = {}) => prBodyRefs(discovered({ body, ...over }), []).map(keyOf)

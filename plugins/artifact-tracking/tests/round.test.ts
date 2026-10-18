@@ -1,8 +1,6 @@
 // AutoRound: the three steps, the PR lane, writes in flight (A20) and quiet rounds (A22). Fake deps.
 import { expect, test } from 'claude-code/testing'
-import { autoIds, dismiss } from '../hooks/auto/dismiss'
-import { emptyAuto, pinRoot, recordEnter, recordSpawn } from '../hooks/auto/ledger'
-import { AutoRound, type RoundDeps } from '../hooks/auto/round'
+import { autoIds, dismiss } from '../core/infra/dismiss'
 import type {
   AutoReason,
   AutoState,
@@ -15,7 +13,9 @@ import type {
   ToolStatus,
 } from '../hooks/contracts'
 import { isRowId } from '../hooks/contracts'
-import { dropAuto } from '../hooks/model/discovered'
+import { emptyAuto, pinRoot, recordEnter, recordSpawn } from '../trackers/auto/ledger'
+import { AutoRound, type RoundDeps } from '../trackers/auto/round'
+import { dropAuto } from '../trackers/github/discovered'
 import { discoveryData, prNode } from './fixtures/gh-discovery'
 import { porcelain as gitPorcelain, NOT_A_REPO_STDERR } from './fixtures/git'
 

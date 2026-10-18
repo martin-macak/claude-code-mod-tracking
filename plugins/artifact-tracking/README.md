@@ -219,13 +219,18 @@ claude plugin test .
 | Folder | Content |
 | --- | --- |
 | `hooks/register.tsx` | Hooks, command, timers, state, store, render. |
-| `hooks/scan/` | Text to references (`refs.ts`), artifact URLs and ids (`artifact-url.ts`), Markdown paths (`files.ts`) and the link scanner (`links.ts`). |
-| `hooks/capture/` | An Artifact tool call as an event (`artifact-tool.ts`), for the hook and the resume backfill. |
-| `hooks/model/` | Items, keys, merge, dedupe, caps. |
-| `hooks/tools/` | `GhTool`, `AcliTool`, the base `Tool` and the circuit breaker. |
-| `hooks/refresh/` | The refresh coordinator. |
-| `hooks/auto/` | Ledger, worktrees, agents, events, scheduler and round of auto tracking. |
-| `hooks/ui/` | The view model, the pane and the band. |
+| `hooks/` (rest) | Modules that mix concerns until later layers split them: `contracts.ts`, `model/` (keys, priority, registry, tracked item), `scan/refs.ts`, `ui/view.ts`, `ui/auto-view.ts`. |
+| `core/lib/` | Pure helpers: JSON parsing, `git status` porcelain, shell splitting and the link scanner. |
+| `core/infra/` | The base `Tool` and the circuit breaker, the refresh coordinator, the scheduler and the dismiss store. |
+| `ux/` | The pane and the band. |
+| `trackers/github/` | GitHub items, `GhTool`, PR discovery and the PR body scanner. |
+| `trackers/jira/` | Jira items and `AcliTool`. |
+| `trackers/web/` | Web links. |
+| `trackers/artifact/` | Artifact items, the Artifact tool call as an event (for the hook and the resume backfill) and artifact URLs and ids. |
+| `trackers/file/` | File items and the Markdown path scanner. |
+| `trackers/repos/` | Repository hints, identity, paths, queue, rows, tracker and view. |
+| `trackers/processes/` | Process parsing, probing and view. |
+| `trackers/auto/` | Ledger, worktrees, agents, events and round of auto tracking. |
 | `tests/` | Unit tests, fixtures, and the kit tests of the wiring (`register.test.tsx`, `artifact-wiring.test.tsx`). |
 
 ## CI

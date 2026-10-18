@@ -1,6 +1,6 @@
 // Artifact URLs: base58 ids, UUIDs, the two URL forms and their key (issue #29). Pure.
 import { expect, test } from 'claude-code/testing'
-import { artifactUuid, clipLabel, parseArtifactUrl } from '../hooks/scan/artifact-url'
+import { artifactUuid, clipLabel, parseArtifactUrl } from '../trackers/artifact/artifact-url'
 import { PAIRS } from './fixtures/artifacts'
 
 test('artifactUuid: the observed base58 ids decode to their UUIDs', () => {

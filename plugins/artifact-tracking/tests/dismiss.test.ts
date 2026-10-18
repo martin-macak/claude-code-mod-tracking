@@ -1,9 +1,9 @@
 // Dismiss list: ids of the current auto rows and items. Pure.
 import { expect, test } from 'claude-code/testing'
-import { autoIds, dismiss } from '../hooks/auto/dismiss'
-import { emptyAuto, pinRoot } from '../hooks/auto/ledger'
+import { autoIds, dismiss } from '../core/infra/dismiss'
 import type { AgentRow, AutoSnapshot, AutoState, ItemRecord, WorktreeRow } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
+import { emptyAuto, pinRoot } from '../trackers/auto/ledger'
 
 const wt = (path: string, depth: 0 | 1): WorktreeRow => ({
   id: `wt:${path}`,

@@ -1,6 +1,6 @@
 // AutoScheduler: fixed window, immediate tick and manual, busy guard, errors, refused timers. Pure, fake clock.
 import { expect, test } from 'claude-code/testing'
-import { AutoScheduler } from '../hooks/auto/scheduler'
+import { AutoScheduler } from '../core/infra/scheduler'
 import type { AutoReason } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
 

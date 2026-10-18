@@ -1,9 +1,9 @@
 // Item keys and the auto-only test (spec 6.2, A9). No state, no I/O. Scan, model and ui import these from here,
 // so none of them has to pull in `registry.ts` or `discovered.ts` for a key.
 
+import { normalizeUrl } from '../../core/lib/links'
 import type { ArtifactOrigin, DiscoveredPr, ItemRecord, Ref, Source } from '../contracts'
 import { AUTO_SOURCES, githubKey } from '../contracts'
-import { normalizeUrl } from '../scan/links'
 
 const withoutFragment = (url: string): string => {
   const i = url.indexOf('#')

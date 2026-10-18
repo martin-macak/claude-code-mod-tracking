@@ -2,7 +2,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { GitHubTarget, RunInit, Runner, RunResult } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
-import { buildQuery, classifyReply, GhTool, rollupToChecks } from '../hooks/tools/gh-tool'
+import { buildQuery, classifyReply, GhTool, rollupToChecks } from '../trackers/github/gh-tool'
 import * as fx from './fixtures/gh'
 
 const NOW = 1_000_000
