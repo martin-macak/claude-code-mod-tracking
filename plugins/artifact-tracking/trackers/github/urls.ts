@@ -1,5 +1,5 @@
 // GitHub item keys and URLs. Pure: no state, no I/O. The kind, the lane and the tool build their keys here.
-// Plan: L5 Task 4 (keys move with their kind). Task 5 adds `parseGitHubUrl`.
+// Plan: L5 Task 4 (keys move with their kind) and Task 5 (`parseGitHubUrl` moves from `hooks/scan/refs.ts`).
 
 import type { DiscoveredPr, GitHubRef } from './types'
 
@@ -19,4 +19,38 @@ export const githubUrl = (host: string, owner: string, repo: string, type: strin
 /** The item key of the PR, `gh:<host>/<owner>/<repo>#<n>`. */
 export function prKey(pr: Pick<DiscoveredPr, 'host' | 'owner' | 'repo' | 'number'>): string {
   return githubKey(pr.host, pr.owner, pr.repo, pr.number)
+}
+
+const GH_PATH = /^\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/(issues|pull)\/(\d+)(?:[/?#].*)?$/
+
+/**
+ * The issue or PR an URL names. The URL's host must be `github.com` (also as `www.`) or one of `githubHosts`.
+ * The ref keeps the URL in its canonical form: no tail, no query, no fragment.
+ */
+export function parseGitHubUrl(url: string, githubHosts: readonly string[] = []): GitHubRef | null {
+  let u: URL
+  try {
+    u = new URL(url.trim())
+  } catch {
+    return null
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null
+  const seen = u.hostname.toLowerCase()
+  const host = seen === 'www.github.com' ? 'github.com' : seen
+  const known = host === 'github.com' || githubHosts.some(h => h.toLowerCase() === host)
+  if (!known) return null
+  const m = GH_PATH.exec(u.pathname + u.search + u.hash)
+  if (!m) return null
+  const [, owner, repo, kind, n] = m
+  const number = Number(n)
+  if (!Number.isSafeInteger(number)) return null
+  return {
+    category: 'github',
+    host,
+    owner: owner!,
+    repo: repo!,
+    number,
+    type: kind === 'pull' ? 'pr' : 'issue',
+    url: `https://${host}/${owner}/${repo}/${kind}/${n}`,
+  }
 }

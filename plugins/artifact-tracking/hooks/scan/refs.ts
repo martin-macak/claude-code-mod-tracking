@@ -1,272 +1,39 @@
 // Reference extraction: text -> GitHub, Jira, artifact and web refs (spec section 6.1).
-// Pure code. No `$`, no I/O. Every regex is linear. Input is capped at MAX_TEXT before any regex runs.
+// A binding over the capture scan and the item kinds (plan L5, Task 5): the old signatures stay, the work is done by
+// `scanClaims` with the claims and scans of the shipped kinds. Task 15 moves it to the test fixtures.
+// Pure code. No `$`, no I/O.
 
-import { hostPath, MAX_TEXT, normalizeUrl, scanMarkdown, schemeOf } from '../../core/lib/links'
-import { maskForBare } from '../../core/lib/mask'
-import { parseArtifactUrl } from '../../trackers/artifact/artifact-url'
+import { scanClaims } from '../../core/infra/capture'
+import type { Json } from '../../core/interfaces/items'
+import { parseRemote as parseGitRemote } from '../../core/lib/git'
+import { scanContext } from '../../core/lib/kind-context'
+import { commandArgs, hostPath } from '../../core/lib/links'
 import { GITHUB_DEFAULTS } from '../../trackers/github/config'
-import type { ExtractOptions, GitHubRef, JiraRef, Ref, RepoRef, WebRef } from '../contracts'
-import { JIRA_KEY } from '../contracts'
-import { keyOf } from '../model/keys'
+import { HOST_ALIASES } from '../../trackers/github/remote'
+import { parseGitHubUrl } from '../../trackers/github/urls'
+import { parseJiraUrl } from '../../trackers/jira/urls'
+import type { ExtractOptions, Ref, RepoRef } from '../contracts'
+import { KINDS } from '../model/registry'
 
-const MAX_REMOTE = 2048
-const FILE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|md|py|go|rs|java|kt|rb|json|ya?ml|toml|txt|html|css|sh)$/i
-const GH_PATH = /^\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/(issues|pull)\/(\d+)(?:[/?#].*)?$/
-const BARE_REF = /(?<![\w/&#])#(\d{1,7})\b/g
-const URL_RUN = /https?:\/\/[^\s<>"'`\][(){}]+/g
-const TRAILING = '.,;:!?*_~'
-const REGEX_CHARS = /[.*+?^${}()|[\]\\]/g
+// These moved to their owners in plan L5, Tasks 4 and 5. The old callers read them here until Task 15.
+export { commandArgs, hostPath, parseGitHubUrl, parseJiraUrl }
 
-// Conversation short refs are narrow by design (issue #8): only the lead words of `shortRefKeywords` opt in `#N`
-// capture (default: github, bug, issue, issues, enhancement, chore). The pattern is built from the list and kept for
-// the next call with the same list; an empty list matches nothing.
-let prefixCache: { key: string; pattern: RegExp | null } | undefined
+/** `owner/repo` of a git remote, with the host aliases of GitHub (`ssh.github.com`). */
+export const parseRemote = (remote: string): RepoRef | null => parseGitRemote(remote, HOST_ALIASES)
 
-function shortRefPrefix(words: readonly string[]): RegExp | null {
-  const list = words.filter(w => w !== '')
-  const key = list.join('\n')
-  if (prefixCache?.key !== key) {
-    const alternatives = list.map(w => w.replace(REGEX_CHARS, '\\$&')).join('|')
-    prefixCache = { key, pattern: list.length === 0 ? null : new RegExp(`\\b(?:${alternatives})\\s*[-:() ]*$`, 'i') }
-  }
-  return prefixCache.pattern
-}
-
-/** A web URL longer than this is not tracked. It would bloat the plugin state and store. */
-const MAX_WEB_URL = 2048
-
-const cap = (text: string): string => (text.length > MAX_TEXT ? text.slice(0, MAX_TEXT) : text)
-
-/** Cut trailing characters of `chars` from `s`. A backward loop: linear, unlike `/[…]+$/`. */
-function trimEnd(s: string, chars: string): string {
-  let e = s.length
-  while (e > 0 && chars.includes(s[e - 1]!)) e--
-  return s.slice(0, e)
-}
-
-// `hostPath` moved to core/lib/links.ts in plan L5, Task 4 (the artifact kind needs it). The old callers read it here.
-export { hostPath }
-
-// ---------------------------------------------------------------- parsers
-
-/** `owner/repo` of a git remote: scp form, ssh://, https:// (credentials dropped), git://. */
-export function parseRemote(remote: string): RepoRef | null {
-  if (!remote || remote.length > MAX_REMOTE) return null
-  const m =
-    /^(?:[\w.-]+@)?([\w.-]+):(?!\/\/)([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(remote) ??
-    /^(?:ssh|https?|git):\/\/(?:[^@/]+@)?([\w.-]+)(?::\d+)?\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(remote)
-  if (!m) return null
-  const scp = !/^[a-z][a-z0-9+.-]*:\/\//i.test(remote)
-  if (scp && m[1]!.length < 2) return null // `C:/dir/x` is a path, not a host
-  const host = m[1]!.toLowerCase()
-  return { host: host === 'ssh.github.com' ? 'github.com' : host, owner: m[2]!, repo: m[3]! }
-}
-
-function parse(url: string): URL | null {
-  try {
-    return new URL(url)
-  } catch {
-    return null
-  }
-}
-
-export function parseGitHubUrl(url: string, githubHosts: readonly string[] = []): GitHubRef | null {
-  const u = parse(url.trim())
-  if (!u || (u.protocol !== 'https:' && u.protocol !== 'http:')) return null
-  const seen = u.hostname.toLowerCase()
-  const host = seen === 'www.github.com' ? 'github.com' : seen
-  const known = host === 'github.com' || githubHosts.some(h => h.toLowerCase() === host)
-  if (!known) return null
-  const m = GH_PATH.exec(u.pathname + u.search + u.hash)
-  if (!m) return null
-  const [, owner, repo, kind, n] = m
-  const number = Number(n)
-  if (!Number.isSafeInteger(number)) return null
-  return {
-    category: 'github',
-    host,
-    owner: owner!,
-    repo: repo!,
-    number,
-    type: kind === 'pull' ? 'pr' : 'issue',
-    url: `https://${host}/${owner}/${repo}/${kind}/${n}`,
-  }
-}
-
-export function parseJiraUrl(url: string): JiraRef | null {
-  const u = parse(url.trim())
-  if (!u || (u.protocol !== 'https:' && u.protocol !== 'http:')) return null
-  const site = u.hostname.toLowerCase()
-  const cloud = site.endsWith('.atlassian.net')
-  const key = jiraKey(u, cloud)
-  if (key === null) return null
-  return { category: 'jira', site, issueKey: key, url: `https://${site}/browse/${key}`, trackOnly: !cloud }
-}
-
-function jiraKey(u: URL, cloud: boolean): string | null {
-  const browse = /^\/browse\/([^/]+)\/?$/.exec(u.pathname)
-  if (browse && JIRA_KEY.test(browse[1]!)) return browse[1]!
-  if (!cloud) return null
-  const sel = u.searchParams.get('selectedIssue')
-  if (sel !== null && JIRA_KEY.test(sel)) return sel
-  const tail = /\/issues\/([^/]+)\/?$/.exec(u.pathname)
-  return tail && JIRA_KEY.test(tail[1]!) ? tail[1]! : null
-}
-
-// ---------------------------------------------------------------- small helpers
-
-/** Inner text of `<command-args>…</command-args>`, or ''. */
-export function commandArgs(text: string): string {
-  const t = cap(text)
-  const open = t.indexOf('<command-args>')
-  if (open === -1) return ''
-  const from = open + '<command-args>'.length
-  const close = t.indexOf('</command-args>', from)
-  return close === -1 ? '' : t.slice(from, close)
-}
-
-// ---------------------------------------------------------------- extraction
-
-function webRef(url: string, label: string | undefined): WebRef {
-  return { category: 'web', url, label: label !== undefined && label !== url ? label : hostPath(url) }
-}
-
-function classify(url: string, label: string | undefined, hosts: readonly string[]): Ref {
-  return parseGitHubUrl(url, hosts) ?? parseJiraUrl(url) ?? parseArtifactUrl(url, label) ?? webRef(url, label)
-}
-
-type At = { pos: number; ref: Ref }
-
-/**
- * Where a found link sits in the text. scanMarkdown gives no offsets, but it lists links in order.
- * So search forward from the last hit. A miss keeps the cursor, so the order stays right.
- */
-function locate(text: string, needles: Array<string | undefined>, cursor: number): { pos: number; next: number } {
-  for (const n of needles) {
-    if (!n) continue
-    const i = text.indexOf(n, cursor)
-    if (i !== -1) return { pos: i, next: i + n.length }
-  }
-  return { pos: cursor, next: cursor }
-}
-
-function fromMarkdown(
-  text: string,
-  hosts: readonly string[],
-  repo: RepoRef | null | undefined,
-  strictShortRefs: boolean,
-  prefix: RegExp | null,
-): At[] {
-  const refs: At[] = []
-  let cursor = 0
-  for (const f of scanMarkdown(text)) {
-    if (f.kind !== 'link') continue
-    const scheme = schemeOf(f.url)
-    if (scheme !== 'http' && scheme !== 'https') continue
-    const hit = locate(text, [f.via === 'issue-ref' ? f.label : f.url, f.label], cursor)
-    cursor = hit.next
-    if (f.via === 'issue-ref') {
-      const gh = parseGitHubUrl(f.url)
-      const keep =
-        gh && !FILE_EXT.test(gh.repo!) && (!strictShortRefs || shortRefAllowed(text, hit.pos, gh, repo, prefix))
-      if (keep) {
-        refs.push({
-          pos: hit.pos,
-          ref: { ...gh, type: 'unknown', ...(strictShortRefs ? { short: true as const } : {}) },
-        })
-      }
-      continue
-    }
-    const ref = classify(f.url, f.label, hosts)
-    if (ref.category === 'web' && ref.url.length > MAX_WEB_URL) continue
-    refs.push({ pos: hit.pos, ref })
-  }
-  return refs
-}
-
-function sameRepo(a: RepoRef | null | undefined, b: { host: string; owner: string; repo: string }): boolean {
-  if (!a) return false
-  return (
-    a.host.toLowerCase() === b.host.toLowerCase() &&
-    a.owner.toLowerCase() === b.owner.toLowerCase() &&
-    a.repo.toLowerCase() === b.repo.toLowerCase()
-  )
-}
-
-function hasShortRefPrefix(text: string, at: number, prefix: RegExp | null): boolean {
-  const from = Math.max(0, at - 64)
-  return prefix?.test(text.slice(from, at)) === true
-}
-
-function shortRefAllowed(
-  text: string,
-  at: number,
-  ref: GitHubRef,
-  repo: RepoRef | null | undefined,
-  prefix: RegExp | null,
-): boolean {
-  if (!hasShortRefPrefix(text, at, prefix)) return false
-  if (!ref.owner || !ref.repo) return false
-  return sameRepo(repo, { host: ref.host, owner: ref.owner, repo: ref.repo })
-}
-
-function bareRefs(
-  text: string,
-  repo: RepoRef | null | undefined,
-  strictShortRefs: boolean,
-  prefix: RegExp | null,
-): At[] {
-  const masked = maskForBare(text)
-  const refs: At[] = []
-  for (const m of masked.matchAll(BARE_REF)) {
-    const number = Number(m[1])
-    const ref: GitHubRef = repo
-      ? { category: 'github', host: repo.host, owner: repo.owner, repo: repo.repo, number, type: 'unknown' }
-      : { category: 'github', host: 'github.com', number, type: 'unknown' }
-    if (strictShortRefs && !shortRefAllowed(text, m.index!, ref, repo, prefix)) continue
-    if (strictShortRefs) ref.short = true
-    refs.push({ pos: m.index!, ref })
-  }
-  return refs
-}
-
-function urlsOnly(text: string, hosts: readonly string[]): Ref[] {
-  const refs: Ref[] = []
-  for (const m of text.matchAll(URL_RUN)) {
-    const url = trimEnd(m[0], TRAILING)
-    const ref = parseGitHubUrl(url, hosts) ?? parseJiraUrl(url)
-    if (ref) refs.push(ref)
-  }
-  return refs
-}
-
-function uniqueKey(r: Ref): string {
-  if (r.category === 'github') return `gh:${r.host}/${r.owner ?? ''}/${r.repo ?? ''}#${r.number}`.toLowerCase()
-  if (r.category === 'jira') return `jira:${r.site}/${r.issueKey}`.toLowerCase()
-  if (r.category === 'artifact') return keyOf(r)
-  return 'web:' + normalizeUrl(r.url).replace(/#.*$/s, '')
-}
+/** A `Ref` has no file member: a Markdown file is found by its own path, not by a link. */
+const REF_KINDS = KINDS.filter(kind => kind.category !== 'file')
 
 /** Refs found in `text`, unique, in order of appearance. */
 export function extractRefs(text: string, opts: ExtractOptions): Ref[] {
-  const t = cap(text)
-  const hosts = opts.githubHosts ?? []
-  const strictShortRefs = opts.strictShortRefs ?? false
-  const prefix = strictShortRefs ? shortRefPrefix(opts.shortRefWords ?? GITHUB_DEFAULTS.shortRefKeywords) : null
-  const all =
-    opts.mode === 'urls-only'
-      ? urlsOnly(t, hosts)
-      : [
-          ...fromMarkdown(t, hosts, opts.defaultRepo, strictShortRefs, prefix),
-          ...bareRefs(t, opts.defaultRepo, strictShortRefs, prefix),
-        ]
-          .sort((a, b) => a.pos - b.pos)
-          .map(x => x.ref)
-  const seen = new Set<string>()
-  return all.filter(r => {
-    const k = uniqueKey(r)
-    if (seen.has(k)) return false
-    seen.add(k)
-    return true
+  const ctx = scanContext({
+    mode: opts.mode,
+    purpose: opts.strictShortRefs ? 'capture' : 'lookup',
+    facts: {
+      'session.repo': (opts.defaultRepo ?? null) as unknown as Json,
+      'github.hosts': [...(opts.githubHosts ?? [])],
+    },
+    slice: { shortRefKeywords: [...(opts.shortRefWords ?? GITHUB_DEFAULTS.shortRefKeywords)] },
   })
+  return scanClaims(text, opts.mode, REF_KINDS, ctx).map(c => ({ category: c.category, ...c.fields }) as unknown as Ref)
 }

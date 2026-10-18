@@ -1,13 +1,13 @@
 import type { Breaker } from '../../core/interfaces/tracker'
 import { CircuitBreaker } from '../../core/lib/circuit-breaker'
+import { parseRemote } from '../../core/lib/git'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import { normPath } from '../../core/lib/porcelain'
 import { resolvePath } from '../../core/lib/shell'
 import type { RepoRef, Runner, RunResult } from '../../hooks/contracts'
-import { parseRemote } from '../../hooks/scan/refs'
 import { REPOS_DEFAULTS } from './config'
 import type { RepoMode } from './hints'
-import { type Env, isNoisePath, localIdentity, normalizeRemoteUrl, remoteKey } from './identity'
+import { type Env, isNoisePath, localIdentity, normalizeRemoteUrl, REMOTE_ALIASES, remoteKey } from './identity'
 import { cleanPath, isAbs, maybeDir, within } from './paths'
 
 type ResolvedRepo = {
@@ -297,7 +297,7 @@ export class RepoTracker {
     if (!branchFailed) this.breaker.success()
     this.branches.set(root, branch ? { branch, at: this.d.now() } : { at: this.d.now() })
 
-    const parsed = remote ? parseRemote(remote) : null
+    const parsed = remote ? parseRemote(remote, REMOTE_ALIASES) : null
     const id = parsed
       ? { key: remoteKey(parsed), name: `${parsed.owner}/${parsed.repo}` }
       : remote

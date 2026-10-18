@@ -18,7 +18,7 @@ export type Found = {
 }
 
 export type ScanOptions = {
-  /** Host that `owner/repo#12` points to. Default `github.com`. */
+  /** Host that `owner/repo#12` points to. Absent: the scan finds no issue references (plan K22). */
   issueHost?: string
 }
 
@@ -29,8 +29,38 @@ export const MAX_TEXT = 200_000
 
 const MAX_LABEL = 60
 
+/** `text` cut at `MAX_TEXT`. */
+export const capText = (text: string): string => (text.length > MAX_TEXT ? text.slice(0, MAX_TEXT) : text)
+
+/** Inner text of `<command-args>…</command-args>`, or ''. */
+export function commandArgs(text: string): string {
+  const t = capText(text)
+  const open = t.indexOf('<command-args>')
+  if (open === -1) return ''
+  const from = open + '<command-args>'.length
+  const close = t.indexOf('</command-args>', from)
+  return close === -1 ? '' : t.slice(from, close)
+}
+
+/**
+ * Where a found link sits in the text. `scanMarkdown` gives no offsets, but it lists links in order. So search forward
+ * from `cursor` for the first needle that is there. A miss keeps the cursor, so the order stays right.
+ */
+export function locate(
+  text: string,
+  needles: ReadonlyArray<string | undefined>,
+  cursor: number,
+): { pos: number; length: number; next: number } {
+  for (const n of needles) {
+    if (!n) continue
+    const i = text.indexOf(n, cursor)
+    if (i !== -1) return { pos: i, length: n.length, next: i + n.length }
+  }
+  return { pos: cursor, length: 0, next: cursor }
+}
+
 /** Cut trailing characters of `chars` from `s`. A backward loop: linear, unlike `/[…]+$/`. */
-function trimEnd(s: string, chars: string): string {
+export function trimEnd(s: string, chars: string): string {
   let e = s.length
   while (e > 0 && chars.includes(s[e - 1]!)) e--
   return s.slice(0, e)
@@ -454,8 +484,8 @@ function scanInline(src: string, opts: ScanOptions): Found[] {
     i++
   }
   // Plain text only: `owner/repo#12`.
-  const host = opts.issueHost ?? 'github.com'
-  if (!NO_ISSUE_HOSTS.includes(host)) {
+  const host = opts.issueHost
+  if (host !== undefined && !NO_ISSUE_HOSTS.includes(host)) {
     const plain = mask.join('')
     const sep = host === 'gitlab.com' ? '/-/issues/' : '/issues/'
     for (const m of plain.matchAll(ISSUE_REF)) {
@@ -476,7 +506,7 @@ function scanInline(src: string, opts: ScanOptions): Found[] {
 /** Links the engine's renderer makes out of Markdown text, in order of appearance. */
 export function scanMarkdown(text: string, opts: ScanOptions = {}): Found[] {
   if (text === '') return []
-  return scanInline(stripCodeBlocks(text.length > MAX_TEXT ? text.slice(0, MAX_TEXT) : text), opts)
+  return scanInline(stripCodeBlocks(capText(text)), opts)
 }
 
 // ---------------------------------------------------------------- OSC 8

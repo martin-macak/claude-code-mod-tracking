@@ -239,20 +239,26 @@ test('tables, lists, quotes and headings are scanned (observed)', () => {
 })
 
 test('issue references: owner/repo#12 becomes a host link in plain text only (observed)', () => {
-  expect(scanMarkdown('fix acme/widgets#42 now')).toEqual([
+  expect(scanMarkdown('fix acme/widgets#42 now', { issueHost: 'github.com' })).toEqual([
     { url: 'https://github.com/acme/widgets/issues/42', label: 'acme/widgets#42', via: 'issue-ref', kind: 'link' },
   ])
   expect(links('see acme/widgets#42', { issueHost: 'gitlab.com' })).toEqual([
     'https://gitlab.com/acme/widgets/-/issues/42',
   ])
   expect(links('see acme/widgets#42', { issueHost: 'bitbucket.org' })).toEqual([])
-  expect(links('`acme/widgets#42` and [acme/widgets#42](https://e.com/x) and x/acme/widgets#42')).toEqual([
-    'https://e.com/x',
-  ])
+  expect(
+    links('`acme/widgets#42` and [acme/widgets#42](https://e.com/x) and x/acme/widgets#42', {
+      issueHost: 'github.com',
+    }),
+  ).toEqual(['https://e.com/x'])
 })
 
 test('issue references: any word/word#n matches, a path with an extension too (observed quirk)', () => {
-  expect(links('src/a.ts#12 and docs/readme.md#3, Org/Repo.js#9 (acme/widgets#8) and x/acme/widgets#10')).toEqual([
+  expect(
+    links('src/a.ts#12 and docs/readme.md#3, Org/Repo.js#9 (acme/widgets#8) and x/acme/widgets#10', {
+      issueHost: 'github.com',
+    }),
+  ).toEqual([
     'https://github.com/src/a.ts/issues/12',
     'https://github.com/docs/readme.md/issues/3',
     'https://github.com/Org/Repo.js/issues/9',
@@ -261,7 +267,7 @@ test('issue references: any word/word#n matches, a path with an extension too (o
 })
 
 test('order follows the text, issue references included (observed)', () => {
-  expect(links('acme/w#1 then www.a.org and [l](https://b.org)')).toEqual([
+  expect(links('acme/w#1 then www.a.org and [l](https://b.org)', { issueHost: 'github.com' })).toEqual([
     'https://github.com/acme/w/issues/1',
     'http://www.a.org',
     'https://b.org',

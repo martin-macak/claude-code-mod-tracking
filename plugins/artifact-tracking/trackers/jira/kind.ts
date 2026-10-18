@@ -1,13 +1,14 @@
 // The item kind of Jira work items: its key, its record, its fold and its refresh through `acli`.
 // Plan: L5 Task 4, K4, K5. Task 5 adds `claimUrl`; Task 6 `setLevel` and `findRow`; Task 8 `accept` and `restore`.
 
-import type { Claim, ItemKind, Refreshable, RefreshContext } from '../../core/interfaces/items'
+import type { Claim, ItemKind, JsonObject, Refreshable, RefreshContext } from '../../core/interfaces/items'
 import { sighted } from '../../core/lib/records'
 import { acliClient } from './client'
 import type { JiraConfig } from './config'
 import { JiraItem } from './jira-item'
 import { carryPriorities, mergeNodePriorities } from './nodes'
 import type { JiraRecord, JiraRef, JiraTarget } from './types'
+import { parseJiraUrl } from './urls'
 
 /** The item key: the site in lower case, the issue key as written. */
 export const jiraKeyOf = (ref: Pick<JiraRef, 'site' | 'issueKey'>): string =>
@@ -40,6 +41,18 @@ const clientOf = (c: RefreshContext) =>
 export const jiraKind: ItemKind<JiraRecord> = {
   category: 'jira',
   rank: 20,
+  claimUrl(url, _label, ctx) {
+    const ref = parseJiraUrl(url)
+    if (!ref) return null
+    const { category, ...fields } = ref
+    return {
+      category,
+      key: jiraKeyOf(ref),
+      source: ctx.source,
+      at: ctx.now,
+      fields: fields as unknown as JsonObject,
+    }
+  },
   decode: item => (item.category === 'jira' && typeof item.issueKey === 'string' ? (item as JiraRecord) : null),
   merge: (cur, seen) => (cur === null ? jiraRecord(refOf(seen), seen) : sighted(cur, seen)),
   fold(_winner, loser, out) {

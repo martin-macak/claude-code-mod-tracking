@@ -2,8 +2,10 @@
 // A file is track-only, so it has no refresh. Plan: L5 Task 4 (K17: the static item class goes). Task 5 adds `scan`;
 // Task 8 the tool calls and the stat of a mention.
 
-import type { ItemKind } from '../../core/interfaces/items'
+import type { Claim, ItemKind, Json, KindContext, ScanMode } from '../../core/interfaces/items'
 import { foldRecords, type KindTable } from '../../core/lib/records'
+import { FILE_DEFAULTS } from './config'
+import { mdCandidates } from './files'
 import type { FileActivity, FileRecord } from './types'
 
 /** The item key of a Markdown file, `file:<path>`, where `path` is where the file landed (issue #28). */
@@ -34,11 +36,28 @@ export function fileRecord(
   }
 }
 
+/**
+ * The `.md` paths a prompt or reply names, as spelled: one `mentioned` claim each, at most `maxMentionsPerRow`. Path and
+ * label hold the spelling here. The stat of the file, which re-keys the claim to where it landed, is Task 8's `accept`.
+ */
+function scanMentions(text: string, mode: ScanMode, ctx: KindContext): Claim[] {
+  if (mode !== 'full') return []
+  const max: Json | undefined = ctx.config.slice().maxMentionsPerRow
+  return mdCandidates(text, typeof max === 'number' ? max : FILE_DEFAULTS.maxMentionsPerRow).map(name => ({
+    category: 'file',
+    key: fileKey(name),
+    source: ctx.source,
+    at: ctx.now,
+    fields: { path: name, label: name, activity: 'mentioned', bySubagent: false },
+  }))
+}
+
 const onlyFile: KindTable = category => (category === 'file' ? fileKind : undefined)
 
 export const fileKind: ItemKind<FileRecord> = {
   category: 'file',
   rank: 80,
+  scan: scanMentions,
   decode: item => (item.category === 'file' ? (item as FileRecord) : null),
   merge(cur, seen) {
     const f = seen.fields as unknown as FileFields

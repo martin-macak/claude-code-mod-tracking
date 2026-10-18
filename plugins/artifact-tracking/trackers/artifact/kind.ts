@@ -2,9 +2,9 @@
 // No tool reads its status, so it has no refresh. Plan: L5 Task 4 (K17: the static item class goes), K4 (`fold`, `migrate`).
 // Task 5 adds `claimUrl`; Task 8 the Artifact tool call, `replayWins` and the delete claim.
 
-import type { Claim, ItemKind } from '../../core/interfaces/items'
+import type { Claim, ItemKind, JsonObject } from '../../core/interfaces/items'
 import { type BaseRecord, sighted } from '../../core/lib/records'
-import { artifactIdOf, artifactKeyOf } from './artifact-url'
+import { artifactIdOf, artifactKeyOf, parseArtifactUrl } from './artifact-url'
 import { artifactFromWeb } from './records'
 import type { ArtifactRecord, ArtifactRef } from './types'
 
@@ -53,6 +53,19 @@ function artifactRecord(ref: ArtifactRef, claim: Claim): ArtifactRecord {
 export const artifactKind: ItemKind<ArtifactRecord> = {
   category: 'artifact',
   rank: 30,
+  /** A mention of a page in text. A tool output (`urls-only`) names the pages of a publish call, not these. */
+  claimUrl(url, label, ctx) {
+    const ref = ctx.mode === 'full' ? parseArtifactUrl(url, label) : null
+    if (!ref) return null
+    const { category, ...fields } = ref
+    return {
+      category,
+      key: artifactKeyOf(ref),
+      source: ctx.source,
+      at: ctx.now,
+      fields: fields as unknown as JsonObject,
+    }
+  },
   decode: item => (item.category === 'artifact' ? (item as ArtifactRecord) : null),
   merge(cur, seen) {
     const ref = refOf(seen)

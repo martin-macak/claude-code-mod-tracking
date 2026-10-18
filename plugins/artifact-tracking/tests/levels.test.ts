@@ -23,6 +23,23 @@ test('maskSpans blanks several spans and ignores one outside the text', () => {
   expect(maskSpans('abc', [{ start: 5, end: 9 }])).toBe('abc')
 })
 
+test('maskSpans takes spans in any order, overlapping or touching, in one pass', () => {
+  expect(
+    maskSpans('abcdefgh', [
+      { start: 5, end: 7 },
+      { start: 1, end: 4 },
+      { start: 3, end: 6 },
+      { start: -3, end: 1 },
+    ]),
+  ).toBe('       h')
+  expect(maskSpans('abc', [{ start: 2, end: 2 }])).toBe('abc')
+  const text = 'x'.repeat(200_000)
+  const spans = Array.from({ length: 50_000 }, (_, i) => ({ start: i * 4, end: i * 4 + 2 }))
+  const t0 = Date.now()
+  expect(maskSpans(text, spans).length).toBe(text.length)
+  expect(Date.now() - t0).toBeLessThan(500)
+})
+
 test('levels: the order is top, high, normal, low; no level reads as normal', () => {
   const levels: Level[] = ['low', 'top', 'normal', 'high']
   expect(levels.sort(byLevel)).toEqual(['top', 'high', 'normal', 'low'])

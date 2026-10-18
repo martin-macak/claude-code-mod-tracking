@@ -2,6 +2,12 @@ import { basename, normPath } from '../../core/lib/porcelain'
 import type { RepoRef } from '../../hooks/contracts'
 import { lower, within } from './paths'
 
+/**
+ * The host a remote spells, to the host it stands for. The repos tracker keeps its own table (K23): a tracker folder
+ * imports no other, so it does not read the table of another tracker for the same host.
+ */
+export const REMOTE_ALIASES: Readonly<Record<string, string>> = { 'ssh.github.com': 'github.com' }
+
 export function remoteKey(ref: RepoRef): string {
   return `remote:${lower(ref.host)}/${lower(ref.owner)}/${lower(ref.repo)}`
 }

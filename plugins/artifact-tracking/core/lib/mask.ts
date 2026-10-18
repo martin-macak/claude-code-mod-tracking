@@ -61,13 +61,23 @@ export function maskForBare(text: string): string {
     .replace(/https?:\/\/\S+/g, blanks)
 }
 
-/** `text` with each span replaced by spaces of equal length. Spans may touch; one outside the text changes nothing. */
+/**
+ * `text` with each span replaced by spaces of equal length. Spans may touch, overlap or come in any order; one outside
+ * the text changes nothing. One pass: the cost does not grow with the number of spans times the length of the text.
+ */
 export function maskSpans(text: string, spans: readonly { start: number; end: number }[]): string {
-  let out = text
-  for (const { start, end } of spans) {
-    const from = Math.max(0, start)
-    const to = Math.min(text.length, end)
-    if (to > from) out = out.slice(0, from) + ' '.repeat(to - from) + out.slice(to)
+  if (spans.length === 0) return text
+  const sorted = spans
+    .map(({ start, end }) => ({ start: Math.max(0, start), end: Math.min(text.length, end) }))
+    .filter(({ start, end }) => end > start)
+    .sort((a, b) => a.start - b.start)
+  let out = ''
+  let pos = 0
+  for (const { start, end } of sorted) {
+    if (end <= pos) continue
+    const from = Math.max(start, pos)
+    out += text.slice(pos, from) + blanks(text.slice(from, end))
+    pos = end
   }
-  return out
+  return out + text.slice(pos)
 }

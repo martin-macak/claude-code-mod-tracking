@@ -1,13 +1,14 @@
 // The item kind of GitHub issues and pull requests: its key, its record, its fold and its refresh through `gh`.
 // Plan: L5 Task 4, K4, K5. Task 5 adds `claimUrl` and `scan`; Task 6 the rules; Task 8 the async hooks.
 
-import type { Claim, ItemKind, Refreshable, RefreshContext } from '../../core/interfaces/items'
+import type { Claim, ItemKind, Json, Refreshable, RefreshContext } from '../../core/interfaces/items'
 import { sighted } from '../../core/lib/records'
 import { ghClient } from './client'
 import type { GithubConfig } from './config'
 import { GitHubItem } from './github-item'
+import { githubClaim, scanGitHub } from './scan'
 import type { GitHubRecord, GitHubRef, GitHubTarget } from './types'
-import { githubKeyOf, githubUrl } from './urls'
+import { githubKeyOf, githubUrl, parseGitHubUrl } from './urls'
 
 /** The ref a claim carries: the kind's ref fields under the category. */
 const refOf = (claim: Claim): GitHubRef => ({ category: 'github', ...claim.fields }) as unknown as GitHubRef
@@ -50,6 +51,12 @@ const clientOf = (c: RefreshContext) =>
 export const githubKind: ItemKind<GitHubRecord> = {
   category: 'github',
   rank: 10,
+  claimUrl(url, _label, ctx) {
+    const hosts = ctx.facts.read<Json>('github.hosts') as unknown as readonly string[] | undefined
+    const ref = parseGitHubUrl(url, hosts)
+    return ref && githubClaim(ref, ctx)
+  },
+  scan: scanGitHub,
   decode: item => (item.category === 'github' && typeof item.number === 'number' ? (item as GitHubRecord) : null),
   merge(cur, seen) {
     if (cur === null) return githubRecord(refOf(seen), seen)

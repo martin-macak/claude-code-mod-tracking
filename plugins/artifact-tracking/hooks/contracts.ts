@@ -142,13 +142,12 @@ export type HydratedItem =
 
 export type Sighting = { source: Source; at: number }
 
-export const JIRA_KEY = /^[A-Z][A-Z0-9_]+-\d+$/
-
 // The key of a resolved GitHub issue or PR, the auto sources and the child-tree carry live with their owners now
 // (plan L5, Task 4). The old callers import them from here until Task 15.
 export { AUTO_SOURCES } from '../core/lib/records'
 export { githubKey } from '../trackers/github/urls'
 export { carryPriorities } from '../trackers/jira/nodes'
+export { JIRA_KEY } from '../trackers/jira/urls'
 
 // ---------------------------------------------------------------- auto tracking (spec 5.3, 6.3)
 
