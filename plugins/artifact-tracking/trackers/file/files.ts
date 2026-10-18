@@ -3,7 +3,7 @@
 
 import { isRecord } from '../../core/lib/json'
 import type { FileActivity } from '../../hooks/contracts'
-import { LIMITS } from '../../hooks/contracts'
+import { FILE_DEFAULTS } from './config'
 
 const MD = /[^/\\]\.md$/i
 const DRIVE = /^[A-Za-z]:/
@@ -110,8 +110,9 @@ const SUFFIX = /(?:#[^#]*|:\d+(?:[:-]\d+)?)$/
  * `.md` paths that a prompt or a reply names, as spelled, unique, at most `max`. A URL is skipped. A trailing line
  * number (`a.md:42`), anchor (`a.md#L7`) or punctuation and a leading `@` are cut.
  */
-export function mdCandidates(text: string, max: number = LIMITS.maxMentionsPerRow): string[] {
+export function mdCandidates(text: string, max: number = FILE_DEFAULTS.maxMentionsPerRow): string[] {
   const out: string[] = []
+  if (max <= 0) return out // `maxMentionsPerRow: 0` turns the mentions off
   for (const raw of text.split(SPLIT)) {
     if (raw.includes('://')) continue
     const token = raw

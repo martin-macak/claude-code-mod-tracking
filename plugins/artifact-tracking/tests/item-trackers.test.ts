@@ -3,7 +3,6 @@
 import { expect, test } from 'claude-code/testing'
 import { LIMITS } from '../hooks/contracts'
 import { githubConfig, githubTracker } from '../trackers/github'
-import { CHUNK } from '../trackers/github/gh-tool'
 import { jiraConfig, jiraTracker } from '../trackers/jira'
 import { webConfig, webTracker } from '../trackers/web'
 import { hostWorld } from './fixtures/tracker-host'
@@ -14,7 +13,7 @@ const warnings = () => {
 }
 
 test('defaults serve today: github chunk 50, jira concurrency 3 and 50 epic children, web on', () => {
-  expect(githubConfig.defaults).toMatchObject({ enabled: true, chunkSize: CHUNK })
+  expect(githubConfig.defaults).toMatchObject({ enabled: true, chunkSize: 50 })
   expect(jiraConfig.defaults).toEqual({
     enabled: true,
     concurrency: LIMITS.acliConcurrency,

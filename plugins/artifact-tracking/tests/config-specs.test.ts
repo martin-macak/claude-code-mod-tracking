@@ -270,7 +270,13 @@ test('the github keyword list is lowercased, deduped and capped at 32 words', ()
 
 test('buildTrackers uses the specs', () => {
   const list = buildTrackers({
-    autoGithub: { discovery: {} as never, ready: async () => false, repo: async () => null, hosts: () => [] },
+    autoGithub: {
+      discovery: {} as never,
+      ready: async () => false,
+      repo: async () => null,
+      hosts: () => [],
+      lane: () => ({ headPrsPerBranch: 5, basePrsPerBranch: 10, closingRefsPerPr: 10, maxBodyRefs: 50 }),
+    },
   })
   expect(list.map(t => t.id).sort()).toEqual(Object.keys(SPECS).sort())
   for (const tracker of list) {

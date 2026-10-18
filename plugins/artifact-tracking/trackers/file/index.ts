@@ -23,7 +23,14 @@ export function fileTracker(): Tracker<FileConfig, Json> {
     (tool: 'Write' | 'Edit' | 'Read'): Handler<FileConfig, Json, ToolCallEvent> =>
     async (ctx, ev) => {
       const touch = touchFromToolResult(tool, ev.result)
-      if (touch) await captureFileTouch(new FileSight(ctx, cache), ctx.items, touch, ev.agentId)
+      if (touch)
+        await captureFileTouch(
+          new FileSight(ctx, cache),
+          ctx.items,
+          touch,
+          ev.agentId,
+          ctx.config.global().store.maxItems,
+        )
     }
   return {
     id: 'file',

@@ -27,6 +27,17 @@ import { trackAgents } from './agents'
 import { setRootTop } from './ledger'
 import { trackWorktrees } from './worktrees'
 
+/**
+ * The github values of the PR lane: the `first:` counts of the discovery query, the closing refs read per PR and the refs
+ * read from one PR body. The github slice has them; the item runtime serves them through `AutoGithub.lane()`.
+ */
+export type AutoLane = {
+  headPrsPerBranch: number
+  basePrsPerBranch: number
+  closingRefsPerPr: number
+  maxBodyRefs: number
+}
+
 export type RoundDeps = {
   now: Now
   /** Read for inputs only. The round never writes this copy back (A20). */

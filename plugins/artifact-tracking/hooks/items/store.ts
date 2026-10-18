@@ -85,7 +85,7 @@ export class ItemStore implements ItemStorePort {
     if (keep.length === 0) return
     let added: string[] = []
     await this.set(list => {
-      const merged = mergeRefs(list, keep, { source, at: host.clock.wall() })
+      const merged = mergeRefs(list, keep, { source, at: host.clock.wall() }, host.config.global().store.maxItems)
       added = merged.added
       return merged.list
     })

@@ -84,10 +84,13 @@ export class FileSight {
     return recordFromFile({ path: hit.path, label, kind, bySubagent }, s)
   }
 
-  /** `.md` paths that a prompt or reply names and that exist: one `mentioned` sighting each (R8). */
-  async mentionRecords(ctx: FileCtx, text: string, s: Sighting): Promise<FileRecord[]> {
+  /**
+   * `.md` paths that a prompt or reply names and that exist: one `mentioned` sighting each (R8). At most `max` paths
+   * are looked at (`maxMentionsPerRow`).
+   */
+  async mentionRecords(ctx: FileCtx, text: string, s: Sighting, max?: number): Promise<FileRecord[]> {
     const recs: FileRecord[] = []
-    for (const name of mdCandidates(text)) {
+    for (const name of mdCandidates(text, max)) {
       const rec = await this.sighting(ctx, name, 'mentioned', false, s)
       if (rec) recs.push(rec)
     }
@@ -110,15 +113,22 @@ export function withoutLoneViews(list: readonly ItemRecord[], recs: readonly Fil
   })
 }
 
-/** Merges file sightings into the list. A dismissed key never comes back, and a list that would not change is not written. */
-export async function addFiles(items: Pick<ItemStorePort, 'update'>, recs: readonly FileRecord[]): Promise<void> {
+/**
+ * Merges file sightings into the list. A dismissed key never comes back, and a list that would not change is not
+ * written. `cap` is `global.store.maxItems`; the default is today's.
+ */
+export async function addFiles(
+  items: Pick<ItemStorePort, 'update'>,
+  recs: readonly FileRecord[],
+  cap?: number,
+): Promise<void> {
   await items.update((stored, dismissed) => {
     const list = stored as unknown as ItemRecord[]
     const wanted = withoutLoneViews(
       list,
       recs.filter(r => !dismissed.has(r.key)),
     )
-    return wanted.length === 0 ? stored : (mergeFiles(list, wanted) as unknown as typeof stored)
+    return wanted.length === 0 ? stored : (mergeFiles(list, wanted, cap) as unknown as typeof stored)
   })
 }
 
@@ -128,20 +138,23 @@ export async function captureFileTouch(
   items: Pick<ItemStorePort, 'update'>,
   t: FileTouch,
   agentId: string | undefined,
+  cap?: number,
 ): Promise<void> {
   const ctx = await sight.ctxFor(agentId)
   const rec = await sight.sighting(ctx, t.spelled, t.kind, agentId !== undefined, { source: 'tool', at: sight.at() })
-  if (rec) await addFiles(items, [rec])
+  if (rec) await addFiles(items, [rec], cap)
 }
 
-/** The `.md` files a prompt or reply names. Most rows name none: no read then. */
+/** The `.md` files a prompt or reply names, at most `max` of them (`cap`: the item cap). Most rows name none: no read then. */
 export async function captureMentions(
   sight: FileSight,
   items: Pick<ItemStorePort, 'update'>,
   text: string,
   source: Source,
+  max?: number,
+  cap?: number,
 ): Promise<void> {
-  if (mdCandidates(text).length === 0) return
-  const recs = await sight.mentionRecords(await sight.ctxFor(), text, { source, at: sight.at() })
-  if (recs.length > 0) await addFiles(items, recs)
+  if (mdCandidates(text, max).length === 0) return
+  const recs = await sight.mentionRecords(await sight.ctxFor(), text, { source, at: sight.at() }, max)
+  if (recs.length > 0) await addFiles(items, recs, cap)
 }

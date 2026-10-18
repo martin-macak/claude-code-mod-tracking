@@ -31,7 +31,10 @@ export function backfillText(role: 'user' | 'assistant', text: string): string |
 }
 
 /** `files: false` skips the file work (mentions and Write, Edit and Read results): the file tracker is off. */
-export type ReplayDeps = Pick<CaptureDeps, 'repo' | 'hosts' | 'site' | 'gh'> & { sight: FileSight; files?: boolean }
+export type ReplayDeps = Pick<CaptureDeps, 'repo' | 'hosts' | 'site' | 'gh' | 'limits'> & {
+  sight: FileSight
+  files?: boolean
+}
 
 /**
  * Items from a replayed transcript batch. File rows come from the Write, Edit and Read results and the mentions,
@@ -43,6 +46,7 @@ export async function itemsFromBatch(d: ReplayDeps, batch: readonly ReplayItem[]
   const batches: ({ refs: Ref[]; source: Source } | { deleted: string })[] = []
   const fileRecs: FileRecord[] = []
   const opts = { defaultRepo: d.repo() ?? null, githubHosts: d.hosts() }
+  const lim = d.limits?.()
   const toolSite = await d.site()
   const files = d.files !== false
   const ctx = files ? await d.sight.ctxFor() : undefined
@@ -54,10 +58,18 @@ export async function itemsFromBatch(d: ReplayDeps, batch: readonly ReplayItem[]
       if (text === null) continue
       const source: Source = role === 'user' ? 'prompt' : 'response'
       batches.push({
-        refs: await keepOpenSessionShortRefs(d, extractRefs(text, { mode: 'full', ...opts, strictShortRefs: true })),
+        refs: await keepOpenSessionShortRefs(
+          d,
+          extractRefs(text, {
+            mode: 'full',
+            ...opts,
+            strictShortRefs: true,
+            ...(lim ? { shortRefWords: lim.shortRefKeywords } : {}),
+          }),
+        ),
         source,
       })
-      if (ctx) fileRecs.push(...(await d.sight.mentionRecords(ctx, text, { source, at })))
+      if (ctx) fileRecs.push(...(await d.sight.mentionRecords(ctx, text, { source, at }, lim?.maxMentionsPerRow)))
       continue
     }
     const { tool, input, result: use } = item.ev // `use` is the whole tool use of the transcript
@@ -77,9 +89,9 @@ export async function itemsFromBatch(d: ReplayDeps, batch: readonly ReplayItem[]
   let list: ItemRecord[] = []
   for (const b of batches) {
     if ('deleted' in b) list = markArtifactDeleted(list, b.deleted)
-    else if (b.refs.length > 0) list = mergeRefs(list, b.refs, { source: b.source, at }).list
+    else if (b.refs.length > 0) list = mergeRefs(list, b.refs, { source: b.source, at }, lim?.maxItems).list
   }
-  return mergeFiles(list, withoutLoneViews(list, fileRecs))
+  return mergeFiles(list, withoutLoneViews(list, fileRecs), lim?.maxItems)
 }
 
 /**

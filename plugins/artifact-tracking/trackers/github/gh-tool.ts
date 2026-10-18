@@ -2,7 +2,7 @@
 // One batched GraphQL call per host and chunk. No `$`: it gets a Runner and a clock.
 
 import type { CircuitBreaker } from '../../core/infra/circuit-breaker'
-import { firstLine, Tool } from '../../core/infra/tool'
+import { firstLine, Tool, type ToolTimeouts } from '../../core/infra/tool'
 import { dig, isRecord, type Json } from '../../core/lib/json'
 import type {
   Checks,
@@ -16,10 +16,9 @@ import type {
   Runner,
   RunResult,
 } from '../../hooks/contracts'
-import { githubKey, LIMITS } from '../../hooks/contracts'
+import { githubKey } from '../../hooks/contracts'
+import { GITHUB_DEFAULTS, type GithubConfig } from './config'
 
-/** Aliases per GraphQL call. 50 aliases cost 1 rate point (KB github.md section 5). */
-export const CHUNK = 50
 const NAME_OK = /^[A-Za-z0-9_.-]+$/
 // Exit 4 and the "gh auth login" hint mean logged out. HTTP 401 is a plain failure for the breaker (spec section 8).
 const AUTH_TEXT = /gh auth login/
@@ -67,8 +66,11 @@ export function classifyReply(r: RunResult): ReplyClass {
   return { kind: 'unparsable', ...(detail ? { detail } : {}) }
 }
 
-/** One alias per distinct item key. Items with the same key share an alias. */
-export function buildQuery(items: readonly GitHubTarget[]): { query: string; aliases: Map<string, GitHubTarget[]> } {
+/** One alias per distinct item key. Items with the same key share an alias. `closingRefs` is `closingRefsPerPr`. */
+export function buildQuery(
+  items: readonly GitHubTarget[],
+  closingRefs: number = GITHUB_DEFAULTS.closingRefsPerPr,
+): { query: string; aliases: Map<string, GitHubTarget[]> } {
   const byKey = new Map<string, GitHubTarget[]>()
   for (const it of items) {
     const group = byKey.get(it.key)
@@ -89,7 +91,7 @@ export function buildQuery(items: readonly GitHubTarget[]): { query: string; ali
       ... on Issue { number title state stateReason url }
       ... on PullRequest { number title state isDraft reviewDecision url
         commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
-        closingIssuesReferences(first: ${LIMITS.closingRefsPerPr}) { nodes { number repository { nameWithOwner } } } }
+        closingIssuesReferences(first: ${closingRefs}) { nodes { number repository { nameWithOwner } } } }
     }
   }`,
     )
@@ -119,13 +121,23 @@ function put<K extends keyof GitHubTarget>(it: GitHubTarget, key: K, value: GitH
   else it[key] = value
 }
 
+/** The github values the tool reads, at each call: a changed config file shows at the next one. */
+export type GhLimits = () => Pick<GithubConfig, 'chunkSize' | 'closingRefsPerPr' | 'discoveryTimeoutMs'>
+
 export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
   private readonly hosts = new Map<string, boolean>()
   private readonly asking = new Map<string, Promise<boolean>>()
   private repo?: Promise<RepoRef | null>
+  private readonly limits: GhLimits
 
-  constructor(run: Runner, now: Now, breaker?: CircuitBreaker) {
-    super('gh', run, now, breaker)
+  constructor(
+    run: Runner,
+    now: Now,
+    breaker?: CircuitBreaker,
+    opts: { limits?: GhLimits; timeouts?: ToolTimeouts } = {},
+  ) {
+    super('gh', run, now, breaker, opts.timeouts)
+    this.limits = opts.limits ?? (() => GITHUB_DEFAULTS)
   }
 
   async refreshItems(items: GitHubTarget[]): Promise<void> {
@@ -149,8 +161,10 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
         else groups.set(it.key, [it])
       }
       const all = [...groups.values()]
-      for (let i = 0; i < all.length; i += CHUNK) {
-        const goOn = await this.refreshChunk(host, all.slice(i, i + CHUNK).flat())
+      // Aliases per GraphQL call. 50 aliases cost 1 rate point (KB github.md section 5).
+      const chunk = this.limits().chunkSize
+      for (let i = 0; i < all.length; i += chunk) {
+        const goOn = await this.refreshChunk(host, all.slice(i, i + chunk).flat())
         if (!goOn) return
       }
     }
@@ -158,7 +172,7 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
 
   /** One call. Returns false when later calls make no sense: not logged in, or the breaker is open. */
   private async refreshChunk(host: string, items: GitHubTarget[]): Promise<boolean> {
-    const { query, aliases } = buildQuery(items)
+    const { query, aliases } = buildQuery(items, this.limits().closingRefsPerPr)
     const r = await this.exec(['gh', 'api', 'graphql', '--hostname', host, '-f', 'query=' + query])
     if (!r) return this.breaker.peek(this.now()) // blocked, or rejected and already recorded
 
@@ -185,7 +199,7 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
     if (this.available !== true) return { ok: false, kind: 'no-gh' }
     if (!this.breaker.peek(this.now())) return { ok: false, kind: 'blocked' }
     const r = await this.exec(['gh', 'api', 'graphql', '--hostname', host, '-f', 'query=' + query], {
-      timeoutMs: LIMITS.discoveryTimeoutMs,
+      timeoutMs: this.limits().discoveryTimeoutMs,
     })
     // A null after `peek` said yes is a rejected run, which `exec` recorded as a tool failure.
     // A lost half-open slot also gives null; it reads as transport too, which is harmless.
@@ -261,7 +275,7 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
 
   private async askHost(host: string): Promise<boolean> {
     try {
-      const r = await this.run(['gh', 'auth', 'status', '--hostname', host], { timeoutMs: LIMITS.toolTimeoutMs })
+      const r = await this.run(['gh', 'auth', 'status', '--hostname', host], { timeoutMs: this.timeouts().timeoutMs })
       const authed = r.exitCode === 0
       this.hosts.set(host, authed)
       return authed
@@ -279,7 +293,9 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
   private async loadRepo(): Promise<RepoRef | null> {
     let r: RunResult
     try {
-      r = await this.run(['gh', 'repo', 'view', '--json', 'nameWithOwner,url'], { timeoutMs: LIMITS.toolTimeoutMs })
+      r = await this.run(['gh', 'repo', 'view', '--json', 'nameWithOwner,url'], {
+        timeoutMs: this.timeouts().timeoutMs,
+      })
     } catch {
       return null
     }

@@ -1,8 +1,8 @@
 // A GitHub issue or pull request. GhTool fills the status fields in place.
 
 import type { Checks, GitHubRecord, GitHubState, GitHubTarget, GitHubToolApi, GitHubType } from '../../hooks/contracts'
-import { LIMITS } from '../../hooks/contracts'
 import { omitUndefined, TrackedItem } from '../../hooks/model/tracked-item'
+import { GITHUB_DEFAULTS } from './config'
 
 export class GitHubItem extends TrackedItem implements GitHubTarget {
   readonly category = 'github' as const
@@ -23,8 +23,11 @@ export class GitHubItem extends TrackedItem implements GitHubTarget {
   constructor(
     rec: GitHubRecord,
     private readonly tool: GitHubToolApi,
+    staleMs?: () => number,
+    /** How long a PR with pending checks stays current. Read at each check. */
+    private readonly pendingStaleMs: () => number = () => GITHUB_DEFAULTS.pendingStaleMs,
   ) {
-    super(rec)
+    super(rec, staleMs)
     this.host = rec.host
     this.owner = rec.owner
     this.repo = rec.repo
@@ -52,7 +55,7 @@ export class GitHubItem extends TrackedItem implements GitHubTarget {
   }
 
   protected override staleAfter(): number {
-    return this.type === 'pr' && this.checks === 'pending' ? LIMITS.pendingStaleMs : super.staleAfter()
+    return this.type === 'pr' && this.checks === 'pending' ? this.pendingStaleMs() : super.staleAfter()
   }
 
   toRecord(): GitHubRecord {

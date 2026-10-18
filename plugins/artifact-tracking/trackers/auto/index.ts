@@ -38,7 +38,7 @@ import {
   recordSpawn,
   recordTurnEnd,
 } from './ledger'
-import { AutoRound } from './round'
+import { type AutoLane, AutoRound } from './round'
 import { AutoScheduler } from './scheduler'
 
 /**
@@ -52,6 +52,11 @@ export type AutoGithub = {
   /** The session repo, after it was looked up. null: none. */
   repo(): Promise<RepoRef | null>
   hosts(): readonly string[]
+  /**
+   * The github values of the PR lane, read at each call: a changed config file shows at the next round. The auto
+   * tracker does not import the github folder, so the lane is spelled here (plan decision C15, layer L5 gives it one owner).
+   */
+  lane(): AutoLane
 }
 
 export { type AutoConfig, autoConfig }

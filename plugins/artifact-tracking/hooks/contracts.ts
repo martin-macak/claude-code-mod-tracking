@@ -89,6 +89,11 @@ export type ExtractOptions = {
   githubHosts?: readonly string[]
   /** In conversation text, track short GitHub refs only when a keyword prefixes them and they target the current repo. */
   strictShortRefs?: boolean
+  /**
+   * The lead words that opt a short `#N` in when `strictShortRefs` is on (`trackers.github.shortRefKeywords`).
+   * Absent: the defaults. An empty list: no word does, so no short ref is tracked.
+   */
+  shortRefWords?: readonly string[]
 }
 
 // ---------------------------------------------------------------- what tools mutate

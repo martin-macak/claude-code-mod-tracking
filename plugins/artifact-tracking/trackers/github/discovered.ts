@@ -1,10 +1,12 @@
 // Discovered items (spec A9 to A12, 8.4): PRs on tracked branches and the refs in their bodies.
 // Pure: no `$`. A call that changes nothing returns its input list (A22).
 
+import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import type { DiscoveredPr, DiscoveryApplied, GitHubRecord, ItemRecord, Ref, Source } from '../../hooks/contracts'
-import { AUTO_SOURCES, LIMITS } from '../../hooks/contracts'
+import { AUTO_SOURCES } from '../../hooks/contracts'
 import { isAutoOnly, keyOf, prKey } from '../../hooks/model/keys'
 import { enforceCap, recordFromRef } from '../../hooks/model/registry'
+import { PR_LANE_DEFAULTS } from './config'
 
 const isAuto = (s: Source): boolean => AUTO_SOURCES.has(s)
 
@@ -31,7 +33,7 @@ function discoveryFields(pr: DiscoveredPr) {
   }
 }
 
-function isCurrent(rec: GitHubRecord, pr: DiscoveredPr, at: number): boolean {
+function isCurrent(rec: GitHubRecord, pr: DiscoveredPr, at: number, staleMs: number): boolean {
   return (
     rec.sources.includes('auto') &&
     rec.error === undefined &&
@@ -45,7 +47,7 @@ function isCurrent(rec: GitHubRecord, pr: DiscoveredPr, at: number): boolean {
     rec.baseRefName === pr.baseRefName &&
     rec.reviewDecision === pr.reviewDecision &&
     (rec.closes ?? []).join(' ') === closesOf(pr).join(' ') &&
-    at - (rec.refreshedAt ?? Number.NEGATIVE_INFINITY) < LIMITS.staleMs / 2
+    at - (rec.refreshedAt ?? Number.NEGATIVE_INFINITY) < staleMs / 2
   )
 }
 
@@ -70,6 +72,9 @@ function newPrRecord(pr: DiscoveredPr, at: number): GitHubRecord {
   return { ...base, seenCount: 0, ...discoveryFields(pr), refreshedAt: at }
 }
 
+/** The numbers `applyDiscovery` reads: how long a record stays current, and the two item caps. */
+export type DiscoveryCaps = { staleMs: number; maxAutoItems: number; maxItems: number }
+
 export function applyDiscovery(
   list: readonly ItemRecord[],
   input: {
@@ -78,16 +83,23 @@ export function applyDiscovery(
     complete: boolean
     dismissed: ReadonlySet<string>
     at: number
+    /** The auto round passes its own. A direct caller gets today's numbers. */
+    caps?: DiscoveryCaps
   },
 ): DiscoveryApplied {
   const { refsByPr, complete, dismissed, at } = input
+  const caps = input.caps ?? {
+    staleMs: GLOBAL_DEFAULTS.refresh.staleMs,
+    maxAutoItems: PR_LANE_DEFAULTS.maxAutoItems,
+    maxItems: GLOBAL_DEFAULTS.store.maxItems,
+  }
   const out: ItemRecord[] = list.slice()
   const index = new Map<string, number>(out.map((r, i) => [r.key, i]))
   const added: string[] = []
   const notAdded = new Set<string>()
   let changed = false
   // 0. The budget for new auto-only items. Existing records always update.
-  let budget = LIMITS.maxAutoItems - list.filter(isAutoOnly).length
+  let budget = caps.maxAutoItems - list.filter(isAutoOnly).length
 
   const livePrs = input.prs.filter(pr => !dismissed.has(prKey(pr)))
   const live = new Set(livePrs.map(prKey))
@@ -98,7 +110,7 @@ export function applyDiscovery(
     const i = index.get(key)
     if (i !== undefined) {
       const rec = out[i]!
-      if (rec.category !== 'github' || isCurrent(rec, pr, at)) continue
+      if (rec.category !== 'github' || isCurrent(rec, pr, at, caps.staleMs)) continue
       out[i] = withDiscovery(rec, pr, at)
       changed = true
     } else if (budget > 0) {
@@ -175,7 +187,7 @@ export function applyDiscovery(
 
   // 4. Cap on the non-auto items only.
   const kept = drop.size > 0 ? out.filter((_, i) => !drop.has(i)) : out
-  const capped = enforceCap(kept, LIMITS.maxItems)
+  const capped = enforceCap(kept, caps.maxItems)
   if (capped !== kept) changed = true
 
   // 5. Quiet step: the input list itself.

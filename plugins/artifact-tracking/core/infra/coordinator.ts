@@ -2,7 +2,7 @@
 // It picks the due items, hands them to the tools in one batch each, and saves the result.
 
 import type { GitHubTarget, HydratedItem, ItemRecord, JiraTarget, Now, Tools } from '../../hooks/contracts'
-import { LIMITS } from '../../hooks/contracts'
+import { GLOBAL_DEFAULTS } from '../lib/global-config'
 
 export type Timer = { cancel(): void }
 
@@ -13,6 +13,8 @@ export type CoordinatorDeps = {
   save: (refreshed: ItemRecord[]) => Promise<void>
   hydrate: (rec: ItemRecord) => HydratedItem
   tools: Tools
+  /** The capture debounce, read at each kick. Default: `global.refresh.captureDebounceMs`. */
+  debounceMs?: () => number
   after: (ms: number, fn: () => void | Promise<void>) => Timer
   /** Called after every finished run, also when nothing was due (to publish tool status). */
   onRun?: () => void | Promise<void>
@@ -54,14 +56,15 @@ export class RefreshCoordinator {
         if (keys) for (const k of keys) this.pendingKeys.add(k)
         else this.pendingAll = true
         const at = this.deps.now()
-        if (this.timer && at - this.timerAt > 2 * LIMITS.captureDebounceMs) {
+        const debounce = this.deps.debounceMs?.() ?? GLOBAL_DEFAULTS.refresh.captureDebounceMs
+        if (this.timer && at - this.timerAt > 2 * debounce) {
           // The timer is long overdue: the engine never ran it. Arm a new one.
           this.timer.cancel()
           this.timer = undefined
         }
         if (this.timer) return
         this.timerAt = at
-        this.timer = this.deps.after(LIMITS.captureDebounceMs, () => {
+        this.timer = this.deps.after(debounce, () => {
           const opts: RunOptions = this.pendingAll ? {} : { keys: [...this.pendingKeys] }
           this.pendingKeys = new Set()
           this.pendingAll = false

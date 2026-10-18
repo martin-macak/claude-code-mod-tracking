@@ -2,8 +2,11 @@
 // Subclasses build argv, parse output, classify each outcome, and update the items.
 
 import type { Now, RefreshTool, RunInit, Runner, RunResult, ToolName, ToolStatus } from '../../hooks/contracts'
-import { LIMITS } from '../../hooks/contracts'
+import { GLOBAL_DEFAULTS } from '../lib/global-config'
 import { CircuitBreaker } from './circuit-breaker'
+
+/** The two timeouts of a tool, read at each call so a changed config file shows at the next one (`global.tools`). */
+export type ToolTimeouts = () => { timeoutMs: number; probeTimeoutMs: number }
 
 /**
  * How one call ended, for the breaker.
@@ -25,13 +28,14 @@ export abstract class Tool<T> implements RefreshTool<T> {
     protected readonly run: Runner,
     protected readonly now: Now,
     protected readonly breaker: CircuitBreaker = new CircuitBreaker(),
+    protected readonly timeouts: ToolTimeouts = () => GLOBAL_DEFAULTS.tools,
   ) {}
 
   /** Runs `<tool> --version` once and caches the promise. Never rejects. */
   probe(): Promise<boolean> {
     this.probing ??= (async () => {
       try {
-        const r = await this.run([this.name, '--version'], { timeoutMs: 10_000 })
+        const r = await this.run([this.name, '--version'], { timeoutMs: this.timeouts().probeTimeoutMs })
         this.available = r.exitCode === 0
         if (this.available) this.version = firstLine(r.stdout)
         else this.lastError = firstLine(r.stderr) || `exit ${r.exitCode}`
@@ -83,7 +87,7 @@ export abstract class Tool<T> implements RefreshTool<T> {
     if (!this.breaker.allows(this.now())) return null
     this.lastRunAt = this.now()
     try {
-      return await this.run(argv, { timeoutMs: LIMITS.toolTimeoutMs, ...init })
+      return await this.run(argv, { timeoutMs: this.timeouts().timeoutMs, ...init })
     } catch (err) {
       this.record('tool-failure', message(err))
       return null

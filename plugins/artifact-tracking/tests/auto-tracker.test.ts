@@ -58,6 +58,7 @@ function setup(o: SetupOpts = {}) {
     },
     repo: async () => null,
     hosts: () => [],
+    lane: () => ({ headPrsPerBranch: 5, basePrsPerBranch: 10, closingRefsPerPr: 10, maxBodyRefs: 50 }),
     ...o.github,
   }
   const held = { list: o.items ?? ([] as StoredItem[]), refreshed: [] as string[][] }

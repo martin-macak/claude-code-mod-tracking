@@ -8,19 +8,34 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.7, 5.8 and 5.9.
 // Plan: L3 Task 11, D13. L4 Task 6, C12.
 
+import { CircuitBreaker } from '../../core/infra/circuit-breaker'
 import { RefreshCoordinator } from '../../core/infra/coordinator'
+import type { ToolTimeouts } from '../../core/infra/tool'
+import type { GlobalConfig } from '../../core/interfaces/config'
 import type { ReplayItem, RowEvent, SessionChangedEvent } from '../../core/interfaces/events'
 import type { Claim, HostContext, ItemsHost, Json, StoredItem } from '../../core/interfaces/items'
 import type { StatePorts } from '../../core/interfaces/ports'
 import type { DataSlot } from '../../core/interfaces/slots'
+import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import type { AutoGithub } from '../../trackers/auto'
+import { FILE_DEFAULTS, type FileConfig } from '../../trackers/file/config'
 import { FileSight } from '../../trackers/file/sighting'
+import { GITHUB_DEFAULTS, type GithubConfig } from '../../trackers/github/config'
 import { GhTool } from '../../trackers/github/gh-tool'
 import { AcliTool } from '../../trackers/jira/acli-tool'
+import { JIRA_DEFAULTS, type JiraConfig } from '../../trackers/jira/config'
 import type { GitHubDiscoveryApi, ItemRecord, Priority, RepoRef, Runner, ToolStatus } from '../contracts'
 import { rowIdOf, setPriority } from '../model/priority'
-import { carryOver, hydrate, mergeResults, rekeyArtifacts, resolveBareRefs, unionRecords } from '../model/registry'
-import { Capture } from './capture'
+import {
+  carryOver,
+  hydrate,
+  mergeResults,
+  rekeyArtifacts,
+  resolveBareRefs,
+  type Ttl,
+  unionRecords,
+} from '../model/registry'
+import { Capture, type CaptureLimits } from './capture'
 import { itemsFromBatch, onlyNew } from './replay'
 import { ItemStore, storedForLoad } from './store'
 
@@ -64,6 +79,7 @@ export class ItemRuntime implements ItemsHost {
       gh: () => this.ghTool(),
       items: this.store,
       files: () => (this.kindLive('file') ? this.sight : undefined),
+      limits: () => this.captureLimits(),
     })
     this.facet = this.buildFacet()
     this.slot = {
@@ -75,13 +91,13 @@ export class ItemRuntime implements ItemsHost {
         // The stored copy can predate the last presses: an item the person dismissed since, or a mark they changed (D6).
         const dismissed = await this.need().dismiss.list()
         const kept = ((stored ?? []) as unknown as ItemRecord[]).filter(rec => !dismissed.has(rec.key))
-        return rekeyArtifacts(carryOver((live ?? []) as unknown as ItemRecord[], kept)) as unknown as Json
+        return rekeyArtifacts(carryOver((live ?? []) as unknown as ItemRecord[], kept, this.cap())) as unknown as Json
       },
       restore: async (value, how) => {
         const list = value as unknown as ItemRecord[]
         if (how === 'load') return this.loadItems(list)
         const kept = this.onlyOn(list)
-        if (kept.length > 0) await this.store.set(cur => unionRecords(kept, cur))
+        if (kept.length > 0) await this.store.set(cur => unionRecords(kept, cur, this.cap()))
       },
       clear: () => this.store.set(() => []),
     }
@@ -120,7 +136,7 @@ export class ItemRuntime implements ItemsHost {
     const found = batch.length === 0 || !sight ? [] : await itemsFromBatch({ ...this.deps(), sight, files }, batch)
     const fresh = this.onlyOn(onlyNew(have, found)).filter(r => !dismissed.has(r.key))
     if (fresh.length === 0) return
-    await this.store.set(list => unionRecords(list, fresh))
+    await this.store.set(list => unionRecords(list, fresh, this.cap()))
     this.afterLoad(repoReady)
   }
 
@@ -252,7 +268,46 @@ export class ItemRuntime implements ItemsHost {
       hosts: () => this.hostList,
       site: () => this.activeSite(),
       gh: () => this.ghTool(),
+      limits: () => this.captureLimits(),
     }
+  }
+
+  // ---------------------------------------------------------------- the config views
+  // Each read goes to the live view of the host context, so a changed file shows at the next call (decision C5). The
+  // slices come over their defaults: a slice that lacks a key (a host with no spec for it) reads as today's value.
+
+  private global(): GlobalConfig {
+    return this.ctx?.config.global() ?? GLOBAL_DEFAULTS
+  }
+
+  private github(): GithubConfig {
+    return { ...GITHUB_DEFAULTS, ...this.ctx?.trackers.slice<GithubConfig>('github') }
+  }
+
+  private jira(): JiraConfig {
+    return { ...JIRA_DEFAULTS, ...this.ctx?.trackers.slice<JiraConfig>('jira') }
+  }
+
+  private file(): FileConfig {
+    return { ...FILE_DEFAULTS, ...this.ctx?.trackers.slice<FileConfig>('file') }
+  }
+
+  /** `global.store.maxItems`: the cap of every merge into the list. */
+  private cap(): number {
+    return this.global().store.maxItems
+  }
+
+  private captureLimits(): CaptureLimits {
+    return {
+      shortRefKeywords: this.github().shortRefKeywords,
+      maxMentionsPerRow: this.file().maxMentionsPerRow,
+      maxItems: this.cap(),
+    }
+  }
+
+  /** How long an item stays current: `global.refresh.staleMs`, and `trackers.github.pendingStaleMs` for a PR with pending checks. */
+  private ttl(): Ttl {
+    return { staleMs: this.global().refresh.staleMs, pendingStaleMs: this.github().pendingStaleMs }
   }
 
   /** True when the tracker of an item kind is on. Before the start there is no config to ask: everything is on. */
@@ -280,8 +335,17 @@ export class ItemRuntime implements ItemsHost {
     if (this.gh && this.acli && this.coordinator) return
     const ctx = this.need()
     const run: Runner = (argv, init) => ctx.tools.run(argv[0] ?? '', argv, init ?? {})
-    const g = new GhTool(run, ctx.clock.wall)
-    const a = new AcliTool(run, ctx.clock.wall)
+    // The breakers and the jira concurrency are read once per load: they size an object at construction (C5).
+    const b = ctx.config.global().tools.breaker
+    const timeouts: ToolTimeouts = () => this.global().tools
+    const g = new GhTool(run, ctx.clock.wall, new CircuitBreaker(b.threshold, b.openMs), {
+      limits: () => this.github(),
+      timeouts,
+    })
+    const a = new AcliTool(run, ctx.clock.wall, new CircuitBreaker(b.threshold, b.openMs), {
+      limits: () => this.jira(),
+      timeouts,
+    })
     this.gh = g
     this.acli = a
     this.sight = new FileSight(ctx)
@@ -307,8 +371,9 @@ export class ItemRuntime implements ItemsHost {
           }
         }
       },
-      hydrate: rec => hydrate(rec, { gh: g, acli: a }),
+      hydrate: rec => hydrate(rec, { gh: g, acli: a }, () => this.ttl()),
       tools: { gh: g, acli: a },
+      debounceMs: () => this.global().refresh.captureDebounceMs,
       after: (ms, fn) => ctx.clock.after(ms, fn),
       onRun: async () => {
         await this.publishTools()
@@ -411,7 +476,7 @@ export class ItemRuntime implements ItemsHost {
     const dismissed = await this.need().dismiss.list()
     const stored = this.onlyOn(storedForLoad(storedItems, site, dismissed))
     if (stored.length === 0) return
-    await this.store.set(list => unionRecords(list, stored))
+    await this.store.set(list => unionRecords(list, stored, this.cap()))
     this.afterLoad(repoReady)
   }
 
@@ -466,6 +531,10 @@ export class ItemRuntime implements ItemsHost {
         return this.repoNow ?? null
       },
       hosts: () => this.hostList,
+      lane: () => {
+        const { headPrsPerBranch, basePrsPerBranch, closingRefsPerPr, maxBodyRefs } = this.github()
+        return { headPrsPerBranch, basePrsPerBranch, closingRefsPerPr, maxBodyRefs }
+      },
     }
   }
 }
