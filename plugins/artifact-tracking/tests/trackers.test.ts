@@ -1,6 +1,6 @@
 // The tracker list: ids and orders are unique, no tracker takes the id of the item list, and every `store` serves its
 // defaults with the tracker on. The OCP proof of the list: tests/tracker-host.test.ts runs a fake tracker with no edit
-// to core. Task 12 adds the artifact and file trackers here and the order check for all eight.
+// to core. The list holds all eight trackers, in the order of the pane.
 import { expect, test } from 'claude-code/testing'
 import { buildTrackers } from '../trackers'
 import type { AutoGithub } from '../trackers/auto'
@@ -37,17 +37,19 @@ test('each store(ctx) equals its config.defaults and enabled is true', async () 
   }
 })
 
-test('the list holds github, jira, web, repos, processes and auto at orders 30, 20, 60, 50, 80 and 10', () => {
-  expect(list.map(t => [t.id, t.order])).toEqual([
-    ['github', 30],
-    ['jira', 20],
-    ['web', 60],
-    ['repos', 50],
-    ['processes', 80],
+test('eight trackers in order 10, 20, 30, 40, 50, 60, 70, 80: auto, jira, github, artifact, repos, web, file, processes', () => {
+  expect([...list].sort((a, b) => a.order - b.order).map(t => [t.id, t.order])).toEqual([
     ['auto', 10],
+    ['jira', 20],
+    ['github', 30],
+    ['artifact', 40],
+    ['repos', 50],
+    ['web', 60],
+    ['file', 70],
+    ['processes', 80],
   ])
   expect(list.find(t => t.id === 'auto')?.persist).toBe(false)
-  // The item trackers declare their identity and config only (plan decision D13): no events, no data.
+  // The github, jira and web trackers declare their identity and config only (plan decision D13): no events, no data.
   for (const id of ['github', 'jira', 'web']) {
     const t = list.find(x => x.id === id)
     expect(t?.events).toBeUndefined()

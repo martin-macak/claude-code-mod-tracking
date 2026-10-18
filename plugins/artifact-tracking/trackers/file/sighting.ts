@@ -39,20 +39,27 @@ async function readFileEnv(d: Pick<SightDeps, 'env'>): Promise<FileEnv> {
   return { ...(home ? { home } : {}), ...(configDir ? { configDir } : {}), ...(memoryDir ? { memoryDir } : {}) }
 }
 
-/** One sighting service per load: the environment is read once, because every Write, Edit, Read and mention needs it. */
-export class FileSight {
-  private env: Promise<FileEnv> | undefined
+/** The environment of a load, read once and shared by every sighting service of that load. */
+export type SightCache = { env?: Promise<FileEnv> }
 
-  constructor(private readonly d: SightDeps) {}
+/**
+ * One sighting service. The environment is read once per cache, because every Write, Edit, Read and mention needs it.
+ * The item runtime keeps one service for its load. The file tracker builds one per dispatch over a shared cache.
+ */
+export class FileSight {
+  constructor(
+    private readonly d: SightDeps,
+    private readonly cache: SightCache = {},
+  ) {}
 
   /** A subagent's relative path joins its spawn cwd (A6); everything else joins the session cwd. */
   async ctxFor(agentId?: string): Promise<FileCtx> {
-    this.env ??= readFileEnv(this.d)
+    this.cache.env ??= readFileEnv(this.d)
     const agents = this.d.facts.read<Json>('auto.agents') as unknown as AgentProof[] | undefined
     const spawn = agentId === undefined ? undefined : agents?.find(a => a.id === agentId)?.cwd
     const root = this.d.facts.read<Json>('auto.root')
     const top = isRecord(root) && typeof root.cwd === 'string' ? root.cwd : undefined
-    return { ...(await this.env), cwd: spawn ?? (await this.d.session.cwd()), ...(top ? { root: top } : {}) }
+    return { ...(await this.cache.env), cwd: spawn ?? (await this.d.session.cwd()), ...(top ? { root: top } : {}) }
   }
 
   /** Where an absolute path lands: the real path from one stat, else the path itself. */

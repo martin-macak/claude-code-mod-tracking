@@ -11,8 +11,7 @@ import type { Claim, HostContext, ItemsHost, Json, StoredItem } from '../../core
 import type { StatePorts } from '../../core/interfaces/ports'
 import type { DataSlot } from '../../core/interfaces/slots'
 import type { AutoGithub } from '../../trackers/auto'
-import { touchFromToolResult } from '../../trackers/file/files'
-import { captureFileTouch, FileSight } from '../../trackers/file/sighting'
+import { FileSight } from '../../trackers/file/sighting'
 import { GhTool } from '../../trackers/github/gh-tool'
 import { AcliTool } from '../../trackers/jira/acli-tool'
 import type { GitHubDiscoveryApi, ItemRecord, Priority, RepoRef, Runner, ToolStatus } from '../contracts'
@@ -228,15 +227,6 @@ export class ItemRuntime implements ItemsHost {
     if (id === undefined) return 'not-tracked'
     await this.setPriority(id, word === 'auto' ? undefined : (word as Priority))
     return 'ok'
-  }
-
-  /**
-   * A Write, Edit or Read result. Transitional: the file tracker (plan Task 12) takes the call over and this goes.
-   * Uses the sighting service of the load.
-   */
-  async touchFile(tool: string, ran: unknown, agentId: string | undefined): Promise<void> {
-    const t = touchFromToolResult(tool, ran)
-    if (t && this.sight) await captureFileTouch(this.sight, this.store, t, agentId)
   }
 
   // ---------------------------------------------------------------- inside

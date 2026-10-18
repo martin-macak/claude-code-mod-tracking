@@ -3,7 +3,6 @@
 // Each case mirrors the kit test of the same subject. Plan: L3 Task 11, D13, D16.
 import { expect, test } from 'claude-code/testing'
 import type { GitHubTarget } from '../hooks/contracts'
-import { ItemRuntime } from '../hooks/items/runtime'
 import { GHE_AUTH_STATUS_STDERR } from './fixtures/gh'
 import { graphqlCalls, itemsWorld, promptRow, res, sleep, until } from './fixtures/items'
 
@@ -253,26 +252,6 @@ test('setPriority marks a row by its id', async () => {
   await rt.capture(promptRow('see https://docs.example/a'))
   await rt.setPriority('web:https://docs.example/a', 'low')
   expect((t.list()[0] as { priority?: string }).priority).toBe('low')
-})
-
-test('touchFile tracks a Markdown file by a Write result; a failed call adds nothing', async () => {
-  const t = itemsWorld()
-  const rt = await t.started()
-  const created = {
-    result: {
-      type: 'create',
-      filePath: '/work/plan.md',
-      content: '# x',
-      structuredPatch: [],
-      originalFile: null,
-      userModified: false,
-    },
-  }
-  await rt.touchFile('Write', { isError: true, result: 'denied' }, undefined)
-  expect(t.keys()).toEqual([])
-  await rt.touchFile('Write', created, undefined)
-  expect(t.keys()).toEqual(['file:/work/plan.md'])
-  await new ItemRuntime(t.w.ports.state).touchFile('Write', created, undefined) // not started: nothing to do
 })
 
 test('before start the runtime does nothing it cannot do', async () => {

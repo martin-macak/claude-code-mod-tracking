@@ -58,7 +58,8 @@ export type FakeWorld = {
   settings?: Json
   session: { id: string; cwd: string; repo: RepoRemote | null; messages: SessionRow[] }
   agents: AgentInfo[]
-  ui: { opened: number; focused: string[]; invalidated: number; toasts: string[]; panes: PaneInfo[] }
+  /** `placed` is what `ui.open` answers: false when the terminal is too narrow for the pane. */
+  ui: { opened: number; placed: boolean; focused: string[]; invalidated: number; toasts: string[]; panes: PaneInfo[] }
   logs: string[]
 }
 
@@ -183,7 +184,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
     ui: {
       async open() {
         world.ui.opened++
-        return true
+        return world.ui.placed
       },
       async focus(key) {
         world.ui.focused.push(key)
@@ -242,7 +243,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       messages: o.session?.messages ?? [],
     },
     agents: o.agents ?? [],
-    ui: { opened: 0, focused: [], invalidated: 0, toasts: [], panes: o.panes ?? [] },
+    ui: { opened: 0, placed: true, focused: [], invalidated: 0, toasts: [], panes: o.panes ?? [] },
     logs: [],
   }
   return world

@@ -2,7 +2,9 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.1 and 5.8. Plan: L3 Tasks 8 to 12.
 
 import type { Tracker } from '../core/interfaces/tracker'
+import { artifactTracker } from './artifact'
 import { type AutoGithub, autoTracker } from './auto'
+import { fileTracker } from './file'
 import { githubTracker } from './github'
 import { jiraTracker } from './jira'
 import { processesTracker } from './processes'
@@ -21,6 +23,8 @@ export function buildTrackers(deps: TrackerDeps): readonly Tracker[] {
     githubTracker(),
     jiraTracker(),
     webTracker(),
+    artifactTracker(),
+    fileTracker(),
     reposTracker(),
     processesTracker(),
     autoTracker(deps.autoGithub),

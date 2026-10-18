@@ -114,3 +114,39 @@ test('a /resume that loads a stored copy keeps the session repo it looked up', a
   expect(await ui.find({ text: 'acme/web#5' })).toBeUndefined() // the long key means the repo is forgotten
   await ui.unmount()
 })
+
+const FOCUS = {
+  component: 'Pane',
+  requestId: 'track',
+  plugin: 'artifact-tracking',
+  element: 'nothing-drawn',
+  origin: { kind: 'person' },
+} as never
+
+test('the first pane focus after a /resume does not wait for the switch', async ($, on) => {
+  // The switch loads the transcript, and the transcript names issue #5: one gh call that takes 600 ms.
+  const w = world(on, {
+    isolateState: true,
+    ghDelayMs: 600,
+    messages: [{ role: 'user', text: 'please look at issue #5', toolUses: [] }],
+  })
+  await $.session.append(response('https://alpha.example/')) // learns the id
+  await quiet(w.calls)
+  await clearSession($, w, 'sess-b', 'resume') // a /resume raises no row: the focus is the first hook
+  const t0 = Date.now()
+  await $.ui.focus(FOCUS)
+  expect(Date.now() - t0).toBeLessThan(300) // the check runs, but the key does not wait for it
+  expect((await track($)).text).toContain('#5') // /track waits for the switch the focus started
+  await quiet(w.calls)
+})
+
+test('a tool no tracker declared passes straight through and starts nothing', async ($, on) => {
+  const w = world(on)
+  w.fake.tools.mcp__demo__ping = { ok: true }
+  await $.tool.call({ tool: 'mcp__demo__ping' } as never)
+  await quiet(w.calls)
+  expect(w.calls).toEqual([]) // no gh or acli probe: the manager did not start for it
+  await fileTool($, w.fake, 'Write', writeCreated('/work/a.md')) // a declared tool starts it
+  await quiet(w.calls)
+  expect(w.calls.length).toBeGreaterThan(0)
+})

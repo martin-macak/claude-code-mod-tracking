@@ -49,10 +49,9 @@ export type ItemsOpts = {
   run?: (argv: string[]) => RunResult | undefined | Promise<RunResult | undefined>
 }
 
-export function itemsWorld(o: ItemsOpts = {}) {
-  const t = hostWorld([])
-  t.w.session.repo = o.remote === undefined ? { host: 'github.com', owner: 'acme', repo: 'web' } : o.remote
-  t.w.run = async argv => {
+/** The answers of gh and acli that the item tests share: versions, auth, GraphQL nodes, a Jira view. */
+export function ghAcliRun(o: ItemsOpts = {}): (argv: string[]) => Promise<RunResult | undefined> {
+  return async argv => {
     const custom = await o.run?.(argv)
     if (custom) return custom
     const [tool, a1, a2, a3, a4] = argv
@@ -67,6 +66,12 @@ export function itemsWorld(o: ItemsOpts = {}) {
     if (tool === 'acli' && a3 === 'view') return res(withKey(acliFx.TASK_VIEW_JSON, a4!))
     return undefined
   }
+}
+
+export function itemsWorld(o: ItemsOpts = {}) {
+  const t = hostWorld([])
+  t.w.session.repo = o.remote === undefined ? { host: 'github.com', owner: 'acme', repo: 'web' } : o.remote
+  t.w.run = ghAcliRun(o)
   const rt = new ItemRuntime(t.w.ports.state)
   const ctx = t.host.hostCtx(t.w.ports)
   const started = async () => {
