@@ -443,7 +443,10 @@ test('a stored copy restores without auto sources, and with gh missing a tick do
     via: ['gh:github.com/acme/web#9'],
     seenCount: 1,
   }
-  const w = world(on, { missing: ['gh'], seed: { index: ['sess-1'], 's:sess-1': { items: [autoOnly, mentioned] } } })
+  const w = world(on, {
+    missing: ['gh'],
+    seed: { 'v2:index': ['sess-1'], 'v2:s:sess-1': { items: [autoOnly, mentioned] } },
+  })
   await $.session.start(START)
   await settle(w, TICK)
   const text = await textOf($)
@@ -471,7 +474,7 @@ test('/resume while a PR step is in flight: the stored copy of the new session l
     sources: ['prompt'],
     seenCount: 1,
   }
-  const w = world(on, { isolateState: true, seed: { index: ['sess-2'], 's:sess-2': { items: [mentioned] } } })
+  const w = world(on, { isolateState: true, seed: { 'v2:index': ['sess-2'], 'v2:s:sess-2': { items: [mentioned] } } })
   repo(w, ['probe-wt', 'worktree-probe-wt'])
   await $.session.start(START)
   await enter($, w)

@@ -9,9 +9,12 @@ import { CircuitBreaker } from '../core/infra/circuit-breaker'
 import type { Timer } from '../core/infra/coordinator'
 import { RefreshCoordinator } from '../core/infra/coordinator'
 import { autoIds, dismiss } from '../core/infra/dismiss'
+import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
+import { Persistence, type PersistenceDeps } from '../core/infra/persistence'
 import { AutoScheduler } from '../core/infra/scheduler'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
+import type { DataSlot } from '../core/interfaces/slots'
 import { isRecord } from '../core/lib/json'
 import { textOfContent } from '../core/lib/links'
 import { artifactEvent } from '../trackers/artifact/artifact-tool'
@@ -300,9 +303,10 @@ let githubHosts: string[] = []
 /** The session id last seen. A change means /clear, /resume or /branch. */
 let knownId: string | undefined
 let tick: Timer | null = null
-let flushTimer: Timer | null = null
-/** `$.clock.now()` when `flushTimer` was armed. */
-let flushArmedAt = 0
+/** Writes the stored copies. Built on first use; a hot reload builds a new one. */
+let persistence: Persistence | undefined
+/** The first start of a load deletes the keys of the old layout. */
+let legacyDropped = false
 /**
  * The list as last written for `knownId`. A module variable outlives /clear, `$.state` does not.
  * So a /clear still finds what was captured in the last moments (D10).
@@ -318,8 +322,6 @@ let lastBeatAt = 0
 let autoMirror: AutoState | undefined
 /** When the last round ended. The Worktrees note reads it before `snapshot.at` (A22). */
 let lastRoundAt: number | undefined
-/** The last list written to $.store: id and JSON. A flush of an equal list writes nothing (A22). */
-let flushed: { id: string; json: string } | undefined
 let repoTracker: RepoTracker | undefined
 /** Repo lookups run here, one at a time, after the tool has returned. */
 const repoQueue = new RepoQueue()
@@ -487,6 +489,7 @@ async function setItems($: EngineInterface, change: (list: ItemRecord[]) => Item
   const id = await $.session.id()
   // A write that lands after /clear but before the id change is seen belongs to the old session. Keep the old mirror.
   if (knownId !== undefined && id === knownId) mirror = { id, items: next }
+  await schedule($)
 }
 
 /**
@@ -697,10 +700,7 @@ async function dismissOne($: EngineInterface, id: string): Promise<void> {
     await setAuto($, s => dismiss(s, [id]))
     // A repo row: setRepos is the choke point that drops it now that the id is on the dismiss list.
     if (id.startsWith('rp:')) await setRepos($, rows => rows)
-    else if (!isRowId(id)) {
-      await setItems($, list => list.filter(rec => rec.key !== id))
-      await schedule($) // the store copy must lose the item too, or /clear brings it back
-    }
+    else if (!isRowId(id)) await setItems($, list => list.filter(rec => rec.key !== id)) // the store copy loses it too
   } catch {
     // The row stays. The person can press again.
   }
@@ -725,7 +725,7 @@ async function ensureSession($: EngineInterface): Promise<void> {
   if (prev === undefined) return
   // The `auto` atom belongs to the run, not to a session id. After /clear $.state is empty; the module copy fills it.
   await setAuto($, s => s)
-  const stored = (await $.store.get('s:' + prev)) as StoredCopy | undefined
+  const stored = await storedCopy($, prev)
   const held: SessionSlices = {
     items: mirror?.id === prev ? mirror.items : [],
     repos: repoMirror?.id === prev ? repoMirror.rows : [],
@@ -746,8 +746,9 @@ async function ensureSession($: EngineInterface): Promise<void> {
     repos: mergeRepoRows(stored?.repos ?? [], held.repos),
     processes: mergeProcessRows(stored?.processes ?? [], held.processes),
   }
-  if (held.items.length > 0 || held.repos.length > 0 || held.processes.length > 0) await writeStore($, prev, left)
-  const own = (await $.store.get('s:' + id)) as StoredCopy | undefined
+  if (held.items.length > 0 || held.repos.length > 0 || held.processes.length > 0)
+    await persistenceOf($).write(prev, left)
+  const own = await storedCopy($, id)
   if (own?.items || own?.repos || own?.processes) {
     await restore($)
   } else {
@@ -836,7 +837,6 @@ async function trackRefs($: EngineInterface, refs: readonly Ref[], source: Sourc
     return merged.list
   })
   if (added.length > 0) coordinator?.kick('capture', added)
-  await schedule($)
 }
 
 /**
@@ -851,7 +851,6 @@ async function applyArtifactCall($: EngineInterface, input: unknown, ran: unknow
   const cur = await read($, items)
   if (markArtifactDeleted(cur, ev.key) === cur) return // no such row: a write would change nothing (A22)
   await setItems($, list => markArtifactDeleted(list, ev.key))
-  await schedule($)
 }
 
 function sameSessionRepo(ref: Ref): ref is GitHubRef & { owner: string; repo: string; type: 'unknown' } {
@@ -969,7 +968,6 @@ async function addFiles($: EngineInterface, recs: readonly FileRecord[]): Promis
   const wanted = recs.filter(r => !dismissed.has(r.key))
   if (withoutLoneViews(await read($, items), wanted).length === 0) return // only views of untracked files: no write
   await setItems($, list => mergeFiles(list, withoutLoneViews(list, wanted)))
-  await schedule($)
 }
 
 /** A Write, Edit or Read result: one sighting of the file it touched. */
@@ -1168,65 +1166,63 @@ async function probeProcesses($: EngineInterface): Promise<void> {
 
 // ------------------------------------------------------------------ store mirror
 
-/**
- * Copy the list to $.store later. Many rows in one burst make one write.
- * A timer that a hook refused never runs. So a pending timer that is long overdue is replaced.
- * Never rejects.
- */
-async function schedule($: EngineInterface): Promise<void> {
-  try {
-    if (flushTimer) {
-      const now = await $.clock.now()
-      if (flushTimer && now - flushArmedAt <= 2 * LIMITS.flushMs) return
-      flushTimer?.cancel()
-      flushTimer = null
-    }
-    const timer: Timer = $.clock.after(LIMITS.flushMs, async () => {
-      if (flushTimer === timer) flushTimer = null
-      try {
-        await flush($)
-      } catch {
-        // A failed copy is retried by the next change.
-      }
-    })
-    flushTimer = timer
-    flushArmedAt = await $.clock.now()
-  } catch {
-    // No copy this time. The next change tries again.
-  }
-}
-
-async function flush($: EngineInterface): Promise<void> {
-  await ensureSession($) // a /clear since the last row: save the old session first, carry its items over
-  const slices: SessionSlices = {
-    items: await read($, items),
-    repos: await readRepos($),
-    processes: await readProcesses($),
-  }
-  if (slices.items.length === 0 && slices.repos.length === 0 && slices.processes.length === 0) return // after /track clear: never replace a stored copy with an empty one
-  await writeStore($, await $.session.id(), slices)
-}
-
 /** The three lists that one session's stored copy holds. */
 type SessionSlices = { items: ItemRecord[]; repos: RepoRecord[]; processes: ProcessRecord[] }
 
 /** A stored copy as read back: an older copy may lack a slice. */
 type StoredCopy = Partial<SessionSlices>
 
-/** One session's copy, the index of copies (newest first) and the cap on how many copies stay. */
-async function writeStore($: EngineInterface, id: string, slices: SessionSlices): Promise<void> {
-  const json = JSON.stringify([slices.items, slices.repos, slices.processes])
-  if (flushed?.id === id && flushed.json === json) return
-  await $.store.set('s:' + id, {
-    items: slices.items,
-    repos: slices.repos,
-    processes: slices.processes,
-  })
-  const index = ((await $.store.get('index')) as string[] | undefined) ?? []
-  const next = [id, ...index.filter(x => x !== id)]
-  for (const old of next.slice(LIMITS.keepSessions)) await $.store.delete('s:' + old)
-  await $.store.set('index', next.slice(0, LIMITS.keepSessions))
-  flushed = { id, json }
+/** One list as a data slot of the stored copy. Temporary: a tracker brings its own slot when it moves out of here. */
+function listSlot(id: string, load: () => Promise<unknown>): DataSlot {
+  return {
+    id,
+    persist: true,
+    read: async () => (await load()) as Json,
+    empty: v => !Array.isArray(v) || v.length === 0,
+    settle: async live => live,
+    restore: async () => {},
+  }
+}
+
+function persistenceDeps($: EngineInterface): PersistenceDeps {
+  const ports = portsOf($)
+  return {
+    store: ports.store,
+    clock: ports.clock,
+    sessionId: () => ports.session.id(),
+    slots: () => [
+      listSlot('items', () => read($, items)),
+      listSlot('repos', () => readRepos($)),
+      listSlot('processes', () => readProcesses($)),
+    ],
+    limits: () => ({
+      flushMs: GLOBAL_DEFAULTS.refresh.flushMs,
+      keepSessions: GLOBAL_DEFAULTS.store.keepSessions,
+      maxBytes: GLOBAL_DEFAULTS.store.maxBytes,
+    }),
+    beforeFlush: () => ensureSession($), // a /clear since the last row: save the old session first, carry its items over
+    log: ports.log,
+  }
+}
+
+/** The one Persistence of this load. It keeps the `$` of the hook that built it, like the runtime does. */
+function persistenceOf($: EngineInterface): Persistence {
+  persistence ??= new Persistence(persistenceDeps($))
+  return persistence
+}
+
+/** The stored copy of a session, or undefined. */
+async function storedCopy($: EngineInterface, id: string): Promise<StoredCopy | undefined> {
+  return (await persistenceOf($).read(id)) as unknown as StoredCopy | undefined
+}
+
+/**
+ * Copy the lists to $.store later. Many changes in one burst make one write.
+ * A timer that a hook refused never runs. So a pending timer that is long overdue is replaced.
+ * Never rejects.
+ */
+function schedule($: EngineInterface): Promise<void> {
+  return persistenceOf($).touch()
 }
 
 // ------------------------------------------------------------------ restore
@@ -1326,7 +1322,7 @@ async function restore($: EngineInterface): Promise<void> {
   const repoReady = ensureRepo($).catch(() => {})
   const id = await $.session.id()
   // No gate on the index: two sessions that flush together can drop each other's id from it.
-  const copy = (await $.store.get('s:' + id)) as StoredCopy | undefined
+  const copy = await storedCopy($, id)
   const activeSite = await activeJiraSite()
   const dismissed = new Set((autoMirror ?? emptyAuto()).dismissed)
   const stored = withoutAuto(rekeyArtifacts(copy?.items ?? []))
@@ -1405,18 +1401,11 @@ async function openPane($: EngineInterface): Promise<void> {
 }
 
 async function clearAll($: EngineInterface): Promise<void> {
-  flushed = undefined
   repoGen++
   await setItems($, () => [])
   await setRepos($, () => [])
   await setProcesses($, () => [])
-  const id = await $.session.id()
-  await $.store.delete('s:' + id)
-  const index = ((await $.store.get('index')) as string[] | undefined) ?? []
-  await $.store.set(
-    'index',
-    index.filter(x => x !== id),
-  )
+  await persistenceOf($).forget(await $.session.id())
 }
 
 // ------------------------------------------------------------------ priority keys
@@ -1433,7 +1422,6 @@ async function prioritize($: EngineInterface, level: Priority | undefined): Prom
   try {
     arm($)
     await setItems($, list => setPriority(list, id, level))
-    await schedule($)
   } catch {
     return // The mark stays. The person can press again.
   }
@@ -1534,6 +1522,15 @@ export const register: Register = on => {
       // No root this time. The next session.start pins it.
     }
     try {
+      // Old data is dropped by design: the v2 layout starts empty (plan: Behavior changes).
+      if (!legacyDropped) {
+        legacyDropped = true
+        await persistenceOf($).dropLegacy()
+      }
+    } catch {
+      // The old keys stay. They cost space only, and the next load tries again.
+    }
+    try {
       await restore($)
     } catch {
       // The list stays empty. New rows still land.
@@ -1597,7 +1594,7 @@ export const register: Register = on => {
       if (id === undefined) return { text: `Not tracked: ${ref}` }
       await setItems($, list => setPriority(list, id, word === 'auto' ? undefined : (word as Priority)))
       try {
-        await flush($) // `claude -p` can exit right after the reply: save now, not after flushMs
+        await persistenceOf($).flushNow() // `claude -p` can exit right after the reply: save now, not after flushMs
       } catch {
         // The next change saves it.
       }
