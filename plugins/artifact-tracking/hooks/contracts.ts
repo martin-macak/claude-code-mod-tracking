@@ -16,7 +16,7 @@ import type {
   GitHubTarget,
   GitHubToolApi,
 } from '../trackers/github/types'
-import type { JiraNode, JiraRecord, JiraRef, JiraTarget, JiraToolApi } from '../trackers/jira/types'
+import type { JiraRecord, JiraRef, JiraTarget, JiraToolApi } from '../trackers/jira/types'
 import type { WebRecord, WebRef } from '../trackers/web/types'
 
 export type { Priority, ScanMode } from '../core/interfaces/items'
@@ -123,7 +123,10 @@ export type Tools = { gh: GitHubToolApi; acli: JiraToolApi }
 
 // ---------------------------------------------------------------- hydrated items
 
-/** The pre-L5 shape of an item the coordinator refreshes. Task 4 retires it with `HydratedItem`. */
+/**
+ * The pre-L5 shape of an item the coordinator refreshes. The coordinator hydrates through it until Task 7 gives it
+ * lanes; its test keeps the `HydratedItem` type to the end of L5.
+ */
 interface Hydrated extends Refreshable {
   readonly category: Category
   refresh(): Promise<void>
@@ -141,32 +144,13 @@ export type Sighting = { source: Source; at: number }
 
 export const JIRA_KEY = /^[A-Z][A-Z0-9_]+-\d+$/
 
-/** The item key of a resolved GitHub issue or PR (spec 6.2). `model/keys.ts` and the gh refresh both build it here. */
-export const githubKey = (host: string, owner: string, repo: string, number: number): string =>
-  `gh:${host.toLowerCase()}/${owner.toLowerCase()}/${repo.toLowerCase()}#${number}`
+// The key of a resolved GitHub issue or PR, the auto sources and the child-tree carry live with their owners now
+// (plan L5, Task 4). The old callers import them from here until Task 15.
+export { AUTO_SOURCES } from '../core/lib/records'
+export { githubKey } from '../trackers/github/urls'
+export { carryPriorities } from '../trackers/jira/nodes'
 
 // ---------------------------------------------------------------- auto tracking (spec 5.3, 6.3)
-
-/** Sources that discovery adds. The transcript backfill and the capture hooks never write them. */
-export const AUTO_SOURCES: ReadonlySet<string> = new Set<string>(['auto', 'pr-body'])
-
-/**
- * A fetched child tree with the marks the person set. A node matches by key, level by level.
- * A refresh carries no mark of its own, so `old` decides for each node it holds, also when that node has no mark:
- * the person may have reset it while the fetch ran. A node `old` lacks keeps what `fresh` has.
- * Here and not in `model/`: `tools/acli-tool.ts` and `model/registry.ts` both need it.
- */
-export function carryPriorities(fresh: readonly JiraNode[], old: readonly JiraNode[]): JiraNode[] {
-  const byKey = new Map(old.map(n => [n.key, n]))
-  return fresh.map(n => {
-    const prev = byKey.get(n.key)
-    const out = { ...n, children: carryPriorities(n.children, prev?.children ?? []) }
-    const priority = prev ? prev.priority : n.priority
-    if (priority === undefined) delete out.priority
-    else out.priority = priority
-    return out
-  })
-}
 
 // Row ids of the auto sections (spec 6.2). An item key never starts with `wt:` or `ag:`. Build and test ids here only.
 export const MASTER_ID = 'ag:master'

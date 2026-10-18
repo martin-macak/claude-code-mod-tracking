@@ -3,7 +3,6 @@ import { expect, test } from 'claude-code/testing'
 import type { GitHubRecord, GitHubToolApi, JiraRecord, JiraToolApi, ToolStatus } from '../hooks/contracts'
 import { GitHubItem } from '../trackers/github/github-item'
 import { JiraItem } from '../trackers/jira/jira-item'
-import { WebLink } from '../trackers/web/web-link'
 import { LIMITS } from './fixtures/limits'
 
 const status = (name: 'gh' | 'acli'): ToolStatus => ({ name, available: true, loggedIn: null, breaker: 'closed' })
@@ -107,24 +106,6 @@ test('JiraItem.canRefresh: track-only, bad key, site match, unknown site, logged
   expect(new JiraItem(jira(), acliTool(null)).canRefresh(0)).toBe(false)
 })
 
-test('WebLink never refreshes and toRecord round-trips', async () => {
-  const rec = {
-    key: 'web:https://x.example/',
-    category: 'web' as const,
-    url: 'https://x.example/',
-    label: 'x.example',
-    sources: ['response' as const],
-    firstSeen: 1,
-    lastSeen: 2,
-    seenCount: 2,
-  }
-  const w = new WebLink(rec)
-  expect(w.canRefresh(0)).toBe(false)
-  expect(w.isDue(0)).toBe(false)
-  await w.refresh()
-  expect(w.toRecord()).toEqual(rec)
-})
-
 test('GitHubItem does not mutate its input record and toRecord omits undefined fields', () => {
   const rec = gh()
   const i = new GitHubItem(rec, ghTool().t)
@@ -184,18 +165,6 @@ test('JiraItem deep-copies children and round-trips', () => {
 test('every item class round-trips a high and a low mark, a Jira child mark too', () => {
   for (const priority of ['high', 'low'] as const) {
     expect(new GitHubItem(gh({ priority }), ghTool().t).toRecord().priority).toBe(priority)
-    const web = new WebLink({
-      key: 'web:https://x.example/',
-      category: 'web',
-      url: 'https://x.example/',
-      label: 'x.example',
-      priority,
-      sources: ['response'],
-      firstSeen: 1,
-      lastSeen: 1,
-      seenCount: 1,
-    })
-    expect(web.toRecord().priority).toBe(priority)
     const child = { key: 'ISS-2', priority, summary: 'c', issueType: 'Story', status: 'Done', children: [] }
     const out = new JiraItem(jira({ priority, children: [child] }), acliTool('acme.atlassian.net')).toRecord()
     expect(out.priority).toBe(priority)

@@ -71,11 +71,13 @@ export interface Refreshable {
   toRecord(): StoredItem
 }
 
-/** What a kind's refresh gets: the ports of the owning tracker. */
+/** What a kind's refresh gets: the ports of the owning tracker, and the wall clock for the times it writes. */
 export interface RefreshContext {
   readonly tools: ToolPort
   readonly config: ConfigView<JsonObject>
   readonly facts: Pick<FactsPort, 'read'>
+  /** Epoch ms. */
+  now(): number
 }
 
 /**

@@ -7,14 +7,16 @@ import type { Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
 import { GH_TOOL } from './client'
 import { type GithubConfig, githubConfig } from './config'
+import { githubKind } from './kind'
 
-export { GH_TOOL, type GithubConfig, githubConfig }
+export { GH_TOOL, type GithubConfig, githubConfig, githubKind }
 
 export function githubTracker(): Tracker<GithubConfig, Json> {
   return {
     id: 'github',
     order: 30,
     config: githubConfig,
+    kinds: [githubKind],
     tools: [GH_TOOL],
     init: () => {},
     store: ctx => ctx.config.slice(),

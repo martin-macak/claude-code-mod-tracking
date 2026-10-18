@@ -31,11 +31,6 @@ import {
   resolveBareRefs,
   unionRecords,
 } from '../hooks/model/registry'
-import { ArtifactItem } from '../trackers/artifact/artifact-item'
-import { FileItem } from '../trackers/file/file-item'
-import { GitHubItem } from '../trackers/github/github-item'
-import { JiraItem } from '../trackers/jira/jira-item'
-import { WebLink } from '../trackers/web/web-link'
 import { PAGE_CODE_URL, PAGE_ID, PAGE_KEY, PAGE_URL, PAGE_UUID, PAIRS } from './fixtures/artifacts'
 import { LIMITS } from './fixtures/limits'
 
@@ -646,38 +641,6 @@ const tools = {
     loadActiveSite: async () => null,
   } as JiraToolApi,
 }
-test('hydrate: picks the class by category', () => {
-  expect(hydrate(recordFromRef(ghRef(), s(1)), tools)).toBeInstanceOf(GitHubItem)
-  expect(hydrate(recordFromRef(jiraRef(), s(1)), tools)).toBeInstanceOf(JiraItem)
-  const a: ArtifactRecord = { ...(recordFromRef(publishRef(), s(1, 'publish')) as ArtifactRecord), deleted: true }
-  const item = hydrate(a, tools)
-  expect(item).toBeInstanceOf(ArtifactItem)
-  expect(item.toRecord()).toEqual(a)
-  expect(item.canRefresh(0)).toBe(false)
-  expect(item.isDue(0)).toBe(false)
-  const w = hydrate(recordFromRef(webRef(), s(1)), tools)
-  expect(w).toBeInstanceOf(WebLink)
-  expect(w.toRecord()).toEqual(recordFromRef(webRef(), s(1)) as WebRecord)
-})
-test('hydrate: a file record gives a FileItem that is never due, never refreshes and round-trips', async () => {
-  const rec = mergeFiles([], [fileRec('a', 1, 'created', true), fileRec('a', 2, 'viewed')])[0] as FileRecord
-  const f = hydrate(rec, tools)
-  expect(f).toBeInstanceOf(FileItem)
-  expect(f.isDue(1e12)).toBe(false)
-  expect(f.canRefresh(0)).toBe(false)
-  await f.refresh()
-  expect(f.toRecord()).toEqual(rec)
-})
-test('hydrate: round-trips a refreshed record', () => {
-  const rec = {
-    ...(recordFromRef(ghRef(), s(1)) as GitHubRecord),
-    title: 'T',
-    checks: 'pending' as const,
-    refreshedAt: 3,
-  }
-  expect(hydrate(rec, tools).toRecord()).toEqual(rec)
-})
-
 // ---------------------------------------------------------------- auto items (spec A11)
 
 const webAt = (i: number, sources: ItemRecord['sources'], over: Partial<WebRecord> = {}): WebRecord => ({

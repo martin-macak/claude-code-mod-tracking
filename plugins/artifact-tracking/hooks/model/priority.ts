@@ -1,7 +1,8 @@
 // Priority of a tracked item (issue #30): the order of the levels, their markers and the merge of manual marks.
 // Pure: no `$`. A record's `priority` is the person's manual mark only. Absent means no mark.
 
-import { type Level, mergePriority, type Priority, rankOf, withPriority } from '../../core/lib/levels'
+import { type Level, type Priority, rankOf, withPriority } from '../../core/lib/levels'
+import { mergeNodePriorities } from '../../trackers/jira/nodes'
 import type { GitHubRecord, ItemRecord, JiraNode, RepoRef } from '../contracts'
 import { JIRA_KEY } from '../contracts'
 import { extractRefs } from '../scan/refs'
@@ -10,16 +11,7 @@ import { childId, keyOf } from './keys'
 export type { Level } from '../../core/lib/levels'
 // The level helpers moved to core/lib/levels.ts in plan L5, Task 2. The old callers import them from here until Task 15.
 export { byLevel, markerOf, mergePriority, rankOf, withPriority } from '../../core/lib/levels'
-
-/** Child trees of one Jira item: `a` gives the shape; each node merges the mark of the same key in `b`, level by level. */
-export function mergeNodePriorities(a: readonly JiraNode[], b: readonly JiraNode[]): JiraNode[] {
-  const byKey = new Map(b.map(n => [n.key, n]))
-  return a.map(n => {
-    const other = byKey.get(n.key)
-    const children = mergeNodePriorities(n.children, other?.children ?? [])
-    return withPriority({ ...n, children }, mergePriority(n.priority, other?.priority))
-  })
-}
+export { mergeNodePriorities }
 
 /** `nodes` with the mark of child row `id` set, or undefined when no node of the tree is `id` or nothing changes. */
 function setNode(

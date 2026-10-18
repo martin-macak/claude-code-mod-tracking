@@ -27,6 +27,28 @@ export type ScanOptions = {
 /** One scan reads at most this many characters. A longer text loses its tail. */
 export const MAX_TEXT = 200_000
 
+const MAX_LABEL = 60
+
+/** Cut trailing characters of `chars` from `s`. A backward loop: linear, unlike `/[…]+$/`. */
+function trimEnd(s: string, chars: string): string {
+  let e = s.length
+  while (e > 0 && chars.includes(s[e - 1]!)) e--
+  return s.slice(0, e)
+}
+
+/** `host/path` of a URL for a label: no scheme, query or trailing slash, at most 60 chars. */
+export function hostPath(url: string): string {
+  let u: URL | null = null
+  try {
+    u = new URL(url)
+  } catch {
+    // Not a URL: the label is the text without its scheme.
+  }
+  const raw = u ? u.host + u.pathname : url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
+  const s = trimEnd(raw, '/')
+  return s.length > MAX_LABEL ? s.slice(0, MAX_LABEL - 1) + '\u2026' : s
+}
+
 const WEB_SCHEMES = ['http', 'https', 'file']
 
 /** The scheme of a URL, lower case, or '' when it has none. */

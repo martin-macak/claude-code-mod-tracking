@@ -6,14 +6,16 @@ import type { Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
 import { ACLI_TOOL } from './client'
 import { type JiraConfig, jiraConfig } from './config'
+import { jiraKind } from './kind'
 
-export { ACLI_TOOL, type JiraConfig, jiraConfig }
+export { ACLI_TOOL, type JiraConfig, jiraConfig, jiraKind }
 
 export function jiraTracker(): Tracker<JiraConfig, Json> {
   return {
     id: 'jira',
     order: 20,
     config: jiraConfig,
+    kinds: [jiraKind],
     tools: [ACLI_TOOL],
     init: () => {},
     store: ctx => ctx.config.slice(),

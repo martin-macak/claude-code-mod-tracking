@@ -83,16 +83,3 @@ export abstract class TrackedItem implements Refreshable {
     })
   }
 }
-
-/** An item with no status to fetch: a web link, an artifact or a Markdown file. It never refreshes. */
-export abstract class StaticItem extends TrackedItem {
-  canRefresh(_now: number): boolean {
-    return false
-  }
-
-  async refresh(): Promise<void> {}
-
-  override isDue(_now: number): boolean {
-    return false
-  }
-}

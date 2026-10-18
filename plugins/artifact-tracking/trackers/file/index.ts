@@ -10,9 +10,10 @@ import type { Json } from '../../core/interfaces/items'
 import type { Handler, Tracker } from '../../core/interfaces/tracker'
 import { type FileConfig, fileConfig } from './config'
 import { touchFromToolResult } from './files'
+import { fileKind } from './kind'
 import { captureFileTouch, FileSight, type SightCache } from './sighting'
 
-export { type FileConfig, fileConfig }
+export { type FileConfig, fileConfig, fileKind }
 
 export function fileTracker(): Tracker<FileConfig, Json> {
   // One cache per load (the tracker list is built per load): HOME, the config dir and the memory setting are read once.
@@ -36,6 +37,7 @@ export function fileTracker(): Tracker<FileConfig, Json> {
     id: 'file',
     order: 70,
     config: fileConfig,
+    kinds: [fileKind],
     init: () => {},
     store: ctx => ctx.config.slice(),
     events: { toolCall: { Write: onTool('Write'), Edit: onTool('Edit'), Read: onTool('Read') } },

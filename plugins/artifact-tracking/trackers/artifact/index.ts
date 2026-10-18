@@ -8,11 +8,12 @@ import type { ToolCallEvent } from '../../core/interfaces/events'
 import type { Claim, Json } from '../../core/interfaces/items'
 import type { Handler, Tracker } from '../../core/interfaces/tracker'
 import { asRecords } from '../../hooks/contracts'
-import { markArtifactDeleted } from '../../hooks/model/registry'
 import { artifactEvent } from './artifact-tool'
 import { type ArtifactConfig, artifactConfig } from './config'
+import { artifactKind } from './kind'
+import { markArtifactDeleted } from './records'
 
-export { type ArtifactConfig, artifactConfig }
+export { type ArtifactConfig, artifactConfig, artifactKind }
 
 /** One Artifact call: `ev.input` as the model gave it, `ev.result` as the tool answered. */
 const onArtifact: Handler<ArtifactConfig, Json, ToolCallEvent> = async (ctx, ev) => {
@@ -28,6 +29,7 @@ export function artifactTracker(): Tracker<ArtifactConfig, Json> {
     id: 'artifact',
     order: 40,
     config: artifactConfig,
+    kinds: [artifactKind],
     init: () => {},
     store: ctx => ctx.config.slice(),
     events: { toolCall: { Artifact: onArtifact } },

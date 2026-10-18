@@ -5,14 +5,16 @@
 import type { Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
 import { type WebConfig, webConfig } from './config'
+import { webKind } from './kind'
 
-export { type WebConfig, webConfig }
+export { type WebConfig, webConfig, webKind }
 
 export function webTracker(): Tracker<WebConfig, Json> {
   return {
     id: 'web',
     order: 60,
     config: webConfig,
+    kinds: [webKind],
     init: () => {},
     store: ctx => ctx.config.slice(),
   }

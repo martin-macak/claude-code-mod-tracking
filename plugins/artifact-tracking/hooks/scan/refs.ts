@@ -1,7 +1,7 @@
 // Reference extraction: text -> GitHub, Jira, artifact and web refs (spec section 6.1).
 // Pure code. No `$`, no I/O. Every regex is linear. Input is capped at MAX_TEXT before any regex runs.
 
-import { MAX_TEXT, normalizeUrl, scanMarkdown, schemeOf } from '../../core/lib/links'
+import { hostPath, MAX_TEXT, normalizeUrl, scanMarkdown, schemeOf } from '../../core/lib/links'
 import { maskForBare } from '../../core/lib/mask'
 import { parseArtifactUrl } from '../../trackers/artifact/artifact-url'
 import { GITHUB_DEFAULTS } from '../../trackers/github/config'
@@ -10,7 +10,6 @@ import { JIRA_KEY } from '../contracts'
 import { keyOf } from '../model/keys'
 
 const MAX_REMOTE = 2048
-const MAX_LABEL = 60
 const FILE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|md|py|go|rs|java|kt|rb|json|ya?ml|toml|txt|html|css|sh)$/i
 const GH_PATH = /^\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/(issues|pull)\/(\d+)(?:[/?#].*)?$/
 const BARE_REF = /(?<![\w/&#])#(\d{1,7})\b/g
@@ -44,6 +43,9 @@ function trimEnd(s: string, chars: string): string {
   while (e > 0 && chars.includes(s[e - 1]!)) e--
   return s.slice(0, e)
 }
+
+// `hostPath` moved to core/lib/links.ts in plan L5, Task 4 (the artifact kind needs it). The old callers read it here.
+export { hostPath }
 
 // ---------------------------------------------------------------- parsers
 
@@ -121,14 +123,6 @@ export function commandArgs(text: string): string {
   const from = open + '<command-args>'.length
   const close = t.indexOf('</command-args>', from)
   return close === -1 ? '' : t.slice(from, close)
-}
-
-/** `host/path` of a URL for a label: no scheme, query or trailing slash, at most 60 chars. */
-export function hostPath(url: string): string {
-  const u = parse(url)
-  const raw = u ? u.host + u.pathname : url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
-  const s = trimEnd(raw, '/')
-  return s.length > MAX_LABEL ? s.slice(0, MAX_LABEL - 1) + '\u2026' : s
 }
 
 // ---------------------------------------------------------------- extraction

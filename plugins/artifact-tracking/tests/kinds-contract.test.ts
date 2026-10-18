@@ -5,7 +5,6 @@ import { expect, test } from 'claude-code/testing'
 import type { Claim, ItemKind } from '../core/interfaces/items'
 import type { Tracker } from '../core/interfaces/tracker'
 import { bool, type Schema, specOf } from '../core/lib/normalise'
-import * as records from '../core/lib/records'
 import * as artifactTypes from '../trackers/artifact/types'
 import * as autoTypes from '../trackers/auto/types'
 import * as fileTypes from '../trackers/file/types'
@@ -49,13 +48,13 @@ test('a Claim carries the fields of a ref', () => {
 })
 
 // The node coverage gate wants every source file loaded by a test (`check.mjs`). These modules hold types only, so a
-// test that loads them also pins that no runtime value hides in a file the contract calls type-only.
+// test that loads them also pins that no runtime value hides in a file the contract calls type-only. `core/lib/records.ts`
+// held the record types only until plan Task 4; it holds the record algebra now and `records.test.ts` loads it.
 // Node reads a module with no `type` field as CommonJS and adds `default` and `module.exports` to its namespace.
 const valuesOf = (m: object): string[] => Object.keys(m).filter(k => k !== 'default' && k !== 'module.exports')
 
-test('the tracker type modules and the record types load and export no value', () => {
+test('the tracker type modules load and export no value', () => {
   const modules = {
-    records,
     artifactTypes,
     autoTypes,
     fileTypes,
@@ -66,7 +65,6 @@ test('the tracker type modules and the record types load and export no value', (
     webTypes,
   }
   expect(Object.fromEntries(Object.entries(modules).map(([name, m]) => [name, valuesOf(m)]))).toEqual({
-    records: [],
     artifactTypes: [],
     autoTypes: [],
     fileTypes: [],
