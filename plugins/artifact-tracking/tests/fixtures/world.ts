@@ -207,7 +207,9 @@ export function world(on: On, opts: Opts = {}) {
       const cur = states.get(at(e))
       const version = cur?.version ?? 0
       if (e.ifVersion !== undefined && e.ifVersion !== version) return { value: { isSet: false, version } }
-      states.set(at(e), { value: JSON.parse(JSON.stringify(e.value ?? null)), version: version + 1 })
+      // `e.value` is a recursive Json union since the `trackers` family: tsc gives up on it, so read it as unknown.
+      const written = (e as unknown as { value?: unknown }).value
+      states.set(at(e), { value: JSON.parse(JSON.stringify(written ?? null)), version: version + 1 })
       return { value: { isSet: true, version: version + 1 } }
     })
   }

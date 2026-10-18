@@ -1,30 +1,22 @@
 // Item contracts: the stored record, the item kind and the store port. Types only.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.9 and 5.13.
 //
-// `Json`, `JsonObject`, `Level` and `StoredItem` are declared here for now. Spec 5.13 gives them to the
-// PluginState contract (`types/index.d.ts`); layer L3 moves them there and this file re-exports them.
+// `Json` and `JsonObject` live in the PluginState contract (`types/index.d.ts`, spec 5.13) and are re-exported here.
+// `Level` and `StoredItem` are declared here for now. Plan decision D14: layer L5 moves `StoredItem` to the contract.
 //
 // Two names clash with older code, and tsc accepts a wrong import without a word:
 // - `Json` here is a real JSON union. `core/lib/json.ts` exports another `Json` (`Record<string, unknown>`).
-//   Contract code imports it from this folder, never from `core/lib/json`. When L3 moves these types, rename the lib one.
-// - `Level` is also declared in `hooks/model/priority.ts`. The two have the same members. When L3 moves the types, drop that copy.
+//   Contract code imports it from this folder, never from `core/lib/json`. Rename the lib one when it is next touched.
+// - `Level` is also declared in `hooks/model/priority.ts`. The two have the same members. Drop that copy in L5.
 
+import type { Json, JsonObject } from '../../types'
 import type { ConfigView } from './config'
 import type { ReplayItem, RowEvent, SessionChangedEvent } from './events'
 import type { DataSlot } from './slots'
 import type { FactsPort, ToolPort, TrackerContext } from './tracker'
 import type { TreeRow, ViewContext } from './view'
 
-/** A JSON value. Arrays and objects are read-only, so a frozen config or a stored record fits. */
-export type Json = null | boolean | number | string | readonly Json[] | JsonObject
-
-/**
- * A JSON object. A tracker config type must be a `type` alias, not an `interface`:
- * only an alias has the implicit index signature that `C extends JsonObject` needs.
- */
-export interface JsonObject {
-  readonly [key: string]: Json | undefined
-}
+export type { Json, JsonObject } from '../../types'
 
 /** A priority level, highest first. `top` comes from a kind rule only. A person sets `high`, `normal` or `low`. */
 export type Level = 'top' | 'high' | 'normal' | 'low'

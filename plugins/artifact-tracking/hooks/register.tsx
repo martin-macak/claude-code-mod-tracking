@@ -10,6 +10,8 @@ import type { Timer } from '../core/infra/coordinator'
 import { RefreshCoordinator } from '../core/infra/coordinator'
 import { autoIds, dismiss } from '../core/infra/dismiss'
 import { AutoScheduler } from '../core/infra/scheduler'
+import type { Json, StoredItem } from '../core/interfaces/items'
+import type { Ports } from '../core/interfaces/ports'
 import { isRecord } from '../core/lib/json'
 import { textOfContent } from '../core/lib/links'
 import { artifactEvent } from '../trackers/artifact/artifact-tool'
@@ -111,19 +113,171 @@ import { focusTargets, markKeys } from './ui/view'
 // ------------------------------------------------------------------ state
 
 // Working set in $.state (survives hot reload, reset by /clear). Mirror in $.store, one key per session.
+// The contract (types/index.d.ts) has four keys. `items`, `tools` and `ui` are atoms. Each tracker's data is one
+// member of the `trackers` family (spec 5.13, plan decision D14): `repos`, `processes` and `auto`.
 const items = atom({ plugin: 'artifact-tracking', key: 'items' } as const, [] as ItemRecord[])
-const repos = atom({ plugin: 'artifact-tracking', key: 'repos' } as const, [] as RepoRecord[])
-const processes = atom({ plugin: 'artifact-tracking', key: 'processes' } as const, [] as ProcessRecord[])
+const IDLE_GH: ToolStatus = { name: 'gh', available: null, loggedIn: null, breaker: 'closed' }
+const IDLE_ACLI: ToolStatus = { name: 'acli', available: null, loggedIn: null, breaker: 'closed' }
 const tools = atom(
   { plugin: 'artifact-tracking', key: 'tools' } as const,
-  {
-    gh: { name: 'gh', available: null, loggedIn: null, breaker: 'closed' },
-    acli: { name: 'acli', available: null, loggedIn: null, breaker: 'closed' },
-  } as { gh: ToolStatus; acli: ToolStatus },
+  { gh: IDLE_GH, acli: IDLE_ACLI } as Record<string, ToolStatus>,
 )
-const ui = atom({ plugin: 'artifact-tracking', key: 'ui' } as const, { folded: [], paneOpen: false } as UiState)
+const ui = atom({ plugin: 'artifact-tracking', key: 'ui' } as const, { folded: [] } as UiState)
+
+/**
+ * One member of the `trackers` family, typed. The family stores Json; the shapes are the records of the contract.
+ * `empty` is what a member never written reads as. It runs on every read, so each read of a missing member gets a
+ * fresh value, and a change that returns its input is still seen as "no change".
+ * Plain functions, not methods: `claude plugin validate` refuses `$` as an argument of a method call.
+ */
+async function readSlot<T>($: EngineInterface, id: string, empty: () => T): Promise<T> {
+  return ((await portsOf($).state.slot.get(id)) as unknown as T | undefined) ?? empty()
+}
+
+async function updateSlot<T>($: EngineInterface, id: string, empty: () => T, change: (cur: T) => T): Promise<T> {
+  const next = await portsOf($).state.slot.update(
+    id,
+    cur => change((cur as unknown as T | undefined) ?? empty()) as unknown as Json,
+  )
+  return next as unknown as T
+}
+
+const noRows = (): never[] => []
+
+function readRepos($: EngineInterface): Promise<RepoRecord[]> {
+  return readSlot<RepoRecord[]>($, 'repos', noRows)
+}
+
+function updateRepos($: EngineInterface, change: (rows: RepoRecord[]) => RepoRecord[]): Promise<RepoRecord[]> {
+  return updateSlot<RepoRecord[]>($, 'repos', noRows, change)
+}
+
+function readProcesses($: EngineInterface): Promise<ProcessRecord[]> {
+  return readSlot<ProcessRecord[]>($, 'processes', noRows)
+}
+
+function updateProcesses(
+  $: EngineInterface,
+  change: (rows: ProcessRecord[]) => ProcessRecord[],
+): Promise<ProcessRecord[]> {
+  return updateSlot<ProcessRecord[]>($, 'processes', noRows, change)
+}
+
 /** The run: root, proofs, agents, dismiss list and the last snapshot (spec 6.2). Never goes to $.store. */
-const auto = atom({ plugin: 'artifact-tracking', key: 'auto' } as const, emptyAuto() as AutoState)
+function readAuto($: EngineInterface): Promise<AutoState> {
+  return readSlot<AutoState>($, 'auto', emptyAuto)
+}
+
+function updateAuto($: EngineInterface, change: (cur: AutoState) => AutoState): Promise<AutoState> {
+  return updateSlot<AutoState>($, 'auto', emptyAuto, change)
+}
+
+// ------------------------------------------------------------------ ports
+
+/**
+ * The engine as ports (spec 5.4). Built per dispatch, so each `$` call keeps the hook's agent context (E5).
+ * Each closure holds a literal `$` call and each state ref is a literal, so `claude plugin validate` lists
+ * what the module reads and writes (E4). Only the `trackers` slots and (from the next step) the store use it yet.
+ */
+function portsOf($: EngineInterface): Ports {
+  return {
+    clock: {
+      now: () => $.clock.now(),
+      wall: Date.now,
+      after: (ms, fn) => $.clock.after(ms, fn),
+      every: (ms, fn) => $.clock.every(ms, fn),
+    },
+    run: (argv, opts) => $.process.run(argv, opts),
+    fs: {
+      read: path => $.fs.read(path),
+      write: (path, text) => $.fs.write(path, text),
+      exists: path => $.fs.exists(path),
+      stat: async (path, opts) => {
+        try {
+          return await (opts?.resolve ? $.fs.stat(path, { resolve: true }) : $.fs.stat(path))
+        } catch {
+          return null // any refusal
+        }
+      },
+    },
+    env: {
+      // One literal call per name: validate lists the names this module reads.
+      get: name => {
+        switch (name) {
+          case 'HOME':
+            return $.env.get('HOME')
+          case 'XDG_CONFIG_HOME':
+            return $.env.get('XDG_CONFIG_HOME')
+          case 'CLAUDE_TRACKER_CONFIG_DIR':
+            return $.env.get('CLAUDE_TRACKER_CONFIG_DIR')
+          case 'CLAUDE_CONFIG_DIR':
+            return $.env.get('CLAUDE_CONFIG_DIR')
+        }
+      },
+    },
+    settings: { read: async () => (await $.settings.read()) as unknown as Json },
+    store: {
+      get: async key => (await $.store.get(key)) as Json | undefined,
+      set: (key, value) => $.store.set(key, value),
+      delete: key => $.store.delete(key),
+      keys: () => $.store.keys(),
+    },
+    session: {
+      id: () => $.session.id(),
+      cwd: () => $.session.cwd(),
+      repo: async () => {
+        const info = await $.session.repo()
+        return (info?.remote ? parseRemote(info.remote) : null) ?? null
+      },
+      messages: () => $.session.messages(),
+    },
+    agents: {
+      list: async () =>
+        (await $.agent.list()).map(a => ({
+          id: a.id,
+          status: a.status,
+          ...(a.teammateId !== undefined ? { teammateId: a.teammateId } : {}),
+          ...(a.description !== undefined ? { description: a.description } : {}),
+          ...(a.type !== undefined ? { type: a.type } : {}),
+        })),
+    },
+    state: {
+      items: {
+        get: async () => (await read($, items)) as StoredItem[],
+        update: async fn => (await update($, items, cur => fn(cur as StoredItem[]) as ItemRecord[])) as StoredItem[],
+      },
+      tools: { get: () => read($, tools), update: fn => update($, tools, fn) },
+      ui: { get: () => read($, ui), update: fn => update($, ui, fn) },
+      slot: {
+        get: id => read($, { plugin: 'artifact-tracking', key: 'trackers', id } as const),
+        update: (id, fn) => update($, { plugin: 'artifact-tracking', key: 'trackers', id } as const, cur => fn(cur)),
+      },
+    },
+    ui: {
+      open: async () =>
+        (await $.ui.open({ id: 'track', title: 'Tracking', focus: true, closeOnEscape: true })).isPlaced,
+      focus: async key => {
+        await $.ui.focus({ requestId: 'track', key })
+      },
+      panes: () => $.ui.panes(),
+      invalidate: () => {
+        try {
+          $.ui.invalidate('ui.render')
+        } catch {
+          // A refused redraw changes nothing the next one cannot fix.
+        }
+      },
+      toast: text => $.ui.toast(text),
+    },
+    log: line => {
+      try {
+        $.ui.log(line, { to: 'debug' })
+      } catch {
+        // A log line must never fail a hook.
+      }
+    },
+  }
+}
 
 const PANE = 'track'
 const USAGE = 'Usage: /track [refresh|clear|prio <ref> <high|normal|low|auto>]'
@@ -273,11 +427,17 @@ function ensureRuntime($: EngineInterface): void {
 }
 
 /** The status as the pane sees it. `lastRunAt` moves on every call and no view shows it, so it is not compared (A22). */
-const shown = (x: { gh: ToolStatus; acli: ToolStatus }): string =>
+const shown = (x: Record<string, ToolStatus>): string =>
   JSON.stringify([
     { ...x.gh, lastRunAt: undefined },
     { ...x.acli, lastRunAt: undefined },
   ])
+
+/** The two statuses the sections read. A tool the record does not list yet reads as not probed. */
+const viewTools = (x: Record<string, ToolStatus>): { gh: ToolStatus; acli: ToolStatus } => ({
+  gh: x.gh ?? IDLE_GH,
+  acli: x.acli ?? IDLE_ACLI,
+})
 
 /**
  * Active Jira site state:
@@ -341,9 +501,9 @@ async function setRepos($: EngineInterface, change: (rows: RepoRecord[]) => Repo
     const kept = dismissed.size === 0 ? out : out.filter(r => !dismissed.has(repoRowId(r.key)))
     return capRepoRows(kept.length === out.length ? out : kept)
   }
-  const cur = (await read($, repos)) ?? []
+  const cur = await readRepos($)
   if (apply(cur) === cur) return // nothing changed: no write, no flush
-  const next = await update($, repos, rows => apply(rows ?? []))
+  const next = await updateRepos($, apply)
   const id = await $.session.id()
   if (knownId !== undefined && id === knownId) repoMirror = { id, rows: next }
   await schedule($)
@@ -351,7 +511,7 @@ async function setRepos($: EngineInterface, change: (rows: RepoRecord[]) => Repo
 
 /** Like setItems, for tracked background processes. */
 async function setProcesses($: EngineInterface, change: (rows: ProcessRecord[]) => ProcessRecord[]): Promise<void> {
-  const next = await update($, processes, rows => change(rows ?? []))
+  const next = await updateProcesses($, change)
   const id = await $.session.id()
   if (knownId !== undefined && id === knownId) processMirror = { id, rows: next }
   await schedule($)
@@ -363,19 +523,19 @@ async function setProcesses($: EngineInterface, change: (rows: ProcessRecord[]) 
  * fallback after /clear, and retries on a version miss.
  */
 async function setAuto($: EngineInterface, change: (cur: AutoState) => AutoState): Promise<AutoState> {
-  const cur = await read($, auto)
+  const cur = await readAuto($)
   if (change(carryAuto(autoMirror, cur)) === cur) {
     autoMirror = cur
     return cur
   }
-  const next = await update($, auto, c => change(carryAuto(autoMirror, c)))
+  const next = await updateAuto($, c => change(carryAuto(autoMirror, c)))
   autoMirror = next
   return next
 }
 
 /** The `auto` atom, or the module copy when /clear reset it. */
 async function currentAuto($: EngineInterface): Promise<AutoState> {
-  return carryAuto(autoMirror, await read($, auto))
+  return carryAuto(autoMirror, await readAuto($))
 }
 
 /**
@@ -905,7 +1065,7 @@ async function probeProcesses($: EngineInterface): Promise<void> {
     processUiState = { ...processUiState, breaker: 'open', openUntil: processBreaker.openUntil }
     return
   }
-  const rows = await read($, processes)
+  const rows = await readProcesses($)
   const of = (kind: ProcessRecord['kind']) => rows.filter(r => r.kind === kind)
   const dockerRows = of('docker-container')
   const composeRows = of('docker-compose')
@@ -1040,8 +1200,8 @@ async function flush($: EngineInterface): Promise<void> {
   await ensureSession($) // a /clear since the last row: save the old session first, carry its items over
   const slices: SessionSlices = {
     items: await read($, items),
-    repos: await read($, repos),
-    processes: await read($, processes),
+    repos: await readRepos($),
+    processes: await readProcesses($),
   }
   if (slices.items.length === 0 && slices.repos.length === 0 && slices.processes.length === 0) return // after /track clear: never replace a stored copy with an empty one
   await writeStore($, await $.session.id(), slices)
@@ -1208,7 +1368,7 @@ async function contextOf($: EngineInterface, bodyColumns?: number): Promise<View
   return {
     now: Date.now(),
     folded: (await read($, ui)).folded,
-    tools: await read($, tools),
+    tools: viewTools(await read($, tools)),
     sessionRepo,
     auto: await currentAuto($),
     ...(lastRoundAt !== undefined ? { autoCheckedAt: lastRoundAt } : {}),
@@ -1225,10 +1385,10 @@ async function viewContext($: EngineInterface): Promise<ViewContext> {
 async function listText($: EngineInterface): Promise<string> {
   return composeCommandText(
     await read($, items),
-    await read($, processes),
+    await readProcesses($),
     processUiState,
     await viewContext($),
-    await read($, repos),
+    await readRepos($),
   )
 }
 
@@ -1242,7 +1402,6 @@ async function settleProbes($: EngineInterface): Promise<void> {
 async function openPane($: EngineInterface): Promise<void> {
   const opened = await $.ui.open({ id: PANE, title: 'Tracking', focus: true, closeOnEscape: true })
   if (!opened.isPlaced) $.ui.toast('Widen the terminal to see the tracking pane')
-  await update($, ui, u => ({ folded: u?.folded ?? [], paneOpen: true }))
 }
 
 async function clearAll($: EngineInterface): Promise<void> {
@@ -1279,7 +1438,7 @@ async function prioritize($: EngineInterface, level: Priority | undefined): Prom
     return // The mark stays. The person can press again.
   }
   try {
-    const sections = composePane(await read($, items), await read($, processes), processUiState, await contextOf($))
+    const sections = composePane(await read($, items), await readProcesses($), processUiState, await contextOf($))
     const key = markKeys(sections).get(id)
     if (key !== undefined) await $.ui.focus({ requestId: PANE, key })
   } catch {
@@ -1457,13 +1616,8 @@ export const register: Register = on => {
     return next(e)
   }).catch((_$, e, next) => next(e))
 
-  on('ui.close', { id: PANE }, async ($, e, next) => {
+  on('ui.close', { id: PANE }, (_$, e, next) => {
     focusedRow = undefined
-    try {
-      await update($, ui, u => ({ folded: u?.folded ?? [], paneOpen: false }))
-    } catch {
-      // Closing must not fail.
-    }
     return next(e)
   }).catch((_$, e, next) => next(e))
 
@@ -1472,20 +1626,17 @@ export const register: Register = on => {
     const list = await read($, items)
     const sections = composePane(
       list,
-      await read($, processes),
+      await readProcesses($),
       processUiState,
       await contextOf($, e.props.bodyColumns),
-      await read($, repos),
+      await readRepos($),
     )
     focusRows = focusTargets(sections)
     return renderSections(el, sections, e.props.bodyColumns, {
       fold: id => {
         void update($, ui, u => {
           const folded = u?.folded ?? []
-          return {
-            folded: folded.includes(id) ? folded.filter(x => x !== id) : [...folded, id],
-            paneOpen: u?.paneOpen ?? true,
-          }
+          return { folded: folded.includes(id) ? folded.filter(x => x !== id) : [...folded, id] }
         })
       },
       refresh: () => {
@@ -1512,7 +1663,7 @@ export const register: Register = on => {
 
   // One line above the prompt. The engine's own band stays inside our Box.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const text = composeBand(await read($, items), await read($, processes), await currentAuto($), await read($, repos))
+    const text = composeBand(await read($, items), await readProcesses($), await currentAuto($), await readRepos($))
     if (text === null || e.props.hasSurvey) return next(e)
     const el = $.ui.resolve(e)
     const { Box } = el
