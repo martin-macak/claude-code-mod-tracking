@@ -18,5 +18,6 @@ export function parseRemote(remote: string, aliases: Readonly<Record<string, str
   const scp = !/^[a-z][a-z0-9+.-]*:\/\//i.test(remote)
   if (scp && m[1]!.length < 2) return null // `C:/dir/x` is a path, not a host
   const host = m[1]!.toLowerCase()
-  return { host: aliases[host] ?? host, owner: m[2]!, repo: m[3]! }
+  // Own keys only: a host spelled `constructor` or `__proto__` must not reach the prototype of the table.
+  return { host: Object.hasOwn(aliases, host) ? aliases[host]! : host, owner: m[2]!, repo: m[3]! }
 }

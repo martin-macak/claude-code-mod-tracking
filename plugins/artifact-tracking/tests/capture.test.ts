@@ -244,6 +244,14 @@ test('parseRemote: an alias table maps the host', () => {
   expect(parseRemote('git@ghe.corp:acme/web.git', HOST_ALIASES)?.host).toBe('ghe.corp')
 })
 
+test('parseRemote: a host named like an inherited property is no alias', () => {
+  for (const name of ['constructor', '__proto__']) {
+    const remote = `git@${name}:acme/web.git`
+    expect(parseRemote(remote, HOST_ALIASES)).toEqual({ host: name, owner: 'acme', repo: 'web' })
+    expect(parseRemote(remote)).toEqual({ host: name, owner: 'acme', repo: 'web' })
+  }
+})
+
 test('parseGitHubUrl and parseJiraUrl read http(s) URLs of their own host only', () => {
   for (const url of ['not a url', 'ftp://github.com/a/b/issues/1', 'mailto:a@b.example', '']) {
     expect(parseGitHubUrl(url)).toBeNull()
