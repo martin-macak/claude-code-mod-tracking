@@ -210,6 +210,84 @@ test('the size of v2:run counts against maxBytes', async () => {
   expect(w.store.get('v2:index')).toEqual(['sess-1']) // 100 + 150 + the run copy is over 400
 })
 
+/** The store calls that change data, in order: `set v2:s:a`, `delete v2:s:b`. */
+function logged(ops: string[]) {
+  return (real: StorePort): StorePort => ({
+    ...real,
+    set: async (k, v) => {
+      ops.push(`set ${k}`)
+      return real.set(k, v)
+    },
+    delete: async k => {
+      ops.push(`delete ${k}`)
+      return real.delete(k)
+    },
+  })
+}
+
+/** Twenty stored sessions: the next write drops `old19` by the retention rule. */
+function fullHistory(): Record<string, Json> {
+  const ids = Array.from({ length: 20 }, (_, k) => `old${k}`)
+  const store: Record<string, Json> = { 'v2:index': ids }
+  for (const id of ids) store[`v2:s:${id}`] = { items: [] }
+  return store
+}
+
+test('the copy is written before the sessions that the retention drops', async () => {
+  const ops: string[] = []
+  const { w, p } = setup({ fake: { store: fullHistory() }, store: logged(ops) })
+  await p.flushNow()
+  expect(ops).toEqual(['set v2:s:sess-1', 'delete v2:s:old19', 'set v2:index'])
+  expect(w.store.has('v2:s:old19')).toBe(false)
+})
+
+test('a rejected copy write deletes no older session and leaves the index alone', async () => {
+  const { w, p } = setup({
+    fake: { store: fullHistory() },
+    store: real => ({
+      ...real,
+      set: async (k, v) => {
+        if (k === 'v2:s:sess-1') throw new Error('quota')
+        return real.set(k, v)
+      },
+    }),
+  })
+  await p.flushNow()
+  expect(w.store.has('v2:s:old19')).toBe(true) // the retention would drop it, but the new copy is not saved
+  expect((w.store.get('v2:index') as string[]).length).toBe(20)
+  expect(w.store.get('v2:index')).not.toContain('sess-1')
+  expect(w.logs).toEqual(['store: write of v2:s:sess-1 failed: quota'])
+})
+
+test('when the store would refuse the copy beside the sessions to drop, they go first', async () => {
+  const ops: string[] = []
+  const { w, p } = setup({
+    fake: {
+      store: {
+        'v2:index': ['old1', 'old2'],
+        'v2:s:old1': copyOf(1_500_000),
+        'v2:s:old2': copyOf(1_500_000),
+      },
+    },
+    slots: [slot('items', ['x'.repeat(1_200_000 - 14)])], // 1.2M + 1.5M fit the 3M bound; old2 goes, and 4.2M would not fit the store
+    store: logged(ops),
+  })
+  await p.flushNow()
+  expect(ops).toEqual(['delete v2:s:old2', 'set v2:s:sess-1', 'set v2:index'])
+  expect(w.store.get('v2:index')).toEqual(['sess-1', 'old1'])
+})
+
+test('end counts the v2:run it is about to write against maxBytes', async () => {
+  const { w, p } = setup({
+    fake: { store: { 'v2:index': ['old1'], 'v2:s:old1': copyOf(150), 'v2:run': {} } },
+    limits: { maxBytes: 400 },
+    slots: [slot('items', ['x'.repeat(86)]), slot('auto', 'y'.repeat(200), false)],
+  })
+  await p.end('sess-1', 1000, PENDING) // 100 + 150 + the old run record fit; the new run record of 300 does not
+  expect(w.store.get('v2:index')).toEqual(['sess-1'])
+  expect(w.store.has('v2:s:old1')).toBe(false)
+})
+
 test('a session named in the index with no copy counts as nothing', async () => {
   const { w, p } = setup({ fake: { store: { 'v2:index': ['ghost'] } } })
   await p.flushNow()

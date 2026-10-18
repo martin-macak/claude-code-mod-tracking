@@ -11,6 +11,9 @@ export const KEYS = { session: (id: string) => `v2:s:${id}`, index: 'v2:index', 
 /** Under this budget `session.end` writes nothing: the exit is too close. */
 export const MIN_END_BUDGET_MS = 200
 
+/** What the engine's store holds in all (E18: 4 MiB of JSON text), less a margin. A write that would pass it makes room first. */
+export const ENGINE_STORE_CHARS = 4_000_000
+
 export interface PersistenceDeps {
   store: StorePort
   clock: { now(): Promise<number>; after(ms: number, fn: () => void): Timer }
@@ -90,9 +93,12 @@ export class Persistence {
 
   /**
    * Stores one session's copy and puts its id first in the index. Keeps `keepSessions` ids, and drops the oldest
-   * others until the copies, the index and `v2:run` fit `maxBytes`. The copy itself always stays. Never rejects.
+   * others until the copies, the index and `v2:run` fit `maxBytes`. The copy itself always stays. `runChars` is the
+   * size of the `v2:run` that is about to replace the stored one. The copy is written before the dropped sessions
+   * are deleted, so a refused write loses no history. When the store would hold the dropped and the new copies
+   * together over its own bound, the dropped ones go first. Never rejects.
    */
-  async write(id: string, copy: SessionCopy): Promise<void> {
+  async write(id: string, copy: SessionCopy, runChars?: number): Promise<void> {
     const json = JSON.stringify(copy)
     if (this.written.get(id) === json) return
     try {
@@ -103,19 +109,20 @@ export class Persistence {
       const kept = all.slice(0, Math.max(1, keepSessions))
       this.sizes.set(id, json.length)
       for (const x of kept) if (!this.sizes.has(x)) this.sizes.set(x, size(await this.d.store.get(KEYS.session(x))))
-      const run = await this.runBytes()
+      const run = runChars ?? (await this.runBytes())
       const total = () => kept.reduce((n, x) => n + (this.sizes.get(x) ?? 0), 0) + JSON.stringify(kept).length + run
       while (kept.length > 1 && total() > maxBytes) dropped.push(kept.pop() as string)
-      for (const x of dropped) {
-        await this.d.store.delete(KEYS.session(x))
-        this.sizes.delete(x)
-        this.written.delete(x)
-      }
+      let held = 0
+      for (const x of dropped) held += this.sizes.get(x) ?? size(await this.d.store.get(KEYS.session(x)))
+      const roomFirst = total() + held > ENGINE_STORE_CHARS
+      if (roomFirst) await this.drop(dropped)
       await this.d.store.set(KEYS.session(id), copy)
+      if (!roomFirst) await this.drop(dropped)
       if (JSON.stringify(kept) !== JSON.stringify(index)) await this.d.store.set(KEYS.index, kept)
       this.written.set(id, json)
     } catch (e) {
       this.written.delete(id)
+      this.sizes.delete(id) // the stored size is not the new one: learn it again
       this.d.log(`store: write of ${KEYS.session(id)} failed: ${reason(e)}`)
     }
   }
@@ -132,12 +139,13 @@ export class Persistence {
     for (const slot of this.d.slots()) settled.push([slot, await slot.settle(await slot.read(), stored?.[slot.id])])
     if (budgetMs >= MIN_END_BUDGET_MS) {
       const { copy, hasData } = copyOf(settled)
-      if (hasData) await this.write(id, copy)
       const run = settled.filter(([s, v]) => !s.persist && v !== undefined).map(([s, v]) => [s.id, v] as const)
-      await this.setRun({
+      const record: RunCopy = {
         pendingEnd: pending,
         ...(run.length > 0 ? { run: Object.fromEntries(run) as Record<string, Json> } : {}),
-      })
+      }
+      if (hasData) await this.write(id, copy, size(record)) // the bound counts the run record that follows
+      await this.setRun(record)
     }
     return { from: id, slots: Object.fromEntries(settled.map(([s, v]) => [s.id, v])) }
   }
@@ -175,6 +183,15 @@ export class Persistence {
     const old = (await this.d.store.keys()).filter(k => k === 'index' || k.startsWith('s:'))
     for (const k of old) await this.d.store.delete(k)
     return old.length
+  }
+
+  /** Deletes the stored copies of sessions that fell out of the index. */
+  private async drop(ids: readonly string[]): Promise<void> {
+    for (const x of ids) {
+      await this.d.store.delete(KEYS.session(x))
+      this.sizes.delete(x)
+      this.written.delete(x)
+    }
   }
 
   private cancel(): void {
