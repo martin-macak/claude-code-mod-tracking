@@ -111,9 +111,9 @@ Rules:
 - Only `.md` paths count, in any case. A failed, denied or staged call adds nothing.
 - A relative path joins the cwd: the spawn cwd of a subagent, else the session cwd. `~/` in a mention joins `HOME`.
 - A row is keyed by where the file lands (`file:<real path>`): two spellings of one file, such as `/tmp/a.md` and `/private/tmp/a.md`, are one row. A case alias or a hard link stays a second row. The row keeps the path as first spelled.
-- Mentions: at most 20 paths per prompt or reply, each checked with one stat. A URL, a missing file and tool output are not mentions. A trailing line number (`a.md:42`) or anchor (`a.md#L7`) is cut.
+- Mentions: by default at most 20 paths per prompt or reply (`trackers.file.maxMentionsPerRow`), each checked with one stat. A URL, a missing file and tool output are not mentions. A trailing line number (`a.md:42`) or anchor (`a.md#L7`) is cut.
 - Ignored paths, fixed: a `.git` or `node_modules` folder, auto-memory under `<config dir>/projects/<project>/memory/` or under the `autoMemoryDirectory` setting, and the Claude scratchpad (`claude-<uid>/<project>/<session>/scratchpad/` under any temp folder). The config dir is `CLAUDE_CONFIG_DIR`, else `~/.claude`. Below the session root, only a `.git` or `node_modules` folder below the root counts, so a project inside such a folder keeps its files. `CLAUDE.md`, `AGENTS.md` and plans stay tracked.
-- File rows count against the 500-item session cap like other items. The oldest row goes first.
+- File rows count against the session item cap (500 by default) like other items. The oldest row goes first.
 - The `x` button dismisses a file row for the run. A later write, edit, read or mention of the same file does not bring it back.
 - A resume restores file rows from the stored copy, then from the `Write`, `Edit` and `Read` results and the mentions in the transcript. A subagent's writes come back from the stored copy only: its transcript holds no results.
 - Paths only. The mod never reads or stores file contents.
@@ -178,20 +178,122 @@ Limits: peer sessions in other processes are not tracked. A worktree that git cr
 - Optional: `acli` 1.3.19 or newer, logged in. It refreshes Jira items on its active site.
 - Without a tool, its section says `not installed` or `not logged in`. The items stay in the list.
 
-A tool that fails three times in a row is paused for 5 minutes (circuit breaker). The section says `paused 4m`. `/track refresh` lifts the pause.
+By default, a tool that fails three times in a row is paused for 5 minutes (circuit breaker, see [Configuration](#configuration)). The section says `paused 4m`. `/track refresh` lifts the pause.
 
 ## Persistence
 
-- Items live in `$.state` and are copied to `$.store` 1.5 s after a change. The store keeps the newest 20 sessions, and each session keeps up to 500 items. Only the extracted fields are stored, never raw CLI output.
+- By default, items live in `$.state` and are copied to `$.store` 1.5 s after a change. The store keeps the newest 20 sessions, and each session keeps up to 500 items (see [Configuration](#configuration)). Only the extracted fields are stored, never raw CLI output.
 - `/clear` gives a new session. The items of the old session carry over, with their priority marks. The live list wins over an older stored copy.
 - `x` and `/track clear` remove an item with its mark. An item tracked again starts with no mark. A new session starts with no marks.
 - `--resume` and `--continue` restore the stored copy, then add what the transcript holds. Restored items are due for a refresh.
+
+## Configuration
+
+One JSON file holds the settings of the mod: the global limits, and for each tracker an on/off switch and its limits. With no file, the mod uses the defaults in the tables below.
+
+Where the file is, in this order:
+
+1. `CLAUDE_TRACKER_CONFIG_DIR`, when it is an absolute path: `<dir>/config.json`. The tests use it. A relative value is ignored, with one problem.
+2. `$XDG_CONFIG_HOME/claude-code/mods/tracker/config.json`, when `XDG_CONFIG_HOME` is an absolute path.
+3. `~/.config/claude-code/mods/tracker/config.json`.
+
+One file serves every Claude Code profile. With no absolute `HOME` and no override, the mod uses the defaults and never reads or writes a file.
+
+The file is strict JSON: no comments, no trailing commas. The first start writes the defaults once. Later starts add only the keys that are missing, once, and never change a value. A file with no key missing is never rewritten, whatever its indent, its final newline or its key order. When the mod adds a key, it writes the whole file with a two-space indent. It puts `version`, `global` and `trackers` first and keeps the order of your other top-level keys. Inside an object, your keys keep their order and the added keys come last. It never writes the file in `session.end`. It never rewrites a file that it cannot parse. If a write is refused, the defaults work, `/track` shows one problem, and the mod tries again at the next start.
+
+An excerpt of the default file. The real file also holds `store`, `ui` and the `trackers` block:
+
+```json
+{
+  "version": 1,
+  "global": {
+    "refresh": {
+      "tickMs": 30000,
+      "staleMs": 300000,
+      "captureDebounceMs": 1000,
+      "flushMs": 1500
+    },
+    "tools": {
+      "timeoutMs": 30000,
+      "probeTimeoutMs": 10000,
+      "breaker": {
+        "threshold": 3,
+        "openMs": 300000
+      }
+    }
+  }
+}
+```
+
+To turn a tracker off, write `enabled: false` in its slice. Write the whole slice. `"web": false` does not turn web off:
+
+```json
+{ "version": 1, "trackers": { "web": { "enabled": false } } }
+```
+
+A tracker that is off captures nothing, runs no tool and shows no section. A URL that an off tracker owns is not tracked as a web link either. At the start, the mod drops the items of an off item tracker (`github`, `jira`, `web`, `artifact` and `file`) from the session. The data of `repos`, `processes` and `auto` stays, frozen and hidden.
+
+When a value applies:
+
+- A tracker switch: at the next start of Claude Code, also after `--resume` or a reload.
+- `global.tools.breaker.*`, `trackers.jira.concurrency` and `trackers.repos.maxRepoQueue`: at the next start. They size an object at its construction.
+- Every other value: within one tick (30 s by default). `/track` and `/track refresh` check the file first, so they show an edit at once.
+
+Problems: `/track` lists them under the path of the file, after the list.
+
+- A value of the wrong type, or a decimal, uses its default. A number below the min or above the max uses the bound.
+- A key or a tracker id that the mod does not know is kept in the file and ignored. The problem names it.
+- A file that is not valid JSON, or not one object, keeps the last good values and is never changed. Fix the file. The mod reads it at the next check, with no restart.
+- A file with a `version` above 1 is read and never changed.
+
+Every key. Time values are in milliseconds.
+
+| Key | Default | Min | Max | Meaning |
+| --- | --- | --- | --- | --- |
+| `global.refresh.tickMs` | 30000 | 5000 | 600000 | Time between ticks. |
+| `global.refresh.staleMs` | 300000 | 30000 | 86400000 | Age at which a refreshed item is due again. |
+| `global.refresh.captureDebounceMs` | 1000 | 100 | 60000 | Wait after a new item, then refresh. |
+| `global.refresh.flushMs` | 1500 | 100 | 60000 | Wait after a change, then copy to the store. |
+| `global.tools.timeoutMs` | 30000 | 1000 | 300000 | Timeout of one `gh` or `acli` call. |
+| `global.tools.probeTimeoutMs` | 10000 | 1000 | 120000 | Timeout of the `--version` probe of a tool. |
+| `global.tools.breaker.threshold` | 3 | 1 | 100 | Failures in a row that pause a tool. |
+| `global.tools.breaker.openMs` | 300000 | 1000 | 86400000 | Length of the pause. |
+| `global.store.keepSessions` | 20 | 1 | 200 | Sessions kept in the store. |
+| `global.store.maxItems` | 500 | 200 | 5000 | Items kept for one session. |
+| `global.store.maxDismissed` | 500 | 50 | 5000 | Hidden auto rows remembered. |
+| `global.store.maxBytes` | 3000000 | 100000 | 4000000 | Size cap of the stored copies. The oldest sessions go first. |
+| `global.ui.maxRows` | 300 | 50 | 1000 | Reserved, no effect yet. |
+| `global.ui.sectionRows` | 50 | 5 | 300 | Reserved, no effect yet. |
+| `trackers.<id>.enabled` | true | | | Switch of each of `github`, `jira`, `web`, `artifact`, `file`, `repos`, `processes` and `auto`. |
+| `trackers.github.chunkSize` | 50 | 1 | 100 | Items in one GraphQL call. |
+| `trackers.github.pendingStaleMs` | 60000 | 10000 | 3600000 | Age at which a PR with pending checks is due again. |
+| `trackers.github.discoveryTimeoutMs` | 10000 | 1000 | 120000 | Timeout of the PR discovery call. |
+| `trackers.github.closingRefsPerPr` | 10 | 1 | 50 | Closing references read for one PR. |
+| `trackers.github.headPrsPerBranch` | 5 | 1 | 50 | PRs read for one branch as head. |
+| `trackers.github.basePrsPerBranch` | 10 | 1 | 50 | PRs read for one branch as base. |
+| `trackers.github.maxBodyRefs` | 50 | 1 | 200 | References read from one PR body. |
+| `trackers.github.shortRefKeywords` | `["github", "bug", "issue", "issues", "enhancement", "chore"]` | | 32 words | Lead words that make a bare `#N` in the conversation an issue. A word has 1 to 32 characters: a letter, then letters, digits or `-`. The mod lowercases it. |
+| `trackers.jira.concurrency` | 3 | 1 | 10 | Parallel `acli` calls. |
+| `trackers.jira.epicChildLimit` | 50 | 1 | 500 | Children read for one Epic. |
+| `trackers.file.maxMentionsPerRow` | 20 | 0 | 200 | `.md` paths read from one prompt or reply. 0 reads none. |
+| `trackers.repos.maxRepos` | 50 | 1 | 500 | Repositories listed. |
+| `trackers.repos.maxRepoAgents` | 8 | 1 | 50 | Agents named on one repository. |
+| `trackers.repos.maxRepoQueue` | 32 | 1 | 256 | Repository lookups that wait in the queue. |
+| `trackers.repos.gitTimeoutMs` | 5000 | 500 | 60000 | Timeout of one `git` call for a repository. |
+| `trackers.processes.probeTimeoutMs` | 10000 | 1000 | 120000 | Timeout of a process probe. |
+| `trackers.auto.debounceMs` | 750 | 50 | 60000 | Window that groups the events of auto tracking. |
+| `trackers.auto.gitTimeoutMs` | 5000 | 500 | 60000 | Timeout of one `git` call of auto tracking. |
+| `trackers.auto.workflowIdleMs` | 3600000 | 60000 | 86400000 | Time with no sign of life after which a workflow agent ends as stale. |
+| `trackers.auto.maxBranches` | 12 | 1 | 50 | Branches that the PR lane polls. |
+| `trackers.auto.maxAutoItems` | 100 | 1 | 200 | Items that only auto tracking added. |
+| `trackers.auto.maxProofs` | 100 | 10 | 1000 | Worktree proofs kept. |
+| `trackers.auto.maxAgents` | 200 | 10 | 2000 | Agents kept. |
 
 ## Known limits
 
 - **False positives.** `rank #1` counts as issue 1 of the session repo. The scanner cannot tell it from `fixed in #1`.
 - **Focus after a background change.** A refresh or a round can move a row while the focus ring is on it. The ring stays at its old place. Tab moves it again. The keys still act on the row you picked.
-- **Closing references.** An issue takes a PR's level only from the first 10 closing references that GitHub lists for the PR.
+- **Closing references.** An issue takes a PR's level only from the first closing references that GitHub lists for the PR (10 by default).
 - **Jira sites.** `acli` works on one site at a time. A work item on any other site is `track-only`. The mod never runs `acli jira auth switch`. A host that is not `*.atlassian.net` is also `track-only`.
 - **GitHub Enterprise.** A GHE issue URL is a web link, unless the host is the host of the session repo and `gh` is logged in to it.
 - **Other github.com URLs** (repo pages, commits, files) are web links.
@@ -220,8 +322,8 @@ claude plugin test .
 | --- | --- |
 | `hooks/register.tsx` | Hooks, command, timers, state, store, render. |
 | `hooks/` (rest) | Modules that mix concerns until later layers split them: `contracts.ts`, `model/` (keys, priority, registry, tracked item), `scan/refs.ts`, `ui/view.ts`, `ui/auto-view.ts`. |
-| `core/lib/` | Pure helpers: JSON parsing, `git status` porcelain, shell splitting and the link scanner. |
-| `core/infra/` | The base `Tool` and the circuit breaker, the refresh coordinator, the scheduler and the dismiss store. |
+| `core/lib/` | Pure helpers: JSON parsing, `git status` porcelain, shell splitting, the link scanner, the config schema rules (`normalise.ts`) and the global config (`global-config.ts`). |
+| `core/infra/` | The base `Tool` and the circuit breaker, the refresh coordinator, the scheduler, the dismiss store, and the config path rule, file format and `ConfigManager` (`config-path.ts`, `config-file.ts`, `config-manager.ts`). |
 | `ux/` | The pane and the band. |
 | `trackers/github/` | GitHub items, `GhTool`, PR discovery and the PR body scanner. |
 | `trackers/jira/` | Jira items and `AcliTool`. |
@@ -231,7 +333,8 @@ claude plugin test .
 | `trackers/repos/` | Repository hints, identity, paths, queue, rows, tracker and view. |
 | `trackers/processes/` | Process parsing, probing and view. |
 | `trackers/auto/` | Ledger, worktrees, agents, events and round of auto tracking. |
-| `tests/` | Unit tests, fixtures, and the kit tests of the wiring (`register.test.tsx`, `artifact-wiring.test.tsx`). |
+| `trackers/*/config.ts` | One config spec for each tracker: its schema, defaults and `ConfigSpec`. |
+| `tests/` | Unit tests, fixtures, and the kit tests of the wiring (`register.test.tsx`, `artifact-wiring.test.tsx`, `config-wiring.test.tsx`). |
 
 ## CI
 
