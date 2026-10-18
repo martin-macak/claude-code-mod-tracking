@@ -27,3 +27,4 @@ Copilot specifics:
 - You run as the Copilot agent, so you run in autonomous mode.
 - Use the `github/*` tools to read and the `github-rw/*` tools to reply to threads, resolve them and edit the PR body.
 - The gate in `.github/hooks/verify.json` blocks `report_progress` until `make verify` passes.
+- You only read the GitHub Project (the `project-sync` skill: `sync` and `next` without `--apply`, when your token can read it). You have no write tool for it and no new secret. Never run `add`, `status` or `--apply`. When the PR is ready and closes its issue, write in the PR that the issue should move to `In review` (`AGENTS.md`, "Planning and delivery").

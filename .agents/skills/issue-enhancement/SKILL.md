@@ -16,7 +16,7 @@ This skill is the brainstorm for this flow. Do not invoke `superpowers:brainstor
 - Ask every question with `AskUserQuestion`. 1–4 questions per call, one topic per call. Preferred option first, with ` (Recommended)`. "Other" is always there for free text.
 - Make options concrete guesses from the repo and the idea, so the user reacts instead of writing from scratch.
 - Wait for each answer. Reflect it back in one line before the next topic.
-- Never run `gh issue create` before the user picks "Create" in step 7.
+- Never run `gh issue create` before the user picks "Create" in step 8.
 
 ## Steps
 
@@ -26,13 +26,20 @@ This skill is the brainstorm for this flow. Do not invoke `superpowers:brainstor
 4. **Options.** Offer 2–3 ways to solve it, with trade-offs, and recommend one. Include "do nothing" or "existing workaround" when it is real. The rejected options become "Alternatives considered".
 5. **Scope.** Ask what is out of scope. Check the kept use cases against it; on a conflict, ask which wins and move the loser to a follow-up issue. Propose a split if the idea holds more than one feature.
 6. **Acceptance criteria.** Draft checkable criteria from the use cases. Ask the user to confirm them.
-7. **Preview and create.** Write the body to the scratchpad dir. Show the title and the full body. Ask: "Create", "Edit", "Cancel". On "Create":
+7. **Place it.** The issue joins the delivery plan: `AGENTS.md`, "Planning and delivery". Read the Area options and the Order of the open items first (`project-sync` skill, "Place a new issue"). Ask in one `AskUserQuestion` call:
+   - Milestone: the open milestone that fits, or none.
+   - Blockers: open issues that must close first (seen in step 1 or 5), or none.
+   - Area: an Area option of the project.
+   - Order: a number among the open items. Propose one from the value of the idea. The owner has the last word.
+8. **Preview and create.** Write the body to the scratchpad dir. Show the title, the full body and the placement (milestone, blockers, Area, Order). Ask: "Create", "Edit", "Cancel". On "Create":
 
    ```bash
-   gh issue create --title "<title>" --label enhancement --body-file <scratchpad>/enhancement-body.md
+   gh issue create --title "<title>" --label enhancement --body-file <scratchpad>/enhancement-body.md \
+     [--milestone "<milestone>"] [--blocked-by <n>[,<n>]]
+   node .agents/skills/project-sync/scripts/sync.mjs add <number from the URL> --order <order> --area <area> --release <release> --apply
    ```
 
-   Pass `--label enhancement` by hand; `gh` does not apply the issue form. Give the user the issue URL as a link.
+   Pass `--label enhancement` by hand; `gh` does not apply the issue form. Pass `--milestone` and `--blocked-by` only when the user chose them. Get `Release` by the rule in `AGENTS.md`, "Planning and delivery", "Fields". When `add` cannot write (exit 3), say so and give the user the command to run later. Give the user the issue URL as a link.
 
 Go back to an earlier step when an answer changes it. Stop if the user drops the idea.
 
@@ -69,4 +76,6 @@ Write in short, active sentences. Use `#N` for other issues and PRs.
 | "Problem" restates the proposal | Problem = pain without the solution in it. |
 | Alternatives left empty | Use the options from step 4. |
 | Issue created without the `enhancement` label | Pass `--label enhancement`. |
+| A blocker named only in the body | Pass `--blocked-by`. The native link is the source of the plan. |
+| Issue left out of the project | Step 8 ends with `project-sync add`. |
 | Questions in plain text | Use `AskUserQuestion`. |

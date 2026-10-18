@@ -4,7 +4,7 @@ A Claude Code mod. It tracks the GitHub issues and pull requests, the Jira work 
 
 `gh` and `acli` are optional. With them, the mod also shows live status: title, state, failing checks, Jira status and the Epic tree.
 
-Design: [`docs/superpowers/specs/2026-10-10-artifact-tracking-design.md`](../../docs/superpowers/specs/2026-10-10-artifact-tracking-design.md). Evidence: [`docs/knowledge-base/claude-code-artifact-tracking/`](../../docs/knowledge-base/claude-code-artifact-tracking/README.md).
+Design: [`docs/superpowers/specs/2026-10-10-artifact-tracking-design.md`](../../docs/superpowers/specs/2026-10-10-artifact-tracking-design.md). Evidence: [`docs/knowledge-base/claude-code-artifact-tracking/`](../../docs/knowledge-base/claude-code-artifact-tracking/README.md). Roadmap: the [GitHub Project](https://github.com/users/martin-macak/projects/3) shows the order of work and the status of each item.
 
 ## Load it
 
@@ -261,14 +261,15 @@ Run `make` from the repo root. `make help` lists the targets. Set `PLUGIN=<dir>`
 
 | Target | Action |
 | --- | --- |
-| `init` | Checks `claude`, `mise` and node. Reports `gh`, `acli` and `pre-commit` as present or missing. A missing optional tool does not fail. Warms the TypeScript cache for offline runs. |
+| `init` | Checks `claude`, `mise` and node. Reports `gh`, `acli` and `pre-commit` as present or missing. A missing optional tool does not fail. Warns when the `gh` token lacks the `project` scope, or when `gh` is older than 2.94 (`scripts/dev/gh-check.sh`). Warms the TypeScript cache for offline runs. |
 | `build` | Runs `claude plugin validate` on the plugin, and `--strict` on the repo root (the marketplace), then `typecheck`. Nothing is emitted. Claude Code loads the `.ts` and `.tsx` files as they are. |
 | `typecheck` | Runs `tsc` only. The `typecheck` pre-commit hook calls it. |
 | `lint` | Runs every pre-commit hook on all files. |
 | `hooks` | Installs the `pre-commit`, `commit-msg` and `pre-push` git hooks. |
 | `verify` | The gate before every push: `lint` with auto-fix, then `test`, `e2e-unit` and `test-scripts`. Fails on untracked files, because the hooks skip them. |
 | `test` | Runs `build`, then `claude plugin test`. `check` is an alias. |
-| `test-scripts` | Tests `scripts/dev/install-local-watch.sh`. Needs no `claude`. |
+| `test-scripts` | Tests `scripts/dev/install-local-watch.sh`, `scripts/dev/gh-check.sh` and the scripts of the `pr-review` and `project-sync` skills. It also checks that the docs point to `AGENTS.md`, "Planning and delivery". Needs no `claude`. |
+| `project-sync` | Runs the `project-sync` skill: `ARGS='sync'` (default), `next`, `add`, `status`. `sync`, `next` and `add` are dry runs unless `ARGS` has `--apply`. `status` writes at once. See `AGENTS.md`, "Planning and delivery". |
 | `dist` | Builds `dist/<name>-<version>.zip` from the committed plugin folder at `HEAD`, and `dist/SHA256SUMS`. Uncommitted edits are not in the zip. |
 | `release` | On a clean `main` equal to `origin/main`: runs `test`, then `claude plugin tag --push`. See [Release](#release). |
 | `release-dry` | Prints the tag that `release` would create. |
