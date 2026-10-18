@@ -47,8 +47,9 @@ test('a Claim carries the fields of a ref', () => {
   expect(c.fields.number).toBe(5)
 })
 
-// The node coverage gate wants every source file loaded by a test (`check.mjs`). These modules hold types only, so a
-// test that loads them also pins that no runtime value hides in a file the contract calls type-only. `core/lib/records.ts`
+// The node coverage gate wants every source file loaded by a test (`check.mjs`), but it skips `trackers/<id>/types.ts`:
+// these modules hold types only, and Node 24.21 leaves such a module out of the report. This test loads them anyway and
+// pins that no runtime value hides in a file the contract calls type-only. `core/lib/records.ts`
 // held the record types only until plan Task 4; it holds the record algebra now and `records.test.ts` loads it.
 // Node reads a module with no `type` field as CommonJS and adds `default` and `module.exports` to its namespace.
 const valuesOf = (m: object): string[] => Object.keys(m).filter(k => k !== 'default' && k !== 'module.exports')

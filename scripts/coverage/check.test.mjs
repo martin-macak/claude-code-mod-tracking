@@ -61,6 +61,17 @@ test('skips d.ts, tsx, core/interfaces and files outside the four folders', () =
   assert.equal(r.code, 0, r.err)
 })
 
+test('skips trackers/<id>/types.ts, which holds types only, but not another types.ts', () => {
+  // Node 24.21 leaves a module with no code out of the report. Node 24.15 lists it with no lines.
+  const r = run(['trackers/web/types.ts', 'trackers/auto/types.ts', 'hooks/a.ts'], ['hooks/a.ts'])
+  assert.equal(r.code, 0, r.err)
+  const other = run(['trackers/web/sub/types.ts', 'core/lib/types.ts', 'hooks/types.ts', 'hooks/a.ts'], ['hooks/a.ts'])
+  assert.equal(other.code, 1)
+  assert.match(other.err, /no test loads trackers\/web\/sub\/types\.ts/)
+  assert.match(other.err, /no test loads core\/lib\/types\.ts/)
+  assert.match(other.err, /no test loads hooks\/types\.ts/)
+})
+
 test('a .mts, .cts, .js, .mjs or .cjs source that the report lacks is named too', () => {
   const r = run(
     ['core/a.mts', 'core/b.cts', 'ux/c.js', 'trackers/x/d.mjs', 'hooks/e.cjs', 'hooks/f.ts'],
