@@ -1,7 +1,7 @@
-// LifecycleManager (first slice): the session switch, `session.end` and `/track clear` over data slots.
-// It builds SessionWatch and Persistence from the ports of the first hook of a load. It names no tracker and holds no `$`.
-// `end` stores the leaving session and keeps a snapshot. The switch that follows carries it (`/clear`) or loads the
-// stored copy of the new id (`/resume`). Later tasks add the start sequence, the bus and the tick.
+// LifecycleManager (first slice): the session switch, `session.end`, `/track clear` and the tick over data slots.
+// It builds SessionWatch, Persistence and Scheduler from the ports of the first hook of a load. It names no tracker and
+// holds no `$`. `end` stores the leaving session and keeps a snapshot. The switch that follows carries it (`/clear`) or
+// loads the stored copy of the new id (`/resume`). Later tasks add the start sequence and the bus.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.6. Plan: L3 Task 5, decisions D6, D8, D9.
 
 import type { GlobalConfig } from '../interfaces/config'
@@ -11,11 +11,12 @@ import type { DataSlot, PendingEnd, Snapshot } from '../interfaces/slots'
 import type { FactsPort } from '../interfaces/tracker'
 import { Facts } from './facts'
 import { Persistence } from './persistence'
+import { Scheduler } from './scheduler'
 import { SessionWatch, type Switch } from './session'
 
 export interface LifecycleDeps {
-  /** The item host: its list is the `items` slot, and it hears of a switch. */
-  items: Pick<ItemsHost, 'slot' | 'sessionChanged'>
+  /** The item host: its list is the `items` slot, it hears of a switch, and it has its share of every beat. */
+  items: Pick<ItemsHost, 'slot' | 'sessionChanged' | 'tick'>
   /** Slots that a tracker will own later. Until it moves out of register.tsx, register.tsx passes them here. */
   extraSlots?: readonly DataSlot[]
   global: GlobalConfig
@@ -28,6 +29,7 @@ export class LifecycleManager {
   readonly watch: SessionWatch
   /** register.tsx still calls the store paths itself (touch, flush, read, legacy sweep) until Tasks 8 to 11 move them in. */
   readonly persistence: Persistence
+  private readonly scheduler: Scheduler
 
   constructor(
     private readonly d: LifecycleDeps,
@@ -36,6 +38,13 @@ export class LifecycleManager {
     this.watch = new SessionWatch({
       id: () => ports.session.id(),
       onSwitch: sw => this.onSwitch(sw),
+      log: ports.log,
+    })
+    this.scheduler = new Scheduler({
+      now: () => ports.clock.now(),
+      every: (ms, fn) => ports.clock.every(ms, fn),
+      periodMs: () => d.global.refresh.tickMs,
+      beat: () => this.tick(),
       log: ports.log,
     })
     this.persistence = new Persistence({
@@ -59,9 +68,23 @@ export class LifecycleManager {
     return this.watch.generation
   }
 
-  /** The first step of every hook that reads or writes session data. `ports` are the dispatch's own. */
+  /**
+   * The first step of every hook that reads or writes session data: the session check, then the watchdog of the tick.
+   * `ports` are the dispatch's own.
+   */
   async entry(_ports: Ports): Promise<void> {
     await this.watch.check()
+    await this.scheduler.ensure()
+  }
+
+  /** One beat of the tick: finds a new session id, then gives the item host its share. */
+  async tick(): Promise<void> {
+    try {
+      await this.watch.check()
+    } catch {
+      // The beat still does what it can.
+    }
+    await this.d.items.tick()
   }
 
   /**

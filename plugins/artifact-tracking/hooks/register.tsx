@@ -6,12 +6,10 @@
 import type { EngineInterface, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 import { CircuitBreaker } from '../core/infra/circuit-breaker'
-import type { Timer } from '../core/infra/coordinator'
 import { RefreshCoordinator } from '../core/infra/coordinator'
 import { autoIds, dismiss } from '../core/infra/dismiss'
 import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
 import { LifecycleManager } from '../core/infra/lifecycle'
-import { AutoScheduler } from '../core/infra/scheduler'
 import type { ItemsHost, Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
 import type { DataSlot } from '../core/interfaces/slots'
@@ -32,6 +30,7 @@ import {
   recordTurnEnd,
 } from '../trackers/auto/ledger'
 import { AutoRound } from '../trackers/auto/round'
+import { AutoScheduler } from '../trackers/auto/scheduler'
 import {
   type FileTouch,
   type IgnoreContext,
@@ -301,15 +300,12 @@ let processUiState: ProcessUiState = { breaker: 'closed' }
 let sessionRepo: RepoRef | null | undefined
 let repoTask: Promise<void> | undefined
 let githubHosts: string[] = []
-let tick: Timer | null = null
 /** The session switch, the store and the facts of this load. Built on first use; a hot reload builds a new one. */
 let manager: LifecycleManager | undefined
 /** The first start of a load deletes the keys of the old layout. */
 let legacyDropped = false
 let scheduler: AutoScheduler | undefined
 let round: AutoRound | undefined
-/** `$.clock.now()` when the tick was armed, and at each beat (A1). */
-let lastBeatAt = 0
 /** When the last round ended. The Worktrees note reads it before `snapshot.at` (A22). */
 let lastRoundAt: number | undefined
 let repoTracker: RepoTracker | undefined
@@ -628,62 +624,15 @@ const refused = (ran: unknown): boolean =>
 const failed = (ran: unknown): boolean =>
   refused(ran) || (!!ran && typeof ran === 'object' && (ran as { isError?: unknown }).isError === true)
 
-/**
- * Arms the 30 s tick, or arms it again when the last beat is over two periods old (A1). One refused period ends a
- * `clock.every` for good, so every hook, kick, command and button press calls this. `now` and `lastBeatAt` both come
- * from `$.clock.now()`. Render hooks do not call it: a render must not start timers. Never rejects.
- */
-async function ensureTick($: EngineInterface): Promise<void> {
-  try {
-    const now = await $.clock.now()
-    if (tick && now - lastBeatAt <= 2 * LIMITS.tickMs) return
-    tick?.cancel()
-    lastBeatAt = now
-    tick = $.clock.every(LIMITS.tickMs, async () => {
-      try {
-        lastBeatAt = await $.clock.now()
-      } catch {
-        // Keep the old beat: the watchdog will arm the interval again.
-      }
-      await beat($)
-    })
-  } catch {
-    // No tick this time. The next hook tries again.
-  }
-}
-
-/** One beat: find the session and the repo again (after /clear), then one round and one refresh. */
-async function beat($: EngineInterface): Promise<void> {
-  try {
-    ensureRuntime($)
-    await enter($)
-    await ensureRepo($)
-  } catch {
-    // The beat still kicks what it can.
-  }
-  scheduler?.kick('tick')
-  coordinator?.kick('tick')
-  await probeProcesses($).catch(() => {})
-}
-
-/** Builds the runtime if needed, looks at the tick and runs the session check. The first step of every event hook. */
-async function arm($: EngineInterface): Promise<void> {
-  ensureRuntime($)
-  void ensureTick($)
-  await enter($)
-}
-
 /** An event reason for the round, and a look at the tick. */
 function kickAuto($: EngineInterface, reason: AutoReason): void {
-  void ensureTick($)
+  void enter($).catch(() => {})
   scheduler?.kick(reason)
 }
 
 /** The x button: the `auto` atom first, the items second. The order matters (spec 8, 10.5). */
 async function dismissOne($: EngineInterface, id: string): Promise<void> {
   try {
-    ensureRuntime($)
-    void ensureTick($)
     await enter($)
     await setAuto($, s => dismiss(s, [id]))
     // A repo row: setRepos is the choke point that drops it now that the id is on the dismiss list.
@@ -720,8 +669,13 @@ function factsOf($: EngineInterface): FactsPort {
   return managerOf($).facts
 }
 
-/** The session check: the first step of every hook that reads or writes session data. */
+/**
+ * The first step of every event hook, command and button press: the session check, then the watchdog of the 30 s tick
+ * (A1). One refused period ends a `clock.every` for good, so all of them come through here. Render hooks do not: a
+ * render must not start timers. It builds the runtime first: a switch that loads a session needs the tools.
+ */
 function enter($: EngineInterface): Promise<void> {
+  ensureRuntime($)
   return managerOf($).entry(portsOf($))
 }
 
@@ -809,12 +763,25 @@ function autoSlot($: EngineInterface): DataSlot {
 }
 
 /** The part of the item host that this file still holds. Task 11 moves the rest in. */
-function legacyHost($: EngineInterface): Pick<ItemsHost, 'slot' | 'sessionChanged'> {
+function legacyHost($: EngineInterface): Pick<ItemsHost, 'slot' | 'sessionChanged' | 'tick'> {
   return {
     slot: itemsSlot($),
     sessionChanged: async () => {
       resetRepo($)
       await publishTools($) // the tools atom was reset too
+    },
+    // The share of one beat that is not the session check: find the repo again (after /clear), then one round, one
+    // refresh and one probe of the processes.
+    tick: async () => {
+      try {
+        ensureRuntime($)
+        await ensureRepo($)
+      } catch {
+        // The beat still kicks what it can.
+      }
+      scheduler?.kick('tick')
+      coordinator?.kick('tick')
+      await probeProcesses($).catch(() => {})
     },
   }
 }
@@ -882,7 +849,7 @@ async function resolveRepo($: EngineInterface): Promise<void> {
 /** Scan text and merge the refs into the session list. Never throws into the caller. */
 async function capture($: EngineInterface, text: string, mode: ScanMode, source: Source): Promise<void> {
   if (text === '') return
-  await arm($)
+  await enter($)
   await ensureRepo($)
   if (mode === 'full') await captureMentions($, text, source).catch(() => {}) // a file fault must not stop the refs
   let refs = extractRefs(text, {
@@ -1066,7 +1033,7 @@ async function captureMentions($: EngineInterface, text: string, source: Source)
 /** The Write, Edit and Read hooks: track the Markdown file, then count the call as a sign of life (A7). */
 async function onFileTool($: EngineInterface, tool: string, ran: unknown, agentId: string | undefined): Promise<void> {
   try {
-    await arm($)
+    await enter($)
     const t = touchFromToolResult(tool, ran)
     if (t) await captureFileTouch($, t, agentId)
     await touch($, agentId)
@@ -1445,7 +1412,7 @@ async function prioritize($: EngineInterface, level: Priority | undefined): Prom
   const id = focusedRow
   if (id === undefined) return
   try {
-    await arm($)
+    await enter($)
     await setItems($, list => setPriority(list, id, level))
   } catch {
     return // The mark stays. The person can press again.
@@ -1522,7 +1489,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Artifact' }, async ($, e, next) => {
     const ran = await next(e)
     try {
-      await arm($)
+      await enter($)
       await applyArtifactCall($, e, ran)
     } catch {
       // See above.
@@ -1542,7 +1509,6 @@ export const register: Register = on => {
       // The command may be refused. Capture and restore still work.
     }
     try {
-      ensureRuntime($)
       await enter($) // learns the session id
       await setAuto($, s => pinRoot(s, e.cwd, Date.now())) // A3: a later session.start (reload) keeps the pinned root
     } catch {
@@ -1562,7 +1528,7 @@ export const register: Register = on => {
     } catch {
       // The list stays empty. New rows still land.
     }
-    await ensureTick($) // A1: from the start, with the pane open or closed
+    await enter($).catch(() => {}) // A1: the tick runs from the start, with the pane open or closed
     scheduler?.kick('start')
     return next(e)
   }).catch((_$, e, next) => next(e))
@@ -1578,9 +1544,7 @@ export const register: Register = on => {
   }).catch((_$, e, next) => next(e))
 
   on('command.run', { command: 'track' }, async ($, e) => {
-    ensureRuntime($)
     await enter($)
-    await ensureTick($)
     const g = gh
     const a = acli
     const c = coordinator
@@ -1675,7 +1639,7 @@ export const register: Register = on => {
       },
       refresh: () => {
         ensureRuntime($)
-        void ensureTick($)
+        void enter($).catch(() => {})
         coordinator?.kick('manual')
         scheduler?.kick('manual')
       },
@@ -1733,7 +1697,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'EnterWorktree' }, async ($, e, next) => {
     const ran = await next(e)
     try {
-      await arm($)
+      await enter($)
       const f = fromEnterResult(ran, e.agentId)
       if (f) await setAuto($, s => recordEnter(s, f, Date.now()))
       await touch($, e.agentId)
@@ -1747,7 +1711,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'ExitWorktree' }, async ($, e, next) => {
     const ran = await next(e)
     try {
-      await arm($)
+      await enter($)
       await touch($, e.agentId)
       kickAuto($, 'worktree') // the next round marks the child removed (remove) or keeps it live (keep)
     } catch {
@@ -1759,7 +1723,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     const ran = await next(e)
     try {
-      await arm($)
+      await enter($)
       const f = fromAgentResult(ran)
       if (f?.worktreePath !== undefined) await setAuto($, s => recordAgentResult(s, f, Date.now()))
       await touch($, e.agentId)
@@ -1777,7 +1741,7 @@ export const register: Register = on => {
     const ran = await next(e)
     const command = String(e.command ?? '')
     try {
-      await arm($)
+      await enter($)
       await addProcessRows($, parseBashProcesses(command, ran, e.tool_use_id, Date.now(), cwd))
       const f = fromBash(command, ran, e.agentId)
       const { agentId, branch } = f
@@ -1803,7 +1767,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
     const ran = await next(e)
     try {
-      await arm($)
+      await enter($)
       const taskId =
         ran && typeof ran === 'object' && 'result' in ran && ran.result && typeof ran.result === 'object'
           ? (ran.result as Record<string, unknown>).taskId
@@ -1820,7 +1784,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'TaskStop' }, async ($, e, next) => {
     const ran = await next(e)
     try {
-      await arm($)
+      await enter($)
       const result =
         ran && typeof ran === 'object' && 'result' in ran ? (ran as { result?: unknown }).result : undefined
       await applyTaskUpdate($, processUpdateFromTaskStop(result))
@@ -1844,7 +1808,7 @@ export const register: Register = on => {
       const ran = await next(e)
       try {
         if (!failed(ran)) {
-          await arm($)
+          await enter($)
           enqueueRepoPaths($, hits, e.agentId)
         }
       } catch {
@@ -1861,7 +1825,6 @@ export const register: Register = on => {
     if (e.cwd === undefined && e.parentAgentId === undefined) sessionCwd = await $.session.cwd().catch(() => undefined)
     const out = await next(e)
     try {
-      ensureRuntime($)
       await enter($)
       const f = fromSpawn(e, out)
       if (f) {
@@ -1881,9 +1844,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const out = await next(e)
     try {
-      ensureRuntime($)
-      await enter($)
-      void ensureTick($) // a main-loop turn has no agent id and no fact, but it is the most regular beat to re-arm on
+      await enter($) // a main-loop turn has no agent id and no fact, but it is the most regular beat to re-arm on
       const f = fromTurnEnd(e)
       if (f) {
         const at = Date.now()

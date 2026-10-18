@@ -32,7 +32,7 @@ function slot(id: string, live: Json | undefined, log: string[], persist = true)
   return s
 }
 
-function setup(o: { items?: Json; repos?: Json; seed?: Record<string, Json>; fail?: boolean } = {}) {
+function setup(o: { items?: Json; repos?: Json; seed?: Record<string, Json> } = {}) {
   const w = fakePorts({ store: o.seed })
   const log: string[] = []
   const items = slot('items', 'items' in o ? o.items : ['i1'], log)
@@ -40,6 +40,7 @@ function setup(o: { items?: Json; repos?: Json; seed?: Record<string, Json>; fai
   const processes = slot('processes', [], log)
   const auto = slot('auto', { root: '/work' }, log, false)
   const changed: string[] = []
+  const ticks = { n: 0 }
   const m = new LifecycleManager(
     {
       items: {
@@ -48,13 +49,16 @@ function setup(o: { items?: Json; repos?: Json; seed?: Record<string, Json>; fai
           log.push(`host:${ev.kind}`)
           changed.push(`${ev.from}>${ev.to}`)
         },
+        tick: async () => {
+          ticks.n++
+        },
       },
       extraSlots: [repos, processes, auto],
       global: GLOBAL_DEFAULTS,
     },
     w.ports,
   )
-  return { w, m, log, items, repos, processes, auto, changed }
+  return { w, m, log, items, repos, processes, auto, changed, ticks }
 }
 
 /** Plays a `/clear` or `/resume`: `session.end` sees the leaving id, then the id changes. */
@@ -274,4 +278,53 @@ test('facts is one store for the load', async () => {
   const t = setup()
   t.m.facts.publish('auto.root', { cwd: '/work' })
   expect(t.m.facts.read('auto.root')).toEqual({ cwd: '/work' })
+})
+
+test('entry arms the tick after the check, and each beat gives the item host its share', async () => {
+  const t = setup()
+  await t.m.entry(t.w.ports)
+  expect(t.ticks.n).toBe(0)
+  await t.w.clock.advance(GLOBAL_DEFAULTS.refresh.tickMs)
+  expect(t.ticks.n).toBe(1)
+  await t.w.clock.advance(GLOBAL_DEFAULTS.refresh.tickMs)
+  expect(t.ticks.n).toBe(2)
+})
+
+test('a second entry within two periods arms nothing', async () => {
+  const t = setup()
+  await t.m.entry(t.w.ports)
+  await t.m.entry(t.w.ports)
+  await t.w.clock.advance(GLOBAL_DEFAULTS.refresh.tickMs)
+  expect(t.ticks.n).toBe(1) // one interval, not two
+})
+
+test('entry arms the tick again when a period was refused (the watchdog)', async () => {
+  const t = setup()
+  t.w.clock.refuse('every', GLOBAL_DEFAULTS.refresh.tickMs)
+  await t.m.entry(t.w.ports)
+  await t.w.clock.advance(GLOBAL_DEFAULTS.refresh.tickMs * 2 + 1)
+  expect(t.ticks.n).toBe(0)
+  await t.m.entry(t.w.ports)
+  await t.w.clock.advance(GLOBAL_DEFAULTS.refresh.tickMs)
+  expect(t.ticks.n).toBe(1)
+})
+
+test('a beat finds a new session id and carries the snapshot before the item host ticks', async () => {
+  const t = setup()
+  await t.m.entry(t.w.ports)
+  await leave(t, 'sess-2', 'clear')
+  t.items.live = []
+  await t.w.clock.advance(GLOBAL_DEFAULTS.refresh.tickMs)
+  expect(t.items.live).toEqual(['i1'])
+  expect(t.ticks.n).toBe(1)
+})
+
+test('a beat whose session check fails still gives the item host its share', async () => {
+  const t = setup()
+  await t.m.entry(t.w.ports)
+  t.w.ports.session.id = async () => {
+    throw new Error('no id')
+  }
+  await t.m.tick()
+  expect(t.ticks.n).toBe(1)
 })
