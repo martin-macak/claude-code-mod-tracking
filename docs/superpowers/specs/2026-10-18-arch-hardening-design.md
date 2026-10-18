@@ -396,7 +396,7 @@ Every data write runs the session check first. The steps of a switch, the start 
 
 The four mirrors (`mirror`, `repoMirror`, `processMirror`, `autoMirror`) and the seven `ensureSession` call sites go away. State is intact at `session.end`, so the snapshot replaces them (E6).
 
-**Tick.** One `$.clock.every` at `global.refresh.tickMs`. A refused period ends the interval (E18), so the Scheduler keeps today's watchdog. Every non-render hook entry and `turnComplete` re-arm the tick when the last beat is older than two periods. A change of `tickMs` in the config re-arms the timer. Each beat finds a new session id, gives the item host its share, then emits `tick { now }`. A tracker declares `events.tick = { everyMs?(config), run }`. The Scheduler runs it when `now - last >= everyMs - 1,000` ms, because a timer may fire a little early. The default period is `tickMs`.
+**Tick.** One `$.clock.every` at `global.refresh.tickMs`. A refused period ends the interval (E18), so the Scheduler keeps today's watchdog. Every non-render hook entry and `turnComplete` re-arm the tick when the last beat is older than two periods. Each beat first checks the config file. A change redraws the pane, and a new `tickMs` re-arms the timer. Each beat then finds a new session id, gives the item host its share, then emits `tick { now }`. A tracker declares `events.tick = { everyMs?(config), run }`. The Scheduler runs it when `now - last >= everyMs - 1,000` ms, because a timer may fire a little early. The default period is `tickMs`.
 
 **Data writes.** Persistence writes through with a debounce of `global.refresh.flushMs` (default 1,500 ms) to coalesce. The first change arms the timer, and later ones do not move it. A flush is an entry: the session check runs first, so a `/clear` since the last change saves the old session. A reload loses at most one window (E7).
 
@@ -446,7 +446,7 @@ Each tracker owns the shape of `trackers.<id>`. `enabled` is common to all. `pro
 | `global.ui` | `maxRows` (300; 50 to 1000), `sectionRows` (50; 5 to 300) |
 | `github` | `chunkSize` (50; 1 to 100), `pendingStaleMs` (60000; 10000 to 3600000), `discoveryTimeoutMs` (10000; 1000 to 120000), `closingRefsPerPr` (10; 1 to 50), `headPrsPerBranch` (5; 1 to 50), `basePrsPerBranch` (10; 1 to 50), `maxBodyRefs` (50; 1 to 200), `shortRefKeywords` (a list of at most 32 words; the six words above) |
 | `jira` | `concurrency` (3; 1 to 10), `epicChildLimit` (50; 1 to 500) |
-| `file` | `maxMentionsPerRow` (20; 0 to 200) |
+| `file` | `maxMentionsPerRow` (20; 0 to 200; 0 turns mentions off) |
 | `repos` | `maxRepos` (50; 1 to 500), `maxRepoAgents` (8; 1 to 50), `maxRepoQueue` (32; 1 to 256), `gitTimeoutMs` (5000; 500 to 60000) |
 | `processes` | `probeTimeoutMs` (10000; 1000 to 120000) |
 | `auto` | `debounceMs` (750; 50 to 60000), `gitTimeoutMs` (5000; 500 to 60000), `workflowIdleMs` (3600000; 60000 to 86400000), `maxBranches` (12; 1 to 50), `maxAutoItems` (100; 1 to 200), `maxProofs` (100; 10 to 1000), `maxAgents` (200; 10 to 2000) |
@@ -467,7 +467,7 @@ Only `ConfigManager.reconcile` writes, after the store phase (§5.6, start step 
 
 **Version.** An integer `version`. A missing `version` is read as the known one, and the merge adds it as the first key. A value that is not a whole number of 1 or more is read as the known version, with one problem, and the value is kept. A file whose version the mod cannot reach is read-only: it reads the file, never changes it, and `/track` shows one problem (`The file has version <n>, and this mod knows version <k> only. …`). That covers a higher version, and a lower one for which the manager holds no chain of migrations. Migrations are ordered pure functions `{ from, to, up(raw) }`, applied to a copy. Before a migration write, the manager writes `config.json.v<from>.bak`, and a refused backup stops the upgrade with one problem. Version 1 has no migration.
 
-**Toggles.** `enabled: false`: TrackerHost skips the tracker's `init`, handlers, sections, keys, commands and prompt. A disabled item kind still claims its spans and drops them, so a GitHub URL does not fall through to `web` (my call).
+**Toggles.** `enabled: false`: TrackerHost skips the tracker's `init`, handlers, sections, keys, commands and prompt. It still runs `store`, keeps the slot in `slots()` and skips `dispose` (C4). It reads the toggles once per load (C5). A disabled item kind still claims its spans and drops them, so a GitHub URL does not fall through to `web` (my call).
 
 ### 5.8 Tracker contract
 
@@ -895,6 +895,7 @@ Building L4 settled these points where the text above left them open. Code comme
 | Whether a later `gh stack push` overwrites an edited PR body | Checked at the first push (§8). |
 | A `$.state` write from a `prompt.compose` dispatch | Not needed: SessionWatch never runs there (§5.6). Proven by the L3 validate run. |
 | Delete the trial repo `martin-macak/gh-stack-trial-20261017` | Manual. The token lacks the `delete_repo` scope. |
+| `ToolSpec.timeoutMs` and `ToolSpec.breaker` are declared and not read | L5 wires them in ToolRunner. Until then the tools take `global.tools.*`. |
 | `HostContext.trackers` and `AutoGithub.lane()` (C12) | L5 removes both when the item kinds get handlers. |
 | `PR_LANE_DEFAULTS` repeats two auto defaults (C15) | L5 gives them one owner. |
 | `GITHUB_DEFAULTS.pendingStaleMs` is read by `GitHubItem` through `hydrate` | L5 moves freshness into `ItemKind`. |
