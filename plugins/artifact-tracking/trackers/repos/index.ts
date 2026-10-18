@@ -19,7 +19,7 @@ export { type ReposConfig, reposConfig }
 type Ctx = TrackerContext<ReposConfig, RepoRecord[]>
 type H<E> = Handler<ReposConfig, RepoRecord[], E>
 /** What the row writes need of a context. */
-type RowsCtx = Pick<Ctx, 'data' | 'dismiss'>
+type RowsCtx = Pick<Ctx, 'data' | 'dismiss' | 'config'>
 
 /** The slot value as rows. The family stores Json, so a value that is not a list reads as none. */
 export const asRepoRows = (v: readonly RepoRecord[] | undefined): RepoRecord[] =>
@@ -39,7 +39,7 @@ export async function setRepos(
   const apply = (rows: RepoRecord[]): RepoRecord[] => {
     const out = change(rows)
     const kept = dismissed.size === 0 ? out : out.filter(r => !dismissed.has(repoRowId(r.key)))
-    return capRepoRows(kept.length === out.length ? out : kept)
+    return capRepoRows(kept.length === out.length ? out : kept, ctx.config.slice())
   }
   const cur = asRepoRows(await ctx.data.get())
   if (apply(cur) === cur) return // nothing changed: no write, no flush
@@ -105,7 +105,7 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> {
         ctx,
         rows => {
           let out = rows
-          for (const v of visits) out = upsertRepoRows(out, { ...v, at })
+          for (const v of visits) out = upsertRepoRows(out, { ...v, at }, ctx.config.global().refresh.tickMs)
           return out
         },
         gen,
@@ -174,10 +174,15 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> {
     config: reposConfig,
     init: ctx => {
       // `run` is the raw runner of L3: it ignores the tool name, so `sh -c` (the env probe) goes through it too.
+      // The queue size and the breaker are read once per load: they size an object at construction (C5). The git
+      // timeout and the cache age are read at each use.
+      const b = ctx.config.global().tools.breaker
       svc ??= {
         tracker: new RepoTracker({
           run: (argv, o) => ctx.tools.run('git', argv, o ?? {}),
           now: () => ctx.clock.wall(),
+          limits: () => ({ gitTimeoutMs: ctx.config.slice().gitTimeoutMs, tickMs: ctx.config.global().refresh.tickMs }),
+          breakerLimits: b,
           get rootPath() {
             return rootPath(ctx)
           },

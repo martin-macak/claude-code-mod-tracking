@@ -1,5 +1,6 @@
+import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import type { RepoRecord } from '../../hooks/contracts'
-import { LIMITS } from '../../hooks/contracts'
+import { REPOS_DEFAULTS, type ReposConfig } from './config'
 import type { RepoMode } from './hints'
 import type { RepoVisit } from './tracker'
 
@@ -56,32 +57,40 @@ export function mergeRepoRows(cur: RepoRecord[], added: readonly RepoRecord[]): 
   return out
 }
 
-/** Keeps the `LIMITS.maxRepos` rows with the greatest lastSeen (in their order) and the first `maxRepoAgents` agents of each. */
-export function capRepoRows(rows: RepoRecord[]): RepoRecord[] {
+/** Keeps `maxRepos` rows with the greatest lastSeen (in their order) and the first `maxRepoAgents` agents of each. */
+export function capRepoRows(
+  rows: RepoRecord[],
+  caps: Pick<ReposConfig, 'maxRepos' | 'maxRepoAgents'> = REPOS_DEFAULTS,
+): RepoRecord[] {
   let out = rows
-  if (out.length > LIMITS.maxRepos) {
+  if (out.length > caps.maxRepos) {
     const keep = new Set(
       out
         .map((r, i) => ({ i, at: r.lastSeen }))
         .sort((a, b) => b.at - a.at || b.i - a.i)
-        .slice(0, LIMITS.maxRepos)
+        .slice(0, caps.maxRepos)
         .map(x => x.i),
     )
     out = out.filter((_, i) => keep.has(i))
   }
-  if (out.some(r => r.touchedBy.length > LIMITS.maxRepoAgents))
+  if (out.some(r => r.touchedBy.length > caps.maxRepoAgents))
     out = out.map(r =>
-      r.touchedBy.length > LIMITS.maxRepoAgents ? { ...r, touchedBy: r.touchedBy.slice(0, LIMITS.maxRepoAgents) } : r,
+      r.touchedBy.length > caps.maxRepoAgents ? { ...r, touchedBy: r.touchedBy.slice(0, caps.maxRepoAgents) } : r,
     )
   return out
 }
 
 /**
  * Record one visit. An older visit never moves the name, root, branch or lastSeen of a newer row. A visit within
- * `LIMITS.tickMs` of lastSeen leaves lastSeen alone, so a burst of tool calls is one write. A ref visit (no root)
- * does not rename a row that git already named. Edit wins over read, whatever the age of the visit. Returns `rows` itself when no field changes.
+ * `tickMs` (`global.refresh.tickMs`) of lastSeen leaves lastSeen alone, so a burst of tool calls is one write. A ref
+ * visit (no root) does not rename a row that git already named. Edit wins over read, whatever the age of the visit.
+ * Returns `rows` itself when no field changes.
  */
-export function upsertRepoRows(rows: readonly RepoRecord[], visit: RepoVisit & { at: number }): RepoRecord[] {
+export function upsertRepoRows(
+  rows: readonly RepoRecord[],
+  visit: RepoVisit & { at: number },
+  tickMs: number = GLOBAL_DEFAULTS.refresh.tickMs,
+): RepoRecord[] {
   const i = rows.findIndex(r => r.key === visit.key)
   if (i < 0) {
     return [
@@ -106,7 +115,7 @@ export function upsertRepoRows(rows: readonly RepoRecord[], visit: RepoVisit & {
     if (visit.root !== undefined) next.root = visit.root
     if (visit.branch !== undefined) next.branch = visit.branch
     if (visit.root !== undefined || cur.name === '') next.name = visit.name
-    if (visit.at - cur.lastSeen >= LIMITS.tickMs) next.lastSeen = visit.at
+    if (visit.at - cur.lastSeen >= tickMs) next.lastSeen = visit.at
   }
   if (sameRow(next, cur)) return rows as RepoRecord[]
   const out = rows.slice()

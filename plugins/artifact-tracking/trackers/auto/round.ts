@@ -24,6 +24,7 @@ import { applyDiscovery } from '../github/discovered'
 import { prBodyRefs } from '../github/pr-body'
 import { discoverPrs } from '../github/pr-discovery'
 import { trackAgents } from './agents'
+import type { AutoConfig } from './config'
 import { setRootTop } from './ledger'
 import { trackWorktrees } from './worktrees'
 
@@ -36,6 +37,18 @@ export type AutoLane = {
   basePrsPerBranch: number
   closingRefsPerPr: number
   maxBodyRefs: number
+}
+
+/**
+ * The numbers a round reads, once per step: the auto slice, the two global ones and the github lane. A round that gets
+ * none uses today's numbers.
+ */
+export type RoundCaps = Pick<AutoConfig, 'maxBranches' | 'maxAutoItems' | 'maxProofs' | 'workflowIdleMs'> & {
+  /** `global.refresh.staleMs`: how long a discovered record stays current (half of it). */
+  staleMs: number
+  /** `global.store.maxItems`: the cap on the items that are not auto-only. */
+  maxItems: number
+  lane: AutoLane
 }
 
 export type RoundDeps = {
@@ -63,6 +76,8 @@ export type RoundDeps = {
   ) => Promise<DiscoveryApplied>
   /** New keys to refresh: register passes coordinator.kick('capture', keys). */
   onAdded: (keys: string[]) => void
+  /** Read at each step, so a changed config file shows at the next round. Absent: today's numbers. */
+  caps?: () => RoundCaps
 }
 
 /** The reasons that start a PR step. Another reason starts one only when the tracked branches changed. */
@@ -189,7 +204,9 @@ export class AutoRound {
     } catch {
       masterCwd = null
     }
-    const committed = (await this.save(cur => this.snapshotOf(cur, list, live, masterCwd, at, git, agentList))) ?? s
+    const caps = this.d.caps?.()
+    const committed =
+      (await this.save(cur => this.snapshotOf(cur, list, live, masterCwd, at, git, agentList, caps))) ?? s
 
     // Step 3: pull requests, in their own lane (spec 8.3, A16).
     const branches = committed.snapshot?.branches ?? []
@@ -207,9 +224,10 @@ export class AutoRound {
     at: number,
     git: Health,
     agentList: Health,
+    caps: RoundCaps | undefined,
   ): AutoState {
-    const wv = trackWorktrees(cur, list, at)
-    const av = trackAgents(wv.state, live, list, masterCwd, at)
+    const wv = trackWorktrees(cur, list, at, caps)
+    const av = trackAgents(wv.state, live, list, masterCwd, at, caps?.workflowIdleMs)
     const prev = cur.snapshot
     const next: AutoSnapshot = {
       at,
@@ -274,7 +292,9 @@ export class AutoRound {
     await this.d.ghReady()
     const repo = await this.d.repo()
     const at = this.d.now()
-    const out = await discoverPrs(this.d.gh, repo, branches, at, defaultBranch)
+    const caps = this.d.caps?.()
+    const lane = caps ? { ...caps.lane, maxBranches: caps.maxBranches, maxAutoItems: caps.maxAutoItems } : undefined
+    const out = await discoverPrs(this.d.gh, repo, branches, at, defaultBranch, lane)
     if (!out.ok) {
       await this.d.save(cur =>
         withPrs(cur, {
@@ -287,9 +307,19 @@ export class AutoRound {
       return
     }
     const refsByPr = new Map<string, Ref[]>()
-    for (const pr of out.prs) refsByPr.set(prKey(pr), prBodyRefs(pr, this.d.githubHosts()))
+    for (const pr of out.prs) refsByPr.set(prKey(pr), prBodyRefs(pr, this.d.githubHosts(), caps?.lane.maxBodyRefs))
+    const applied = caps
+      ? { staleMs: caps.staleMs, maxAutoItems: caps.maxAutoItems, maxItems: caps.maxItems }
+      : undefined
     const r = await this.d.applyItems((list, dismissed) =>
-      applyDiscovery(list, { prs: out.prs, refsByPr, complete: out.complete, dismissed, at }),
+      applyDiscovery(list, {
+        prs: out.prs,
+        refsByPr,
+        complete: out.complete,
+        dismissed,
+        at,
+        ...(applied ? { caps: applied } : {}),
+      }),
     )
     this.d.onAdded(r.added)
     await this.d.save(cur =>

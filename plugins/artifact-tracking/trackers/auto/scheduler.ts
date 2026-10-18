@@ -3,13 +3,15 @@
 
 import type { Timer } from '../../core/interfaces/ports'
 import type { AutoReason, Now } from '../../hooks/contracts'
-import { LIMITS } from '../../hooks/contracts'
+import { AUTO_DEFAULTS } from './config'
 
 export type SchedulerDeps = {
   now: Now
   after: (ms: number, fn: () => void | Promise<void>) => Timer
   run: (reasons: ReadonlySet<AutoReason>) => Promise<void>
   onError?: (err: unknown) => void
+  /** The window of the events, read at each kick. Default: `trackers.auto.debounceMs`. */
+  debounceMs?: () => number
 }
 
 export class AutoScheduler {
@@ -28,7 +30,7 @@ export class AutoScheduler {
   }
 
   /**
-   * `tick` and `manual` run at once. The other reasons join a fixed window of `LIMITS.autoDebounceMs`
+   * `tick` and `manual` run at once. The other reasons join a fixed window of `debounceMs()`
    * that the first of them arms. A later kick joins it and does not move its end, so a burst of events
    * (a workflow that spawns many agents) gives at most one round per window.
    */
@@ -39,14 +41,15 @@ export class AutoScheduler {
     }
     this.pending.add(reason)
     const at = this.deps.now()
-    if (this.timer && at - this.timerAt > 2 * LIMITS.autoDebounceMs) {
+    const window = this.deps.debounceMs?.() ?? AUTO_DEFAULTS.debounceMs
+    if (this.timer && at - this.timerAt > 2 * window) {
       // The timer is long overdue: the engine never ran it. Arm a new one. The pending reasons stay.
       this.timer.cancel()
       this.timer = undefined
     }
     if (this.timer) return
     this.timerAt = at
-    this.timer = this.deps.after(LIMITS.autoDebounceMs, () => {
+    this.timer = this.deps.after(window, () => {
       const reasons = this.pending
       this.pending = new Set()
       this.timer = undefined

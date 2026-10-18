@@ -130,6 +130,11 @@ function build(ctx: Ctx, gh: AutoGithub): Services {
     },
     save: change => setAuto(ctx, change),
     git: (argv, cwd) => ctx.tools.run('git', ['git', ...argv], { cwd, timeoutMs: ctx.config.slice().gitTimeoutMs }),
+    // The caps are read at each step, so a changed file shows at the next round. The staleMs and maxItems are global.
+    caps: () => {
+      const g = ctx.config.global()
+      return { ...ctx.config.slice(), staleMs: g.refresh.staleMs, maxItems: g.store.maxItems, lane: gh.lane() }
+    },
     listAgents: async () =>
       (await ctx.env.agents()).map(a => ({
         id: a.id,
@@ -159,6 +164,7 @@ function build(ctx: Ctx, gh: AutoGithub): Services {
   const scheduler = new AutoScheduler({
     now: () => ctx.clock.wall(),
     after: (ms, fn) => ctx.clock.after(ms, fn),
+    debounceMs: () => ctx.config.slice().debounceMs,
     run: async reasons => {
       await round.run(reasons)
       ctx.facts.publish(FACT_CHECKED_AT, ctx.clock.wall()) // the Worktrees note reads it before `snapshot.at` (A22)
@@ -185,7 +191,7 @@ export function autoTracker(gh: AutoGithub): Tracker<AutoConfig, AutoState> {
 
   const onEnter: H<ToolCallEvent> = soft('EnterWorktree', async (ctx, ev) => {
     const f = fromEnterResult(ev.result, ev.agentId)
-    if (f) await setAuto(ctx, s => recordEnter(s, f, ctx.clock.wall()))
+    if (f) await setAuto(ctx, s => recordEnter(s, f, ctx.clock.wall(), ctx.config.slice().maxProofs))
     await touch(ctx, ev.agentId)
     kick('worktree')
   })
@@ -198,7 +204,8 @@ export function autoTracker(gh: AutoGithub): Tracker<AutoConfig, AutoState> {
 
   const onAgent: H<ToolCallEvent> = soft('Agent', async (ctx, ev) => {
     const f = fromAgentResult(ev.result)
-    if (f?.worktreePath !== undefined) await setAuto(ctx, s => recordAgentResult(s, f, ctx.clock.wall()))
+    if (f?.worktreePath !== undefined)
+      await setAuto(ctx, s => recordAgentResult(s, f, ctx.clock.wall(), ctx.config.slice().maxProofs))
     await touch(ctx, ev.agentId)
     kick('agent')
   })
@@ -217,7 +224,7 @@ export function autoTracker(gh: AutoGithub): Tracker<AutoConfig, AutoState> {
 
   const onSpawn: H<AgentSpawnEvent> = soft('agent.spawn', async (ctx, ev) => {
     const f = fromSpawn(ev.input, ev.answer)
-    if (f) await setAuto(ctx, s => recordSpawn(s, f, ctx.clock.wall(), ev.sessionCwd))
+    if (f) await setAuto(ctx, s => recordSpawn(s, f, ctx.clock.wall(), ev.sessionCwd, ctx.config.slice().maxAgents))
     kick('agent')
   })
 

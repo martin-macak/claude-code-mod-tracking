@@ -3,7 +3,8 @@
 
 import { agentWorktreePath, basename, findByPath, locate, normPath } from '../../core/lib/porcelain'
 import type { AutoState, GitWorktree, WorktreeProof, WorktreeRow } from '../../hooks/contracts'
-import { LIMITS, worktreeId } from '../../hooks/contracts'
+import { worktreeId } from '../../hooks/contracts'
+import { AUTO_DEFAULTS, type AutoConfig } from './config'
 
 export type WorktreeView = { state: AutoState; rows: WorktreeRow[]; branches: string[]; overflow: number }
 
@@ -41,7 +42,13 @@ function newProofs(
   return added
 }
 
-export function trackWorktrees(s: AutoState, list: readonly GitWorktree[], at: number): WorktreeView {
+/** `caps` are `maxProofs` (room for new proofs) and `maxBranches` (the branches the PR lane polls). */
+export function trackWorktrees(
+  s: AutoState,
+  list: readonly GitWorktree[],
+  at: number,
+  caps: Pick<AutoConfig, 'maxProofs' | 'maxBranches'> = AUTO_DEFAULTS,
+): WorktreeView {
   const top = s.root?.top
   if (typeof top !== 'string' || list.length === 0) return { state: s, rows: [], branches: [], overflow: 0 }
   const mainRec = list[0]!
@@ -51,7 +58,7 @@ export function trackWorktrees(s: AutoState, list: readonly GitWorktree[], at: n
 
   // 1. New proofs from the convention paths, only while there is room. A full list takes no new proof: a path that
   //    the cap evicted would be proved again every round, and each round would write `auto` (A22).
-  const room = Math.max(0, LIMITS.maxProofs - s.worktrees.length)
+  const room = Math.max(0, caps.maxProofs - s.worktrees.length)
   const added = newProofs(s, list, main, new Set(s.worktrees.map(p => p.path)), at, room)
   const all = added.length > 0 ? [...s.worktrees, ...added] : s.worktrees
 
@@ -134,7 +141,7 @@ export function trackWorktrees(s: AutoState, list: readonly GitWorktree[], at: n
   return {
     state: changed ? { ...s, worktrees: updated } : s,
     rows,
-    branches: ordered.slice(0, LIMITS.maxBranches),
-    overflow: Math.max(0, ordered.length - LIMITS.maxBranches),
+    branches: ordered.slice(0, caps.maxBranches),
+    overflow: Math.max(0, ordered.length - caps.maxBranches),
   }
 }

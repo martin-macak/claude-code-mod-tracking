@@ -1,9 +1,10 @@
 import { CircuitBreaker } from '../../core/infra/circuit-breaker'
+import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import { normPath } from '../../core/lib/porcelain'
 import { resolvePath } from '../../core/lib/shell'
 import type { RepoRef, Runner, RunResult } from '../../hooks/contracts'
-import { LIMITS } from '../../hooks/contracts'
 import { parseRemote } from '../../hooks/scan/refs'
+import { REPOS_DEFAULTS } from './config'
 import type { RepoMode } from './hints'
 import { type Env, isNoisePath, localIdentity, normalizeRemoteUrl, remoteKey } from './identity'
 import { cleanPath, isAbs, maybeDir, within } from './paths'
@@ -21,6 +22,13 @@ type TrackerDeps = {
   now: () => number
   rootPath?: string
   rootRepo?: RepoRef | null
+  /**
+   * The git timeout (`trackers.repos.gitTimeoutMs`) and how long a cached answer lives (`global.refresh.tickMs`), read
+   * at each use. Absent: today's numbers.
+   */
+  limits?: () => { gitTimeoutMs: number; tickMs: number }
+  /** `global.tools.breaker`, read once per load: the tracker builds its breaker from it. Absent: the default numbers. */
+  breakerLimits?: { threshold: number; openMs: number }
 }
 
 export type RepoVisit = Omit<ResolvedRepo, 'common'> & { branch?: string; touchedBy: string; mode: RepoMode }
@@ -29,8 +37,8 @@ export type RepoVisit = Omit<ResolvedRepo, 'common'> & { branch?: string; touche
  * Every git and sh call runs in `/`: a cwd that is a file or a missing directory would make the spawn itself fail.
  * `LC_ALL=C` keeps git's messages in English, so `MISSING` matches under any locale.
  */
-async function call(run: Runner, argv: readonly string[]): Promise<RunResult> {
-  return run(argv, { cwd: '/', timeoutMs: LIMITS.gitTimeoutMs, env: { LC_ALL: 'C' } })
+async function call(run: Runner, argv: readonly string[], timeoutMs: number): Promise<RunResult> {
+  return run(argv, { cwd: '/', timeoutMs, env: { LC_ALL: 'C' } })
 }
 
 const MAX_WALK = 4
@@ -49,7 +57,7 @@ function visitOf(r: ResolvedRepo, branch: string | undefined, touchedBy: string,
 }
 
 export class RepoTracker {
-  private readonly breaker = new CircuitBreaker()
+  private readonly breaker: CircuitBreaker
   /** Repos stay for the session. null and 'missing' expire after one tick. */
   private readonly cache = new Map<string, { value: Answer; at: number }>()
   private readonly pending = new Map<string, Promise<Answer | 'retry'>>()
@@ -62,7 +70,18 @@ export class RepoTracker {
   private readonly branchPending = new Map<string, Promise<void>>()
   private env: Promise<Env | undefined> | undefined
 
-  constructor(private readonly d: TrackerDeps) {}
+  constructor(private readonly d: TrackerDeps) {
+    this.breaker = new CircuitBreaker(d.breakerLimits?.threshold, d.breakerLimits?.openMs)
+  }
+
+  private get limits(): { gitTimeoutMs: number; tickMs: number } {
+    return this.d.limits?.() ?? { gitTimeoutMs: REPOS_DEFAULTS.gitTimeoutMs, tickMs: GLOBAL_DEFAULTS.refresh.tickMs }
+  }
+
+  /** One git or sh call, with the timeout the config says now. */
+  private git(argv: readonly string[]): Promise<RunResult> {
+    return call(this.d.run, argv, this.limits.gitTimeoutMs)
+  }
 
   private ownRemoteKey(): string | undefined {
     return this.d.rootRepo ? remoteKey(this.d.rootRepo) : undefined
@@ -105,7 +124,7 @@ export class RepoTracker {
 
   private async probeEnv(): Promise<Env | undefined> {
     try {
-      const r = await call(this.d.run, ['sh', '-c', 'printf "%s\\n%s\\n%s\\n" "$HOME" "$TMPDIR" "$CLAUDE_CONFIG_DIR"'])
+      const r = await this.git(['sh', '-c', 'printf "%s\\n%s\\n%s\\n" "$HOME" "$TMPDIR" "$CLAUDE_CONFIG_DIR"'])
       if (r.exitCode !== 0) return undefined
       const [home = '', tmp = '', cfg = ''] = r.stdout.split('\n').map(x => x.trim())
       if (!home.startsWith('/')) return undefined
@@ -181,7 +200,7 @@ export class RepoTracker {
     const hit = this.cache.get(dir)
     if (hit) {
       if (hit.value !== null && hit.value !== 'missing') return hit.value
-      if (this.d.now() - hit.at < LIMITS.tickMs) return hit.value
+      if (this.d.now() - hit.at < this.limits.tickMs) return hit.value
       this.cache.delete(dir)
     }
     let p = this.pending.get(dir)
@@ -212,12 +231,12 @@ export class RepoTracker {
         .split('\n')
         .map(x => x.trim())
         .filter(x => x !== '')
-    let r = await call(this.d.run, [...base, '--path-format=absolute', '--show-toplevel', '--git-common-dir'])
+    let r = await this.git([...base, '--path-format=absolute', '--show-toplevel', '--git-common-dir'])
     if (r.exitCode !== 0) return MISSING.test(r.stderr) ? 'missing' : null
     let out = lines(r)
     if (out.length === 0) return null
     if (!out.every(isAbsolute)) {
-      r = await call(this.d.run, [...base, '--show-toplevel', '--git-common-dir'])
+      r = await this.git([...base, '--show-toplevel', '--git-common-dir'])
       if (r.exitCode !== 0) return MISSING.test(r.stderr) ? 'missing' : null
       out = lines(r)
       if (!out[0] || !isAbsolute(out[0])) return null
@@ -259,7 +278,7 @@ export class RepoTracker {
 
     let remote = ''
     try {
-      const r = await call(this.d.run, ['git', '-C', root, 'remote', 'get-url', 'origin'])
+      const r = await this.git(['git', '-C', root, 'remote', 'get-url', 'origin'])
       if (r.exitCode === 0) remote = r.stdout.trim()
     } catch {
       this.breaker.failure(now) // never cache a local identity because of a fault
@@ -268,7 +287,7 @@ export class RepoTracker {
     let branch = ''
     let branchFailed = false
     try {
-      const b = await call(this.d.run, ['git', '-C', root, 'branch', '--show-current'])
+      const b = await this.git(['git', '-C', root, 'branch', '--show-current'])
       if (b.exitCode === 0) branch = b.stdout.trim()
     } catch {
       branchFailed = true
@@ -289,7 +308,7 @@ export class RepoTracker {
   }
 
   /**
-   * The branch of a known repo, re-read at most once per `LIMITS.tickMs`. It runs inside the queued job, never on the
+   * The branch of a known repo, re-read at most once per `tickMs`. It runs inside the queued job, never on the
    * hook path. Parallel visits share one call. A fault (or an open breaker) keeps the old value and `at`.
    * `force` skips the TTL: the command that caused the visit (`git checkout`) has ended and may have moved HEAD. A
    * call that started before the command ended may be stale, so a forced read waits for it and then reads again.
@@ -299,7 +318,7 @@ export class RepoTracker {
   private async freshBranch(root: string, force = false): Promise<string | undefined> {
     if (force) await this.branchPending.get(root)
     const cur = this.branches.get(root)
-    if (!force && cur && this.d.now() - cur.at < LIMITS.tickMs) return cur.branch
+    if (!force && cur && this.d.now() - cur.at < this.limits.tickMs) return cur.branch
     let p = this.branchPending.get(root)
     if (!p) {
       p = (async () => {
@@ -307,7 +326,7 @@ export class RepoTracker {
           const now = this.d.now()
           if (!this.breaker.allows(now)) return
           try {
-            const b = await call(this.d.run, ['git', '-C', root, 'branch', '--show-current'])
+            const b = await this.git(['git', '-C', root, 'branch', '--show-current'])
             this.breaker.success()
             const branch = b.exitCode === 0 ? b.stdout.trim() : ''
             this.branches.set(root, branch ? { branch, at: now } : { at: now })

@@ -11,7 +11,7 @@ import type {
   TurnCompleteReason,
   WorktreeProof,
 } from '../../hooks/contracts'
-import { LIMITS } from '../../hooks/contracts'
+import { AUTO_DEFAULTS } from './config'
 
 /** A bump of `lastActiveAt` younger than this is skipped, so a busy agent does not write `auto` per command. */
 const ACTIVITY_MIN_MS = 60_000
@@ -37,11 +37,20 @@ function isRootPath(s: AutoState, path: string): boolean {
   return path === normPath(s.root.cwd) || (typeof s.root.top === 'string' && path === normPath(s.root.top))
 }
 
-/** Adds a proof for `path`, or updates the branch of the one that exists. The root path never becomes a proof. */
-function withProof(s: AutoState, path: string, make: () => WorktreeProof, branch?: string): AutoState {
+/**
+ * Adds a proof for `path`, or updates the branch of the one that exists. The root path never becomes a proof. The list
+ * keeps the newest `maxProofs`.
+ */
+function withProof(
+  s: AutoState,
+  path: string,
+  make: () => WorktreeProof,
+  branch: string | undefined,
+  maxProofs: number,
+): AutoState {
   if (isRootPath(s, path)) return s
   const i = s.worktrees.findIndex(w => w.path === path)
-  if (i < 0) return { ...s, worktrees: [...s.worktrees, make()].slice(-LIMITS.maxProofs) }
+  if (i < 0) return { ...s, worktrees: [...s.worktrees, make()].slice(-maxProofs) }
   const w = s.worktrees[i]!
   if (branch === undefined || w.branch === branch) return s
   const worktrees = s.worktrees.slice()
@@ -50,7 +59,12 @@ function withProof(s: AutoState, path: string, make: () => WorktreeProof, branch
 }
 
 /** Proof 1 (A4): an EnterWorktree result path. */
-export function recordEnter(s: AutoState, ev: EnterFacts, at: number): AutoState {
+export function recordEnter(
+  s: AutoState,
+  ev: EnterFacts,
+  at: number,
+  maxProofs: number = AUTO_DEFAULTS.maxProofs,
+): AutoState {
   const path = normPath(ev.path)
   return withProof(
     s,
@@ -62,6 +76,7 @@ export function recordEnter(s: AutoState, ev: EnterFacts, at: number): AutoState
       return p
     },
     ev.branch,
+    maxProofs,
   )
 }
 
@@ -101,7 +116,13 @@ const indexOfAgent = (s: AutoState, id: string): number => s.agents.findIndex(a 
  * Records an `agent.spawn`. A second spawn for a known id (a retry) keeps the first record (A5).
  * The proof's cwd is `ev.cwd`, else the parent's recorded cwd for a nested child, else `sessionCwd` (A6).
  */
-export function recordSpawn(s: AutoState, ev: SpawnFacts, at: number, sessionCwd?: string): AutoState {
+export function recordSpawn(
+  s: AutoState,
+  ev: SpawnFacts,
+  at: number,
+  sessionCwd?: string,
+  maxAgents: number = AUTO_DEFAULTS.maxAgents,
+): AutoState {
   if (indexOfAgent(s, ev.agentId) >= 0) return s
   const parent = ev.parentAgentId === undefined ? undefined : s.agents.find(a => a.id === ev.parentAgentId)
   const cwd = ev.cwd ?? (ev.parentAgentId === undefined ? sessionCwd : parent?.cwd)
@@ -114,7 +135,7 @@ export function recordSpawn(s: AutoState, ev: SpawnFacts, at: number, sessionCwd
   if (ev.parentAgentId !== undefined) a.parentId = ev.parentAgentId
   if (ev.workflow) a.workflow = { runId: ev.workflow.runId, agentIndex: ev.workflow.agentIndex }
   if (cwd !== undefined) a.cwd = cwd
-  return { ...s, agents: [...s.agents, a].slice(-LIMITS.maxAgents) }
+  return { ...s, agents: [...s.agents, a].slice(-maxAgents) }
 }
 
 /**
@@ -133,7 +154,12 @@ export function recordActivity(s: AutoState, agentId: string, at: number): AutoS
 }
 
 /** Proof 2 (A4): the exact `worktreePath` of an Agent result. Also sets the agent's path and branch. */
-export function recordAgentResult(s: AutoState, ev: AgentResultFacts, at: number): AutoState {
+export function recordAgentResult(
+  s: AutoState,
+  ev: AgentResultFacts,
+  at: number,
+  maxProofs: number = AUTO_DEFAULTS.maxProofs,
+): AutoState {
   if (ev.worktreePath === undefined) return s
   const path = normPath(ev.worktreePath)
   if (isRootPath(s, path)) return s
@@ -146,6 +172,7 @@ export function recordAgentResult(s: AutoState, ev: AgentResultFacts, at: number
       return p
     },
     ev.worktreeBranch,
+    maxProofs,
   )
   const i = indexOfAgent(next, ev.agentId)
   if (i >= 0) {

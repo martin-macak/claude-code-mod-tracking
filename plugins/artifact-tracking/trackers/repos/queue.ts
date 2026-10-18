@@ -1,4 +1,4 @@
-import { LIMITS } from '../../hooks/contracts'
+import { REPOS_DEFAULTS } from './config'
 
 /**
  * Runs repo jobs one after another, off the hook path. A job that throws or rejects does not stop the next one.
@@ -10,7 +10,7 @@ export class RepoQueue {
   private readonly waiting = new Set<string>()
   private count = 0
 
-  constructor(private readonly max: number = LIMITS.maxRepoQueue) {}
+  constructor(private readonly max: number = REPOS_DEFAULTS.maxRepoQueue) {}
 
   /** `false` only when the queue is full. A key that already waits counts as taken care of: `true`. */
   push(key: string, job: () => Promise<void>): boolean {

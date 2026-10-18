@@ -6,19 +6,23 @@ import { dismiss } from '../../core/infra/dismiss'
 import type { Json } from '../../core/interfaces/items'
 import type { SlotPort } from '../../core/interfaces/ports'
 import type { DismissPort } from '../../core/interfaces/tracker'
+import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import type { AutoState } from '../../hooks/contracts'
 import { emptyAuto } from './ledger'
 
 export const AUTO_SLOT = 'auto'
 
-/** The dismiss list over the `auto` slot. `add` also drops the rows of the ids (and an agent's subtree) from the snapshot. */
-export function autoDismiss(slot: SlotPort): DismissPort {
+/**
+ * The dismiss list over the `auto` slot. `add` also drops the rows of the ids (and an agent's subtree) from the
+ * snapshot, and keeps the last `max()` ids. `max` is read at each `add`.
+ */
+export function autoDismiss(slot: SlotPort, max: () => number = () => GLOBAL_DEFAULTS.store.maxDismissed): DismissPort {
   return {
     list: async () => new Set(((await slot.get(AUTO_SLOT)) as unknown as AutoState | undefined)?.dismissed ?? []),
     add: async ids => {
       await slot.update(
         AUTO_SLOT,
-        cur => dismiss((cur as unknown as AutoState | undefined) ?? emptyAuto(), ids) as unknown as Json,
+        cur => dismiss((cur as unknown as AutoState | undefined) ?? emptyAuto(), ids, max()) as unknown as Json,
       )
     },
   }

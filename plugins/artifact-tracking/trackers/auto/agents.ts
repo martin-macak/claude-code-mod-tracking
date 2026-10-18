@@ -3,7 +3,8 @@
 
 import { agentWorktreePath, basename, findByPath, locate, normPath } from '../../core/lib/porcelain'
 import type { AgentProof, AgentRow, AgentRowState, AutoState, GitWorktree, LiveAgent } from '../../hooks/contracts'
-import { agentRowId, LIMITS, MASTER_ID } from '../../hooks/contracts'
+import { agentRowId, MASTER_ID } from '../../hooks/contracts'
+import { AUTO_DEFAULTS } from './config'
 import { type AgentPatch, patchRecord } from './ledger'
 
 /** The one A7 table: an `AgentStatus` word to a row state. An unknown word is running (K11). */
@@ -24,9 +25,9 @@ export function classifyStatus(status: string, teammate: boolean): AgentRowState
 }
 
 /** Status, listed, endedAt and failed per A7. Workflow agents end by the idle bound. */
-function refreshAgent(a: AgentProof, live: readonly LiveAgent[] | null, at: number): AgentProof {
+function refreshAgent(a: AgentProof, live: readonly LiveAgent[] | null, at: number, idleMs: number): AgentProof {
   if (a.kind === 'workflow') {
-    const idle = at - (a.lastActiveAt ?? a.spawnedAt) > LIMITS.workflowIdleMs
+    const idle = at - (a.lastActiveAt ?? a.spawnedAt) > idleMs
     return a.endedAt === undefined && idle ? patchRecord(a, { endedAt: at, stale: true }) : a
   }
   if (live === null) return a
@@ -58,17 +59,19 @@ function rowState(a: AgentProof): AgentRowState {
   return classifyStatus(a.status ?? 'running', a.teammate === true)
 }
 
+/** `idleMs` is `workflowIdleMs`: a workflow agent with no sign of life for that long ends as stale. */
 export function trackAgents(
   s: AutoState,
   live: readonly LiveAgent[] | null,
   list: readonly GitWorktree[],
   masterCwd: string | null,
   at: number,
+  idleMs: number = AUTO_DEFAULTS.workflowIdleMs,
 ): { state: AutoState; rows: AgentRow[] } {
   // 1. Status and end per agent.
   let changed = false
   const agents = s.agents.map(a => {
-    const next = refreshAgent(a, live, at)
+    const next = refreshAgent(a, live, at, idleMs)
     if (next !== a) changed = true
     return next
   })

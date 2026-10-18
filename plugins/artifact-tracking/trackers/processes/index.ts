@@ -23,11 +23,14 @@ export { type ProcessesConfig, processesConfig }
 
 type H<E> = Handler<ProcessesConfig, Json, E>
 
-/** The tracker is built once per load, so its breaker lives as long as the load (plan decision D16). */
+/**
+ * The tracker is built once per load, so its breaker lives as long as the load (plan decision D16). The breaker numbers
+ * come from `global.tools.breaker`, read once, at `init`: the breaker is an object that holds them (decision C5).
+ */
 export function processesTracker(): Tracker<ProcessesConfig, Json> {
   let state: ProbeState | undefined
-  const live = (): ProbeState => {
-    state ??= { breaker: new CircuitBreaker() }
+  const live = (b?: { threshold: number; openMs: number }): ProbeState => {
+    state ??= { breaker: b ? new CircuitBreaker(b.threshold, b.openMs) : new CircuitBreaker() }
     return state
   }
 
@@ -74,8 +77,8 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> {
     id: 'processes',
     order: 80,
     config: processesConfig,
-    init: () => {
-      live() // builds the breaker once; a second init keeps it
+    init: ctx => {
+      live(ctx.config.global().tools.breaker) // builds the breaker once; a second init keeps it
     },
     store: ctx => ctx.config.slice(),
     data: {

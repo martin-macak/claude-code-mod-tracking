@@ -162,7 +162,7 @@ function managerOf($: EngineInterface): LifecycleManager {
     {
       trackers,
       items: host,
-      dismiss: p => autoDismiss(p.state.slot),
+      dismiss: (p, c) => autoDismiss(p.state.slot, () => c.global().store.maxDismissed),
       // The config file: read at the start and on the tick, written once per load (L4). The manager knows the trackers
       // only as `{ id, config }`.
       config: p => new ConfigManager({ fs: p.fs, env: p.env, specs: trackers, log: p.log }),
