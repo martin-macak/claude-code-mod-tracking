@@ -13,9 +13,9 @@ import { autoDismiss } from '../trackers/auto/dismiss-store'
 import { renderBand } from '../ux/band'
 import { renderSections } from '../ux/pane'
 import { autoGithubOf } from './auto-github'
-import { trackCommand } from './command'
 import type { ToolStatus, UiState } from './contracts'
 import { rowEvent, spawnEvent, toolCallEvent, turnEvent } from './events'
+import { listText } from './list-text'
 import { type PaneFocus, paneActions, pickRow } from './pane-actions'
 import { parseRemote } from './scan/refs'
 import { composeBand, composePane } from './ui/auto-view'
@@ -158,6 +158,8 @@ function managerOf($: EngineInterface): LifecycleManager {
       // only as `{ id, config }`.
       config: p => new ConfigManager({ fs: p.fs, env: p.env, specs: trackers, log: p.log }),
       paneId: PANE,
+      // The text of the list for /track: the legacy composers until L6 (K19). Read at call time, the manager is set by then.
+      listText: p => listText(p, managerOf($)),
     },
     portsOf($),
   )
@@ -172,7 +174,7 @@ export const register: Register = on => {
       $.command.register({
         name: 'track',
         description: 'Show tracked GitHub, Jira, artifacts, web links and Markdown files',
-        argumentHint: '[refresh|clear|prio <ref> <level>]',
+        argumentHint: managerOf($).commands.hint(),
       }),
     ) // a refused command: capture and restore still work
     await soft(() => managerOf($).start(portsOf($), { cwd: e.cwd, fromSessionStart: true }))
@@ -239,9 +241,9 @@ export const register: Register = on => {
     return out
   }).catch((_$, e, next) => next(e))
 
-  on('command.run', { command: 'track' }, ($, e) =>
-    trackCommand(portsOf($), managerOf($), managerOf($).items, e.args),
-  ).catch(() => ({ text: 'artifact-tracking: could not run the command.' }))
+  on('command.run', { command: 'track' }, ($, e) => managerOf($).track(portsOf($), e.args)).catch(() => ({
+    text: 'artifact-tracking: could not run the command.',
+  }))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const el = $.ui.resolve(e)

@@ -6,7 +6,6 @@ import { Facts } from '../core/infra/facts'
 import { transcriptItems } from '../core/infra/replay'
 import type { Json } from '../core/interfaces/items'
 import { autoGithubOf } from '../hooks/auto-github'
-import { trackCommand } from '../hooks/command'
 import type { GitHubRef, ItemRecord, ProcessRecord, Ref, RepoRecord, WebRef } from '../hooks/contracts'
 import { recordFromRef } from '../hooks/model/registry'
 import { viewInputs } from '../hooks/view-inputs'
@@ -225,7 +224,7 @@ test('the /track text leaves out a tracker that is off', async () => {
       config: specs => fakeConfig({ specs, file: off ? { trackers: { repos: { enabled: false } } } : {} }),
     })
     t.w.state.set('repos', [repo] as unknown as Json)
-    const text = (await trackCommand(t.w.ports, t.m, t.rt, '')).text ?? ''
+    const text = (await t.m.track(t.w.ports, '')).text ?? ''
     expect([off, text.includes('acme/sdk')]).toEqual([off, !off])
   }
 })
@@ -236,7 +235,7 @@ test('the /track text with GitHub and Jira off shows no tool note', async () => 
       config: specs =>
         fakeConfig({ specs, file: { trackers: Object.fromEntries(off.map(id => [id, { enabled: false }])) } }),
     })
-    expect([off, (await trackCommand(t.w.ports, t.m, t.rt, '')).text]).toEqual([off, 'No tracked items yet.'])
+    expect([off, (await t.m.track(t.w.ports, '')).text]).toEqual([off, 'No tracked items yet.'])
     expect(argv0(t.w.calls, 'gh').length + argv0(t.w.calls, 'acli').length).toBe(
       (off.includes('github') ? 0 : 1) + (off.includes('jira') ? 0 : 1), // one --version probe for each tool that is on
     )

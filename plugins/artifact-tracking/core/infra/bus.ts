@@ -56,10 +56,13 @@ export class EventBus {
 
   /**
    * Calls the handlers of `kind` that accept `ev`. `via` goes to each as its second argument (the dispatch's ports).
+   * `only` limits the call to the handlers of one owner (a sub-command a tracker declared).
    * Never rejects. In a parallel kind every handler has started when `emit` returns its promise.
    */
-  async emit(kind: BusKind, ev: unknown, via: unknown): Promise<void> {
-    const list = (this.entries.get(kind) ?? []).filter(e => accepts(kind, e.filter, ev))
+  async emit(kind: BusKind, ev: unknown, via: unknown, only?: string): Promise<void> {
+    const list = (this.entries.get(kind) ?? []).filter(
+      e => (only === undefined || e.owner === only) && accepts(kind, e.filter, ev),
+    )
     if (MODE[kind] === 'sequential') {
       for (const e of list) await this.call(kind, e, ev, via)
       return

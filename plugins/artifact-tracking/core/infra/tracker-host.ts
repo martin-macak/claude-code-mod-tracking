@@ -10,7 +10,15 @@ import type { TickEvent } from '../interfaces/events'
 import type { HostContext, ItemStorePort, Json, JsonObject } from '../interfaces/items'
 import type { EnvName, Ports, RunOpts, Timer } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
-import type { DismissPort, FactsPort, Handler, ToolPort, Tracker, TrackerContext } from '../interfaces/tracker'
+import type {
+  CommandSpec,
+  DismissPort,
+  FactsPort,
+  Handler,
+  ToolPort,
+  Tracker,
+  TrackerContext,
+} from '../interfaces/tracker'
 import { isRecord } from '../lib/json'
 import type { BusKind, EventBus } from './bus'
 import type { SessionWatch } from './session'
@@ -109,6 +117,13 @@ export class TrackerHost {
   /** What each tracker's `store` gave: the slice it wants in the file. The ConfigManager merges it once per load. */
   stored(): ReadonlyMap<string, JsonObject> {
     return this.slices
+  }
+
+  /** The `/track` sub-commands of the live trackers, in `order`. The Commands router asks for them. */
+  commands(): readonly { owner: string; spec: CommandSpec }[] {
+    return this.ordered
+      .filter(t => this.live(t.id))
+      .flatMap(t => (t.commands ?? []).map(spec => ({ owner: t.id, spec })))
   }
 
   /** The data of every live tracker that declares any, as slots for Persistence and the switch. Run-scoped when `persist` is false. */
