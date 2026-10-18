@@ -6,25 +6,26 @@
 // A kind that the config turned off (`ctx.trackers.live`) runs no CLI, claims its spans and drops them, and leaves no
 // record at start, replay, load or carry.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.7, 5.8 and 5.9.
-// Plan: L3 Task 11, D13. L4 Task 6, C12.
+// Plan: L3 Task 11, D13. L4 Task 6, C12. L5 Task 3: the tools come from a ToolRunner.
 
 import { RefreshCoordinator } from '../../core/infra/coordinator'
+import { ToolRunner } from '../../core/infra/tools'
 import type { GlobalConfig } from '../../core/interfaces/config'
 import type { ReplayItem, RowEvent, SessionChangedEvent } from '../../core/interfaces/events'
 import type { Claim, HostContext, ItemsHost, Json, StoredItem } from '../../core/interfaces/items'
 import type { StatePorts } from '../../core/interfaces/ports'
 import type { DataSlot } from '../../core/interfaces/slots'
-import { CircuitBreaker } from '../../core/lib/circuit-breaker'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
-import type { ToolTimeouts } from '../../core/lib/tool'
 import type { AutoGithub } from '../../trackers/auto'
 import { FILE_DEFAULTS, type FileConfig } from '../../trackers/file/config'
 import { FileSight } from '../../trackers/file/sighting'
+import { GH_TOOL, ghClient } from '../../trackers/github/client'
 import { GITHUB_DEFAULTS, type GithubConfig } from '../../trackers/github/config'
-import { GhTool } from '../../trackers/github/gh-tool'
-import { AcliTool } from '../../trackers/jira/acli-tool'
+import type { GhTool } from '../../trackers/github/gh-tool'
+import type { AcliTool } from '../../trackers/jira/acli-tool'
+import { ACLI_TOOL, acliClient } from '../../trackers/jira/client'
 import { JIRA_DEFAULTS, type JiraConfig } from '../../trackers/jira/config'
-import type { GitHubDiscoveryApi, ItemRecord, Priority, RepoRef, Runner, ToolStatus } from '../contracts'
+import type { GitHubDiscoveryApi, ItemRecord, Priority, RepoRef } from '../contracts'
 import { rowIdOf, setPriority } from '../model/priority'
 import {
   carryOver,
@@ -39,13 +40,6 @@ import { Capture, type CaptureLimits } from './capture'
 import { itemsFromBatch, onlyNew } from './replay'
 import { ItemStore, storedForLoad } from './store'
 
-/** The status as the pane sees it. `lastRunAt` moves on every call and no view shows it, so it is not compared (A22). */
-const shown = (x: Record<string, ToolStatus>): string =>
-  JSON.stringify([
-    { ...x.gh, lastRunAt: undefined },
-    { ...x.acli, lastRunAt: undefined },
-  ])
-
 const isEmpty = (v: Json | undefined): boolean => !Array.isArray(v) || v.length === 0
 
 export class ItemRuntime implements ItemsHost {
@@ -55,6 +49,7 @@ export class ItemRuntime implements ItemsHost {
   private readonly facet: AutoGithub
   /** The context of the first hook of the load. Absent until `start`. */
   private ctx: HostContext | undefined
+  private runner: ToolRunner | undefined
   private gh: GhTool | undefined
   private acli: AcliTool | undefined
   private coordinator: RefreshCoordinator | undefined
@@ -205,9 +200,9 @@ export class ItemRuntime implements ItemsHost {
    * the sections.
    */
   async settleProbes(): Promise<void> {
-    const { gh, acli } = this
-    if (!gh || !acli) return
-    await Promise.allSettled(this.probes(gh, acli))
+    const { runner } = this
+    if (!runner) return
+    await runner.settle()
     await this.publishTools()
   }
 
@@ -326,32 +321,30 @@ export class ItemRuntime implements ItemsHost {
     return this.kindLive('github') ? this.gh : undefined
   }
 
-  /** The `--version` probes of the tools that are on. */
-  private probes(g: GhTool, a: AcliTool): Promise<unknown>[] {
-    return [...(this.kindLive('github') ? [g.probe()] : []), ...(this.kindLive('jira') ? [a.probe()] : [])]
-  }
-
   private buildTools(): void {
     if (this.gh && this.acli && this.coordinator) return
     const ctx = this.need()
-    const run: Runner = (argv, init) => ctx.tools.run(argv[0] ?? '', argv, init ?? {})
-    // The breakers and the jira concurrency are read once per load: they size an object at construction (C5).
-    const b = ctx.config.global().tools.breaker
-    const timeouts: ToolTimeouts = () => this.global().tools
-    const g = new GhTool(run, ctx.clock.wall, new CircuitBreaker(b.threshold, b.openMs), {
-      limits: () => this.github(),
-      timeouts,
+    // The breakers are read once per load: they are objects that hold their numbers (C5). A tool of a tracker that is
+    // off gets a handle but no probe.
+    const runner = new ToolRunner({
+      run: (argv, opts) => ctx.tools.run(argv[0] ?? '', argv, opts),
+      now: ctx.clock.wall,
+      global: () => this.global(),
+      tools: this.state.tools,
+      log: ctx.log,
+      live: owner => this.kindLive(owner),
     })
-    const a = new AcliTool(run, ctx.clock.wall, new CircuitBreaker(b.threshold, b.openMs), {
-      limits: () => this.jira(),
-      timeouts,
-    })
+    runner.build([
+      { owner: 'github', spec: GH_TOOL },
+      { owner: 'jira', spec: ACLI_TOOL },
+    ])
+    const g = ghClient(runner.port('github').handle(GH_TOOL.id)!, { now: ctx.clock.wall, limits: () => this.github() })
+    const a = acliClient(runner.port('jira').handle(ACLI_TOOL.id)!, { now: ctx.clock.wall, limits: () => this.jira() })
+    this.runner = runner
     this.gh = g
     this.acli = a
     this.sight = new FileSight(ctx)
-    void Promise.allSettled(this.probes(g, a))
-      .then(() => this.publishTools())
-      .catch(() => {})
+    runner.start()
     this.coordinator = new RefreshCoordinator({
       now: ctx.clock.wall,
       load: () => this.store.records(),
@@ -390,11 +383,7 @@ export class ItemRuntime implements ItemsHost {
    * changed, so a quiet tick makes no write (A22).
    */
   private async publishTools(): Promise<void> {
-    const { gh, acli } = this
-    if (!gh || !acli) return
-    const next = { gh: gh.status(), acli: acli.status() }
-    if (shown(await this.state.tools.get()) === shown(next)) return
-    await this.state.tools.update(() => next)
+    await this.runner?.publish()
   }
 
   /**

@@ -239,7 +239,7 @@ export class TrackerHost {
           return isRecord(root) && typeof root.cwd === 'string' ? root.cwd : undefined
         },
       },
-      // No ToolRunner yet (plan Task 3): a tracker has no handles, only the raw run.
+      // The ToolRunner lives in the item runtime until the item service of plan Task 8 owns it: no handles here yet.
       tools: {
         handle: () => undefined,
         run: (_tool: string, argv: readonly string[], opts: RunOpts) => ports.run(argv, opts),

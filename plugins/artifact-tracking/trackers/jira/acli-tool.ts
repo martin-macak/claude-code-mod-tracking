@@ -1,10 +1,10 @@
 // AcliTool: Jira work items through the Atlassian CLI (spec section 7.3, KB jira.md).
 // No `$`: it gets a Runner and a clock. It never runs `acli jira auth switch`, `login` or `logout`.
 
-import type { CircuitBreaker } from '../../core/lib/circuit-breaker'
+import type { Breaker, ToolHandle } from '../../core/interfaces/tracker'
 import type { Outcome, ToolTimeouts } from '../../core/lib/tool'
 import { firstLine, Tool } from '../../core/lib/tool'
-import type { JiraNode, JiraTarget, JiraToolApi, Now, Runner, ToolStatus } from '../../hooks/contracts'
+import type { JiraNode, JiraTarget, JiraToolApi, Now, Runner } from '../../hooks/contracts'
 import { carryPriorities, JIRA_KEY } from '../../hooks/contracts'
 import { JIRA_DEFAULTS, type JiraConfig } from './config'
 
@@ -109,9 +109,9 @@ export class AcliTool extends Tool<JiraTarget> implements JiraToolApi {
   private readonly limits: AcliLimits
 
   constructor(
-    run: Runner,
+    run: Runner | ToolHandle,
     now: Now,
-    breaker?: CircuitBreaker,
+    breaker?: Breaker,
     opts: { limits?: AcliLimits; timeouts?: ToolTimeouts } = {},
   ) {
     super('acli', run, now, breaker, opts.timeouts)
@@ -124,16 +124,16 @@ export class AcliTool extends Tool<JiraTarget> implements JiraToolApi {
     return this.site
   }
 
-  override status(): ToolStatus {
-    const s = super.status()
-    if (this.site) s.site = this.site
-    return s
+  /** Keeps the site, and tells the handle, whose status shows it. null (not logged in) shows no site. */
+  private setSite(site: string | null | undefined): void {
+    this.site = site
+    this.handle.setSite(site ?? undefined)
   }
 
   /** Manual refresh: also forget a "no site" answer, so the next refresh asks acli again. */
   override reset(): void {
     super.reset()
-    if (this.site === null) this.site = undefined
+    if (this.site === null) this.setSite(undefined)
   }
 
   /** Runs `acli jira auth status` and caches the site. Concurrent callers share one call. */
@@ -149,12 +149,12 @@ export class AcliTool extends Tool<JiraTarget> implements JiraToolApi {
     if (!r) return this.site ?? null // blocked by the breaker, or rejected (already recorded)
     const site = r.exitCode === 0 ? parseAuthStatus(r.stdout) : null
     if (site) {
-      this.site = site
+      this.setSite(site)
       this.record('ok')
       return site
     }
     if (/unauthorized/i.test(r.stderr)) {
-      this.site = null
+      this.setSite(null)
       this.record('auth')
       return null
     }
@@ -172,8 +172,8 @@ export class AcliTool extends Tool<JiraTarget> implements JiraToolApi {
 
   private async refresh(items: JiraTarget[]): Promise<void> {
     if (this.available === false || this.isLoggedOut()) return
-    if (!this.breaker.peek(this.now())) return
-    if (this.site === undefined || this.breaker.state !== 'closed') await this.loadActiveSite()
+    if (!this.breakerAllows) return
+    if (this.site === undefined || this.status().breaker !== 'closed') await this.loadActiveSite()
     const site = this.site
     if (!site || this.isLoggedOut()) return
 

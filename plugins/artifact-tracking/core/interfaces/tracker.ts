@@ -3,7 +3,7 @@
 // Names may change in later layers. The shape may not.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.8, 5.5 and 5.12.
 
-import type { ToolStatus } from '../../types'
+import type { BreakerState, ToolStatus } from '../../types'
 import type { ConfigSpec, ConfigView, GlobalConfig } from './config'
 import type {
   AgentSpawnEvent,
@@ -103,6 +103,24 @@ export interface DismissPort {
  */
 export type ToolOutcome = 'ok' | 'item-error' | 'tool-failure' | 'auth'
 
+/**
+ * The circuit breaker of one tool. Pure: the caller passes the time. `CircuitBreaker` in `core/lib` is the shipped one.
+ * `closed` -> (enough failures in a row) -> `open` -> (the wait is over) -> `half-open`: one call goes through.
+ */
+export interface Breaker {
+  readonly state: BreakerState
+  /** When an open breaker lets the next call through. undefined unless open. */
+  readonly openUntil: number | undefined
+  /** Would `allows(now)` say yes? Changes nothing. */
+  peek(now: number): boolean
+  /** May a call start now? An open breaker whose wait is over becomes half-open and lets one call through. */
+  allows(now: number): boolean
+  success(): void
+  failure(now: number): void
+  /** Manual refresh: an open breaker becomes half-open at once. */
+  reset(): void
+}
+
 /** One declared CLI: its probe, its timeouts and its circuit breaker. ToolRunner owns one per `ToolSpec`. */
 export interface ToolHandle {
   readonly id: string
@@ -112,11 +130,15 @@ export interface ToolHandle {
   probe(): Promise<boolean>
   /** Available, not known to be logged out, and the breaker lets a call through. No side effects. */
   canCall(now: number): boolean
+  /** The breaker alone: would it let a call through? Not the probe, not the login flag. No side effects. */
+  peek(now: number): boolean
   /** Manual refresh: forget `loggedIn: false`, move an open breaker to half-open. */
   reset(): void
   status(): ToolStatus
   /** Runs one command through the breaker. null: the breaker blocked it, or it rejected (recorded as a failure). */
   exec(argv: readonly string[], init?: RunOpts): Promise<RunResult | null>
+  /** Runs one command on the tool's timeout, outside the breaker: nothing is recorded, a rejection reaches the caller. */
+  raw(argv: readonly string[], init?: RunOpts): Promise<RunResult>
   /** Feeds one outcome to the breaker and the login flag. */
   record(outcome: ToolOutcome, detail?: string): void
   /** The site or account the tool acts on, when it has one. */

@@ -1,3 +1,4 @@
+import type { Breaker } from '../../core/interfaces/tracker'
 import { CircuitBreaker } from '../../core/lib/circuit-breaker'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import { normPath } from '../../core/lib/porcelain'
@@ -57,7 +58,7 @@ function visitOf(r: ResolvedRepo, branch: string | undefined, touchedBy: string,
 }
 
 export class RepoTracker {
-  private readonly breaker: CircuitBreaker
+  private readonly breaker: Breaker
   /** Repos stay for the session. null and 'missing' expire after one tick. */
   private readonly cache = new Map<string, { value: Answer; at: number }>()
   private readonly pending = new Map<string, Promise<Answer | 'retry'>>()

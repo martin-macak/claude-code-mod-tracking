@@ -3,9 +3,10 @@
 //                                                                     \--fail--> open
 
 import type { BreakerState } from '../../types'
+import type { Breaker } from '../interfaces/tracker'
 import { GLOBAL_DEFAULTS } from './global-config'
 
-export class CircuitBreaker {
+export class CircuitBreaker implements Breaker {
   private st: BreakerState = 'closed'
   private failures = 0
   private until = 0
