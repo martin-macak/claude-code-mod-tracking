@@ -41,7 +41,10 @@ Enforcement, so a skipped step fails loudly:
 
 ## Releases
 
-- A release is a tag `<plugin>--v<version>`. Bump `version` in `plugin.json` in a PR. After the merge, run `make release` on `main`. CI (`.github/workflows/release.yml`) publishes the GitHub release with the zip.
+- A release is a tag `artifact-tracking--v<version>`. Set the version only with `make release VERSION=x.y.z` on clean `main` equal to `origin/main`. Do not bump `plugin.json` for a release. CI stamps the tag version before validation, tests and packaging.
+- Versions must be valid SemVer and newer than every existing release tag. Stable releases require no open issues in milestone `artifact-tracking <version>` when `gh` is available. Pre-releases skip this guard. CI closes the milestone after a stable publication.
+- CI publishes versioned and unversioned zips. Stable releases become `latest`; pre-releases leave `latest` unchanged. The post-release smoke job checks files, fresh installs and updates from 0.1.0 with isolated CLI configs.
+- Switch the marketplace to the stable archive only after `latest` carries `artifact-tracking.zip`: run `make marketplace-release` and submit its validated diff in a PR. Until that cutover, the path entry still installs `main`. The bootstrap smoke checks a temporary archive catalog.
 - Never push a release tag from a feature branch. Steps: `plugins/artifact-tracking/README.md`, "Release". Background: `docs/knowledge-base/claude-code-mods/workflow/release.md`.
 
 ## Planning and delivery

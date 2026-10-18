@@ -58,45 +58,63 @@ Tag:     artifact-tracking--v0.1.0
 
 ## The pipeline in this repo
 
-Tag-driven. A person bumps the version and pushes the tag; CI builds and publishes.
+Tag first. A person sets the version in `make release VERSION=x.y.z`. CI reads the tag and stamps the manifest. The source manifest is a development value; it does not select the release version.
 
 ```mermaid
 sequenceDiagram
     actor Dev
-    participant PR as Pull request
     participant Main as main
     participant Make as make release
     participant GH as GitHub Actions (release.yml)
     participant Rel as GitHub release
 
-    Dev->>PR: bump "version" in plugin.json
-    PR->>Main: squash merge (test.yml green)
-    Dev->>Make: run on clean main == origin/main
+    Dev->>Make: VERSION=x.y.z on clean main == origin/main
+    Make->>Make: validate SemVer, check newer than all release tags
+    Make->>Make: stable only, check milestone if gh is present
     Make->>Make: make test
-    Make->>Main: claude plugin tag --push (artifact-tracking--v<version>)
+    Make->>Main: git tag -a artifact-tracking--v<version>, git push tag
     Main-->>GH: push of tag artifact-tracking--v*
-    GH->>GH: tag == name--v<version>, commit on main
+    GH->>GH: parse tag, check commit on main, jq stamp manifest
     GH->>GH: validate --strict (plugin, marketplace), make test
-    GH->>GH: make dist (zip + SHA256SUMS)
+    GH->>GH: make dist VERSION (versioned zip, alias, SHA256SUMS)
     GH->>GH: actions/attest (build provenance)
     GH->>Rel: gh release create --verify-tag --generate-notes
+    GH->>Rel: stable only, set latest and close milestone
+    GH->>GH: isolated install, file comparison, update from 0.1.0
 ```
 
 | Piece | File |
 | --- | --- |
-| Marketplace `mod-tracking`, one relative-path entry | `.claude-plugin/marketplace.json` |
-| `dist`, `release`, `release-dry` targets | `Makefile` |
+| Marketplace `mod-tracking`, path entry until the guarded archive cutover | `.claude-plugin/marketplace.json` |
+| `dist`, `release`, `release-dry`, `marketplace-release` targets | `Makefile` |
+| SemVer, guards, stamping, publication and smoke checks | `scripts/release/` |
 | Release workflow | `.github/workflows/release.yml` |
 | Steps for people | `plugins/artifact-tracking/README.md`, section "Release" |
 
 Decisions:
 
 - **Tag format** `<name>--v<version>`. It is the Claude Code convention, and it lets one repo hold several plugins.
-- **Version** pinned in `plugin.json`, none in the marketplace entry. `plugin tag` and `validate` check that they agree.
-- **The workflow re-checks the tag.** A hand-made tag skips the checks of `plugin tag`. The workflow fails when the tag does not equal `<name>--v<version>` of the tagged `plugin.json`, or when the commit is not on `main`.
-- **The zip is built by `git archive` from the tagged tree.** Ignored and untracked files never enter it. The zip holds the same files a marketplace install copies. *(inference)*
+- **Version authority:** only the tag. CI stamps `plugin.json` before validate, test and dist. A later change to the manifest on `main`, including issue 55's 0.2.0 bump, cannot alter a published archive.
+- **Guards:** `make release VERSION=x.y.z` requires clean `main` equal to fetched `origin/main`, valid SemVer and a version newer than every release tag. `release-dry` applies the same guards without testing, tagging or pushing. Numeric prerelease identifiers compare numerically; build metadata does not affect precedence.
+- **Milestones:** stable releases refuse open issues in `artifact-tracking <version>` when `gh` is present. Pre-releases and machines without `gh` skip this check. Missing milestones do not block; API failures do. After stable publication CI closes the matching milestone with `issues: write`.
+- **The workflow re-checks the tag.** It parses SemVer and checks main ancestry before building. It does not require the tagged manifest to match the tag.
+- **The zip uses `git archive` from the tagged tree.** Only the manifest version changes in a temporary staging folder. Ignored, untracked and other edited files never enter it. `artifact-tracking-<version>.zip` and `artifact-tracking.zip` are identical. `SHA256SUMS` covers both. The source tree stays unchanged by `make dist VERSION=x.y.z`.
+- **Stable versus pre-release:** `x.y.z-*` publishes with `--prerelease --latest=false`; stable versions publish with `--latest`. Build metadata with a hyphen does not make a version a pre-release. Publication jobs are serialized.
+- **Marketplace rollout:** keep the relative path until a stable release contains the alias asset. Then run `make marketplace-release`, validate and submit that diff in a PR. The command checks release metadata before replacing the source with an `archive` at `https://github.com/martin-macak/claude-code-mod-tracking/releases/latest/download/artifact-tracking.zip`. No `sha256` is pinned because the URL moves on stable releases. `latest` is repo-wide, which assumes this repo ships one plugin.
+- **Post-release smoke:** download and verify both archives; install through a marketplace in a temporary `CLAUDE_CONFIG_DIR`; compare the manifest, registered version and every file. Install the real 0.1.0 tag with its path entry, change that catalog to archive, run marketplace refresh and `claude plugin update`, and compare again. Before cutover, smoke uses a temporary archive catalog and reports that the public cutover is pending. An RC checks its own archive and that `latest` is unchanged; stable checks wait if the old release lacks an alias.
+- **Dependency cost:** the tagged manifest keeps the development version. Tag-based dependency range resolution against the source tree is no longer supported. Consumers that need it must be checked before rollout; no consumer audit has been recorded.
 - **Release notes** come from GitHub's generator, which lists the merged PRs. PR titles are Conventional Commits, so the notes read as a changelog. The start point is the previous tag of the same plugin.
 - **Provenance:** `actions/attest@v4` signs the zip. It needs `id-token: write`, `attestations: write` and `artifact-metadata: write`. Check with `gh attestation verify <zip> --repo <owner>/<repo>`. Public repos only on Free, Pro and Team plans (actions/attest README).
+
+## Recorded checks and rollout status
+
+*Observed on 2026-10-18 with Claude Code 2.1.302:* `claude --plugin-url https://github.com/martin-macak/claude-code-mod-tracking/releases/download/artifact-tracking--v0.1.0/artifact-tracking-0.1.0.zip plugin list --json` loaded `artifact-tracking@inline` at 0.1.0. This settles open question 20: the GitHub asset URL works through its redirect.
+
+Open question 21 is obsolete for this pipeline. It no longer calls `claude plugin tag --push`; it creates an annotated tag with Git. The existing published 0.1.0 release shows that a release tag has reached GitHub. A push from the new pipeline still needs live release evidence.
+
+*Observed in the same probe:* archive installs add a root `.in_use` cache marker. Smoke compares a snapshot without that CLI-owned marker; it still detects missing, extra or changed plugin files.
+
+At implementation time, the latest 0.1.0 release has no unversioned asset. The marketplace therefore still uses its path entry. Publishing 0.2.0-rc.1, the first stable alias, the cutover PR and a live update to that release remain rollout checks. Shell tests cover parser, local guards, milestone requests, stamping, zip content and publication flags; they do not prove a GitHub publication or public marketplace migration.
 
 ## See also
 
