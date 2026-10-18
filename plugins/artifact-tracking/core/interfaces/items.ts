@@ -115,10 +115,26 @@ export interface ItemStorePort<T extends StoredItem = StoredItem> {
   refresh(keys?: readonly string[]): void
 }
 
+/**
+ * Which trackers are on, and what the config says of them. The transitional item host reads it, because it runs the
+ * five item kinds before they have handlers (D13). L5 gives each kind its own context and removes this.
+ */
+export interface TrackerConfigs {
+  /**
+   * False for a tracker the config turned off, as it read at the first start of the load, and for a tracker that
+   * failed to start. An id no tracker has reads as live: nothing turned it off.
+   */
+  live(id: string): boolean
+  /** The slice of a tracker, read at call time. An id no tracker has gives a frozen `{}`. */
+  slice<C extends JsonObject>(id: string): Readonly<C>
+}
+
 /** What an item host gets at start: a tracker context without `items` and `data`, plus a persist signal. */
 export type HostContext = Omit<TrackerContext<JsonObject, never>, 'items' | 'data'> & {
   /** The host changed its list. Persistence writes the session copy soon. */
   persisted(): void
+  /** The toggles and the slices of the trackers. */
+  readonly trackers: TrackerConfigs
 }
 
 /**

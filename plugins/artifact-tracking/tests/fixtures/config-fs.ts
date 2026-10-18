@@ -2,8 +2,11 @@
 // so the signature `mtimeMs:size` changes the way a real file's does. `calls` records every attempt, denied ones too.
 // `writes` records the successful writes only. A deny switch rejects its op with an Error of the given message.
 // `stat` resolves null for a refusal, as the engine's stat does.
-// Plan: L4 Task 4.
-import type { ConfigFs } from '../../core/interfaces/config'
+// `fakeConfig` is a `ConfigService` with no fs: the views come from `normaliseDoc` over a file object the test sets.
+// Plan: L4 Tasks 4 and 5.
+import { type DocSpec, normaliseDoc } from '../../core/infra/config-file'
+import type { ConfigFs, ConfigService } from '../../core/interfaces/config'
+import type { JsonObject } from '../../core/interfaces/items'
 import type { FsStat } from '../../core/interfaces/ports'
 
 type Op = 'read' | 'write' | 'exists' | 'stat'
@@ -88,6 +91,50 @@ export function fakeConfigFs(seed: Record<string, string> = {}): FakeConfigFs {
     },
     tearNext(text) {
       torn = text
+    },
+  }
+}
+
+/** A `ConfigService` with no fs. `set` changes the views at once; the next `refresh()` answers true once. */
+export type FakeConfig = ConfigService & {
+  set(file: JsonObject): void
+  /** `'refresh'` and `'reconcile'`, in call order. */
+  readonly calls: string[]
+  /** The `stored` argument of every `reconcile` call. */
+  readonly reconciled: ReadonlyMap<string, JsonObject>[]
+}
+
+export function fakeConfig(
+  o: { specs?: readonly DocSpec[]; file?: JsonObject; path?: string; problems?: readonly string[] } = {},
+): FakeConfig {
+  const specs = o.specs ?? []
+  let doc = normaliseDoc(o.file ?? {}, specs)
+  let dirty = false
+  const calls: string[] = []
+  const reconciled: ReadonlyMap<string, JsonObject>[] = []
+  return {
+    calls,
+    reconciled,
+    set(file) {
+      doc = normaliseDoc(file, specs)
+      dirty = true
+    },
+    global: () => doc.global,
+    slice: id => doc.slices.get(id) ?? Object.freeze({}),
+    enabled(id) {
+      return this.slice(id).enabled !== false
+    },
+    problems: () => [...(o.problems ?? []), ...doc.problems],
+    path: () => o.path,
+    async refresh() {
+      calls.push('refresh')
+      const changed = dirty
+      dirty = false
+      return changed
+    },
+    async reconcile(stored) {
+      calls.push('reconcile')
+      reconciled.push(stored)
     },
   }
 }

@@ -7,7 +7,6 @@ import { LifecycleManager } from '../core/infra/lifecycle'
 import type { ToolCallEvent } from '../core/interfaces/events'
 import type { ItemsHost, Json, StoredItem } from '../core/interfaces/items'
 import type { RunResult } from '../core/interfaces/ports'
-import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import type {
   AgentProof,
   AutoState,
@@ -20,6 +19,7 @@ import { LIMITS } from '../hooks/contracts'
 import { type AutoGithub, autoConfig, autoTracker } from '../trackers/auto'
 import { autoDismiss } from '../trackers/auto/dismiss-store'
 import { emptyAuto } from '../trackers/auto/ledger'
+import { fakeConfig } from './fixtures/config-fs'
 import * as ev from './fixtures/events'
 import { discoveryData, prNode } from './fixtures/gh-discovery'
 import { porcelain } from './fixtures/git'
@@ -87,12 +87,13 @@ function setup(o: SetupOpts = {}) {
     track: async () => {},
     refresh: keys => void held.refreshed.push([...(keys ?? [])]),
   }
+  const trackers = [autoTracker(gh)]
   const m = new LifecycleManager(
     {
-      trackers: [autoTracker(gh)],
+      trackers,
       items: host,
       dismiss: p => autoDismiss(p.state.slot),
-      global: GLOBAL_DEFAULTS,
+      config: () => fakeConfig({ specs: trackers }),
       paneId: 'track',
     },
     w.ports,

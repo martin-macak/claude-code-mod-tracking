@@ -3,9 +3,9 @@
 import { EventBus } from '../../core/infra/bus'
 import { Facts } from '../../core/infra/facts'
 import { TrackerHost } from '../../core/infra/tracker-host'
-import type { ItemStorePort, Json } from '../../core/interfaces/items'
+import type { ItemStorePort, Json, JsonObject } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
-import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
+import { fakeConfig } from './config-fs'
 import { fakePorts } from './ports'
 
 export type Cfg = { enabled: boolean }
@@ -22,8 +22,13 @@ export function fake(id: string, order: number, extra: Partial<Tracker<Cfg, Json
   }
 }
 
-export function hostWorld(trackers: readonly Tracker<Cfg, Json>[] | readonly Tracker[], o: { due?: boolean } = {}) {
+/** `file` is the parsed config file the host's config reads, e.g. `{ trackers: { t: { enabled: false } } }`. */
+export function hostWorld(
+  trackers: readonly Tracker<Cfg, Json>[] | readonly Tracker[],
+  o: { due?: boolean; file?: JsonObject } = {},
+) {
   const w = fakePorts()
+  const cfg = fakeConfig({ specs: trackers, ...(o.file ? { file: o.file } : {}) })
   const facts = new Facts()
   const persisted: string[] = []
   const watch = {
@@ -52,7 +57,7 @@ export function hostWorld(trackers: readonly Tracker<Cfg, Json>[] | readonly Tra
   const host = new TrackerHost({
     trackers,
     ports: w.ports,
-    global: GLOBAL_DEFAULTS,
+    config: cfg,
     facts,
     dismiss: {
       list: async () => dismissed,
@@ -70,5 +75,5 @@ export function hostWorld(trackers: readonly Tracker<Cfg, Json>[] | readonly Tra
     log: w.ports.log,
   })
   const bus = new EventBus({ log: w.ports.log })
-  return { w, host, bus, facts, watch, persisted, items, dues, dismissed }
+  return { w, host, bus, facts, watch, persisted, items, dues, dismissed, cfg }
 }

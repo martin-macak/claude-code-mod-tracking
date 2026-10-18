@@ -4,10 +4,10 @@
 
 import type { EngineInterface, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
+import { ConfigManager } from '../core/infra/config-manager'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
-import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { buildTrackers } from '../trackers'
 import { autoDismiss } from '../trackers/auto/dismiss-store'
 import { renderBand } from '../ux/band'
@@ -156,12 +156,16 @@ function runtimeOf($: EngineInterface): ItemRuntime {
  */
 function managerOf($: EngineInterface): LifecycleManager {
   const host = runtimeOf($)
-  manager ??= new LifecycleManager(
+  if (manager) return manager
+  const trackers = buildTrackers({ autoGithub: host.autoGithub })
+  manager = new LifecycleManager(
     {
-      trackers: buildTrackers({ autoGithub: host.autoGithub }),
+      trackers,
       items: host,
       dismiss: p => autoDismiss(p.state.slot),
-      global: GLOBAL_DEFAULTS,
+      // The config file: read at the start and on the tick, written once per load (L4). The manager knows the trackers
+      // only as `{ id, config }`.
+      config: p => new ConfigManager({ fs: p.fs, env: p.env, specs: trackers, log: p.log }),
       paneId: PANE,
     },
     portsOf($),

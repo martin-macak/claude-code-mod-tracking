@@ -395,7 +395,8 @@ test('the context passes the engine through: tools, fs, env, session, facts, ite
   expect([...(await ctx.dismiss.list())]).toEqual([])
   expect(ctx.config.slice()).toEqual({ enabled: true })
   expect(Object.isFrozen(ctx.config.slice())).toBe(true)
-  expect(ctx.config.global()).toBe(GLOBAL_DEFAULTS)
+  expect(ctx.config.global()).toBe(t.cfg.global()) // the config's own view, read at call time
+  expect(ctx.config.global()).toEqual(GLOBAL_DEFAULTS)
   expect(await ctx.clock.now()).toBe(0)
   expect(ctx.clock.wall()).toBe(0)
   expect(ctx.id).toBe('a')

@@ -6,9 +6,9 @@ import { LifecycleManager } from '../core/infra/lifecycle'
 import type { RowEvent, ToolCallEvent } from '../core/interfaces/events'
 import type { ItemsHost, Json } from '../core/interfaces/items'
 import type { RunResult } from '../core/interfaces/ports'
-import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import type { ProcessRecord, ProcessUiState } from '../hooks/contracts'
 import { processesConfig, processesTracker } from '../trackers/processes'
+import { fakeConfig } from './fixtures/config-fs'
 import { fakePorts } from './fixtures/ports'
 
 const res = (stdout = '', exitCode = 0, stderr = ''): RunResult => ({ exitCode, stdout, stderr })
@@ -47,12 +47,13 @@ function setup(o: { cwd?: string } = {}) {
     track: async () => {},
     refresh: () => {},
   }
+  const trackers = [processesTracker()]
   const m = new LifecycleManager(
     {
-      trackers: [processesTracker()],
+      trackers,
       items: host,
       dismiss: () => ({ list: async () => new Set(), add: async () => {} }),
-      global: GLOBAL_DEFAULTS,
+      config: () => fakeConfig({ specs: trackers }),
       paneId: 'track',
     },
     w.ports,

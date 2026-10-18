@@ -7,6 +7,7 @@ import type { ItemsHost, Json, StoredItem } from '../core/interfaces/items'
 import type { DataSlot } from '../core/interfaces/slots'
 import type { Tracker } from '../core/interfaces/tracker'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
+import { fakeConfig } from './fixtures/config-fs'
 import { fakePorts } from './fixtures/ports'
 
 type TestSlot = DataSlot & { live: Json | undefined; log: string[]; cleared: number }
@@ -99,7 +100,7 @@ function setup(o: SetupOpts = {}) {
           for (const id of ids) held.dismissed.add(id)
         },
       }),
-      global: GLOBAL_DEFAULTS,
+      config: () => fakeConfig({ specs: o.trackers ?? [] }),
       paneId: 'track',
     },
     w.ports,

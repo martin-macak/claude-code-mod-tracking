@@ -6,10 +6,10 @@ import { LifecycleManager } from '../core/infra/lifecycle'
 import type { ToolCallEvent } from '../core/interfaces/events'
 import type { ItemsHost, Json } from '../core/interfaces/items'
 import type { RunResult } from '../core/interfaces/ports'
-import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import type { AgentProof, RepoRecord } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
 import { asRepoRows, reposConfig, reposTracker, setRepos } from '../trackers/repos'
+import { fakeConfig } from './fixtures/config-fs'
 import { type FakeWorld, fakePorts } from './fixtures/ports'
 import { hostWorld } from './fixtures/tracker-host'
 
@@ -60,9 +60,10 @@ function stubHost(): ItemsHost {
 function setup(o: { cwd?: string } = {}) {
   const w = fakePorts({ session: { cwd: o.cwd ?? '/work' } })
   const dismissed = new Set<string>()
+  const trackers = [reposTracker()]
   const m = new LifecycleManager(
     {
-      trackers: [reposTracker()],
+      trackers,
       items: stubHost(),
       dismiss: () => ({
         list: async () => dismissed,
@@ -70,7 +71,7 @@ function setup(o: { cwd?: string } = {}) {
           for (const id of ids) dismissed.add(id)
         },
       }),
-      global: GLOBAL_DEFAULTS,
+      config: () => fakeConfig({ specs: trackers }),
       paneId: 'track',
     },
     w.ports,

@@ -6,7 +6,7 @@
 // stored copy of the new id (`/resume`).
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.6. Plan: L3 Tasks 5 to 8, D4 to D9, D20.
 
-import type { GlobalConfig } from '../interfaces/config'
+import type { ConfigService, ConfigSource } from '../interfaces/config'
 import type { AgentSpawnEvent, CommandEvent, RowEvent, ToolCallEvent, TurnCompleteEvent } from '../interfaces/events'
 import type { ItemsHost } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
@@ -34,9 +34,10 @@ export interface LifecycleDeps {
    * lifecycle unit tests use it to run the switch over fake slots.
    */
   extraSlots?: readonly DataSlot[]
-  /** The run-scoped dismiss list over the ports of a dispatch. */
-  dismiss(ports: Ports): DismissPort
-  global: GlobalConfig
+  /** The run-scoped dismiss list over the ports of a dispatch. It reads its limit from the config. */
+  dismiss(ports: Ports, config: ConfigSource): DismissPort
+  /** The config file's manager, built once over the ports of the first hook of the load. */
+  config(ports: Ports): ConfigService
   /** The pane the start sequence reattaches when the engine kept it across a hot reload. */
   paneId: string
 }
@@ -49,6 +50,7 @@ export class LifecycleManager {
   readonly watch: SessionWatch
   /** The session store. Public for the lifecycle tests; the hooks reach it through the manager only. */
   readonly persistence: Persistence
+  private readonly cfg: ConfigService
   private readonly scheduler: Scheduler
   private readonly bus: EventBus
   private readonly host: TrackerHost
@@ -61,6 +63,9 @@ export class LifecycleManager {
     private readonly d: LifecycleDeps,
     private readonly ports: Ports,
   ) {
+    this.cfg = d.config(ports)
+    // Read per call, never held: a changed file shows on the next read.
+    const g = () => this.cfg.global()
     this.watch = new SessionWatch({
       id: () => ports.session.id(),
       onSwitch: sw => this.switcher.run(sw),
@@ -69,7 +74,7 @@ export class LifecycleManager {
     this.scheduler = new Scheduler({
       now: () => ports.clock.now(),
       every: (ms, fn) => ports.clock.every(ms, fn),
-      periodMs: () => d.global.refresh.tickMs,
+      periodMs: () => g().refresh.tickMs,
       beat: () => this.tick(),
       log: ports.log,
     })
@@ -80,9 +85,9 @@ export class LifecycleManager {
       sessionId: () => ports.session.id(),
       slots: () => this.slots(),
       limits: () => ({
-        flushMs: d.global.refresh.flushMs,
-        keepSessions: d.global.store.keepSessions,
-        maxBytes: d.global.store.maxBytes,
+        flushMs: g().refresh.flushMs,
+        keepSessions: g().store.keepSessions,
+        maxBytes: g().store.maxBytes,
       }),
       beforeFlush: async () => {
         await this.watch.check() // a flush is an entry: a /clear since the last change is carried first
@@ -100,9 +105,9 @@ export class LifecycleManager {
     this.host = new TrackerHost({
       trackers: d.trackers,
       ports,
-      global: d.global,
+      config: this.cfg,
       facts: this.facts,
-      dismiss: d.dismiss(ports),
+      dismiss: d.dismiss(ports, this.cfg),
       items: d.items,
       watch: this.watch,
       due: (owner, everyMs, now) => this.scheduler.due(owner, everyMs, now),
@@ -117,14 +122,43 @@ export class LifecycleManager {
       watch: this.watch,
       scheduler: this.scheduler,
       switcher: this.switcher,
+      config: this.cfg,
       paneId: d.paneId,
-      tickMs: () => d.global.refresh.tickMs,
+      tickMs: () => g().refresh.tickMs,
       ports,
     })
   }
 
   get generation(): number {
     return this.watch.generation
+  }
+
+  /** The config file's views. The hooks read them here, never from the manager that owns the file. */
+  get config(): ConfigSource {
+    return this.cfg
+  }
+
+  /** True unless the config turned the tracker off at the first start of this load, or it failed to start. */
+  live(id: string): boolean {
+    return this.host.live(id)
+  }
+
+  /**
+   * Checks the config file and, when it changed, re-arms the tick (a new `tickMs`) and redraws the pane (a toggle, a
+   * problem). Never rejects: a failure is logged and counts as no change. The file is read when its signature moved.
+   */
+  async refreshConfig(ports: Ports): Promise<boolean> {
+    try {
+      const changed = await this.cfg.refresh()
+      if (changed) {
+        await this.scheduler.ensure()
+        ports.ui.invalidate()
+      }
+      return changed
+    } catch (e) {
+      ports.log(`config: refresh failed: ${reason(e)}`)
+      return false
+    }
   }
 
   // ---------------------------------------------------------------- start
@@ -144,9 +178,10 @@ export class LifecycleManager {
   /**
    * Every non-render entry waits for the start sequence, which runs once per load as a single flight. A hot reload
    * delivers `session.start` about 0.5 s late, so an event can come first. It does not load or replay (D5).
+   * `reconcile: false` is for `session.end`: a lazy start there reads the config file and never writes it (C16).
    */
-  ensureStarted(ports: Ports): Promise<void> {
-    this.started ??= this.sequence.run(ports, { fromSessionStart: false })
+  ensureStarted(ports: Ports, o: { reconcile?: boolean } = {}): Promise<void> {
+    this.started ??= this.sequence.run(ports, { fromSessionStart: false, reconcile: o.reconcile ?? true })
     return this.started
   }
 
@@ -162,9 +197,10 @@ export class LifecycleManager {
     await this.scheduler.ensure()
   }
 
-  /** One beat of the tick: finds a new session id, gives the item host its share, then the trackers theirs. */
+  /** One beat of the tick: the config file, a new session id, the item host's share, then the trackers'. */
   async tick(): Promise<void> {
     await this.ensureStarted(this.ports)
+    await this.refreshConfig(this.ports)
     try {
       await this.watch.check()
     } catch {
@@ -210,7 +246,7 @@ export class LifecycleManager {
   /** The x button: the dismiss list first, the item keys second, then the trackers hear of it (spec 8, 10.5). */
   async dismiss(ports: Ports, ids: readonly string[]): Promise<void> {
     await this.entry(ports)
-    await this.d.dismiss(ports).add(ids)
+    await this.d.dismiss(ports, this.cfg).add(ids)
     const gone = new Set(ids)
     await this.d.items.update(list => {
       const kept = list.filter(rec => !gone.has(rec.key))
@@ -238,7 +274,7 @@ export class LifecycleManager {
    * the watch saw and the wall clock, so the next switch still knows how the session left.
    */
   async end(ports: Ports, endReason: string, budgetMs: number): Promise<void> {
-    await this.ensureStarted(ports) // an end can be the first hook of a load (a hot reload, then /clear)
+    await this.ensureStarted(ports, { reconcile: false }) // an end can be the first hook of a load (a hot reload, then /clear)
     let id = this.watch.lastId
     let at = ports.clock.wall()
     try {

@@ -1,9 +1,11 @@
 // TrackerHost: gives each tracker its context, runs `init` and `store`, fills the bus with the declared handlers,
 // turns a tracker's data spec into a DataSlot, and owns the timers a tracker starts. A tracker that throws at init is
-// marked failed for the load: its handlers never run. It names no tracker and holds no `$`.
-// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.5, 5.8 and 6. Plan: L3 Task 8, D1, D15, D16.
+// marked failed for the load: its handlers never run. A tracker the config turned off (read once, at the first start of
+// the load) gets `store` but no `init`, no handler and no command. It names no tracker and holds no `$`.
+// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.5, 5.7, 5.8 and 6.
+// Plan: L3 Task 8, D1, D15, D16. L4 Task 5, C4, C5.
 
-import type { GlobalConfig } from '../interfaces/config'
+import type { ConfigSource } from '../interfaces/config'
 import type { TickEvent } from '../interfaces/events'
 import type { HostContext, ItemStorePort, Json, JsonObject } from '../interfaces/items'
 import type { EnvName, Ports, RunOpts, Timer } from '../interfaces/ports'
@@ -17,7 +19,8 @@ export interface TrackerHostDeps {
   trackers: readonly Tracker[]
   /** The ports of the first hook of the load: the slots and `init` use them. A handler gets its own dispatch's ports. */
   ports: Ports
-  global: GlobalConfig
+  /** The config file's views, read at call time: a tracker's `ctx.config` never holds a copy. */
+  config: ConfigSource
   facts: FactsPort
   dismiss: DismissPort
   items: ItemStorePort
@@ -42,13 +45,12 @@ const reason = (e: unknown): string => (e instanceof Error ? e.message : String(
 
 type Base = Omit<TrackerContext<JsonObject, Json>, 'data' | 'items'>
 
-const EMPTY_SLICE: Readonly<JsonObject> = Object.freeze({})
-
 export class TrackerHost {
   private readonly ordered: readonly Tracker[]
   private readonly failedIds = new Set<string>()
   private readonly slices = new Map<string, JsonObject>()
-  private readonly defaults = new Map<string, Readonly<JsonObject>>()
+  /** The trackers the config turned off, as the file read at the first start of the load. Set once (C5). */
+  private off: ReadonlySet<string> | undefined
   private readonly timers = new Map<string, Set<Timer>>()
   private readonly disposed = new Set<string>()
   private filled = false
@@ -57,14 +59,17 @@ export class TrackerHost {
     this.ordered = [...d.trackers].sort((a, b) => a.order - b.order)
   }
 
-  /** `init`, then `store`, for each tracker in `order`. A throw marks that tracker failed; the others still run. */
+  /**
+   * `init`, then `store`, for each tracker in `order`. A tracker the config turned off gets `store` only. A throw marks
+   * that tracker failed; the others still run.
+   */
   async init(): Promise<void> {
     for (const t of this.ordered) {
       if (this.failedIds.has(t.id)) continue
       try {
         if (t.id === ITEMS) throw new Error(`the id ${ITEMS} belongs to the item list`)
         const ctx = this.contextOf(t, this.d.ports, false)
-        await t.init(ctx)
+        if (this.live(t.id)) await t.init(ctx)
         this.slices.set(t.id, t.store(ctx) as JsonObject)
       } catch (e) {
         this.failedIds.add(t.id)
@@ -77,7 +82,16 @@ export class TrackerHost {
     return [...this.failedIds]
   }
 
-  /** What each tracker's `store` gave. Memory only in L3: no config file is read or written. */
+  /**
+   * True unless the config turned the tracker off or it failed to start. The toggles are read once per load, by the
+   * first caller (the item host asks before the first `init`), so a later edit of the file waits for the next load (C5).
+   */
+  live(id: string): boolean {
+    this.off ??= new Set(this.ordered.filter(t => !this.d.config.enabled(t.id)).map(t => t.id))
+    return !this.off.has(id) && !this.failedIds.has(id)
+  }
+
+  /** What each tracker's `store` gave: the slice it wants in the file. The ConfigManager merges it once per load. */
   stored(): ReadonlyMap<string, JsonObject> {
     return this.slices
   }
@@ -93,7 +107,7 @@ export class TrackerHost {
     this.filled = true
     for (const t of this.ordered) {
       const ev = t.events
-      if (!ev || this.failedIds.has(t.id)) continue
+      if (!ev || !this.live(t.id)) continue
       const add = <E>(
         kind: BusKind,
         run: Handler<JsonObject, Json, E>,
@@ -121,7 +135,7 @@ export class TrackerHost {
       const tick = ev.tick
       if (tick)
         add<TickEvent>('tick', async (ctx, e) => {
-          const everyMs = tick.everyMs?.(ctx.config.slice()) ?? this.d.global.refresh.tickMs
+          const everyMs = tick.everyMs?.(ctx.config.slice()) ?? this.d.config.global().refresh.tickMs
           if (this.d.due(t.id, everyMs, e.now)) await tick.run(ctx, e)
         })
     }
@@ -139,7 +153,10 @@ export class TrackerHost {
 
   /** The item host's context: no data and no items of its own, and a signal that its list changed. */
   hostCtx(ports: Ports): HostContext {
-    return this.make(ITEMS, ports, EMPTY_SLICE, { persisted: () => this.d.persisted(ITEMS) }) as unknown as HostContext
+    return this.make(ITEMS, ports, {
+      persisted: () => this.d.persisted(ITEMS),
+      trackers: { live: (id: string) => this.live(id), slice: (id: string) => this.d.config.slice(id) },
+    }) as unknown as HostContext
   }
 
   /** Cancels the timers the trackers started, then calls each tracker's `dispose` once. A throw is logged. */
@@ -174,12 +191,7 @@ export class TrackerHost {
   private contextOf(t: Tracker, ports: Ports, guard: boolean): TrackerContext<JsonObject, Json> {
     const { d } = this
     const persist = t.persist !== false
-    let slice = this.defaults.get(t.id)
-    if (!slice) {
-      slice = Object.freeze({ ...t.config.defaults })
-      this.defaults.set(t.id, slice)
-    }
-    return this.make(t.id, ports, slice, {
+    return this.make(t.id, ports, {
       data: {
         get: () => ports.state.slot.get(t.id),
         update: async (fn: (cur: Json | undefined) => Json, opts?: { since?: number }) => {
@@ -196,9 +208,10 @@ export class TrackerHost {
 
   /**
    * A context: everything the tracker may use, over the ports of one dispatch. `extra` adds the parts that differ
-   * (`data` and `items` for a tracker, `persisted` for the item host). `generation` is a getter that reads the live value.
+   * (`data` and `items` for a tracker, `persisted` for the item host). `generation` is a getter that reads the live
+   * value, and so are the config views: a changed file shows on the next call.
    */
-  private make<X extends object>(owner: string, ports: Ports, slice: Readonly<JsonObject>, extra: X): Base & X {
+  private make<X extends object>(owner: string, ports: Ports, extra: X): Base & X {
     const { d } = this
     return {
       id: owner,
@@ -206,7 +219,7 @@ export class TrackerHost {
         return d.watch.generation
       },
       current: () => d.watch.current(),
-      config: { slice: () => slice, global: () => d.global },
+      config: { slice: () => d.config.slice(owner), global: () => d.config.global() },
       facts: d.facts,
       dismiss: d.dismiss,
       session: {
