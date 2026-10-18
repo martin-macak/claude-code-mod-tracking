@@ -82,7 +82,7 @@ export interface RefreshContext {
 
 /**
  * A CLI tool that refreshes items in place, as the tool classes of the item trackers do. `ItemKind.refresh` replaces
- * it for new code (plan K5). It stays for the tool classes until the refresh lanes of Task 7 own them.
+ * it for new code (plan K5). The tool classes implement it, and the refresh lanes reach them through the kind.
  */
 export interface RefreshTool<T> {
   /** The tool id. */

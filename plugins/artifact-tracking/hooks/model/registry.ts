@@ -149,7 +149,7 @@ export function carryOver(
 /** How long a refreshed item stays current: all items, and a GitHub PR whose checks are still pending. */
 export type Ttl = { staleMs: number; pendingStaleMs: number }
 
-/** An item the coordinator may select but no tool refreshes: never due, never refreshed. Task 7 removes the need. */
+/** An item no tool refreshes: never due, never refreshed. Only the `hydrate` binding below builds it. */
 function plainItem(rec: ItemRecord): HydratedItem {
   return {
     key: rec.key,
@@ -163,8 +163,9 @@ function plainItem(rec: ItemRecord): HydratedItem {
 
 /**
  * `ttl` is how long an item stays current. It is read at each check; the default is today's. The item classes of the
- * two kinds that refresh take their tool from `tools`. Task 7 gives the coordinator lanes, which build items through
- * `ItemKind.refresh.hydrate`, and this goes.
+ * two kinds that refresh take their tool from `tools`. No production code calls it since plan L5, Task 7: the coordinator's
+ * lanes build items through `ItemKind.refresh.hydrate`. The registry, global-values and kinds tests still do, until Task 15
+ * moves this binding to the test fixtures.
  */
 export function hydrate(rec: ItemRecord, tools: Tools, ttl?: () => Ttl): HydratedItem {
   const staleMs = ttl && (() => ttl().staleMs)

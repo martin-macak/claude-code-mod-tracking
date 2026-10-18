@@ -8,11 +8,19 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.7, 5.8 and 5.9.
 // Plan: L3 Task 11, D13. L4 Task 6, C12. L5 Task 3: the tools come from a ToolRunner.
 
-import { RefreshCoordinator } from '../../core/infra/coordinator'
+import { RefreshCoordinator, type RefreshLane } from '../../core/infra/refresh'
 import { ToolRunner } from '../../core/infra/tools'
 import type { GlobalConfig } from '../../core/interfaces/config'
 import type { ReplayItem, RowEvent, SessionChangedEvent } from '../../core/interfaces/events'
-import type { Claim, HostContext, ItemsHost, Json, StoredItem } from '../../core/interfaces/items'
+import type {
+  Claim,
+  HostContext,
+  ItemsHost,
+  Json,
+  JsonObject,
+  RefreshContext,
+  StoredItem,
+} from '../../core/interfaces/items'
 import type { StatePorts } from '../../core/interfaces/ports'
 import type { DataSlot } from '../../core/interfaces/slots'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
@@ -27,15 +35,7 @@ import { ACLI_TOOL, acliClient } from '../../trackers/jira/client'
 import { JIRA_DEFAULTS, type JiraConfig } from '../../trackers/jira/config'
 import type { GitHubDiscoveryApi, ItemRecord, Priority, RepoRef } from '../contracts'
 import { rowIdOf, setPriority } from '../model/priority'
-import {
-  carryOver,
-  hydrate,
-  mergeResults,
-  rekeyArtifacts,
-  resolveBareRefs,
-  type Ttl,
-  unionRecords,
-} from '../model/registry'
+import { carryOver, KINDS, mergeResults, rekeyArtifacts, resolveBareRefs, unionRecords } from '../model/registry'
 import { Capture, type CaptureLimits } from './capture'
 import { itemsFromBatch, onlyNew } from './replay'
 import { ItemStore, storedForLoad } from './store'
@@ -300,11 +300,6 @@ export class ItemRuntime implements ItemsHost {
     }
   }
 
-  /** How long an item stays current: `global.refresh.staleMs`, and `trackers.github.pendingStaleMs` for a PR with pending checks. */
-  private ttl(): Ttl {
-    return { staleMs: this.global().refresh.staleMs, pendingStaleMs: this.github().pendingStaleMs }
-  }
-
   /** True when the tracker of an item kind is on. Before the start there is no config to ask: everything is on. */
   private kindLive(id: string): boolean {
     return this.ctx?.trackers.live(id) ?? true
@@ -351,7 +346,7 @@ export class ItemRuntime implements ItemsHost {
       save: async refreshed => {
         const refreshedKeys = new Set(refreshed.map(rec => rec.key))
         const before = await this.store.records()
-        await this.store.set(list => mergeResults(list, refreshed))
+        await this.store.set(list => mergeResults(list, refreshed as unknown as ItemRecord[]))
         const after = await this.store.records()
         const kept = new Set(after.map(rec => rec.key))
         const dropped = before.filter(rec => refreshedKeys.has(rec.key) && !kept.has(rec.key)).map(rec => rec.key)
@@ -364,8 +359,7 @@ export class ItemRuntime implements ItemsHost {
           }
         }
       },
-      hydrate: rec => hydrate(rec, { gh: g, acli: a }, () => this.ttl()),
-      tools: { gh: g, acli: a },
+      lanes: this.buildLanes(runner, ctx, { [GH_TOOL.id]: g, [ACLI_TOOL.id]: a }),
       debounceMs: () => this.global().refresh.captureDebounceMs,
       after: (ms, fn) => ctx.clock.after(ms, fn),
       onRun: async () => {
@@ -375,6 +369,52 @@ export class ItemRuntime implements ItemsHost {
       onError: () => {
         // The tools record their own failures. A run must not break the session.
       },
+    })
+  }
+
+  /**
+   * One lane per kind that refreshes. The kind brings the fetch (`ItemKind.refresh`); this brings the tool handle that
+   * gates the call, the tool class that forgets its failures on a manual refresh, and the context of the owning tracker.
+   * The owner of a shipped kind is the tracker of its own id, until the item service of Task 8 reads the trackers.
+   */
+  private buildLanes(
+    runner: ToolRunner,
+    ctx: HostContext,
+    tools: Readonly<Record<string, { reset(): void }>>,
+  ): RefreshLane[] {
+    const slices: Readonly<Record<string, () => unknown>> = { github: () => this.github(), jira: () => this.jira() }
+    return KINDS.flatMap((kind): RefreshLane[] => {
+      const { refresh } = kind
+      const port = runner.port(kind.category)
+      const handle = refresh && port.handle(refresh.tool)
+      if (!refresh || !handle) return []
+      const rctx: RefreshContext = {
+        tools: port,
+        config: { slice: () => (slices[kind.category]?.() ?? {}) as JsonObject, global: () => this.global() },
+        facts: ctx.facts,
+        now: ctx.clock.wall,
+      }
+      return [
+        {
+          category: kind.category,
+          canCall: now => handle.canCall(now),
+          // The tool class forgets more than its handle does (denied hosts, a null site).
+          reset: () => (tools[refresh.tool] ?? handle).reset(),
+          // A stored record of a malformed shape is never due: one bad record must not stop the run for the others.
+          hydrate: rec => {
+            const typed = kind.decode(rec)
+            if (typed) return refresh.hydrate(typed, rctx)
+            return {
+              key: rec.key,
+              category: rec.category,
+              canRefresh: () => false,
+              isDue: () => false,
+              toRecord: () => rec,
+            }
+          },
+          refreshItems: items => refresh.refreshItems(items, rctx),
+        },
+      ]
     })
   }
 

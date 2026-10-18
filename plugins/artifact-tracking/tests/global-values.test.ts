@@ -2,7 +2,7 @@
 // the stale times of an item and the item cap. Each test uses a value that is not the default, so it fails on the old
 // constant. Plan: L4 Task 7 (decisions C2, C5).
 import { expect, test } from 'claude-code/testing'
-import { RefreshCoordinator } from '../core/infra/coordinator'
+import { RefreshCoordinator } from '../core/infra/refresh'
 import { CircuitBreaker } from '../core/lib/circuit-breaker'
 import type { ToolTimeouts } from '../core/lib/tool'
 import type { GitHubRecord, GitHubToolApi, ItemRecord, JiraToolApi, RunInit, Runner, Tools } from '../hooks/contracts'
@@ -18,10 +18,6 @@ function coordinatorWorld(debounceMs?: () => number) {
   const timers: { ms: number; fn: () => void | Promise<void>; cancelled: boolean }[] = []
   let loads = 0
   let now = NOW
-  const tools = {
-    gh: { canCall: () => true, reset: () => {} },
-    acli: { canCall: () => true, reset: () => {} },
-  } as unknown as Tools
   const coordinator = new RefreshCoordinator({
     now: () => now,
     load: async () => {
@@ -29,10 +25,7 @@ function coordinatorWorld(debounceMs?: () => number) {
       return []
     },
     save: async () => {},
-    hydrate: () => {
-      throw new Error('no items')
-    },
-    tools,
+    lanes: [],
     after: (ms, fn) => {
       const t = { ms, fn, cancelled: false }
       timers.push(t)

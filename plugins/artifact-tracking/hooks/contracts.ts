@@ -124,8 +124,8 @@ export type Tools = { gh: GitHubToolApi; acli: JiraToolApi }
 // ---------------------------------------------------------------- hydrated items
 
 /**
- * The pre-L5 shape of an item the coordinator refreshes. The coordinator hydrates through it until Task 7 gives it
- * lanes; its test keeps the `HydratedItem` type to the end of L5.
+ * The pre-L5 shape of an item the coordinator refreshed. The coordinator works on `Refreshable` through lanes now (plan
+ * L5, Task 7); the `hydrate` binding of the registry and the coordinator test keep this type to the end of L5.
  */
 interface Hydrated extends Refreshable {
   readonly category: Category

@@ -1,7 +1,7 @@
 // RefreshCoordinator: due picking, debounce, re-entry guard, force, logged-out tools, errors. Pure, fakes only.
 import { expect, test } from 'claude-code/testing'
-import type { CoordinatorDeps } from '../core/infra/coordinator'
-import { RefreshCoordinator } from '../core/infra/coordinator'
+import type { CoordinatorDeps, RefreshLane } from '../core/infra/refresh'
+import { RefreshCoordinator } from '../core/infra/refresh'
 import type {
   GitHubTarget,
   GitHubToolApi,
@@ -123,6 +123,17 @@ function fakeTools(opts: ToolOpts = {}) {
   return { tools, calls, resets }
 }
 
+/** The lane of one category over a tool double. */
+function lane(category: string, tool: Tools['gh'] | Tools['acli']): RefreshLane {
+  return {
+    category,
+    canCall: n => tool.canCall(n),
+    reset: () => tool.reset(),
+    hydrate,
+    refreshItems: xs => tool.refreshItems(xs as never),
+  }
+}
+
 function setup(records: ItemRecord[], toolOpts: ToolOpts = {}, over: Partial<CoordinatorDeps> = {}) {
   const t = fakeTools(toolOpts)
   const saved: ItemRecord[][] = []
@@ -133,10 +144,9 @@ function setup(records: ItemRecord[], toolOpts: ToolOpts = {}, over: Partial<Coo
     now: () => NOW,
     load: async () => records,
     save: async r => {
-      saved.push(r)
+      saved.push(r as ItemRecord[])
     },
-    hydrate,
-    tools: t.tools,
+    lanes: [lane('github', t.tools.gh), lane('jira', t.tools.acli)],
     after: (ms, fn) => {
       const timer = { ms, fn, cancelled: false }
       timers.push(timer)
@@ -454,4 +464,23 @@ test('a capture timer that never fired is re-armed by the next capture kick', as
   expect(s.timers[0]!.cancelled).toBe(true)
   await fire(s.timers[1]!)
   expect(s.calls.gh).toEqual([['gh:github.com/o/r#1', 'gh:github.com/o/r#2']])
+})
+
+test('a category with no lane is never hydrated', async () => {
+  const t = fakeTools()
+  const hydrated: string[] = []
+  const only: RefreshLane = {
+    ...lane('github', t.tools.gh),
+    hydrate: rec => {
+      hydrated.push(rec.key)
+      return hydrate(rec as ItemRecord)
+    },
+  }
+  const s = setup([gh(1), jira('ISS-1'), web('https://example.com/')], {}, { lanes: [only] })
+  expect(await s.c.runDue({ force: true })).toEqual({ refreshed: 1, skipped: false })
+  expect(hydrated).toEqual(['gh:github.com/o/r#1']) // the Jira record and the web link have no lane
+  expect(t.calls).toEqual({ gh: [['gh:github.com/o/r#1']], acli: [] })
+  s.c.kick('manual')
+  await flush()
+  expect(t.resets).toEqual(['gh']) // only the lanes there are are reset
 })
