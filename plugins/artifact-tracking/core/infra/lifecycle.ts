@@ -9,14 +9,16 @@ import type { ItemsHost, Json } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { DataSlot, PendingEnd, Snapshot } from '../interfaces/slots'
 import type { FactsPort } from '../interfaces/tracker'
+import { EventBus } from './bus'
 import { Facts } from './facts'
 import { Persistence } from './persistence'
+import { Replay } from './replay'
 import { Scheduler } from './scheduler'
 import { SessionWatch, type Switch } from './session'
 
 export interface LifecycleDeps {
   /** The item host: its list is the `items` slot, it hears of a switch, and it has its share of every beat. */
-  items: Pick<ItemsHost, 'slot' | 'sessionChanged' | 'tick'>
+  items: Pick<ItemsHost, 'slot' | 'sessionChanged' | 'tick' | 'replay'>
   /** Slots that a tracker will own later. Until it moves out of register.tsx, register.tsx passes them here. */
   extraSlots?: readonly DataSlot[]
   global: GlobalConfig
@@ -30,6 +32,8 @@ export class LifecycleManager {
   /** register.tsx still calls the store paths itself (touch, flush, read, legacy sweep) until Tasks 8 to 11 move them in. */
   readonly persistence: Persistence
   private readonly scheduler: Scheduler
+  private readonly bus: EventBus
+  private readonly replayer: Replay
 
   constructor(
     private readonly d: LifecycleDeps,
@@ -47,6 +51,8 @@ export class LifecycleManager {
       beat: () => this.tick(),
       log: ports.log,
     })
+    this.bus = new EventBus({ log: ports.log })
+    this.replayer = new Replay({ messages: () => ports.session.messages(), log: ports.log })
     this.persistence = new Persistence({
       store: ports.store,
       clock: ports.clock,
@@ -85,6 +91,16 @@ export class LifecycleManager {
       // The beat still does what it can.
     }
     await this.d.items.tick()
+  }
+
+  /**
+   * Reads the transcript back and gives it to the item host and the bus, on a cold load. It writes through the raw
+   * paths, so it may run inside a switch. Nothing in the batch is a live row: capture and the row handlers skip it.
+   */
+  async replay(): Promise<void> {
+    const batch = await this.replayer.collect()
+    await this.d.items.replay(batch)
+    await this.bus.emit('replay', batch, this.ports)
   }
 
   /**
@@ -136,6 +152,8 @@ export class LifecycleManager {
         const value = to?.[slot.id]
         if (value !== undefined) await this.guard(slot.id, () => slot.restore(value, 'load'))
       }
+      // The transcript fills in what the stored copy lacks, whether or not there was a copy (D7).
+      await this.guard('replay', () => this.replay())
     }
     await this.guard('sessionChanged', () => this.d.items.sessionChanged({ from: sw.from, to: sw.to, kind: sw.kind }))
     await this.guard('clearRun', () => this.persistence.clearRun())

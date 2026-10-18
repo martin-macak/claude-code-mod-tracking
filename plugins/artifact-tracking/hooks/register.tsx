@@ -10,6 +10,7 @@ import { RefreshCoordinator } from '../core/infra/coordinator'
 import { autoIds, dismiss } from '../core/infra/dismiss'
 import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
 import { LifecycleManager } from '../core/infra/lifecycle'
+import type { ReplayItem } from '../core/interfaces/events'
 import type { ItemsHost, Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
 import type { DataSlot } from '../core/interfaces/slots'
@@ -763,9 +764,10 @@ function autoSlot($: EngineInterface): DataSlot {
 }
 
 /** The part of the item host that this file still holds. Task 11 moves the rest in. */
-function legacyHost($: EngineInterface): Pick<ItemsHost, 'slot' | 'sessionChanged' | 'tick'> {
+function legacyHost($: EngineInterface): Pick<ItemsHost, 'slot' | 'sessionChanged' | 'tick' | 'replay'> {
   return {
     slot: itemsSlot($),
+    replay: batch => replayItems($, batch),
     sessionChanged: async () => {
       resetRepo($)
       await publishTools($) // the tools atom was reset too
@@ -1236,13 +1238,11 @@ function backfillText(role: 'user' | 'assistant', text: string): string | null {
 }
 
 /**
- * Items from `$.session.messages()`: a `--resume` load fires no append hooks. File rows come from the Write, Edit
+ * Items from a replayed transcript batch: a `--resume` load fires no append hooks. File rows come from the Write, Edit
  * and Read results and the mentions, artifact rows from the Artifact tool uses, in transcript order. A subagent's
  * transcript stores no result, so its writes and publishes come back from the stored copy only.
  */
-async function fromTranscript($: EngineInterface): Promise<ItemRecord[]> {
-  const messages = await $.session.messages()
-  if (!Array.isArray(messages)) return []
+async function fromBatch($: EngineInterface, batch: readonly ReplayItem[]): Promise<ItemRecord[]> {
   // In transcript order, so a delete lands after the publish before it.
   const batches: ({ refs: Ref[]; source: Source } | { deleted: string })[] = []
   const fileRecs: FileRecord[] = []
@@ -1250,29 +1250,32 @@ async function fromTranscript($: EngineInterface): Promise<ItemRecord[]> {
   const toolSite = await activeJiraSite()
   const ctx = await fileCtx($)
   const at = Date.now()
-  for (const m of messages) {
-    const text = backfillText(m.role, m.text)
-    const source: Source = m.role === 'user' ? 'prompt' : 'response'
-    if (text !== null) {
+  for (const item of batch) {
+    if (item.kind === 'row') {
+      const role = item.ev.door === 'prompt' ? 'user' : 'assistant'
+      const text = backfillText(role, item.ev.text)
+      if (text === null) continue
+      const source: Source = role === 'user' ? 'prompt' : 'response'
       batches.push({
         refs: await keepOpenSessionShortRefs(extractRefs(text, { mode: 'full', ...opts, strictShortRefs: true })),
         source,
       })
       fileRecs.push(...(await mentionRecords($, ctx, text, { source, at })))
+      continue
     }
-    for (const use of m.toolUses) {
-      const t = touchFromToolResult(use.tool, use)
-      const rec = t && (await sighting($, ctx, t.spelled, t.kind, false, { source: 'tool', at }))
-      if (rec) fileRecs.push(rec)
-      if (use.tool === 'Artifact') {
-        const ev = artifactEvent(use.input, use)
-        if (ev?.kind === 'published') batches.push({ refs: [ev.ref], source: 'publish' })
-        else if (ev?.kind === 'deleted') batches.push({ deleted: ev.key })
-      }
-      if (!use.text) continue
-      const refs = filterToolRefsForSite(extractRefs(use.text, { mode: 'urls-only', ...opts }), toolSite)
-      if (refs.length > 0) batches.push({ refs, source: 'tool' })
+    const { tool, input, result: use } = item.ev // `use` is the whole tool use of the transcript
+    const t = touchFromToolResult(tool, use)
+    const rec = t && (await sighting($, ctx, t.spelled, t.kind, false, { source: 'tool', at }))
+    if (rec) fileRecs.push(rec)
+    if (tool === 'Artifact') {
+      const ev = artifactEvent(input, use)
+      if (ev?.kind === 'published') batches.push({ refs: [ev.ref], source: 'publish' })
+      else if (ev?.kind === 'deleted') batches.push({ deleted: ev.key })
     }
+    const text = isRecord(use) && typeof use.text === 'string' ? use.text : ''
+    if (!text) continue
+    const refs = filterToolRefsForSite(extractRefs(text, { mode: 'urls-only', ...opts }), toolSite)
+    if (refs.length > 0) batches.push({ refs, source: 'tool' })
   }
   let list: ItemRecord[] = []
   for (const b of batches) {
@@ -1305,8 +1308,9 @@ function keepStored(rec: ItemRecord, activeSite: string | null | undefined): boo
 }
 
 /**
- * The items of a stored copy, then what the transcript adds. A `--resume` load and a /resume switch both come here.
- * The list is empty: the caller checked. Does not wait for the repo, which may need `gh` calls of up to 30 s.
+ * The items of a stored copy. A `--resume` load and a /resume switch both come here, with the list empty: the caller
+ * checked. The transcript is not read here: Replay hands it over after the load. Does not wait for the repo, which
+ * may need `gh` calls of up to 30 s.
  */
 async function loadItems($: EngineInterface, storedItems: ItemRecord[]): Promise<void> {
   // Bare #N is re-keyed when the repo arrives.
@@ -1318,19 +1322,34 @@ async function loadItems($: EngineInterface, storedItems: ItemRecord[]): Promise
     .filter(rec => rec.error?.kind !== 'not-found')
     .filter(rec => !dismissed.has(rec.key))
     .map(due)
-  const have = new Map(stored.map(r => [r.key, r]))
-  // A stored key wins over the transcript, except for what only the transcript may know of an artifact:
-  // a publish or a delete that landed after the last flush.
+  if (stored.length === 0) return
+  await setItems($, list => unionRecords(list, stored))
+  afterLoad($, repoReady)
+}
+
+/**
+ * The transcript of a cold load or a cold resume, after the stored copy. A stored key wins over the transcript, except
+ * for what only the transcript may know of an artifact: a publish or a delete that landed after the last flush.
+ */
+async function replayItems($: EngineInterface, batch: readonly ReplayItem[]): Promise<void> {
+  const repoReady = ensureRepo($).catch(() => {})
+  await activeJiraSite() // learns the site now, so the first refresh finds it cached
+  const dismissed = new Set((await readAuto($)).dismissed)
+  const have = new Map((await read($, items)).map(r => [r.key, r]))
   const news = (r: ItemRecord): boolean => {
     const old = have.get(r.key)
     if (!old) return true
     if (r.category !== 'artifact' || old.category !== 'artifact') return false
     return (artifactOrigin(r) === 'published' && artifactOrigin(old) === 'mentioned') || (!!r.deleted && !old.deleted)
   }
-  const fresh = (await fromTranscript($)).filter(r => news(r) && !dismissed.has(r.key))
-  const all = unionRecords(stored, fresh)
-  if (all.length === 0) return
-  await setItems($, list => unionRecords(list, all))
+  const fresh = batch.length === 0 ? [] : (await fromBatch($, batch)).filter(r => news(r) && !dismissed.has(r.key))
+  if (fresh.length === 0) return
+  await setItems($, list => unionRecords(list, fresh))
+  afterLoad($, repoReady)
+}
+
+/** After items came in: bare #N waits for the repo, then the refresh picks them up. */
+function afterLoad($: EngineInterface, repoReady: Promise<void>): void {
   void repoReady
     .then(async () => {
       const repo = sessionRepo
@@ -1355,6 +1374,7 @@ async function restore($: EngineInterface): Promise<void> {
   const proc = copy?.processes ?? []
   if (repoRows.length > 0) await setRepos($, rows => mergeRepoRows(rows, repoRows))
   if (proc.length > 0) await setProcesses($, rows => mergeProcessRows(rows, proc))
+  await managerOf($).replay() // the transcript fills in what the stored copy lacks (Task 8 moves this into `start`)
 }
 
 // ------------------------------------------------------------------ /track

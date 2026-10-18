@@ -3,6 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
 import { LifecycleManager } from '../core/infra/lifecycle'
+import type { ReplayItem } from '../core/interfaces/events'
 import type { Json } from '../core/interfaces/items'
 import type { DataSlot } from '../core/interfaces/slots'
 import { fakePorts } from './fixtures/ports'
@@ -41,24 +42,30 @@ function setup(o: { items?: Json; repos?: Json; seed?: Record<string, Json> } = 
   const auto = slot('auto', { root: '/work' }, log, false)
   const changed: string[] = []
   const ticks = { n: 0 }
+  /** Each replay the host got: its batch, and what had loaded before it. */
+  const replays: { batch: readonly ReplayItem[]; after: string[] }[] = []
+  const host = {
+    slot: items,
+    sessionChanged: async (ev: { kind: string; from: string; to: string }) => {
+      log.push(`host:${ev.kind}`)
+      changed.push(`${ev.from}>${ev.to}`)
+    },
+    tick: async () => {
+      ticks.n++
+    },
+    replay: async (batch: readonly ReplayItem[]) => {
+      replays.push({ batch, after: [...log] })
+    },
+  }
   const m = new LifecycleManager(
     {
-      items: {
-        slot: items,
-        sessionChanged: async ev => {
-          log.push(`host:${ev.kind}`)
-          changed.push(`${ev.from}>${ev.to}`)
-        },
-        tick: async () => {
-          ticks.n++
-        },
-      },
+      items: host,
       extraSlots: [repos, processes, auto],
       global: GLOBAL_DEFAULTS,
     },
     w.ports,
   )
-  return { w, m, log, items, repos, processes, auto, changed, ticks }
+  return { w, m, log, items, repos, processes, auto, changed, ticks, replays, host }
 }
 
 /** Plays a `/clear` or `/resume`: `session.end` sees the leaving id, then the id changes. */
@@ -155,6 +162,61 @@ test('a resume switch carries persist:false slots and loads v2:s:<new> when the 
   expect(t.log).toEqual(['auto:carry', 'items:load', 'repos:load', 'host:resume']) // processes has no stored value
   expect(t.items.live).toEqual(['b-item'])
   expect(t.repos.live).toEqual(['b-repo'])
+})
+
+test('a resume switch replays the transcript once, after the stored copy loads', async () => {
+  const t = setup({ seed: { 'v2:s:sess-b': { items: ['b-item'] } } })
+  await t.m.entry(t.w.ports)
+  await leave(t, 'sess-b', 'resume')
+  t.items.live = []
+  t.w.session.messages = [{ role: 'user', text: 'hello', toolUses: [] }]
+  await t.m.entry(t.w.ports)
+  expect(t.replays).toHaveLength(1)
+  expect(t.replays[0]?.after).toContain('items:load')
+  expect(t.replays[0]?.batch).toEqual([
+    { kind: 'row', ev: { door: 'prompt', origin: 'replay', isMeta: false, hasMessage: true, text: 'hello' } },
+  ])
+})
+
+test('a resume switch replays even when the new id has no stored copy', async () => {
+  const t = setup()
+  await t.m.entry(t.w.ports)
+  await leave(t, 'sess-new', 'resume')
+  t.items.live = []
+  await t.m.entry(t.w.ports)
+  expect(t.replays).toHaveLength(1)
+})
+
+test('a clear switch and a warm resume do not replay', async () => {
+  const t = setup({ seed: { 'v2:s:sess-b': { items: ['b-item'] } } })
+  await t.m.entry(t.w.ports)
+  await leave(t, 'sess-2', 'clear')
+  await t.m.entry(t.w.ports)
+  await leave(t, 'sess-b', 'resume')
+  await t.m.entry(t.w.ports) // the items slot still holds the carried list
+  expect(t.replays).toHaveLength(0)
+})
+
+test('a failing replay is logged and the host still hears of the switch', async () => {
+  const t = setup()
+  await t.m.entry(t.w.ports)
+  await leave(t, 'sess-new', 'resume')
+  t.items.live = []
+  t.w.session.messages = [{ role: 'user', text: 'x', toolUses: [] }]
+  t.host.replay = async () => {
+    throw new Error('merge failed')
+  }
+  await t.m.entry(t.w.ports)
+  expect(t.w.logs).toEqual(['lifecycle: replay failed in a switch: merge failed'])
+  expect(t.changed).toEqual(['sess-1>sess-new'])
+})
+
+test('replay hands the collected batch to the item host', async () => {
+  const t = setup()
+  t.w.session.messages = [{ role: 'assistant', text: 'done', toolUses: [] }]
+  await t.m.replay()
+  expect(t.replays).toHaveLength(1)
+  expect(t.replays[0]?.batch).toHaveLength(1)
 })
 
 test('a resume switch to a warm items slot loads nothing', async () => {
