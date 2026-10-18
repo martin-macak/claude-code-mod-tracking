@@ -5,18 +5,18 @@
 
 import type { EngineInterface, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
-import { CircuitBreaker } from '../core/infra/circuit-breaker'
 import { RefreshCoordinator } from '../core/infra/coordinator'
 import { autoIds, dismiss } from '../core/infra/dismiss'
 import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { ReplayItem } from '../core/interfaces/events'
 import type { ItemsHost, Json, StoredItem } from '../core/interfaces/items'
-import type { Ports } from '../core/interfaces/ports'
+import type { Ports, SlotPort } from '../core/interfaces/ports'
 import type { DataSlot } from '../core/interfaces/slots'
-import type { FactsPort } from '../core/interfaces/tracker'
+import type { DismissPort, FactsPort } from '../core/interfaces/tracker'
 import { isRecord } from '../core/lib/json'
 import { textOfContent } from '../core/lib/links'
+import { buildTrackers } from '../trackers'
 import { artifactEvent } from '../trackers/artifact/artifact-tool'
 import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from '../trackers/auto/events'
 import {
@@ -44,22 +44,6 @@ import {
 import { dropAuto } from '../trackers/github/discovered'
 import { GhTool } from '../trackers/github/gh-tool'
 import { AcliTool } from '../trackers/jira/acli-tool'
-import {
-  monitorRow,
-  parseBashProcesses,
-  processUpdateFromNotification,
-  processUpdateFromNotificationText,
-  processUpdateFromTaskStop,
-} from '../trackers/processes/parse'
-import {
-  composeState,
-  dockerEntryMatchesRow,
-  findDetachedPid,
-  parseDockerPs,
-  psStillMatches,
-  screenLive,
-  tmuxLive,
-} from '../trackers/processes/probe'
 import {
   extractRepoPathsFromTool,
   PATH_TOOLS,
@@ -95,6 +79,7 @@ import type {
   UiState,
 } from './contracts'
 import { AUTO_SOURCES, isRowId, LIMITS, repoRowId } from './contracts'
+import { rowEvent, toolCallEvent } from './events'
 import { artifactOrigin, keyOf } from './model/keys'
 import { rowIdOf, setPriority } from './model/priority'
 import {
@@ -158,13 +143,6 @@ function updateRepos($: EngineInterface, change: (rows: RepoRecord[]) => RepoRec
 
 function readProcesses($: EngineInterface): Promise<ProcessRecord[]> {
   return readSlot<ProcessRecord[]>($, 'processes', noRows)
-}
-
-function updateProcesses(
-  $: EngineInterface,
-  change: (rows: ProcessRecord[]) => ProcessRecord[],
-): Promise<ProcessRecord[]> {
-  return updateSlot<ProcessRecord[]>($, 'processes', noRows, change)
 }
 
 /** The run: root, proofs, agents, dismiss list and the last snapshot (spec 6.2). Never goes to $.store. */
@@ -294,17 +272,12 @@ const PERSON = new Set(['composer', 'bridge', 'sdk', 'unclassified'])
 let gh: GhTool | undefined
 let acli: AcliTool | undefined
 let coordinator: RefreshCoordinator | undefined
-let runCmd: Runner | undefined
-const processBreaker = new CircuitBreaker()
-let processUiState: ProcessUiState = { breaker: 'closed' }
 /** undefined: not resolved yet. null: this session has no known repo. */
 let sessionRepo: RepoRef | null | undefined
 let repoTask: Promise<void> | undefined
 let githubHosts: string[] = []
 /** The session switch, the store and the facts of this load. Built on first use; a hot reload builds a new one. */
 let manager: LifecycleManager | undefined
-/** The first start of a load deletes the keys of the old layout. */
-let legacyDropped = false
 let scheduler: AutoScheduler | undefined
 let round: AutoRound | undefined
 /** When the last round ended. The Worktrees note reads it before `snapshot.at` (A22). */
@@ -323,7 +296,6 @@ let focusRows: ReadonlyMap<string, string> = new Map()
 function ensureRuntime($: EngineInterface): void {
   if (gh && acli && coordinator && scheduler && round) return
   const run: Runner = (argv, init) => $.process.run(argv, init)
-  runCmd = run
   repoTracker = new RepoTracker({
     run,
     now: Date.now,
@@ -493,12 +465,6 @@ async function setRepos($: EngineInterface, change: (rows: RepoRecord[]) => Repo
   await schedule($)
 }
 
-/** Like setItems, for tracked background processes. */
-async function setProcesses($: EngineInterface, change: (rows: ProcessRecord[]) => ProcessRecord[]): Promise<void> {
-  await updateProcesses($, change)
-  await schedule($)
-}
-
 /**
  * Change the `auto` member. Every write goes through here (A18, A22). It reads first and stops when the change
  * returns its input: no write. Else `update` runs the change on the current value and retries on a version miss.
@@ -657,17 +623,44 @@ async function dismissOne($: EngineInterface, id: string): Promise<void> {
 function managerOf($: EngineInterface): LifecycleManager {
   manager ??= new LifecycleManager(
     {
+      trackers: buildTrackers({}),
       items: legacyHost($),
-      extraSlots: [reposSlot($), processesSlot($), autoSlot($)],
+      extraSlots: [reposSlot($), autoSlot($)],
+      dismiss: p => autoDismiss(p.state.slot),
       global: GLOBAL_DEFAULTS,
+      paneId: PANE,
     },
     portsOf($),
   )
   return manager
 }
 
+/**
+ * The dismiss list over the `auto` member (it lives in AutoState until the auto tracker owns it, Task 10 moves this
+ * into trackers/auto/dismiss-store.ts). The list is run-scoped.
+ */
+function autoDismiss(slot: SlotPort): DismissPort {
+  return {
+    list: async () => new Set(((await slot.get('auto')) as unknown as AutoState | undefined)?.dismissed ?? []),
+    add: async ids => {
+      await slot.update(
+        'auto',
+        cur => dismiss((cur as unknown as AutoState | undefined) ?? emptyAuto(), ids) as unknown as Json,
+      )
+    },
+  }
+}
+
 function factsOf($: EngineInterface): FactsPort {
   return managerOf($).facts
+}
+
+/** The processes tracker publishes its probe state under this name (`trackers/processes/watch.ts`). */
+const PROCESS_UI_FACT = 'processes.ui'
+
+/** The probe state of the processes tracker as the pane and the `/track` text show it. Idle before the first probe. */
+function processUi($: EngineInterface): ProcessUiState {
+  return (factsOf($).read(PROCESS_UI_FACT) as unknown as ProcessUiState | undefined) ?? { breaker: 'closed' }
 }
 
 /**
@@ -727,26 +720,6 @@ function reposSlot($: EngineInterface): DataSlot {
   }
 }
 
-function processesSlot($: EngineInterface): DataSlot {
-  return {
-    id: 'processes',
-    persist: true,
-    read: async () => (await readProcesses($)) as unknown as Json,
-    empty: isEmpty,
-    settle: async (live, stored) =>
-      mergeProcessRows(
-        (stored ?? []) as unknown as ProcessRecord[],
-        (live ?? []) as unknown as ProcessRecord[],
-      ) as unknown as Json,
-    restore: async (value, how) => {
-      const rows = value as unknown as ProcessRecord[]
-      if (rows.length > 0)
-        await setProcesses($, cur => (how === 'carry' ? mergeProcessRows(rows, cur) : mergeProcessRows(cur, rows)))
-    },
-    clear: () => setProcesses($, () => []),
-  }
-}
-
 /** The run: root, proofs, agents, dismiss list. Run-scoped: a switch carries it before anything else loads (D9). */
 function autoSlot($: EngineInterface): DataSlot {
   return {
@@ -763,17 +736,45 @@ function autoSlot($: EngineInterface): DataSlot {
   }
 }
 
-/** The part of the item host that this file still holds. Task 11 moves the rest in. */
-function legacyHost($: EngineInterface): Pick<ItemsHost, 'slot' | 'sessionChanged' | 'tick' | 'replay'> {
+/**
+ * The item host over the code this file still holds: the list, the capture funnel, the refresh coordinator and the
+ * tools. Task 11 moves them into the item runtime.
+ */
+function legacyHost($: EngineInterface): ItemsHost {
   return {
     slot: itemsSlot($),
+    // The tools, the coordinator and the auto round are built here, before the session load needs them (D4).
+    start: async () => {
+      ensureRuntime($)
+      // A hot reload keeps $.state. Rows an older version stored as web links move (R13).
+      const live = await read($, items)
+      if (rekeyArtifacts(live) !== live) await setItems($, rekeyArtifacts)
+    },
+    // The four door hooks below still capture, until Task 11 moves the funnel here.
+    capture: async () => {},
     replay: batch => replayItems($, batch),
+    dispose: () => {},
+    list: async () => (await read($, items)) as unknown as StoredItem[],
+    update: async (change, opts) => {
+      const m = managerOf($)
+      await m.watch.check()
+      if (opts?.since !== undefined && opts.since !== m.generation) return false
+      const dismissed = new Set((await readAuto($)).dismissed)
+      const cur = (await read($, items)) as unknown as StoredItem[]
+      if (change(cur, dismissed) === cur) return false
+      await setItems($, list => change(list as unknown as StoredItem[], dismissed) as unknown as ItemRecord[])
+      return true
+    },
+    track: (refs, source) => trackRefs($, refs as unknown as Ref[], source as Source),
+    refresh: keys => {
+      coordinator?.kick('capture', keys === undefined ? undefined : [...keys])
+    },
     sessionChanged: async () => {
       resetRepo($)
       await publishTools($) // the tools atom was reset too
     },
-    // The share of one beat that is not the session check: find the repo again (after /clear), then one round, one
-    // refresh and one probe of the processes.
+    // The share of one beat that is not the session check: find the repo again (after /clear), then one round and one
+    // refresh. The trackers' ticks (the process probe) come from the bus.
     tick: async () => {
       try {
         ensureRuntime($)
@@ -783,7 +784,6 @@ function legacyHost($: EngineInterface): Pick<ItemsHost, 'slot' | 'sessionChange
       }
       scheduler?.kick('tick')
       coordinator?.kick('tick')
-      await probeProcesses($).catch(() => {})
     },
   }
 }
@@ -1044,173 +1044,7 @@ async function onFileTool($: EngineInterface, tool: string, ran: unknown, agentI
   }
 }
 
-// ------------------------------------------------------------------ process tracking
-
-function mergeProcessRows(cur: ProcessRecord[], added: ProcessRecord[]): ProcessRecord[] {
-  if (added.length === 0) return cur
-  const now = Date.now()
-  const byId = new Map(cur.map(r => [r.id, r]))
-  for (const row of added) {
-    const old = byId.get(row.id)
-    byId.set(
-      row.id,
-      old
-        ? {
-            ...old,
-            ...row,
-            firstSeen: old.firstSeen,
-            lastSeen: now,
-          }
-        : row,
-    )
-  }
-  return [...byId.values()].sort((a, b) => a.firstSeen - b.firstSeen || a.id.localeCompare(b.id))
-}
-
-async function addProcessRows($: EngineInterface, rows: ProcessRecord[]): Promise<void> {
-  if (rows.length === 0) return
-  await setProcesses($, cur => mergeProcessRows(cur, rows))
-}
-
-async function applyTaskUpdate(
-  $: EngineInterface,
-  u: { taskId?: string; toolUseId?: string; state: ProcessRecord['state'] } | null,
-): Promise<void> {
-  if (!u) return
-  await setProcesses($, rows => {
-    let changed = false
-    const next = rows.map(r => {
-      const byTask = u.taskId !== undefined && r.taskId === u.taskId
-      const byToolUse = u.toolUseId !== undefined && r.toolUseId === u.toolUseId
-      if (!byTask && !byToolUse) return r
-      changed = true
-      return { ...r, state: u.state, lastSeen: Date.now() }
-    })
-    return changed ? next : rows
-  })
-}
-
-/** A probe command ran and exited non-zero. Not a breaker failure. */
-class ExitError extends Error {}
-
-async function probeProcesses($: EngineInterface): Promise<void> {
-  const run = runCmd
-  if (!run) return
-  const now = Date.now()
-  if (!processBreaker.allows(now)) {
-    processUiState = { ...processUiState, breaker: 'open', openUntil: processBreaker.openUntil }
-    return
-  }
-  const rows = await readProcesses($)
-  const of = (kind: ProcessRecord['kind']) => rows.filter(r => r.kind === kind)
-  const dockerRows = of('docker-container')
-  const composeRows = of('docker-compose')
-  const tmuxRows = of('tmux')
-  const screenRows = of('screen')
-  const pidRows = of('detached-process').filter(r => r.pid !== undefined)
-  const lostRows = of('detached-process').filter(r => r.pid === undefined && r.fingerprint !== undefined)
-  const opts = { timeoutMs: LIMITS.discoveryTimeoutMs }
-  const updates = new Map<string, Partial<ProcessRecord>>()
-  const mark = (r: ProcessRecord, state: ProcessRecord['state'], pid?: number) => {
-    if (r.state === state && (pid === undefined || r.pid === pid)) return
-    updates.set(r.id, { state, ...(pid !== undefined ? { pid } : {}) })
-  }
-  // Each source is probed on its own: a Docker daemon that is down must not stop the tmux probe.
-  // A failed source leaves its rows at their last known state. Only a thrown error (timeout, no binary) counts
-  // for the breaker. A quick non-zero `docker ps` (daemon down) is shown as the reason and does not open it,
-  // else after three ticks the open breaker would stop the tmux, screen and ps probes too.
-  const failures: string[] = []
-  let dockerError: string | undefined
-  const probe = async (what: string, fn: () => Promise<void>) => {
-    try {
-      await fn()
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      if (!(e instanceof ExitError)) failures.push(msg)
-      if (what === 'docker') dockerError = msg.includes('ENOENT') ? 'docker not installed' : msg.trim()
-    }
-  }
-
-  if (dockerRows.length > 0 || composeRows.length > 0)
-    await probe('docker', async () => {
-      const ps = await run(['docker', 'ps', '-a', '--no-trunc', '--format', '{{.ID}}\t{{.Names}}\t{{.Status}}'], opts)
-      if (ps.exitCode !== 0) throw new ExitError(ps.stderr.trim() || `docker ps failed (${ps.exitCode})`)
-      const seen = parseDockerPs(ps.stdout)
-      const found = new Map<string, ProcessRecord['state']>()
-      for (const r of dockerRows) found.set(r.id, seen.find(x => dockerEntryMatchesRow(x, r))?.state ?? 'exited')
-      for (const r of composeRows) {
-        const label = `label=com.docker.compose.project=${r.project ?? r.name}`
-        const listed = await run(['docker', 'ps', '-a', '--filter', label, '--format', '{{.Status}}'], opts)
-        if (listed.exitCode !== 0) throw new ExitError(listed.stderr.trim() || `docker ps failed (${listed.exitCode})`)
-        found.set(r.id, composeState(listed.stdout))
-      }
-      for (const r of [...dockerRows, ...composeRows]) mark(r, found.get(r.id)!)
-    })
-
-  if (tmuxRows.length > 0)
-    await probe('tmux', async () => {
-      const live = new Set(tmuxLive(await run(['tmux', 'ls'], opts)))
-      for (const r of tmuxRows) mark(r, live.has(r.name) ? 'running' : 'exited')
-    })
-
-  if (screenRows.length > 0)
-    await probe('screen', async () => {
-      const live = new Set(screenLive(await run(['screen', '-ls'], opts)))
-      for (const r of screenRows) mark(r, live.has(r.name) ? 'running' : 'exited')
-    })
-
-  if (pidRows.length > 0)
-    await probe('ps', async () => {
-      for (const r of pidRows) {
-        const out = await run(['ps', '-p', String(r.pid), '-o', 'lstart=,command='], opts)
-        const alive = out.exitCode === 0 && psStillMatches(out.stdout, r.fingerprint ?? r.name, r.firstSeen)
-        mark(r, alive ? 'running' : 'exited')
-      }
-    })
-
-  // A detached process with no `echo $!` in its Bash call: find it once by command and start time.
-  if (lostRows.length > 0)
-    await probe('ps', async () => {
-      const all = await run(['ps', '-A', '-o', 'pid=,lstart=,command='], opts)
-      if (all.exitCode !== 0) throw new Error(all.stderr.trim() || `ps failed (${all.exitCode})`)
-      for (const r of lostRows) {
-        const pid = findDetachedPid(all.stdout, r.fingerprint!, r.firstSeen)
-        mark(r, pid !== undefined ? 'running' : 'exited', pid)
-      }
-    })
-
-  if (updates.size > 0)
-    await setProcesses($, current => {
-      const seenNow = Date.now()
-      let changed = false
-      const merged = current.map(r => {
-        const u = updates.get(r.id)
-        if (u === undefined || (u.state === r.state && (u.pid === undefined || u.pid === r.pid))) return r
-        changed = true
-        return { ...r, ...u, lastSeen: seenNow }
-      })
-      return changed ? merged : current
-    })
-  if (failures.length > 0) processBreaker.failure(now)
-  else processBreaker.success()
-  const dockerProbed = dockerRows.length > 0 || composeRows.length > 0
-  processUiState = {
-    ...processUiState,
-    breaker: processBreaker.state,
-    openUntil: processBreaker.openUntil,
-    dockerIssue: dockerError ?? (dockerProbed ? undefined : processUiState.dockerIssue),
-  }
-}
-
 // ------------------------------------------------------------------ store
-
-/** A stored copy as read back: the three lists of one session. An older copy may lack one. */
-type StoredCopy = Partial<{ items: ItemRecord[]; repos: RepoRecord[]; processes: ProcessRecord[] }>
-
-/** The stored copy of a session, or undefined. */
-async function storedCopy($: EngineInterface, id: string): Promise<StoredCopy | undefined> {
-  return (await managerOf($).persistence.read(id)) as unknown as StoredCopy | undefined
-}
 
 /**
  * Copy the lists to $.store later. Many changes in one burst make one write.
@@ -1359,24 +1193,6 @@ function afterLoad($: EngineInterface, repoReady: Promise<void>): void {
   coordinator?.kick('capture')
 }
 
-/** Fill the lists again at startup: the stored copy of this session, then what the transcript adds. */
-async function restore($: EngineInterface): Promise<void> {
-  const live = await read($, items)
-  if (live.length > 0) {
-    // A hot reload keeps $.state: nothing to restore. Rows an older version stored as web links move (R13).
-    if (rekeyArtifacts(live) !== live) await setItems($, rekeyArtifacts)
-    return
-  }
-  // No gate on the index: two sessions that flush together can drop each other's id from it.
-  const copy = await storedCopy($, await $.session.id())
-  await loadItems($, copy?.items ?? [])
-  const repoRows = copy?.repos ?? []
-  const proc = copy?.processes ?? []
-  if (repoRows.length > 0) await setRepos($, rows => mergeRepoRows(rows, repoRows))
-  if (proc.length > 0) await setProcesses($, rows => mergeProcessRows(rows, proc))
-  await managerOf($).replay() // the transcript fills in what the stored copy lacks (Task 8 moves this into `start`)
-}
-
 // ------------------------------------------------------------------ /track
 
 /** The view context from what is known now. It does not wait for the repo: a render must not wait on `gh`. */
@@ -1402,7 +1218,7 @@ async function listText($: EngineInterface): Promise<string> {
   return composeCommandText(
     await read($, items),
     await readProcesses($),
-    processUiState,
+    processUi($),
     await viewContext($),
     await readRepos($),
   )
@@ -1438,7 +1254,7 @@ async function prioritize($: EngineInterface, level: Priority | undefined): Prom
     return // The mark stays. The person can press again.
   }
   try {
-    const sections = composePane(await read($, items), await readProcesses($), processUiState, await contextOf($))
+    const sections = composePane(await read($, items), await readProcesses($), processUi($), await contextOf($))
     const key = markKeys(sections).get(id)
     if (key !== undefined) await $.ui.focus({ requestId: PANE, key })
   } catch {
@@ -1449,17 +1265,56 @@ async function prioritize($: EngineInterface, level: Priority | undefined): Prom
 // ------------------------------------------------------------------ hooks
 
 export const register: Register = on => {
+  // Every row, whatever the door: the manager captures it and gives it to the trackers that declared the door. The
+  // four door hooks below still capture until Task 11. The list is a literal, so a new door edits this line (E17).
+  on(
+    'session.append',
+    {
+      door: [
+        'prompt',
+        'command',
+        'response',
+        'tool-result',
+        'tool-message',
+        'delivery',
+        'attachment',
+        'hook-context',
+        'note',
+        'compaction',
+        'notice',
+        'queue',
+      ],
+    },
+    async ($, e, next) => {
+      const stored = await next(e)
+      try {
+        await managerOf($).row(portsOf($), rowEvent(e, stored))
+      } catch {
+        // A tracker fault must not touch the row.
+      }
+      return stored
+    },
+  ).catch((_$, e, next) => next(e))
+
+  // Every tool call: the trackers pick the tools they declared. A persisted `cd` moves the session cwd during the run,
+  // so it is read before the call, and only when a tracker wants this tool.
+  on('tool.call', async ($, e, next) => {
+    const m = managerOf($)
+    const cwdBefore = m.wants(e.tool) ? ((await $.session.cwd().catch(() => undefined)) ?? undefined) : undefined
+    const ran = await next(e)
+    try {
+      await m.toolCall(portsOf($), toolCallEvent(e, ran, cwdBefore))
+    } catch {
+      // The tool result goes back unchanged.
+    }
+    return ran
+  }).catch((_$, e, next) => next(e))
+
   // The person's typed prompt. Machines and notifications are not the person's text (D3).
   on('session.append', { door: 'prompt' }, async ($, e, next) => {
     const stored = await next(e)
     try {
       await enter($) // the first row of a new session carries the old one over, whatever the row is
-      if (e.origin.kind === 'task-notification')
-        await applyTaskUpdate(
-          $,
-          processUpdateFromNotification((e as { task?: unknown }).task) ??
-            processUpdateFromNotificationText(textOfContent(stored.message?.content)),
-        )
       if (PERSON.has(e.origin.kind) && !stored.message?.isMeta && e.agentId === undefined && stored.message) {
         await capture($, textOfContent(stored.message.content), 'full', 'prompt')
       }
@@ -1517,7 +1372,8 @@ export const register: Register = on => {
     return ran
   }).catch((_$, e, next) => next(e))
 
-  // Once per process: register the command and load what a resume brought in.
+  // Once per process: register the command, then the start sequence of the manager: the run record, the trackers,
+  // the stored session and the transcript of a resume, the tick and the pane.
   on('session.start', async ($, e, next) => {
     try {
       await $.command.register({
@@ -1529,24 +1385,14 @@ export const register: Register = on => {
       // The command may be refused. Capture and restore still work.
     }
     try {
-      await enter($) // learns the session id
       await setAuto($, s => pinRoot(s, e.cwd, Date.now())) // A3: a later session.start (reload) keeps the pinned root
     } catch {
       // No root this time. The next session.start pins it.
     }
     try {
-      // Old data is dropped by design: the v2 layout starts empty (plan: Behavior changes).
-      if (!legacyDropped) {
-        legacyDropped = true
-        await managerOf($).persistence.dropLegacy()
-      }
+      await managerOf($).start(portsOf($), { cwd: e.cwd, fromSessionStart: true })
     } catch {
-      // The old keys stay. They cost space only, and the next load tries again.
-    }
-    try {
-      await restore($)
-    } catch {
-      // The list stays empty. New rows still land.
+      // The start sequence logs its own faults. The session goes on.
     }
     await enter($).catch(() => {}) // A1: the tick runs from the start, with the pane open or closed
     scheduler?.kick('start')
@@ -1575,7 +1421,7 @@ export const register: Register = on => {
       // Wait for them and for the repo first, so the pane's first drawing is already right (also after /clear).
       await settleProbes($)
       await ensureRepo($)
-      await probeProcesses($).catch(() => {})
+      await managerOf($).command(portsOf($), { sub: '', args: '', wait: true })
       await openPane($)
       c.kick('open')
       return { text: await listText($) }
@@ -1595,8 +1441,7 @@ export const register: Register = on => {
       }
       await scheduler?.idle()
       await round?.idle()
-      processBreaker.reset()
-      await probeProcesses($).catch(() => {})
+      await managerOf($).command(portsOf($), { sub: 'refresh', args: '', wait: true })
       return { text: await listText($) }
     }
     if (arg === 'clear') {
@@ -1615,7 +1460,7 @@ export const register: Register = on => {
       if (id === undefined) return { text: `Not tracked: ${ref}` }
       await setItems($, list => setPriority(list, id, word === 'auto' ? undefined : (word as Priority)))
       try {
-        await managerOf($).persistence.flushNow() // `claude -p` can exit right after the reply: save now, not after flushMs
+        await managerOf($).flushNow() // `claude -p` can exit right after the reply: save now, not after flushMs
       } catch {
         // The next change saves it.
       }
@@ -1645,7 +1490,7 @@ export const register: Register = on => {
     const sections = composePane(
       list,
       await readProcesses($),
-      processUiState,
+      processUi($),
       await contextOf($, e.props.bodyColumns),
       await readRepos($),
     )
@@ -1762,7 +1607,6 @@ export const register: Register = on => {
     const command = String(e.command ?? '')
     try {
       await enter($)
-      await addProcessRows($, parseBashProcesses(command, ran, e.tool_use_id, Date.now(), cwd))
       const f = fromBash(command, ran, e.agentId)
       const { agentId, branch } = f
       if (agentId !== undefined && branch !== undefined) await setAuto($, s => recordAgentBranch(s, agentId, branch))
@@ -1784,16 +1628,11 @@ export const register: Register = on => {
     return ran
   }).catch((_$, e, next) => next(e))
 
+  // The Monitor and TaskStop rows belong to the processes tracker. These hooks only count the call as a sign of life.
   on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
     const ran = await next(e)
     try {
       await enter($)
-      const taskId =
-        ran && typeof ran === 'object' && 'result' in ran && ran.result && typeof ran.result === 'object'
-          ? (ran.result as Record<string, unknown>).taskId
-          : undefined
-      if (typeof taskId === 'string' && taskId !== '')
-        await addProcessRows($, [monitorRow(taskId, Date.now(), e.tool_use_id)])
       await touch($, e.agentId)
     } catch {
       // See above.
@@ -1805,9 +1644,6 @@ export const register: Register = on => {
     const ran = await next(e)
     try {
       await enter($)
-      const result =
-        ran && typeof ran === 'object' && 'result' in ran ? (ran as { result?: unknown }).result : undefined
-      await applyTaskUpdate($, processUpdateFromTaskStop(result))
       await touch($, e.agentId)
     } catch {
       // See above.
