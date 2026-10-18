@@ -1,0 +1,51 @@
+
+ ▐▛███▛█   Claude Code v2.1.302
+▝▜██████▀  Opus 5.5 · Claude Max
+ ▝▝   ▝▝   <SPIKES>/live2-lifecycle/cwd
+
+⚠ 1 MCP server needs authentication · run /mcp
+⚠ Your login expires in 3 days · run /login to renew
+
+❯ /spike-info
+  ⎿  lifecycle-mod: gen=gmvcwfmy7ggrs core=x1+y1 reg=r1 cmdCount=103 ticks=33 loadedAt=1792271933935 snap={"sid":"27d1b087-70fb-49bb-b00d-10f1ff077437","marker":"","github":null,"jira":null}
+
+❯ /spike-mark
+  ⎿  lifecycle-mod: marker=A2-mark snap={"sid":"27d1b087-70fb-49bb-b00d-10f1ff077437","marker":"A2-mark","github":1,"jira":1}
+
+❯ /branch
+  ⎿  Branched conversation. You are now in the new branch (session 2e1f868c-0e8e-40d9-8ae4-ffb54136f2af). Use /resume 27d1b087-70fb-49bb-b00d-10f1ff077437 to return to the original, or run claude -r
+     27d1b087-70fb-49bb-b00d-10f1ff077437 in a new terminal.
+
+❯ /spike-info
+  ⎿  lifecycle-mod: gen=gmvcwfmy7ggrs core=x1+y1 reg=r1 cmdCount=104 ticks=45 loadedAt=1792271933935 snap={"sid":"2e1f868c-0e8e-40d9-8ae4-ffb54136f2af","marker":"","github":null,"jira":null}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Branched conversation (Branch) ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 3 agents
+

@@ -1,0 +1,7 @@
+{
+  "name": "arch-spike-ui",
+  "version": "0.0.1",
+  "description": "Throwaway spike: pane focus ring, hotkeys, alignment and colors (issue 55 gaps G03 G08 G09 G10 G14 G16).",
+  "author": { "name": "arch-spike" },
+  "types": "./types/index.d.ts"
+}

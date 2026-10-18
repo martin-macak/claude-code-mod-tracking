@@ -1,0 +1,40 @@
+⏺ hooks:                │                                                                                             ✕
+  ui.render             │>   #322 log endpoint and cache invalidation on permissi… draft      28m
+  (Pane)                │>   #323 endpoint and cache invalidation on permission    closed     29m
+  refused: more         │>   #324 and cache invalidation on permission change Fix… open       30m
+  than 20000            │>   #325 cache invalidation on permission change Fix fla… merged     31m
+  nodes; the            │>   #326 invalidation on permission change Fix flaky ret… draft      32m
+  engine drew           │>   #327 on permission change Fix flaky retry logic in w… closed     33m
+  its own               │>   #328 permission change Fix flaky retry logic          open       34m
+                        │>   #329 change Fix flaky retry logic in webhook dispatc  merged     35m
+❯ /tbl                  │>   #330 Fix flaky retry logic in webhook dispatcher for… draft      36m
+  ⎿ arch-spike-tbl: tbl │>   #331 flaky retry logic in webhook dispatcher for ten… closed     37m
+    opened rows=1300    │>   #332 retry logic in webhook dispatcher for tenant bi… open       38m
+    titleLen=0          │>   #333 logic in webhook dispatcher for tenant billing … merged     39m
+    auto=false          │>   #334 in webhook dispatcher for tenant billing         draft      40m
+    sticky=true         │>   #335 webhook dispatcher for tenant billing export whe closed     41m
+    long=false          │>   #336 dispatcher for tenant billing export when the q… open       42m
+    placed=true         │>   #337 for tenant billing export when the queue stalls… merged     43m
+                        │>   #338 tenant billing export when the queue stalls aft… draft      44m
+❯ /tbl                  │>   #339 billing export when the queue stalls after a sc… closed     45m
+  ⎿ arch-spike-tbl: tbl │>   #340 export when the queue stalls after a schem       open       46m
+    opened rows=1300    │>   #341 when the queue stalls after a schema migration … merged     47m
+    titleLen=0          │>   #342 the queue stalls after a schema migration rolls… draft      48m
+    auto=false          │>   #343 queue stalls after a schema migration rolls bac… closed     49m
+    sticky=true         │>   #344 stalls after a schema migration rolls back Add … open       50m
+    long=false          │>   #345 after a schema migration rolls back Add paginat… merged     51m
+    placed=true         │>   #346 a schema migration rolls back Add paginatio      draft      52m
+                        │>   #347 schema migration rolls back Add pagination to a… closed     53m
+❯ /tbl                  │>   #348 migration rolls back Add pagination to audit lo… open       54m
+  ⎿ arch-spike-tbl: tbl │>   #349 rolls back Add pagination to audit log endpoint… merged     55m
+    opened rows=600     │>   #350 back Add pagination to audit log endpoint and c… draft      56m
+    titleLen=0          │>   #351 Add pagination to audit log endpoint and cache … closed     57m
+    auto=false          │>   #352 pagination to audit log endpoint and cache i     open       58m
+    sticky=true         │>   #353 to audit log endpoint and cache invalidation on… merged     59m
+    long=true           │>   #354
+    placed=true         │         … 58 more characters, not drawn
+                        │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 3 agents

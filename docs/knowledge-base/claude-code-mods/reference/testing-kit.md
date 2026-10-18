@@ -2,6 +2,13 @@
 
 How to test a mod with no session, sign-in or network. Covers the CLI, the kit's exports, what sits beneath your hooks, the mocks, the `$.ui.mount` handle, and one complete example. Pinned to Claude Code 2.1.295.
 
+**2.1.302 notes.** Claims added for the architecture refactor ([issue #55](https://github.com/martin-macak/claude-code-mod-tracking/issues/55)) cite the 2.1.302 snapshot with the label `d.ts 302:N`, for example [d.ts 302:16208](../sources/claude-code-2.1.302/types/claude-code.d.ts#L16208). Old citations keep the 2.1.295 snapshot. The kit module moved to [d.ts 302:15590-16704](../sources/claude-code-2.1.302/types/claude-code.d.ts#L15590-L16704) and is near-identical (see [section 11](#11-changed-in-21302)). A grade tells how a new claim was checked:
+
+- *verified-kit*: seen in `claude plugin validate`, `claude plugin test` or `tsc` on 2.1.302.
+- *verified-live*: seen in a real interactive session.
+- *types-only*: stated by the types file, not run.
+- *inference*: derived, not seen.
+
 ## 1. The command
 
 ```bash
@@ -90,7 +97,7 @@ Rules:
 - **The kit answers three things itself:** `$.state`, a render's `$.ui.invalidate`, and `session.append` ([d.ts:15925-15931](../sources/claude-code-2.1.295/types/claude-code.d.ts#L15925-L15931), [reference.md:81](../sources/claude-code-2.1.295/reference.md#L81)). Everything else needs a stub or a mock, or it throws `no implementation for <name>`. `$.clock.now()` fails the same way without `mock.clock(on)`.
 - **`session.start` does not run by itself.** A test starts with a fresh module and no hook called. Fire `$.session.start(...)` first if the mod depends on it ([docs: test:122-133](../sources/code-claude-com-2026-10-09/mods/test.md#L122-L133)).
 - **A hook that returns `next(e)` needs a stub to answer.** For `ui.render`: `on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine'] }))` ([docs: test:135-142](../sources/code-claude-com-2026-10-09/mods/test.md#L135-L142)).
-- **Stub shapes.** A stub for a `$` call (`store.get`, `ui.toast`, `model.complete`) returns `{ value }` or `{ deny }`. Name it without the `$.`. A stub for an event (`tool.call`, `turn.step`, `prompt.submit`) returns that event's result. A bare value fails with `returned neither { value } nor { deny }` ([docs: test:104-114](../sources/code-claude-com-2026-10-09/mods/test.md#L104-L114)).
+- **Stub shapes.** A stub for a `$` call (`store.get`, `ui.toast`, `model.complete`) returns `{ value }` or `{ deny }`. Name it without the `$.`. A stub for an event (`tool.call`, `turn.step`, `prompt.submit`) returns that event's result. A bare value fails with `returned neither { value } nor { deny }` ([docs: test:104-114](../sources/code-claude-com-2026-10-09/mods/test.md#L104-L114)). *Changed in 2.1.302* (*verified-kit*): the message reads `returned something that is not a result object`, then `in the test's fs.exists hook`. The fix is the same: return `{ value }`. Meanwhile the mod gets `no implementation for fs.exists`.
 - **`turn.step` and `process.spawn` stubs are async generators.** Read the stream to its end for the result ([docs: test:144-162](../sources/code-claude-com-2026-10-09/mods/test.md#L144-L162)).
 - **A failed test prints `the engine reported:`**, listing each skipped hook and why ([d.ts:15912](../sources/claude-code-2.1.295/types/claude-code.d.ts#L15912), [docs: test:104](../sources/code-claude-com-2026-10-09/mods/test.md#L104)).
 
@@ -106,6 +113,8 @@ Stub cheat sheet for common names: [docs: test:166-198](../sources/code-claude-c
 | `mock.store(on, entries?)` | nothing | Answers `$.store` (`get`, `set`, `delete`, `keys`) from memory. To read back what the mod saved, write the two `store` stubs yourself. | [d.ts:15461](../sources/claude-code-2.1.295/types/claude-code.d.ts#L15461) |
 | `mock.env(on, vars)` | nothing | Answers `$.env.get`. Names not listed are unset. | [d.ts:15468](../sources/claude-code-2.1.295/types/claude-code.d.ts#L15468) |
 | `mock.session(on)` | `MockSession` | `appended()` lists the rows the mod added with `$.session.append`, oldest first. Needs 2.1.293 or later. | [d.ts:15480](../sources/claude-code-2.1.295/types/claude-code.d.ts#L15480), [d.ts:15553](../sources/claude-code-2.1.295/types/claude-code.d.ts#L15553) |
+
+There is no `mock.fs`. In 2.1.302 `mock` still holds `clock`, `store`, `env` and `session` only ([d.ts 302:16208](../sources/claude-code-2.1.302/types/claude-code.d.ts#L16208), *types-only*). Stub `fs.*` yourself, see [section 8](#8-files-fs-in-the-kit).
 
 `MockClock` ([d.ts:15496](../sources/claude-code-2.1.295/types/claude-code.d.ts#L15496)): `now()`, `advance(ms)`, `set(ms)`, `settle()` (same as `advance(0)`), `sleep(ms)` (resolves once the clock moves that far, so a stub can answer late).
 
@@ -194,7 +203,9 @@ The handle `Mounted<P, C>` ([d.ts:15574](../sources/claude-code-2.1.295/types/cl
 
 Table by surface: `input` and `select` need `Input`/`Select` (not on mobile). `key`, `pointer`, `post`, `advance`, `resize` need `Client` (terminal and desktop only). TypeScript hides the member on a surface that lacks it.
 
-The kit tests your hooks and the tree they return under each surface's rules. It does not test any surface's paint ([d.ts:15586](../sources/claude-code-2.1.295/types/claude-code.d.ts#L15586), [reference.md:81](../sources/claude-code-2.1.295/reference.md#L81)). Look at a new layout in a real session as well.
+The kit tests your hooks and the tree they return under each surface's rules. It does not test any surface's paint ([d.ts:15586](../sources/claude-code-2.1.295/types/claude-code.d.ts#L15586), [reference.md:81](../sources/claude-code-2.1.295/reference.md#L81)). Look at a new layout in a real session as well. See [section 10](#10-what-the-kit-cannot-show) for the list.
+
+`drawn()` returns a `Promise` ([d.ts 302:16321](../sources/claude-code-2.1.302/types/claude-code.d.ts#L16321)). Always `await ui.drawn()`. Without the `await`, the JSON of the result is `{}` and the assertion checks nothing. The file then ends with `a rejection nothing handled: this drawing was unmounted`. `tsc` catches the missing `await` (*verified-kit*).
 
 ### The surface-loop pattern
 
@@ -308,6 +319,128 @@ What each stub is for:
 | (none for `$.state`) | The kit answers it. |
 
 The mod also calls `$.ui.toast` when a turn runs over 120 s. This test never reaches that branch. If it did, it would need `on('ui.toast', () => ({ value: undefined }))`.
+
+## 8. Files: `$.fs` in the kit
+
+*Grade: verified-kit* (2.1.302, one spike mod with a `/fsprobe` command). The same facts, with the live behaviour of `$.fs`, are in [fs-and-config](./fs-and-config.md).
+
+The kit answers `$.state`, `ui.invalidate` and `session.append` itself. It does not answer `$.fs`. An unstubbed `$.fs.read`, `$.fs.write` or `$.fs.exists` is refused inside the kit and never reaches the real disk:
+
+```text
+UNSTUBBED write  -> ERR write: no implementation for fs.write
+UNSTUBBED exists -> ERR exists: no implementation for fs.exists
+UNSTUBBED read   -> ERR read: no implementation for fs.read
+```
+
+- A file that exists on disk (content `REAL-DISK-CONTENT`) was not read. A write created nothing (`ls` of the target folder: `No such file or directory`). A path under `$.plugin.root` was refused the same way.
+- The test body cannot call `$.fs`. `Engine` has no `fs` noun. `tsc` says `Property 'fs' does not exist on type 'Engine'`, and at run time `undefined is not an object (evaluating '$.fs.read')`. Drive `fs` through the mod: a command (`$.command.run`) or a hook that calls it. The `fs.*` events are core events, not noun methods ([d.ts 302:4915-4925](../sources/claude-code-2.1.302/types/claude-code.d.ts#L4915-L4925); *inference* for why `Engine` lacks the noun).
+- Event inputs and results: `fs.read` takes `{ path, as }`, `fs.write` takes `{ path, text }`, `fs.exists` takes `{ path }` ([d.ts 302:7205-7230](../sources/claude-code-2.1.302/types/claude-code.d.ts#L7205-L7230)). The results are `string | FsBytes`, `void` and `boolean` ([d.ts 302:7433-7437](../sources/claude-code-2.1.302/types/claude-code.d.ts#L7433-L7437)). `e.as` is `text` by default.
+- A stub returns `{ value }` or `{ deny }`. A bare value fails (`returned something that is not a result object`).
+- A `deny` reaches the mod as a rejection: `kit-fs: $.fs.read: ENOENT: no such file or directory, open <path>` and `kit-fs: $.fs.write: EACCES: permission denied`.
+
+A Map-backed fake covers the file, the missing file (ENOENT) and the refused write (EACCES). Register the stubs before the first call on `$`.
+
+```ts
+const disk = new Map<string, string>()
+
+test('the mod reads and writes its config on a fake disk', async ($, on) => {
+  on('fs.exists', (_$, e) => ({ value: disk.has(e.path) }))
+  on('fs.read', (_$, e) => {
+    const text = disk.get(e.path)
+
+    return text === undefined
+      ? { deny: `ENOENT: no such file or directory, open '${e.path}'` }
+      : { value: text }
+  })
+  on('fs.write', (_$, e) => {
+    disk.set(e.path, e.text)
+
+    return { value: undefined }
+  })
+
+  await $.command.run({ command: 'my-command', args: '' })
+  // assert on disk.get(...) here
+})
+```
+
+Design consequences (*inference*):
+
+- A config manager that takes an `FsPort { read, write, exists }` closes over `$` in one top-level function of the hooks file. Unit tests then use an in-memory port and need no kit. Wiring tests use the stubs above.
+- The artifact-tracking test world stubs only `fs.stat` (`plugins/artifact-tracking/tests/fixtures/world.ts:240`, files in `fake.files` at `:138`). Add a seeded Map and switches for ENOENT and EACCES there.
+- Never assume a real disk in `claude plugin test`. Live access to a path under `~/.config` is a separate fact: on 2.1.302 an interactive session read, wrote, listed and stat'ed `~/.config/claude-code/mods/tracker-spike/` with no prompt in the default and auto permission modes (*verified-live*).
+
+## 9. Lifecycle: `session.end` and `/clear` in the kit
+
+*Grade: verified-kit* for the kit column, *verified-live* for the live column (2.1.302). The live side is told in full in [lifecycle](../concepts/lifecycle.md).
+
+`$.session.end({ reason, sessionId, resume })` runs the mod's `session.end` hook once. The call shape is `$.session.end(input)` ([d.ts 302:4890](../sources/claude-code-2.1.302/types/claude-code.d.ts#L4890)), which `Engine` raises as an event ([d.ts 302:15727](../sources/claude-code-2.1.302/types/claude-code.d.ts#L15727)). The input is `SessionEndInput` ([d.ts 302:11477-11496](../sources/claude-code-2.1.302/types/claude-code.d.ts#L11477-L11496)). All five reasons reached the hook (`prompt_input_exit`, `resume`, `logout`, `other`, `clear`).
+
+| Fact | In the kit | Live |
+| --- | --- | --- |
+| `$.session.id()` inside the hook | The leaving stub id | The leaving id, equal to `e.sessionId`, before and after `next(e)` |
+| `$.state` inside the hook | The leaving value. A write inside succeeds. | The leaving value, before and after `next(e)` |
+| After the hook | **No reset.** `$.state` keeps its value and `$.session.id()` does not change. | `$.state` is reset when the first `session.append` of the new session arrives, 11 to 15 ms after `session.end` |
+| `next.budget.ms` | 10000 | 1500 |
+| Bottom of the chain | Needs a stub, else `no implementation for session.end` | The engine's end step |
+| `session.start` after `/clear` | Not fired | Not fired ([d.ts 302:11482-11483](../sources/claude-code-2.1.302/types/claude-code.d.ts#L11482-L11483)) |
+
+- The bottom stub is `on('session.end', (_$, e) => ({ sessionId: e.sessionId }))`.
+- Live, `/resume` and `/branch` also reach `session.end`, both with `reason: 'resume'`, and both leave `$.state` empty (*verified-live*, [lifecycle](../concepts/lifecycle.md#resume-and-branch)). The kit drives the reason with `$.session.end({ reason: 'resume', … })`, but it resets nothing. A test of the new-session path must flip the stub id itself, and must not expect `$.state` to come back.
+- The kit does not emulate the 1.5 s bound or the real reset. A store phase that must finish inside `session.end` is not proven by a kit test. The live run measured `$.store.set` at 1 to 2 ms, `$.fs.write` at 0 to 1 ms, and 1485 ms of budget left after a 300 KB `$.store.set` plus a `$.fs.write`.
+- A `classic.SessionStart` driver works in the kit: `await $.classic.SessionStart({ source: 'clear' })` runs a hook registered as `on('classic.SessionStart', { source: ['clear', 'resume'] }, ...)`, and `claude plugin validate` prints `classic.SessionStart{source=clear|resume}`. **A kit pass is not proof for the live engine.** In the live runs on 2.1.302 a `classic.SessionStart` or `classic.SessionEnd` function hook in a `--plugin-dir` mod never ran at start-up, `/clear` or `/exit`, while shell settings hooks for the same events did. `claude plugin validate` warns that these hooks do not run in an installed plugin where an organization manages Claude Code. Whether that gate explains the live result is *inference*. See [lifecycle](../concepts/lifecycle.md) and [limits-and-diagnostics](./limits-and-diagnostics.md#an-edit-or-value-is-lost).
+
+A full `/clear` driver, with state stubs keyed by the session id (*verified-kit*; the helper is *inference*):
+
+```ts
+async function clearSession($: Engine, world: { current: { id: string } }, nextId: string) {
+  await $.session.end({ reason: 'clear', sessionId: world.current.id, resume: { id: world.current.id } })
+  world.current.id = nextId // the id-keyed state stubs now read a fresh bucket
+  await $.classic.SessionStart({ source: 'clear' }) // optional: run the new-session hook
+}
+```
+
+With the state stubs keyed by id, the in-hook write landed in the leaving session's bucket and the new session read `n: 0`. The artifact-tracking world already keeps `$.state` per session id with `isolateState` (`plugins/artifact-tracking/tests/fixtures/world.ts:190`) and a mutable `current.id` (`:16`, `:169`). The helper would replace the bare id flip and would run the store phase in the hook.
+
+## 10. What the kit cannot show
+
+*Grade: verified-live.* The kit exercises hooks and the trees they return. These facts came only from live tmux runs on 2.1.302:
+
+- The focus ring: which stop Tab reaches, the dead stop of a `display: 'none'` `Button`, the close mark, Up and Down scroll against move. See [ui](./ui.md#ring-walk-and-scroll).
+- Hotkeys: that every letter and digit fires, and that a hotkey fires for a `Button` scrolled out of view. See [ui](./ui.md#hotkeys-in-a-pane).
+- Paint: colors, color depth under `TMUX`, cell widths, alignment, clipping. See [ui](./ui.md#aligning-and-clipping-a-cell).
+- `Client` keyboard focus (needs a click).
+- The redraw rate and the cost of a Tab (measured live: [ui](./ui.md#redraw-cost)). That the ring stays on one `Button` key after the redraw that a `ui.focus` write causes was seen live: it does ([ui](./ui.md#selected-row-from-a-uifocus-hook)).
+
+What the kit does show for a table:
+
+- The node and depth bounds of an ordinary `Pane` tree. A tree past 20,000 counted values is refused: `$.ui.mount: kit-tree drew nothing on the terminal surface: kit-tree: ui.render (Pane) refused: more than 20000 nodes; the engine drew its own`. Deeper than 32 reads `refused: deeper than 32`. See [limits-and-diagnostics](./limits-and-diagnostics.md#text-and-size).
+- The 100,000-character cut is not a refusal. Later rows mount empty and lose their `Button`s. A test must count the `Button`s per row (`ui.findAll({ type: 'Button' })` grouped by row) and fail on a row with none. A mount of 500 rows took 47 to 88 ms.
+- A `ui.focus` hook that writes state, and the selected-row highlight it draws ([ui](./ui.md#selected-row-from-a-uifocus-hook)). The kit needs `on('ui.focus', () => ({}))` beneath the plugins, else `$.ui.focus` rejects with `no implementation for ui.focus` (`plugins/artifact-tracking/tests/fixtures/world.ts:214` has it). In a test, `$.ui.focus` takes the event input `UiFocusInput` ([d.ts 302:14548](../sources/claude-code-2.1.302/types/claude-code.d.ts#L14548)): `{ component, requestId, plugin, element, origin }`.
+- The Client's keys, through `ui.key({ key, in })`.
+
+Other kit facts (*verified-kit*):
+
+- The kit runs the same static scan as `claude plugin validate`. A rule violation shows as `HooksError: <plugin>: hooks module did not load: ...` and fails every test in the file. Run `claude plugin validate` first. Treat that prefix as a scan error, not a test error. The scan rules are in [validate-test-debug](../workflow/validate-test-debug.md).
+- `test(name, { options }, body)` toggles a conditional install such as `if (options.withB === true) installB(on)`. Validate lists the hooks whatever the option says.
+- A test file needs `declare const console: { log: (...a: unknown[]) => void }` (and `performance` if used) to type-check, because the declared libs have no DOM or Node types. `console.log` output does appear in the `claude plugin test` output, although the types give only a surface module a `console` ([d.ts 302:15450-15460](../sources/claude-code-2.1.302/types/claude-code.d.ts#L15450-L15460)).
+- The test child has `Intl.Segmenter` and the Unicode property escapes, and has no `Bun`, `process` or `Buffer`. A `cellWidth` helper can be tested against vectors made by `Bun.stringWidth(text, { ambiguousIsNarrow: true })` (see [ui](./ui.md#measuring-a-cell)). Such a test passed on 2.1.302.
+- **Mounting a Pane whose plugin has a `ui.focus` hook needs the bottom stub** `on('ui.focus', () => ({}))`, else `HooksError: no implementation for ui.focus`. A hook that calls `next(e)` in `ui.render` needs a bottom `on('ui.render', …)` too, else `HooksError: $.ui.mount: no implementation for ui.render`. A bottom tree built by hand must not give a `Text` a `key` prop (`Text prop "key" is not allowed; the engine drew its own`).
+- `claude plugin test` runs only the `tests/*.test.ts` files. For a UI test use `$.ui.mount` and `await ui.drawn()`. `mock.clock(on)` returns a clock: `clock.settle()` and `clock.advance(ms)` run work that waits on `$.clock.sleep` or `$.clock.after`.
+- In the kit the test's `$.session.append` takes the whole `SessionAppendInput` (`door`, `origin`, `uuid`). In a plugin `$.session.append` takes `SessionAppendArgs` only, and its rows always have the door `note` and the origin `{ kind: 'plugin', name }` (*verified-kit*).
+- The kit loads the plugin fresh for each test, so module variables (counters) do not carry across tests. In a real session they do, until a reload. Read a count out through `$.store.set` with a store stub in the test, or through the plugin's store file in a headless run.
+- `tsc` 7.0.2 (`npx -y -p typescript@7.0.2 tsc -p .`) type-checks the test files against the 2.1.302 declarations when `include` names that file. The repo's `plugins/artifact-tracking/tsconfig.json` still includes the 2.1.295 declarations.
+
+## 11. Changed in 2.1.302
+
+*Grade: types-only*, plus the kit runs above.
+
+- `claude plugin test` help is byte-identical to 2.1.295 (`cli-help.txt`).
+- The `claude-code/testing` module is near-identical. The only type change is `EngineNoun`: a `skill.prompt` call takes the call-input type, where `frontmatter` and `source` are optional ([d.ts 302:15811](../sources/claude-code-2.1.302/types/claude-code.d.ts#L15811)).
+- `mock` holds `clock`, `store`, `env` and `session` ([d.ts 302:16208](../sources/claude-code-2.1.302/types/claude-code.d.ts#L16208)). There is no `mock.fs`.
+- `TestOptions.options` still injects `userConfig` values ([d.ts 302:16657-16671](../sources/claude-code-2.1.302/types/claude-code.d.ts#L16657-L16671)). `PluginOptions` is unchanged.
+- The `fs`, `store` and `state` blocks of `$` are byte-identical to 2.1.295 (new lines 3306-3480).
+- A stub that returns a bare value now fails with `returned something that is not a result object` (*verified-kit*, see [section 3](#3-what-sits-beneath-your-hooks)).
+- `mount` and `drawn` behave as before. `drawn` is `Promise<RenderElement>` ([d.ts 302:16321](../sources/claude-code-2.1.302/types/claude-code.d.ts#L16321)).
 
 ## See also
 

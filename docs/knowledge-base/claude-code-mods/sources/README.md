@@ -24,6 +24,38 @@ Captured on 2026-10-09 from Claude Code 2.1.295 (macOS).
 
 Once the engine loads a mod from a watched folder, it writes `<mod>/.claude-plugin/types/` with `claude-code/index.d.ts`, `claude-code-tools/index.d.ts` (this machine's built-in tools), `claude-code-mcp/index.d.ts` (connected MCP tools) and a `tsconfig.json`. Snapshot the tools and MCP files when the first mod loads.
 
+## `claude-code-2.1.302/`
+
+Captured on 2026-10-17 from Claude Code 2.1.302 (macOS). Same layout as the 2.1.295 folder. Made by the refresh procedure below.
+
+| File | Origin |
+| --- | --- |
+| `SKILL.md` | Body of the bundled `plugin-authoring` skill, with `<MODS_DIR>` and `<SKILL_DIR>` in place of session paths. It adds a "SHARING IT" paragraph (line 25). |
+| `reference.md` | `<SKILL_DIR>/reference.md`. It holds no absolute temp path (a search for `/private/tmp`, `bundled-skills` and `/Users/` finds none), so the path replacement changed nothing. |
+| `examples/` | The same three hooks modules and two state contracts. `diff -r` against 2.1.295 shows nothing. |
+| `types/claude-code.d.ts` | The engine-written API declarations (22,255 lines; 2.1.295 has 21,451). |
+| `cli-help.txt` | Output of `claude plugin --help` and its `validate`, `test`, `init`, `details`, `configure` subcommands. Byte-identical to the 2.1.295 file. |
+
+What changed, as far as a mod author needs: [reference/changes-2.1.302](../reference/changes-2.1.302.md).
+
+### Known discrepancies in 2.1.302
+
+- `SKILL.md` still says the API file is "about 14,000 lines". The snapshot has 22,255 lines. (The 2.1.295 file said it too.)
+- `reference.md` line 168 still says a record queued by a plugin's own `$.prompt.submit` or `$.command.run` is raised under the hook's frames, "so that hook is not run on it (the re-entry rule)". The sentence is right about the behaviour: a plugin's call runs the chain with the calling hook alone skipped (`d.ts` 4843-4844, *verified-kit*, see [dispatch-and-guards](../concepts/dispatch-and-guards.md#a-hook-is-not-run-beneath-its-own-call)). Only the name is old: `HookFailure.kind` is `'throw' | 'timeout'` now, and the `re-entry` failure kind, the `lent` cause and the ten-second re-ask are gone from `reference.md` line 79 and from the types.
+
+## `spikes-2026-10-17/`
+
+Captured on 2026-10-17 and 2026-10-18 from the throwaway spike mods of [issue #55](https://github.com/martin-macak/claude-code-mod-tracking/issues/55), Claude Code 2.1.302 (macOS). Not a primary source: it is the evidence behind the graded claims in the 2.1.302 pages and in the [mod-architecture KB](../../claude-code-mod-architecture/README.md).
+
+| Content | Origin |
+| --- | --- |
+| One folder per spike (84) | Only its source: `.claude-plugin/plugin.json`, `hooks/hooks.json`, `hooks/**/*.ts(x)`, `tests/*.ts`, `types/index.d.ts`, `core/` and `trackers/`. No `node_modules`, no `.claude-plugin/types/`, no copied engine `claude-code.d.ts`. |
+| `live2-lifecycle/`, `live2-table/`, `live-life/`, `live-ui/`, `kit-fs/out-real/` | Small captured output (`*.txt`, `*.log`, each under 50 KB), the part that pages quote. |
+| `tbl-drive/`, `hl/` | The tmux drivers, the screen analysers and the headless runner. |
+| `README.md` | One row per spike: question, grade, key result. |
+
+Absolute scratch paths in the files are replaced with `<SPIKES>` and `<SCRATCH>`, as the 2.1.295 snapshot did with `<SKILL_DIR>`. The folder holds 518 files and about 445 KB. Do not edit it. To add more evidence, make a new dated folder.
+
 ## `code-claude-com-2026-10-09/`
 
 Raw Markdown of the public docs, fetched on 2026-10-09 from `https://code.claude.com/docs/en/<page>.md` (page list from `https://code.claude.com/docs/llms.txt`).
@@ -57,4 +89,4 @@ types file (local build) > bundled `reference.md` / `SKILL.md` > public docs > G
 1. In a Claude Code session, load the `plugin-authoring` skill (`/plugin-authoring` or the Skill tool). This writes a fresh `<SKILL_DIR>`.
 2. Create `claude-code-<version>/` beside the old folder. Copy `reference.md`, `examples/`, `types/`. Save the skill body as `SKILL.md`.
 3. Re-run the CLI help commands into `cli-help.txt`.
-4. `diff -r` against the old folder. Update topic pages and their citations. Note changes in `../README.md`.
+4. `diff -r` against the old folder. Update topic pages and their citations. Write what matters to mod authors in `../reference/changes-<version>.md` (see `changes-2.1.302.md`), and move the pin in `../README.md` and `../AGENTS.md`.

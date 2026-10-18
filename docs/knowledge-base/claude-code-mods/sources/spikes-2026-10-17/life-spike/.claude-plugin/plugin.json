@@ -1,0 +1,7 @@
+{
+  "name": "life-spike",
+  "version": "0.0.1",
+  "description": "Throwaway spike: $.fs under HOME, session.end on /clear, events before a hot reload.",
+  "author": { "name": "arch-spike-life" },
+  "types": "./types/index.d.ts"
+}

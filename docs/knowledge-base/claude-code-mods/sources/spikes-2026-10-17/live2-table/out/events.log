@@ -1,0 +1,8 @@
+1792276669533 CMD {"rows":600,"titleLen":0,"auto":false,"sticky":true,"long":true}
+1792276669580 R rows=600 nodes=6613 str=2403 chars=43152 btn=600 sel=null foc=1 off=0 dock cols=95 build=41ms
+1792276669693 R rows=600 nodes=6613 str=2403 chars=43152 btn=600 sel=null foc=1 off=0 dock cols=95 build=10ms
+1792276671088 F el=- origin=person next=0ms upd=19ms deny=- wrote=-
+1792276671998 F el=r354 origin=person next=0ms upd=51ms deny=- wrote=r354
+1792276672019 R rows=600 nodes=6613 str=2403 chars=43152 btn=600 sel=r354 foc=1 off=325 dock cols=95 build=8ms
+1792276674360 S by=360 off=326 body=34 of=360 origin=person
+1792276674389 R rows=600 nodes=6613 str=2403 chars=43152 btn=600 sel=r354 foc=1 off=326 dock cols=95 build=8ms

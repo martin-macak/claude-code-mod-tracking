@@ -1,0 +1,8 @@
+61419 R:grid foc1 off0 body29 dock cols95 vp24x37
+61939 CLOSE person
+61947 R:grid foc0 off0 body29 dock cols95 vp24x37
+66981 cmd grid
+66988 R:grid foc1 off0 body29 dock cols95 vp24x37
+66998 F:row-35/plugin
+67087 R:grid foc1 off13 body29 dock cols95 vp24x37
+78749 CLOSE person

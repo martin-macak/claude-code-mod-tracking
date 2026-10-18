@@ -1,0 +1,7 @@
+{
+  "name": "arch-spike-tbl",
+  "version": "0.0.1",
+  "description": "Throwaway spike: TreeDataTable prototype (rows, ring, selection, footer hotkeys, budgets). Issue 55.",
+  "author": { "name": "arch-spike" },
+  "types": "./types/index.d.ts"
+}

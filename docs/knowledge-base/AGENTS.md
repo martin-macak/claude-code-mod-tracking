@@ -10,6 +10,7 @@ Research knowledge bases. One folder per problem, named by a kebab-case slug.
 | [`claude-code-link-capture`](claude-code-link-capture/) | Capture every link Claude shows (Markdown, OSC 8) with a mod |
 | [`claude-code-artifact-tracking`](claude-code-artifact-tracking/) | Track GitHub issues/PRs, Jira work items and web links in a session; enrich with `gh` and `acli`; show them in a pane |
 | [`claude-code-auto-tracking`](claude-code-auto-tracking/) | Auto tracking: find worktrees, agents and PRs relevant to a repository or branch; events, polling and feasibility |
+| [`claude-code-mod-architecture`](claude-code-mod-architecture/) | Architecture of a multi-tracker mod: tree-table UI, config manager, tracker plugin contract, lifecycle manager, delivery as stacked PRs |
 
 ## Convention for a slug folder
 

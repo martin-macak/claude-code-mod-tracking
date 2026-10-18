@@ -1,0 +1,429 @@
+# TreeDataTable
+
+Research for the first part of [issue #55](https://github.com/martin-macak/claude-code-mod-tracking/issues/55): one UX component that draws every tree in the pane and owns its interactions. The index is [README.md](README.md). Grades: [AGENTS.md](AGENTS.md#grades). `d.ts:N` links to the 2.1.302 snapshot.
+
+The page gives prior art, what the engine allows, constraints and options. Recommendations are marked. The design spec decides.
+
+Short answer:
+
+- **Keys.** Tab and Shift+Tab walk the rows through the engine focus ring (`verified-live`). Up and Down only scroll while the tree is taller than the pane. A hotkey is one lowercase letter or digit. No other key reaches a pane.
+- **Selection.** A `ui.focus` hook may write a `selected` atom. A render hook may not (`verified-kit`). Live, the highlight follows Tab on the first frame and the ring stays on the same `Button` (`verified-live`). Make the selection sticky: write `selected` only for row keys.
+- **Hotkeys.** A hotkey acts on the selected row and does not move the ring (`verified-live`). Read the selection from state at press time.
+- **Size.** A pane tree has hard budgets. Past about 250 rows with real `Box` keys, or about 470 rows with 200-character titles, the page loses its Buttons without a refusal (`verified-live`, same rows as the kit). The engine logs the cut once, but the mod cannot read the log. A row cap is required. A refused tree is blank and keyboard-dead.
+- **Cost.** One Tab costs one engine repaint and one full-tree hook render: about 58 ms to a settled screen at 300 rows, 221 ms at 1300 (`verified-live`).
+- **Layout.** Alignment, colors and clipping all work with `Box` and `Text`. Cell width needs a measure function that the mod ships itself (`verified-live`).
+
+## 1. What the issue asks
+
+The definition of done lists six items for the component, plus one rule.
+
+| # | Requirement | Short name |
+| --- | --- | --- |
+| 1 | Every tree row is expandable | U1 |
+| 2 | A header row shows column headers | U2 |
+| 3 | A column has a fixed size or sizes to its content, and aligns left, right or center | U3 |
+| 4 | A cell has a foreground and a background color | U4 |
+| 5 | The user moves between rows with the keyboard | U5 |
+| 6 | A caller registers any key on a row to run an action (for example `x`) | U6 |
+| 7 | Every tree in the pane uses TreeDataTable | U7 |
+
+The issue also says: "New UX is a goal: the pane may look and behave differently after this work."
+
+## 2. The pane today
+
+The renderers and their code are in [current-architecture §10](current-architecture.md#10-the-ui-today). The status of each requirement, from the code at commit d391552:
+
+| Req | Status | Evidence |
+| --- | --- | --- |
+| U1 expandable rows | partial | Only Jira items and nodes, the worktree root and the master agent fold (`H/ui/view.ts:287, :327`, `H/ui/auto-view.ts:57, :122`). Every other row is `foldable: false`. `PaneRow` has no children or detail field. The builders drop folded children, not the renderer. The toggle is a plain `+`/`-` Button (`H/ui/pane.tsx:74-79`). State is the `ui.folded` atom. |
+| U2 header row | missing | No header row. A section has a title and a note only (`H/ui/pane.tsx:164-168`). `Cell` has no label (`H/ui/view.ts:63`). |
+| U3 sizing and alignment | partial | Fixed: a numeric width per layout, with a wide and a narrow variant at 70 columns (`H/ui/view.ts:142, :155-219`). Fill: a cell without width grows. Content sizing: missing, every width is a literal. Alignment: missing, every cell is left-aligned. Truncation per cell exists. |
+| U4 colors | partial | Foreground only, from a closed set `ok, warn, bad, dim, plain` mapped to `green, yellow, red, dimColor` (`H/ui/pane.tsx:30-37`). Only `status` and `extra` take a tone. No `backgroundColor` anywhere in `hooks/ui/`. Raw color names, not theme keys. |
+| U5 keyboard rows | partial | Only through the focus ring over Buttons. A row is reachable if it holds a Button: priority mark, fold or `x`. Process rows hold none. Selection is the non-reactive module variable `focusedRow`. |
+| U6 key registry | partial | A hard-coded footer: `r` and `1 2 3 0` (`H/ui/pane.tsx:23-28, :190`). `PaneActions` is a fixed type with five methods. The `x` Button has no hotkey. |
+| U7 one component | partial | One drawer serves all ten sections, but it is bound to `PaneRow`, `Cell` and `CellName`. A closed eight-case switch draws the cells. Two other renderers (`textOf`, the band) read the same model. Interaction logic is split across `view.ts`, `pane.tsx` and `register.tsx:1446-1500`. |
+
+Each row holds up to three Buttons today: the priority mark, the fold toggle and `x`. A Tab walk therefore visits up to three stops per row.
+
+## 3. What the engine allows
+
+### 3.1 Elements and layout
+
+| Fact | Grade | Evidence |
+| --- | --- | --- |
+| The terminal element table is `Box, Text, Button, Input, Select, Link, Code, Markdown, Client, Raster, Image`. No Table, Tree, Grid or List element exists on any surface. | `types-only` | [d.ts:3897-3918](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L3897-L3918), [d.ts:3891-3972](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L3891-L3972) |
+| `Box` has `width`, `height`, `minWidth`, `minHeight`, `flexGrow`, `flexShrink`, `alignItems`, `justifyContent`, `gap`, `columnGap`, `backgroundColor`, `overflow`, `display`. It has no `maxWidth` and no `flexBasis`. | `types-only` | [d.ts:928-1023](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L928-L1023) |
+| `Text` has no width and no align. Width must sit on a `Box`. | `types-only` | [d.ts:13154-13220](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L13154-L13220) |
+| `gap`, `margin*` and `padding*` take `Space` (`number` or `xs..xl`). A number means cells on every surface. A step name differs per surface. | `types-only` | [d.ts:12508](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L12508), [d.ts:990-1020](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L990-L1020) |
+| A `Button` child is a string or a `Text`. Any other element, including `Box`, is refused. A whole-row Button cannot hold fixed-width Box cells. | `types-only` | [d.ts:1105-1107](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L1105-L1107) |
+| A `Button` `hotkey` is one digit or one lowercase letter. Two clashing hotkeys: the later one wins. | `types-only` | [d.ts:1112-1121](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L1112-L1121) |
+| `Button.action` binds only an existing engine keybinding action. | `types-only` | [d.ts:1130](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L1130) |
+| `Pane` render props include `bodyColumns` (95 docked at 120 columns, 96 inline at 100) and `scroll` (`SiteScroll`). A taller tree scrolls as a whole. | `types-only`, `verified-live` | [d.ts:10732-10777](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L10732-L10777), [d.ts:12336-12349](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L12336-L12349) |
+| `justifyContent` `flex-start`, `center` and `flex-end` on a fixed-width `Box` place the `Text` child at offset 0, 5 and 10 of 12. The result is the same in dock and inline placement. | `verified-live` | Capture of a row of three `Box width=12` cells: plain text `ab` at columns 0, 18, 36. |
+| `Text wrap="truncate-end"` clips inside a fixed-width `Box` and draws `ABCDEFG…` in 8 cells. Without `wrap` the text wraps and the row grows to four lines. | `verified-live` | Same capture. |
+| `Box backgroundColor` fills the whole fixed width and the whole row height. `Text backgroundColor` paints only its own characters. A row `Box` with a background paints its children as one band, including mixed-width children. | `verified-live` | `ESC[48;2;0;0;255mbox10` followed by five padded blue cells; `ESC[48;2;0;0;255mbghex` paints 5 cells. |
+| `bold underline` on `Text` draws SGR `1;4`. `inverse` draws SGR `7`. | `verified-live` | Same captures. |
+
+### 3.2 Keyboard
+
+The mod cannot bind Tab or the arrows. No pane-level key event exists and there is no raw-key subscription in a hooks module. Only a `Client` surface module has `onKey`.
+
+| Fact | Grade | Evidence |
+| --- | --- | --- |
+| **Tab walks every Button in document order. Shift+Tab walks back.** The window scrolls one row at a time to keep the ring in view, in dock and in inline placement. | `verified-live` | 40-row grid, docked, tmux 120x37: Tab to `Go 30` shows rows 1-30. Tab to `Go 31` shows rows 2-31. Tab to `Go 40` shows rows 11-40. Inline (100 columns, body 10 rows) follows the ring the same way. |
+| **Up and Down scroll the window while the tree overflows.** The ring stays where it was. They move the ring only when the whole tree fits, in ring order, not in spatial order. Left and Right do nothing. | `verified-live` | With the ring on the close mark, Down logged `S:by1 off1`, `off2`, `off3` and Up logged `S:by-1 off2`. The ring did not move. A 36-Button, 3-row tree: Down, Down, Down moved the ring to `k-c`, `k-d`, `k-e`. |
+| The ring also stops on a `display:'none'` Button (nothing inverted, a dead stop) and on the engine's close mark `✕`. The first Tab after open lands on a hidden Button if one exists. | `verified-live` | First Tab logged `F:hidden-z/person` with nothing inverted. |
+| Enter presses a ring Button even when it has scrolled out of view. | `verified-live` | Ring on `Go 05`, End key moves the window to rows 12-40, Enter logs `P:row-05`. |
+| The engine's own keep-in-view scroll raises no `ui.scroll` and no re-render. `e.props.scroll.offset` in a render hook can be stale until the next render. | `verified-live` | After 44 Tabs the log held only `F:` lines. The next render logged `off18`. |
+| `autoFocus` works on a `Button`, also for a row that is off screen (the pane opens already scrolled). | `verified-live` | `autoFocus` on row 35: the pane opens with rows 7-35 visible. |
+| **`autoFocus` on the first row `Button` puts the ring there at open, so the first Tab goes to the second row.** Without `autoFocus` the ring starts on nothing, the first Tab lands on the first row `Button` (not on the close mark), and the first Shift+Tab goes to the close mark. The ring order is the rows, the footer `Button`s, then the close mark. | `verified-live` | `/tbl 300 0 auto sticky`, before any Tab: `row=#0 ring='>' highlight_bg=['68']`, header `sel=r0`. `events.log`: `F el=r0 origin=plugin`, then the first Tab `F el=r1 origin=person`. Without `auto`: `F el=r0 origin=person`, first Shift+Tab `F el=-`. `Button.autoFocus`: [d.ts:1165-1174](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L1165-L1174). Spike [`tbl`](../claude-code-mods/sources/spikes-2026-10-17/tbl/). |
+| **The pane header and footer are not sticky.** A status line in either is out of view while the window is scrolled between them. A hotkey `Button` in the footer still fires. | `verified-live` | The `last action` status sat in the header `Text` and in the footer. `events.log` lines `A …` were the reliable signal. |
+| **A hotkey press does not move the ring.** `x` and `y` fire from whichever `Button` holds the ring, also the close mark or a footer `Button`. | `verified-live` | `events.log`: `P el=fx`, `A last action: x on row 4`, `R … sel=r4`, no `F` line. With the ring on a footer `Button`: `P el=fy`, `A last action: y on row 0`. |
+| **A `Client` region gets the keyboard only after a mouse click.** Tab skips it. `$.ui.focus` on its key is denied (`no element of its own is drawn under that key`). `ClientProps` has no `autoFocus`. After a click it receives every key and Esc gives the focus back. | `verified-live` | [d.ts:1532-1600](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L1532-L1600), [d.ts:1626-1628](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L1626-L1628). A synthetic SGR click (`\x1b[<0;30;6M`) focused it; letters, arrows, Tab and Enter then reached `surface.onKey`. |
+| **A pane hotkey fires wherever its Button is**: scrolled out below or above the window, in the footer, or inside a `display:'none'` Box. Pane hotkeys are gated by pane focus only. The band rule (a bare digit arms only Buttons wholly in view) does not apply to a pane. | `verified-live` | `q` (row 35, below), `z` (hidden Box), `w` (visible) and `f` (footer, below) all logged `P:<key>`. Band rule: [d.ts:10692](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L10692). |
+| **No letter or digit is reserved.** All 36 hotkeys `a-z` and `0-9` fired on a focused plugin pane. Shift folds to lowercase. | `verified-live` | `keys.py` sent each character with `tmux send-keys -l`. All 36 logged `P:k-<char>`. The composer stayed empty. |
+| Other printable keys leave the pane. The character goes to the composer and the pane loses focus. `!` opens shell mode. `?` opens the shortcut overlay and keeps the pane focused (the body shrinks from 30 to 24 rows). `/` drops focus. | `verified-live` | Header flipped to `foc=0`. |
+| The engine binds Tab, Shift+Tab, Up, Down, Enter, Esc, PageUp, PageDown, Home, End and the `ctrl+x` chords on a focused pane. `ctrl+x Tab` toggles pane focus. | `verified-live`, `public-docs` | Home gave `S:by-48 off0`; End gave `S:by48`. Public docs: [interface.md:532-545](../claude-code-mods/sources/code-claude-com-2026-10-09/mods/interface.md#L532-L545). |
+| A resize that switches dock to inline (120 to 100 columns) dropped pane focus. | `verified-live` | Render log `foc1` then `foc0`. |
+
+### 3.3 Selection state
+
+| Fact | Grade | Evidence |
+| --- | --- | --- |
+| A `ui.focus` hook may call `update($, selected, ...)`. A Pane render that reads the atom shows the new highlight on the next draw, with no `redraw()` call. | `verified-kit` | Spike [`kit-focus`](../claude-code-mods/sources/spikes-2026-10-17/kit-focus/): row `row-b` got `backgroundColor: 'blue'` and a `>` marker after `$.ui.focus(...)`. A move to `row-c` moved it. An engine stop (no element) cleared it. |
+| A `ui.render` hook that writes state is refused with a clear message. | `verified-kit` | `state.set: denied: it was made while ui.render is being dispatched`. Doc: [d.ts:3488-3489](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L3488-L3489). |
+| The `ui.focus` hook runs before the ring moves. If the hook writes state before `next(e)` and core then denies the move, or the kit bottom throws, the selection stays written. Fix: call `next(e)` first and write only when `r.deny === undefined`. | `verified-kit` | Variant test: `deny` left the selection unwritten. A write before `next` left `row-b` blue after `no implementation for ui.focus`. |
+| A `get` made while a render hook draws subscribes that instance. A later `set` draws it again. | `types-only` | [d.ts:3463-3464](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L3463-L3464) |
+| `ui.focus` can redirect: `next({ ...e, element })` lands the ring on another of the plugin's elements. Not run. | `types-only` | [d.ts:4154-4164](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L4154-L4164) |
+| **Live: the highlight follows Tab, and the ring stays on the same `Button` after the redraw.** The highlight shows on the first frame after the redraw. One Tab raises exactly one `ui.focus` event. The hook runs `next(e)` first, then writes `selected` when there is no deny. The write triggers one hook render. No second `ui.focus` follows that render, which is the evidence the ring did not jump. | `verified-live` | `events.log` after Tab 5: `F el=r4 origin=person next=0ms upd=18ms deny=- wrote=r4`, then `R rows=300 … sel=r4 foc=1`; no `F` line follows. Colored capture read with `an.py`: line 8 `row=#4 ring='>' highlight_bg=['68']` (the ring is SGR 7, the `Box` background 48;5;68). Same for Tab 1 (`#0`) and after Enter (`#5`). Over 20 Tabs at 300 rows: 21 person focus events and 23 renders (1.10 renders per focus event, one toggle included). `next(e)` mean 0.3 ms, max 1 ms. Under tmux `blue` paints 48;5;68. [d.ts:4154-4164](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L4154-L4164). Answers the first half of [Q1](open-questions.md#1-unknowns). |
+| **A hotkey acts on the selected row.** The `onPress` closure reads the `selected` atom at press time. | `verified-live` | `events.log`: `A last action: x on row 4`. |
+| **The literal hook loses the selection on a stop that is not a row.** Writing `e.element ?? null` writes `null` on the close mark (it has no `element`: [d.ts:14570](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L14570)) and writes the footer key (`fd`) on a footer `Button`. Neither matches a row, so the highlight vanishes and a hotkey reports `x on no row`. | `verified-live` | Shift+Tab from `r0`: `F el=- origin=person … wrote=null`, header `sel=null`, only the close mark ✕ inverted, then `last action: x on no row (selected=null)`. Shift+Tab again: `F el=fd … wrote=fd`, header `sel=fd`, `x on no row (selected=fd)`. |
+| **A sticky variant keeps the selection.** Write `selected` only when `e.element` matches the row-key pattern (`/^r\d+$/`). The highlight then stays on the last row, and `x` and `y` act on it while the ring sits on the footer or the close mark. This is a design choice (`inference`) and the only mode in which the footer hotkeys always have a target. | `verified-live` | `/tbl 300 0 sticky`: `F el=- … wrote=-`, `F el=fd … wrote=-`; header stays `sel=r0`, highlight stays on `#0`; then `A last action: x on row 0` and `y on row 0`. |
+| **Enter toggles detail rows and keeps the ring.** The label goes from `>` to `v` under the same key. No `ui.focus` follows. The next Tab goes to the next row `Button` (`r5`), skipping the detail rows because they hold no `Button`. Two one-line detail rows cost 5 nodes, 2 strings and 70 characters. | `verified-live` | `events.log`: `P el=r4`, `T toggle r4`, `R rows=300 nodes=3318 str=1205 chars=21603 … sel=r4`; the render before showed `nodes=3313 str=1203 chars=21533`. `an.py`: `row=#4 ring='v' highlight_bg=['68']`. Next Tab: `F el=r5`. |
+| Not tested: the ring after a **re-sort** or a data refresh between two Tabs, the highlight when the selected row's key leaves the next draw, and inline placement (all live runs were docked). | open | [Q1](open-questions.md#1-unknowns), [Q29](open-questions.md#1-unknowns) |
+
+### 3.4 Colors
+
+| Fact | Grade | Evidence |
+| --- | --- | --- |
+| Accepted and painted: `#rrggbb`, `#rgb`, `rgb(r,g,b)`, `ansi256(n)`, the basic names (`red green blue yellow cyan magenta white black gray redBright`) and all theme keys. Names and theme keys resolve to the theme palette, not to SGR 30-37. | `verified-live` | Truecolor session: `red` gave `38;2;229;72;77`, `#ff0000` gave `38;2;255;0;0`, `ansi256(208)` gave `38;5;208`. |
+| Accepted but drawn with no color, and no error: `orange`, `bogus`, `Red`, `brightRed`, `hsl(...)`, `ansi256(300)`. | `verified-live` | SGR `39` / `49`. |
+| **A string with a colon (`ansi:red`) makes the engine refuse the whole Pane tree.** The pane draws blank. | `verified-live` | Transcript line: `hooks: ui.render (Pane) refused: Text prop "color" must be a color (a theme key, a name, or hex); the engine drew its own`. |
+| Under tmux (`TMUX` set) Claude Code quantizes every color to the 256-color palette, even with `terminal-features RGB` and `COLORTERM=truecolor`. Run with `env -u TMUX` to get `38;2;r;g;b`. `e2e/` runs `claude` inside tmux, so ANSI assertions there see `38;5;N`. | `verified-live` | `#ff0000` gave `38;5;196` in tmux and `38;2;255;0;0` outside. |
+| `Text` gains `weight`, `size`, `mono`, `tabular`, `dir` in 2.1.302. `bold` is deprecated and read as `semibold`. The terminal draws `semibold` and `bold` as bold. It ignores `size`, `mono` and `tabular`. For `dir` the d.ts says only that a terminal that reorders text itself draws the `Text` as without `dir`. Claude Code's terminal is not named (`inference`: no effect). | `types-only` | [d.ts:13164-13220](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L13164-L13220), [d.ts:13186](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L13186), [d.ts:13205](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L13205) |
+
+### 3.5 Cell width
+
+| Fact | Grade | Evidence |
+| --- | --- | --- |
+| No measure API exists in the d.ts. The only hit for `measure` is `session.measure`. | `types-only` | A grep of the snapshot for `stringWidth`, `wcwidth` and `measure`. |
+| The renderer measures with `Bun.stringWidth(s, { ambiguousIsNarrow: true })` and writes cells with `Bun.ant.CellSegmenter`. East Asian Wide and Fullwidth are 2. Ambiguous is 1. Emoji clusters (RGI, VS16, ZWJ, flag, keycap, skin tone) are 2. Controls, joiners and combining marks are 0. Any other cluster sums its code points. A tab expands to 8-column stops. | `verified-live` | 16 live rows on a `Box width=8` with `wrap="truncate-end"`: `★▲▽●✓✗a…` (Ambiguous is 1), `日本語…` (wide is 2), `😀😀😀…`, `a       b` (a tab took 9 cells). The binary embeds Bun 1.4.4. |
+| A hooks module has no `Bun`, `process` or `Buffer`. `Intl.Segmenter` and the Unicode property escapes (including `/\p{RGI_Emoji}/v`) exist. | `verified-kit` | Test child printed `typeof Bun` as `undefined`. |
+| A 65-line `cellWidth` (`Intl.Segmenter`, three Unicode-property regexes, a 126-range Wide table) matched the live renderer on 24 of 24 strings, run inside a real `ui.render` hook. | `verified-live` | Probe: `Box width = cellWidth(text) + 3` for 24 strings. Every row showed the whole text, three spaces, then a pipe character. |
+| **The helper's `/v` regexes need `target: es2024`.** At `target: es2023`, `tsc` 7.0.2 stops with `TS1501` on the two `/…/v` literals (`ZERO` and `RGI_EMOJI`). The plugin's own `tsconfig.json` has `target: es2023` today, so it must move to `es2024` when `cellWidth` lands (`lib` can stay `es2023`). The alternative keeps `es2023`: build the regexes with `new RegExp(src, 'v')`, which `tsc` accepts at `es2023`. Whether the engine's loader accepts the constructor form at run time was not run (`inference`: it is the same flag). | `verified-kit` | Spike [`width-spike`](../claude-code-mods/sources/spikes-2026-10-17/width-spike/), `npx -y -p typescript@7.0.2 tsc -p`, `module: esnext`, `moduleResolution: bundler`, `strict`, `lib: ["es2023"]`. `target: es2023`: `cell-width.ts(43,137): error TS1501: This regular expression flag is only available when targeting 'es2024' or later.` and `cell-width.ts(44,36): error TS1501: …`, exit 1. `target: es2024`: no output, exit 0. A file with `new RegExp('[\\p{Default_Ignorable_Code_Point}\\p{Control}]', 'v')` at `es2023`: no output, exit 0. Ties to [D13](open-questions.md#2-decisions-for-the-design-spec). |
+| The helper differs from `Bun.stringWidth` on 5,519 of 1,112,064 single code points (4,861 are unassigned code points: Unicode version drift). On 100,000 realistic mixed strings it differed 0 times. It missed 2 of 31 curated sequences (decomposed Hangul L+V, L+V+T). On 20,000 malformed strings it differed 141 times. | `verified-kit` | Compared against npm `bun@1.4.3`, not the embedded 1.4.4. |
+| Terminals disagree about emoji clusters. A ZWJ farmer emoji is 2, 4, 5 or 6 cells depending on the terminal. | `public-docs` | Mitchell Hashimoto, "Grapheme Clusters and Terminal Emulators". |
+
+**Three width rules.** Width code in the wild follows one of three rules. They agree on ASCII and plain CJK. They differ on emoji clusters and on marks that join. All three rows are `public-docs`. The library names come from the research for this slug. A check with `gh api` on 2026-10-17 (`observed`) found `unicode-segmentation` and `unicode-width` in ratatui's `Cargo.toml`, `Intl.Segmenter` and `get-east-asian-width` in `string-width`'s `index.js`, `cell_len` in Rich's `cells.py`, and the `StringWidthWc` doc comment in `charmbracelet/x/ansi`. None of the three was run here except the renderer's own rule, which is rule 2 (`verified-live`, above).
+
+| # | Rule | How it measures | Used by | ZWJ family emoji |
+| --- | --- | --- | --- | --- |
+| 1 | Per code point (`wcwidth`) | Sum of per-code-point widths. Wide and Fullwidth are 2. Combining marks and ZWJ are 0. No clusters. | Rich `cell_len`. Go `ansi.StringWidthWc` in `charmbracelet/x/ansi` ("treats the text as a sequence of wide characters and runes"). | 6 to 8, because each pictograph counts 2 |
+| 2 | Cluster, then East Asian Width | Split into [UAX #29](https://www.unicode.org/reports/tr29/) grapheme clusters. Take the width from [UAX #11](https://www.unicode.org/reports/tr11/) (Wide and Fullwidth 2, Ambiguous narrow). An emoji cluster is 2. | `string-width`, Ink `widest-line`, `Bun.stringWidth`, ratatui (`unicode-segmentation` plus `unicode-width`) | 2 |
+| 3 | The terminal clusters | The terminal groups clusters itself when DEC private mode 2027 is on (`CSI ? 2027 h`). An application asks with `DECRQM`. | Terminals that implement mode 2027, per the [Contour terminal Unicode core spec](https://github.com/contour-terminal/terminal-unicode-core) | 2, as the terminal decides |
+
+- UAX #11 section 5 says an Ambiguous character "should be treated as narrow" when context cannot be established. The renderer's `ambiguousIsNarrow: true` follows that.
+- **Why the renderer follows rule 2.** Its Bun measures per cluster (`verified-live`). A mod that measures by rule 1 (or by `String.length`) misaligns every row that holds an emoji cluster.
+- **What it means for a mod.** Match rule 2 in `cellWidth`. Do not trust the terminal to follow it: a terminal that follows rule 1 or has mode 2027 off draws an emoji cluster in another width than the renderer counted. The mod cannot detect that. Keep emoji out of fixed-width cells.
+- Rule 2 is not one implementation. Bun differs from `string-width@8` on Indic clusters, Thai SARA AM and halfwidth voiced marks. The live renderer summed the code points of those clusters, so the "first visible scalar" shortcut came out one cell short on 3 of 24 rows.
+
+### 3.6 Size limits of a pane tree
+
+The d.ts names the bounds (20,000 nodes, 32 levels, 100,000 characters serialized) in the `ClientElements` doc as "every tree's bounds" ([d.ts:1439-1440](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L1439-L1440)). The wording is general. The kit confirms 20,000 nodes and 32 levels for an ordinary `Pane` tree (`verified-kit`). It shows no serialized-size bound there: a 685 KB tree drew. The 100,000 that bites a `Pane` is the drawn-text budget. Why the serialized bound does not show for a `Pane` is `inference`.
+
+| Limit | Behavior | Grade |
+| --- | --- | --- |
+| Nodes plus string children: 20,000 | Over it, the tree is refused. The engine draws its own. Message: `ui.render (Pane) refused: more than 20000 nodes; the engine drew its own`. | `verified-kit` |
+| Depth: 32 | Over it: `deeper than 32`. | `verified-kit` |
+| Text: the first 100,000 characters count | **Past it the tree is not refused.** Later rows draw empty (`… N more characters, not drawn`) and their Buttons and Links vanish. The kit and the mod see no error. The engine logs `<plugin>: ui.render (<Component>): <n> characters of text are drawn up to the first <m>`: the debug log always, the transcript while a plugin folder hot-reloads ([reference.md 302:155](../claude-code-mods/sources/claude-code-2.1.302/reference.md#L155)). | `verified-kit` (rows lose Buttons), `types-only` (the log line) |
+
+What counts toward the 100,000: a `Box` key, a `Button` label, a `Link` href plus label, and visible text. A `Button` key and a `Text` key do not count.
+
+Measured on the kit, with 17-character titles:
+
+| Tree shape | Result |
+| --- | --- |
+| 500 flat rows with header and detail row | 11,020 of 20,000 counted values. Passes. 685 KB of JSON. |
+| Rows per tree before the node refusal | flat with detail 908, flat without 1,051, real `/track` shape with detail 666, without 740 |
+| First row that loses its Buttons, real row shape, short Box keys | row 686 without detail rows, row 522 with them |
+| First row that loses its Buttons, real Box key format `cell-<name>-gh:github.com/acme/web#N` | row 248 without detail rows, row 223 with them |
+
+A real `/track` row costs 21 nodes and 6 strings. A detail row adds 3. The current pane would lose Buttons past roughly 250 items.
+
+**Live results** (`verified-live`, tmux 120 by 40 docked, spike [`tbl`](../claude-code-mods/sources/spikes-2026-10-17/tbl/), answers [Q2](open-questions.md#1-unknowns)). A row has five cells, one focus `Button` and short or no `Box` keys. That shape costs 11 nodes and 4 string children per row, 15.03 counted per row.
+
+| Question | Answer | Evidence |
+| --- | --- | --- |
+| Do the limits apply to 600 rows with 40 to 80 character titles? | Neither is reached. 9,029 of 20,000 counted and 43,254 of 100,000 characters (about 72 per row). The pane draws whole: the ring reaches `r599` and the footer `Button`s exist. The engine logs nothing. | Kit: `PROBE tbl-r600-t0 DRAWN nodes=6623 strings=2406 nodes+strings=9029 chars=43254 buttons=603 rowButtons=600 lastRowButton=r599`. Live header of `/tbl 600 0 sticky`: `rows=600 tl=0 nodes=6613 str=2403 chars=43152 btn=600` (the kit counts 10 more nodes for its wrapper). Shift+Tab walks the close mark, `fd`, `fy`, `fx`, `r599`. |
+| Does the 20,000-node refusal behave live as in the kit? | Yes. The count is nodes plus string children. 1300 rows (19,516 counted) draw. 1400 rows (21,016 counted) are refused: the pane body is blank apart from the engine's close mark, and Tab reaches only that mark. The mod's render hook completes without error and cannot see the refusal. The engine reports it in the transcript and the debug log, twice (the open render and the Tab render). | Kit: `tbl-r1300-t0 DRAWN … nodes+strings=19529`, `tbl-r1400-t0 REFUSED … ui.render (Pane) refused: more than 20000 nodes; the engine drew its own`. Live: `/tbl 1400 0 sticky` header `nodes=15413 str=5603`, `R … build=54ms`; `screen-1400.txt` has an empty body with only ✕. Transcript: `⏺ hooks: ui.render (Pane) refused: more than 20000 nodes; the engine drew its own`. Debug log: `[WARN] ui.render (Pane): a hook returned a tree that does not validate (more than 20000 nodes); drawing the engine's own`. [reference.md 302:155](../claude-code-mods/sources/claude-code-2.1.302/reference.md#L155). |
+| Do rows past the 100,000-character cut lose their `Button`s, as in the kit? | Yes. 600 rows with 200-character titles: `Button`s survive to `r469` (kit `r469`). 600 rows with natural titles and the legacy long `Box` keys (`row-gh:github.com/acme/web#N`, `cell-<name>-…`): to `r354` (kit `r354`). Rows past the cut get no `Button`s and cannot be reached by keyboard. The footer `Button`s `fx`, `fy` and `fd`, and with them the hotkeys, disappear too, because the footer sits after the rows. The engine ends the drawing at the cut with `… N more characters, not drawn`. | `t200`: kit `lastRowButton=r469 CUT`; live Shift+Tab from the close mark gave `F el=-`, then `F el=r469`, and no `fd`, `fy` or `fx` stop. End shows `#469 for tenant`, then `… 189 more characters, not drawn`. Long keys: kit `chars=25527 buttons=355 lastRowButton=r354 CUT`; live End shows `#354`, then `… 58 more characters, not drawn`. The visible text was only 43k, so `Box` keys count. |
+| What does the text count include, and what does the engine log? | `Text` strings, `Button` labels and `Box` keys. 127,920 = 127,201 body text + 600 `Button` labels (`>`) + 119 header and footer text. The spike's own `chars=` header counted body `Text` only and understated the total. The log line is once per load and component. | Debug log: `[WARN] hooks: ui.render (Pane): 127920 characters of text are drawn up to the first 100000`, with a `$.ui.log` copy. Transcript: `⏺ hooks: ui.render (Pane): 127920 characters of text are drawn up to the first 100000`. The prefix is `hooks:`, not the plugin name. After the second overflow (the long-key run) the debug log still held one cut `[WARN]`, from the `t200` run. |
+
+So a mod cannot rely on the engine's log line, even in development: it fires once. A cap of about 300 rows in total is far inside both budgets (4,529 counted and 21,635 characters at 300 rows). The budgets bite only above about 1,330 rows (nodes) or 1,390 rows (text) with this row shape. They bite earlier with long titles, long `Box` keys, several `Button`s per row or open detail rows. The row cap and the guard must still exist as a safety net.
+
+## 4. Prior art
+
+All entries are `public-docs` read on 2026-10-17, not run. The sources are the Textual, ratatui, `tui-treelistview`, Bubbles, Ink, `ink-table` and AG Grid documentation.
+
+| Component | Column | Cell style | Expansion | Cursor | Keys |
+| --- | --- | --- | --- | --- | --- |
+| Textual `DataTable` | label, width (`None` fits content, grow-only), key | Rich `Text` per cell, CSS component classes | none (a separate `Tree` widget has `expand`, `collapse`, `toggle_node`) | `cursor_type` cell, row, column, none | class-level `BINDINGS` of `Binding(key, action, description, show, key_display, priority, id)`, `check_action` (True, False, None = shown, hidden, dimmed), `set_keymap` by `id`, a Footer generated from active bindings |
+| ratatui `Table` | `Constraint` enum with a solver (`Min`, `Max`, `Length`, `Percentage`, `Ratio`, `Fill`) | `Style` on table, row, cell; row, column and cell highlight styles | none | app-owned `TableState` | none; the app matches `KeyCode` |
+| `tui-treelistview` 0.2.2 | `ColumnDef::tree` (exactly one tree column) and `ColumnDef::data`; `ColumnWidth{min, ideal, max}`, `fixed`, `flexible` | per-column renderer | `TreeModel` trait and one flat `TreeProjection` shared by navigation and rendering | selection in the projection | `TreeAction`, `TreeIntent`, optional `keymap` feature |
+| Bubbles `table` | `Column{Title, Width}`; `Width <= 0` hides; cut with `…` | `Styles{Header, Cell, Selected}` | none | `cursor` | `KeyMap` of `key.Binding(WithKeys, WithHelp, WithDisabled)`; `help.KeyMap` gives `ShortHelp` and `FullHelp` |
+| Ink and `ink-table` | `max(header, cells) + 2*padding`, measured with `.length` (wrong for wide characters) | replaceable `header`, `cell`, `skeleton` components | none | none | `useInput`, `useFocus`, `useFocusManager`; no registry |
+| AG Grid | `ColDef` with `width`, `minWidth`, `maxWidth`, `flex`; `defaultColDef`; a separate `autoGroupColumnDef` for the tree column | `cellStyle` as object or function | `getDataPath`, `groupDefaultExpanded`, `isGroupOpenByDefault`, `setRowNodeExpanded` | `rowSelection` | callbacks (`suppressKeyboardEvent`, `navigateToNextCell`); no registry |
+
+What to copy:
+
+- A column is a small declarative record: id, header, width spec, optional cell formatter. Style, cursor style and key bindings stay separate from it.
+- Exactly one tree column, with min, ideal and max width (`tui-treelistview`).
+- Key bindings as data with tri-state enablement and an id for override (Textual), and a help footer generated from the active set (Bubbles).
+- `defaultColDef` for shared column defaults, and `cellStyle` as an object or a function (AG Grid).
+- Expansion and cursor live in app-owned state, apart from the model (ratatui, `tui-treelistview`).
+
+What the engine prunes: a hotkey is one character, no arrow keys reach a pane, and a `Button` cannot hold `Box` cells. All grades in this table are `public-docs` for the library facts and `inference` for the "copy" choices.
+
+## 5. Options and trade-offs
+
+### 5.1 Row navigation (U5)
+
+| Option | How it works | For | Against |
+| --- | --- | --- | --- |
+| **N1: one focus Button per row** | Each row has one small Button, the row handle. Tab and Shift+Tab walk the rows. Enter presses the handle. | Built on verified behavior (`verified-live`). Visible in the kit as `findAll Button`. The engine scrolls to keep the ring in view. | Arrow keys do not walk rows on a tall table (they scroll). The behavior flips when rows are added and the tree fits. Each extra Button per row adds a Tab stop. A `display:'none'` Button is a dead stop. |
+| **N2: hotkey cursor** | Footer or hidden Buttons with hotkeys (for example `j` and `k`) move a `selected` atom. Row actions are other hotkeys that act on `selected`. | No dependence on the ring. Works on a tall table. All parts are verified: a hotkey fires wherever its Button is (`verified-live`), no letter is reserved (`verified-live`), `onPress` may write state ([d.ts:3488-3489](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L3488-L3489)). | The combination was not run (`inference`). Two cursors exist (ring and `selected`) unless the handler also moves the ring. The hotkey letters come from a pool of 36. Hints must be visible. |
+| **N2b: hotkeys that move the ring** | As N2, but `j` and `k` call `$.ui.focus({requestId, key})` to move the ring to the next or previous row handle. The `ui.focus` hook then writes `selected`. | One cursor: the ring. Selection follows it. | `$.ui.focus` works only while the pane holds the keys, and only for a Button, Input or Select the plugin drew ([d.ts:2576-2591](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L2576-L2591), [d.ts:14515-14532](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L14515-L14532)). The mod already uses it in a best-effort way (`H/register.tsx:1278`). Not run with a taller-than-pane tree (`inference`). |
+| **N3: `Client` region with `onKey`** | A `Client` surface module reads every key and posts it to the hooks module. | Any key, including arrows. | Needs a mouse click for focus (`verified-live`). Esc never arrives. No `$` inside. Terminal and desktop only. Not a keyboard-first design. |
+
+**Decided (D2, 2026-10-17):** N1, a Tab ring with one focus `Button` per row. A `ui.focus` hook writes a `selected` atom and the highlight follows it. Enter toggles expand. N2b (`j` and `k`) is not part of the decision. The live run shows that N1 works as drawn ([§3.3](#33-selection-state)).
+
+**Recommendation (inference), before the decision:** N1 as the base, with N2b as an optional addition. The ring is the cursor. A `ui.focus` hook copies the ring position to `selected` after `next(e)`. Do not promise Up and Down row navigation. Reject N3 for keyboard use. Offer it, if ever, as a mouse-driven extra.
+
+Also: set `autoFocus` on the first or the selected row handle, so the first Tab does not land on a dead stop. Live, `autoFocus` on the first row `Button` gives the ring and the selection at open, so the footer hotkeys have a target at once. The first Tab then goes to the second row ([§3.2](#32-keyboard)). The selection write comes from the `origin: plugin` focus event, so the same `ui.focus` hook handles it.
+
+### 5.2 Where the selection lives
+
+| Option | Effect |
+| --- | --- |
+| A `selected` atom written by the `ui.focus` hook after `next(e)` | The highlight is reactive and survives a re-render (`verified-kit`). A hot reload keeps it, because `$.state` survives a reload (`types-only`, [d.ts:3460-3461](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L3460-L3461)). |
+| A module variable (today's `focusedRow`) | No redraw on change, so no highlight. Lost on reload. |
+| Written only from `onPress` | The selection changes on activation, not on Tab. |
+
+**Recommendation (inference):** the atom. It replaces `focusedRow` and `focusRows` (`H/register.tsx:169, :171`). Make the write **sticky**: write `selected` only for a ui.focus event whose `element` is a row key. A footer or close-mark stop leaves it alone ([§3.3](#33-selection-state), `verified-live`). The row-key scheme (short, matchable) then doubles as the selection filter. Stable row-handle keys (`row-<id>`) are possible only if the ring survives a re-sort; today's `mark:<i>:<level>:<id>` keys embed position because the ring must land on a new key after a re-sort (`H/ui/view.ts:510-516`). The ring survives the redraw that a `selected` write causes (`verified-live`). A re-sort is not run ([Q1](open-questions.md#1-unknowns)).
+
+### 5.3 Key registry (U6)
+
+The engine bounds "any key". A pane can bind only one lowercase letter or digit per Button, plus an existing engine action through `Button.action`. Enter, Space, the arrows, punctuation and `ctrl` chords are not available. Typing one of the punctuation keys leaves the pane. The issue's example `x` fits.
+
+Registry rules that follow from the evidence:
+
+1. A key is exactly one of `a-z` or `0-9`. Fold uppercase to lowercase.
+2. A key is unique per pane. The engine lets the later Button win without a warning (`verified-live`), so the registry must throw at build time.
+3. No letter is reserved (`verified-live`). The registry needs no deny list.
+4. A row-scoped action acts on the selected row through one footer Button. A hotkey is unique per pane, so it cannot sit on every row. The action reads the selected row from state **at press time**, not from a closure captured at draw (`verified-live`: a hotkey press does not move the ring). The footer is not sticky in a pane, so a status line there is hidden while the window scrolls. Mirror feedback elsewhere.
+5. Each action has a state: enabled, disabled or hidden (Textual `check_action`, Bubbles `WithDisabled`).
+6. A visible help row is derived from the active actions. Prefer it to a `display:'none'` Box, whose Button is still a dead Tab stop.
+7. An action takes ports or callbacks, never `$`. `$` may go only to same-file `function` declarations ([tracker-plugins §2](tracker-plugins.md#2-what-the-engine-allows)).
+
+**Decided (D1, 2026-10-17):** one pane-wide registry of `a-z` and `0-9`. A tracker registers a key and an action on the selected row. A duplicate fails at build. The keys show in a footer, one footer `Button` per key.
+
+### 5.4 Expansion (U1)
+
+- **Every row expandable.** A leaf expands into a detail line (long title, extra fields). The row handle Button toggles it on Enter, so one Button serves navigation and expansion. State: the `ui.folded` atom of row ids, inverted to `expanded` so that the default is collapsed.
+- **Only rows with children or detail expand.** Cheaper in nodes. It does not meet U1 literally.
+
+Expansion costs nodes. A detail row adds 3 counted values. The default must be collapsed or the budget in [§3.6](#36-size-limits-of-a-pane-tree) breaks first.
+
+**Recommendation (inference):** every row expandable, collapsed by default, with the toggle on the row handle. Enter toggles an `expanded` atom and does not disturb the ring (`verified-live`, [§3.3](#33-selection-state)). Leaf detail rows can be plain `Text` with no `Button`, and Tab skips them. The budget guard must count open rows (about 5 nodes and 70 characters per two one-line details). Decided (D2): every row is expandable, and a leaf expands into tracker-defined detail rows.
+
+### 5.5 Columns, header and sizing (U2, U3)
+
+A column spec: `{ id, header, width, align, role?, priority, cell(row) }`. Width is one of `fixed(n)`, `content(min, max)` or `flex(min)`. Exactly one column has `role: 'tree'` and carries the indent and the fold glyph.
+
+A solver, in order (`inference`, assembled from verified parts):
+
+1. Flatten the visible rows once.
+2. Per column, take `max(cellWidth(header), cellWidth(cell))` over the visible rows. The tree column adds `depth * indent + 2` for the fold glyph.
+3. Clamp to `[min, max]`. `Box` has no `maxWidth`, so the clamp is the mod's job.
+4. If the sum exceeds `e.props.bodyColumns`, drop columns by priority (this replaces the `isWide` gate at 70 columns), then shrink content columns toward their minimum.
+5. The flex column takes the rest with `flexGrow` and `minWidth`.
+6. Draw every cell as `<Box width={n}><Text wrap="truncate-end">`. The renderer stays the final clipper, so a mis-measure costs one ellipsis, not a broken row.
+
+Rules:
+
+- Align a numeric column with `justifyContent="flex-end"` inside the fixed `Box` (`verified-live`).
+- Normalize cell text first: replace tabs, newlines, control characters and ANSI with spaces. `cellWidth` counts none of them, and the renderer expands a tab to 8-column stops.
+- Keep emoji and VS16 glyphs out of aligned cells. Terminals disagree about them.
+- Keep a grow-only width memo per column between refreshes, so folding does not make the other columns jump. Reset it on an explicit refresh (`inference`, from Textual's grow-only content width).
+- The header is a normal first row with the same widths, drawn `weight="bold"` or `underline`. A tree column header spans the whole first column without indent.
+- Use the shipped glyph set (`★ ▲ ▽ ● ✓ ✗ … · ↳ →`). All are 1 cell in the renderer. Add no Ambiguous-width glyph.
+
+**The header is not sticky.** The pane scrolls as a whole ([d.ts:10760-10767](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L10760-L10767)), so a header row scrolls away. Options:
+
+| Option | Trade-off |
+| --- | --- |
+| Accept a non-sticky header. Draw one header row per section. | Cheapest. A section already has a title line. |
+| Window the rows and keep the header outside the window | Needs `e.props.scroll`, whose offset is stale between renders ([§5.7](#57-budget-guard-and-windowing)). |
+| Move the table into a `Client` region | Sticky header possible, but a click is needed for focus. |
+
+**Recommendation (inference):** a non-sticky header row per section in the first version. **Decided (D11, 2026-10-17):** one non-sticky header row per section. Live, the footer is not sticky either ([§3.2](#32-keyboard)): a status line in the header or the footer is hidden while the window sits between them.
+
+### 5.6 Colors (U4)
+
+- Use theme keys for meaning (`success`, `warning`, `error`, `claude`, `inactive`, `subtle`). They follow the person's theme. The mod uses raw `green`, `yellow`, `red` today.
+- Use raw hex only when an exact color matters. It quantizes under tmux.
+- Put `backgroundColor` on the fixed-width cell `Box` to fill the cell. Use a row `Box` background or `inverse` for the selected row, not a `Text` background.
+- Whitelist the color tokens in the component. A colon string kills the whole pane. A typo draws unstyled with no error.
+- Use `weight`, not the deprecated `bold`.
+
+### 5.7 Budget guard and windowing
+
+Windowing or a row cap is required, not optional ([§3.6](#36-size-limits-of-a-pane-tree)).
+
+| Option | Effect |
+| --- | --- |
+| Window the rows by `e.props.scroll` (`bodyRows`, `offset`) | The engine's keep-in-view scroll on Tab raises no `ui.scroll` and no render, so the offset is stale. A window computed from it can lag the ring. Risky (`inference`). |
+| Cap rows per section and add a "N more" row that expands on press | State is explicit (an atom). No dependence on the scroll offset. |
+| Fold by default | Shrinks the tree. Does not bound it. |
+| Short Box keys, clipped titles in the data | The painter's `truncate-end` does not reduce the budget, so clip in the data. Short keys cut the count: a `Box` key counts, a `Button` key does not. |
+| A guard in the component that counts nodes and characters before it returns the tree | Turns a cut the mod cannot see (the engine logs it, the mod cannot read the log) into a visible degrade. |
+
+**Recommendation (inference):** the row cap with a "N more" row, short Box keys, clipped titles and the guard. Do not window by scroll offset. **Decided (D12, 2026-10-17):** a row cap per section with an "N more" row, short element keys and a budget guard.
+
+What the live runs add (`verified-live`, [§3.6](#36-size-limits-of-a-pane-tree)):
+
+- **The guard must run before the tree is returned.** A refused tree leaves the pane blank and keyboard-dead, and the mod gets no error. Count nodes **plus** string children, not nodes alone, and leave margin. Fall back to a smaller tree (the row cap) instead of relying on the engine.
+- **Count everything the engine counts:** `Text` strings, `Button` labels and children, `Box` keys and `Link` hrefs. The spike's `chars=` header counted body `Text` only and understated the engine total.
+- **Place the footer and the hotkey `Button`s before the rows,** or keep the rows far below the cut, so a text cut cannot remove the key registry (*inference*). The engine's log line fires once per load, so the mod cannot rely on it.
+- **Cost.** Each selection write draws the whole tree again, so the cost is O(total rows). A Tab settles in about 29 ms at 100 rows, 58 ms at 300, 109 ms at 600 and 221 ms at 1300. There was no visible lag at 100 or 300 rows. Keep the pane under about 300 rows in total. At 100 rows per section (300 in total) a Tab settles in about 60 ms. A cap of 100 in total would settle in about 30 ms. Do not render every tracker's full list. The figures are in [mods ui: redraw cost](../claude-code-mods/reference/ui.md#redraw-cost).
+
+### 5.8 One model, three renderers (U7)
+
+The pane, the `/track` text and the band read the same sections today, and each lists the fields in its own order (`cellsFor` vs `textOf`; four band-part counters). If the component owns a column spec, the text and the band can derive from it. That removes the duplication list in the inventory: ten `PaneRow` literals with the same defaults, three hand-written fold implementations, four band counters.
+
+## 6. API sketch (recommendation)
+
+The shape below is `inference`. It is a sketch, not a contract.
+
+```mermaid
+classDiagram
+  class TreeDataTable {
+    +render(model, view, el) Tree
+    +addColumn(ColumnDef)
+    +addAction(RowAction)
+    +helpRows() Row[]
+  }
+  class ColumnDef {
+    +id string
+    +header string
+    +width Width
+    +align start_center_end
+    +role tree_or_data
+    +priority number
+    +cell(row, ctx) Cell
+  }
+  class Width {
+    fixed(cells)
+    content(min, max)
+    flex(min)
+  }
+  class Cell {
+    +text string
+    +fg Color
+    +bg Color
+    +weight string
+    +dim boolean
+    +wrap string
+    +href string
+  }
+  class RowAction {
+    +id string
+    +hotkey a_z_or_0_9
+    +label string
+    +scope row_or_table
+    +state(row) enabled_disabled_hidden
+    +run(ports, row)
+  }
+  class TreeModel {
+    +idOf(row) string
+    +children(row) Row[]
+    +detail(row) Cell[]
+  }
+  class ViewState {
+    +expanded Set
+    +selected string
+    +shown Map
+  }
+  TreeDataTable o-- ColumnDef
+  TreeDataTable o-- RowAction
+  TreeDataTable ..> TreeModel : reads
+  TreeDataTable ..> ViewState : reads
+  ColumnDef --> Width
+  ColumnDef ..> Cell : makes
+```
+
+The component takes the element table (`Box`, `Text`, `Button`, `Link`) and callbacks. It never takes `$`, as `H/ui/pane.tsx:1-2, :11` does today. `ViewState` is two atoms (`expanded`, `selected`) plus a `shown` count per section.
+
+The key flow, with the ring as the cursor:
+
+```mermaid
+sequenceDiagram
+  participant P as Person
+  participant E as Engine
+  participant F as ui.focus hook
+  participant S as selected atom
+  participant R as ui.render hook
+  P->>E: Tab
+  E->>F: ui.focus {element: row-handle-7, origin: person}
+  F->>E: next(e): the ring moves
+  E-->>F: result without deny
+  F->>S: update(selected, row 7)
+  S-->>R: a subscribed render is drawn again
+  R->>R: read selected, draw the row Box with a background
+  P->>E: x (hotkey)
+  E->>R: onPress of the footer Button x
+  R->>R: run(ports, selected row)
+```
+
+Costs to know: the hook ordering is "next first, write second" ([§3.3](#33-selection-state)), and a state write at the redraw rate re-draws every subscribed render.
+
+## 7. Test strategy
+
+| What | Where | Grade |
+| --- | --- | --- |
+| `cellWidth`, the column solver, the registry rules (duplicate hotkey, key charset) | Pure unit tests. Vectors generated by `Bun.stringWidth` (`ambiguousIsNarrow: true`) | `verified-kit` for the helper |
+| The tree shape, the highlight after a `ui.focus`, a Buttons-per-row check (a cut row has none), the node and character guard | Kit: `ui.mount`, `await ui.drawn()`, `ui.press({key})`, `ui.findAll({type: 'Button'})` | `verified-kit` |
+| The focus ring, Tab and arrow behavior, hotkeys, scroll, paint, colors | Live run in tmux. The kit cannot drive them | `verified-live` |
+
+Gotchas for tests:
+
+- `Mounted.drawn()` is async ([d.ts:16321](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L16321)). A test that forgets `await` sees JSON `{}` and asserts on nothing.
+- The test body cannot call `$.fs`. The `Engine` type has no `fs` noun ([config-manager §3](config-manager.md#3-what-the-engine-allows)).
+- A kit tree that draws a cut row still passes `claude plugin validate`. Validate never renders.
+- `e2e/` runs inside tmux, so ANSI assertions see 256-color indices.
+
+## 8. Gotchas
+
+- Up and Down flip between "scroll" and "move the ring" as the tree grows past the pane height.
+- The first Tab after open lands on a hidden Button if one exists. Set `autoFocus` or avoid `display:'none'` Buttons.
+- A resize that flips dock to inline drops pane focus. Refocus with `ctrl+x Tab` only after you check `e.props.isFocused`.
+- Existing label truncation cuts UTF-16 code units: `H/scan/refs.ts:114`, `H/scan/artifact-url.ts:30` and `H/process/parse.ts:9` use `.slice(0, N)`. A cut through a surrogate pair leaves a lone half, drawn as U+FFFD ([d.ts:7562](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L7562)). Sixty CJK characters are 120 cells. Truncate by grapheme or leave clipping to the renderer.
+- A hotkey `onPress` must read the selected row from state at press time. A hotkey press does not move the ring.
+- The literal `ui.focus` hook (`e.element ?? null`) loses the selection on the close mark and on a footer `Button`. Write only for row keys.
+- A refused tree (over 20,000 nodes plus strings) leaves the pane blank and keyboard-dead, and the mod sees nothing. The text cut removes the footer `Button`s with the rows.
+- The `cellWidth` helper's `/v` regexes need `target: es2024` (`TS1501` at `es2023`), or `new RegExp(src, 'v')`.
+- A local binding named `next` inside any hook is refused as a shadow of the continuation. `atom({ plugin: CONST, key })` is refused. `$` cannot be assigned to a module variable. In the kit, mounting a Pane with a `ui.focus` hook needs the bottom stub `on('ui.focus', () => ({}))`.
+- Do not copy `ink-table`'s `String(value).length` widths.
+- Do not use `string-width`'s "first visible scalar" rule for non-emoji clusters. Claude Code's Bun sums the code points. Devanagari conjuncts, Thai SARA AM and halfwidth voiced marks came out one cell short live with that rule.
+- `console`: the d.ts gives a `console` to a surface (`Client`) module and none to a hooks module ([d.ts:15449-15456](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L15449-L15456)). The kit child printed `typeof console` as `object`. Do not rely on either.
+- `$.ui.resolve(e)` returns a union of surface tables. Narrow with `if (e.surface !== 'terminal') return next(e)` before you destructure `Client`.

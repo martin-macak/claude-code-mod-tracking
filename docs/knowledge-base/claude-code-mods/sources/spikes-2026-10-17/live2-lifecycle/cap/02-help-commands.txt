@@ -1,0 +1,51 @@
+
+ ▐▛███▛█   Claude Code v2.1.302
+▝▜██████▀  Opus 5.5 · Claude Max
+ ▝▝   ▝▝   <SPIKES>/live2-lifecycle/cwd
+
+⚠ 1 MCP server needs authentication · run /mcp
+⚠ Your login expires in 3 days · run /login to renew
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Help  General   Commands   Custom commands
+
+
+   Browse custom commands
+
+   ❯ /mcp__claude_ai_Exa__agent_research_help
+     Get help structuring a multi-step Exa Agent research run.
+     /mcp__claude_ai_Exa__web_search_help
+     Get help with web search using Exa
+
+
+   For more help: https://code.claude.com/docs/en/overview
+
+   Something else? Use /feedback to report bugs or request features.
+
+   Esc to cancel
+

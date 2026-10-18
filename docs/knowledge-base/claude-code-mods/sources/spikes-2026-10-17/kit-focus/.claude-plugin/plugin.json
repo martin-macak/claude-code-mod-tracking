@@ -1,0 +1,1 @@
+{ "name": "kit-focus", "version": "0.0.1", "description": "Spike G04: may a ui.focus hook write $.state so the next Pane render shows a selected row?", "author": { "name": "spike" }, "types": "./types/index.d.ts" }

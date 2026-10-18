@@ -308,9 +308,9 @@ What the live run showed:
 - First layout had no `columnGap`: a truncated title ran into the next column (`…story in-prog…`). Add `columnGap={1}`.
 - A `Button` with children inside a fixed-width cell shifted the next column. Use a separate fixed `Box` for the toggle (`Button plain label="-"`).
 - The title column shrinks with the pane (62 columns docked, 96 inline) and ends in `…`.
-- Collapsible rows: keep the collapsed ids in a `$.state` atom. `onPress` calls `update` ([Button d.ts:1060](../claude-code-mods/sources/claude-code-2.1.295/types/claude-code.d.ts#L1060)). The kit pressed `t-J1`, the children vanished, a second press brought them back (both `terminal` and `desktop`). The keyboard path (ctrl+x Tab, Enter) was **not** verified live.
+- Collapsible rows: keep the collapsed ids in a `$.state` atom. `onPress` calls `update` ([Button d.ts:1060](../claude-code-mods/sources/claude-code-2.1.295/types/claude-code.d.ts#L1060)). The kit pressed `t-J1`, the children vanished, a second press brought them back (both `terminal` and `desktop`). The keyboard path (ctrl+x Tab, Enter) was **not** verified live. **2.1.302 update:** the keyboard path is verified live. Tab and Shift+Tab walk every `Button`, Enter presses the focused one, and Up and Down scroll when the tree overflows ([ui: ring walk](../claude-code-mods/reference/ui.md#ring-walk-and-scroll), *verified-live*).
 - Give every `Button` a stable `key`. A `Button` takes string or `Text` children only ([ui.md §6](../claude-code-mods/reference/ui.md)).
-- Walk the tree in the hook to skip the children of a collapsed row. Only draw what fits (`e.props.scroll.bodyRows`).
+- Walk the tree in the hook to skip the children of a collapsed row. Only draw what fits (`e.props.scroll.bodyRows`). **2.1.302 update:** the engine's keep-in-view scroll raises no `ui.scroll` and no render, so `offset` and `bodyRows` can be stale between renders. Windowing by the offset is unreliable. Cap the rows instead ([limits: sizing a table](../claude-code-mods/reference/limits-and-diagnostics.md#sizing-a-table-in-a-pane)).
 
 ### `Link`
 
@@ -388,7 +388,7 @@ Decision for the user: after `/clear`, should the tracker keep the old items (li
 | v1 | `new GhTool((argv) => $.process.run(argv))`, class from `./tools` | **pass** (`calls: $.process.run`) |
 | v8 | the same, stored in a module variable, used from a `$.clock.after` callback | **pass** |
 | v10 | top-level `function runnerOf($) { return (argv) => $.process.run(argv) }` in `register.ts`, result passed to the class | **pass** (`$.process.run (via runnerOf)`) |
-| v2 | `probe($)`, `probe` imported from `./helper` | fail: `$ is followed only into a function declared in this same file, never across an import` |
+| v2 | `probe($)`, `probe` imported from `./helper` | fail: `$ is followed only into a function declared in this same file, never across an import`. **2.1.302 update:** on 2.1.300 to 2.1.302 it **passes** (`calls: $.process.run (via probe)`) when `probe` is a `function` declaration. An imported arrow `const` still fails ([ports-and-injection](../claude-code-mods/concepts/ports-and-injection.md#passing-the-engine-interface), *verified-kit*). |
 | v3 | `new Thing($)`, class imported | fail: `$ itself is passed as an argument` |
 | v5 | `new Item().refresh($)`, class **in the same file** | fail: same message. A method is not followed. |
 | v6 | `held = $` (module variable) | fail: `$ itself is assigned` |

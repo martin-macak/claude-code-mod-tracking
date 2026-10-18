@@ -1,0 +1,2 @@
+{ "name": "g01u-conditional-and-trycatch", "version": "0.0.1", "description": "throwaway spike", "author": { "name": "spike" },
+  "userConfig": { "withB": { "type": "boolean", "title": "B", "description": "install tracker B", "default": false } } }
