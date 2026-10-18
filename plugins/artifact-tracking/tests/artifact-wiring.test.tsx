@@ -21,7 +21,7 @@ import {
   REFUSED,
   REPUBLISH,
 } from './fixtures/artifacts'
-import { current, PANE, prompt, quiet, response, SESSION, START, toolResult, track, world } from './fixtures/world'
+import { clearSession, PANE, prompt, quiet, response, SESSION, START, toolResult, track, world } from './fixtures/world'
 
 type World = ReturnType<typeof world>
 type Shape = { input: Record<string, unknown>; result: unknown }
@@ -269,7 +269,7 @@ test('/clear carry-over keeps an artifact with its origin and title', async ($, 
   const w = world(on, { isolateState: true })
   await call($, w, PUBLISH)
   await $.session.append(response(`See ${PAGE_CODE_URL}`))
-  current.id = 'sess-2' // what /clear does
+  await clearSession($, w, 'sess-2', 'clear') // what /clear does
   await settle(w)
   expect(await text($)).toBe(`Artifacts  1 artifacts\n  ${ROW}`)
 })
@@ -299,7 +299,7 @@ test('session.start moves a stored web row of an artifact URL to Artifacts, one 
 test('/clear carry-over moves an old web row of an artifact URL to Artifacts', async ($, on) => {
   const w = world(on, { seed: seed([oldWeb(PAGE_URL, 'Design notes')]) })
   await $.session.append(prompt('first https://example.org/a')) // learns the id; no session.start, so nothing is restored
-  current.id = 'sess-2'
+  await clearSession($, w, 'sess-2', 'clear')
   await $.session.append(response(`and ${PAGE_URL}`))
   await settle(w)
   const out = await text($)

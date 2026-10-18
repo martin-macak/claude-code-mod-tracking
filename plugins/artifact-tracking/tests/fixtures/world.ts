@@ -19,6 +19,15 @@ export const current = { id: SESSION, failItemsRead: false }
 declare function setTimeout(fn: () => void, ms: number): unknown
 export const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
+/** Polls until the condition holds, for work a hook starts and does not return (a tick, a lookup). Throws after `ms`. */
+export async function until(cond: () => boolean, what: string, ms = 3000): Promise<void> {
+  const end = Date.now() + ms
+  while (!cond()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
+    await sleep(10)
+  }
+}
+
 type Res = { exitCode: number; stdout: string; stderr: string; isStdoutTruncated: boolean; isStderrTruncated: boolean }
 export const res = (stdout = '', exitCode = 0, stderr = ''): Res => ({
   exitCode,
@@ -146,7 +155,7 @@ export function world(on: On, opts: Opts = {}) {
     /** When set, a discovery call waits for it. */
     discoveryHold: undefined as Promise<void> | undefined,
     storeSets: 0,
-    /** `$.state` writes by atom key. Counted when `isolateState` is on. */
+    /** `$.state` writes by member: an atom's key, a family member's id. Counted when `isolateState` is on. */
     stateSets: {} as Record<string, number>,
   }
   const calls: string[][] = []
@@ -179,11 +188,6 @@ export function world(on: On, opts: Opts = {}) {
     registered.push({ name: e.name, argumentHint: e.argumentHint })
     return { value: { command: e.name } }
   })
-  if (opts.panes) {
-    on('ui.panes', () => ({
-      value: opts.panes!.map(id => ({ id, title: id, isShown: true, isFocused: false })) as never,
-    }))
-  }
   // The real engine resets `$.state` on /clear. Here a state lives under the session id the stub answers.
   const states = new Map<string, { value: unknown; version: number }>()
   let itemWrites = 0
@@ -195,8 +199,10 @@ export function world(on: On, opts: Opts = {}) {
       return { value: { value: s?.value, version: s?.version ?? 0 } as never }
     })
     on('state.set', (_$, e) => {
-      fake.stateSets[e.key] = (fake.stateSets[e.key] ?? 0) + 1
-      if (e.key === 'auto' && opts.denyAutoWrites) return { deny: 'refused' }
+      // A family member counts under its id (`repos`, `auto`), an atom under its key.
+      const member = (e as { id?: string }).id ?? e.key
+      fake.stateSets[member] = (fake.stateSets[member] ?? 0) + 1
+      if (member === 'auto' && opts.denyAutoWrites) return { deny: 'refused' }
       if (e.key === 'items' && itemWrites++ < (opts.denyItemWrites ?? 0)) return { deny: 'refused' }
       const cur = states.get(at(e))
       const version = cur?.version ?? 0
@@ -212,6 +218,15 @@ export function world(on: On, opts: Opts = {}) {
   })
   // The engine moves the ring. The kit has nothing beneath the plugins for `ui.focus`, so answer it here.
   on('ui.focus', () => ({}))
+  // The lifecycle layer reads these. `session.end` echoes the id, like core; `ui.panes` lists the panes the engine
+  // keeps across a hot reload (none unless a test passes `panes`).
+  on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
+  on('store.keys', () => ({ value: [...store.keys()] }))
+  on('ui.panes', () => ({
+    value: (opts.panes ?? []).map(id => ({ id, title: id, isShown: true, isFocused: false })) as never,
+  }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('ui.log', () => ({ value: undefined }))
 
   const graphql = (query: string): Res => {
     if (state.ghAuthFails > 0) {
@@ -352,6 +367,41 @@ export const toolResult = (content: unknown): SessionAppendInput => ({
 })
 
 export const START = { cwd: '/work', surface: null, isInteractive: false } as const
+
+// ---------------------------------------------------------------- /clear and /resume
+
+/**
+ * Plays the engine order of a live `/clear` or `/resume`: `session.end` sees the leaving id, then the id changes.
+ * A `/clear` then appends its command row, which is the first hook of the new session. `/resume` appends none.
+ * Pass `{ row: false }` for a `/clear` whose row the test must not send (the tick has to find the switch).
+ * `w` is the world, or any object that holds its `calls`.
+ */
+export async function clearSession(
+  $: Engine,
+  w: { calls: unknown[] },
+  nextId: string,
+  reason: 'clear' | 'resume',
+  opts: { row?: boolean } = {},
+): Promise<void> {
+  const leaving = current.id
+  await $.session.end({
+    reason,
+    sessionId: leaving,
+    ...(reason === 'resume' ? { resume: { id: leaving } } : {}),
+  } as never)
+  current.id = nextId
+  if (opts.row ?? reason === 'clear') {
+    // A live /clear appends this row 11 ms after session.end; /resume appends none
+    // (claude-code-mods KB, concepts/lifecycle.md, the "/resume and /branch" table).
+    await $.session.append({
+      door: 'command',
+      origin: { kind: 'unclassified' },
+      uuid: uuid(),
+      message: { type: 'user', role: 'user', content: [{ type: 'text', text: '<command-name>/clear</command-name>' }] },
+    } as never)
+    await quiet(w.calls)
+  }
+}
 
 // ---------------------------------------------------------------- file tool results (issue #28, observed shapes)
 
