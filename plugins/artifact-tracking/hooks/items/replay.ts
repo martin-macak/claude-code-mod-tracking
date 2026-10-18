@@ -30,7 +30,8 @@ export function backfillText(role: 'user' | 'assistant', text: string): string |
   return text.includes('<command-args>') ? commandArgs(text) : text
 }
 
-export type ReplayDeps = Pick<CaptureDeps, 'repo' | 'hosts' | 'site' | 'gh'> & { sight: FileSight }
+/** `files: false` skips the file work (mentions and Write, Edit and Read results): the file tracker is off. */
+export type ReplayDeps = Pick<CaptureDeps, 'repo' | 'hosts' | 'site' | 'gh'> & { sight: FileSight; files?: boolean }
 
 /**
  * Items from a replayed transcript batch. File rows come from the Write, Edit and Read results and the mentions,
@@ -43,7 +44,8 @@ export async function itemsFromBatch(d: ReplayDeps, batch: readonly ReplayItem[]
   const fileRecs: FileRecord[] = []
   const opts = { defaultRepo: d.repo() ?? null, githubHosts: d.hosts() }
   const toolSite = await d.site()
-  const ctx = await d.sight.ctxFor()
+  const files = d.files !== false
+  const ctx = files ? await d.sight.ctxFor() : undefined
   const at = d.sight.at()
   for (const item of batch) {
     if (item.kind === 'row') {
@@ -55,12 +57,12 @@ export async function itemsFromBatch(d: ReplayDeps, batch: readonly ReplayItem[]
         refs: await keepOpenSessionShortRefs(d, extractRefs(text, { mode: 'full', ...opts, strictShortRefs: true })),
         source,
       })
-      fileRecs.push(...(await d.sight.mentionRecords(ctx, text, { source, at })))
+      if (ctx) fileRecs.push(...(await d.sight.mentionRecords(ctx, text, { source, at })))
       continue
     }
     const { tool, input, result: use } = item.ev // `use` is the whole tool use of the transcript
-    const t = touchFromToolResult(tool, use)
-    const rec = t && (await d.sight.sighting(ctx, t.spelled, t.kind, false, { source: 'tool', at }))
+    const t = ctx ? touchFromToolResult(tool, use) : null
+    const rec = ctx && t ? await d.sight.sighting(ctx, t.spelled, t.kind, false, { source: 'tool', at }) : null
     if (rec) fileRecs.push(rec)
     if (tool === 'Artifact') {
       const ev = artifactEvent(input, use)

@@ -1,6 +1,7 @@
 // `/track`: the empty command, `refresh`, `clear` and `prio`. The manager and the item runtime do the work; this holds
 // only the order of the calls and the text of the answer. Every other word prints the usage line.
-// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.3 and 5.12. Plan: L3 Task 12, D12.
+// A reply that prints the list ends with the problems of the config file, when there are any (until the help view of L6).
+// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.3, 5.7 and 5.12. Plan: L3 Task 12, D12. L4 Task 6, C6.
 
 import type { LifecycleManager } from '../core/infra/lifecycle'
 import type { Ports } from '../core/interfaces/ports'
@@ -12,11 +13,30 @@ const USAGE = 'Usage: /track [refresh|clear|prio <ref> <high|normal|low|auto>]'
 /** `/track prio` levels: `auto` removes the person's mark. */
 const PRIO_WORDS = new Set(['high', 'normal', 'low', 'auto'])
 
-/** The text of the list. It waits for the repo first, so `#N` keys are right. */
+/** How many problems the block names before it counts the rest. */
+const SHOWN_PROBLEMS = 10
+
+/**
+ * The config problems as a block: a header with the path, then each problem on its own line, indented two spaces. Over
+ * ten, the first ten and a count. Empty text when all is well.
+ */
+export function problemsText(path: string | undefined, problems: readonly string[]): string {
+  if (problems.length === 0) return ''
+  const rest = problems.length - SHOWN_PROBLEMS
+  return [
+    path === undefined ? 'Config problems:' : `Config problems in ${path}:`,
+    ...problems.slice(0, SHOWN_PROBLEMS).map(p => `  ${p}`),
+    ...(rest > 0 ? [`  and ${rest} more ${rest === 1 ? 'problem' : 'problems'}.`] : []),
+  ].join('\n')
+}
+
+/** The text of the list, then the config problems after one blank line. It waits for the repo first, so `#N` keys are right. */
 async function listText(p: Ports, m: LifecycleManager, items: ItemRuntime): Promise<string> {
   await items.ensureRepo()
-  const v = await viewInputs(p, m.facts, {})
-  return composeCommandText(v.items, v.processes, v.processUi, v.ctx, v.repos)
+  const v = await viewInputs(p, m.facts, { live: id => m.live(id) })
+  const text = composeCommandText(v.items, v.processes, v.processUi, v.ctx, v.repos)
+  const problems = problemsText(m.config.path(), m.config.problems())
+  return problems === '' ? text : `${text}\n\n${problems}`
 }
 
 /**
@@ -33,6 +53,7 @@ export async function trackCommand(
   if (!items.ready) return { text: 'artifact-tracking: not ready.' }
   const arg = args.trim().toLowerCase()
   if (arg === '') {
+    await m.refreshConfig(p) // the file may have changed since the last check: its problems and toggles show now
     // In `claude -p` the command may run before acli answers `--version`. The probes are cached.
     // Wait for them and for the repo first, so the pane's first drawing is already right (also after /clear).
     await items.settleProbes()
@@ -43,6 +64,7 @@ export async function trackCommand(
     return { text: await listText(p, m, items) }
   }
   if (arg === 'refresh') {
+    await m.refreshConfig(p)
     await items.refreshAll()
     // The trackers refresh too: the auto tracker runs a round and waits for it and its PR step.
     await m.command(p, { sub: 'refresh', args: '', wait: true })

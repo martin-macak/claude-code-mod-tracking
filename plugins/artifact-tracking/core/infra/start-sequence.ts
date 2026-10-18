@@ -64,6 +64,7 @@ export class StartSequence {
     const first = this.starts++ === 0
     // The toggles and the limits of this load come from the file, so it is read before anything else uses them.
     await this.soft('config refresh', () => config.refresh(), false)
+    await this.soft('toggles', async () => host.readToggles(), undefined) // once per load; the item runtime asks first
     const run = await this.soft('run load', () => persistence.loadRun(), {} as RunCopy)
     if (!this.swept) {
       this.swept = true // set first: a sweep that throws is not tried again in this load

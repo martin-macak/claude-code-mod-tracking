@@ -255,10 +255,11 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const el = $.ui.resolve(e)
     const p = portsOf($)
-    const v = await viewInputs(p, managerOf($).facts, { bodyColumns: e.props.bodyColumns })
+    const m = managerOf($)
+    const v = await viewInputs(p, m.facts, { bodyColumns: e.props.bodyColumns, live: id => m.live(id) })
     const sections = composePane(v.items, v.processes, v.processUi, v.ctx, v.repos)
     focus.rows = focusTargets(sections)
-    return renderSections(el, sections, e.props.bodyColumns, paneActions(p, managerOf($), runtimeOf($), focus))
+    return renderSections(el, sections, e.props.bodyColumns, paneActions(p, m, runtimeOf($), focus))
   }).catch(($, e) => {
     // A failed read must not close the pane. Draw one line instead.
     const { Text } = $.ui.resolve(e)
@@ -267,7 +268,8 @@ export const register: Register = on => {
 
   // One line above the prompt. The engine's own band stays inside our Box.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const v = await viewInputs(portsOf($), managerOf($).facts, {})
+    const m = managerOf($)
+    const v = await viewInputs(portsOf($), m.facts, { live: id => m.live(id) })
     const text = composeBand(v.items, v.processes, v.ctx.auto ?? null, v.repos)
     if (text === null || e.props.hasSurvey) return next(e)
     const el = $.ui.resolve(e)

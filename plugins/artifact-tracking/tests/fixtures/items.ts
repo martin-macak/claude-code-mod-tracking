@@ -5,6 +5,7 @@
 import type { ReplayItem, RowEvent } from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
 import type { RepoRemote, RunResult } from '../../core/interfaces/ports'
+import type { Tracker } from '../../core/interfaces/tracker'
 import type { ItemRecord } from '../../hooks/contracts'
 import { ItemRuntime } from '../../hooks/items/runtime'
 import * as acliFx from './acli'
@@ -42,6 +43,17 @@ function withKey(json: string, key: string): string {
   return JSON.stringify(o)
 }
 
+/** The five item kinds as bare trackers, so the host's config can turn one off: `{ trackers: { web: { enabled: false } } }`. */
+const KINDS = ['github', 'jira', 'artifact', 'file', 'web']
+const kindTrackers = (): Tracker[] =>
+  KINDS.map((id, i) => ({
+    id,
+    order: 10 * (i + 1),
+    config: { defaults: { enabled: true }, normalise: (raw, defaults) => ({ ...defaults, ...raw }) },
+    init: () => {},
+    store: ctx => ctx.config.slice(),
+  }))
+
 export type ItemsOpts = {
   /** The session repo `ports.session.repo()` answers. Default `acme/web` on github.com. */
   remote?: RepoRemote | null
@@ -68,8 +80,12 @@ export function ghAcliRun(o: ItemsOpts = {}): (argv: string[]) => Promise<RunRes
   }
 }
 
-export function itemsWorld(o: ItemsOpts = {}) {
-  const t = hostWorld([])
+/** `off` turns item kinds off in the host's config (`github`, `jira`, `artifact`, `file`, `web`). */
+export function itemsWorld(o: ItemsOpts & { off?: readonly string[] } = {}) {
+  const t = hostWorld(kindTrackers(), {
+    file: { trackers: Object.fromEntries((o.off ?? []).map(id => [id, { enabled: false }])) },
+  })
+  t.host.readToggles() // the start sequence does this before the item runtime starts
   t.w.session.repo = o.remote === undefined ? { host: 'github.com', owner: 'acme', repo: 'web' } : o.remote
   t.w.run = ghAcliRun(o)
   const rt = new ItemRuntime(t.w.ports.state)

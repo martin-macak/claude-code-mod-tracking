@@ -3,7 +3,10 @@
 // `acli` tools, the session repo and the statuses of the tools. It is the `items` slot of Persistence.
 // It never sees `$`. The manager hands it a HostContext at `start` and it keeps that context (the ports of the first
 // hook of the load). The atoms it writes come in at construction.
-// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.8 and 5.9. Plan: L3 Task 11, D13.
+// A kind that the config turned off (`ctx.trackers.live`) runs no CLI, claims its spans and drops them, and leaves no
+// record at start, replay, load or carry.
+// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.7, 5.8 and 5.9.
+// Plan: L3 Task 11, D13. L4 Task 6, C12.
 
 import { RefreshCoordinator } from '../../core/infra/coordinator'
 import type { ReplayItem, RowEvent, SessionChangedEvent } from '../../core/interfaces/events'
@@ -51,15 +54,16 @@ export class ItemRuntime implements ItemsHost {
       atom: state.items,
       host: () => this.ctx,
       kick: keys => this.coordinator?.kick('capture', keys === undefined ? undefined : [...keys]),
+      live: category => this.kindLive(category),
     })
     this.funnel = new Capture({
       repo: () => this.repoNow,
       hosts: () => this.hostList,
       ensureRepo: () => this.ensureRepo(),
       site: () => this.activeSite(),
-      gh: () => this.gh,
+      gh: () => this.ghTool(),
       items: this.store,
-      files: () => this.sight,
+      files: () => (this.kindLive('file') ? this.sight : undefined),
     })
     this.facet = this.buildFacet()
     this.slot = {
@@ -76,7 +80,8 @@ export class ItemRuntime implements ItemsHost {
       restore: async (value, how) => {
         const list = value as unknown as ItemRecord[]
         if (how === 'load') return this.loadItems(list)
-        if (list.length > 0) await this.store.set(cur => unionRecords(list, cur))
+        const kept = this.onlyOn(list)
+        if (kept.length > 0) await this.store.set(cur => unionRecords(kept, cur))
       },
       clear: () => this.store.set(() => []),
     }
@@ -92,8 +97,9 @@ export class ItemRuntime implements ItemsHost {
   async start(ctx: HostContext): Promise<void> {
     this.ctx ??= ctx
     this.build()
+    // One write for both: a warm list is re-keyed and loses the records of a kind that is off.
     const live = await this.store.records()
-    if (rekeyArtifacts(live) !== live) await this.store.set(rekeyArtifacts)
+    if (this.onlyOn(rekeyArtifacts(live)) !== live) await this.store.set(list => this.onlyOn(rekeyArtifacts(list)))
   }
 
   capture(ev: RowEvent): Promise<void> {
@@ -110,8 +116,9 @@ export class ItemRuntime implements ItemsHost {
     const dismissed = await this.need().dismiss.list()
     const have = await this.store.records()
     const sight = this.sight
-    const found = batch.length === 0 || !sight ? [] : await itemsFromBatch({ ...this.deps(), sight }, batch)
-    const fresh = onlyNew(have, found).filter(r => !dismissed.has(r.key))
+    const files = this.kindLive('file')
+    const found = batch.length === 0 || !sight ? [] : await itemsFromBatch({ ...this.deps(), sight, files }, batch)
+    const fresh = this.onlyOn(onlyNew(have, found)).filter(r => !dismissed.has(r.key))
     if (fresh.length === 0) return
     await this.store.set(list => unionRecords(list, fresh))
     this.afterLoad(repoReady)
@@ -177,11 +184,14 @@ export class ItemRuntime implements ItemsHost {
     return this.repoNow
   }
 
-  /** Waits for both `--version` probes (cached, so cheap) and publishes the statuses for the sections. */
+  /**
+   * Waits for the `--version` probes of the tools whose tracker is on (cached, so cheap) and publishes the statuses for
+   * the sections.
+   */
   async settleProbes(): Promise<void> {
     const { gh, acli } = this
     if (!gh || !acli) return
-    await Promise.allSettled([gh.probe(), acli.probe()])
+    await Promise.allSettled(this.probes(gh, acli))
     await this.publishTools()
   }
 
@@ -241,8 +251,29 @@ export class ItemRuntime implements ItemsHost {
       repo: () => this.repoNow,
       hosts: () => this.hostList,
       site: () => this.activeSite(),
-      gh: () => this.gh,
+      gh: () => this.ghTool(),
     }
+  }
+
+  /** True when the tracker of an item kind is on. Before the start there is no config to ask: everything is on. */
+  private kindLive(id: string): boolean {
+    return this.ctx?.trackers.live(id) ?? true
+  }
+
+  /** The records of the kinds that are on. The same array when none is dropped. */
+  private onlyOn<T extends { readonly category: string }>(list: T[]): T[] {
+    const kept = list.filter(rec => this.kindLive(rec.category))
+    return kept.length === list.length ? list : kept
+  }
+
+  /** `gh`, or undefined when GitHub is off: nothing may run it then. */
+  private ghTool(): GhTool | undefined {
+    return this.kindLive('github') ? this.gh : undefined
+  }
+
+  /** The `--version` probes of the tools that are on. */
+  private probes(g: GhTool, a: AcliTool): Promise<unknown>[] {
+    return [...(this.kindLive('github') ? [g.probe()] : []), ...(this.kindLive('jira') ? [a.probe()] : [])]
   }
 
   private build(): void {
@@ -254,7 +285,7 @@ export class ItemRuntime implements ItemsHost {
     this.gh = g
     this.acli = a
     this.sight = new FileSight(ctx)
-    void Promise.allSettled([g.probe(), a.probe()])
+    void Promise.allSettled(this.probes(g, a))
       .then(() => this.publishTools())
       .catch(() => {})
     this.coordinator = new RefreshCoordinator({
@@ -308,7 +339,7 @@ export class ItemRuntime implements ItemsHost {
    * - `<host>`: active Jira site host
    */
   private async activeSite(): Promise<string | null | undefined> {
-    const a = this.acli
+    const a = this.kindLive('jira') ? this.acli : undefined
     if (!a) return undefined
     if (a.activeSite !== undefined) return a.activeSite
     try {
@@ -332,7 +363,7 @@ export class ItemRuntime implements ItemsHost {
     let repo: RepoRef | null = null
     try {
       repo = await ctx.session.repo()
-      const g = this.gh
+      const g = this.ghTool()
       if (g) {
         // A remote host that gh does not know is an ssh alias (git@github-work:o/r) or not GitHub at all.
         // Drop it and ask `gh repo view`, which resolves aliases.
@@ -378,7 +409,7 @@ export class ItemRuntime implements ItemsHost {
     const repoReady = this.ensureRepo().catch(() => {}) // bare #N is re-keyed when the repo arrives
     const site = await this.activeSite()
     const dismissed = await this.need().dismiss.list()
-    const stored = storedForLoad(storedItems, site, dismissed)
+    const stored = this.onlyOn(storedForLoad(storedItems, site, dismissed))
     if (stored.length === 0) return
     await this.store.set(list => unionRecords(list, stored))
     this.afterLoad(repoReady)
@@ -425,6 +456,7 @@ export class ItemRuntime implements ItemsHost {
       discovery,
       ready: async () => {
         const g = need()
+        if (!this.kindLive('github')) return false // the PR lane is part of the GitHub tracker
         await g.probe()
         return g.isAvailable
       },

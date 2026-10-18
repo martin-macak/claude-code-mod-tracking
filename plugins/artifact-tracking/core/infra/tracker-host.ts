@@ -64,6 +64,7 @@ export class TrackerHost {
    * that tracker failed; the others still run.
    */
   async init(): Promise<void> {
+    this.readToggles()
     for (const t of this.ordered) {
       if (this.failedIds.has(t.id)) continue
       try {
@@ -83,12 +84,19 @@ export class TrackerHost {
   }
 
   /**
-   * True unless the config turned the tracker off or it failed to start. The toggles are read once per load, by the
-   * first caller (the item host asks before the first `init`), so a later edit of the file waits for the next load (C5).
+   * Reads the toggles from the config, once per load: a later call changes nothing, so an edit of the file waits for the
+   * next load (C5). The start sequence calls it right after it read the file. `init` calls it too.
+   */
+  readToggles(): void {
+    this.off ??= new Set(this.ordered.filter(t => !this.d.config.enabled(t.id)).map(t => t.id))
+  }
+
+  /**
+   * True unless the config turned the tracker off or it failed to start. Before the toggles are read nothing is off:
+   * a render ahead of the start draws from state only and must not fix the toggles from values the file has not set yet.
    */
   live(id: string): boolean {
-    this.off ??= new Set(this.ordered.filter(t => !this.d.config.enabled(t.id)).map(t => t.id))
-    return !this.off.has(id) && !this.failedIds.has(id)
+    return !this.off?.has(id) && !this.failedIds.has(id)
   }
 
   /** What each tracker's `store` gave: the slice it wants in the file. The ConfigManager merges it once per load. */
@@ -164,7 +172,7 @@ export class TrackerHost {
     for (const set of this.timers.values()) for (const timer of [...set]) timer.cancel()
     this.timers.clear()
     for (const t of this.ordered) {
-      if (this.disposed.has(t.id)) continue
+      if (this.disposed.has(t.id) || this.off?.has(t.id)) continue // a tracker that is off never ran `init`
       this.disposed.add(t.id)
       try {
         t.dispose?.()

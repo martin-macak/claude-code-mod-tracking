@@ -125,6 +125,16 @@ test('a disabled tracker runs store but no init, no handler, no command', async 
   expect(t.host.stored().get('t')).toEqual({ enabled: false, n: 1 })
 })
 
+test('dispose skips a tracker that is off, because it never ran init', async () => {
+  const disposed: string[] = []
+  const on = probe('on', 10, [], { dispose: () => void disposed.push('on') })
+  const off = probe('off', 20, [], { dispose: () => void disposed.push('off') })
+  const t = hostWorld([on, off], { file: { trackers: { off: { enabled: false } } } })
+  await t.host.init()
+  t.host.dispose()
+  expect(disposed).toEqual(['on'])
+})
+
 test('a disabled tracker still holds its slot, so the data is carried and stored', async () => {
   const data = { empty: () => true, restore: async () => {} }
   const t = hostWorld([probe('t', 10, [], { data })], { file: { trackers: { t: { enabled: false } } } })
@@ -165,6 +175,8 @@ test('the toggles are read at the first init of a load only', async () => {
 test('hostCtx.trackers reads live and the slice', async () => {
   const t = hostWorld([probe('t', 10, []), probe('u', 20, [])], { file: { trackers: { u: { enabled: false } } } })
   const { trackers } = t.host.hostCtx(t.w.ports)
+  expect(trackers.live('u')).toBe(true) // the toggles are not read yet: nothing is off
+  t.host.readToggles()
   expect(trackers.live('t')).toBe(true)
   expect(trackers.live('u')).toBe(false)
   expect(trackers.slice('t')).toEqual({ enabled: true, n: 1 })
@@ -298,4 +310,22 @@ test('live follows the host', async () => {
   const t = setup({ trackers: [probe('t', 10, [])], file: { trackers: { t: { enabled: false } } } })
   await t.m.ensureStarted(t.w.ports)
   expect(t.m.live('t')).toBe(false)
+})
+
+test('a render ahead of the start does not fix the toggles from values the file has not set yet', async () => {
+  const t = setup({ trackers: [probe('t', 10, [])] })
+  expect(t.m.live('t')).toBe(true) // before the start: nothing is off
+  t.cfg.set({ trackers: { t: { enabled: false } } }) // the file is read at the start
+  await t.m.ensureStarted(t.w.ports)
+  expect(t.m.live('t')).toBe(false)
+})
+
+test('the item runtime sees the toggles before the trackers init', async () => {
+  const seen: boolean[] = []
+  const t = setup({ trackers: [probe('t', 10, [])], file: { trackers: { t: { enabled: false } } } })
+  t.host.start = async ctx => {
+    seen.push(ctx.trackers.live('t'))
+  }
+  await t.m.ensureStarted(t.w.ports)
+  expect(seen).toEqual([false])
 })

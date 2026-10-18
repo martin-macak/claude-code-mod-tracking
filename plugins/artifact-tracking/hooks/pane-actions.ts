@@ -50,7 +50,7 @@ async function prioritize(
     return // The mark stays. The person can press again.
   }
   try {
-    const v = await viewInputs(p, m.facts, {})
+    const v = await viewInputs(p, m.facts, { live: id => m.live(id) })
     const key = markKeys(composePane(v.items, v.processes, v.processUi, v.ctx, v.repos)).get(id)
     if (key !== undefined) await p.ui.focus(key)
   } catch {
