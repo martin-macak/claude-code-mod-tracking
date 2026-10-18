@@ -1,11 +1,12 @@
 // A LifecycleManager over a real ItemRuntime and the real tracker list, on fakePorts. The tests of `/track`, the pane
 // actions and the artifact and file trackers use it: they need the whole chain (the start sequence, the bus, the item
 // host and the slots), with no engine and no `$`. `extra` adds trackers after the real ones, e.g. a recorder.
-import { GLOBAL_DEFAULTS } from '../../core/infra/global-defaults'
+
 import { LifecycleManager } from '../../core/infra/lifecycle'
 import type { ToolCallEvent } from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
+import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import type { ItemRecord } from '../../hooks/contracts'
 import { ItemRuntime } from '../../hooks/items/runtime'
 import { buildTrackers } from '../../trackers'

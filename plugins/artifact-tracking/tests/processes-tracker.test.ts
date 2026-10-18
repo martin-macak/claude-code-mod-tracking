@@ -2,11 +2,11 @@
 // it runs and the state it publishes. Each case mirrors the kit test of the same subject in register.test.tsx.
 // Plan: L3 Task 8.
 import { expect, test } from 'claude-code/testing'
-import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { RowEvent, ToolCallEvent } from '../core/interfaces/events'
 import type { ItemsHost, Json } from '../core/interfaces/items'
 import type { RunResult } from '../core/interfaces/ports'
+import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import type { ProcessRecord, ProcessUiState } from '../hooks/contracts'
 import { processesConfig, processesTracker } from '../trackers/processes'
 import { fakePorts } from './fixtures/ports'
@@ -396,16 +396,21 @@ test('config: normalise keeps the defaults for a missing or bad value and warns 
   const d = processesConfig.defaults
   expect(processesConfig.normalise({}, d, warn)).toEqual(d)
   expect(warns).toEqual([])
-  expect(processesConfig.normalise({ enabled: false, probeTimeoutMs: 2500.4, extra: 1 }, d, warn)).toEqual({
+  expect(processesConfig.normalise({ enabled: false, probeTimeoutMs: 2500, extra: 1 }, d, warn)).toEqual({
     enabled: false,
     probeTimeoutMs: 2500,
     extra: 1,
   })
-  const bad = processesConfig.normalise({ enabled: 'yes', probeTimeoutMs: 5 }, d, warn)
-  expect(bad).toEqual(d)
-  expect(warns).toHaveLength(2)
+  expect(warns).toEqual(['extra: unknown key. The mod keeps it and ignores it.'])
+  // A decimal or a string takes the default. A number out of range takes the nearest bound.
+  expect(processesConfig.normalise({ probeTimeoutMs: 2500.4 }, d, warn)).toEqual(d)
   expect(processesConfig.normalise({ probeTimeoutMs: 'slow' }, d, warn)).toEqual(d)
-  expect(processesConfig.normalise({ probeTimeoutMs: 999999 }, d, warn)).toEqual(d)
-  expect(Object.isFrozen(bad)).toBe(true)
+  const bad = processesConfig.normalise({ enabled: 'yes', probeTimeoutMs: 5 }, d, warn)
+  expect(bad).toEqual({ enabled: true, probeTimeoutMs: 1000 })
+  expect(processesConfig.normalise({ probeTimeoutMs: 999999 }, d, warn)).toEqual({
+    enabled: true,
+    probeTimeoutMs: 120000,
+  })
+  expect(warns).toHaveLength(6)
   expect(d.enabled).toBe(true)
 })

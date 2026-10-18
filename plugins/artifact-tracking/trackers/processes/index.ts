@@ -4,12 +4,11 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 8.
 
 import { CircuitBreaker } from '../../core/infra/circuit-breaker'
-import type { ConfigSpec } from '../../core/interfaces/config'
 import type { CommandEvent, RowEvent, ToolCallEvent } from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
 import type { Handler, Tracker } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
-import { LIMITS } from '../../hooks/contracts'
+import { type ProcessesConfig, processesConfig } from './config'
 import {
   monitorRow,
   parseBashProcesses,
@@ -20,30 +19,7 @@ import {
 import { addProcessRows, applyTaskUpdate, asRows, mergeProcessRows, setProcesses } from './rows'
 import { type ProbeState, probeProcesses } from './watch'
 
-export type ProcessesConfig = { enabled: boolean; probeTimeoutMs: number }
-
-const DEFAULTS: Readonly<ProcessesConfig> = Object.freeze({ enabled: true, probeTimeoutMs: LIMITS.discoveryTimeoutMs })
-const MIN_PROBE_MS = 1_000
-const MAX_PROBE_MS = 120_000
-
-export const processesConfig: ConfigSpec<ProcessesConfig> = {
-  defaults: DEFAULTS,
-  normalise(raw, defaults, warn) {
-    let enabled = defaults.enabled
-    if (raw.enabled !== undefined) {
-      if (typeof raw.enabled === 'boolean') enabled = raw.enabled
-      else warn('processes.enabled must be true or false; using the default')
-    }
-    let probeTimeoutMs = defaults.probeTimeoutMs
-    if (raw.probeTimeoutMs !== undefined) {
-      const n = raw.probeTimeoutMs
-      if (typeof n === 'number' && Number.isFinite(n) && n >= MIN_PROBE_MS && n <= MAX_PROBE_MS)
-        probeTimeoutMs = Math.round(n)
-      else warn(`processes.probeTimeoutMs must be a number from ${MIN_PROBE_MS} to ${MAX_PROBE_MS}; using the default`)
-    }
-    return Object.freeze({ ...raw, enabled, probeTimeoutMs })
-  },
-}
+export { type ProcessesConfig, processesConfig }
 
 type H<E> = Handler<ProcessesConfig, Json, E>
 

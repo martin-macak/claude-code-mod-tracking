@@ -3,11 +3,11 @@
 // ready, so a round stops after the snapshot. Each case mirrors a kit test of auto-wiring.test.tsx.
 // Plan: L3 Task 10.
 import { expect, test } from 'claude-code/testing'
-import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { ToolCallEvent } from '../core/interfaces/events'
 import type { ItemsHost, Json, StoredItem } from '../core/interfaces/items'
 import type { RunResult } from '../core/interfaces/ports'
+import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import type {
   AgentProof,
   AutoState,
@@ -462,7 +462,7 @@ test('a refused auto write leaves the tool result alone', async () => {
   await t.call('Bash', { command: 'git commit' }, ev.BASH_COMMIT_RAN, { agentId: 'a1' })
 })
 
-test('normalise keeps a valid slice, rounds numbers and falls back per field with one warning each', () => {
+test('normalise keeps a valid slice, clamps numbers, falls back per field and names each problem once', () => {
   const warns: string[] = []
   const warn = (p: string) => void warns.push(p)
   expect(autoConfig.normalise({}, autoConfig.defaults, warn)).toEqual(autoConfig.defaults)
@@ -474,14 +474,19 @@ test('normalise keeps a valid slice, rounds numbers and falls back per field wit
   )
   expect(out).toMatchObject({
     enabled: false,
-    debounceMs: 100,
-    gitTimeoutMs: LIMITS.gitTimeoutMs,
-    workflowIdleMs: LIMITS.workflowIdleMs,
-    maxAgents: LIMITS.maxAgents,
+    debounceMs: LIMITS.autoDebounceMs, // 100.4 is no whole number: the default
+    gitTimeoutMs: 500, // below the min: the min
+    workflowIdleMs: LIMITS.workflowIdleMs, // no number: the default
+    maxAgents: 2000, // above the max: the max
     extra: 1,
   })
-  expect(warns).toHaveLength(3)
-  expect(Object.isFrozen(out)).toBe(true)
+  expect(warns).toEqual([
+    'debounceMs: 100.4 is not a whole number. Using 750.',
+    'gitTimeoutMs: 1 is below the min 500. Using 500.',
+    'workflowIdleMs: "soon" is not a number. Using 3600000.',
+    'maxAgents: 3000 is above the max 2000. Using 2000.',
+    'extra: unknown key. The mod keeps it and ignores it.',
+  ])
   expect(autoConfig.normalise({ enabled: 'yes' }, autoConfig.defaults, warn).enabled).toBe(true)
-  expect(warns).toHaveLength(4)
+  expect(warns).toHaveLength(6)
 })

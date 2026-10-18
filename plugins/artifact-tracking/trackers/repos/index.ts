@@ -3,61 +3,18 @@
 // It reads the session root and the agent labels from the facts `auto.root` and `auto.agents`.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 9.
 
-import type { ConfigSpec } from '../../core/interfaces/config'
 import type { AgentSpawnEvent, DismissedEvent, ToolCallEvent } from '../../core/interfaces/events'
 import type { Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import type { AgentProof, AutoState, RepoRecord, RepoRef } from '../../hooks/contracts'
-import { LIMITS, repoRowId } from '../../hooks/contracts'
+import { repoRowId } from '../../hooks/contracts'
+import { type ReposConfig, reposConfig } from './config'
 import { extractRepoPathsFromTool, PATH_TOOLS, parseRepoHintsFromBash, type RepoHit, repoBaseDir } from './hints'
 import { RepoQueue } from './queue'
 import { capRepoRows, mergeRepoRows, upsertRepoRows } from './rows'
 import { RepoTracker, type RepoVisit } from './tracker'
 
-export type ReposConfig = {
-  enabled: boolean
-  maxRepos: number
-  maxRepoAgents: number
-  maxRepoQueue: number
-  gitTimeoutMs: number
-}
-
-const DEFAULTS: Readonly<ReposConfig> = Object.freeze({
-  enabled: true,
-  maxRepos: LIMITS.maxRepos,
-  maxRepoAgents: LIMITS.maxRepoAgents,
-  maxRepoQueue: LIMITS.maxRepoQueue,
-  gitTimeoutMs: LIMITS.gitTimeoutMs,
-})
-
-/** The numbers of the slice, with the range each may take. */
-const RANGES = {
-  maxRepos: [1, 500],
-  maxRepoAgents: [1, 50],
-  maxRepoQueue: [1, 500],
-  gitTimeoutMs: [1_000, 120_000],
-} as const
-
-export const reposConfig: ConfigSpec<ReposConfig> = {
-  defaults: DEFAULTS,
-  normalise(raw, defaults, warn) {
-    let enabled = defaults.enabled
-    if (raw.enabled !== undefined) {
-      if (typeof raw.enabled === 'boolean') enabled = raw.enabled
-      else warn('repos.enabled must be true or false; using the default')
-    }
-    const out: ReposConfig = { ...defaults, enabled }
-    for (const key of Object.keys(RANGES) as (keyof typeof RANGES)[]) {
-      const value = raw[key]
-      if (value === undefined) continue
-      const [min, max] = RANGES[key]
-      if (typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max)
-        out[key] = Math.round(value)
-      else warn(`repos.${key} must be a number from ${min} to ${max}; using the default`)
-    }
-    return Object.freeze({ ...raw, ...out })
-  },
-}
+export { type ReposConfig, reposConfig }
 
 type Ctx = TrackerContext<ReposConfig, RepoRecord[]>
 type H<E> = Handler<ReposConfig, RepoRecord[], E>

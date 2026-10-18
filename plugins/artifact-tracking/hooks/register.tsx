@@ -4,10 +4,10 @@
 
 import type { EngineInterface, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
-import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
+import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { buildTrackers } from '../trackers'
 import { autoDismiss } from '../trackers/auto/dismiss-store'
 import { renderBand } from '../ux/band'

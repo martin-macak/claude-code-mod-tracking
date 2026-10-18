@@ -2,11 +2,11 @@
 // keeps and how a switch or `/track clear` treats them. Each case mirrors the kit test of the same subject in
 // register.test.tsx. The facts `auto.root` and `auto.agents` stand in for the auto tracker. Plan: L3 Task 9.
 import { expect, test } from 'claude-code/testing'
-import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { ToolCallEvent } from '../core/interfaces/events'
 import type { ItemsHost, Json } from '../core/interfaces/items'
 import type { RunResult } from '../core/interfaces/ports'
+import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import type { AgentProof, RepoRecord } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
 import { asRepoRows, reposConfig, reposTracker, setRepos } from '../trackers/repos'
@@ -612,27 +612,31 @@ test('the tracker serves LIMITS from memory and builds its services once per loa
   expect(tracker.persist).toBeUndefined()
 })
 
-test('normalise keeps a valid slice, rounds numbers and falls back per field with one warning each', () => {
+test('normalise keeps a valid slice, clamps numbers, falls back per field and names each problem once', () => {
   const warns: string[] = []
   const warn = (p: string) => void warns.push(p)
   expect(reposConfig.normalise({}, reposConfig.defaults, warn)).toEqual(reposConfig.defaults)
   expect(warns).toEqual([])
   const out = reposConfig.normalise(
-    { enabled: false, maxRepos: 20.4, maxRepoAgents: 0, maxRepoQueue: 'many', gitTimeoutMs: 99_999_999, extra: 1 },
+    { enabled: false, maxRepos: 20, maxRepoAgents: 0, maxRepoQueue: 'many', gitTimeoutMs: 99_999_999, extra: 1 },
     reposConfig.defaults,
     warn,
   )
   expect(out).toMatchObject({
     enabled: false,
     maxRepos: 20,
-    maxRepoAgents: LIMITS.maxRepoAgents,
-    maxRepoQueue: LIMITS.maxRepoQueue,
-    gitTimeoutMs: LIMITS.gitTimeoutMs,
+    maxRepoAgents: 1, // below the min: the min
+    maxRepoQueue: LIMITS.maxRepoQueue, // no number: the default
+    gitTimeoutMs: 60000, // above the max: the max
     extra: 1,
   })
-  expect(warns).toHaveLength(3)
-  expect(Object.isFrozen(out)).toBe(true)
+  expect(warns).toEqual([
+    'maxRepoAgents: 0 is below the min 1. Using 1.',
+    'maxRepoQueue: "many" is not a number. Using 32.',
+    'gitTimeoutMs: 99999999 is above the max 60000. Using 60000.',
+    'extra: unknown key. The mod keeps it and ignores it.',
+  ])
   const bad = reposConfig.normalise({ enabled: 'yes' }, reposConfig.defaults, warn)
   expect(bad.enabled).toBe(true)
-  expect(warns).toHaveLength(4)
+  expect(warns).toHaveLength(5)
 })

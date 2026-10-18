@@ -1,12 +1,12 @@
 // LifecycleManager on fakePorts: the end write, the switch (clear carries, resume loads), entry and /track clear.
 // The slots and the items host are small fakes. Spec 5.6. Plan: L3 Task 5, Review Focus 1 and 2.
 import { expect, test } from 'claude-code/testing'
-import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { ReplayItem, RowEvent } from '../core/interfaces/events'
 import type { ItemsHost, Json, StoredItem } from '../core/interfaces/items'
 import type { DataSlot } from '../core/interfaces/slots'
 import type { Tracker } from '../core/interfaces/tracker'
+import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { fakePorts } from './fixtures/ports'
 
 type TestSlot = DataSlot & { live: Json | undefined; log: string[]; cleared: number }

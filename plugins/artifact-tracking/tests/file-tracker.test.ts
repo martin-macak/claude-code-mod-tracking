@@ -195,15 +195,21 @@ test('a refused item write does not reject the dispatch', async () => {
   expect(t.w.logs.some(l => l.includes('toolCall failed in file'))).toBe(true)
 })
 
-test('config: enabled is a flag and maxMentionsPerRow a number in range; bad values warn and keep the default', () => {
+test('config: enabled is a flag and maxMentionsPerRow a whole number from 0; bad values warn', () => {
   const list: string[] = []
   const warn = (p: string) => void list.push(p)
   expect(fileConfig.defaults).toEqual({ enabled: true, maxMentionsPerRow: LIMITS.maxMentionsPerRow })
   expect(Object.isFrozen(fileConfig.defaults)).toBe(true)
-  const good = fileConfig.normalise({ enabled: false, maxMentionsPerRow: 5.4, extra: 1 }, fileConfig.defaults, warn)
+  const good = fileConfig.normalise({ enabled: false, maxMentionsPerRow: 5, extra: 1 }, fileConfig.defaults, warn)
   expect(good).toEqual({ enabled: false, maxMentionsPerRow: 5, extra: 1 })
-  expect(list).toEqual([])
-  const bad = fileConfig.normalise({ enabled: 1, maxMentionsPerRow: 0 }, fileConfig.defaults, warn)
+  expect(list).toEqual(['extra: unknown key. The mod keeps it and ignores it.'])
+  // 0 is valid (read no mention). A decimal is no whole number: the default.
+  expect(fileConfig.normalise({ maxMentionsPerRow: 0 }, fileConfig.defaults, warn).maxMentionsPerRow).toBe(0)
+  expect(list).toHaveLength(1)
+  const bad = fileConfig.normalise({ enabled: 1, maxMentionsPerRow: 5.4 }, fileConfig.defaults, warn)
   expect(bad).toEqual(fileConfig.defaults)
-  expect(list.length).toBe(2)
+  expect(list.slice(1)).toEqual([
+    'enabled: 1 is not true or false. Using true.',
+    'maxMentionsPerRow: 5.4 is not a whole number. Using 20.',
+  ])
 })

@@ -1,11 +1,11 @@
 // Persistence on fakePorts: the v2 layout, the debounce, the size bound, the end write and the legacy sweep.
 // The slots are small fakes. Spec 5.6 and 5.13. Plan: L3 Task 4.
 import { expect, test } from 'claude-code/testing'
-import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
 import { KEYS, MIN_END_BUDGET_MS, Persistence } from '../core/infra/persistence'
 import type { Json } from '../core/interfaces/items'
 import type { StorePort } from '../core/interfaces/ports'
 import type { DataSlot, PendingEnd } from '../core/interfaces/slots'
+import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { type FakeOpts, fakePorts } from './fixtures/ports'
 
 type TestSlot = DataSlot & { live: Json | undefined }

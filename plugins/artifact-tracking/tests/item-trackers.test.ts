@@ -14,7 +14,7 @@ const warnings = () => {
 }
 
 test('defaults serve today: github chunk 50, jira concurrency 3 and 50 epic children, web on', () => {
-  expect(githubConfig.defaults).toEqual({ enabled: true, chunkSize: CHUNK })
+  expect(githubConfig.defaults).toMatchObject({ enabled: true, chunkSize: CHUNK })
   expect(jiraConfig.defaults).toEqual({
     enabled: true,
     concurrency: LIMITS.acliConcurrency,
@@ -32,33 +32,34 @@ test('the trackers take their ids and orders from the pane: jira 20, github 30, 
   ])
 })
 
-test('a good slice is kept as it is, unknown keys too, and the result is frozen', () => {
+test('a good slice is kept as it is, unknown keys too, and a typo is named', () => {
   const w = warnings()
   const out = githubConfig.normalise({ enabled: false, chunkSize: 20, extra: 'x' }, githubConfig.defaults, w.warn)
-  expect(out).toEqual({ enabled: false, chunkSize: 20, extra: 'x' })
-  expect(Object.isFrozen(out)).toBe(true)
-  expect(w.list).toEqual([])
+  expect(out).toMatchObject({ enabled: false, chunkSize: 20, extra: 'x' })
+  expect(w.list).toEqual(['extra: unknown key. The mod keeps it and ignores it.'])
 })
 
-test('a bad value falls back to the default with one warning each', () => {
+test('a bad value falls back to the default or the nearest bound with one warning each', () => {
   const w = warnings()
-  expect(githubConfig.normalise({ enabled: 'yes', chunkSize: 0 }, githubConfig.defaults, w.warn)).toEqual({
+  expect(githubConfig.normalise({ enabled: 'yes', chunkSize: 0 }, githubConfig.defaults, w.warn)).toMatchObject({
     enabled: true,
-    chunkSize: CHUNK,
+    chunkSize: 1,
   })
   expect(
     jiraConfig.normalise({ enabled: 1, concurrency: 99, epicChildLimit: 'many' }, jiraConfig.defaults, w.warn),
-  ).toEqual(jiraConfig.defaults)
+  ).toEqual({ ...jiraConfig.defaults, concurrency: 10 })
   expect(webConfig.normalise({ enabled: null }, webConfig.defaults, w.warn)).toEqual({ enabled: true })
   expect(w.list.length).toBe(6)
-  expect(w.list[0]).toContain('github.enabled')
+  expect(w.list[0]).toBe('enabled: "yes" is not true or false. Using true.')
 })
 
-test('a jira number is rounded and kept inside its range', () => {
+test('a jira number is kept inside its range; a decimal takes the default', () => {
   const w = warnings()
-  const out = jiraConfig.normalise({ concurrency: 4.4, epicChildLimit: 500 }, jiraConfig.defaults, w.warn)
+  const out = jiraConfig.normalise({ concurrency: 4, epicChildLimit: 500 }, jiraConfig.defaults, w.warn)
   expect(out).toMatchObject({ concurrency: 4, epicChildLimit: 500 })
   expect(w.list).toEqual([])
+  expect(jiraConfig.normalise({ concurrency: 4.4 }, jiraConfig.defaults, w.warn).concurrency).toBe(3)
+  expect(w.list).toEqual(['concurrency: 4.4 is not a whole number. Using 3.'])
 })
 
 test('each tracker stores its own slice and init does nothing', async () => {

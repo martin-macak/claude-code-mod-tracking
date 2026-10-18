@@ -2,10 +2,10 @@
 // The watch is a plain counter: `gen` is the generation, `checks` counts the session checks that ran.
 import { EventBus } from '../../core/infra/bus'
 import { Facts } from '../../core/infra/facts'
-import { GLOBAL_DEFAULTS } from '../../core/infra/global-defaults'
 import { TrackerHost } from '../../core/infra/tracker-host'
 import type { ItemStorePort, Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
+import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import { fakePorts } from './ports'
 
 export type Cfg = { enabled: boolean }

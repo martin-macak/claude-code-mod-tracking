@@ -1,9 +1,9 @@
 // TrackerHost on fakePorts with fake trackers: init and store, contexts, slots, the bus fill, timers and dispose.
 // Spec 5.5, 5.8, 6 and 7 (the OCP proof). Plan: L3 Task 8, decisions D1, D11, D15, D16.
 import { expect, test } from 'claude-code/testing'
-import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
 import type { Json, JsonObject } from '../core/interfaces/items'
 import type { TrackerContext } from '../core/interfaces/tracker'
+import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { fakePorts } from './fixtures/ports'
 import { fake, hostWorld as setup } from './fixtures/tracker-host'
 
