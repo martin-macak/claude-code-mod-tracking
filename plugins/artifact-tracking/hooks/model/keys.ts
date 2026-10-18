@@ -2,7 +2,7 @@
 // so none of them has to pull in `registry.ts` or `discovered.ts` for a key.
 
 import { normalizeUrl } from '../../core/lib/links'
-import type { ArtifactOrigin, DiscoveredPr, ItemRecord, Ref, Source } from '../contracts'
+import type { ArtifactOrigin, DiscoveredPr, ItemRecord, Ref } from '../contracts'
 import { AUTO_SOURCES, githubKey } from '../contracts'
 
 const withoutFragment = (url: string): string => {
@@ -40,6 +40,6 @@ export function isAutoOnly(rec: ItemRecord): boolean {
 }
 
 /** An artifact is `published` once the session's Artifact tool wrote it, else `mentioned`. */
-export function artifactOrigin(rec: { sources: readonly Source[] }): ArtifactOrigin {
+export function artifactOrigin(rec: { sources: readonly string[] }): ArtifactOrigin {
   return rec.sources.includes('publish') ? 'published' : 'mentioned'
 }

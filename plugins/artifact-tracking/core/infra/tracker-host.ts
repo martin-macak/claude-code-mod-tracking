@@ -239,7 +239,11 @@ export class TrackerHost {
           return isRecord(root) && typeof root.cwd === 'string' ? root.cwd : undefined
         },
       },
-      tools: { run: (_tool: string, argv: readonly string[], opts: RunOpts) => ports.run(argv, opts) },
+      // No ToolRunner yet (plan Task 3): a tracker has no handles, only the raw run.
+      tools: {
+        handle: () => undefined,
+        run: (_tool: string, argv: readonly string[], opts: RunOpts) => ports.run(argv, opts),
+      },
       fs: {
         stat: (path: string, opts?: { resolve?: boolean }) => ports.fs.stat(path, opts),
         exists: (path: string) => ports.fs.exists(path),

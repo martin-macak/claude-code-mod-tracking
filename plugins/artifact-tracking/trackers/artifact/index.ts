@@ -5,9 +5,9 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 12.
 
 import type { ToolCallEvent } from '../../core/interfaces/events'
-import type { Claim, Json, StoredItem } from '../../core/interfaces/items'
+import type { Claim, Json } from '../../core/interfaces/items'
 import type { Handler, Tracker } from '../../core/interfaces/tracker'
-import type { ItemRecord } from '../../hooks/contracts'
+import { asRecords } from '../../hooks/contracts'
 import { markArtifactDeleted } from '../../hooks/model/registry'
 import { artifactEvent } from './artifact-tool'
 import { type ArtifactConfig, artifactConfig } from './config'
@@ -18,11 +18,9 @@ export { type ArtifactConfig, artifactConfig }
 const onArtifact: Handler<ArtifactConfig, Json, ToolCallEvent> = async (ctx, ev) => {
   const found = artifactEvent(ev.input, ev.result)
   if (!found) return
-  if (found.kind === 'published') return ctx.items.track([found.ref] as unknown as Claim[], 'publish')
+  if (found.kind === 'published') return ctx.items.track([{ ...found.ref, source: 'publish' }] as unknown as Claim[])
   // No such row: the write would change nothing (A22), and `update` skips it.
-  await ctx.items.update(
-    list => markArtifactDeleted(list as unknown as ItemRecord[], found.key) as unknown as StoredItem[],
-  )
+  await ctx.items.update(list => markArtifactDeleted(asRecords(list), found.key))
 }
 
 export function artifactTracker(): Tracker<ArtifactConfig, Json> {

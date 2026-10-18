@@ -8,7 +8,7 @@ import type { Claim, HostContext, ItemStorePort, StoredItem } from '../../core/i
 import type { AtomPort } from '../../core/interfaces/ports'
 import { dropAuto } from '../../trackers/github/discovered'
 import type { ItemRecord, Ref, Source } from '../contracts'
-import { AUTO_SOURCES } from '../contracts'
+import { AUTO_SOURCES, asRecords } from '../contracts'
 import { keyOf } from '../model/keys'
 import { mergeRefs, rekeyArtifacts } from '../model/registry'
 
@@ -23,9 +23,6 @@ export type StoreDeps = {
   live?(category: string): boolean
 }
 
-const asRecords = (list: StoredItem[]): ItemRecord[] => list as unknown as ItemRecord[]
-const asStored = (list: ItemRecord[]): StoredItem[] => list as unknown as StoredItem[]
-
 export class ItemStore implements ItemStorePort {
   constructor(private readonly d: StoreDeps) {}
 
@@ -39,7 +36,7 @@ export class ItemStore implements ItemStorePort {
    * Persistence to flush soon. Before the runtime started there is nobody to tell.
    */
   async set(change: (list: ItemRecord[]) => ItemRecord[]): Promise<void> {
-    await this.d.atom.update(list => asStored(change(asRecords(list ?? []))))
+    await this.d.atom.update(list => change(asRecords(list ?? [])))
     this.d.host()?.persisted()
   }
 
@@ -62,16 +59,20 @@ export class ItemStore implements ItemStorePort {
     const cur = await this.d.atom.get()
     if (change(cur, await host.dismiss.list()) === cur) return false
     const dismissed = await host.dismiss.list()
-    await this.set(list => asRecords(change(asStored(list), dismissed)))
+    await this.set(list => asRecords(change(list, dismissed)))
     return true
   }
 
   /**
-   * The `ItemStorePort` form. In L3 a `Claim` is today's `Ref` (the interface says so); layer L5 turns it into the
-   * real claim.
+   * The `ItemStorePort` form. In L3 a `Claim` is today's `Ref` plus its `source` (the interface says so); Task 8 turns
+   * it into the real claim. A caller that passes `source` (the capture funnel) sets it for all refs. Else each claim
+   * brings its own, and the refs of one source merge in one call.
    */
-  track(claims: readonly Claim[], source: string): Promise<void> {
-    return this.trackRefs(claims as unknown as readonly Ref[], source as Source)
+  async track(claims: readonly Claim[], source?: string): Promise<void> {
+    if (source !== undefined) return this.trackRefs(claims as unknown as readonly Ref[], source as Source)
+    const bySource = new Map<string, Claim[]>()
+    for (const claim of claims) bySource.set(claim.source, [...(bySource.get(claim.source) ?? []), claim])
+    for (const [from, group] of bySource) await this.trackRefs(group as unknown as readonly Ref[], from as Source)
   }
 
   /** Merges refs into the list, less the dismissed keys. The common tail of every capture. */

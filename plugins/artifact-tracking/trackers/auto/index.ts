@@ -14,17 +14,11 @@ import type {
   ToolCallEvent,
   TurnCompleteEvent,
 } from '../../core/interfaces/events'
-import type { Json, StoredItem } from '../../core/interfaces/items'
+import type { Json } from '../../core/interfaces/items'
 import type { FactsPort, Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
-import type {
-  AutoReason,
-  AutoState,
-  DiscoveryApplied,
-  GitHubDiscoveryApi,
-  ItemRecord,
-  RepoRef,
-} from '../../hooks/contracts'
+import type { AutoReason, AutoState, DiscoveryApplied, GitHubDiscoveryApi, RepoRef } from '../../hooks/contracts'
+import { asRecords } from '../../hooks/contracts'
 import { type AutoConfig, autoConfig } from './config'
 import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from './events'
 import {
@@ -151,8 +145,8 @@ function build(ctx: Ctx, gh: AutoGithub): Services {
     applyItems: async change => {
       let result: DiscoveryApplied | undefined
       await ctx.items.update((list, dismissed) => {
-        result = change(list as unknown as ItemRecord[], dismissed)
-        return result.list as unknown as StoredItem[]
+        result = change(asRecords(list), dismissed)
+        return result.list
       })
       if (!result) throw new Error('the item write did not run')
       return result
@@ -242,7 +236,7 @@ export function autoTracker(gh: AutoGithub): Tracker<AutoConfig, AutoState> {
   // refresh` runs a round at once, and with `wait` the command answers when the round and its PR step are done.
   const onCommand: H<CommandEvent> = async (ctx, ev) => {
     if (ev.sub === 'clear') {
-      const ids = autoIds(await readAuto(ctx), (await ctx.items.list()) as unknown as ItemRecord[])
+      const ids = autoIds(await readAuto(ctx), asRecords(await ctx.items.list()))
       await ctx.dismiss.add(ids)
     } else if (ev.sub === 'refresh') {
       kick('manual')

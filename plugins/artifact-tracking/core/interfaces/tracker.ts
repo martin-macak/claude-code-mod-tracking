@@ -3,6 +3,7 @@
 // Names may change in later layers. The shape may not.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.8, 5.5 and 5.12.
 
+import type { ToolStatus } from '../../types'
 import type { ConfigSpec, ConfigView, GlobalConfig } from './config'
 import type {
   AgentSpawnEvent,
@@ -20,10 +21,12 @@ import type { ItemKind, ItemStorePort, Json, JsonObject } from './items'
 import type { AgentInfo, EnvName, Ports, RepoRemote, RunOpts, RunResult, Timer } from './ports'
 import type { ActionImpls, SectionSpec, ViewContext } from './view'
 
+export type { BreakerState, ToolStatus } from '../../types'
+
 /** A CLI a tracker owns. ToolRunner keeps one circuit breaker per tool id. */
 export interface ToolSpec {
   readonly id: string
-  /** The probe argv, e.g. `['gh', '--version']`. */
+  /** The probe argv, e.g. `['tool', '--version']`. */
   readonly probe: readonly string[]
   /** Overrides `global.tools.timeoutMs`. */
   readonly timeoutMs?: number
@@ -93,9 +96,38 @@ export interface DismissPort {
   add(ids: readonly string[]): Promise<void>
 }
 
-/** Runs a CLI. In L3 it is a raw runner. L5 adds the probe, the timeout and the breaker of the `ToolSpec`. */
+/**
+ * How one call ended, for the breaker.
+ * `ok` and `item-error` (not found, no permission) are successes for the tool.
+ * `tool-failure` (cannot start, timeout, network, 401, unparsable) and `auth` (not logged in) count.
+ */
+export type ToolOutcome = 'ok' | 'item-error' | 'tool-failure' | 'auth'
+
+/** One declared CLI: its probe, its timeouts and its circuit breaker. ToolRunner owns one per `ToolSpec`. */
+export interface ToolHandle {
+  readonly id: string
+  /** True once the probe succeeded. False before the probe settles. */
+  readonly isAvailable: boolean
+  /** Runs the probe argv once and caches the answer. Never rejects. */
+  probe(): Promise<boolean>
+  /** Available, not known to be logged out, and the breaker lets a call through. No side effects. */
+  canCall(now: number): boolean
+  /** Manual refresh: forget `loggedIn: false`, move an open breaker to half-open. */
+  reset(): void
+  status(): ToolStatus
+  /** Runs one command through the breaker. null: the breaker blocked it, or it rejected (recorded as a failure). */
+  exec(argv: readonly string[], init?: RunOpts): Promise<RunResult | null>
+  /** Feeds one outcome to the breaker and the login flag. */
+  record(outcome: ToolOutcome, detail?: string): void
+  /** The site or account the tool acts on, when it has one. */
+  setSite(site: string | undefined): void
+}
+
+/** What a tracker runs CLIs through. */
 export interface ToolPort {
-  /** A non-zero exit resolves. */
+  /** The handle of a tool this tracker declared. undefined: no such id, or another tracker's. */
+  handle(id: string): ToolHandle | undefined
+  /** A raw run with no probe, timeout or breaker. A non-zero exit resolves. */
   run(tool: string, argv: readonly string[], opts: RunOpts): Promise<RunResult>
 }
 

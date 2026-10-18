@@ -2,8 +2,7 @@
 // The type is split, so each consumer takes only its part (ISP).
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.4 and 5.13.
 
-import type { ToolStatus } from '../../types'
-import type { Json, StoredItem } from './items'
+import type { Json, StoredItem, ToolStatus } from '../../types'
 
 /** The engine's timer handle. */
 export interface Timer {
@@ -24,6 +23,16 @@ export interface RunOpts {
   /** Kill the child after this time. */
   readonly timeoutMs?: number
 }
+
+/** Epoch milliseconds. Production: `Date.now`. Tests: a fake. */
+export type Now = () => number
+
+/**
+ * Runs one command by argument vector, no shell. In production a closure over the engine's process runner.
+ * Rejects when the command cannot start (not on PATH) or runs past its timeout.
+ * A non-zero exit resolves.
+ */
+export type Runner = (argv: readonly string[], init?: RunOpts) => Promise<RunResult>
 
 /** What the engine's process runner gives once the child exits. A non-zero exit resolves. */
 export interface RunResult {
@@ -89,12 +98,15 @@ export interface PaneInfo {
   readonly isPlaced: boolean
 }
 
-/** The GitHub remote of the session repo. */
+/** The code host remote of the session repo. */
 export interface RepoRemote {
   readonly host: string
   readonly owner: string
   readonly repo: string
 }
+
+/** A repo on a code host, as a person names it. The same fields as `RepoRemote`, writable. */
+export type RepoRef = { host: string; owner: string; repo: string }
 
 /**
  * One atom of the state contract (spec 5.13). `update` reads, applies `fn` and writes, with a version check

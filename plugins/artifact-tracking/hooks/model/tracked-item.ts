@@ -1,8 +1,16 @@
 // Base class of a tracked item (spec section 5). Plain TypeScript: no `$`.
 // An item is rebuilt from an ItemRecord for each operation and turned back into a record afterwards.
 
+import type { Priority, Refreshable } from '../../core/interfaces/items'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
-import type { Category, ItemError, ItemRecord, ItemRecordBase, Priority, Refreshable, Source } from '../contracts'
+import type { BaseRecord, ItemError } from '../../core/lib/records'
+import type { Category, ItemRecord } from '../contracts'
+
+/** The fields every record shares, without the kind's `category`. */
+type BaseFields = Pick<
+  BaseRecord,
+  'key' | 'url' | 'label' | 'priority' | 'sources' | 'firstSeen' | 'lastSeen' | 'seenCount' | 'refreshedAt' | 'error'
+>
 
 /** A copy of `obj` without the keys whose value is undefined. */
 export function omitUndefined<T extends object>(obj: T): T {
@@ -18,7 +26,7 @@ export abstract class TrackedItem implements Refreshable {
   label: string
   /** The person's manual mark. Absent: no mark. */
   priority?: Priority
-  sources: Source[]
+  sources: string[]
   firstSeen: number
   lastSeen: number
   seenCount: number
@@ -30,7 +38,7 @@ export abstract class TrackedItem implements Refreshable {
    * the next one. A kind with its own rule for freshness takes its own getter in its constructor.
    */
   protected constructor(
-    rec: ItemRecordBase,
+    rec: BaseRecord,
     protected readonly staleMs: () => number = () => GLOBAL_DEFAULTS.refresh.staleMs,
   ) {
     this.key = rec.key
@@ -61,7 +69,7 @@ export abstract class TrackedItem implements Refreshable {
   }
 
   /** The shared record fields. Optional fields appear only when set. */
-  protected baseRecord(): ItemRecordBase {
+  protected baseRecord(): BaseFields {
     return omitUndefined({
       key: this.key,
       url: this.url,

@@ -2,13 +2,13 @@
 // Pure: no `$`. A call that changes nothing returns its input list (A22).
 
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
-import type { DiscoveredPr, DiscoveryApplied, GitHubRecord, ItemRecord, Ref, Source } from '../../hooks/contracts'
+import type { DiscoveredPr, DiscoveryApplied, GitHubRecord, ItemRecord, Ref } from '../../hooks/contracts'
 import { AUTO_SOURCES } from '../../hooks/contracts'
 import { isAutoOnly, keyOf, prKey } from '../../hooks/model/keys'
 import { enforceCap, recordFromRef } from '../../hooks/model/registry'
 import { PR_LANE_DEFAULTS } from './config'
 
-const isAuto = (s: Source): boolean => AUTO_SOURCES.has(s)
+const isAuto = (s: string): boolean => AUTO_SOURCES.has(s)
 
 /** The issue keys of the PR's closing references, in reply order. */
 const closesOf = (pr: DiscoveredPr): string[] =>

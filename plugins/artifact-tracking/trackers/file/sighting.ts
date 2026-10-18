@@ -8,6 +8,7 @@ import type { EnvName, FsStat } from '../../core/interfaces/ports'
 import type { FactsPort } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import type { AgentProof, FileActivity, FileRecord, ItemRecord, Sighting, Source } from '../../hooks/contracts'
+import { asRecords } from '../../hooks/contracts'
 import { mergeFiles, recordFromFile } from '../../hooks/model/registry'
 import { type FileTouch, type IgnoreContext, isIgnored, mdCandidates, normalizePath, resolvePath } from './files'
 
@@ -123,7 +124,7 @@ export async function addFiles(
   cap?: number,
 ): Promise<void> {
   await items.update((stored, dismissed) => {
-    const list = stored as unknown as ItemRecord[]
+    const list = asRecords(stored)
     const wanted = withoutLoneViews(
       list,
       recs.filter(r => !dismissed.has(r.key)),

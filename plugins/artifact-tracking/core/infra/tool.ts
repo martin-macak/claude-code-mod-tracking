@@ -1,7 +1,9 @@
 // Base class for a CLI tool (spec sections 5 and 8). No `$`: it gets a Runner and a clock.
 // Subclasses build argv, parse output, classify each outcome, and update the items.
 
-import type { Now, RefreshTool, RunInit, Runner, RunResult, ToolName, ToolStatus } from '../../hooks/contracts'
+import type { RefreshTool } from '../interfaces/items'
+import type { Now, Runner, RunOpts, RunResult } from '../interfaces/ports'
+import type { ToolStatus } from '../interfaces/tracker'
 import { GLOBAL_DEFAULTS } from '../lib/global-config'
 import { CircuitBreaker } from './circuit-breaker'
 
@@ -24,7 +26,7 @@ export abstract class Tool<T> implements RefreshTool<T> {
   private probing?: Promise<boolean>
 
   constructor(
-    readonly name: ToolName,
+    readonly name: string,
     protected readonly run: Runner,
     protected readonly now: Now,
     protected readonly breaker: CircuitBreaker = new CircuitBreaker(),
@@ -83,7 +85,7 @@ export abstract class Tool<T> implements RefreshTool<T> {
    * is recorded) or when the call rejects (cannot start, timeout: recorded as a tool failure).
    * Otherwise the caller classifies the result and calls `record` once.
    */
-  protected async exec(argv: readonly string[], init?: RunInit): Promise<RunResult | null> {
+  protected async exec(argv: readonly string[], init?: RunOpts): Promise<RunResult | null> {
     if (!this.breaker.allows(this.now())) return null
     this.lastRunAt = this.now()
     try {

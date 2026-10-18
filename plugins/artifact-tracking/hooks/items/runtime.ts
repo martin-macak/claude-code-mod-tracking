@@ -112,7 +112,7 @@ export class ItemRuntime implements ItemsHost {
    */
   async start(ctx: HostContext): Promise<void> {
     this.ctx ??= ctx
-    this.build()
+    this.buildTools()
     // One write for both: a warm list is re-keyed and loses the records of a kind that is off.
     const live = await this.store.records()
     if (this.onlyOn(rekeyArtifacts(live)) !== live) await this.store.set(list => this.onlyOn(rekeyArtifacts(list)))
@@ -175,7 +175,7 @@ export class ItemRuntime implements ItemsHost {
     return this.store.update(change, opts)
   }
 
-  track(refs: readonly Claim[], source: string): Promise<void> {
+  track(refs: readonly Claim[], source?: string): Promise<void> {
     return this.store.track(refs, source)
   }
 
@@ -331,7 +331,7 @@ export class ItemRuntime implements ItemsHost {
     return [...(this.kindLive('github') ? [g.probe()] : []), ...(this.kindLive('jira') ? [a.probe()] : [])]
   }
 
-  private build(): void {
+  private buildTools(): void {
     if (this.gh && this.acli && this.coordinator) return
     const ctx = this.need()
     const run: Runner = (argv, init) => ctx.tools.run(argv[0] ?? '', argv, init ?? {})

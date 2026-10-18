@@ -13,7 +13,7 @@ import { autoDismiss } from '../trackers/auto/dismiss-store'
 import { renderBand } from '../ux/band'
 import { renderSections } from '../ux/pane'
 import { trackCommand } from './command'
-import type { ItemRecord, ToolStatus, UiState } from './contracts'
+import type { ToolStatus, UiState } from './contracts'
 import { rowEvent, spawnEvent, toolCallEvent, turnEvent } from './events'
 import { ItemRuntime } from './items/runtime'
 import { type PaneFocus, paneActions, pickRow } from './pane-actions'
@@ -25,7 +25,7 @@ import { IDLE_ACLI, IDLE_GH, viewInputs } from './view-inputs'
 // Working set in $.state (survives hot reload, reset by /clear). Persistence copies it to $.store, one key per session.
 // The contract (types/index.d.ts) has four keys: `items`, `tools` and `ui` are atoms; each tracker's data is one member
 // of the `trackers` family (spec 5.13, decision D14).
-const items = atom({ plugin: 'artifact-tracking', key: 'items' } as const, [] as ItemRecord[])
+const items = atom({ plugin: 'artifact-tracking', key: 'items' } as const, [] as StoredItem[])
 const tools = atom(
   { plugin: 'artifact-tracking', key: 'tools' } as const,
   { gh: IDLE_GH, acli: IDLE_ACLI } as Record<string, ToolStatus>,
@@ -112,8 +112,8 @@ function portsOf($: EngineInterface): Ports {
     },
     state: {
       items: {
-        get: async () => (await read($, items)) as StoredItem[],
-        update: async fn => (await update($, items, cur => fn(cur as StoredItem[]) as ItemRecord[])) as StoredItem[],
+        get: () => read($, items),
+        update: fn => update($, items, fn),
       },
       tools: { get: () => read($, tools), update: fn => update($, tools, fn) },
       ui: { get: () => read($, ui), update: fn => update($, ui, fn) },

@@ -22,7 +22,6 @@ import type {
   Ref,
   RepoRef,
   Sighting,
-  Source,
   Tools,
   WebRecord,
   WebRef,
@@ -137,7 +136,7 @@ function cloneRecord<R extends ItemRecord>(rec: R): R {
   return out
 }
 
-const unionSources = (a: readonly Source[], b: readonly Source[]): Source[] => [...new Set([...a, ...b])]
+const unionSources = (a: readonly string[], b: readonly string[]): string[] => [...new Set([...a, ...b])]
 
 const hasAutoSource = (rec: ItemRecord): boolean => rec.sources.some(s => AUTO_SOURCES.has(s))
 
