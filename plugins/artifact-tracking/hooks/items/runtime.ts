@@ -206,7 +206,7 @@ export class ItemRuntime implements ItemsHost {
     if (run.skipped) {
       // A run was in flight: the forced run is queued behind it. Wait, then publish the tool status again.
       // The publish is also a write of this dispatch. Without it the reads that follow still show the moment
-      // before the runs (`$.state.get` reads one moment for each dispatch).
+      // before the runs (a state read sees one moment for each dispatch).
       await coordinator.idle()
       await this.publishTools()
     }
@@ -290,7 +290,7 @@ export class ItemRuntime implements ItemsHost {
   }
 
   /**
-   * Copies the tool statuses to $.state for the pane. Reads first and writes nothing when nothing the pane shows
+   * Copies the tool statuses to the plugin state for the pane. Reads first and writes nothing when nothing the pane shows
    * changed, so a quiet tick makes no write (A22).
    */
   private async publishTools(): Promise<void> {

@@ -1,4 +1,4 @@
-// The item list in `$.state`: every write goes through the raw writer `set`, which also tells Persistence. `update` and
+// The item list in the plugin state: every write goes through the raw writer `set`, which also tells Persistence. `update` and
 // `track` run the session check first; the switch and the load use `set` alone, because the check is single flight and
 // would wait for the switch they sit in (Review Focus 2). Also the filters a stored copy passes at a load.
 // Transitional (plan Task 11): layer L5 splits this into ItemStore and the kinds' `restore`.

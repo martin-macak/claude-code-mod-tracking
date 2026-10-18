@@ -31,7 +31,7 @@ export function pickRow(focus: PaneFocus, e: { element?: string; origin?: { kind
 /**
  * The priority keys act on the picked row. `undefined` (key `0`) removes the person's mark. The row moves when it
  * sorts again, but the ring stays at its old place (study S3). So the ring is moved to the row's new mark Button, whose
- * key only the next drawing has (S4). In a test kit `$.ui.focus` has no implementation, and live it may be refused:
+ * key only the next drawing has (S4). In a test kit the engine's focus call has no implementation, and live it may be refused:
  * the move is best effort.
  */
 async function prioritize(

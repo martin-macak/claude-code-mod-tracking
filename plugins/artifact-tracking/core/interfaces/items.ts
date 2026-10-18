@@ -98,7 +98,7 @@ export interface ItemKind<T extends StoredItem = StoredItem> {
 
 /**
  * The part of the ItemStore a tracker sees. The store owns the list, the eviction, dismissal and priority.
- * Every call is async: the list lives in `$.state`.
+ * Every call is async: the list lives in the plugin state.
  */
 export interface ItemStorePort<T extends StoredItem = StoredItem> {
   list(): Promise<readonly T[]>

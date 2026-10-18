@@ -566,7 +566,7 @@ export const dismissKey = (id: string): string => `dismiss-${id}`
 
 /**
  * The key of each mark Button, by row id: the row's place among the rows with a prio cell, its level, its id.
- * A row that moved or changed level gets a key the old drawing lacks, so `$.ui.focus` waits for the new drawing
+ * A row that moved or changed level gets a key the old drawing lacks, so the engine's focus call waits for the new drawing
  * and lands on that row. A stable key would resolve against the old drawing, at the old place (study S3, S4).
  */
 export function markKeys(sections: readonly PaneSection[]): Map<string, string> {

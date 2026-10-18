@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["plugins/**", "e2e/**", "scripts/coverage/**", "!e2e/package-lock.json"]
+    "includes": ["plugins/**", "e2e/**", "scripts/coverage/**", "scripts/contracts/**", "!e2e/package-lock.json"]
   },
   "formatter": {
     "enabled": true,

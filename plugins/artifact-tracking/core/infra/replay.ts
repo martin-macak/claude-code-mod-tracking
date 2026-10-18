@@ -9,7 +9,7 @@ import { isRecord } from '../lib/json'
 const reason = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 /**
- * The messages of `$.session.messages()` as one batch. A `user` message is a row of door `prompt`, an `assistant`
+ * The messages of the engine's session transcript as one batch. A `user` message is a row of door `prompt`, an `assistant`
  * message a row of door `response`. Each tool use after its message is a `toolCall`. Its `result` is the whole use,
  * so the use's `text` and `result` travel together. Anything that is not a message is skipped.
  */

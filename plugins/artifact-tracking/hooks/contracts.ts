@@ -32,7 +32,7 @@ export type RunResult = {
 }
 
 /**
- * Runs one command by argument vector, no shell. In production a closure over `$.process.run`.
+ * Runs one command by argument vector, no shell. In production a closure over the engine's process runner.
  * Rejects when the command cannot start (not on PATH) or runs past its timeout.
  * A non-zero exit resolves.
  */

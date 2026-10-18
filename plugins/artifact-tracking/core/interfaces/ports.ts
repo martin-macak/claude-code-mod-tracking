@@ -10,10 +10,10 @@ export interface Timer {
   cancel(): void
 }
 
-/** The only env names the mod reads. Each is a literal `$.env.get` call in register.tsx. */
+/** The only env names the mod reads. Each is a literal engine call in register.tsx. */
 export type EnvName = 'HOME' | 'XDG_CONFIG_HOME' | 'CLAUDE_TRACKER_CONFIG_DIR' | 'CLAUDE_CONFIG_DIR'
 
-/** Options of one `$.process.run`. */
+/** Options of one run of the engine's process runner. */
 export interface RunOpts {
   /** Absolute, or relative to the session cwd. Absent: the session cwd. */
   readonly cwd?: string
@@ -25,7 +25,7 @@ export interface RunOpts {
   readonly timeoutMs?: number
 }
 
-/** What `$.process.run` gives once the child exits. A non-zero exit resolves. */
+/** What the engine's process runner gives once the child exits. A non-zero exit resolves. */
 export interface RunResult {
   readonly exitCode: number
   readonly stdout: string
@@ -34,7 +34,7 @@ export interface RunResult {
   readonly isStderrTruncated?: boolean
 }
 
-/** What `$.fs.stat` gives. */
+/** What the engine's file stat gives. */
 export interface FsStat {
   /** Of what the path leads to. A link is followed. */
   readonly kind: 'file' | 'dir' | 'other'
@@ -48,7 +48,7 @@ export interface FsStat {
   readonly realPath?: string
 }
 
-/** One transcript message as `$.session.messages()` gives it. */
+/** One transcript message as the engine's session gives it. */
 export interface SessionRow {
   readonly role: 'user' | 'assistant'
   readonly text: string
@@ -66,7 +66,7 @@ export interface SessionRow {
   }[]
 }
 
-/** One agent loop of this session as `$.agent.list()` gives it. */
+/** One agent loop of this session as the engine's agent list gives it. */
 export interface AgentInfo {
   readonly id: string
   /** The `<name>@<team>` address of a teammate. */
@@ -77,7 +77,7 @@ export interface AgentInfo {
   readonly status: string
 }
 
-/** One open pane as `$.ui.panes()` lists it. */
+/** One open pane as the engine's pane list gives it. */
 export interface PaneInfo {
   readonly id: string
   readonly title: string
@@ -122,7 +122,7 @@ export interface StatePorts {
   readonly slot: SlotPort
 }
 
-/** `$.store`: the plugin's key-value store. Persistence is its only writer. */
+/** The plugin store: the plugin's key-value store. Persistence is its only writer. */
 export interface StorePort {
   get(key: string): Promise<Json | undefined>
   set(key: string, value: Json): Promise<void>
@@ -141,7 +141,7 @@ export interface Ports {
     /** A refused period ends the interval (E18). */
     every(ms: number, fn: () => void): Timer
   }
-  /** `$.process.run`. */
+  /** The engine's process runner. */
   readonly run: (argv: readonly string[], opts: RunOpts) => Promise<RunResult>
   readonly fs: {
     read(path: string): Promise<string>

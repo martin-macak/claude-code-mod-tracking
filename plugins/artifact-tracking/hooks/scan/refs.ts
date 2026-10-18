@@ -16,7 +16,7 @@ const URL_RUN = /https?:\/\/[^\s<>"'`\][(){}]+/g
 const TRAILING = '.,;:!?*_~'
 // Conversation short refs are narrow by design (issue #8): only these lead words opt in `#N` capture.
 const SHORT_REF_PREFIX = /\b(?:github|bug|issue|issues|enhancement|chore)\s*[-:() ]*$/i
-/** A web URL longer than this is not tracked. It would bloat $.state and $.store. */
+/** A web URL longer than this is not tracked. It would bloat the plugin state and store. */
 const MAX_WEB_URL = 2048
 
 const cap = (text: string): string => (text.length > MAX_TEXT ? text.slice(0, MAX_TEXT) : text)

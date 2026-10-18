@@ -302,7 +302,7 @@ export function autoTracker(gh: AutoGithub): Tracker<AutoConfig, AutoState> {
     init: async ctx => {
       svc ??= build(ctx, gh)
       try {
-        // A hot reload keeps $.state and loses the facts: publish what the slot holds.
+        // A hot reload keeps the plugin state and loses the facts: publish what the slot holds.
         publishAuto(ctx.facts, await readAuto(ctx))
       } catch {
         // The first write or the first round publishes them.

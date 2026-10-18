@@ -59,7 +59,7 @@ export interface TickEvent {
 /** The start sequence reached the trackers. */
 export interface StartEvent {
   readonly cwd?: string
-  /** True when `$.state` held nothing: the first start of a session, not a reload. */
+  /** True when the plugin state held nothing: the first start of a session, not a reload. */
   readonly cold: boolean
 }
 
