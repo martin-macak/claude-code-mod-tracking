@@ -10,11 +10,12 @@ import type { Timer } from '../core/infra/coordinator'
 import { RefreshCoordinator } from '../core/infra/coordinator'
 import { autoIds, dismiss } from '../core/infra/dismiss'
 import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
-import { Persistence, type PersistenceDeps } from '../core/infra/persistence'
+import { LifecycleManager } from '../core/infra/lifecycle'
 import { AutoScheduler } from '../core/infra/scheduler'
-import type { Json, StoredItem } from '../core/interfaces/items'
+import type { ItemsHost, Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
 import type { DataSlot } from '../core/interfaces/slots'
+import type { FactsPort } from '../core/interfaces/tracker'
 import { isRecord } from '../core/lib/json'
 import { textOfContent } from '../core/lib/links'
 import { artifactEvent } from '../trackers/artifact/artifact-tool'
@@ -115,7 +116,7 @@ import { focusTargets, markKeys } from './ui/view'
 
 // ------------------------------------------------------------------ state
 
-// Working set in $.state (survives hot reload, reset by /clear). Mirror in $.store, one key per session.
+// Working set in $.state (survives hot reload, reset by /clear). Persistence copies it to $.store, one key per session.
 // The contract (types/index.d.ts) has four keys. `items`, `tools` and `ui` are atoms. Each tracker's data is one
 // member of the `trackers` family (spec 5.13, plan decision D14): `repos`, `processes` and `auto`.
 const items = atom({ plugin: 'artifact-tracking', key: 'items' } as const, [] as ItemRecord[])
@@ -300,33 +301,20 @@ let processUiState: ProcessUiState = { breaker: 'closed' }
 let sessionRepo: RepoRef | null | undefined
 let repoTask: Promise<void> | undefined
 let githubHosts: string[] = []
-/** The session id last seen. A change means /clear, /resume or /branch. */
-let knownId: string | undefined
 let tick: Timer | null = null
-/** Writes the stored copies. Built on first use; a hot reload builds a new one. */
-let persistence: Persistence | undefined
+/** The session switch, the store and the facts of this load. Built on first use; a hot reload builds a new one. */
+let manager: LifecycleManager | undefined
 /** The first start of a load deletes the keys of the old layout. */
 let legacyDropped = false
-/**
- * The list as last written for `knownId`. A module variable outlives /clear, `$.state` does not.
- * So a /clear still finds what was captured in the last moments (D10).
- */
-let mirror: { id: string; items: ItemRecord[] } | undefined
-let repoMirror: { id: string; rows: RepoRecord[] } | undefined
-let processMirror: { id: string; rows: ProcessRecord[] } | undefined
 let scheduler: AutoScheduler | undefined
 let round: AutoRound | undefined
 /** `$.clock.now()` when the tick was armed, and at each beat (A1). */
 let lastBeatAt = 0
-/** The `auto` atom as last written. A module variable outlives /clear, `$.state` does not (A18). */
-let autoMirror: AutoState | undefined
 /** When the last round ended. The Worktrees note reads it before `snapshot.at` (A22). */
 let lastRoundAt: number | undefined
 let repoTracker: RepoTracker | undefined
 /** Repo lookups run here, one at a time, after the tool has returned. */
 const repoQueue = new RepoQueue()
-/** Bumped by /track clear. A job that began before it writes nothing. */
-let repoGen = 0
 /** The row the priority keys act on. Never stored: a close, a reload or /clear forgets it. */
 let focusedRow: string | undefined
 /** Element key to row id, for the Buttons of the rows with a prio cell as last drawn (`focusTargets`). */
@@ -343,10 +331,11 @@ function ensureRuntime($: EngineInterface): void {
     run,
     now: Date.now,
     get rootPath() {
-      return autoMirror?.root?.top ?? (typeof autoMirror?.root?.cwd === 'string' ? autoMirror.root.cwd : undefined)
+      const root = factsOf($).read('auto.root') as unknown as AutoState['root'] | undefined
+      return root?.top ?? (typeof root?.cwd === 'string' ? root.cwd : undefined)
     },
     get rootRepo() {
-      return sessionRepo ?? null
+      return (factsOf($).read('session.repo') as unknown as RepoRef | undefined) ?? null
     },
   })
   const g = new GhTool(run, Date.now)
@@ -389,8 +378,8 @@ function ensureRuntime($: EngineInterface): void {
   const autoRound = new AutoRound({
     now: Date.now,
     load: async () => {
-      const s = await currentAuto($)
-      autoMirror = s
+      const s = await readAuto($)
+      publishAuto($, s)
       return s
     },
     save: change => setAuto($, change),
@@ -483,12 +472,9 @@ async function publishTools($: EngineInterface): Promise<void> {
   await update($, tools, () => next)
 }
 
-/** Change the list in $.state and remember the result in `mirror`. Every write to `items` goes through here. */
+/** Change the list in $.state and arm the store write. Every write to `items` goes through here. */
 async function setItems($: EngineInterface, change: (list: ItemRecord[]) => ItemRecord[]): Promise<void> {
-  const next = await update($, items, list => change(list ?? []))
-  const id = await $.session.id()
-  // A write that lands after /clear but before the id change is seen belongs to the old session. Keep the old mirror.
-  if (knownId !== undefined && id === knownId) mirror = { id, items: next }
+  await update($, items, list => change(list ?? []))
   await schedule($)
 }
 
@@ -498,7 +484,7 @@ async function setItems($: EngineInterface, change: (list: ItemRecord[]) => Item
  * nothing when the result is the input list itself.
  */
 async function setRepos($: EngineInterface, change: (rows: RepoRecord[]) => RepoRecord[]): Promise<void> {
-  const dismissed = new Set((await currentAuto($)).dismissed)
+  const dismissed = new Set((await readAuto($)).dismissed)
   const apply = (rows: RepoRecord[]): RepoRecord[] => {
     const out = change(rows)
     const kept = dismissed.size === 0 ? out : out.filter(r => !dismissed.has(repoRowId(r.key)))
@@ -506,58 +492,57 @@ async function setRepos($: EngineInterface, change: (rows: RepoRecord[]) => Repo
   }
   const cur = await readRepos($)
   if (apply(cur) === cur) return // nothing changed: no write, no flush
-  const next = await updateRepos($, apply)
-  const id = await $.session.id()
-  if (knownId !== undefined && id === knownId) repoMirror = { id, rows: next }
+  await updateRepos($, apply)
   await schedule($)
 }
 
 /** Like setItems, for tracked background processes. */
 async function setProcesses($: EngineInterface, change: (rows: ProcessRecord[]) => ProcessRecord[]): Promise<void> {
-  const next = await updateProcesses($, change)
-  const id = await $.session.id()
-  if (knownId !== undefined && id === knownId) processMirror = { id, rows: next }
+  await updateProcesses($, change)
   await schedule($)
 }
 
 /**
- * Change the `auto` atom. Every write goes through here (A18, A22). It reads first and stops when the change
- * returns its input: no write. Else `update` runs the change on the current value, with the module copy as the
- * fallback after /clear, and retries on a version miss.
+ * Change the `auto` member. Every write goes through here (A18, A22). It reads first and stops when the change
+ * returns its input: no write. Else `update` runs the change on the current value and retries on a version miss.
+ * The hook that calls it has run the session check first, so a /clear has already carried the run into the new state.
  */
 async function setAuto($: EngineInterface, change: (cur: AutoState) => AutoState): Promise<AutoState> {
   const cur = await readAuto($)
-  if (change(carryAuto(autoMirror, cur)) === cur) {
-    autoMirror = cur
+  if (change(cur) === cur) {
+    publishAuto($, cur)
     return cur
   }
-  const next = await updateAuto($, c => change(carryAuto(autoMirror, c)))
-  autoMirror = next
+  const next = await updateAuto($, change)
+  publishAuto($, next)
   return next
 }
 
-/** The `auto` atom, or the module copy when /clear reset it. */
-async function currentAuto($: EngineInterface): Promise<AutoState> {
-  return carryAuto(autoMirror, await readAuto($))
+/** The root and the agent ledger as facts, for the readers that cannot wait: the repo tracker and the `touchedBy` label. */
+function publishAuto($: EngineInterface, s: AutoState): void {
+  const facts = factsOf($)
+  facts.publish('auto.root', (s.root ?? undefined) as unknown as Json | undefined)
+  facts.publish('auto.agents', s.agents as unknown as Json)
 }
 
 /**
- * The item write of a round. `change` also gets the dismiss list, read inside the change from `autoMirror` (A20).
- * Reads first and skips `update` when the change returns the input list itself (A22).
- * Like `capture`, it looks at the session id first: a PR step that was in flight over /resume must not fill the new,
- * empty list before `restore` has loaded the stored copy.
+ * The item write of a round. `change` also gets the dismiss list (A20). Reads first and skips `update` when the
+ * change returns the input list itself (A22).
+ * Like `capture`, it runs the session check first: a PR step that was in flight over /resume must not fill the new,
+ * empty list before the switch has loaded the stored copy.
  */
 async function applyItems(
   $: EngineInterface,
   change: (list: ItemRecord[], dismissed: ReadonlySet<string>) => DiscoveryApplied,
 ): Promise<DiscoveryApplied> {
-  await ensureSession($)
-  const dismissed = (): ReadonlySet<string> => new Set((autoMirror ?? emptyAuto()).dismissed)
+  await managerOf($).watch.check()
+  const dismissedNow = async (): Promise<ReadonlySet<string>> => new Set((await readAuto($)).dismissed)
   const cur = await read($, items)
-  let result = change(cur, dismissed())
+  let result = change(cur, await dismissedNow())
   if (result.list === cur) return result
+  const dismissed = await dismissedNow()
   await setItems($, list => {
-    result = change(list, dismissed())
+    result = change(list, dismissed)
     return result.list
   })
   return result
@@ -568,9 +553,10 @@ async function touch($: EngineInterface, agentId: string | undefined): Promise<v
   if (agentId !== undefined) await setAuto($, s => recordActivity(s, agentId, Date.now()))
 }
 
-function touchedBy(agentId: string | undefined): string {
+function touchedBy($: EngineInterface, agentId: string | undefined): string {
   if (agentId === undefined) return 'main'
-  const label = autoMirror?.agents.find(a => a.id === agentId)?.label
+  const agents = factsOf($).read('auto.agents') as unknown as AutoState['agents'] | undefined
+  const label = agents?.find(a => a.id === agentId)?.label
   return label && label !== '' ? label : `agent:${agentId.slice(0, 8)}`
 }
 
@@ -589,10 +575,11 @@ function enqueueRepo<T>(
 ): void {
   const tracker = repoTracker
   if (!tracker || items.length === 0) return
-  const who = touchedBy(agentId)
+  const who = touchedBy($, agentId)
   const at = Date.now()
-  const gen = repoGen
-  const sid = knownId
+  const m = managerOf($)
+  const gen = m.generation
+  const sid = m.watch.lastId
   repoQueue.push(`${key}\0${gen}\0${sid ?? ''}\0${who}\0${items.map(label).join('\0')}`, async () => {
     const visits: RepoVisit[] = []
     for (const item of items) {
@@ -603,9 +590,8 @@ function enqueueRepo<T>(
         // one bad item must not stop the others
       }
     }
-    if (visits.length === 0 || repoGen !== gen) return
-    if (sid !== undefined && (await $.session.id()) !== sid) return
-    if (repoGen !== gen) return
+    if (visits.length === 0) return
+    if ((await m.watch.current()) !== gen) return // a /clear, /resume or /track clear since the job began (D8)
     await setRepos($, rows => {
       let out = rows
       for (const v of visits) out = upsertRepoRows(out, { ...v, at })
@@ -670,7 +656,7 @@ async function ensureTick($: EngineInterface): Promise<void> {
 async function beat($: EngineInterface): Promise<void> {
   try {
     ensureRuntime($)
-    await ensureSession($)
+    await enter($)
     await ensureRepo($)
   } catch {
     // The beat still kicks what it can.
@@ -680,10 +666,11 @@ async function beat($: EngineInterface): Promise<void> {
   await probeProcesses($).catch(() => {})
 }
 
-/** Builds the runtime if needed and looks at the tick. The first step of every event hook. */
-function arm($: EngineInterface): void {
+/** Builds the runtime if needed, looks at the tick and runs the session check. The first step of every event hook. */
+async function arm($: EngineInterface): Promise<void> {
   ensureRuntime($)
   void ensureTick($)
+  await enter($)
 }
 
 /** An event reason for the round, and a look at the tick. */
@@ -697,6 +684,7 @@ async function dismissOne($: EngineInterface, id: string): Promise<void> {
   try {
     ensureRuntime($)
     void ensureTick($)
+    await enter($)
     await setAuto($, s => dismiss(s, [id]))
     // A repo row: setRepos is the choke point that drops it now that the id is on the dismiss list.
     if (id.startsWith('rp:')) await setRepos($, rows => rows)
@@ -706,57 +694,138 @@ async function dismissOne($: EngineInterface, id: string): Promise<void> {
   }
 }
 
-// ------------------------------------------------------------------ session id and repo
+// ------------------------------------------------------------------ session lifecycle
 
 /**
- * /clear, /resume and /branch give a new id and reset $.state, and `session.start` does not fire again.
- * So compare the id on every use: in each hook, in the tick and in the flush. On a change:
- * 1. Save the last list of the session just left. Its flush may not have run (D10).
- * 2. A new id that the store knows is a /resume: restore that session (its copy, then the transcript).
- * 3. Any other new id is a /clear or a /branch: carry the items of the old session over.
+ * /clear, /resume and /branch give a new id and reset $.state, and `session.start` does not fire again. `session.end`
+ * runs first and sees the leaving session: the manager stores it and keeps a snapshot. The first hook, tick or flush
+ * that finds the new id runs the switch: /clear carries the snapshot into the new state, /resume loads the stored copy
+ * of the new id (with the transcript), and an id with no stored copy starts empty.
+ * The slots below are the register-local halves of that: they read and write the live state. A tracker will own each
+ * one when it moves out of this file.
  */
-async function ensureSession($: EngineInterface): Promise<void> {
-  const id = await $.session.id()
-  if (knownId === id) return
-  const prev = knownId
-  knownId = id
+function managerOf($: EngineInterface): LifecycleManager {
+  manager ??= new LifecycleManager(
+    {
+      items: legacyHost($),
+      extraSlots: [reposSlot($), processesSlot($), autoSlot($)],
+      global: GLOBAL_DEFAULTS,
+    },
+    portsOf($),
+  )
+  return manager
+}
+
+function factsOf($: EngineInterface): FactsPort {
+  return managerOf($).facts
+}
+
+/** The session check: the first step of every hook that reads or writes session data. */
+function enter($: EngineInterface): Promise<void> {
+  return managerOf($).entry(portsOf($))
+}
+
+const isEmpty = (v: Json | undefined): boolean => !Array.isArray(v) || v.length === 0
+
+/** The item list as a slot. A carry and a load differ: a load filters the stored copy and reads the transcript. */
+function itemsSlot($: EngineInterface): DataSlot {
+  return {
+    id: 'items',
+    persist: true,
+    read: async () => (await read($, items)) as unknown as Json,
+    empty: isEmpty,
+    settle: async (live, stored) => {
+      // The stored copy can predate the last presses: an item the person dismissed since, or a mark they changed (D6).
+      const dismissed = new Set((await readAuto($)).dismissed)
+      const kept = ((stored ?? []) as unknown as ItemRecord[]).filter(rec => !dismissed.has(rec.key))
+      return rekeyArtifacts(carryOver((live ?? []) as unknown as ItemRecord[], kept)) as unknown as Json
+    },
+    restore: async (value, how) => {
+      const list = value as unknown as ItemRecord[]
+      if (how === 'load') {
+        resetRepo($) // the session has its own repo: the transcript is read against it, not against the old one
+        return loadItems($, list)
+      }
+      if (list.length > 0) await setItems($, cur => unionRecords(list, cur))
+    },
+    clear: () => setItems($, () => []),
+  }
+}
+
+function reposSlot($: EngineInterface): DataSlot {
+  return {
+    id: 'repos',
+    persist: true,
+    read: async () => (await readRepos($)) as unknown as Json,
+    empty: isEmpty,
+    settle: async (live, stored) =>
+      mergeRepoRows(
+        (stored ?? []) as unknown as RepoRecord[],
+        (live ?? []) as unknown as RepoRecord[],
+      ) as unknown as Json,
+    restore: async (value, how) => {
+      const rows = value as unknown as RepoRecord[]
+      if (rows.length > 0)
+        await setRepos($, cur => (how === 'carry' ? mergeRepoRows(rows, cur) : mergeRepoRows(cur, rows)))
+    },
+    clear: () => setRepos($, () => []),
+  }
+}
+
+function processesSlot($: EngineInterface): DataSlot {
+  return {
+    id: 'processes',
+    persist: true,
+    read: async () => (await readProcesses($)) as unknown as Json,
+    empty: isEmpty,
+    settle: async (live, stored) =>
+      mergeProcessRows(
+        (stored ?? []) as unknown as ProcessRecord[],
+        (live ?? []) as unknown as ProcessRecord[],
+      ) as unknown as Json,
+    restore: async (value, how) => {
+      const rows = value as unknown as ProcessRecord[]
+      if (rows.length > 0)
+        await setProcesses($, cur => (how === 'carry' ? mergeProcessRows(rows, cur) : mergeProcessRows(cur, rows)))
+    },
+    clear: () => setProcesses($, () => []),
+  }
+}
+
+/** The run: root, proofs, agents, dismiss list. Run-scoped: a switch carries it before anything else loads (D9). */
+function autoSlot($: EngineInterface): DataSlot {
+  return {
+    id: 'auto',
+    persist: false,
+    read: () => portsOf($).state.slot.get('auto'),
+    empty: v => v === undefined,
+    settle: async live => live,
+    restore: async value => {
+      const cur = await readAuto($)
+      const next = carryAuto(value as unknown as AutoState, cur)
+      publishAuto($, next === cur ? cur : await updateAuto($, c => carryAuto(value as unknown as AutoState, c)))
+    },
+  }
+}
+
+/** The part of the item host that this file still holds. Task 11 moves the rest in. */
+function legacyHost($: EngineInterface): Pick<ItemsHost, 'slot' | 'sessionChanged'> {
+  return {
+    slot: itemsSlot($),
+    sessionChanged: async () => {
+      resetRepo($)
+      await publishTools($) // the tools atom was reset too
+    },
+  }
+}
+
+/** The session repo is found again for the new session. */
+function resetRepo($: EngineInterface): void {
   sessionRepo = undefined
   repoTask = undefined
-  if (prev === undefined) return
-  // The `auto` atom belongs to the run, not to a session id. After /clear $.state is empty; the module copy fills it.
-  await setAuto($, s => s)
-  const stored = await storedCopy($, prev)
-  const held: SessionSlices = {
-    items: mirror?.id === prev ? mirror.items : [],
-    repos: repoMirror?.id === prev ? repoMirror.rows : [],
-    processes: processMirror?.id === prev ? processMirror.rows : [],
-  }
-  mirror = undefined
-  repoMirror = undefined
-  processMirror = undefined
-  // The stored copy can predate the last presses: an item the person dismissed since, or a mark they changed.
-  const dismissed = new Set((await currentAuto($)).dismissed)
-  const left: SessionSlices = {
-    items: rekeyArtifacts(
-      carryOver(
-        held.items,
-        (stored?.items ?? []).filter(rec => !dismissed.has(rec.key)),
-      ),
-    ),
-    repos: mergeRepoRows(stored?.repos ?? [], held.repos),
-    processes: mergeProcessRows(stored?.processes ?? [], held.processes),
-  }
-  if (held.items.length > 0 || held.repos.length > 0 || held.processes.length > 0)
-    await persistenceOf($).write(prev, left)
-  const own = await storedCopy($, id)
-  if (own?.items || own?.repos || own?.processes) {
-    await restore($)
-  } else {
-    if (left.items.length > 0) await setItems($, list => unionRecords(left.items, list))
-    if (left.repos.length > 0) await setRepos($, rows => mergeRepoRows(left.repos, rows))
-    if (left.processes.length > 0) await setProcesses($, rows => mergeProcessRows(left.processes, rows))
-  }
-  await publishTools($) // the tools atom was reset too
+  const facts = factsOf($)
+  facts.publish('session.repo', undefined)
+  facts.publish('github.hosts', undefined)
 }
 
 /** Finds the session repo once per session: git remote first, else one `gh repo view`. */
@@ -794,6 +863,9 @@ async function resolveRepo($: EngineInterface): Promise<void> {
     repo = null // No repo: bare #N stays unresolved.
   }
   sessionRepo = repo
+  const facts = factsOf($)
+  facts.publish('session.repo', (repo ?? undefined) as unknown as Json | undefined)
+  facts.publish('github.hosts', [...githubHosts])
   if (repo) {
     const known = repo
     try {
@@ -810,8 +882,7 @@ async function resolveRepo($: EngineInterface): Promise<void> {
 /** Scan text and merge the refs into the session list. Never throws into the caller. */
 async function capture($: EngineInterface, text: string, mode: ScanMode, source: Source): Promise<void> {
   if (text === '') return
-  arm($)
-  await ensureSession($)
+  await arm($)
   await ensureRepo($)
   if (mode === 'full') await captureMentions($, text, source).catch(() => {}) // a file fault must not stop the refs
   let refs = extractRefs(text, {
@@ -827,7 +898,7 @@ async function capture($: EngineInterface, text: string, mode: ScanMode, source:
 
 /** Merge refs into the session list, less the dismissed keys. The common tail of every capture. */
 async function trackRefs($: EngineInterface, refs: readonly Ref[], source: Source): Promise<void> {
-  const dismissed = new Set((await currentAuto($)).dismissed)
+  const dismissed = new Set((await readAuto($)).dismissed)
   const keep = refs.filter(ref => !dismissed.has(keyOf(ref)))
   if (keep.length === 0) return
   let added: string[] = []
@@ -846,7 +917,6 @@ async function trackRefs($: EngineInterface, refs: readonly Ref[], source: Sourc
 async function applyArtifactCall($: EngineInterface, input: unknown, ran: unknown): Promise<void> {
   const ev = artifactEvent(input, ran)
   if (!ev) return
-  await ensureSession($)
   if (ev.kind === 'published') return trackRefs($, [ev.ref], 'publish')
   const cur = await read($, items)
   if (markArtifactDeleted(cur, ev.key) === cur) return // no such row: a write would change nothing (A22)
@@ -927,7 +997,7 @@ type FileCtx = IgnoreContext & { cwd: string; home?: string }
 
 /** A subagent's relative path joins its spawn cwd (A6); everything else joins the session cwd. */
 async function fileCtx($: EngineInterface, agentId?: string): Promise<FileCtx> {
-  const auto = await currentAuto($)
+  const auto = await readAuto($)
   const spawn = agentId === undefined ? undefined : auto.agents.find(a => a.id === agentId)?.cwd
   return {
     ...(await fileEnv($)),
@@ -964,7 +1034,7 @@ function withoutLoneViews(list: readonly ItemRecord[], recs: readonly FileRecord
 
 /** Merges file sightings into the list. A dismissed key never comes back. */
 async function addFiles($: EngineInterface, recs: readonly FileRecord[]): Promise<void> {
-  const dismissed = new Set((await currentAuto($)).dismissed)
+  const dismissed = new Set((await readAuto($)).dismissed)
   const wanted = recs.filter(r => !dismissed.has(r.key))
   if (withoutLoneViews(await read($, items), wanted).length === 0) return // only views of untracked files: no write
   await setItems($, list => mergeFiles(list, withoutLoneViews(list, wanted)))
@@ -972,7 +1042,6 @@ async function addFiles($: EngineInterface, recs: readonly FileRecord[]): Promis
 
 /** A Write, Edit or Read result: one sighting of the file it touched. */
 async function captureFileTouch($: EngineInterface, t: FileTouch, agentId: string | undefined): Promise<void> {
-  await ensureSession($)
   const ctx = await fileCtx($, agentId)
   const rec = await sighting($, ctx, t.spelled, t.kind, agentId !== undefined, { source: 'tool', at: Date.now() })
   if (rec) await addFiles($, [rec])
@@ -997,7 +1066,7 @@ async function captureMentions($: EngineInterface, text: string, source: Source)
 /** The Write, Edit and Read hooks: track the Markdown file, then count the call as a sign of life (A7). */
 async function onFileTool($: EngineInterface, tool: string, ran: unknown, agentId: string | undefined): Promise<void> {
   try {
-    arm($)
+    await arm($)
     const t = touchFromToolResult(tool, ran)
     if (t) await captureFileTouch($, t, agentId)
     await touch($, agentId)
@@ -1164,56 +1233,14 @@ async function probeProcesses($: EngineInterface): Promise<void> {
   }
 }
 
-// ------------------------------------------------------------------ store mirror
+// ------------------------------------------------------------------ store
 
-/** The three lists that one session's stored copy holds. */
-type SessionSlices = { items: ItemRecord[]; repos: RepoRecord[]; processes: ProcessRecord[] }
-
-/** A stored copy as read back: an older copy may lack a slice. */
-type StoredCopy = Partial<SessionSlices>
-
-/** One list as a data slot of the stored copy. Temporary: a tracker brings its own slot when it moves out of here. */
-function listSlot(id: string, load: () => Promise<unknown>): DataSlot {
-  return {
-    id,
-    persist: true,
-    read: async () => (await load()) as Json,
-    empty: v => !Array.isArray(v) || v.length === 0,
-    settle: async live => live,
-    restore: async () => {},
-  }
-}
-
-function persistenceDeps($: EngineInterface): PersistenceDeps {
-  const ports = portsOf($)
-  return {
-    store: ports.store,
-    clock: ports.clock,
-    sessionId: () => ports.session.id(),
-    slots: () => [
-      listSlot('items', () => read($, items)),
-      listSlot('repos', () => readRepos($)),
-      listSlot('processes', () => readProcesses($)),
-    ],
-    limits: () => ({
-      flushMs: GLOBAL_DEFAULTS.refresh.flushMs,
-      keepSessions: GLOBAL_DEFAULTS.store.keepSessions,
-      maxBytes: GLOBAL_DEFAULTS.store.maxBytes,
-    }),
-    beforeFlush: () => ensureSession($), // a /clear since the last row: save the old session first, carry its items over
-    log: ports.log,
-  }
-}
-
-/** The one Persistence of this load. It keeps the `$` of the hook that built it, like the runtime does. */
-function persistenceOf($: EngineInterface): Persistence {
-  persistence ??= new Persistence(persistenceDeps($))
-  return persistence
-}
+/** A stored copy as read back: the three lists of one session. An older copy may lack one. */
+type StoredCopy = Partial<{ items: ItemRecord[]; repos: RepoRecord[]; processes: ProcessRecord[] }>
 
 /** The stored copy of a session, or undefined. */
 async function storedCopy($: EngineInterface, id: string): Promise<StoredCopy | undefined> {
-  return (await persistenceOf($).read(id)) as unknown as StoredCopy | undefined
+  return (await managerOf($).persistence.read(id)) as unknown as StoredCopy | undefined
 }
 
 /**
@@ -1222,7 +1249,7 @@ async function storedCopy($: EngineInterface, id: string): Promise<StoredCopy | 
  * Never rejects.
  */
 function schedule($: EngineInterface): Promise<void> {
-  return persistenceOf($).touch()
+  return managerOf($).persistence.touch()
 }
 
 // ------------------------------------------------------------------ restore
@@ -1310,22 +1337,16 @@ function keepStored(rec: ItemRecord, activeSite: string | null | undefined): boo
   return activeSite !== null && rec.site.toLowerCase() === activeSite.toLowerCase()
 }
 
-/** Fill the list again at startup: the stored copy of this session, then what the transcript adds. */
-async function restore($: EngineInterface): Promise<void> {
-  const live = await read($, items)
-  if (live.length > 0) {
-    // A hot reload keeps $.state: nothing to restore. Rows an older version stored as web links move (R13).
-    if (rekeyArtifacts(live) !== live) await setItems($, rekeyArtifacts)
-    return
-  }
-  // Do not wait for the repo: it may need `gh` calls of up to 30 s. Bare #N is re-keyed when it arrives.
+/**
+ * The items of a stored copy, then what the transcript adds. A `--resume` load and a /resume switch both come here.
+ * The list is empty: the caller checked. Does not wait for the repo, which may need `gh` calls of up to 30 s.
+ */
+async function loadItems($: EngineInterface, storedItems: ItemRecord[]): Promise<void> {
+  // Bare #N is re-keyed when the repo arrives.
   const repoReady = ensureRepo($).catch(() => {})
-  const id = await $.session.id()
-  // No gate on the index: two sessions that flush together can drop each other's id from it.
-  const copy = await storedCopy($, id)
   const activeSite = await activeJiraSite()
-  const dismissed = new Set((autoMirror ?? emptyAuto()).dismissed)
-  const stored = withoutAuto(rekeyArtifacts(copy?.items ?? []))
+  const dismissed = new Set((await readAuto($)).dismissed)
+  const stored = withoutAuto(rekeyArtifacts(storedItems))
     .filter(rec => keepStored(rec, activeSite))
     .filter(rec => rec.error?.kind !== 'not-found')
     .filter(rec => !dismissed.has(rec.key))
@@ -1341,12 +1362,8 @@ async function restore($: EngineInterface): Promise<void> {
   }
   const fresh = (await fromTranscript($)).filter(r => news(r) && !dismissed.has(r.key))
   const all = unionRecords(stored, fresh)
-  const repoRows = copy?.repos ?? []
-  const proc = copy?.processes ?? []
-  if (all.length === 0 && repoRows.length === 0 && proc.length === 0) return
-  if (all.length > 0) await setItems($, list => unionRecords(list, all))
-  if (repoRows.length > 0) await setRepos($, rows => mergeRepoRows(rows, repoRows))
-  if (proc.length > 0) await setProcesses($, rows => mergeProcessRows(rows, proc))
+  if (all.length === 0) return
+  await setItems($, list => unionRecords(list, all))
   void repoReady
     .then(async () => {
       const repo = sessionRepo
@@ -1354,7 +1371,23 @@ async function restore($: EngineInterface): Promise<void> {
     })
     .catch(() => {})
   coordinator?.kick('capture')
-  await schedule($)
+}
+
+/** Fill the lists again at startup: the stored copy of this session, then what the transcript adds. */
+async function restore($: EngineInterface): Promise<void> {
+  const live = await read($, items)
+  if (live.length > 0) {
+    // A hot reload keeps $.state: nothing to restore. Rows an older version stored as web links move (R13).
+    if (rekeyArtifacts(live) !== live) await setItems($, rekeyArtifacts)
+    return
+  }
+  // No gate on the index: two sessions that flush together can drop each other's id from it.
+  const copy = await storedCopy($, await $.session.id())
+  await loadItems($, copy?.items ?? [])
+  const repoRows = copy?.repos ?? []
+  const proc = copy?.processes ?? []
+  if (repoRows.length > 0) await setRepos($, rows => mergeRepoRows(rows, repoRows))
+  if (proc.length > 0) await setProcesses($, rows => mergeProcessRows(rows, proc))
 }
 
 // ------------------------------------------------------------------ /track
@@ -1366,7 +1399,7 @@ async function contextOf($: EngineInterface, bodyColumns?: number): Promise<View
     folded: (await read($, ui)).folded,
     tools: viewTools(await read($, tools)),
     sessionRepo,
-    auto: await currentAuto($),
+    auto: await readAuto($),
     ...(lastRoundAt !== undefined ? { autoCheckedAt: lastRoundAt } : {}),
     ...(bodyColumns !== undefined ? { bodyColumns } : {}),
   }
@@ -1400,14 +1433,6 @@ async function openPane($: EngineInterface): Promise<void> {
   if (!opened.isPlaced) $.ui.toast('Widen the terminal to see the tracking pane')
 }
 
-async function clearAll($: EngineInterface): Promise<void> {
-  repoGen++
-  await setItems($, () => [])
-  await setRepos($, () => [])
-  await setProcesses($, () => [])
-  await persistenceOf($).forget(await $.session.id())
-}
-
 // ------------------------------------------------------------------ priority keys
 
 /**
@@ -1420,7 +1445,7 @@ async function prioritize($: EngineInterface, level: Priority | undefined): Prom
   const id = focusedRow
   if (id === undefined) return
   try {
-    arm($)
+    await arm($)
     await setItems($, list => setPriority(list, id, level))
   } catch {
     return // The mark stays. The person can press again.
@@ -1441,6 +1466,7 @@ export const register: Register = on => {
   on('session.append', { door: 'prompt' }, async ($, e, next) => {
     const stored = await next(e)
     try {
+      await enter($) // the first row of a new session carries the old one over, whatever the row is
       if (e.origin.kind === 'task-notification')
         await applyTaskUpdate(
           $,
@@ -1460,6 +1486,7 @@ export const register: Register = on => {
   on('session.append', { door: 'command' }, async ($, e, next) => {
     const stored = await next(e)
     try {
+      await enter($) // a /clear appends its own command row first: the switch runs here
       if (e.origin.kind === 'composer' && stored.message) {
         await capture($, commandArgs(textOfContent(stored.message.content)), 'full', 'prompt')
       }
@@ -1495,7 +1522,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Artifact' }, async ($, e, next) => {
     const ran = await next(e)
     try {
-      arm($)
+      await arm($)
       await applyArtifactCall($, e, ran)
     } catch {
       // See above.
@@ -1516,7 +1543,7 @@ export const register: Register = on => {
     }
     try {
       ensureRuntime($)
-      knownId = await $.session.id()
+      await enter($) // learns the session id
       await setAuto($, s => pinRoot(s, e.cwd, Date.now())) // A3: a later session.start (reload) keeps the pinned root
     } catch {
       // No root this time. The next session.start pins it.
@@ -1525,7 +1552,7 @@ export const register: Register = on => {
       // Old data is dropped by design: the v2 layout starts empty (plan: Behavior changes).
       if (!legacyDropped) {
         legacyDropped = true
-        await persistenceOf($).dropLegacy()
+        await managerOf($).persistence.dropLegacy()
       }
     } catch {
       // The old keys stay. They cost space only, and the next load tries again.
@@ -1540,9 +1567,19 @@ export const register: Register = on => {
     return next(e)
   }).catch((_$, e, next) => next(e))
 
+  // The leaving session is stored here, while $.state and the id are still its own (E6). Before `next`, within the budget.
+  on('session.end', async ($, e, next) => {
+    try {
+      await managerOf($).end(portsOf($), e.reason, next.budget.remainingMs)
+    } catch {
+      // Storing is best effort: the session must still end.
+    }
+    return next(e)
+  }).catch((_$, e, next) => next(e))
+
   on('command.run', { command: 'track' }, async ($, e) => {
     ensureRuntime($)
-    await ensureSession($)
+    await enter($)
     await ensureTick($)
     const g = gh
     const a = acli
@@ -1579,9 +1616,9 @@ export const register: Register = on => {
       return { text: await listText($) }
     }
     if (arg === 'clear') {
-      const ids = autoIds(await currentAuto($), await read($, items))
+      const ids = autoIds(await readAuto($), await read($, items))
       await setAuto($, s => dismiss(s, ids)) // so the next tick does not bring the auto items back (A14)
-      await clearAll($)
+      await managerOf($).clear(portsOf($))
       return { text: 'Tracking list cleared.' }
     }
     // R11: the pane's keys for `claude -p`. The ref keeps its case: Jira keys and repo names need it.
@@ -1594,7 +1631,7 @@ export const register: Register = on => {
       if (id === undefined) return { text: `Not tracked: ${ref}` }
       await setItems($, list => setPriority(list, id, word === 'auto' ? undefined : (word as Priority)))
       try {
-        await persistenceOf($).flushNow() // `claude -p` can exit right after the reply: save now, not after flushMs
+        await managerOf($).persistence.flushNow() // `claude -p` can exit right after the reply: save now, not after flushMs
       } catch {
         // The next change saves it.
       }
@@ -1660,7 +1697,7 @@ export const register: Register = on => {
 
   // One line above the prompt. The engine's own band stays inside our Box.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const text = composeBand(await read($, items), await readProcesses($), await currentAuto($), await readRepos($))
+    const text = composeBand(await read($, items), await readProcesses($), await readAuto($), await readRepos($))
     if (text === null || e.props.hasSurvey) return next(e)
     const el = $.ui.resolve(e)
     const { Box } = el
@@ -1696,7 +1733,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'EnterWorktree' }, async ($, e, next) => {
     const ran = await next(e)
     try {
-      arm($)
+      await arm($)
       const f = fromEnterResult(ran, e.agentId)
       if (f) await setAuto($, s => recordEnter(s, f, Date.now()))
       await touch($, e.agentId)
@@ -1710,7 +1747,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'ExitWorktree' }, async ($, e, next) => {
     const ran = await next(e)
     try {
-      arm($)
+      await arm($)
       await touch($, e.agentId)
       kickAuto($, 'worktree') // the next round marks the child removed (remove) or keeps it live (keep)
     } catch {
@@ -1722,7 +1759,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     const ran = await next(e)
     try {
-      arm($)
+      await arm($)
       const f = fromAgentResult(ran)
       if (f?.worktreePath !== undefined) await setAuto($, s => recordAgentResult(s, f, Date.now()))
       await touch($, e.agentId)
@@ -1740,7 +1777,7 @@ export const register: Register = on => {
     const ran = await next(e)
     const command = String(e.command ?? '')
     try {
-      arm($)
+      await arm($)
       await addProcessRows($, parseBashProcesses(command, ran, e.tool_use_id, Date.now(), cwd))
       const f = fromBash(command, ran, e.agentId)
       const { agentId, branch } = f
@@ -1766,7 +1803,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
     const ran = await next(e)
     try {
-      arm($)
+      await arm($)
       const taskId =
         ran && typeof ran === 'object' && 'result' in ran && ran.result && typeof ran.result === 'object'
           ? (ran.result as Record<string, unknown>).taskId
@@ -1783,7 +1820,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'TaskStop' }, async ($, e, next) => {
     const ran = await next(e)
     try {
-      arm($)
+      await arm($)
       const result =
         ran && typeof ran === 'object' && 'result' in ran ? (ran as { result?: unknown }).result : undefined
       await applyTaskUpdate($, processUpdateFromTaskStop(result))
@@ -1807,7 +1844,7 @@ export const register: Register = on => {
       const ran = await next(e)
       try {
         if (!failed(ran)) {
-          arm($)
+          await arm($)
           enqueueRepoPaths($, hits, e.agentId)
         }
       } catch {
@@ -1825,6 +1862,7 @@ export const register: Register = on => {
     const out = await next(e)
     try {
       ensureRuntime($)
+      await enter($)
       const f = fromSpawn(e, out)
       if (f) {
         const state = await setAuto($, s => recordSpawn(s, f, Date.now(), sessionCwd))
@@ -1844,6 +1882,7 @@ export const register: Register = on => {
     const out = await next(e)
     try {
       ensureRuntime($)
+      await enter($)
       void ensureTick($) // a main-loop turn has no agent id and no fact, but it is the most regular beat to re-arm on
       const f = fromTurnEnd(e)
       if (f) {
