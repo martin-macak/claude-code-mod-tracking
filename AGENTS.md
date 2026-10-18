@@ -132,6 +132,7 @@ One list for branches, commits and PR titles:
 - Link the issue with `Closes #N` (or `Fixes #N`) so the merge closes it. Use `Refs #N` for partial work.
 - Move the linked issue to `In review` when the PR is ready and closes it (`Closes`, `Fixes`). A `Refs` PR leaves the issue alone. A stack layer PR closes its own sub-issue and refs the parent. See [Planning and delivery](#planning-and-delivery), "Stack layers".
 - Keep history linear. Rebase onto `main`; never merge `main` into the branch. Squash to the fewest commits that keep logical steps. Use `git push --force-with-lease`, never `--force`.
+- Stacked PRs: use `gh stack` (GitHub native stacks). Name every branch. Edit each PR body to the template after `gh stack submit`. Run `make verify` on every layer before `gh stack push`. Merge with `gh stack merge --squash`, never `gh pr merge`. Link each layer as [Planning and delivery](#planning-and-delivery), "Stack layers" says.
 - Open a draft PR for work in progress. Mark it ready when CI passes.
 - Delete temporary files before you push: plans, scratch notes, logs. Keep design specs.
 - Merge with **Squash and merge**. Use **Rebase and merge** only when the PR holds several logical commits that must stay apart. Merge commits are disabled. GitHub deletes the branch on merge.
