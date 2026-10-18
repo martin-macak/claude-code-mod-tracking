@@ -15,7 +15,7 @@ concurrency:
 
 env:
   # Mods are in early access and change between releases. Bump these by hand.
-  CLAUDE_CODE_VERSION: 2.1.296
+  CLAUDE_CODE_VERSION: 2.1.302
   TYPESCRIPT_VERSION: 7.0.2
 
 jobs:

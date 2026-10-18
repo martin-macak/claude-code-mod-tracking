@@ -34,7 +34,7 @@ jobs:
       - name: Install pre-commit, Claude Code and TypeScript
         run: |
           pip install pre-commit
-          npm install -g @anthropic-ai/claude-code@2.1.296
+          npm install -g @anthropic-ai/claude-code@2.1.302
           npx -y -p typescript@7.0.2 tsc --version
 
       # Installs the pre-commit, commit-msg and pre-push git hooks and their environments.

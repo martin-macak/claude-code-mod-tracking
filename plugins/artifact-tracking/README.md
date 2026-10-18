@@ -8,7 +8,7 @@ Design: [`docs/superpowers/specs/2026-10-10-artifact-tracking-design.md`](../../
 
 ## Load it
 
-Mods are in early access. Tested on Claude Code 2.1.295 and 2.1.296.
+Mods are in early access. Tested with Claude Code 2.1.302.
 
 Install it from the marketplace of this repo. In a Claude Code session (2.1.275 or later):
 
@@ -230,7 +230,7 @@ claude plugin test .
 
 ## CI
 
-`.github/workflows/test.yml` runs on every pull request, on each push to `main`, and by hand. It installs Claude Code 2.1.296 and TypeScript 7.0.2 at fixed versions. Then it runs `make test`: `claude plugin validate`, `tsc -p .`, `claude plugin test`. No login or secret is needed.
+`.github/workflows/test.yml` runs on every pull request, on each push to `main`, and by hand. It installs Claude Code 2.1.302 and TypeScript 7.0.2 at fixed versions. Then it runs `make test`: `claude plugin validate`, `tsc -p .`, `claude plugin test`. No login or secret is needed.
 
 ## Release
 
