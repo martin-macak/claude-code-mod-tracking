@@ -16,3 +16,6 @@ e2e/out/
 *.iml
 *.iws
 *.ipr
+
+# make coverage output (lcov report of the pure tests under node)
+/plugins/artifact-tracking/coverage/
