@@ -23,6 +23,7 @@ import {
   focusTargets,
   foldKey,
   markKeys,
+  type PaneRow,
   textOf,
   toolNote,
   type ViewContext,
@@ -280,6 +281,148 @@ test('a folded jira row hides its descendants and says so', () => {
   const inner = buildPane([epic], ctx({ folded: [rootId + '/ISS-102'] }))[0]!.rows
   expect(inner.map(r => r.key)).toEqual(['ISS-101', 'ISS-102', 'ISS-110'])
   expect(inner[1]).toMatchObject({ folded: true })
+})
+
+// A tracked jira record that is also a child of another tracked record (#48).
+const subVia = ['gh:github.com/o/r#2659']
+const subNode = (key: string) => ({ ...node(key, 'To Do', 'new'), summary: 'Sub ' + key, issueType: 'Sub-task' })
+const subParent = jira('BUG-3184', {
+  summary: 'Parent',
+  issueType: 'Bug',
+  status: 'In Progress',
+  statusCategory: 'indeterminate',
+  via: subVia,
+  firstSeen: 1,
+  children: [subNode('BUG-3202'), subNode('BUG-3203')],
+})
+const trackedSub = (key: string, firstSeen: number, over: Partial<JiraRecord> = {}) =>
+  jira(key, {
+    summary: 'Sub ' + key,
+    issueType: 'Sub-task',
+    status: 'To Do',
+    statusCategory: 'new',
+    via: subVia,
+    firstSeen,
+    ...over,
+  })
+const sub1 = trackedSub('BUG-3202', 2)
+const sub2 = trackedSub('BUG-3203', 3)
+const keysOf = (rows: readonly PaneRow[]) => rows.map(r => [r.key, r.depth])
+
+test('tracked jira child: renders once, nested under the shown parent', () => {
+  const section = buildPane([subParent, sub1, sub2], ctx())[0]!
+  expect(keysOf(section.rows)).toEqual([
+    ['BUG-3184', 0],
+    ['BUG-3202', 1],
+    ['BUG-3203', 1],
+  ])
+  expect(textOf([section])).toBe(
+    'Jira work items  acli · acme.atlassian.net · ready\n' +
+      '  BUG-3184  ↳#2659 Parent  Bug  In Progress\n' +
+      '    BUG-3202  ↳#2659 Sub BUG-3202  Sub-task  To Do\n' +
+      '    BUG-3203  ↳#2659 Sub BUG-3203  Sub-task  To Do',
+  )
+})
+
+test('tracked jira child: the nested row keeps the via marker and the level of the record, but no dismiss control', () => {
+  const rows = buildPane([subParent, trackedSub('BUG-3202', 2, { priority: 'high' }), sub2], ctx())[0]!.rows
+  expect(rows[1]).toMatchObject({ key: 'BUG-3202', title: '↳#2659 Sub BUG-3202', prio: { level: 'high' } })
+  expect(rows[1]!.dismissId).toBeUndefined()
+  expect(rows[0]!.dismissId).toBe(subParent.key)
+  expect(bandParts([subParent, sub1, sub2])).toEqual(['Jira 3'])
+})
+
+test('tracked jira child: a folded parent leaves its tracked children as roots, so each key still shows once', () => {
+  const rows = buildPane([subParent, sub1, sub2], ctx({ folded: [subParent.key] }))[0]!.rows
+  expect(keysOf(rows)).toEqual([
+    ['BUG-3184', 0],
+    ['BUG-3202', 0],
+    ['BUG-3203', 0],
+  ])
+  expect(rows[0]).toMatchObject({ folded: true })
+  expect(rows[1]).toMatchObject({ title: '↳#2659 Sub BUG-3202', dismissId: sub1.key })
+})
+
+test('tracked jira child: a folded inner row leaves the tracked record below it as a root', () => {
+  const epic = jira('EP-1', { firstSeen: 1, children: [node('T-1', 'To Do', 'new', [node('S-1', 'To Do', 'new')])] })
+  const rows = buildPane(
+    [epic, jira('T-1', { firstSeen: 2 }), jira('S-1', { firstSeen: 3 })],
+    ctx({ folded: [epic.key + '/T-1'] }),
+  )[0]!.rows
+  expect(keysOf(rows)).toEqual([
+    ['EP-1', 0],
+    ['T-1', 1],
+    ['S-1', 0],
+  ])
+})
+
+test('tracked jira child: without the parent (dismissed or never tracked) the children are roots', () => {
+  expect(keysOf(buildPane([sub1, sub2], ctx())[0]!.rows)).toEqual([
+    ['BUG-3202', 0],
+    ['BUG-3203', 0],
+  ])
+  const other = jira('OTHER-1', { firstSeen: 4, children: [node('OTHER-2', 'To Do', 'new')] })
+  expect(keysOf(buildPane([subParent, other], ctx())[0]!.rows).filter(([, d]) => d === 0)).toEqual([
+    ['BUG-3184', 0],
+    ['OTHER-1', 0],
+  ])
+})
+
+test('tracked jira child: a record named by two PRs shows both on its nested row', () => {
+  const both = trackedSub('BUG-3202', 2, {
+    sources: ['prompt', 'pr-body'],
+    via: ['gh:github.com/o/r#1', 'gh:github.com/o/r#2'],
+  })
+  const rows = buildPane([subParent, both], ctx())[0]!.rows
+  expect(rows.filter(r => r.key === 'BUG-3202')).toHaveLength(1)
+  expect(rows[1]!.title).toBe('↳#1,#2 Sub BUG-3202')
+})
+
+test('tracked jira child: an epic, a task and a sub-task, all tracked: only the epic is a root', () => {
+  const tree = [node('T-1', 'To Do', 'new', [node('S-1', 'To Do', 'new')])]
+  const records = (children: JiraNode[]) => [
+    jira('EP-1', { firstSeen: 1, children }),
+    jira('T-1', { firstSeen: 2, children: [node('S-1', 'To Do', 'new')] }),
+    jira('S-1', { firstSeen: 3 }),
+  ]
+  expect(keysOf(buildPane(records(tree), ctx())[0]!.rows)).toEqual([
+    ['EP-1', 0],
+    ['T-1', 1],
+    ['S-1', 2],
+  ])
+  // The epic's snapshot can stop at the task. The sub-task then stays a root: it never vanishes.
+  expect(keysOf(buildPane(records([node('T-1', 'To Do', 'new')]), ctx())[0]!.rows)).toEqual([
+    ['EP-1', 0],
+    ['T-1', 1],
+    ['S-1', 0],
+  ])
+})
+
+test('tracked jira child: identity is site and key: case does not matter, another site does', () => {
+  const a = jira('A-1', { firstSeen: 1, site: 'ACME.Atlassian.net', children: [node('a-2', 'To Do', 'new')] })
+  expect(keysOf(buildPane([a, jira('A-2', { firstSeen: 2 })], ctx())[0]!.rows)).toEqual([
+    ['A-1', 0],
+    ['a-2', 1],
+  ])
+  const elsewhere = jira('A-2', {
+    ...base('jira:other.atlassian.net/A-2', 'https://other.atlassian.net/browse/A-2', 'A-2', 2),
+    site: 'other.atlassian.net',
+  })
+  const rows = buildPane([a, elsewhere], ctx())[0]!.rows
+  expect(keysOf(rows)).toEqual([
+    ['A-1', 0],
+    ['a-2', 1],
+    ['A-2', 0],
+  ])
+  expect(rows[2]!.href).toContain('other.atlassian.net')
+})
+
+test('tracked jira child: a cycle in stale data keeps every record as a root', () => {
+  const ring = (keys: string[]) =>
+    keys.map((k, i) => jira(k, { firstSeen: i + 1, children: [node(keys[(i + 1) % keys.length]!, 'To Do', 'new')] }))
+  const roots = (rows: readonly PaneRow[]) => rows.filter(r => r.depth === 0).map(r => r.key)
+  expect(roots(buildPane(ring(['A', 'B']), ctx())[0]!.rows)).toEqual(['A', 'B'])
+  expect(roots(buildPane(ring(['A', 'B', 'C']), ctx())[0]!.rows)).toEqual(['A', 'B', 'C'])
 })
 
 test('jira title falls back to the label; not-found wins over everything', () => {

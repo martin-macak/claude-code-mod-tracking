@@ -219,6 +219,8 @@ export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismis
 }
 
 const lower = (s: string | undefined): string => (s ?? '').toLowerCase()
+/** The identity of a Jira issue across records and nodes: lower-case site, upper-case key. */
+const jiraSiteKey = (site: string, key: string): string => `${lower(site)}/${key.toUpperCase()}`
 const byPriority = <T extends { priority?: Priority }>(a: T, b: T): number => byLevel(a.priority, b.priority)
 /** The level of a row whose level is the person's own mark: a Jira child, or an item no rule reads. */
 const prioOf = (priority: Priority | undefined): RowPrio => (priority === undefined ? {} : { level: priority })
@@ -264,31 +266,30 @@ function categoryTone(statusCategory: string | undefined): Tone {
   return 'plain'
 }
 
-function nodeRows(
-  parentId: string,
-  nodes: readonly JiraNode[],
-  depth: number,
-  site: string,
-  folded: ReadonlySet<string>,
-  out: PaneRow[],
-): void {
+/** A tracked Jira record, as its nested row shows it: the via marker and the level. */
+type TrackedJira = { via?: readonly string[]; prio: RowPrio }
+/** What the nested rows of one Jira root read: the root's site, the folds, the tracked records by `site/KEY`. */
+type JiraTree = { site: string; folded: ReadonlySet<string>; tracked: ReadonlyMap<string, TrackedJira> }
+
+function nodeRows(parentId: string, nodes: readonly JiraNode[], depth: number, tree: JiraTree, out: PaneRow[]): void {
   for (const n of [...nodes].sort(byPriority)) {
     const id = childId(parentId, n.key)
-    const isFolded = n.children.length > 0 && folded.has(id)
+    const isFolded = n.children.length > 0 && tree.folded.has(id)
+    const tracked = tree.tracked.get(jiraSiteKey(tree.site, n.key))
     out.push({
       id,
       depth,
       key: n.key,
-      href: `https://${site}/browse/${n.key}`,
-      title: n.summary,
+      href: `https://${tree.site}/browse/${n.key}`,
+      title: viaPrefix(tracked?.via) + n.summary,
       type: n.issueType,
       status: n.status,
       tone: categoryTone(n.statusCategory),
       foldable: n.children.length > 0,
       folded: isFolded,
-      prio: prioOf(n.priority),
+      prio: tracked?.prio.level !== undefined ? tracked.prio : prioOf(n.priority),
     })
-    if (!isFolded) nodeRows(id, n.children, depth + 1, site, folded, out)
+    if (!isFolded) nodeRows(id, n.children, depth + 1, tree, out)
   }
 }
 
@@ -296,6 +297,7 @@ function jiraRows(
   item: JiraRecord,
   ctx: ViewContext,
   folded: ReadonlySet<string>,
+  tracked: ReadonlyMap<string, TrackedJira>,
   out: PaneRow[],
   prio: RowPrio = prioOf(item.priority),
 ): void {
@@ -328,7 +330,7 @@ function jiraRows(
     folded: isFolded,
     prio,
   })
-  if (!isFolded) nodeRows(id, item.children, 1, item.site, folded, out)
+  if (!isFolded) nodeRows(id, item.children, 1, { site: item.site, folded, tracked }, out)
 }
 
 const CHECKS: Record<NonNullable<GitHubRecord['checks']>, { extra?: string; extraTone?: Tone }> = {
@@ -449,6 +451,61 @@ const SECTIONS: { category: Category; title: string; band: string; unit?: string
   { category: 'file', title: 'Files', band: 'Files', unit: 'files', layout: 'files' },
 ]
 
+/** The `site/KEY` of every node that the root's rows draw, with the same folds as `jiraRows`. */
+function drawnKeys(root: JiraRecord, folded: ReadonlySet<string>): Set<string> {
+  const out = new Set<string>()
+  const walk = (parentId: string, nodes: readonly JiraNode[]): void => {
+    for (const n of nodes) {
+      const id = childId(parentId, n.key)
+      out.add(jiraSiteKey(root.site, n.key))
+      if (!(n.children.length > 0 && folded.has(id))) walk(id, n.children)
+    }
+  }
+  if (!(root.children.length > 0 && folded.has(root.key))) walk(root.key, root.children)
+  return out
+}
+
+/**
+ * The `site/KEY` of each Jira record that renders nested under another shown root, so it gets no root row (#48).
+ * Roots are chosen top down: a record that no other open record draws above it becomes a root, and its drawn
+ * keys close the records they show. A fold or a short snapshot draws less, so the record stays a root.
+ * Records in a cycle (stale data) reach each other, so they all stay roots.
+ */
+function nestedJira(records: readonly JiraRecord[], folded: ReadonlySet<string>): Set<string> {
+  const idOf = (r: JiraRecord): string => jiraSiteKey(r.site, r.issueKey)
+  const drawn = new Map(records.map(r => [idOf(r), drawnKeys(r, folded)]))
+  const reaches = (from: string, to: string): boolean => {
+    const seen = new Set([from])
+    const stack = [from]
+    while (stack.length > 0) {
+      for (const k of drawn.get(stack.pop()!) ?? []) {
+        if (k === to) return true
+        if (drawn.has(k) && !seen.has(k)) {
+          seen.add(k)
+          stack.push(k)
+        }
+      }
+    }
+    return false
+  }
+  const above = (p: JiraRecord, r: JiraRecord): boolean =>
+    p !== r && drawn.get(idOf(p))!.has(idOf(r)) && !reaches(idOf(r), idOf(p))
+  const shown = new Set<string>()
+  const closed = new Set<string>()
+  let left = [...records]
+  for (;;) {
+    const open = left.filter(r => !closed.has(idOf(r)))
+    if (open.length === 0) break
+    const tops = open.filter(r => !open.some(p => above(p, r)))
+    for (const t of tops) {
+      shown.add(idOf(t))
+      for (const k of drawn.get(idOf(t))!) closed.add(k)
+    }
+    left = left.filter(r => !tops.includes(r))
+  }
+  return new Set(records.map(idOf).filter(id => !shown.has(id)))
+}
+
 export function lastRefreshOf(items: readonly ItemRecord[]): number | undefined {
   let last: number | undefined
   for (const i of items)
@@ -476,9 +533,14 @@ export function buildPane(items: readonly ItemRecord[], ctx: ViewContext): PaneS
       .sort((a, b) => byLevel(prioFor(a).level, prioFor(b).level) || a.firstSeen - b.firstSeen)
     if (own.length === 0) continue
     const rows: PaneRow[] = []
+    const jira = own.filter((i): i is JiraRecord => i.category === 'jira')
+    const nested = nestedJira(jira, folded)
+    const tracked = new Map(jira.map(r => [jiraSiteKey(r.site, r.issueKey), { via: r.via, prio: prioFor(r) }]))
     for (const item of own) {
-      if (item.category === 'jira') jiraRows(item, ctx, folded, rows, prioFor(item))
-      else if (item.category === 'github') rows.push(githubRow(item, ctx, prioFor(item)))
+      if (item.category === 'jira') {
+        if (nested.has(jiraSiteKey(item.site, item.issueKey))) continue
+        jiraRows(item, ctx, folded, tracked, rows, prioFor(item))
+      } else if (item.category === 'github') rows.push(githubRow(item, ctx, prioFor(item)))
       else if (item.category === 'artifact') rows.push(artifactRow(item, prioFor(item)))
       else if (item.category === 'web') rows.push(webRow(item, prioFor(item)))
       else if (item.category === 'file') rows.push(fileRow(item, ctx, prioFor(item)))
