@@ -44,16 +44,6 @@ import {
 import { dropAuto } from '../trackers/github/discovered'
 import { GhTool } from '../trackers/github/gh-tool'
 import { AcliTool } from '../trackers/jira/acli-tool'
-import {
-  extractRepoPathsFromTool,
-  PATH_TOOLS,
-  parseRepoHintsFromBash,
-  type RepoHit,
-  repoBaseDir,
-} from '../trackers/repos/hints'
-import { RepoQueue } from '../trackers/repos/queue'
-import { capRepoRows, mergeRepoRows, upsertRepoRows } from '../trackers/repos/rows'
-import { RepoTracker, type RepoVisit } from '../trackers/repos/tracker'
 import { renderBand } from '../ux/band'
 import { renderSections } from '../ux/pane'
 import type {
@@ -78,8 +68,8 @@ import type {
   ToolStatus,
   UiState,
 } from './contracts'
-import { AUTO_SOURCES, isRowId, LIMITS, repoRowId } from './contracts'
-import { rowEvent, toolCallEvent } from './events'
+import { AUTO_SOURCES, LIMITS } from './contracts'
+import { rowEvent, spawnEvent, toolCallEvent } from './events'
 import { artifactOrigin, keyOf } from './model/keys'
 import { rowIdOf, setPriority } from './model/priority'
 import {
@@ -135,10 +125,6 @@ const noRows = (): never[] => []
 
 function readRepos($: EngineInterface): Promise<RepoRecord[]> {
   return readSlot<RepoRecord[]>($, 'repos', noRows)
-}
-
-function updateRepos($: EngineInterface, change: (rows: RepoRecord[]) => RepoRecord[]): Promise<RepoRecord[]> {
-  return updateSlot<RepoRecord[]>($, 'repos', noRows, change)
 }
 
 function readProcesses($: EngineInterface): Promise<ProcessRecord[]> {
@@ -282,9 +268,6 @@ let scheduler: AutoScheduler | undefined
 let round: AutoRound | undefined
 /** When the last round ended. The Worktrees note reads it before `snapshot.at` (A22). */
 let lastRoundAt: number | undefined
-let repoTracker: RepoTracker | undefined
-/** Repo lookups run here, one at a time, after the tool has returned. */
-const repoQueue = new RepoQueue()
 /** The row the priority keys act on. Never stored: a close, a reload or /clear forgets it. */
 let focusedRow: string | undefined
 /** Element key to row id, for the Buttons of the rows with a prio cell as last drawn (`focusTargets`). */
@@ -296,17 +279,6 @@ let focusRows: ReadonlyMap<string, string> = new Map()
 function ensureRuntime($: EngineInterface): void {
   if (gh && acli && coordinator && scheduler && round) return
   const run: Runner = (argv, init) => $.process.run(argv, init)
-  repoTracker = new RepoTracker({
-    run,
-    now: Date.now,
-    get rootPath() {
-      const root = factsOf($).read('auto.root') as unknown as AutoState['root'] | undefined
-      return root?.top ?? (typeof root?.cwd === 'string' ? root.cwd : undefined)
-    },
-    get rootRepo() {
-      return (factsOf($).read('session.repo') as unknown as RepoRef | undefined) ?? null
-    },
-  })
   const g = new GhTool(run, Date.now)
   const a = new AcliTool(run, Date.now)
   gh = g
@@ -448,24 +420,6 @@ async function setItems($: EngineInterface, change: (list: ItemRecord[]) => Item
 }
 
 /**
- * Like setItems, for tracked repositories. Every write to `repos` goes through here, so this is the one place that
- * drops the repos the person dismissed with the x button. It drops them before the cap. Reads first and writes
- * nothing when the result is the input list itself.
- */
-async function setRepos($: EngineInterface, change: (rows: RepoRecord[]) => RepoRecord[]): Promise<void> {
-  const dismissed = new Set((await readAuto($)).dismissed)
-  const apply = (rows: RepoRecord[]): RepoRecord[] => {
-    const out = change(rows)
-    const kept = dismissed.size === 0 ? out : out.filter(r => !dismissed.has(repoRowId(r.key)))
-    return capRepoRows(kept.length === out.length ? out : kept)
-  }
-  const cur = await readRepos($)
-  if (apply(cur) === cur) return // nothing changed: no write, no flush
-  await updateRepos($, apply)
-  await schedule($)
-}
-
-/**
  * Change the `auto` member. Every write goes through here (A18, A22). It reads first and stops when the change
  * returns its input: no write. Else `update` runs the change on the current value and retries on a version miss.
  * The hook that calls it has run the session check first, so a /clear has already carried the run into the new state.
@@ -516,95 +470,17 @@ async function touch($: EngineInterface, agentId: string | undefined): Promise<v
   if (agentId !== undefined) await setAuto($, s => recordActivity(s, agentId, Date.now()))
 }
 
-function touchedBy($: EngineInterface, agentId: string | undefined): string {
-  if (agentId === undefined) return 'main'
-  const agents = factsOf($).read('auto.agents') as unknown as AutoState['agents'] | undefined
-  const label = agents?.find(a => a.id === agentId)?.label
-  return label && label !== '' ? label : `agent:${agentId.slice(0, 8)}`
-}
-
-/**
- * Queues a repo lookup and returns at once: a lookup costs several git calls and must not hold a tool result back.
- * Who, when, the clear count and the session id are taken now, so the row says who touched the repo even when the job
- * runs late. The job writes nothing after /track clear or a new session id. Never rejects.
- */
-function enqueueRepo<T>(
-  $: EngineInterface,
-  key: string,
-  items: readonly T[],
-  label: (item: T) => string,
-  agentId: string | undefined,
-  resolve: (tracker: RepoTracker, item: T, who: string) => Promise<RepoVisit | null>,
-): void {
-  const tracker = repoTracker
-  if (!tracker || items.length === 0) return
-  const who = touchedBy($, agentId)
-  const at = Date.now()
-  const m = managerOf($)
-  const gen = m.generation
-  const sid = m.watch.lastId
-  repoQueue.push(`${key}\0${gen}\0${sid ?? ''}\0${who}\0${items.map(label).join('\0')}`, async () => {
-    const visits: RepoVisit[] = []
-    for (const item of items) {
-      try {
-        const v = await resolve(tracker, item, who)
-        if (v) visits.push(v)
-      } catch {
-        // one bad item must not stop the others
-      }
-    }
-    if (visits.length === 0) return
-    if ((await m.watch.current()) !== gen) return // a /clear, /resume or /track clear since the job began (D8)
-    await setRepos($, rows => {
-      let out = rows
-      for (const v of visits) out = upsertRepoRows(out, { ...v, at })
-      return out
-    })
-  })
-}
-
-function enqueueRepoPaths($: EngineInterface, hits: readonly RepoHit[], agentId: string | undefined): void {
-  enqueueRepo(
-    $,
-    'path',
-    hits,
-    h => `${h.mode}${h.branchMayChange ? '!' : ''}:${h.path}`,
-    agentId,
-    (t, h, who) => t.resolvePath(h.path, who, h.mode, { branchMayChange: h.branchMayChange === true }),
-  )
-}
-
-function enqueueRepoRefs($: EngineInterface, refs: readonly RepoRef[], agentId: string | undefined): void {
-  enqueueRepo(
-    $,
-    'ref',
-    refs,
-    r => `${r.host}/${r.owner}/${r.repo}`,
-    agentId,
-    (t, ref, who) => t.fromRepoRef(ref, who),
-  )
-}
-
-/** A `tool.call` result of a call that was refused (`deny`) or that the tool reported as an error (`isError`). */
-const refused = (ran: unknown): boolean =>
-  !!ran && typeof ran === 'object' && (ran as { deny?: unknown }).deny !== undefined
-const failed = (ran: unknown): boolean =>
-  refused(ran) || (!!ran && typeof ran === 'object' && (ran as { isError?: unknown }).isError === true)
-
 /** An event reason for the round, and a look at the tick. */
 function kickAuto($: EngineInterface, reason: AutoReason): void {
   void enter($).catch(() => {})
   scheduler?.kick(reason)
 }
 
-/** The x button: the `auto` atom first, the items second. The order matters (spec 8, 10.5). */
+/** The x button: the manager adds the id to the dismiss list first, drops the item key second, then the trackers hear of it. */
 async function dismissOne($: EngineInterface, id: string): Promise<void> {
   try {
     await enter($)
-    await setAuto($, s => dismiss(s, [id]))
-    // A repo row: setRepos is the choke point that drops it now that the id is on the dismiss list.
-    if (id.startsWith('rp:')) await setRepos($, rows => rows)
-    else if (!isRowId(id)) await setItems($, list => list.filter(rec => rec.key !== id)) // the store copy loses it too
+    await managerOf($).dismiss(portsOf($), [id])
   } catch {
     // The row stays. The person can press again.
   }
@@ -625,7 +501,7 @@ function managerOf($: EngineInterface): LifecycleManager {
     {
       trackers: buildTrackers({}),
       items: legacyHost($),
-      extraSlots: [reposSlot($), autoSlot($)],
+      extraSlots: [autoSlot($)],
       dismiss: p => autoDismiss(p.state.slot),
       global: GLOBAL_DEFAULTS,
       paneId: PANE,
@@ -697,26 +573,6 @@ function itemsSlot($: EngineInterface): DataSlot {
       if (list.length > 0) await setItems($, cur => unionRecords(list, cur))
     },
     clear: () => setItems($, () => []),
-  }
-}
-
-function reposSlot($: EngineInterface): DataSlot {
-  return {
-    id: 'repos',
-    persist: true,
-    read: async () => (await readRepos($)) as unknown as Json,
-    empty: isEmpty,
-    settle: async (live, stored) =>
-      mergeRepoRows(
-        (stored ?? []) as unknown as RepoRecord[],
-        (live ?? []) as unknown as RepoRecord[],
-      ) as unknown as Json,
-    restore: async (value, how) => {
-      const rows = value as unknown as RepoRecord[]
-      if (rows.length > 0)
-        await setRepos($, cur => (how === 'carry' ? mergeRepoRows(rows, cur) : mergeRepoRows(cur, rows)))
-    },
-    clear: () => setRepos($, () => []),
   }
 }
 
@@ -1600,9 +1456,6 @@ export const register: Register = on => {
   }).catch((_$, e, next) => next(e))
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    // The Bash input has no cwd. A compose project without -p is named after a folder, and a relative `cd` or `git -C`
-    // needs a base. Read the session's cwd BEFORE the command runs: a persisted `cd` moves it.
-    const cwd = (await $.session.cwd().catch(() => undefined)) ?? undefined
     const ran = await next(e)
     const command = String(e.command ?? '')
     try {
@@ -1612,16 +1465,6 @@ export const register: Register = on => {
       if (agentId !== undefined && branch !== undefined) await setAuto($, s => recordAgentBranch(s, agentId, branch))
       await touch($, e.agentId)
       if (f.kick) kickAuto($, f.kick)
-    } catch {
-      // See above.
-    }
-    try {
-      // Last, and not for a denied call. A failing command still touched the repo.
-      if (!refused(ran)) {
-        const repoHints = parseRepoHintsFromBash(command, repoBaseDir(cwd, e.agentId))
-        enqueueRepoPaths($, repoHints.paths, e.agentId)
-        enqueueRepoRefs($, repoHints.repos, e.agentId)
-      }
     } catch {
       // See above.
     }
@@ -1651,29 +1494,6 @@ export const register: Register = on => {
     return ran
   }).catch((_$, e, next) => next(e))
 
-  // The file tools. A failed or denied call touched nothing. Not a sign of life: only the hooks above are (A7).
-  for (const tool of PATH_TOOLS) {
-    // The cast: the typings of this engine version do not list Grep and Glob as built-in tools.
-    on('tool.call', { tool: tool as 'Read' }, async ($, e, next) => {
-      // A relative path needs the session cwd, read before the call runs. Only the main loop has one.
-      let hits = extractRepoPathsFromTool(tool, e)
-      if (e.agentId === undefined && hits.some(h => !h.path.startsWith('/') && !h.path.startsWith('~'))) {
-        const cwd = (await $.session.cwd().catch(() => undefined)) ?? undefined
-        hits = extractRepoPathsFromTool(tool, e, repoBaseDir(cwd, e.agentId))
-      }
-      const ran = await next(e)
-      try {
-        if (!failed(ran)) {
-          await enter($)
-          enqueueRepoPaths($, hits, e.agentId)
-        }
-      } catch {
-        // See above.
-      }
-      return ran
-    }).catch((_$, e, next) => next(e))
-  }
-
   // A subagent or a workflow agent starts. `next` gives its id. The master cwd is read before `next`: it is the
   // spawn-time location of a child of the main loop (A6).
   on('agent.spawn', async ($, e, next) => {
@@ -1684,13 +1504,15 @@ export const register: Register = on => {
       await enter($)
       const f = fromSpawn(e, out)
       if (f) {
-        const state = await setAuto($, s => recordSpawn(s, f, Date.now(), sessionCwd))
-        // A nested child with no cwd of its own works where the ledger put it: in the cwd of its parent.
-        const cwd =
-          f.cwd ?? (f.parentAgentId !== undefined ? state.agents.find(a => a.id === f.agentId)?.cwd : undefined)
-        if (cwd) enqueueRepoPaths($, [{ path: cwd, mode: 'read' }], f.agentId)
+        await setAuto($, s => recordSpawn(s, f, Date.now(), sessionCwd))
       }
       kickAuto($, 'agent')
+    } catch {
+      // See above.
+    }
+    try {
+      // The trackers hear of the spawn after the ledger holds it: the repos tracker reads the agent's cwd from there.
+      await managerOf($).agentSpawn(portsOf($), spawnEvent(e, out, sessionCwd))
     } catch {
       // See above.
     }

@@ -3,11 +3,12 @@
 
 import type { Tracker } from '../core/interfaces/tracker'
 import { processesTracker } from './processes'
+import { reposTracker } from './repos'
 
 /** What the trackers need from the wiring. Later tasks add the PR-lane deps of the auto tracker. */
 export type TrackerDeps = Record<string, never>
 
 /** The trackers of this load. Each call builds new ones, so per-load state (a breaker, a service) is not shared. */
 export function buildTrackers(_deps: TrackerDeps): readonly Tracker[] {
-  return [processesTracker()]
+  return [reposTracker(), processesTracker()]
 }

@@ -65,5 +65,5 @@ export function hostWorld(trackers: readonly Tracker<Cfg, Json>[] | readonly Tra
     log: w.ports.log,
   })
   const bus = new EventBus({ log: w.ports.log })
-  return { w, host, bus, facts, watch, persisted, items, dues }
+  return { w, host, bus, facts, watch, persisted, items, dues, dismissed }
 }
