@@ -54,7 +54,12 @@ export function hostWorld(trackers: readonly Tracker<Cfg, Json>[] | readonly Tra
     ports: w.ports,
     global: GLOBAL_DEFAULTS,
     facts,
-    dismiss: { list: async () => dismissed, add: async () => {} },
+    dismiss: {
+      list: async () => dismissed,
+      add: async ids => {
+        for (const id of ids) dismissed.add(id)
+      },
+    },
     items,
     watch,
     due: (owner, everyMs) => {

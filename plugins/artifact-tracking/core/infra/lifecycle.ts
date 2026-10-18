@@ -46,7 +46,7 @@ const reason = (e: unknown): string => (e instanceof Error ? e.message : String(
 export class LifecycleManager {
   readonly facts: FactsPort = new Facts()
   readonly watch: SessionWatch
-  /** register.tsx still calls the store paths itself (touch, read, legacy sweep) until Tasks 9 to 11 move them in. */
+  /** The session store. Public for the lifecycle tests; the hooks reach it through the manager only. */
   readonly persistence: Persistence
   private readonly scheduler: Scheduler
   private readonly bus: EventBus
@@ -332,9 +332,13 @@ export class LifecycleManager {
 
   /**
    * The switch. Every step writes through the raw paths and never calls `watch.check()`: that is single flight and
-   * would wait for this switch (Review Focus 2). A failing step is logged and the next one still runs.
+   * would wait for this switch (Review Focus 2). A failing step is logged and the next one still runs. The item host
+   * hears of the switch first, so it forgets what belonged to the old session (the repo) before a load or the replay
+   * looks it up for the new one. A reset after the load would throw that lookup away.
    */
   private async onSwitch(sw: Switch): Promise<void> {
+    const ev = { from: sw.from, to: sw.to, kind: sw.kind }
+    await this.guard('sessionChanged', () => this.d.items.sessionChanged(ev))
     const slots = this.slots()
     const run = (await this.persistence.loadRun()).run ?? {}
     // The run-scoped slots go first: the dismiss list and the proofs must be there before an item loads (D9). `v2:run`
@@ -350,8 +354,6 @@ export class LifecycleManager {
       // A resume loads the stored copy of the new id. A session that already holds items keeps them (a reload kept its state).
       await this.loadSession(sw.to, 'a switch')
     }
-    const ev = { from: sw.from, to: sw.to, kind: sw.kind }
-    await this.guard('sessionChanged', () => this.d.items.sessionChanged(ev))
     await this.bus.emit('sessionChanged', ev, this.ports)
     await this.guard('clearRun', () => this.persistence.clearRun())
   }

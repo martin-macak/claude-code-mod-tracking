@@ -226,7 +226,7 @@ test('a clear switch carries persist:false slots first, then the persisted slots
   await leave(t, 'sess-2', 'clear')
   t.log.length = 0
   await t.m.entry(t.w.ports)
-  expect(t.log).toEqual(['auto:carry', 'items:carry', 'repos:carry', 'processes:carry', 'host:clear'])
+  expect(t.log).toEqual(['host:clear', 'auto:carry', 'items:carry', 'repos:carry', 'processes:carry'])
   expect(t.changed).toEqual(['sess-1>sess-2'])
 })
 
@@ -236,7 +236,7 @@ test('a clear switch skips a slot whose snapshot value is undefined and the stor
   await leave(t, 'sess-2', 'clear')
   t.log.length = 0
   await t.m.entry(t.w.ports)
-  expect(t.log).toEqual(['auto:carry', 'processes:carry', 'host:clear'])
+  expect(t.log).toEqual(['host:clear', 'auto:carry', 'processes:carry'])
 })
 
 test('a resume switch carries persist:false slots and loads v2:s:<new> when the items slot is empty', async () => {
@@ -249,7 +249,7 @@ test('a resume switch carries persist:false slots and loads v2:s:<new> when the 
   t.repos.live = []
   t.log.length = 0
   await t.m.entry(t.w.ports)
-  expect(t.log).toEqual(['auto:carry', 'items:load', 'repos:load', 'host:resume']) // processes has no stored value
+  expect(t.log).toEqual(['host:resume', 'auto:carry', 'items:load', 'repos:load']) // processes has no stored value
   expect(t.items.live).toEqual(['b-item'])
   expect(t.repos.live).toEqual(['b-repo'])
 })
@@ -262,7 +262,7 @@ test('a resume switch replays the transcript once, after the stored copy loads',
   t.w.session.messages = [{ role: 'user', text: 'hello', toolUses: [] }]
   await t.m.entry(t.w.ports)
   expect(t.replays).toHaveLength(1)
-  expect(t.replays[0]?.after).toContain('items:load')
+  expect(t.replays[0]?.after).toEqual(['host:resume', 'auto:carry', 'items:load']) // the host hears first
   expect(t.replays[0]?.batch).toEqual([
     { kind: 'row', ev: { door: 'prompt', origin: 'replay', isMeta: false, hasMessage: true, text: 'hello' } },
   ])
@@ -275,6 +275,7 @@ test('a resume switch replays even when the new id has no stored copy', async ()
   t.items.live = []
   await t.m.entry(t.w.ports)
   expect(t.replays).toHaveLength(1)
+  expect(t.replays[0]?.after).toContain('host:resume') // the item host forgot the old session before the replay
 })
 
 test('a clear switch and a warm resume do not replay', async () => {
@@ -315,7 +316,7 @@ test('a resume switch to a warm items slot loads nothing', async () => {
   await leave(t, 'sess-b', 'resume')
   t.log.length = 0
   await t.m.entry(t.w.ports) // the items slot still holds ['i1']
-  expect(t.log).toEqual(['auto:carry', 'host:resume'])
+  expect(t.log).toEqual(['host:resume', 'auto:carry'])
 })
 
 test('a resume switch to an id with no stored copy starts empty', async () => {
@@ -326,7 +327,7 @@ test('a resume switch to an id with no stored copy starts empty', async () => {
   t.repos.live = []
   t.log.length = 0
   await t.m.entry(t.w.ports)
-  expect(t.log).toEqual(['auto:carry', 'host:resume'])
+  expect(t.log).toEqual(['host:resume', 'auto:carry'])
   expect(t.items.live).toEqual([])
 })
 
@@ -343,7 +344,7 @@ test('a switch with no snapshot carries v2:s:<from> and v2:run.run', async () =>
   t.auto.live = undefined
   t.log.length = 0
   await t.m.entry(t.w.ports)
-  expect(t.log).toEqual(['auto:carry', 'items:carry', 'host:clear'])
+  expect(t.log).toEqual(['host:clear', 'auto:carry', 'items:carry'])
   expect(t.items.live).toEqual(['stored'])
   expect(t.auto.live).toEqual({ root: '/kept' })
 })
@@ -370,7 +371,7 @@ test('a slot that fails to restore is logged and the other slots and the host st
   t.log.length = 0
   await t.m.entry(t.w.ports)
   expect(t.w.logs).toEqual(['lifecycle: repos failed in a switch: no state'])
-  expect(t.log).toEqual(['auto:carry', 'items:carry', 'processes:carry', 'host:clear'])
+  expect(t.log).toEqual(['host:clear', 'auto:carry', 'items:carry', 'processes:carry'])
   expect((t.w.store.get('v2:run') as { pendingEnd?: unknown }).pendingEnd).toBeUndefined()
 })
 
@@ -636,7 +637,7 @@ test('start honours a recent pendingEnd of a clear and carries v2:s:<from> and v
   t.w.clock.now = 60000 // exactly two ticks later: still recent
   t.auto.live = undefined
   await t.m.start(t.w.ports, { cwd: '/work', fromSessionStart: true })
-  expect(trace).toEqual(['auto:carry', 'items:carry', 'host:clear'])
+  expect(trace).toEqual(['host:clear', 'auto:carry', 'items:carry'])
   expect(t.items.live).toEqual(['old'])
   expect(t.auto.live).toEqual({ root: '/kept' })
   expect(t.replays).toHaveLength(0)
@@ -657,7 +658,7 @@ test('start honours a recent pendingEnd of a resume and loads the stored copy of
   t.w.clock.now = 20
   t.auto.live = undefined
   await t.m.start(t.w.ports, { fromSessionStart: true })
-  expect(trace).toEqual(['items:load', 'host:resume'])
+  expect(trace).toEqual(['host:resume', 'items:load'])
   expect(t.items.live).toEqual(['mine'])
   expect(t.replays).toHaveLength(1)
 })
@@ -700,7 +701,7 @@ test('a second start finds a switch that came between the starts, and loads noth
   await t.m.ensureStarted(t.w.ports)
   t.w.session.id = 'sess-2' // a /resume nobody saw
   await t.m.start(t.w.ports, { fromSessionStart: true })
-  expect(trace).toEqual(['items:load', 'host:resume'])
+  expect(trace).toEqual(['host:resume', 'items:load'])
   expect(t.replays).toHaveLength(1)
 })
 
@@ -775,14 +776,15 @@ test('the host trackers own slots: they are stored with the others and carried b
   expect(t.w.store.get('v2:s:sess-1')).toEqual({ items: ['i1'], repos: ['r1'], processes: [], rows: ['r1'] })
 })
 
-test('a switch tells the trackers, after the item host', async () => {
+test('a switch tells the item host first and the trackers last', async () => {
   const log: string[] = []
   const t = setup({ log, trackers: [rec('a', 10, log)] })
   await t.m.entry(t.w.ports)
   await leave(t, 'sess-2', 'clear')
   log.length = 0
   await t.m.entry(t.w.ports)
-  expect(log.slice(-2)).toEqual(['host:clear', 'switch:a:clear'])
+  expect(log[0]).toBe('host:clear') // before any slot carries
+  expect(log.at(-1)).toBe('switch:a:clear') // after the data moved
 })
 
 test('end on prompt_input_exit disposes the trackers; a clear does not', async () => {

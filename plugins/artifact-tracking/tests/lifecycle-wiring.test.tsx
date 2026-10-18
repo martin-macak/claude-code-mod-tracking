@@ -1,11 +1,13 @@
 // Kit tests of the lifecycle layer (L3): the v2 store layout, the session switch and `session.end`.
 // New behavior goes in this file, so the older wiring tests keep their cases (spec 10, item 14).
 
+import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
 import { LIMITS } from '../hooks/contracts'
 import {
   clearSession,
   fileTool,
+  PANE,
   quiet,
   readDone,
   response,
@@ -76,4 +78,39 @@ test('two tool calls at once right after /clear both land on the carried row', a
     fileTool($, w.fake, 'Read', readDone('/work/a.md')),
   ])
   expect((await track($)).text).toBe('Files  1 files\n  a.md  created  viewed 2')
+})
+
+const GH5 = {
+  key: 'gh:github.com/acme/web#5',
+  category: 'github',
+  url: 'https://github.com/acme/web/issues/5',
+  label: 'acme/web#5',
+  sources: ['prompt'],
+  firstSeen: 2,
+  lastSeen: 2,
+  seenCount: 1,
+  host: 'github.com',
+  owner: 'acme',
+  repo: 'web',
+  number: 5,
+  type: 'issue',
+  title: 'Web five',
+  state: 'open',
+}
+
+type PaneUi = { find(q: unknown): Promise<unknown>; unmount(): Promise<void> }
+const mountPane = ($: Engine) => $.ui.mount({ ...PANE, surface: 'terminal' } as never) as unknown as Promise<PaneUi>
+
+test('a /resume that loads a stored copy keeps the session repo it looked up', async ($, on) => {
+  const w = world(on, { isolateState: true, seed: { 'v2:index': ['sess-b'], 'v2:s:sess-b': { items: [GH5] } } })
+  await $.session.append(response('https://alpha.example/')) // learns the id
+  await quiet(w.calls)
+  await clearSession($, w, 'sess-b', 'resume')
+  // A Write is the first hook of the resumed session and runs the switch. Nothing after it asks for the repo.
+  await fileTool($, w.fake, 'Write', writeCreated('/work/docs/a.md'))
+  await quiet(w.calls)
+  const ui = await mountPane($)
+  expect(await ui.find({ text: 'Web five' })).toBeDefined()
+  expect(await ui.find({ text: 'acme/web#5' })).toBeUndefined() // the long key means the repo is forgotten
+  await ui.unmount()
 })

@@ -1,6 +1,6 @@
 // The tracker list: ids and orders are unique, no tracker takes the id of the item list, and every `store` serves its
 // defaults with the tracker on. The OCP proof of the list: tests/tracker-host.test.ts runs a fake tracker with no edit
-// to core. Tasks 9 to 12 add their trackers here; Task 12 adds the order check for all eight.
+// to core. Task 12 adds the artifact and file trackers here and the order check for all eight.
 import { expect, test } from 'claude-code/testing'
 import { buildTrackers } from '../trackers'
 import type { AutoGithub } from '../trackers/auto'
@@ -37,13 +37,22 @@ test('each store(ctx) equals its config.defaults and enabled is true', async () 
   }
 })
 
-test('the list holds the repos, processes and auto trackers at orders 50, 80 and 10', () => {
+test('the list holds github, jira, web, repos, processes and auto at orders 30, 20, 60, 50, 80 and 10', () => {
   expect(list.map(t => [t.id, t.order])).toEqual([
+    ['github', 30],
+    ['jira', 20],
+    ['web', 60],
     ['repos', 50],
     ['processes', 80],
     ['auto', 10],
   ])
   expect(list.find(t => t.id === 'auto')?.persist).toBe(false)
+  // The item trackers declare their identity and config only (plan decision D13): no events, no data.
+  for (const id of ['github', 'jira', 'web']) {
+    const t = list.find(x => x.id === id)
+    expect(t?.events).toBeUndefined()
+    expect(t?.data).toBeUndefined()
+  }
 })
 
 test('each call builds new trackers, so per-load state is not shared', () => {

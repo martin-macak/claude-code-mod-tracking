@@ -134,6 +134,7 @@ export interface ItemsHost extends ItemStorePort {
   /** Merges a transcript read back: rows and tool calls, in order. */
   replay(batch: readonly ReplayItem[]): Promise<void>
   tick(): Promise<void>
+  /** The session id moved. The manager calls it first in a switch, before any slot carries or loads and before replay. */
   sessionChanged(ev: SessionChangedEvent): Promise<void>
   dispose(): void
 }

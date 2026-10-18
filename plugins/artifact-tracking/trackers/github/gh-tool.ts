@@ -19,7 +19,7 @@ import type {
 import { githubKey, LIMITS } from '../../hooks/contracts'
 
 /** Aliases per GraphQL call. 50 aliases cost 1 rate point (KB github.md section 5). */
-const CHUNK = 50
+export const CHUNK = 50
 const NAME_OK = /^[A-Za-z0-9_.-]+$/
 // Exit 4 and the "gh auth login" hint mean logged out. HTTP 401 is a plain failure for the breaker (spec section 8).
 const AUTH_TEXT = /gh auth login/
