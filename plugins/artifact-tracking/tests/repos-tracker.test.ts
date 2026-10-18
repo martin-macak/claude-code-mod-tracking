@@ -9,6 +9,7 @@ import type { RunResult } from '../core/interfaces/ports'
 import type { AgentProof, RepoRecord } from '../hooks/contracts'
 import { asRepoRows, reposConfig, reposTracker, setRepos } from '../trackers/repos'
 import { fakeConfig } from './fixtures/config-fs'
+import { IDLE_ITEMS } from './fixtures/items-host'
 import { LIMITS } from './fixtures/limits'
 import { type FakeWorld, fakePorts } from './fixtures/ports'
 import { hostWorld } from './fixtures/tracker-host'
@@ -36,6 +37,7 @@ const STORED_SDK: RepoRecord = {
 /** An item host that holds nothing: this tracker never touches the item list. */
 function stubHost(): ItemsHost {
   return {
+    ...IDLE_ITEMS,
     slot: {
       id: 'items',
       persist: true,

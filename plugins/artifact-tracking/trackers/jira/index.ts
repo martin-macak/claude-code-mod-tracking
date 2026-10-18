@@ -1,6 +1,6 @@
-// The jira tracker: Jira issues. In L3 it declares its identity and config. L5 adds its tool, `acli`. The capture
-// funnel and the refresh coordinator stay in the item runtime until Task 8 gives them to the kinds (plan decision D13).
-// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.7 and 5.8. Plan: L3 Task 11, L5 Task 3.
+// The jira tracker: Jira issues. It declares its identity, its config, its kind and its tool, `acli`. Core runs the
+// capture, the refresh and the probe of `acli` through them.
+// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.7 and 5.8. Plan: L3 Task 11, L5 Tasks 3 and 8.
 
 import type { Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'

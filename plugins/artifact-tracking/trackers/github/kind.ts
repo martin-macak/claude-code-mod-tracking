@@ -1,11 +1,14 @@
-// The item kind of GitHub issues and pull requests: its key, its record, its fold and its refresh through `gh`.
+// The item kind of GitHub issues and pull requests: its key, its record, its fold and its refresh through `gh`, the
+// session repo it needs before a scan (`prepare`) and the open check of a short `#N` (`accept`).
 // Plan: L5 Task 4, K4, K5. Task 5 adds `claimUrl` and `scan`; Task 6 the rules; Task 8 the async hooks.
 
 import type { Claim, ItemKind, Json, Refreshable, RefreshContext } from '../../core/interfaces/items'
+import type { RepoRef } from '../../core/interfaces/ports'
 import { sighted } from '../../core/lib/records'
-import { ghClient } from './client'
+import { ghOf } from './client'
 import type { GithubConfig } from './config'
 import { GitHubItem } from './github-item'
+import { ensureRepo, forgetRepo } from './repo'
 import { BRANCH_PR, CLOSED_BY_PR } from './rules'
 import { githubClaim, scanGitHub } from './scan'
 import type { GitHubRecord, GitHubRef, GitHubTarget } from './types'
@@ -45,9 +48,24 @@ function githubRecord(ref: GitHubRef, claim: Claim): GitHubRecord {
   }
 }
 
-/** The client of the `gh` handle the owning tracker declared. The runner builds a handle for every live tool. */
-const clientOf = (c: RefreshContext) =>
-  ghClient(c.tools.handle('gh')!, { now: c.now, limits: () => c.config.slice() as unknown as GithubConfig })
+/** The client of the `gh` handle the owning tracker declared. The runner builds a handle for every declared tool. */
+const clientOf = (c: RefreshContext) => ghOf(c.tools, c.config, c.now)!
+
+// ---------------------------------------------------------------- the open check of a short #N
+
+type Short = { host: string; owner: string; repo: string; number: number; type: 'unknown' }
+
+/** A short `#N` of the session repo: the claim of a keyword-prefixed ref, named in the session repo, type not known. */
+function shortOf(repo: RepoRef | null | undefined, claim: Claim): Short | null {
+  const f = claim.fields as unknown as Partial<GitHubRef> & { short?: true }
+  if (claim.category !== 'github' || f.short !== true || f.type !== 'unknown' || !f.owner || !f.repo || !repo)
+    return null
+  const same =
+    f.host?.toLowerCase() === repo.host.toLowerCase() &&
+    f.owner.toLowerCase() === repo.owner.toLowerCase() &&
+    f.repo.toLowerCase() === repo.repo.toLowerCase()
+  return same ? { host: f.host!, owner: f.owner, repo: f.repo, number: f.number!, type: 'unknown' } : null
+}
 
 export const githubKind: ItemKind<GitHubRecord> = {
   category: 'github',
@@ -58,6 +76,27 @@ export const githubKind: ItemKind<GitHubRecord> = {
     return ref && githubClaim(ref, ctx)
   },
   scan: scanGitHub,
+  prepare: ensureRepo,
+  sessionChanged: forgetRepo,
+  /**
+   * A short `#N` of the session repo counts only when the item exists and is open. Without `gh` none of them counts.
+   * One pre-check call refreshes the candidates and reads their state.
+   */
+  async accept(claims, ctx) {
+    const repo = ctx.facts.read<Json>('session.repo') as unknown as RepoRef | null | undefined
+    const gh = ghOf(ctx.tools, ctx.config, () => ctx.clock.wall())
+    const shorts = new Map(claims.map(c => [c, shortOf(repo, c)] as const))
+    if (!gh) return claims.filter(c => !shorts.get(c))
+    const targets: GitHubTarget[] = claims.flatMap(c => {
+      const s = shorts.get(c)
+      return s ? [{ key: c.key, ...s }] : []
+    })
+    if (targets.length === 0) return claims
+    await gh.refreshItems(targets)
+    // GhTool sets either `error` or a normalized lower-case `state` for each queried item.
+    const open = new Set(targets.filter(t => t.error === undefined && t.state === 'open').map(t => t.key))
+    return claims.filter(c => !shorts.get(c) || open.has(c.key))
+  },
   decode: item => (item.category === 'github' && typeof item.number === 'number' ? (item as GitHubRecord) : null),
   merge(cur, seen) {
     if (cur === null) return githubRecord(refOf(seen), seen)
@@ -81,6 +120,8 @@ export const githubKind: ItemKind<GitHubRecord> = {
       ),
     refreshItems: (items: Refreshable[], c) => clientOf(c).refreshItems(items as unknown as GitHubTarget[]),
     apply: (out, fresh) => (out.type === 'unknown' || fresh.type !== 'unknown' ? { ...out, type: fresh.type } : out),
+    // A manual refresh also forgets the hosts `gh` denied, which the handle does not know.
+    reset: c => clientOf(c).reset(),
   },
   rules: [BRANCH_PR, CLOSED_BY_PR],
 }

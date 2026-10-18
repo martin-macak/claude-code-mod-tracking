@@ -9,6 +9,7 @@ import type { HostContext, ItemsHost, JsonObject } from '../core/interfaces/item
 import type { Ports } from '../core/interfaces/ports'
 import type { Tracker } from '../core/interfaces/tracker'
 import { fakeConfig, fakeConfigFs } from './fixtures/config-fs'
+import { IDLE_ITEMS } from './fixtures/items-host'
 import { fakePorts } from './fixtures/ports'
 import { fake as fakeTracker, hostWorld } from './fixtures/tracker-host'
 
@@ -36,6 +37,7 @@ const P = '/h/.config/claude-code/mods/tracker/config.json'
 /** An item host with a small list. `ctx` is the context the start gave it. */
 function stubHost(): ItemsHost & { ctx?: HostContext } {
   const host: ItemsHost & { ctx?: HostContext } = {
+    ...IDLE_ITEMS,
     slot: {
       id: 'items',
       persist: true,
@@ -172,20 +174,6 @@ test('the toggles are read at the first init of a load only', async () => {
   expect(late.host.live('t')).toBe(false)
 })
 
-test('hostCtx.trackers reads live and the slice', async () => {
-  const t = hostWorld([probe('t', 10, []), probe('u', 20, [])], { file: { trackers: { u: { enabled: false } } } })
-  const { trackers } = t.host.hostCtx(t.w.ports)
-  expect(trackers.live('u')).toBe(true) // the toggles are not read yet: nothing is off
-  t.host.readToggles()
-  expect(trackers.live('t')).toBe(true)
-  expect(trackers.live('u')).toBe(false)
-  expect(trackers.slice('t')).toEqual({ enabled: true, n: 1 })
-  t.cfg.set({ trackers: { t: { n: 7 } } })
-  expect(trackers.slice('t').n).toBe(7) // the slice is read per call; live was fixed by the first read
-  expect(trackers.live('u')).toBe(false)
-  expect(trackers.slice('nobody')).toEqual({})
-})
-
 test('a tracker the host built with the plain fake still gets its slice from the config', async () => {
   const t = hostWorld([fakeTracker('a', 10)])
   await t.host.init()
@@ -320,11 +308,11 @@ test('a render ahead of the start does not fix the toggles from values the file 
   expect(t.m.live('t')).toBe(false)
 })
 
-test('the item runtime sees the toggles before the trackers init', async () => {
+test('the item host sees the toggles before the trackers init', async () => {
   const seen: boolean[] = []
   const t = setup({ trackers: [probe('t', 10, [])], file: { trackers: { t: { enabled: false } } } })
-  t.host.start = async ctx => {
-    seen.push(ctx.trackers.live('t'))
+  t.host.start = async () => {
+    seen.push(t.m.live('t')) // the item service reads `live` from the manager, at the start
   }
   await t.m.ensureStarted(t.w.ports)
   expect(seen).toEqual([false])

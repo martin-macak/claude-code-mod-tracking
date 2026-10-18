@@ -1,10 +1,9 @@
-// `/track` on fakePorts, through a real LifecycleManager and item runtime: the empty command, refresh, clear, prio and
+// `/track` on fakePorts, through a real LifecycleManager and item service: the empty command, refresh, clear, prio and
 // the usage line. Each case mirrors the kit test of the same subject in register.test.tsx. Plan: L3 Task 12.
 import { expect, test } from 'claude-code/testing'
 import type { Tracker } from '../core/interfaces/tracker'
 import { trackCommand } from '../hooks/command'
-import { ItemRuntime } from '../hooks/items/runtime'
-import { promptRow } from './fixtures/items'
+import { fakeItems, promptRow } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
 
 const USAGE = 'Usage: /track [refresh|clear|prio <ref> <high|normal|low|auto>]'
@@ -100,9 +99,9 @@ test('a bad level or a bogus argument prints the usage', async () => {
   expect((t.items()[0] as { priority?: string }).priority).toBeUndefined()
 })
 
-test('a runtime that never started says it is not ready', async () => {
+test('an item host that never started says it is not ready', async () => {
   const t = world()
-  const idle = new ItemRuntime(t.w.ports.state)
+  const idle = fakeItems().items
   expect((await trackCommand(t.w.ports, t.m, idle, '')).text).toBe('artifact-tracking: not ready.')
   expect(t.w.ui.opened).toBe(0)
 })

@@ -18,8 +18,15 @@ import type {
 import type { Json } from '../../core/interfaces/items'
 import type { FactsPort, Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
-import type { AutoReason, AutoState, DiscoveryApplied, GitHubDiscoveryApi, RepoRef } from '../../hooks/contracts'
-import { asRecords, MASTER_ID } from '../../hooks/contracts'
+import type {
+  AutoReason,
+  AutoState,
+  DiscoveryApplied,
+  GitHubDiscoveryApi,
+  ItemRecord,
+  RepoRef,
+} from '../../hooks/contracts'
+import { MASTER_ID } from '../../hooks/contracts'
 import { type AutoConfig, autoConfig } from './config'
 import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from './events'
 import {
@@ -39,7 +46,7 @@ import type { BranchesFact } from './types'
 
 /**
  * What the PR lane of the round needs from github. Injected, because the GitHub tool and the session repo belong to
- * the item runtime until layer L5 moves the PR lane to the github tracker (plan decision D13).
+ * the item host until layer L5b moves the PR lane to the github tracker (plan decision D13).
  */
 export type AutoGithub = {
   discovery: GitHubDiscoveryApi
@@ -168,7 +175,7 @@ function build(ctx: Ctx, gh: AutoGithub, tally: Tally): Services {
     applyItems: async change => {
       let result: DiscoveryApplied | undefined
       await ctx.items.update((list, dismissed) => {
-        result = change(asRecords(list), dismissed)
+        result = change(list as unknown as ItemRecord[], dismissed)
         return result.list
       })
       if (!result) throw new Error('the item write did not run')
@@ -262,7 +269,7 @@ export function autoTracker(gh: AutoGithub): Tracker<AutoConfig, AutoState> {
   // refresh` runs a round at once, and with `wait` the command answers when the round and its PR step are done.
   const onCommand: H<CommandEvent> = async (ctx, ev) => {
     if (ev.sub === 'clear') {
-      const ids = autoIds(await readAuto(ctx), asRecords(await ctx.items.list()))
+      const ids = autoIds(await readAuto(ctx), (await ctx.items.list()) as unknown as ItemRecord[])
       await ctx.dismiss.add(ids)
     } else if (ev.sub === 'refresh') {
       kick('manual')

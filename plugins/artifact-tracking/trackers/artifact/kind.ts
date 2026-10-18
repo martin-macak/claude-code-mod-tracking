@@ -1,11 +1,14 @@
 // The item kind of Claude artifacts (issue #29): its key, its record and the rules for the name of a page seen twice.
-// No tool reads its status, so it has no refresh. Plan: L5 Task 4 (K17: the static item class goes), K4 (`fold`, `migrate`).
-// Task 5 adds `claimUrl`; Task 8 the Artifact tool call, `replayWins` and the delete claim.
+// No tool reads its status, so it has no refresh. A publish with the Artifact tool tracks the page (source `publish`), a
+// delete marks its row; a page that no row knows gets no row. An error, a refusal or another action changes nothing.
+// Plan: L5 Task 4 (K17: the static item class goes), K4 (`fold`, `migrate`). Task 5 adds `claimUrl`; Task 8 the Artifact
+// tool call, `replayWins` and the delete claim.
 
 import type { Claim, ItemKind, JsonObject } from '../../core/interfaces/items'
 import { type BaseRecord, sighted } from '../../core/lib/records'
+import { artifactEvent } from './artifact-tool'
 import { artifactIdOf, artifactKeyOf, parseArtifactUrl } from './artifact-url'
-import { artifactFromWeb } from './records'
+import { artifactFromWeb, artifactOrigin } from './records'
 import type { ArtifactRecord, ArtifactRef } from './types'
 
 export { artifactKeyOf }
@@ -66,8 +69,29 @@ export const artifactKind: ItemKind<ArtifactRecord> = {
       fields: fields as unknown as JsonObject,
     }
   },
+  /** One Artifact call: `ev.input` as the model gave it, `ev.result` as the tool answered. */
+  fromTool: {
+    Artifact: async (ev, ctx) => {
+      const found = artifactEvent(ev.input, ev.result)
+      if (!found) return []
+      if (found.kind === 'deleted')
+        return [{ category: 'artifact', key: found.key, source: 'publish', at: ctx.now, fields: { deleted: true } }]
+      const { category, ...fields } = found.ref
+      return [
+        {
+          category,
+          key: artifactKeyOf(found.ref),
+          source: 'publish',
+          at: ctx.now,
+          fields: fields as unknown as JsonObject,
+        },
+      ]
+    },
+  },
   decode: item => (item.category === 'artifact' ? (item as ArtifactRecord) : null),
   merge(cur, seen) {
+    // A delete marks the row (R12). With no row there is nothing to mark, and a marked row stays as it is.
+    if (seen.fields.deleted === true) return cur && !cur.deleted ? { ...cur, deleted: true } : cur
     const ref = refOf(seen)
     if (cur === null) return artifactRecord(ref, seen)
     const next = sighted(cur, seen)
@@ -81,4 +105,8 @@ export const artifactKind: ItemKind<ArtifactRecord> = {
     return out
   },
   migrate: item => (item.category === 'web' ? artifactFromWeb(item as BaseRecord) : null),
+  /** A transcript knows more than a stored copy of a page only when it saw the publish or the delete after the flush. */
+  replayWins: (fresh, stored) =>
+    (artifactOrigin(fresh) === 'published' && artifactOrigin(stored) === 'mentioned') ||
+    (!!fresh.deleted && !stored.deleted),
 }

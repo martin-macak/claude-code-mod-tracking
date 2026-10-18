@@ -142,18 +142,20 @@ export function foldRecords(a: StoredItem, b: StoredItem, kinds: KindTable): Sto
 
 /**
  * Offers each claim to the kind of its category. A new key gets `kind.merge(null, claim)` (null adds nothing). A known
- * key gets `kind.merge(cur, claim)`. The cap drops the smallest lastSeen, never a record this call added. Every record
- * of the input is copied, so the output shares nothing with it.
+ * key gets `kind.merge(cur, claim)`; the kind returns `cur` itself when the claim changes nothing. The cap drops the
+ * smallest lastSeen, never a record this call added. Every record of the output is a copy, so it shares nothing with
+ * the input. `changed` is false when no claim changed anything (a delete of a page that is gone): the caller skips the write.
  */
 export function mergeClaims(
   list: readonly StoredItem[],
   claims: readonly Claim[],
   kinds: KindTable,
   cap: number,
-): { list: StoredItem[]; added: string[] } {
+): { list: StoredItem[]; added: string[]; changed: boolean } {
   const out: StoredItem[] = list.map(cloneRecord)
   const index = new Map<string, number>(out.map((r, i) => [r.key, i]))
   const added: string[] = []
+  let changed = false
   for (const claim of claims) {
     const kind = kinds(claim.category)
     if (!kind) continue
@@ -164,13 +166,17 @@ export function mergeClaims(
       index.set(claim.key, out.length)
       out.push(rec)
       added.push(claim.key)
+      changed = true
       continue
     }
     const cur = kind.decode(out[at]!)
     const next = cur === null ? null : kind.merge(cur, claim)
-    if (next) out[at] = next
+    if (next && next !== cur) {
+      out[at] = next
+      changed = true
+    }
   }
-  return { list: enforceCap(out, cap, new Set(added)), added }
+  return { list: enforceCap(out, cap, new Set(added)), added, changed }
 }
 
 /** Fold records with the same key (`a` first), then cap. The input records are copied. */

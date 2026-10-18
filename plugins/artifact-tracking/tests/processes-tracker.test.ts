@@ -9,6 +9,7 @@ import type { RunResult } from '../core/interfaces/ports'
 import type { ProcessRecord, ProcessUiState } from '../hooks/contracts'
 import { processesConfig, processesTracker } from '../trackers/processes'
 import { fakeConfig } from './fixtures/config-fs'
+import { IDLE_ITEMS } from './fixtures/items-host'
 import { fakePorts } from './fixtures/ports'
 
 const res = (stdout = '', exitCode = 0, stderr = ''): RunResult => ({ exitCode, stdout, stderr })
@@ -28,6 +29,7 @@ function setup(o: { cwd?: string } = {}) {
   // Engine time starts at the real time: `ps` start times in the cases below are real dates.
   const w = fakePorts({ now: Date.now(), session: { cwd: o.cwd ?? '/work' } })
   const host: ItemsHost = {
+    ...IDLE_ITEMS,
     slot: {
       id: 'items',
       persist: true,

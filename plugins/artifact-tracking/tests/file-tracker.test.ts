@@ -4,7 +4,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Json } from '../core/interfaces/items'
 import type { FileRecord } from '../hooks/contracts'
-import { fileConfig, fileTracker } from '../trackers/file'
+import { fileConfig, fileKind, fileTracker } from '../trackers/file'
 import { LIMITS } from './fixtures/limits'
 import { managerWorld } from './fixtures/manager'
 
@@ -60,10 +60,12 @@ function world(o: { cwd?: string; env?: Record<string, string>; settings?: Json 
   return { ...w, tool, files }
 }
 
-test('the tracker takes order 70 and hears Write, Edit and Read; it keeps no data', () => {
+test('the tracker takes order 70 and its kind hears Write, Edit and Read; it keeps no data', () => {
   const t = fileTracker()
   expect([t.id, t.order]).toEqual(['file', 70])
-  expect(Object.keys(t.events?.toolCall ?? {}).sort()).toEqual(['Edit', 'Read', 'Write'])
+  expect(Object.keys(fileKind.fromTool ?? {}).sort()).toEqual(['Edit', 'Read', 'Write'])
+  expect(t.kinds).toEqual([fileKind])
+  expect(t.events).toBeUndefined()
   expect(t.data).toBeUndefined()
 })
 
@@ -190,9 +192,9 @@ test('a refused item write does not reject the dispatch', async () => {
     throw new Error('denied')
   }
   t.w.ports.state.items.update = fail
-  await t.tool('Write', created('/work/docs/plan.md')) // the bus isolates the handler: this resolves
+  await t.tool('Write', created('/work/docs/plan.md')) // the item host isolates the kind: this resolves
   expect(t.keys()).toEqual([])
-  expect(t.w.logs.some(l => l.includes('toolCall failed in file'))).toBe(true)
+  expect(t.w.logs.some(l => l.includes('toolCall failed in file'))).toBe(true) // the item host isolates each kind
 })
 
 test('config: enabled is a flag and maxMentionsPerRow a whole number from 0; bad values warn', () => {

@@ -93,6 +93,18 @@ test('mergeClaims adds a new key once and reports it in added; the input list is
   expect(r.list[0]).not.toBe(list[0])
 })
 
+test('mergeClaims says whether a claim changed anything: a kind that returns cur changes nothing', () => {
+  const same: ItemKind<TRec> = {
+    ...tKind,
+    merge: (cur, seen) => (seen.fields.skip === true ? null : (cur ?? rec(seen.key, seen.at))),
+  }
+  const table: KindTable = c => (c === 't' ? same : undefined)
+  const list = [rec('t:a', 1)]
+  expect(mergeClaims(list, [claim('t:a', 2)], table, 100).changed).toBe(false)
+  expect(mergeClaims(list, [claim('t:b', 2)], table, 100).changed).toBe(true)
+  expect(mergeClaims(list, [claim('t:a', 2, 7)], kinds, 100).changed).toBe(true)
+})
+
 test('a merge that returns null adds nothing', () => {
   const list = [rec('t:a', 1)]
   const r = mergeClaims(list, [{ ...claim('t:x', 2), fields: { skip: true } }], kinds, 100)

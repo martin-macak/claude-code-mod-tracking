@@ -4,6 +4,7 @@
 // the TrackerHost from the ports of the first hook of a load. It names no tracker and holds no `$`.
 // `end` stores the leaving session and keeps a snapshot. The switch that follows carries it (`/clear`) or loads the
 // stored copy of the new id (`/resume`).
+// Without an item host of its own it builds the ItemService after the TrackerHost, whose `live` the service reads.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.6. Plan: L3 Tasks 5 to 8, D4 to D9, D20.
 
 import type { ConfigService, ConfigSource } from '../interfaces/config'
@@ -14,6 +15,7 @@ import type { DataSlot, PendingEnd, Snapshot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
 import { EventBus } from './bus'
 import { Facts } from './facts'
+import { ItemService } from './items'
 import { Persistence } from './persistence'
 import { Replay } from './replay'
 import { Scheduler } from './scheduler'
@@ -27,8 +29,11 @@ export type { Launch } from './start-sequence'
 
 export interface LifecycleDeps {
   trackers: readonly Tracker[]
-  /** The item host: its list is the `items` slot, and it owns capture, replay and its share of every beat. */
-  items: ItemsHost
+  /**
+   * The item host: its list is the `items` slot, and it owns capture, replay and its share of every beat. Absent, the
+   * manager builds the ItemService from `trackers`.
+   */
+  items?: ItemsHost
   /**
    * Slots that no tracker owns. register.tsx passes none since the last tracker took its slot (L3 Task 10). The
    * lifecycle unit tests use it to run the switch over fake slots.
@@ -50,6 +55,8 @@ export class LifecycleManager {
   readonly watch: SessionWatch
   /** The session store. Public for the lifecycle tests; the hooks reach it through the manager only. */
   readonly persistence: Persistence
+  /** The item host of this load: the one the deps gave, else the ItemService the manager built. */
+  readonly items: ItemsHost
   private readonly cfg: ConfigService
   private readonly scheduler: Scheduler
   private readonly bus: EventBus
@@ -94,8 +101,22 @@ export class LifecycleManager {
       },
       log: ports.log,
     })
+    const dismiss = d.dismiss(ports, this.cfg)
+    this.items =
+      d.items ??
+      new ItemService({
+        trackers: d.trackers,
+        live: id => this.host.live(id),
+        config: this.cfg,
+        facts: this.facts,
+        dismiss,
+        watch: this.watch,
+        persisted: () => void this.persistence.touch(),
+        state: ports.state,
+        log: ports.log,
+      })
     this.switcher = new SwitchRunner({
-      items: d.items,
+      items: this.items,
       persistence: this.persistence,
       bus: this.bus,
       replayer: new Replay({ messages: () => ports.session.messages(), log: ports.log }),
@@ -107,15 +128,17 @@ export class LifecycleManager {
       ports,
       config: this.cfg,
       facts: this.facts,
-      dismiss: d.dismiss(ports, this.cfg),
-      items: d.items,
+      dismiss,
+      items: this.items,
+      itemsOf: owner => this.items.port(owner),
+      toolsOf: owner => this.items.tools(owner),
       watch: this.watch,
       due: (owner, everyMs, now) => this.scheduler.due(owner, everyMs, now),
       persisted: () => void this.persistence.touch(),
       log: ports.log,
     })
     this.sequence = new StartSequence({
-      items: d.items,
+      items: this.items,
       persistence: this.persistence,
       host: this.host,
       bus: this.bus,
@@ -206,24 +229,29 @@ export class LifecycleManager {
     } catch {
       // The beat still does what it can.
     }
-    await this.guard('item tick', () => this.d.items.tick(), 'a beat')
+    await this.guard('item tick', () => this.items.tick(), 'a beat')
     await this.bus.emit('tick', { now: await this.ports.clock.now() }, this.ports)
   }
 
-  /** True when a tracker declared a `toolCall` handler for the tool. Static: it needs no start. */
+  /** True when a tracker declared a `toolCall` handler for the tool, or a kind reads it. Static: it needs no start. */
   wants(tool: string): boolean {
-    return this.d.trackers.some(t => t.events?.toolCall !== undefined && Object.hasOwn(t.events.toolCall, tool))
+    return (
+      this.d.trackers.some(t => t.events?.toolCall !== undefined && Object.hasOwn(t.events.toolCall, tool)) ||
+      this.items.wants(tool)
+    )
   }
 
   /** A row was appended: capture first (the item host), then the handlers of the declared doors. */
   async row(ports: Ports, ev: RowEvent): Promise<void> {
     await this.entry(ports)
-    await this.guard('capture', () => this.d.items.capture(ev), 'a row')
+    await this.guard('capture', () => this.items.capture(ev), 'a row')
     await this.bus.emit('row', ev, ports)
   }
 
+  /** A finished tool call: the kinds that read the tool (the item host), then the handlers of the trackers. */
   async toolCall(ports: Ports, ev: ToolCallEvent): Promise<void> {
     await this.entry(ports)
+    await this.guard('item toolCall', () => this.items.toolCall(ev, this.host.hostCtx(ports)), 'a tool call')
     await this.bus.emit('toolCall', ev, ports)
   }
 
@@ -248,7 +276,7 @@ export class LifecycleManager {
     await this.entry(ports)
     await this.d.dismiss(ports, this.cfg).add(ids)
     const gone = new Set(ids)
-    await this.d.items.update(list => {
+    await this.items.update(list => {
       const kept = list.filter(rec => !gone.has(rec.key))
       return kept.length === list.length ? list : kept
     })
@@ -297,7 +325,7 @@ export class LifecycleManager {
     }
     if (EXITS.has(endReason)) {
       this.host.dispose()
-      await this.guard('item dispose', async () => this.d.items.dispose(), 'the end')
+      await this.guard('item dispose', async () => this.items.dispose(), 'the end')
     }
   }
 
@@ -311,7 +339,7 @@ export class LifecycleManager {
   // ---------------------------------------------------------------- slots
 
   private slots(): readonly DataSlot[] {
-    return [this.d.items.slot, ...(this.d.extraSlots ?? []), ...this.host.slots()]
+    return [this.items.slot, ...(this.d.extraSlots ?? []), ...this.host.slots()]
   }
 
   private guard(what: string, step: () => Promise<unknown>, where = 'a switch'): Promise<void> {

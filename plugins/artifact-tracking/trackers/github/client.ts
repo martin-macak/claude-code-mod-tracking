@@ -3,9 +3,11 @@
 // given: one `GhTool` per handle, so the host cache and the repo lookup are shared.
 // Plan: L5 Task 3, K13.
 
-import type { ToolHandle, ToolSpec } from '../../core/interfaces/tracker'
-import type { Now } from '../../hooks/contracts'
-import type { GithubConfig } from './config'
+import type { ConfigView } from '../../core/interfaces/config'
+import type { JsonObject } from '../../core/interfaces/items'
+import type { Now } from '../../core/interfaces/ports'
+import type { ToolHandle, ToolPort, ToolSpec } from '../../core/interfaces/tracker'
+import { GITHUB_DEFAULTS, type GithubConfig } from './config'
 import { GhTool } from './gh-tool'
 
 export const GH_TOOL: ToolSpec = { id: 'gh', probe: ['gh', '--version'] }
@@ -22,4 +24,20 @@ export function ghClient(
     clients.set(handle, client)
   }
   return client
+}
+
+/**
+ * The client over the `gh` handle the owning tracker declared, or undefined when there is no such handle. One client
+ * per handle: the first caller's clock and limits stay, and every caller reads the same live config and clock.
+ * The slice comes over the defaults, so a host with no spec for the tracker reads today's numbers.
+ */
+export function ghOf(tools: ToolPort, config: ConfigView<JsonObject>, now: Now): GhTool | undefined {
+  const handle = tools.handle(GH_TOOL.id)
+  return (
+    handle &&
+    ghClient(handle, {
+      now,
+      limits: () => ({ ...GITHUB_DEFAULTS, ...(config.slice() as unknown as Partial<GithubConfig>) }),
+    })
+  )
 }

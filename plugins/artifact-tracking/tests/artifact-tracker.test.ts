@@ -2,7 +2,7 @@
 // deleted (issue #29). Each case mirrors the kit test of the same subject in artifact-wiring.test.tsx. Plan: L3 Task 12.
 import { expect, test } from 'claude-code/testing'
 import type { ArtifactRecord } from '../hooks/contracts'
-import { artifactConfig, artifactTracker } from '../trackers/artifact'
+import { artifactConfig, artifactKind, artifactTracker } from '../trackers/artifact'
 import { DELETE, DELETE_REJECTED, PAGE_KEY, PUBLISH, READ, REFUSED } from './fixtures/artifacts'
 import { managerWorld } from './fixtures/manager'
 
@@ -17,10 +17,12 @@ const call = (w: World, shape: Shape, isError = false) =>
 
 const rows = (w: World) => w.items() as unknown as ArtifactRecord[]
 
-test('the tracker takes order 40, hears the Artifact tool and keeps no data of its own', () => {
+test('the tracker takes order 40, its kind hears the Artifact tool and it keeps no data of its own', () => {
   const t = artifactTracker()
   expect([t.id, t.order]).toEqual(['artifact', 40])
-  expect(Object.keys(t.events?.toolCall ?? {})).toEqual(['Artifact'])
+  expect(Object.keys(artifactKind.fromTool ?? {})).toEqual(['Artifact'])
+  expect(t.kinds).toEqual([artifactKind])
+  expect(t.events).toBeUndefined()
   expect(t.data).toBeUndefined()
 })
 

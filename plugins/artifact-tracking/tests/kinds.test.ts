@@ -5,6 +5,7 @@ import type { Claim, ItemKind, JsonObject, RefreshContext, StoredItem } from '..
 import type { RunResult } from '../core/interfaces/ports'
 import type { ToolHandle } from '../core/interfaces/tracker'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
+import { scanContext } from '../core/lib/kind-context'
 import { CliTool } from '../core/lib/tool'
 import type { Tools } from '../hooks/contracts'
 import { hydrate, recordFromFile } from '../hooks/model/registry'
@@ -353,4 +354,25 @@ test('a record of a kind with no refresh is plain data: the registry binding hyd
     edits: 1,
     bySubagent: true,
   })
+})
+
+test('artifact: a delete claim marks a known row once, and adds no row for an unknown page', () => {
+  const del: Claim = { category: 'artifact', key: PAGE_KEY, source: 'publish', at: 9, fields: { deleted: true } }
+  expect(artifactKind.merge(null, del)).toBeNull()
+  const cur = artifactKind.merge(null, artClaim())!
+  const marked = artifactKind.merge(cur, del)!
+  expect(marked.deleted).toBe(true)
+  expect(marked.seenCount).toBe(cur.seenCount) // a delete is no sighting
+  expect(artifactKind.merge(marked, del)).toBe(marked) // already marked: the kind gives cur back
+})
+
+test('kinds: only the file kind reads Write, Edit and Read; only artifact reads Artifact', () => {
+  const reads = (k: ItemKind) => Object.keys(k.fromTool ?? {}).sort()
+  expect(SHIPPED.map(reads)).toEqual([[], [], ['Artifact'], ['Edit', 'Read', 'Write'], []])
+})
+
+test('file: a lookup scan names no file; a conversation scan does', () => {
+  const ctx = (purpose: 'capture' | 'lookup') => scanContext({ mode: 'full', purpose })
+  expect(fileKind.scan?.('see a.md', 'full', ctx('capture')).map(c => c.key)).toEqual(['file:a.md'])
+  expect(fileKind.scan?.('see a.md', 'full', ctx('lookup'))).toEqual([])
 })

@@ -2,8 +2,8 @@
 // the mod ignores. Pure: no `$`, no I/O. register.tsx resolves and stats the paths.
 
 import { isRecord } from '../../core/lib/json'
-import type { FileActivity } from '../../hooks/contracts'
 import { FILE_DEFAULTS } from './config'
+import type { FileActivity } from './types'
 
 const MD = /[^/\\]\.md$/i
 const DRIVE = /^[A-Za-z]:/

@@ -76,21 +76,24 @@ export function setLevel(
 /**
  * The row id a ref names, or undefined when it names no tracked row. A kind may name a row inside one of its items
  * (`findRow`). Else the ref is read as the capture reads a lookup text, and the first claim names the row when the
- * list holds its key.
+ * list holds its key. Every kind scans, so a kind that is off still owns its spans; the first claim of a kind that is
+ * off (`live` says so) names no row, and no later kind gets the ref.
  */
 export function rowIdOf(
   list: readonly StoredItem[],
   ref: string,
   kinds: readonly ItemKind[],
   ctx: KindContext,
+  live: (category: string) => boolean = () => true,
 ): string | undefined {
   const byCategory = new Map(kinds.map(kind => [kind.category, kind]))
   for (const item of list) {
+    if (!live(item.category)) continue
     const kind = byCategory.get(item.category)
     const typed = kind?.decode(item)
     const row = typed ? kind?.findRow?.(typed, ref) : undefined
     if (row !== undefined) return row
   }
   const [first] = scanClaims(ref, 'full', kinds, { ...ctx, purpose: 'lookup' })
-  return first && list.some(item => item.key === first.key) ? first.key : undefined
+  return first && live(first.category) && list.some(item => item.key === first.key) ? first.key : undefined
 }

@@ -24,6 +24,7 @@ import type { WebRecord } from '../trackers/web/types'
 import { fakeConfig } from './fixtures/config-fs'
 import * as ev from './fixtures/events'
 import { porcelain } from './fixtures/git'
+import { IDLE_ITEMS } from './fixtures/items-host'
 import { LIMITS } from './fixtures/limits'
 import { fakePorts } from './fixtures/ports'
 
@@ -301,6 +302,7 @@ function autoWorld() {
     lane: () => ({ headPrsPerBranch: 5, basePrsPerBranch: 10, closingRefsPerPr: 10, maxBodyRefs: 50 }),
   }
   const host = {
+    ...IDLE_ITEMS,
     slot: {
       id: 'items',
       persist: true,

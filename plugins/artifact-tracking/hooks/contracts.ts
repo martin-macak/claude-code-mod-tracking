@@ -5,7 +5,7 @@
 // Spec: docs/superpowers/specs/2026-10-10-artifact-tracking-design.md
 
 import type { TurnCompleteReason } from 'claude-code'
-import type { Refreshable, ScanMode, StoredItem } from '../core/interfaces/items'
+import type { Refreshable, ScanMode } from '../core/interfaces/items'
 import type { RepoRef, RunOpts } from '../core/interfaces/ports'
 import type { ArtifactRecord, ArtifactRef } from '../trackers/artifact/types'
 import type { FileRecord } from '../trackers/file/types'
@@ -91,12 +91,6 @@ export type ItemRecord = GitHubRecord | JiraRecord | ArtifactRecord | WebRecord 
 
 /** What `applyDiscovery` returns, over the old record union. */
 export type DiscoveryApplied = Applied<ItemRecord>
-
-/**
- * The list the plugin state holds, as the old modules see it. The state contract types the items atom as
- * `StoredItem[]` (spec 5.13); the cast sits here once. Task 8 deletes it with the item runtime.
- */
-export const asRecords = (list: readonly StoredItem[]): ItemRecord[] => list as unknown as ItemRecord[]
 
 // ---------------------------------------------------------------- references found in text
 

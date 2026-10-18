@@ -35,6 +35,7 @@ export function scanContext(o: ScanContextOptions): KindContext {
     fs: { stat: async () => null, exists: async () => false },
     env: { get: async () => undefined, settings: async () => undefined, agents: async () => [] },
     session: { id: async () => '', cwd: async () => '', repo: async () => null, root: () => undefined },
+    clock: { wall: () => o.now ?? 0 },
     log: () => {},
   }
 }

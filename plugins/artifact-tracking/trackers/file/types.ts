@@ -23,3 +23,6 @@ export type FileRecord = BaseRecord & {
   /** A subagent wrote, edited or read the file. Absent when only the main loop did. */
   bySubagent?: true
 }
+
+/** One sighting of a file: which door saw it (`prompt`, `response`, `tool`, ...) and when. */
+export type Sighting = { source: string; at: number }

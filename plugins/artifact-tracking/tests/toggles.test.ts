@@ -1,10 +1,11 @@
-// The tracker toggles in the item runtime and in the view inputs: an item kind that the config turned off runs no CLI,
+// The tracker toggles in the item service and in the view inputs: an item kind that the config turned off runs no CLI,
 // claims its spans and drops them (so a GitHub URL never becomes a web link), and leaves no record behind at start,
 // replay, load or carry. Plan: L4 Task 6 (decisions C4, C12).
 import { expect, test } from 'claude-code/testing'
 import { Facts } from '../core/infra/facts'
 import { transcriptItems } from '../core/infra/replay'
 import type { Json } from '../core/interfaces/items'
+import { autoGithubOf } from '../hooks/auto-github'
 import { trackCommand } from '../hooks/command'
 import type { GitHubRef, ItemRecord, ProcessRecord, Ref, RepoRecord, WebRef } from '../hooks/contracts'
 import { recordFromRef } from '../hooks/model/registry'
@@ -12,7 +13,7 @@ import { viewInputs } from '../hooks/view-inputs'
 import { emptyAuto } from '../trackers/auto/ledger'
 import { DOC_URL } from './fixtures/artifacts'
 import { fakeConfig } from './fixtures/config-fs'
-import { itemsWorld, promptRow } from './fixtures/items'
+import { fakeItems, promptRow } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
 import { fakePorts } from './fixtures/ports'
 
@@ -29,36 +30,43 @@ const rec = (ref: Ref): ItemRecord => recordFromRef(ref, { source: 'prompt', at:
 const asJson = (list: ItemRecord[]) => list as unknown as Json
 const argv0 = (calls: string[][], tool: string) => calls.filter(c => c[0] === tool)
 
+/** The facet of the auto tracker's PR lane over a fake item host, as the manager would wire it. */
+const facetOf = (t: ReturnType<typeof fakeItems>) =>
+  autoGithubOf({
+    manager: () => ({ items: t.items, live: id => t.host.live(id), config: t.cfg, facts: t.facts }),
+    now: () => 0,
+  })
+
 test('with github off, start runs no gh command and autoGithub is not ready', async () => {
-  const t = itemsWorld({ off: ['github'] })
+  const t = fakeItems({ off: ['github'] })
   const rt = await t.started()
   await rt.capture(promptRow('see issue #5 and https://docs.example/a'))
   expect(argv0(t.w.calls, 'gh')).toEqual([])
-  expect(await rt.autoGithub.ready()).toBe(false)
+  expect(await facetOf(t).ready()).toBe(false)
   expect(argv0(t.w.calls, 'acli').length).toBeGreaterThan(0) // jira is on: its probe ran
   expect(t.keys()).toEqual(['web:https://docs.example/a']) // the bare #5 needs gh to check it is open
 })
 
 test('with github off and no remote, the repo lookup runs no gh command', async () => {
-  const off = itemsWorld({ off: ['github'], remote: null })
+  const off = fakeItems({ off: ['github'], remote: null })
   const rt = await off.started()
   await rt.capture(promptRow('see https://docs.example/a'))
   expect(argv0(off.w.calls, 'gh')).toEqual([])
   expect(off.keys()).toEqual(['web:https://docs.example/a'])
-  const on = itemsWorld({ remote: null }) // the control: gh repo view finds the repo
+  const on = fakeItems({ remote: null }) // the control: gh repo view finds the repo
   await (await on.started()).capture(promptRow('see https://docs.example/a'))
   expect(on.w.calls.some(c => c[0] === 'gh' && c[1] === 'repo')).toBe(true)
 })
 
 test('with github on, the same start does run gh', async () => {
-  const t = itemsWorld()
-  const rt = await t.started()
+  const t = fakeItems()
+  await t.started()
   expect(argv0(t.w.calls, 'gh').length).toBeGreaterThan(0)
-  expect(await rt.autoGithub.ready()).toBe(true)
+  expect(await facetOf(t).ready()).toBe(true)
 })
 
 test('with jira off, start runs no acli command', async () => {
-  const t = itemsWorld({ off: ['jira'] })
+  const t = fakeItems({ off: ['jira'] })
   const rt = await t.started()
   await rt.capture(promptRow('see https://acme.atlassian.net/browse/ISS-1'))
   expect(argv0(t.w.calls, 'acli')).toEqual([])
@@ -67,7 +75,7 @@ test('with jira off, start runs no acli command', async () => {
 })
 
 test('with github off a GitHub URL makes no item and no web link', async () => {
-  const t = itemsWorld({ off: ['github'] })
+  const t = fakeItems({ off: ['github'] })
   const rt = await t.started()
   await rt.capture(promptRow('see https://github.com/acme/web/issues/5'))
   expect(t.list()).toEqual([])
@@ -75,49 +83,49 @@ test('with github off a GitHub URL makes no item and no web link', async () => {
 })
 
 test('with web off a web URL makes no item; a GitHub URL still does', async () => {
-  const t = itemsWorld({ off: ['web'] })
+  const t = fakeItems({ off: ['web'] })
   const rt = await t.started()
   await rt.capture(promptRow('see https://docs.example/a and https://github.com/cli/cli/pull/14640'))
   expect(t.keys()).toEqual(['gh:github.com/cli/cli#14640'])
 })
 
 test('with artifact off an artifact URL makes no item and no web link', async () => {
-  const t = itemsWorld({ off: ['artifact'] })
+  const t = fakeItems({ off: ['artifact'] })
   const rt = await t.started()
   await rt.capture(promptRow(`see ${DOC_URL}`))
   expect(t.list()).toEqual([])
 })
 
 test('with file off a .md mention makes no item', async () => {
-  const off = itemsWorld({ off: ['file'] })
+  const off = fakeItems({ off: ['file'] })
   off.w.files['/work/plan.md'] = '# plan'
   await (await off.started()).capture(promptRow('please read plan.md'))
   expect(off.list()).toEqual([])
-  const on = itemsWorld()
+  const on = fakeItems()
   on.w.files['/work/plan.md'] = '# plan'
   await (await on.started()).capture(promptRow('please read plan.md'))
   expect(on.keys()).toEqual(['file:/work/plan.md'])
 })
 
 test('start drops the records of a kind that is off, once', async () => {
-  const t = itemsWorld({ off: ['web'] })
+  const t = fakeItems({ off: ['web'] })
   t.w.state.set('items', [rec(web('https://docs.example/a')), rec(gh(5))] as unknown as Json)
   await t.started()
   expect(t.w.stateSets.items).toBe(1)
   expect(t.keys()).toEqual(['gh:github.com/acme/web#5'])
-  await t.rt.start(t.ctx)
+  await t.items.start(t.hostCtx)
   expect(t.w.stateSets.items).toBe(1) // nothing left to drop: no second write
 })
 
 test('start with every kind on leaves a warm list alone', async () => {
-  const t = itemsWorld()
+  const t = fakeItems()
   t.w.state.set('items', [rec(web('https://docs.example/a')), rec(gh(5))] as unknown as Json)
   await t.started()
   expect(t.w.stateSets.items).toBeUndefined()
 })
 
 test('replay, a resume load and a carry add no record of a kind that is off', async () => {
-  const replayed = itemsWorld({ off: ['web'] })
+  const replayed = fakeItems({ off: ['web'] })
   await (await replayed.started()).replay(
     transcriptItems([
       {
@@ -130,19 +138,19 @@ test('replay, a resume load and a carry add no record of a kind that is off', as
   expect(replayed.keys()).toEqual(['gh:github.com/cli/cli#14640'])
 
   const stored = [rec(web('https://docs.example/a')), rec(gh(5))]
-  const loaded = itemsWorld({ off: ['web'] })
+  const loaded = fakeItems({ off: ['web'] })
   await (await loaded.started()).slot.restore(asJson(stored), 'load')
   expect(loaded.keys()).toEqual(['gh:github.com/acme/web#5'])
 
-  const carried = itemsWorld({ off: ['web'] })
+  const carried = fakeItems({ off: ['web'] })
   await (await carried.started()).slot.restore(asJson(stored), 'carry')
   expect(carried.keys()).toEqual(['gh:github.com/acme/web#5'])
-  await carried.rt.slot.restore(asJson([rec(web('https://docs.example/b'))]), 'carry') // only a dead kind: no write
+  await carried.items.slot.restore(asJson([rec(web('https://docs.example/b'))]), 'carry') // only a dead kind: no write
   expect(carried.keys()).toEqual(['gh:github.com/acme/web#5'])
 })
 
 test('replay with file off does not look for .md files', async () => {
-  const t = itemsWorld({ off: ['file'] })
+  const t = fakeItems({ off: ['file'] })
   t.w.files['/work/plan.md'] = '# plan'
   const stats: string[] = []
   const { stat } = t.w.ports.fs
@@ -156,7 +164,7 @@ test('replay with file off does not look for .md files', async () => {
 })
 
 test('with jira off, a replay and a load ask acli for nothing', async () => {
-  const t = itemsWorld({ off: ['jira'] })
+  const t = fakeItems({ off: ['jira'] })
   const rt = await t.started()
   await rt.replay(
     transcriptItems([{ role: 'assistant', text: 'see https://acme.atlassian.net/browse/ISS-1', toolUses: [] }]),

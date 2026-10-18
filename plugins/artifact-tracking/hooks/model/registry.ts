@@ -42,7 +42,7 @@ function claimOf(ref: Ref, s: Sighting): Claim {
   return { category, key: keyOf(ref), source: s.source, at: s.at, fields: fields as unknown as JsonObject }
 }
 
-const asRecords = (list: readonly StoredItem[]): ItemRecord[] => list as unknown as ItemRecord[]
+const typed = (list: readonly StoredItem[]): ItemRecord[] => list as unknown as ItemRecord[]
 
 // ---------------------------------------------------------------- record from ref
 
@@ -72,7 +72,7 @@ export function mergeRefs(
     table,
     cap,
   )
-  return { list: asRecords(merged.list), added: merged.added }
+  return { list: typed(merged.list), added: merged.added }
 }
 
 /**
@@ -103,13 +103,13 @@ export function mergeFiles(
 }
 
 export function mergeResults(list: readonly ItemRecord[], refreshed: readonly ItemRecord[]): ItemRecord[] {
-  return asRecords(applyRefresh(list, refreshed, table))
+  return typed(applyRefresh(list, refreshed, table))
 }
 
 // ---------------------------------------------------------------- bare #N
 
 export function resolveBareRefs(list: readonly ItemRecord[], repo: RepoRef): ItemRecord[] {
-  return asRecords(resolveBare(list, repo))
+  return typed(resolveBare(list, repo))
 }
 
 // ---------------------------------------------------------------- re-key and carry-over
@@ -119,7 +119,7 @@ export function resolveBareRefs(list: readonly ItemRecord[], repo: RepoRef): Ite
  * The input list comes back when no row moves.
  */
 export function rekeyArtifacts(list: ItemRecord[]): ItemRecord[] {
-  return asRecords(migrateRecords(list, KINDS))
+  return typed(migrateRecords(list, KINDS))
 }
 
 /** Merge for `/clear` carry-over: fold records with the same key, then cap. */
@@ -128,7 +128,7 @@ export function unionRecords(
   b: readonly ItemRecord[],
   cap: number = GLOBAL_DEFAULTS.store.maxItems,
 ): ItemRecord[] {
-  return asRecords(unionKinds(a, b, table, cap))
+  return typed(unionKinds(a, b, table, cap))
 }
 
 /**
@@ -141,7 +141,7 @@ export function carryOver(
   stored: readonly ItemRecord[],
   cap: number = GLOBAL_DEFAULTS.store.maxItems,
 ): ItemRecord[] {
-  return asRecords(carryRecords(held, stored, table, cap))
+  return typed(carryRecords(held, stored, table, cap))
 }
 
 // ---------------------------------------------------------------- classes

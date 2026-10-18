@@ -59,7 +59,18 @@ export interface KindContext {
   readonly fs: Pick<Ports['fs'], 'stat' | 'exists'>
   readonly env: TrackerContext['env']
   readonly session: TrackerContext['session']
+  /** The wall clock, for a client a hook builds (`now` above is fixed for the call). */
+  readonly clock: Pick<TrackerContext['clock'], 'wall'>
   readonly log: (line: string) => void
+}
+
+/**
+ * What `prepare` and `sessionChanged` get: the kind context, with the facts it may publish and the part of the store it
+ * may write. A scan and an `accept` get the read-only form.
+ */
+export type PrepareContext = KindContext & {
+  readonly facts: FactsPort
+  readonly items: Pick<ItemStorePort, 'update' | 'refresh'>
 }
 
 /** What the coordinator needs from an item it refreshes. */
@@ -108,6 +119,8 @@ export interface RefreshSpec<T extends StoredItem> {
   refreshItems(items: Refreshable[], ctx: RefreshContext): Promise<void>
   /** The kind part of a refresh merge. */
   apply?(out: T, fresh: T): T
+  /** A manual refresh: forget more than the tool handle does (denied hosts, a missing site). Default: the handle only. */
+  reset?(ctx: RefreshContext): void
 }
 
 /** What a priority rule reads: the facts, the whole list, and the levels the earlier stages gave. */
@@ -132,8 +145,14 @@ export interface ItemKind<T extends StoredItem = StoredItem> {
   readonly category: string
   /** Claim order, lowest first. `web` is last. */
   readonly rank: number
-  /** Runs before each scan, e.g. to resolve what the scan needs. */
-  prepare?(ctx: KindContext): Promise<void>
+  /**
+   * Runs before each scan of a live kind, e.g. to resolve what the scan needs. Memoise per session. `quick`: a replay
+   * asks, and the kind returns once the cheap part is done (no CLI call); the rest runs on and a later full `prepare`
+   * waits for it.
+   */
+  prepare?(ctx: PrepareContext, o?: { quick?: boolean }): Promise<void>
+  /** The session id moved. Forget what belonged to the old session. Runs first in a switch, before any load or replay. */
+  sessionChanged?(ctx: PrepareContext): void | Promise<void>
   claimUrl?(url: string, label: string | undefined, ctx: KindContext): Claim | null
   scan?(maskedText: string, mode: ScanMode, ctx: KindContext): readonly Claim[]
   /** Claims a tool call makes, by tool name. */
@@ -188,53 +207,64 @@ export interface ItemStorePort {
   /** Marks the keys due, or all items when none are named, and kicks the refresh. Fire and forget. */
   refresh(keys?: readonly string[]): void
   /**
-   * The claims in a text, from the live kinds. Optional until the item service of Task 8 implements it (K3).
-   * `facts` overrides what the kinds read for this call.
+   * The claims in a text, from the live kinds. `facts` overrides what the kinds read for this call.
+   * The claims carry the source `scan`: the caller sets its own.
    */
-  scan?(
+  scan(
     text: string,
     o: { mode: ScanMode; purpose: 'capture' | 'lookup'; facts?: Readonly<Record<string, Json>> },
   ): readonly Claim[]
-  /** The record a claim makes, from its kind. null: no such kind. Optional until Task 8. */
-  build?(claim: Claim): StoredItem | null
-}
-
-/**
- * Which trackers are on, and what the config says of them. The transitional item host reads it, because it runs the
- * five item kinds before they have handlers (D13). L5 gives each kind its own context and removes this.
- */
-export interface TrackerConfigs {
-  /**
-   * False for a tracker the config turned off, as it read at the first start of the load, and for a tracker that
-   * failed to start. An id no tracker has reads as live: nothing turned it off.
-   */
-  live(id: string): boolean
-  /** The slice of a tracker, read at call time. An id no tracker has gives a frozen `{}`. */
-  slice<C extends JsonObject>(id: string): Readonly<C>
+  /** The record a claim makes, from its kind. null: no such kind, or a claim that adds no item. */
+  build(claim: Claim): StoredItem | null
 }
 
 /** What an item host gets at start: a tracker context without `items` and `data`, plus a persist signal. */
 export type HostContext = Omit<TrackerContext<JsonObject, never>, 'items' | 'data'> & {
   /** The host changed its list. Persistence writes the session copy soon. */
   persisted(): void
-  /** The toggles and the slices of the trackers. */
-  readonly trackers: TrackerConfigs
 }
 
 /**
- * The part of core that owns the item list and the five item trackers' shared work (capture, refresh, replay).
- * L3 builds it as the transitional `ItemRuntime`. L5 splits it into ItemStore, Capture, ItemKind and ToolSpec.
+ * The part of core that owns the item list and the five item trackers' shared work: capture, refresh, replay, the
+ * tools and the priority levels. The ItemService implements it (plan L5, Task 8).
  */
 export interface ItemsHost extends ItemStorePort {
   /** The `items` slot: Persistence stores it, a switch carries it. */
   readonly slot: DataSlot
+  /** True once `start` built the tools and the refresh coordinator. */
+  readonly ready: boolean
+  /** Builds the tools and the coordinator once per load, probes the tools, drops the records of a kind that is off. */
   start(ctx: HostContext): Promise<void>
   /** Reads one row for items: the capture funnel. */
   capture(ev: RowEvent): Promise<void>
+  /**
+   * A finished tool call: the claims of each live kind that reads the tool. `ctx` is the context of the dispatch (its
+   * own ports); absent, the context of the first hook of the load.
+   */
+  toolCall(ev: ToolCallEvent, ctx?: HostContext): Promise<void>
+  /** True when a kind reads the tool. Static: it needs no start. */
+  wants(tool: string): boolean
   /** Merges a transcript read back: rows and tool calls, in order. */
   replay(batch: readonly ReplayItem[]): Promise<void>
   tick(): Promise<void>
   /** The session id moved. The manager calls it first in a switch, before any slot carries or loads and before replay. */
   sessionChanged(ev: SessionChangedEvent): Promise<void>
+  /** Runs the `prepare` of every live kind (the session repo), once per session. */
+  prepare(): Promise<void>
+  /** Every tool probe settled, and the statuses published. */
+  settle(): Promise<void>
+  kick(reason: 'open' | 'manual'): void
+  /** `/track refresh`: reset every tool, force a run, wait for it, publish. */
+  refreshAll(): Promise<void>
+  /** The person's mark on a row (`undefined` removes it). True when the list changed. `top` comes from a rule: it does nothing. */
+  setPriority(rowId: string, level: Level | undefined): Promise<boolean>
+  /** The row id a typed ref names (`#5`, a URL, a key a kind names). undefined: it names no tracked row. */
+  rowIdOf(ref: string): Promise<string | undefined>
+  /** The level of every item, by key: the person's mark, or a rule's. */
+  levels(): Promise<ReadonlyMap<string, Effective>>
+  /** What `ctx.items` is for the tracker `owner`. */
+  port(owner: string): ItemStorePort
+  /** The tools of the tracker `owner`. undefined before `start`. */
+  tools(owner: string): ToolPort | undefined
   dispose(): void
 }

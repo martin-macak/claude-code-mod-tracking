@@ -1,11 +1,11 @@
-// `/track`: the empty command, `refresh`, `clear` and `prio`. The manager and the item runtime do the work; this holds
+// `/track`: the empty command, `refresh`, `clear` and `prio`. The manager and the item host do the work; this holds
 // only the order of the calls and the text of the answer. Every other word prints the usage line.
 // A reply that prints the list ends with the problems of the config file, when there are any (until the help view of L6).
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.3, 5.7 and 5.12. Plan: L3 Task 12, D12. L4 Task 6, C6.
 
 import type { LifecycleManager } from '../core/infra/lifecycle'
+import type { ItemsHost, Priority } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
-import type { ItemRuntime } from './items/runtime'
 import { composeCommandText } from './ui/auto-view'
 import { viewInputs } from './view-inputs'
 
@@ -31,8 +31,8 @@ export function problemsText(path: string | undefined, problems: readonly string
 }
 
 /** The text of the list, then the config problems after one blank line. It waits for the repo first, so `#N` keys are right. */
-async function listText(p: Ports, m: LifecycleManager, items: ItemRuntime): Promise<string> {
-  await items.ensureRepo()
+async function listText(p: Ports, m: LifecycleManager, items: ItemsHost): Promise<string> {
+  await items.prepare()
   const v = await viewInputs(p, m.facts, { live: id => m.live(id) })
   const text = composeCommandText(v.items, v.processes, v.processUi, v.ctx, v.repos)
   const problems = problemsText(m.config.path(), m.config.problems())
@@ -46,7 +46,7 @@ async function listText(p: Ports, m: LifecycleManager, items: ItemRuntime): Prom
 export async function trackCommand(
   p: Ports,
   m: LifecycleManager,
-  items: ItemRuntime,
+  items: ItemsHost,
   args: string,
 ): Promise<{ text: string }> {
   await m.entry(p)
@@ -56,8 +56,8 @@ export async function trackCommand(
     await m.refreshConfig(p) // the file may have changed since the last check: its problems and toggles show now
     // In `claude -p` the command may run before acli answers `--version`. The probes are cached.
     // Wait for them and for the repo first, so the pane's first drawing is already right (also after /clear).
-    await items.settleProbes()
-    await items.ensureRepo()
+    await items.settle()
+    await items.prepare()
     await m.command(p, { sub: '', args: '', wait: true })
     if (!(await p.ui.open())) p.ui.toast('Widen the terminal to see the tracking pane')
     items.kick('open')
@@ -81,7 +81,9 @@ export async function trackCommand(
   const word = prio?.[2]?.toLowerCase()
   if (prio && word !== undefined && PRIO_WORDS.has(word)) {
     const ref = prio[1] ?? ''
-    if ((await items.prio(ref, word)) === 'not-tracked') return { text: `Not tracked: ${ref}` }
+    const id = await items.rowIdOf(ref)
+    if (id === undefined) return { text: `Not tracked: ${ref}` }
+    await items.setPriority(id, word === 'auto' ? undefined : (word as Priority))
     try {
       await m.flushNow() // `claude -p` can exit right after the reply: save now, not after flushMs
     } catch {
