@@ -23,7 +23,10 @@ export interface LifecycleDeps {
   trackers: readonly Tracker[]
   /** The item host: its list is the `items` slot, and it owns capture, replay and its share of every beat. */
   items: ItemsHost
-  /** Slots that a tracker will own later. Until it moves out of register.tsx, register.tsx passes them here. */
+  /**
+   * Slots that no tracker owns. register.tsx passes none since the last tracker took its slot (L3 Task 10). The
+   * lifecycle unit tests use it to run the switch over fake slots.
+   */
   extraSlots?: readonly DataSlot[]
   /** The run-scoped dismiss list over the ports of a dispatch. */
   dismiss(ports: Ports): DismissPort

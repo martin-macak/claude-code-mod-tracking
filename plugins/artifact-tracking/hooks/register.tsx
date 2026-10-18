@@ -6,32 +6,20 @@
 import type { EngineInterface, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 import { RefreshCoordinator } from '../core/infra/coordinator'
-import { autoIds, dismiss } from '../core/infra/dismiss'
 import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { ReplayItem } from '../core/interfaces/events'
 import type { ItemsHost, Json, StoredItem } from '../core/interfaces/items'
-import type { Ports, SlotPort } from '../core/interfaces/ports'
+import type { Ports } from '../core/interfaces/ports'
 import type { DataSlot } from '../core/interfaces/slots'
-import type { DismissPort, FactsPort } from '../core/interfaces/tracker'
+import type { FactsPort } from '../core/interfaces/tracker'
 import { isRecord } from '../core/lib/json'
 import { textOfContent } from '../core/lib/links'
 import { buildTrackers } from '../trackers'
 import { artifactEvent } from '../trackers/artifact/artifact-tool'
-import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from '../trackers/auto/events'
-import {
-  carryAuto,
-  emptyAuto,
-  pinRoot,
-  recordActivity,
-  recordAgentBranch,
-  recordAgentResult,
-  recordEnter,
-  recordSpawn,
-  recordTurnEnd,
-} from '../trackers/auto/ledger'
-import { AutoRound } from '../trackers/auto/round'
-import { AutoScheduler } from '../trackers/auto/scheduler'
+import type { AutoGithub } from '../trackers/auto'
+import { autoDismiss } from '../trackers/auto/dismiss-store'
+import { emptyAuto } from '../trackers/auto/ledger'
 import {
   type FileTouch,
   type IgnoreContext,
@@ -47,11 +35,10 @@ import { AcliTool } from '../trackers/jira/acli-tool'
 import { renderBand } from '../ux/band'
 import { renderSections } from '../ux/pane'
 import type {
-  AutoReason,
   AutoState,
-  DiscoveryApplied,
   FileActivity,
   FileRecord,
+  GitHubDiscoveryApi,
   GitHubRef,
   GitHubTarget,
   ItemRecord,
@@ -68,8 +55,8 @@ import type {
   ToolStatus,
   UiState,
 } from './contracts'
-import { AUTO_SOURCES, LIMITS } from './contracts'
-import { rowEvent, spawnEvent, toolCallEvent } from './events'
+import { AUTO_SOURCES } from './contracts'
+import { rowEvent, spawnEvent, toolCallEvent, turnEvent } from './events'
 import { artifactOrigin, keyOf } from './model/keys'
 import { rowIdOf, setPriority } from './model/priority'
 import {
@@ -106,19 +93,11 @@ const ui = atom({ plugin: 'artifact-tracking', key: 'ui' } as const, { folded: [
 /**
  * One member of the `trackers` family, typed. The family stores Json; the shapes are the records of the contract.
  * `empty` is what a member never written reads as. It runs on every read, so each read of a missing member gets a
- * fresh value, and a change that returns its input is still seen as "no change".
+ * fresh value.
  * Plain functions, not methods: `claude plugin validate` refuses `$` as an argument of a method call.
  */
 async function readSlot<T>($: EngineInterface, id: string, empty: () => T): Promise<T> {
   return ((await portsOf($).state.slot.get(id)) as unknown as T | undefined) ?? empty()
-}
-
-async function updateSlot<T>($: EngineInterface, id: string, empty: () => T, change: (cur: T) => T): Promise<T> {
-  const next = await portsOf($).state.slot.update(
-    id,
-    cur => change((cur as unknown as T | undefined) ?? empty()) as unknown as Json,
-  )
-  return next as unknown as T
 }
 
 const noRows = (): never[] => []
@@ -134,10 +113,6 @@ function readProcesses($: EngineInterface): Promise<ProcessRecord[]> {
 /** The run: root, proofs, agents, dismiss list and the last snapshot (spec 6.2). Never goes to $.store. */
 function readAuto($: EngineInterface): Promise<AutoState> {
   return readSlot<AutoState>($, 'auto', emptyAuto)
-}
-
-function updateAuto($: EngineInterface, change: (cur: AutoState) => AutoState): Promise<AutoState> {
-  return updateSlot<AutoState>($, 'auto', emptyAuto, change)
 }
 
 // ------------------------------------------------------------------ ports
@@ -264,10 +239,6 @@ let repoTask: Promise<void> | undefined
 let githubHosts: string[] = []
 /** The session switch, the store and the facts of this load. Built on first use; a hot reload builds a new one. */
 let manager: LifecycleManager | undefined
-let scheduler: AutoScheduler | undefined
-let round: AutoRound | undefined
-/** When the last round ended. The Worktrees note reads it before `snapshot.at` (A22). */
-let lastRoundAt: number | undefined
 /** The row the priority keys act on. Never stored: a close, a reload or /clear forgets it. */
 let focusedRow: string | undefined
 /** Element key to row id, for the Buttons of the rows with a prio cell as last drawn (`focusTargets`). */
@@ -277,7 +248,7 @@ let focusRows: ReadonlyMap<string, string> = new Map()
 
 /** Builds the tools and the coordinator once. `$` only appears in calls, never as a value. */
 function ensureRuntime($: EngineInterface): void {
-  if (gh && acli && coordinator && scheduler && round) return
+  if (gh && acli && coordinator) return
   const run: Runner = (argv, init) => $.process.run(argv, init)
   const g = new GhTool(run, Date.now)
   const a = new AcliTool(run, Date.now)
@@ -298,7 +269,7 @@ function ensureRuntime($: EngineInterface): void {
       if (dropped.length > 0) {
         // Keep discarded keys in this run's dismiss list, so transcript replay does not bring them back on /resume.
         try {
-          await setAuto($, s => dismiss(s, dropped))
+          await autoDismiss(portsOf($).state.slot).add(dropped)
         } catch {
           // The list is already merged; dismissal tracking is best-effort.
         }
@@ -313,47 +284,6 @@ function ensureRuntime($: EngineInterface): void {
     },
     onError: () => {
       // The tools record their own failures. A run must not break the session.
-    },
-  })
-  const git = (argv: readonly string[], cwd: string) => run(['git', ...argv], { cwd, timeoutMs: LIMITS.gitTimeoutMs })
-  const autoRound = new AutoRound({
-    now: Date.now,
-    load: async () => {
-      const s = await readAuto($)
-      publishAuto($, s)
-      return s
-    },
-    save: change => setAuto($, change),
-    git,
-    listAgents: async () =>
-      (await $.agent.list()).map(a => ({
-        id: a.id,
-        status: a.status,
-        ...(a.teammateId !== undefined ? { teammateId: a.teammateId } : {}),
-      })),
-    sessionCwd: () => $.session.cwd(),
-    repo: async () => {
-      await ensureRepo($)
-      return sessionRepo ?? null
-    },
-    gh: g,
-    ghReady: async () => {
-      await g.probe()
-      return g.isAvailable
-    },
-    githubHosts: () => githubHosts,
-    applyItems: change => applyItems($, change),
-    onAdded: keys => {
-      if (keys.length > 0) coordinator?.kick('capture', keys)
-    },
-  })
-  round = autoRound
-  scheduler = new AutoScheduler({
-    now: Date.now,
-    after: (ms, fn) => $.clock.after(ms, fn),
-    run: async reasons => {
-      await autoRound.run(reasons)
-      lastRoundAt = Date.now()
     },
   })
 }
@@ -419,63 +349,6 @@ async function setItems($: EngineInterface, change: (list: ItemRecord[]) => Item
   await schedule($)
 }
 
-/**
- * Change the `auto` member. Every write goes through here (A18, A22). It reads first and stops when the change
- * returns its input: no write. Else `update` runs the change on the current value and retries on a version miss.
- * The hook that calls it has run the session check first, so a /clear has already carried the run into the new state.
- */
-async function setAuto($: EngineInterface, change: (cur: AutoState) => AutoState): Promise<AutoState> {
-  const cur = await readAuto($)
-  if (change(cur) === cur) {
-    publishAuto($, cur)
-    return cur
-  }
-  const next = await updateAuto($, change)
-  publishAuto($, next)
-  return next
-}
-
-/** The root and the agent ledger as facts, for the readers that cannot wait: the repo tracker and the `touchedBy` label. */
-function publishAuto($: EngineInterface, s: AutoState): void {
-  const facts = factsOf($)
-  facts.publish('auto.root', (s.root ?? undefined) as unknown as Json | undefined)
-  facts.publish('auto.agents', s.agents as unknown as Json)
-}
-
-/**
- * The item write of a round. `change` also gets the dismiss list (A20). Reads first and skips `update` when the
- * change returns the input list itself (A22).
- * Like `capture`, it runs the session check first: a PR step that was in flight over /resume must not fill the new,
- * empty list before the switch has loaded the stored copy.
- */
-async function applyItems(
-  $: EngineInterface,
-  change: (list: ItemRecord[], dismissed: ReadonlySet<string>) => DiscoveryApplied,
-): Promise<DiscoveryApplied> {
-  await managerOf($).watch.check()
-  const dismissedNow = async (): Promise<ReadonlySet<string>> => new Set((await readAuto($)).dismissed)
-  const cur = await read($, items)
-  let result = change(cur, await dismissedNow())
-  if (result.list === cur) return result
-  const dismissed = await dismissedNow()
-  await setItems($, list => {
-    result = change(list, dismissed)
-    return result.list
-  })
-  return result
-}
-
-/** A sign of life for a workflow agent (A7). A main-loop call has no agent id and does nothing. */
-async function touch($: EngineInterface, agentId: string | undefined): Promise<void> {
-  if (agentId !== undefined) await setAuto($, s => recordActivity(s, agentId, Date.now()))
-}
-
-/** An event reason for the round, and a look at the tick. */
-function kickAuto($: EngineInterface, reason: AutoReason): void {
-  void enter($).catch(() => {})
-  scheduler?.kick(reason)
-}
-
 /** The x button: the manager adds the id to the dismiss list first, drops the item key second, then the trackers hear of it. */
 async function dismissOne($: EngineInterface, id: string): Promise<void> {
   try {
@@ -499,9 +372,8 @@ async function dismissOne($: EngineInterface, id: string): Promise<void> {
 function managerOf($: EngineInterface): LifecycleManager {
   manager ??= new LifecycleManager(
     {
-      trackers: buildTrackers({}),
+      trackers: buildTrackers({ autoGithub: autoGithubOf($) }),
       items: legacyHost($),
-      extraSlots: [autoSlot($)],
       dismiss: p => autoDismiss(p.state.slot),
       global: GLOBAL_DEFAULTS,
       paneId: PANE,
@@ -512,18 +384,44 @@ function managerOf($: EngineInterface): LifecycleManager {
 }
 
 /**
- * The dismiss list over the `auto` member (it lives in AutoState until the auto tracker owns it, Task 10 moves this
- * into trackers/auto/dismiss-store.ts). The list is run-scoped.
+ * The GitHub side of the auto tracker's PR lane, over the tool and the session repo this file still holds (the item
+ * runtime takes them over in Task 11, and the PR lane moves to the github tracker in L5). The tracker is built before
+ * the tools are, so every member looks the tool up when it is called and fails with `not ready` before that.
  */
-function autoDismiss(slot: SlotPort): DismissPort {
-  return {
-    list: async () => new Set(((await slot.get('auto')) as unknown as AutoState | undefined)?.dismissed ?? []),
-    add: async ids => {
-      await slot.update(
-        'auto',
-        cur => dismiss((cur as unknown as AutoState | undefined) ?? emptyAuto(), ids) as unknown as Json,
-      )
+function autoGithubOf($: EngineInterface): AutoGithub {
+  const need = (): GhTool => {
+    if (!gh) throw new Error('gh: not ready')
+    return gh
+  }
+  const discovery: GitHubDiscoveryApi = {
+    get name() {
+      return 'gh' as const
     },
+    get isAvailable() {
+      return gh?.isAvailable ?? false
+    },
+    canCall: now => need().canCall(now),
+    refreshItems: async targets => need().refreshItems(targets),
+    reset: () => need().reset(),
+    status: () => need().status(),
+    isHostAuthed: host => need().isHostAuthed(host),
+    checkHost: async host => need().checkHost(host),
+    defaultRepo: async () => need().defaultRepo(),
+    graphql: async (host, query) => need().graphql(host, query),
+  }
+  return {
+    discovery,
+    ready: async () => {
+      const g = need()
+      await g.probe()
+      return g.isAvailable
+    },
+    repo: async () => {
+      need()
+      await ensureRepo($)
+      return sessionRepo ?? null
+    },
+    hosts: () => githubHosts,
   }
 }
 
@@ -576,22 +474,6 @@ function itemsSlot($: EngineInterface): DataSlot {
   }
 }
 
-/** The run: root, proofs, agents, dismiss list. Run-scoped: a switch carries it before anything else loads (D9). */
-function autoSlot($: EngineInterface): DataSlot {
-  return {
-    id: 'auto',
-    persist: false,
-    read: () => portsOf($).state.slot.get('auto'),
-    empty: v => v === undefined,
-    settle: async live => live,
-    restore: async value => {
-      const cur = await readAuto($)
-      const next = carryAuto(value as unknown as AutoState, cur)
-      publishAuto($, next === cur ? cur : await updateAuto($, c => carryAuto(value as unknown as AutoState, c)))
-    },
-  }
-}
-
 /**
  * The item host over the code this file still holds: the list, the capture funnel, the refresh coordinator and the
  * tools. Task 11 moves them into the item runtime.
@@ -615,9 +497,11 @@ function legacyHost($: EngineInterface): ItemsHost {
       const m = managerOf($)
       await m.watch.check()
       if (opts?.since !== undefined && opts.since !== m.generation) return false
-      const dismissed = new Set((await readAuto($)).dismissed)
+      // The dismiss list is read again before the write: an x press while the first change ran must win (A20).
+      const dismissedNow = async (): Promise<ReadonlySet<string>> => new Set((await readAuto($)).dismissed)
       const cur = (await read($, items)) as unknown as StoredItem[]
-      if (change(cur, dismissed) === cur) return false
+      if (change(cur, await dismissedNow()) === cur) return false
+      const dismissed = await dismissedNow()
       await setItems($, list => change(list as unknown as StoredItem[], dismissed) as unknown as ItemRecord[])
       return true
     },
@@ -629,16 +513,15 @@ function legacyHost($: EngineInterface): ItemsHost {
       resetRepo($)
       await publishTools($) // the tools atom was reset too
     },
-    // The share of one beat that is not the session check: find the repo again (after /clear), then one round and one
-    // refresh. The trackers' ticks (the process probe) come from the bus.
+    // The share of one beat that is not the session check: find the repo again (after /clear), then one refresh. The
+    // trackers' ticks (the auto round, the process probe) come from the bus.
     tick: async () => {
       try {
         ensureRuntime($)
         await ensureRepo($)
       } catch {
-        // The beat still kicks what it can.
+        // The beat still kicks the refresh.
       }
-      scheduler?.kick('tick')
       coordinator?.kick('tick')
     },
   }
@@ -888,13 +771,12 @@ async function captureMentions($: EngineInterface, text: string, source: Source)
   if (recs.length > 0) await addFiles($, recs)
 }
 
-/** The Write, Edit and Read hooks: track the Markdown file, then count the call as a sign of life (A7). */
+/** The Write, Edit and Read hooks: track the Markdown file. The auto tracker counts the call as a sign of life (A7). */
 async function onFileTool($: EngineInterface, tool: string, ran: unknown, agentId: string | undefined): Promise<void> {
   try {
     await enter($)
     const t = touchFromToolResult(tool, ran)
     if (t) await captureFileTouch($, t, agentId)
-    await touch($, agentId)
   } catch {
     // Tracking a file must not change the tool result.
   }
@@ -1053,13 +935,15 @@ function afterLoad($: EngineInterface, repoReady: Promise<void>): void {
 
 /** The view context from what is known now. It does not wait for the repo: a render must not wait on `gh`. */
 async function contextOf($: EngineInterface, bodyColumns?: number): Promise<ViewContext> {
+  // When the last auto round ended. The Worktrees note reads it before `snapshot.at` (A22).
+  const autoCheckedAt = factsOf($).read<number>('auto.checkedAt')
   return {
     now: Date.now(),
     folded: (await read($, ui)).folded,
     tools: viewTools(await read($, tools)),
     sessionRepo,
     auto: await readAuto($),
-    ...(lastRoundAt !== undefined ? { autoCheckedAt: lastRoundAt } : {}),
+    ...(autoCheckedAt !== undefined ? { autoCheckedAt } : {}),
     ...(bodyColumns !== undefined ? { bodyColumns } : {}),
   }
 }
@@ -1228,8 +1112,8 @@ export const register: Register = on => {
     return ran
   }).catch((_$, e, next) => next(e))
 
-  // Once per process: register the command, then the start sequence of the manager: the run record, the trackers,
-  // the stored session and the transcript of a resume, the tick and the pane.
+  // Once per process: register the command, then the start sequence of the manager: the run record, the trackers
+  // (the auto tracker pins the root), the stored session and the transcript of a resume, the tick and the pane.
   on('session.start', async ($, e, next) => {
     try {
       await $.command.register({
@@ -1241,17 +1125,11 @@ export const register: Register = on => {
       // The command may be refused. Capture and restore still work.
     }
     try {
-      await setAuto($, s => pinRoot(s, e.cwd, Date.now())) // A3: a later session.start (reload) keeps the pinned root
-    } catch {
-      // No root this time. The next session.start pins it.
-    }
-    try {
       await managerOf($).start(portsOf($), { cwd: e.cwd, fromSessionStart: true })
     } catch {
       // The start sequence logs its own faults. The session goes on.
     }
     await enter($).catch(() => {}) // A1: the tick runs from the start, with the pane open or closed
-    scheduler?.kick('start')
     return next(e)
   }).catch((_$, e, next) => next(e))
 
@@ -1286,7 +1164,6 @@ export const register: Register = on => {
       await settleProbes($)
       g.reset()
       a.reset()
-      scheduler?.kick('manual')
       const run = await c.runDue({ force: true })
       if (run.skipped) {
         // A run was in flight: the forced run is queued behind it. Wait, then publish the tool status again.
@@ -1295,14 +1172,13 @@ export const register: Register = on => {
         await c.idle()
         await publishTools($)
       }
-      await scheduler?.idle()
-      await round?.idle()
+      // The trackers refresh too: the auto tracker runs a round and waits for it and its PR step.
       await managerOf($).command(portsOf($), { sub: 'refresh', args: '', wait: true })
       return { text: await listText($) }
     }
     if (arg === 'clear') {
-      const ids = autoIds(await readAuto($), await read($, items))
-      await setAuto($, s => dismiss(s, ids)) // so the next tick does not bring the auto items back (A14)
+      // The auto tracker hides its current items first, so the next tick does not bring them back (A14).
+      await managerOf($).command(portsOf($), { sub: 'clear', args: '', wait: true })
       await managerOf($).clear(portsOf($))
       return { text: 'Tracking list cleared.' }
     }
@@ -1360,9 +1236,10 @@ export const register: Register = on => {
       },
       refresh: () => {
         ensureRuntime($)
-        void enter($).catch(() => {})
         coordinator?.kick('manual')
-        scheduler?.kick('manual')
+        void managerOf($)
+          .command(portsOf($), { sub: 'manual', args: '', wait: false })
+          .catch(() => {})
       },
       dismiss: id => {
         void dismissOne($, id)
@@ -1413,108 +1290,17 @@ export const register: Register = on => {
     return ran
   }).catch((_$, e, next) => next(e))
 
-  // ---------------------------------------------------------------- auto tracking events (spec 7)
-
-  on('tool.call', { tool: 'EnterWorktree' }, async ($, e, next) => {
-    const ran = await next(e)
-    try {
-      await enter($)
-      const f = fromEnterResult(ran, e.agentId)
-      if (f) await setAuto($, s => recordEnter(s, f, Date.now()))
-      await touch($, e.agentId)
-      kickAuto($, 'worktree')
-    } catch {
-      // The tool result goes back unchanged.
-    }
-    return ran
-  }).catch((_$, e, next) => next(e))
-
-  on('tool.call', { tool: 'ExitWorktree' }, async ($, e, next) => {
-    const ran = await next(e)
-    try {
-      await enter($)
-      await touch($, e.agentId)
-      kickAuto($, 'worktree') // the next round marks the child removed (remove) or keeps it live (keep)
-    } catch {
-      // See above.
-    }
-    return ran
-  }).catch((_$, e, next) => next(e))
-
-  on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
-    const ran = await next(e)
-    try {
-      await enter($)
-      const f = fromAgentResult(ran)
-      if (f?.worktreePath !== undefined) await setAuto($, s => recordAgentResult(s, f, Date.now()))
-      await touch($, e.agentId)
-      kickAuto($, 'agent')
-    } catch {
-      // See above.
-    }
-    return ran
-  }).catch((_$, e, next) => next(e))
-
-  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    const ran = await next(e)
-    const command = String(e.command ?? '')
-    try {
-      await enter($)
-      const f = fromBash(command, ran, e.agentId)
-      const { agentId, branch } = f
-      if (agentId !== undefined && branch !== undefined) await setAuto($, s => recordAgentBranch(s, agentId, branch))
-      await touch($, e.agentId)
-      if (f.kick) kickAuto($, f.kick)
-    } catch {
-      // See above.
-    }
-    return ran
-  }).catch((_$, e, next) => next(e))
-
-  // The Monitor and TaskStop rows belong to the processes tracker. These hooks only count the call as a sign of life.
-  on('tool.call', { tool: 'Monitor' }, async ($, e, next) => {
-    const ran = await next(e)
-    try {
-      await enter($)
-      await touch($, e.agentId)
-    } catch {
-      // See above.
-    }
-    return ran
-  }).catch((_$, e, next) => next(e))
-
-  on('tool.call', { tool: 'TaskStop' }, async ($, e, next) => {
-    const ran = await next(e)
-    try {
-      await enter($)
-      await touch($, e.agentId)
-    } catch {
-      // See above.
-    }
-    return ran
-  }).catch((_$, e, next) => next(e))
-
   // A subagent or a workflow agent starts. `next` gives its id. The master cwd is read before `next`: it is the
-  // spawn-time location of a child of the main loop (A6).
+  // spawn-time location of a child of the main loop (A6). The trackers hear of it in `order`: the auto tracker records
+  // the spawn first, the repos tracker reads the agent's cwd from the ledger.
   on('agent.spawn', async ($, e, next) => {
     let sessionCwd: string | undefined
     if (e.cwd === undefined && e.parentAgentId === undefined) sessionCwd = await $.session.cwd().catch(() => undefined)
     const out = await next(e)
     try {
-      await enter($)
-      const f = fromSpawn(e, out)
-      if (f) {
-        await setAuto($, s => recordSpawn(s, f, Date.now(), sessionCwd))
-      }
-      kickAuto($, 'agent')
-    } catch {
-      // See above.
-    }
-    try {
-      // The trackers hear of the spawn after the ledger holds it: the repos tracker reads the agent's cwd from there.
       await managerOf($).agentSpawn(portsOf($), spawnEvent(e, out, sessionCwd))
     } catch {
-      // See above.
+      // The spawn answer goes back unchanged.
     }
     return out
   }).catch((_$, e, next) => next(e))
@@ -1522,13 +1308,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const out = await next(e)
     try {
-      await enter($) // a main-loop turn has no agent id and no fact, but it is the most regular beat to re-arm on
-      const f = fromTurnEnd(e)
-      if (f) {
-        const at = Date.now()
-        await setAuto($, s => recordTurnEnd(recordActivity(s, f.agentId, at), f.agentId, f.reason, at))
-        kickAuto($, 'agent')
-      }
+      await managerOf($).turnComplete(portsOf($), turnEvent(e)) // a main-loop turn re-arms the tick: the manager's entry
     } catch {
       // See above.
     }

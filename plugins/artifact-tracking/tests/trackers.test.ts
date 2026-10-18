@@ -3,9 +3,18 @@
 // to core. Tasks 9 to 12 add their trackers here; Task 12 adds the order check for all eight.
 import { expect, test } from 'claude-code/testing'
 import { buildTrackers } from '../trackers'
+import type { AutoGithub } from '../trackers/auto'
 import { hostWorld } from './fixtures/tracker-host'
 
-const list = buildTrackers({})
+/** The PR lane's GitHub side, not ready: the list only needs the object to build the auto tracker. */
+const autoGithub: AutoGithub = {
+  discovery: {} as AutoGithub['discovery'],
+  ready: async () => false,
+  repo: async () => null,
+  hosts: () => [],
+}
+const build = () => buildTrackers({ autoGithub })
+const list = build()
 
 test('ids are unique and none is items', () => {
   const ids = list.map(t => t.id)
@@ -28,6 +37,15 @@ test('each store(ctx) equals its config.defaults and enabled is true', async () 
   }
 })
 
+test('the list holds the repos, processes and auto trackers at orders 50, 80 and 10', () => {
+  expect(list.map(t => [t.id, t.order])).toEqual([
+    ['repos', 50],
+    ['processes', 80],
+    ['auto', 10],
+  ])
+  expect(list.find(t => t.id === 'auto')?.persist).toBe(false)
+})
+
 test('each call builds new trackers, so per-load state is not shared', () => {
-  expect(buildTrackers({})[0]).not.toBe(buildTrackers({})[0])
+  expect(build()[0]).not.toBe(build()[0])
 })
