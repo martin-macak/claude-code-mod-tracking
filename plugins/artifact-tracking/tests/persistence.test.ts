@@ -508,6 +508,25 @@ test('clearRun deletes v2:run when only pendingEnd was in it', async () => {
   expect(w.store.has('v2:run')).toBe(false)
 })
 
+test('dropRun deletes the record the start read, and a record with nothing in it is left alone', async () => {
+  const { w, p } = setup({ fake: { store: { 'v2:run': { run: { auto: { root: '/old' } } } } } })
+  await p.dropRun(await p.loadRun())
+  expect(w.store.has('v2:run')).toBe(false)
+  const sets = w.storeSets
+  await p.dropRun({})
+  expect(w.storeSets).toBe(sets)
+})
+
+test('dropRun leaves a v2:run that another process wrote after the start read it', async () => {
+  const { w, p } = setup({ fake: { store: { 'v2:run': { run: { auto: { root: '/old' } } } } } })
+  const stale = await p.loadRun()
+  w.store.set('v2:run', { pendingEnd: PENDING }) // a second process ended its session while this start ran
+  await p.dropRun(stale)
+  expect(w.store.get('v2:run')).toEqual({ pendingEnd: PENDING })
+  await p.clearRun() // the size it counts is the fresh record's
+  expect(w.store.has('v2:run')).toBe(false)
+})
+
 test('KEYS names the three v2 keys', () => {
   expect(KEYS.session('abc')).toBe('v2:s:abc')
   expect(KEYS.index).toBe('v2:index')

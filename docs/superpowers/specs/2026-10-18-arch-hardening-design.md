@@ -365,7 +365,7 @@ stateDiagram-v2
 4. The session load. It runs only on a cold `session.start`, that is, when the items slot is empty. The first start of a load also judges the `pendingEnd` that `v2:run` holds (D20, C19):
    - Carried: reason `clear` or `resume`, from another id than the current one, and `now - at <= 2 * tickMs`. SessionWatch resumes from it, and the switch (below) carries or loads.
    - Awaited: the same reason and age, but `fromId` is the current id. The reload came before the id flipped. `v2:run` stays, because the flip may still come in this load. It has no snapshot, so it carries `v2:run.run` (the reload gap).
-   - Else the record is stale. SessionWatch learns the id, Persistence loads `v2:s:<id>` into each persisted slot, and Replay runs (§5.6.1). The start deletes `v2:run`, because what it holds is an older process's. Without this, a later switch with no snapshot would carry that process's dismiss list and root. A failed delete is logged. A start whose session load failed (for example an unreadable id) deletes nothing.
+   - Else the record is stale. SessionWatch learns the id, Persistence loads `v2:s:<id>` into each persisted slot, and Replay runs (§5.6.1). The start deletes `v2:run`, because what it holds is an older process's. It reads the key again first and deletes it only if it still holds the record the start read, so a second process that ended its session meanwhile keeps its own record. Without this, a later switch with no snapshot would carry that process's dismiss list and root. A failed delete is logged. A start whose session load failed (for example an unreadable id) deletes nothing.
 5. Scheduler arms the tick.
 6. The pane reattaches through `ports.ui.panes()` and is invalidated.
 
@@ -868,7 +868,7 @@ Building L4 settled these points where the text above left them open. Code comme
 | C16 | A lazy start inside `session.end` reads the file and never reconciles. | The end writes no config (E6). |
 | C17 | A missing `version` is read as 1. A bad one is read as 1 with one problem. A migration's `up` returns the object with `version: to`. | The merge adds the key. The file stays the user's. |
 | C18 | `claudeCommand` puts `env CLAUDE_TRACKER_CONFIG_DIR=<dir>` before `claude` when `LaunchSpec.env` is set. Each scenario gets a temp folder. | No run may touch the real file (§7). |
-| C19 | The first start of a load deletes `v2:run` unless it carried a recent end or awaits one (§5.6, start step 4). | A switch with no snapshot falls back to `v2:run.run`. That is right for the reload gap and wrong for an older process's values. The reload gap includes an end of the current id: the id flips after the new module starts. |
+| C19 | The first start of a load deletes `v2:run` unless it carried a recent end or awaits one (§5.6, start step 4). The delete re-reads the key and goes only if the record is the one the start read. | A switch with no snapshot falls back to `v2:run.run`. That is right for the reload gap and wrong for an older process's values. The reload gap includes an end of the current id: the id flips after the new module starts. |
 | C20 | `reconcile` writes only when it adds a key or upgrades the file. | The file is the user's. A rewrite for layout alone changes their indent, newline and order, with no gain. |
 | C21 | The problem text quotes the reason of an engine refusal, without the `<plugin>: <call>:` prefix. | The copy table names the reason only. |
 

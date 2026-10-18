@@ -179,10 +179,14 @@ export class Persistence {
 
   /**
    * The first start of a load that honours no pending end: whatever `v2:run` holds is an older process's. `stale` is
-   * the record the start read. Deletes the key, so a later switch with no snapshot finds no run values to carry.
+   * the record the start read. Deletes the key, so a later switch with no snapshot finds no run values to carry. The
+   * start took a while since it read: a second process may have written its own end there. The key goes only if it
+   * still holds `stale`.
    */
   async dropRun(stale: RunCopy): Promise<void> {
     if (stale.pendingEnd === undefined && stale.run === undefined) return
+    const now = await this.loadRun()
+    if (JSON.stringify(now) !== JSON.stringify(stale)) return
     await this.d.store.delete(KEYS.run)
     this.runSize = 0
   }
