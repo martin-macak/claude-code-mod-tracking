@@ -110,6 +110,8 @@ plugins/artifact-tracking/
   hooks/
     hooks.json                 # { "modules": ["./register.tsx"] }
     register.tsx               # composition root: the only file with on and $
+    events.ts  command.ts  pane-actions.ts  view-inputs.ts   # L3: pure helpers register.tsx calls
+    items/                     # L3, transitional: ItemRuntime (runtime, store, capture, replay). L5 dissolves it.
   core/
     interfaces/                # contracts only, no logic
       tracker.ts               # Tracker, TrackerContext, TrackerEvents, ToolSpec, KeySpec
@@ -123,7 +125,7 @@ plugins/artifact-tracking/
       bus.ts                   # EventBus
       tracker-host.ts          # TrackerHost: init, store, dispose, isolation
       session.ts               # SessionWatch: id compare, pendingEnd, generation
-      scheduler.ts             # one tick, watchdog, per-tracker periods
+      scheduler.ts             # Scheduler: one tick, watchdog, per-tracker periods (the PR-step AutoScheduler is trackers/auto/scheduler.ts)
       persistence.ts           # $.store layout, write-through, end flush, size bound
       replay.ts                # transcript replay on a cold resume
       capture.ts               # one scan per text: offers spans to kinds by rank
@@ -170,6 +172,13 @@ Dependency rules:
 | `core/interfaces/` | `types/` (types only) | everything else |
 
 The names `github`, `jira`, `gh` and `acli` appear only under `trackers/` and in `trackers/index.ts`. Only `H/register.tsx` touches `$` or calls `on`.
+
+L3 breaks the rules above in four places. L5 closes them.
+
+- `hooks/` holds more than `register.tsx`: `events.ts`, `command.ts`, `pane-actions.ts`, `view-inputs.ts` and `items/`. These files are not `core/infra/`, so they may import trackers. `hooks/items/` uses the `gh`, `acli`, file and artifact tools of the trackers (D13, §10.1).
+- `trackers/` imports `core/infra/`: `CircuitBreaker` (repos, processes, and the `gh` and `acli` tools), `Tool` (the `gh` and `acli` tools), and `autoIds` and `dismiss` (auto). L5's ToolRunner takes the breaker and the tool wrapper. The dismiss code moves with the DismissList.
+- `core/infra/circuit-breaker.ts`, `coordinator.ts`, `dismiss.ts` and `tool.ts`, and `core/lib/porcelain.ts`, import types and `LIMITS` from `hooks/contracts.ts` (a move of L2). L4 moves `LIMITS` into the config. L5 moves the types.
+- `AutoScheduler` is auto-only (it uses `AutoReason`), so it lives in `trackers/auto/scheduler.ts` (D17).
 
 ### 5.2 Components
 
@@ -235,7 +244,7 @@ flowchart TB
 `register.tsx` holds wiring only:
 
 1. `portsOf($)`: a same-file top-level function that returns the `Ports` object (§5.4). It is built per dispatch, so each `$` call keeps the hook's agent context (E5).
-2. A module-level `LifecycleManager`, built on the first hook of a load. A hot reload builds a new one (E7). After a reload, `session.start` comes about 0.5 s late, so an event can arrive first. Every non-render entry therefore calls `ensureStarted()`: it runs the start sequence (§5.6) once per load, as a single-flight promise, and the event waits for it. A render before the start draws from state only.
+2. A module-level `LifecycleManager`, built on the first hook of a load. A hot reload builds a new one (E7). After a reload, `session.start` comes about 0.5 s late, so an event can arrive first. Every non-render entry therefore calls `entry()`: it runs `ensureStarted()`, then the session check and the tick watchdog. `ensureStarted()` runs the start sequence (§5.6) once per load, as a single-flight promise, and the event waits for it. This lazy start skips the session load and Replay (D5). A render before the start draws from state only.
 3. One literal `on()` per engine event (table below). Each hook ends with `.catch((_$, e, next) => next(e))`.
 4. The atom and `StateFamily` refs, inline at each call (E4).
 5. The `$.command.register` call for `/track`, in `session.start`.
@@ -243,28 +252,31 @@ flowchart TB
 
 Hook order inside each hook:
 
-- **Observe-only hooks** (`session.append`, `turn.complete`, `command.run`): `await next(e)`, then the manager call in a `try/catch`, then return the result.
-- **Pre-state hooks** (`tool.call`, `agent.spawn`): read `$.session.cwd()` first (a persisted `cd` moves it during the run, `T/register.test.tsx:2021`), then `await next(e)`, then the manager call with `cwdBefore`.
+- **Observe-only hooks** (`session.append`, `turn.complete`): `await next(e)`, then the manager call in a `try/catch`, then return the result.
+- **`command.run`**: the hook answers `/track` and never calls `next` (D12). It is the implementation of the command.
+- **Pre-state hooks** (`tool.call`, `agent.spawn`): read `$.session.cwd()` first (a persisted `cd` moves it during the run, `T/register.test.tsx:2021`), then `await next(e)`, then the manager call with `cwdBefore`. `tool.call` reads the cwd only when `wants(tool)` says a tracker declared that tool. Any other tool goes straight through with no entry.
 - **`session.end`**: the manager writes first, within the budget, then `next(e)` (§5.6).
-- **`ui.focus`**: `await next(e)`, then write the selection only when the result has no deny (§5.10).
+- **`ui.focus`**: `await next(e)`, then write the selection only when the result has no deny (§5.10). In L3 the hook maps the key (`pickRow`) and starts `entry()` beside the key, then calls `next(e)`. The key does not wait for the entry, because after a `/resume` the entry can load the stored copy and call `gh`. The selection atoms come in L6.
 - **`ui.render`**: reads only, no writes, no SessionWatch, no invalidate (E8, E9).
 
 | Event | Matcher | Manager call |
 | --- | --- | --- |
-| `session.start` | none | `start(ports)` |
+| `session.start` | none | `start(ports, { cwd, fromSessionStart })` |
 | `session.end` | none | `end(ports, reason, budgetMs)` |
-| `session.append` | `{ door: [<every door, as a literal>] }` | `row(ports, row)` |
-| `tool.call` | none | `toolCall(ports, call, result, cwdBefore)` |
-| `agent.spawn` | none | `agentSpawn(ports, spawn, cwdBefore)` |
-| `turn.complete` | none | `turnComplete(ports, turn)` |
-| `command.run` | `{ command: 'track' }` | `command(ports, args)` |
-| `ui.render` | `{ component: 'Pane', requestId: 'track' }` | `paneData(view)` then `TreeDataTable.render` |
-| `ui.render` | `{ component: 'AbovePrompt' }` | `bandData(view)` then `band` |
-| `ui.focus` | `{ requestId: 'track' }` | `focus(ports, element)` |
-| `ui.close` | `{ id: 'track' }` | `closed(ports)` |
-| `prompt.compose` | none | `compose(input, sections)` |
+| `session.append` | `{ door: [<every door, as a literal>] }` | `row(ports, RowEvent)`, built by `rowEvent(e, stored)` |
+| `tool.call` | none | `toolCall(ports, ToolCallEvent)`, built by `toolCallEvent(e, ran, cwdBefore)` |
+| `agent.spawn` | none | `agentSpawn(ports, AgentSpawnEvent)` |
+| `turn.complete` | none | `turnComplete(ports, TurnCompleteEvent)` |
+| `command.run` | `{ command: 'track' }` | `trackCommand(ports, manager, items, args)`: `entry`, then `command(ports, CommandEvent)` and `clear(ports)` as the sub-command needs |
+| `ui.render` | `{ component: 'Pane', requestId: 'track' }` | L3: `viewInputs` then `composePane` and `renderSections`. L6: `paneData(view)` then `TreeDataTable.render` |
+| `ui.render` | `{ component: 'AbovePrompt' }` | L3: `viewInputs` then `composeBand`. L6: `bandData(view)` then `band` |
+| `ui.focus` | `{ requestId: 'track' }` | L3: `pickRow`, then `entry(ports)` beside the key. L6: `focus(ports, element)` |
+| `ui.close` | `{ id: 'track' }` | L3: `entry(ports)` beside the key. L6: `closed(ports)` |
+| `prompt.compose` | none | L3: pass-through `next(e)` (D19). L7: `compose(input, sections)` |
 
-The door list is the full superset as a literal, `queue` and `compaction` included (E17). A tracker declares its doors as data, and the bus filters. `tool.call` is one matcherless hook, and the bus dispatches by tool name. So a new tool or door needs no edit in `register.tsx`. A new engine event family edits `register.tsx` once (§11).
+The pane's `x` button calls `dismiss(ports, ids)`: the dismiss list first, the item keys second, then the `dismissed` event.
+
+The door list is the full superset as a literal, `queue` and `compaction` included (E17). In L3 it is one `session.append` hook with 12 doors (it replaced four hooks). A tracker declares its doors as data, and the bus filters. `tool.call` is one matcherless hook, and the bus dispatches by tool name. So a new tool or door needs no edit in `register.tsx`. A new engine event family edits `register.tsx` once (§11).
 
 `agent.spawn` with `resume` set is a resumed agent, not a new one. The auto tracker dedupes by agent id.
 
@@ -275,22 +287,26 @@ Ports are async closures over `$`. No class outside `register.tsx` sees `$`. The
 ```ts
 // core/interfaces/ports.ts (sketch)
 export interface Ports {
-  clock: { now(): Promise<number>; wall(): number; after(ms: number, fn: () => void): Promise<Timer>; every(ms: number, fn: () => void): Promise<Timer> }
+  clock: { now(): Promise<number>; wall(): number; after(ms: number, fn: () => void): Timer; every(ms: number, fn: () => void): Timer }
   run(argv: readonly string[], opts: RunOpts): Promise<RunResult>            // $.process.run
-  fs: { read(p: string): Promise<string>; write(p: string, t: string): Promise<void>; exists(p: string): Promise<boolean>; stat(p: string): Promise<FsStat | null> }
+  fs: { read(p: string): Promise<string>; write(p: string, t: string): Promise<void>; exists(p: string): Promise<boolean>; stat(p: string, opts?: { resolve?: boolean }): Promise<FsStat | null> }
   env: { get(name: EnvName): Promise<string | undefined> }                  // literal names only
   settings: { read(): Promise<Json> }                                      // for the file tracker
-  store: { get(k: string): Promise<Json | undefined>; set(k: string, v: Json): Promise<void>; delete(k: string): Promise<void>; keys(): Promise<string[]> }
-  session: { id(): Promise<string>; cwd(): Promise<string>; repo(): Promise<RepoRemote | null>; messages(): Promise<SessionRow[]> }
-  agents: { list(): Promise<AgentInfo[]> }
+  store: StorePort                                                         // get, set, delete (one key each), keys(): Promise<string[]>
+  session: { id(): Promise<string>; cwd(): Promise<string>; repo(): Promise<RepoRemote | null>; messages(): Promise<readonly SessionRow[]> }
+  agents: { list(): Promise<readonly AgentInfo[]> }
   state: StatePorts                                                        // closures per atom, refs inline
-  ui: { open(): Promise<boolean>; focus(key: string): Promise<void>; panes(): Promise<PaneInfo[]>; invalidate(): Promise<void>; toast(t: string): void }
+  ui: { open(): Promise<boolean>; focus(key: string): Promise<void>; panes(): Promise<readonly PaneInfo[]>; invalidate(): void; toast(t: string): void }
   log(line: string): void
 }
+
+// In L3: StatePorts = { items, tools, ui, slot }. items, tools and ui are AtomPort<T> { get(), update(fn) }.
+// slot is a SlotPort { get(id), update(id, fn) } over the `trackers` family. L6 adds expanded, selected, shown and help.
 ```
 
 - `clock.now()` is engine time. Timers, debounces and the tick use it, so the kit's mock clock drives them. `clock.wall()` is `Date.now`, for record stamps (as today).
-- `Timer` is the engine's handle with `cancel()`.
+- `Timer` is the engine's handle with `cancel()`. The engine call returns it at once, so `after` and `every` return a `Timer`, not a promise. A refused timer never fires.
+- `session.repo()` parses the engine's `remote` string into a `RepoRemote` in `portsOf`. `fs.stat` with `resolve: true` also gives the `realPath` of a link.
 - `EnvName` is a closed list in `register.tsx`: `HOME`, `XDG_CONFIG_HOME`, `CLAUDE_TRACKER_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`. Each is a literal `$.env.get` call.
 - `state` holds one closure pair per atom. The family port takes the id as a parameter, with the ref literal inline. This exact form passes `claude plugin validate --strict`, `tsc` and the kit (spike [`g14-ports-family-param`](../../knowledge-base/claude-code-mods/sources/spikes-2026-10-17/g14-ports-family-param/), verified-kit).
 - `ui.invalidate` is called from event handlers and the tick only, never from a render (E8). A config or tool-status change needs it, because it is not a state read.
@@ -301,14 +317,24 @@ The bus maps a domain event kind to handlers. TrackerHost fills it at init from 
 
 | Domain event | From | Fan-out |
 | --- | --- | --- |
-| `row` (door, text, origin, agentId) | `session.append`, replay | Capture first (§5.9), then the declared handlers, parallel and isolated |
-| `toolCall` (tool, input, result, agentId, cwdBefore) | `tool.call`, replay | parallel, keyed by tool name |
-| `agentSpawn`, `turnComplete` | engine | parallel |
-| `tick` | Scheduler | per tracker period |
-| `sessionChanged` (old id, new id, kind: `clear` or `resume`) | SessionWatch | sequential, in `order` |
-| `command` (sub, args) | `/track <sub>` | Commands router (§5.12) |
+| `start` (cwd?, cold) | start sequence (§5.6) | sequential, in `order` |
+| `row` (door, origin, agentId, isMeta, hasMessage, text, task?) | `session.append` | Capture first (§5.9), then the declared handlers, parallel and isolated |
+| `toolCall` (tool, input, result, agentId, toolUseId, cwdBefore) | `tool.call` | parallel, keyed by tool name |
+| `agentSpawn` (input, answer, sessionCwd) | `agent.spawn` | sequential, in `order` |
+| `turnComplete` (input) | `turn.complete` | parallel |
+| `tick` (now) | Scheduler | parallel, per tracker period |
+| `sessionChanged` (from, to, kind: `clear` or `resume`) | SessionWatch switch | sequential, in `order` |
+| `command` (sub, args, wait) | `/track <sub>` | sequential, in `order`. Commands router (§5.12). `wait`: the handler awaits its work before the command answers. |
+| `dismissed` (ids) | `LifecycleManager.dismiss` | sequential, in `order` |
+| `replay` (a batch of `row` and `toolCall` items) | start sequence, cold resume | parallel (§5.6.1) |
+
+`input`, `result` and `answer` are raw `Json`. A handler parses them with guards, because they come from the engine. `row` carries `task` for a task-notification row.
+
+`start`, `agentSpawn`, `sessionChanged`, `command` and `dismissed` run one handler after the other in `order`, so a later tracker sees the earlier one's write (repos reads the ledger row that auto writes for the same spawn, D11). The other kinds start every handler at once. `order` follows the pane: auto 10, jira 20, github 30, artifact 40, repos 50, web 60, file 70, processes 80.
 
 A handler has the form `(ctx, event) => void | Promise<void>`. TrackerHost passes the tracker's context. Each call runs in a `try/catch`. A failing handler logs one line through `ports.log`, and the others go on. Trackers never emit to each other. They share data through core services only: ItemStore, Facts, DismissList.
+
+In L3 the five item trackers declare no `row` or `toolCall` handler. The item host reads the `row` event through `ItemsHost.capture` before the bus (§5.9). A `tick` handler runs only when the Scheduler says its period is due (§5.6).
 
 ### 5.6 Lifecycle
 
@@ -320,48 +346,59 @@ stateDiagram-v2
   Active --> Ending: session.end / flush, snapshot, pendingEnd
   Ending --> [*]: exit reasons
   Ending --> Switching: new id seen at a hook entry or the tick
-  Switching --> Active: clear: carry the snapshot / resume: load s:newId, else empty
+  Switching --> Active: clear: carry the snapshot / resume: load v2:s:newId, else empty
   Active --> Loaded: hot reload (new module copy)
 ```
 
 **Start sequence** (`session.start`, on load and on each hot reload):
 
-1. ConfigManager reads the file (§5.7).
-2. Persistence loads `v2:run` (dismiss list, pinned root, `pendingEnd`) and, when `$.state` is empty, `v2:s:<id>`.
-3. TrackerHost runs `init` for each enabled tracker and fills the bus with the declared handlers (§5.5). It then runs `store` (§5.8) and hands the config writes to ConfigManager.
-4. Replay runs when the stored copy is missing or new (§5.6.1). It comes after step 3, because replayed events reach a tracker only through its handlers.
+1. ConfigManager reads the file (§5.7). L3 has none: each tracker's `config` and `store` serve today's `LIMITS` from memory, and no file is read or written.
+2. Persistence loads `v2:run` (the `pendingEnd` and the run-scoped slots, §5.13). Once per load it deletes the keys of the old layout (`s:*`, `index`).
+3. The item host starts. TrackerHost runs `init` and then `store` (§5.8) for each tracker in `order`, and fills the bus with the declared handlers (§5.5). The bus emits `start`.
+4. The session load. It runs only on a cold `session.start`, that is, when the items slot is empty:
+   - A `pendingEnd` in `v2:run` counts only on the first start of a load, with reason `clear` or `resume`, from another id than the current one, and when `now - at <= 2 * tickMs`. SessionWatch then resumes from it, and the switch (below) carries or loads.
+   - Else SessionWatch learns the id. Persistence loads `v2:s:<id>` into each persisted slot. Replay then runs (§5.6.1).
 5. Scheduler arms the tick.
 6. The pane reattaches through `ports.ui.panes()` and is invalidated.
 
-`init` is idempotent. It reads the stored copy of step 2 and never waits for replay: replay fills the stores through the handlers. TrackerHost cancels every timer a tracker holds before a new `init` and at dispose.
+The review of [PR #59](https://github.com/martin-macak/claude-code-mod-tracking/pull/59) put the session load before `init`, so `init` could read the stored copy. L3 keeps `init` first (D4). The item restore filters need the active Jira site from `acli`, and the item runtime starts its tools in step 3, as `ensureRuntime` did before `restore`. So `init` reads the slots as they are. The load fills them afterwards through `DataSpec.restore`.
+
+The lazy start (`ensureStarted`) runs the same steps without the session load and without Replay (D5). A reload keeps `$.state`, so nothing needs a load. The later `session.start` of the same load runs the sequence again and loads the session if the items slot is still empty. `init` is idempotent. A tracker builds its services once per load, and TrackerHost fills the bus once (D16). TrackerHost cancels the timers a tracker holds (`ctx.clock.after`) at dispose only. A second `session.start` must not drop a pending debounce.
 
 **End** (`session.end`, any reason):
 
-1. Persistence cancels its pending flush timer, then writes one batched `$.store.set` for the leaving id, if `budgetMs` allows. No config-file write happens here (E6, E16).
-2. Persistence keeps a snapshot of the leaving session in a module variable (items, tracker slots).
-3. SessionWatch sets `pendingEnd = { reason, fromId }` and writes it to `v2:run` in the same batched `$.store.set`. A hot reload between the end and the switch loses the module snapshot, so the switch then carries from `v2:s:<fromId>`, which step 1 wrote.
-4. `next(e)` runs.
-5. On an exit reason, TrackerHost calls `dispose` (best effort).
+1. The manager starts lazily if this is the first hook of the load (a hot reload, then `/clear`). It runs the session check, so a switch no hook has seen yet is carried first. If the id or the clock read fails, the end goes on with the last id SessionWatch saw and the wall clock. With no id ever seen, it writes nothing.
+2. Persistence cancels its pending flush timer. For each slot it merges the stored copy of the leaving id under the live value (`DataSpec.settle`, D6). That keeps the rows today's switch merge keeps.
+3. If `budgetMs` allows (200 ms or more), Persistence writes `v2:s:<id>` when a slot holds data, `v2:index` when it changed, and then `v2:run`. It writes one `$.store.set` per key, because the engine call writes one key (D3). No config-file write happens here (E6, E16).
+4. SessionWatch keeps `pendingEnd = { reason, fromId, at }` and a snapshot of every settled slot, the run-scoped ones too. `v2:run` holds the same `pendingEnd` and the run-scoped slots. A hot reload between the end and the switch loses the module snapshot. The switch then carries from `v2:s:<fromId>` and `v2:run`, which step 3 wrote.
+5. On an exit reason (`prompt_input_exit`, `logout`, `other`), TrackerHost and the item host `dispose` (best effort).
+6. `next(e)` runs.
 
-**Switch.** SessionWatch compares `ports.session.id()` with the last seen id on the tick and at the entry of `session.append`, `tool.call`, `agent.spawn`, `turn.complete`, `command.run`, `ui.focus` and `ui.close`. It never runs in `ui.render` or `prompt.compose`, because a switch writes `$.state` and a render-like dispatch may refuse that (E9). On a new id:
+**Switch.** SessionWatch compares `ports.session.id()` with the last seen id on the tick, at a flush, in `session.end` and at the entry of `session.append`, `tool.call`, `agent.spawn`, `turn.complete`, `command.run`, `ui.focus` and `ui.close`. It never runs in `ui.render` or `prompt.compose`, because a switch writes `$.state` and a render-like dispatch may refuse that (E9). Concurrent checks share one switch, so two tool calls right after `/clear` both land on the carried list. On a new id, the manager runs these steps in order. A failing step is logged, and the next one still runs:
 
-- After `pendingEnd.reason === 'clear'`: carry the snapshot (or `v2:s:<fromId>`) into the new session's state (today's behavior). Then clear `pendingEnd` in `v2:run`.
-- Else (`resume`, or no `pendingEnd`): load `v2:s:<newId>` into state, or start empty.
-- The dismiss list and the pinned root are run-scoped. They stay either way.
-- SessionWatch bumps the generation. Writes from an async task of an older generation are dropped. This replaces `repoGen` and guards late results after `/clear`, `/track clear` or `/resume`.
-- The bus emits `sessionChanged`.
+1. The item host hears of the switch first and forgets the session repo, so a later lookup is for the new session.
+2. Run-scoped slots (`persist: false`) carry: from the snapshot, or from `v2:run.run` when this load saw no end (the reload gap). After an end the snapshot is the whole truth. The dismiss list and the pinned root are run-scoped, so they stay either way. They load before the persisted slots, because an item load needs the dismiss list (D9).
+3. After `pendingEnd.reason === 'clear'`: the persisted slots carry the snapshot (or `v2:s:<fromId>`) into the new session's state (today's behavior).
+4. Else (`resume`, or no `pendingEnd`): load `v2:s:<newId>`, then run Replay (§5.6.1), only when the items slot is empty. A warm slot, kept by a reload, loads nothing. An id with no stored copy (`/branch`) starts empty.
+5. The bus emits `sessionChanged`. Then Persistence drops `pendingEnd` from `v2:run` and keeps the run values (`clearRun`).
+
+SessionWatch bumps the generation before the steps. A data write that carries an older `since` is dropped (`ctx.data.update(fn, { since })`, `items.update(change, { since })`). The repo queue and `/track clear` drop by generation. The PR lane of auto keeps today's rule: it runs the session check, then applies, so a discovery in flight during `/resume` lands (D8). This replaces `repoGen` and guards late results after `/clear`, `/track clear` or `/resume`.
+
+Every data write runs the session check first. The steps of a switch, the start sequence, and the `start`, `sessionChanged` and `replay` handlers write without it. The check is single flight and would wait for the run it sits in.
 
 The four mirrors (`mirror`, `repoMirror`, `processMirror`, `autoMirror`) and the seven `ensureSession` call sites go away. State is intact at `session.end`, so the snapshot replaces them (E6).
 
-**Tick.** One `$.clock.every` at `global.refresh.tickMs`. A refused period ends the interval (E18), so the Scheduler keeps today's watchdog. Every non-render hook entry and `turnComplete` re-arm the tick when the last beat is older than two periods. A change of `tickMs` in the config re-arms the timer. A tracker declares `events.tick = { everyMs?(config), run }`. The Scheduler runs it when `now - last >= everyMs`. The default period is `tickMs`.
+**Tick.** One `$.clock.every` at `global.refresh.tickMs`. A refused period ends the interval (E18), so the Scheduler keeps today's watchdog. Every non-render hook entry and `turnComplete` re-arm the tick when the last beat is older than two periods. A change of `tickMs` in the config re-arms the timer. Each beat finds a new session id, gives the item host its share, then emits `tick { now }`. A tracker declares `events.tick = { everyMs?(config), run }`. The Scheduler runs it when `now - last >= everyMs - 1,000` ms, because a timer may fire a little early. The default period is `tickMs`.
 
-**Data writes.** Persistence writes through with a debounce of `global.refresh.flushMs` (default 1,500 ms) to coalesce. A reload loses at most one window (E7).
+**Data writes.** Persistence writes through with a debounce of `global.refresh.flushMs` (default 1,500 ms) to coalesce. The first change arms the timer, and later ones do not move it. A flush is an entry: the session check runs first, so a `/clear` since the last change saves the old session. A reload loses at most one window (E7).
 
 #### 5.6.1 Replay
 
-A `claude --resume` load fires no append hooks. Today `restore` merges the stored copy with `$.session.messages()` (`H/register.tsx:1087`, `T/register.test.tsx:388`). Replay keeps this. It reads `ports.session.messages()` and feeds each row and tool result through the bus as `row` and `toolCall` events with origin `replay`. Trackers need no second entry point.
+A `claude --resume` load fires no append hooks. Today `restore` merges the stored copy with `$.session.messages()` (`H/register.tsx:1087`, `T/register.test.tsx:388`). Replay keeps this. It reads `ports.session.messages()` and builds one batch of rows and tool results, in transcript order, with origin `replay`. The manager gives the batch to the item host (`ItemsHost.replay`) and emits it once as the bus kind `replay` (D7). A tracker that needs the transcript subscribes to `replay`. In L3 none does: processes, repos and auto were never replayed. The item host merges the batch under the stored items, so a stored copy that already knows a publish does not count it twice.
 
-The restore filters move to the kinds: `ItemKind.restore?(item): StoredItem | null` drops not-found items, Jira tool sightings off the active site and auto sources, and clears `refreshedAt` (today `H/register.tsx:1136-1149`).
+Replay runs on a cold `session.start` and on a cold resume switch, whether or not a stored copy exists. It does not run on a lazy start or on `/clear`. Capture and the `row` handlers skip a replayed row.
+
+The restore filters move to the kinds: `ItemKind.restore?(item): StoredItem | null` drops not-found items, Jira tool sightings off the active site and auto sources, and clears `refreshedAt` (today `H/register.tsx:1136-1149`). In L3 they stay in `hooks/items/store.ts` (`storedForLoad`). That function also re-keys artifacts and drops dismissed items. L5 moves it.
 
 ### 5.7 ConfigManager
 
@@ -386,6 +423,8 @@ The restore filters move to the kinds: `ItemKind.restore?(item): StoredItem | nu
 ```
 
 Each tracker owns the shape of `trackers.<id>`. `enabled` and `prompt` are common to all. The candidate keys per tracker are in [config-manager §6](../../knowledge-base/claude-code-mod-architecture/config-manager.md#6-candidate-config-keys). Argv and command lines stay out of the file.
+
+L3 builds each slice's `ConfigSpec` but reads no file. The slices carry no `prompt` block yet (PromptComposer is L7). Jira's slice has `concurrency` and `epicChildLimit`, github's has `chunkSize`, and processes has `probeTimeoutMs` (1,000 to 120,000 ms).
 
 **Read.** `JSON.parse` after a BOM strip. Each slice goes through its tracker's `ConfigSpec.normalise(raw, defaults)`: per-field fallback to the default, a min and a max on every number, warnings collected, unknown keys kept, the result frozen. A parse error is transient first: keep the last good value (or defaults) and retry on the next check. A persistent error shows as a problem in `/track` and the help view. The mod never clears or overwrites an invalid file.
 
@@ -416,6 +455,7 @@ export interface Tracker<C extends JsonObject = JsonObject, D extends Json = Jso
   readonly keys?: readonly KeySpec[]           // static: id, key, label, scope
   readonly commands?: readonly CommandSpec[]   // /track sub-commands: sub, hint
   readonly events?: TrackerEvents<C, D>        // handlers as data: (ctx, event) => …
+  readonly data?: DataSpec<C, D>               // how core stores, carries and clears the slot: empty, settle, restore, clear
   init(ctx: TrackerContext<C, D>): void | Promise<void>
   store(ctx: TrackerContext<C, D>): C          // the slice this tracker wants in the file
   sections?(ctx: ViewContext<C, D>): readonly SectionSpec[]
@@ -426,35 +466,41 @@ export interface Tracker<C extends JsonObject = JsonObject, D extends Json = Jso
 
 export interface TrackerContext<C, D> {
   readonly id: string
-  readonly generation: number
+  readonly generation: number                  // a getter: the live value
+  current(): Promise<number>                   // runs the session check, answers the generation
   readonly config: { slice(): Readonly<C>; global(): Readonly<GlobalConfig> }
-  readonly data: { get(): D | undefined; update(fn: (cur: D | undefined) => D): Promise<void> }  // StateFamily slot
+  readonly data: {                             // StateFamily slot
+    get(): Promise<D | undefined>
+    update(fn: (cur: D | undefined) => D, opts?: { since?: number }): Promise<D | undefined>  // undefined: dropped (older since)
+  }
   readonly items: ItemStorePort
-  readonly facts: FactsPort
-  readonly dismiss: DismissPort
+  readonly facts: FactsPort                    // publish(name, Json | undefined), read<T>(name)
+  readonly dismiss: DismissPort                // list(): Promise<ReadonlySet<string>>, add(ids)
   readonly session: { id(): Promise<string>; cwd(): Promise<string>; repo(): Promise<RepoRemote | null>; root(): string | undefined }
-  readonly tools: ToolPort                     // run by tool id: probe, timeout, breaker
+  readonly tools: ToolPort                     // L3: raw run(tool, argv, opts). L5: probe, timeout, breaker
   readonly fs: Pick<Ports['fs'], 'stat' | 'exists'>
-  readonly env: Pick<Ports, 'settings' | 'agents'>
-  readonly clock: { now(): Promise<number>; wall(): number; after(ms: number, fn: () => void): Promise<void> }
+  readonly env: { get(name: EnvName): Promise<string | undefined>; settings(): Promise<Json | undefined>; agents(): Promise<readonly AgentInfo[]> }
+  readonly clock: { now(): Promise<number>; wall(): number; after(ms: number, fn: () => void): Timer }
   readonly log: (line: string) => void
 }
 ```
+
+A handler runs in a dispatch and every `$` call is async, so `data.get()` is async (D15). A job that outlives its dispatch keeps `current()` as `since` and passes it to `data.update`. The write returns `undefined` when a switch made the job stale. `events.row` is `{ doors, run }`. `events.toolCall` maps a tool name to a handler. `events.replay` takes the whole batch.
 
 **Phases.**
 
 | Phase | When | Contract |
 | --- | --- | --- |
-| `init` | Start sequence step 3, and after a switch | Idempotent. Reads its data from `ctx.data` and `ctx.items`. Timers only through `ctx.clock.after`, which TrackerHost tracks and cancels. Periodic work only through `events.tick`. |
+| `init` | Start sequence step 3, on each run of the sequence | Idempotent. A tracker builds its services once per load (`??=`). Reads its data from `ctx.data` and `ctx.items`. Timers only through `ctx.clock.after`, which TrackerHost tracks and cancels at dispose. Periodic work only through `events.tick`. A switch does not call `init` again: `DataSpec.restore` and the `sessionChanged` handler move the data. |
 | `store` | Start sequence step 3, right after `init` | Returns the slice this tracker wants persisted. Today every tracker returns its normalised slice with defaults filled. ConfigManager merges only the missing keys into the file (§5.7). This is the only source of the tracker's part of the default file. Config only: data persistence stays in core. |
 | `sections`, `actions`, `prompt` | On render and on `prompt.compose` | Pure. Read the view context, return values, write nothing. |
 | `dispose` | `session.end` with an exit reason | Best effort, synchronous. A reload gives no call (E7). |
 
-**Data.** A tier-2 tracker (repos, processes, auto) keeps its data in `ctx.data`, one member of the `StateFamily` key `trackers` with `id` = tracker id (E4). Persistence stores all slots except those with `persist: false`. Auto sets `persist: false`, as today (auto is rebuilt from git and the agent list). Item trackers keep their records in the ItemStore. A tracker guards the shape of its slot, because the contract types it as `Json`.
+**Data.** A tier-2 tracker (repos, processes, auto) keeps its data in `ctx.data`, one member of the `StateFamily` key `trackers` with `id` = tracker id (E4). Core turns `Tracker.data` into a `DataSlot` (`read`, `empty`, `settle`, `restore`, `clear`) for Persistence and the switch. Persistence stores the persisted slots in `v2:s:<id>`. A slot with `persist: false` is run-scoped: it goes to `v2:run` and carries on every switch (D9). Auto sets `persist: false`, as today (auto is rebuilt from git and the agent list). Item trackers keep their records in the ItemStore. `/track clear` empties the persisted slots and keeps the run-scoped ones, after auto dismisses its ids (D10). A tracker guards the shape of its slot, because the contract types it as `Json`. The id `items` belongs to the item list, and TrackerHost refuses it at init.
 
-**Tools.** A `ToolSpec` is `{ id, probe: argv, timeoutMs?, breaker? }`. ToolRunner owns one circuit breaker per tool id. Tool status lives in one atom, `tools: Record<string, ToolStatus>`, so a status change redraws the pane. A tool has one owner tracker: github owns `gh`, jira owns `acli`, repos owns `git`, processes owns `docker`, `tmux`, `screen` and `ps`.
+**Tools.** A `ToolSpec` is `{ id, probe: argv, timeoutMs?, breaker? }`. ToolRunner owns one circuit breaker per tool id. Tool status lives in one atom, `tools: Record<string, ToolStatus>`, so a status change redraws the pane. A tool has one owner tracker: github owns `gh`, jira owns `acli`, repos owns `git`, processes owns `docker`, `tmux`, `screen` and `ps`. L3 builds none of this yet: `ToolPort.run` is a raw runner, and `gh`, `acli`, the refresh coordinator and the session repo stay in the item runtime (D13). The auto tracker gets the PR-lane dependencies by injection, `buildTrackers({ autoGithub })`. L5 moves them.
 
-**Facts.** A tracker publishes named values that others read: `ctx.facts.publish(name, value)` and `ctx.facts.read(name)`. Names are strings owned by the publisher: github publishes `session.repo` (the resolved repo with host aliases), auto publishes `auto.root` and `auto.branches`. This replaces today's getters across trackers (`H/register.tsx:180-189, 766-771`). A missing fact reads as `undefined`.
+**Facts.** A tracker publishes named values that others read: `ctx.facts.publish(name, value)` and `ctx.facts.read(name)`. Names are strings owned by the publisher: github publishes `session.repo` (the resolved repo with host aliases), auto publishes `auto.root` and `auto.branches`. This replaces today's getters across trackers (`H/register.tsx:180-189, 766-771`). A missing fact reads as `undefined`. A value is `Json`, and `publish(name, undefined)` withdraws it. In L3 the item runtime publishes `session.repo` and `github.hosts`, and auto publishes `auto.root`, `auto.agents` and `auto.checkedAt`. Processes publishes its probe state as `processes.ui`. The pane and the `/track` text read it.
 
 **Registration.** `trackers/index.ts`:
 
@@ -497,6 +543,15 @@ export interface ItemKind<T extends StoredItem = StoredItem> {
 ```
 
 Records stay flat, so today's record shapes and most test assertions survive. The contract types the kind fields as `Json`. Each kind's `decode` gives the typed view.
+
+**Store port.** A tracker sees the store through `ctx.items`, an `ItemStorePort`. Every call is async, because the list lives in the plugin state:
+
+- `list()` gives the records.
+- `update(change, { since })` runs the session check, reads the list, calls `change(list, dismissed)` and writes the result. It writes nothing when `change` returns its input. An older `since` drops the write. It resolves to whether it wrote.
+- `track(refs, source)` offers claims to the kinds and merges the result. In L3 a `Claim` is today's `Ref` (`hooks/contracts.ts`).
+- `refresh(keys?)` marks the keys due, or all items when none is named, and kicks the refresh. It does not wait.
+
+**In L3** the store, capture, refresh and replay are one transitional `ItemRuntime` in `hooks/items/` (runtime, store, capture, replay). It implements `ItemsHost`, which extends `ItemStorePort` with `slot` (the `items` `DataSlot`), `start(HostContext)`, `capture(RowEvent)`, `replay(batch)`, `tick()`, `sessionChanged(ev)` and `dispose()`. A `HostContext` is a tracker context without `items` and `data`, plus `persisted()`, which tells Persistence the list changed. L5 splits the runtime into ItemStore, Capture, ItemKind and ToolSpec (D13).
 
 **Capture.** Capture runs once per text, in core:
 
@@ -585,9 +640,9 @@ The Commands router claims first:
 | --- | --- | --- |
 | (empty) | core | Open the pane and print the text. |
 | `refresh` | core | Reset every breaker, refresh all kinds now. |
-| `clear` | core | Empty the items and every tracker slot, bump the generation, delete `v2:s:<id>`. |
+| `clear` | core | Empty the items and every persisted tracker slot, bump the generation, delete `v2:s:<id>`. Run-scoped slots (auto's root and proofs) stay (D10). |
 | `prio <ref> <level>` | core | The ref resolves through the kinds' `claimUrl` and `scan`. |
-| `help` | core | Print the help view as text. |
+| `help` | core | Print the help view as text. Not in L3: `help` prints the usage line until L6. |
 | a tracker's `commands` | tracker, in `order` | The first tracker that declares the sub-command runs it. |
 
 The argument hint is built from the core list plus the declared commands. While no tracker declares one, it stays today's literal.
@@ -598,23 +653,24 @@ The `PluginState` contract in `types/index.d.ts` imports nothing (E4). It declar
 
 | Key | Type | Note |
 | --- | --- | --- |
-| `items` | `StoredItem[]` | The ItemStore's live copy. |
+| `items` | `StoredItem[]` | The ItemStore's live copy. L3 types it as `ItemRecord[]`. L5 moves `StoredItem` into the contract. |
 | `trackers` | `StateFamily<Json>` | One slot per tracker id. |
 | `tools` | `Record<string, ToolStatus>` | One status per tool id. |
-| `expanded` | `string[]` | Expanded row ids. |
-| `selected` | `string \| null` | The selected row id. |
-| `shown` | `StateFamily<number>` | Rows shown per section beyond the cap. |
-| `help` | `boolean` | The help view is on. |
+| `ui` | `{ folded: string[] }` | Folded tree rows (D14). The pane tests pin the `fold-<id>` keys. |
+| `expanded` | `string[]` | L6. Expanded row ids. |
+| `selected` | `string \| null` | L6. The selected row id. |
+| `shown` | `StateFamily<number>` | L6. Rows shown per section beyond the cap. |
+| `help` | `boolean` | L6. The help view is on. |
 
-`processUi` and `ui.paneOpen` are removed. The contract declares `StoredItem`, `Json`, `Level` and `ToolStatus`.
+`processUi` and `ui.paneOpen` are removed. The processes probe state is the fact `processes.ui` now. The contract declares `Json`, `JsonObject` (a readonly form), `Level` and `ToolStatus`. L3 declares `StoredItem` and `Level` in `core/interfaces/items.ts`. L5 moves `StoredItem` into the contract.
 
 | `$.store` key | Value |
 | --- | --- |
-| `v2:s:<sessionId>` | `{ items: StoredItem[], trackers: { [id]: Json } }` without `persist: false` slots |
+| `v2:s:<sessionId>` | `{ items, [trackerId]: Json }`, flat, without `persist: false` slots (D1). Today that is `{ items, repos, processes }`: 13 wiring assertions read `.repos` and `.processes` of the stored copy. |
 | `v2:index` | Session ids, newest first, at most `global.store.keepSessions` |
-| `v2:run` | `{ dismissed: string[], root?: string, pendingEnd?: { reason: string, fromId: string } }`: run-scoped values and the pending end (§5.6), for a reload. SessionWatch sets `pendingEnd` at the end and clears it after the switch (§5.6). Persistence does the writes. |
+| `v2:run` | `{ pendingEnd?: { reason: string, fromId: string, at: number }, run?: { [slotId]: Json } }` (D2, D20). `run` holds the `persist: false` slots. The dismiss list, the pinned root and the proofs sit in auto's slot, so they travel as `run.auto`. `at` is engine time at the end. SessionWatch sets `pendingEnd` at the end and clears it after the switch (§5.6). Persistence does the writes, and `clearRun` drops `pendingEnd` and keeps `run`. It deletes the key when nothing is left. |
 
-On the first load after the upgrade, Persistence deletes the old keys (`s:*`, `index`) once, through `ports.store.keys()`. Old data is dropped. Before each write, Persistence bounds the total JSON size at `global.store.maxBytes` (default 3,000,000, under E18) and evicts the oldest sessions first. Persistence is the only writer of `$.store`.
+On the first load after the upgrade, Persistence deletes the old keys (`s:*`, `index`) once, through `ports.store.keys()`. Old data is dropped. Before each write, Persistence bounds the total size at `global.store.maxBytes` (default 3,000,000, under E18) and evicts the oldest sessions first. The bound counts the stored copies, the index and the last `v2:run`, in JSON characters, not UTF-8 bytes. The copy being written always stays, even when it alone is over the bound. A rejected `$.store.set` logs one line, and the next change tries again. Persistence is the only writer of `$.store`.
 
 ## 6. Error handling
 
@@ -637,12 +693,12 @@ The baseline before the work: 825 tests pass in 36 files.
 
 | Layer | Tests |
 | --- | --- |
-| Pure units | `cellWidth` against Bun-generated vectors; the column solver; the budget guard (with the footer reserve); KeyRegistry (valid keys, duplicates, folding); `normalise` per tracker; ConfigManager over an in-memory `ConfigFs` fake (path rule, missing, invalid, torn read, signature change, first-run write, missing-slice merge, no write when unchanged, read-only higher version); EventBus isolation; SessionWatch (id compare, clear vs resume, generation, a switch after a reload reads `pendingEnd` from `v2:run`, and `pendingEnd` is cleared after the switch); Persistence (batching, budget check, size bound, old-key delete, `v2:run` round trip with `pendingEnd`); Capture (rank order, masking, `urls-only`, async accept); ItemStore (merge, eviction). |
+| Pure units | `cellWidth` against Bun-generated vectors; the column solver; the budget guard (with the footer reserve); KeyRegistry (valid keys, duplicates, folding); `normalise` per tracker; ConfigManager over an in-memory `ConfigFs` fake (path rule, missing, invalid, torn read, signature change, first-run write, missing-slice merge, no write when unchanged, read-only higher version); EventBus isolation; SessionWatch (id compare, clear vs resume, generation, a switch after a reload reads `pendingEnd` from `v2:run`, and `pendingEnd` is cleared after the switch); Persistence (debounce, one write per key, budget check, size bound, old-key delete, `v2:run` round trip with `pendingEnd`); Capture (rank order, masking, `urls-only`, async accept); ItemStore (merge, eviction). |
 | OCP proof | A pure test runs LifecycleManager and TrackerHost with fake ports and a fake tracker list, including a new fake tracker. An import-graph test asserts that each `trackers/<id>/` path appears outside its folder only in `trackers/index.ts`. |
 | Tracker units | Each tracker with fake ports. Its events produce the records today's tests expect. These are today's unit tests with new import paths and mechanical shape edits. |
 | Kit wiring | `tests/fixtures/world.ts` gets a Map-backed `fs.read`, `fs.write`, `fs.exists`, `fs.stat` block with deny switches, and a `clearSession($, world, nextId, reason)` helper that fires `session.end`, then flips the stub id. The id-flip `/clear` tests move to the helper. Store-key seeds change to `v2:`. The asserted behavior stays: carry-over on `/clear` (about 18 tests), replay on `--resume`, late results dropped after `/clear`. New: first-run config write, a disabled tracker, a prompt section on and off. |
 | Pane (rewritten in L6) | The header row, one Button per row, `r<n>` keys, `selected` by row id from a driven `ui.focus`, the refocus after a re-sort, Enter toggles detail and the default detail, footer keys, `h` help, "N more", the budget guard at 600 and 1,400 rows, the `/track` text and the band. |
-| Contract checks | Added in the layer that makes each true. L3: only `H/register.tsx` matches `\$\.` or `\bon\(`. L5: no `\b(github\|jira\|gh\|acli)\b` in `core/` and `ux/`; the import rules of §5.1. L6: no section renderer outside `ux/`. A test lists every key and asserts no duplicate. |
+| Contract checks | Added in the layer that makes each true. L3: only `H/register.tsx` has a `$` call, an `on(` call, a value import from `claude-code`, the type `EngineInterface` or the literal `plugin: 'artifact-tracking'`. The test is `scripts/contracts/source-contracts.test.mjs`, run by `make test-scripts`, because the kit has no fs (D18). L5: no `\b(github\|jira\|gh\|acli)\b` in `core/` and `ux/`; the import rules of §5.1. L6: no section renderer outside `ux/`. A test lists every key and asserts no duplicate. |
 | e2e (local, `make e2e`) | The harness sets `CLAUDE_TRACKER_CONFIG_DIR` to a temp folder for every scenario and deletes it afterwards, so no run touches the developer's real config. Update `priority.feature` and `tracking.feature` for the new keys. Add a scenario: Tab moves the highlight, `x` dismisses the selected row, `h` shows help, a config file turns a tracker off. The L6 live checks also cover the ring after a data-driven re-sort and `autoFocus`. |
 
 `make verify` passes on every layer (§8).
@@ -680,7 +736,7 @@ Rules:
 | L0 | `chore/stack-tooling` | `verify-gate.sh` regex for `gh stack`; stack-aware `pr-shepherd` steps; a short stack note in `AGENTS.md` | none |
 | L1 | `docs/arch-kb-and-spec` | The KB research (2.1.302 snapshot, spike sources, new pages) and this spec | none |
 | L2 | `refactor/layout-and-interfaces` | Pin CI and types to 2.1.302, `target: es2024`, `tsconfig` `include` for `core/**`, `ux/**`, `trackers/**`, the new folders, `core/interfaces/*`, file moves, test import paths. README states the minimum Claude Code version. No logic change. | none |
-| L3 | `refactor/lifecycle-bus-ports` | `register.tsx` becomes wiring. Ports, LifecycleManager, SessionWatch (`session.end`, snapshot, generation), Scheduler with watchdog, Persistence (`v2:` keys, size bound), Replay, EventBus, TrackerHost. The 8 trackers become `Tracker` objects whose handlers call today's modules through ports. Their `config` and `store` serve today's `LIMITS` from memory; no file is read or written before L4. Mirrors and polling go. `clearSession` helper. The `$` and `on` contract test. | storage layout; old data dropped; `/branch` now starts empty (today it carries the items over) |
+| L3 | `refactor/lifecycle-bus-ports` | `register.tsx` becomes wiring. Ports, LifecycleManager, SessionWatch (`session.end`, snapshot, generation), Scheduler with watchdog, Persistence (`v2:` keys, size bound), Replay, EventBus, TrackerHost. The 8 trackers become `Tracker` objects whose handlers call today's modules through ports. The item runtime stays in `hooks/items/` until L5. Their `config` and `store` serve today's `LIMITS` from memory; no file is read or written before L4. Mirrors and polling go. `clearSession` helper. The `$` and `on` contract test. | storage layout; old data dropped; `/branch` (and a `/resume` to an id with no stored copy) now starts empty (today it carries the items over); a write in the last 1.5 s before exit is no longer lost |
 | L4 | `feat/config-manager` | ConfigManager, `config.json`, `LIMITS` moved into each tracker's `ConfigSpec`, toggles, the store phase | new config file |
 | L5 | `refactor/tracker-contracts` | Each tracker moves into `trackers/<id>/`. ItemStore, ItemKind, Capture, Facts, ToolSpec and the Commands router replace the closed unions. The PR lane moves to github. The name and import contract tests. May split into one layer per tracker. | the PR lane moves from auto to github; the "Pull requests" section looks the same |
 | L6 | `feat/tree-data-table` | `ux/tree-data-table`, `cellWidth`, KeyRegistry, help view, budget guard, the new pane, text and band from sections. Pane tests rewritten. e2e updated. README demo GIF refreshed (`demo-scenario` skill). | new pane UX |
@@ -732,6 +788,33 @@ These are my calls, not the user's. Check them while you read.
 17. The lifecycle learns of a switch from `session.end` plus an id compare on the tick and at hook entries (§5.6). The four mirrors go. This settles the mechanism of KB decision D10. The behavior (carry over on `/clear`, stored data on `/resume`) is the user's, in §3.
 
 Calls 16 and 17 are in the design the user approved on 2026-10-18. They are listed here because the KB decision log still had them open.
+
+### 10.1 Decisions made in L3
+
+Building L3 settled these points where the text above left them open or the tests contradicted it. Code comments cite them as `D1` to `D20`. Each row says what L3 does and why. The sections above already show the result.
+
+| # | L3 does | Why |
+| --- | --- | --- |
+| D1 | `v2:s:<id>` is flat: `{ items, [trackerId]: Json }`. TrackerHost refuses a tracker id `items`. | 13 wiring assertions read `.repos` and `.processes` of the stored copy. |
+| D2 | `v2:run` is `{ pendingEnd?, run? }`, not `{ dismissed, root }`. `run` holds the `persist: false` slots. | The dismiss list and the root live in `AutoState`, and its ledger, round and dismiss unit tests pin that shape. They travel as `run.auto`. |
+| D3 | Persistence writes one `$.store.set` per key: `v2:s:<id>`, then `v2:index` when it changed, then `v2:run`. | `$.store.set` writes one key. |
+| D4 | `init` runs before the session load. | The item restore needs the active Jira site from `acli`. Today `ensureRuntime` runs before `restore`. |
+| D5 | The lazy start skips the session load and Replay. | 64 register tests send rows with no `session.start`, and two pin "nothing restored". Live, a lazy start follows a reload, with `$.state` intact. |
+| D6 | `session.end` merges the stored copy of the leaving id under the live value (`DataSpec.settle`) and keeps the result as the snapshot. | It is today's switch merge (`carryOver`, `rekeyArtifacts`, `mergeRepoRows`). Three `/clear` carry-over tests pin it. |
+| D7 | Replay is one `replay` batch event, not `row` and `toolCall` events. It runs on a cold `session.start` and a cold resume. | It keeps today's merge, where the stored key wins. "/resume of a known session" pins replay on resume. |
+| D8 | Every data write runs the session check first. The repo queue and `/track clear` drop by generation. The PR lane switches first, then applies. | "/resume while a PR step is in flight" pins that the discovery lands. "a lookup that ends after /track clear leaves no row" pins the drop. |
+| D9 | A `persist: false` slot carries on every switch, `clear` and `resume`, before the persisted slots load. | Auto's proofs and the dismiss list must be there before an item loads. |
+| D10 | `/track clear` empties the persisted slots and keeps auto's slot, after auto dismisses its ids. | It is today's `clearAll`. Losing the root changes the auto tests. |
+| D11 | `start`, `agentSpawn`, `sessionChanged`, `command` and `dismissed` run in `order`, one after the other. The other kinds run in parallel. | Repos needs auto's ledger row of the same spawn. |
+| D12 | `command.run` answers `/track` and never calls `next`. | It is the command's implementation. |
+| D13 | `gh`, `acli`, the refresh coordinator and the session repo stay in the item runtime. Auto gets the PR-lane dependencies by injection. | §5.9 makes capture, store and refresh core duties. L5 builds them. |
+| D14 | The contract keeps `items`, `trackers`, `tools` and `ui: { folded }`. The L6 keys come in L6. | The pane tests pin `fold-<id>`. |
+| D15 | `TrackerContext` changes as §5.8 shows: async `data.get`, `since`, `current()`, a `Timer` from `clock.after`, `env.get`, a raw `tools.run`, and `Tracker.data`. | A handler runs in a dispatch, and every `$` call is async. The coordinator cancels its timer. File needs `HOME`. |
+| D16 | A tracker builds its services once per load. TrackerHost cancels timers at dispose only. | A second `session.start` must not drop a pending debounce. |
+| D17 | `core/infra/scheduler.ts` is the Scheduler. `AutoScheduler` moves to `trackers/auto/scheduler.ts`. | `AutoScheduler` is auto-only (`AutoReason`). |
+| D18 | The `$` and `on` contract test is `scripts/contracts/source-contracts.test.mjs`, run by `make test-scripts`. | The kit runs every `*.test.ts` and has no fs. |
+| D19 | `prompt.compose` is a pass-through hook. | The §5.3 table is binding. PromptComposer is L7. |
+| D20 | A `pendingEnd` counts at start only on the first start of a load, with reason `clear` or `resume`, and when `now - at <= 2 * tickMs`. | The reload gap needs it. A new `claude --resume` process must not act on the last process's `pendingEnd`. |
 
 ## 11. Architecture rules
 
