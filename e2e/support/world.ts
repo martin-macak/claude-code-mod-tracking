@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   After,
@@ -32,6 +33,8 @@ export class DemoWorld extends World {
   timeline: Timeline | undefined
   outDir = ''
   signalFile = ''
+  /** CLAUDE_TRACKER_CONFIG_DIR of this scenario: an empty folder, so no run touches the real config file. */
+  configDir = ''
   turnMark = 0
   /** The artifact a scenario published and did not delete yet. A failed run deletes it (artifact.steps.ts). */
   artifact: string | undefined
@@ -47,6 +50,7 @@ export class DemoWorld extends World {
     if (record && ++recordedScenarios > 1) throw new Error('demo: only one @demo scenario can be recorded per run')
     this.outDir = join(OUT_DIR, record ? 'demo' : slug(name))
     this.release = claimRun(LOCK_DIR, this.outDir)
+    this.configDir = mkdtempSync(join(tmpdir(), 'cc-tracker-config-'))
     this.signalFile = join(this.outDir, 'signal')
     this.timeline = new Timeline(join(this.outDir, 'timeline.ndjson'))
     this.tmux.kill()
@@ -69,6 +73,7 @@ export class DemoWorld extends World {
         model: this.config.model,
         timeoutMs: this.config.turnTimeoutMs,
         ...(tools ? { tools } : {}),
+        env: { CLAUDE_TRACKER_CONFIG_DIR: this.configDir },
       },
       prompt,
     )
@@ -114,6 +119,7 @@ export class DemoWorld extends World {
       if (!this.config.keep) {
         this.tmux.kill()
         rmSync(join(this.config.dir, CLONE_NAME), { recursive: true, force: true })
+        rmSync(this.configDir, { recursive: true, force: true })
       }
       this.release()
       this.release = undefined

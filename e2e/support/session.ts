@@ -37,6 +37,8 @@ export type LaunchSpec = {
   prompt?: string
   /** Tools the session may use without a permission dialog. Absent: the demo session, which uses no tools. */
   tools?: readonly string[]
+  /** Variables for claude only, set through env(1) so they win over the tmux server's own. */
+  env?: Readonly<Record<string, string>>
 }
 
 export function claudeCommand(spec: LaunchSpec): string {
@@ -60,7 +62,8 @@ export function claudeCommand(spec: LaunchSpec): string {
       throw new Error(`session: a prompt must not start with "-" (a flag): ${spec.prompt}`)
     args.push(spec.prompt)
   }
-  return args.map(shellQuote).join(' ')
+  const vars = Object.entries(spec.env ?? {}).map(([name, value]) => `${name}=${value}`)
+  return (vars.length > 0 ? ['env', ...vars, ...args] : args).map(shellQuote).join(' ')
 }
 
 export function countLines(file: string): number {
@@ -104,14 +107,17 @@ export type LaunchContext = {
   model: string
   timeoutMs: number
   tools?: readonly string[]
+  env?: Readonly<Record<string, string>>
 }
 
 // Starts claude in the pane. In the trust dialog it moves to "Yes" before Enter. Ends when the
 // prompt box is idle, or, with a first prompt, when that turn ends.
 export async function launchClaude(ctx: LaunchContext, prompt?: string): Promise<void> {
   const before = countLines(ctx.signalFile)
-  const { pluginDir, model, signalFile, tools } = ctx
-  ctx.tmux.respawn(claudeCommand({ pluginDir, model, signalFile, prompt, ...(tools ? { tools } : {}) }))
+  const { pluginDir, model, signalFile, tools, env } = ctx
+  ctx.tmux.respawn(
+    claudeCommand({ pluginDir, model, signalFile, prompt, ...(tools ? { tools } : {}), ...(env ? { env } : {}) }),
+  )
   await waitUntil(
     () => {
       const screen = ctx.tmux.capture()

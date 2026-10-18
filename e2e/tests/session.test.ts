@@ -66,6 +66,22 @@ test('claudeCommand with tools: the tools system prompt and an allow list, promp
   assert.ok(!demo.includes('--allowedTools'))
 })
 
+test('claudeCommand with env runs claude through env, variables first', () => {
+  const spec = { pluginDir: '/p', model: 'haiku', signalFile: '/s', env: { CLAUDE_TRACKER_CONFIG_DIR: '/t d/cfg' } }
+  const command = claudeCommand(spec)
+  assert.ok(command.startsWith("'env' 'CLAUDE_TRACKER_CONFIG_DIR=/t d/cfg' 'claude' "))
+  const printed = execFileSync('/bin/sh', ['-c', command.replace(/^'env'/, "printf '%s\\n'")], { encoding: 'utf8' })
+  const argv = printed.trimEnd().split('\n')
+  assert.deepEqual(argv.slice(0, 2), ['CLAUDE_TRACKER_CONFIG_DIR=/t d/cfg', 'claude'])
+  assert.ok(argv.includes('--plugin-dir'))
+})
+
+test('claudeCommand with an empty env is the plain command', () => {
+  const spec = { pluginDir: '/p', model: 'haiku', signalFile: '/s', prompt: 'go' }
+  assert.equal(claudeCommand({ ...spec, env: {} }), claudeCommand(spec))
+  assert.ok(claudeCommand(spec).startsWith("'claude' "))
+})
+
 test('claudeCommand refuses a prompt that looks like a flag', () => {
   assert.throws(() => claudeCommand({ pluginDir: '/p', model: 'm', signalFile: '/s', prompt: '-x' }), /flag/)
 })

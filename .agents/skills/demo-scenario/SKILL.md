@@ -36,6 +36,8 @@ Make the README demo GIF from a Gherkin scenario that also runs as an E2E test.
 | `Then the screen stops showing "…"` | Polls until the text is gone, for example a pane after Esc. |
 | `Then the screen does not show "…"` | One check, no wait. Only for text that can never appear. |
 | `Then no permission dialog is open` | Fails if a tool approval opened. |
+| `Given the tracker config file:` (doc string) | Hidden. Writes the scenario's `config.json` before the session starts. Every scenario has its own empty config folder. |
+| `Then the tracker config file sets "a.b" to "json"` | Polls the file for the value at the dotted path, for example `"trackers.web.enabled"` to `"false"`. |
 
 ## Loop
 
