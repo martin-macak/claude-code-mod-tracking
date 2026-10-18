@@ -52,6 +52,34 @@ test('text with no design throws', () => {
   assert.throws(() => parseStudy('## Something else\n'), /no design study or design draft found/)
 })
 
+test('study item ids accept letter suffixes and warn on unreadable rows', () => {
+  const s = parseStudy(`## Design study: Demo
+
+**Overall: Go** (weighted mean 78/100).
+
+### 1. Score
+
+| item | priority | verdict | evidence | ease | safety | score |
+| --- | --- | --- | --- | --- | --- | --- |
+| R2 | Must | Partial | 5 | 3 | 3 | 60 |
+| R5a | Must | Go | 4 | 4 | 4 | 85 |
+| R5b | Must | Partial | 4 | 3 | 3 | 70 |
+| R10 | Should | Go | 3 | 4 | 5 | 80 |
+| X1 foo | Should | Go | 3 | 3 | 3 | 75 |
+
+### 3. Feasibility
+
+| item | mechanism | caveat |
+| --- | --- | --- |
+| R2 | \`splitShell\` | None |
+| R5a | \`id\` | None |
+| R5b | \`id\` | None |
+| R10 | \`id\` | None |
+`)
+  assert.deepEqual(s.items.map((i) => i.id), ['R2', 'R5a', 'R5b', 'R10'])
+  assert.deepEqual(s.warnings, ['Score row skipped: no item id in "X1 foo"'])
+})
+
 test('splitRow keeps escaped pipes in the cell', () => {
   assert.deepEqual(splitRow('| R1 | a \\| b | c |'), ['R1', 'a | b', 'c'])
 })
