@@ -6,6 +6,7 @@ import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 import type { ItemRecord, ProcessRecord } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
+import * as ev from './fixtures/events'
 import {
   BAND,
   commandRow,
@@ -801,7 +802,7 @@ test('tool-result row of 1 MB settles fast, is stored whole, and a URL near its 
 test('session.start registers /track with its hint', async ($, on) => {
   const { registered } = world(on)
   await $.session.start(START)
-  expect(registered).toEqual([{ name: 'track', argumentHint: '[refresh|clear]' }])
+  expect(registered).toEqual([{ name: 'track', argumentHint: '[refresh|clear|prio <ref> <level>]' }])
 })
 
 test('session.start backfills from the transcript with the same rules per role', async ($, on) => {
@@ -1213,6 +1214,324 @@ test('pane: the Refresh button asks the coordinator for a manual refresh', async
   await ui.unmount()
 })
 
+// ---------------------------------------------------------------- priority keys
+
+type MarkUi = PaneUi & {
+  press(q: unknown): Promise<void>
+  findAll(q: unknown): Promise<{ key?: string; props: { hotkey?: string } }[]>
+}
+const ONE = 'web:https://one.example/'
+const TWO = 'web:https://two.example/'
+const JIRA_ROOT = 'jira:acme.atlassian.net/ISS-1'
+const GH5 = 'gh:github.com/acme/web#5'
+
+/** The key of the mark Button of row `id`, as last drawn. */
+async function markKeyOf(ui: MarkUi, id: string): Promise<string> {
+  const key = (await ui.findAll({ type: 'Button' }))
+    .map(b => b.key ?? '')
+    .find(k => k.startsWith('mark:') && k.endsWith(`:${id}`))
+  expect(key).toBeDefined()
+  return key ?? ''
+}
+/** The person moves the pane's ring onto the element keyed `key`, with Tab or the arrows. */
+const focusOn = ($: Engine, key: string) =>
+  $.ui.focus({
+    component: 'Pane',
+    requestId: 'track',
+    plugin: 'artifact-tracking',
+    element: key,
+    origin: { kind: 'person' },
+  } as never)
+const pick = async ($: Engine, ui: MarkUi, id: string) => focusOn($, await markKeyOf(ui, id))
+/** The line of the `/track` text that holds `s`. */
+const lineOf = (text: string, s: string) => text.split('\n').findIndex(l => l.includes(s))
+const storedItem = (store: Map<string, unknown>, key: string) =>
+  (store.get('s:' + SESSION) as { items: ItemRecord[] } | undefined)?.items.find(i => i.key === key)
+
+/**
+ * one.example, then two.example, captured, listed and flushed. `/track` kicks a run that arms a flush too, so wait
+ * that one out as well: the next store write then comes from what the test does.
+ */
+async function twoLinks($: Engine, on: Parameters<typeof world>[0], opts: Parameters<typeof world>[1] = {}) {
+  const w = world(on, opts)
+  await $.session.append(response('See https://one.example/ and https://two.example/'))
+  await w.clock.advance(LIMITS.flushMs + 10)
+  await quiet(w.calls)
+  await track($)
+  await quiet(w.calls)
+  await w.clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  return { ...w, ui: (await mountPane($)) as MarkUi }
+}
+
+test('pane: key 1 raises the focused row above its sibling and draws its marker', async ($, on) => {
+  const { ui } = await twoLinks($, on)
+  let text = (await track($)).text ?? ''
+  expect(lineOf(text, 'one.example')).toBeLessThan(lineOf(text, 'two.example'))
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-1' })
+  text = (await track($)).text ?? ''
+  expect(lineOf(text, 'two.example')).toBeLessThan(lineOf(text, 'one.example'))
+  expect(text).toContain('▲ two.example')
+  expect(await ui.find({ text: '▲' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('pane: key 3 lowers the row, key 2 stores a manual normal, key 0 removes the mark', async ($, on) => {
+  const { ui, clock, store } = await twoLinks($, on)
+  await pick($, ui, ONE)
+  await ui.press({ key: 'prio-3' })
+  let text = (await track($)).text ?? ''
+  expect(lineOf(text, 'two.example')).toBeLessThan(lineOf(text, 'one.example'))
+  expect(text).toContain('▽ one.example')
+  await ui.press({ key: 'prio-2' })
+  text = (await track($)).text ?? ''
+  expect(lineOf(text, 'one.example')).toBeLessThan(lineOf(text, 'two.example'))
+  expect(text).not.toContain('▽')
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  expect(storedItem(store, ONE)?.priority).toBe('normal')
+  await ui.press({ key: 'prio-0' })
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  expect('priority' in (storedItem(store, ONE) ?? {})).toBe(false)
+  await ui.unmount()
+})
+
+test('pane: a priority key with no focused row changes nothing', async ($, on) => {
+  const { ui } = await twoLinks($, on)
+  const before = (await track($)).text
+  await ui.press({ key: 'prio-1' })
+  expect((await track($)).text).toBe(before)
+  await ui.unmount()
+})
+
+test('pane: the ring on a footer key keeps the pick; on Refresh or off the Buttons it drops it', async ($, on) => {
+  const { ui } = await twoLinks($, on)
+  await pick($, ui, TWO)
+  await focusOn($, 'prio-1') // Tab onto the footer, then Enter or the digit
+  await ui.press({ key: 'prio-1' })
+  expect((await track($)).text).toContain('▲ two.example')
+  await focusOn($, 'refresh')
+  await ui.press({ key: 'prio-3' })
+  expect((await track($)).text).not.toContain('▽')
+  await pick($, ui, ONE)
+  await $.ui.focus({ component: 'Pane', requestId: 'track', origin: { kind: 'person' } } as never) // the close mark
+  await ui.press({ key: 'prio-3' })
+  expect((await track($)).text).not.toContain('▽')
+  await ui.unmount()
+})
+
+test('pane: the keys work on a Jira root, a Jira child and a GitHub row, by its mark, fold or x', async ($, on) => {
+  const { clock, calls, store } = world(on)
+  await $.session.append(prompt('Look at issue #5 and https://acme.atlassian.net/browse/ISS-1'))
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await sleep(20)
+  await track($)
+  await quiet(calls)
+  const ui = (await mountPane($)) as MarkUi
+  await focusOn($, `fold-${JIRA_ROOT}`) // the fold Button of the root picks the root
+  await ui.press({ key: 'prio-1' })
+  await pick($, ui, `${JIRA_ROOT}/PROJ-201`)
+  await ui.press({ key: 'prio-3' })
+  await focusOn($, `dismiss-${GH5}`) // the x of a row picks that row
+  await ui.press({ key: 'prio-1' })
+  await ui.press({ key: 'prio-0' })
+  await ui.unmount()
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  const root = storedItem(store, JIRA_ROOT) as
+    | (ItemRecord & { children: { key: string; priority?: string }[] })
+    | undefined
+  expect(root?.priority).toBe('high')
+  expect(root?.children.map(c => [c.key, c.priority])).toEqual([
+    ['PROJ-201', 'low'],
+    ['PROJ-202', undefined],
+  ])
+  expect('priority' in (storedItem(store, GH5) ?? {})).toBe(false)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('▲ ISS-1')
+  expect(lineOf(text, 'PROJ-202')).toBeLessThan(lineOf(text, 'PROJ-201')) // the child sorts inside its parent
+  expect(lineOf(text, 'ISS-1')).toBeLessThan(lineOf(text, 'PROJ-202'))
+})
+
+test('pane: a raised priority reaches the stored copy with no other change in between', async ($, on) => {
+  const { ui, clock, store } = await twoLinks($, on)
+  expect('priority' in (storedItem(store, TWO) ?? {})).toBe(false)
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-1' })
+  await ui.unmount()
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  expect(storedItem(store, TWO)?.priority).toBe('high')
+})
+
+test('pane: a refresh keeps the order the person set', async ($, on) => {
+  const { ui } = await twoLinks($, on)
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-1' })
+  await ui.unmount()
+  const text = (await track($, 'refresh')).text ?? ''
+  expect(lineOf(text, 'two.example')).toBeLessThan(lineOf(text, 'one.example'))
+})
+
+test('pane: mark Buttons claim no hotkey, and each footer key is on one Button only', async ($, on) => {
+  const { ui } = await twoLinks($, on)
+  const buttons = await ui.findAll({ type: 'Button' })
+  const marks = buttons.filter(b => b.key?.startsWith('mark:'))
+  expect(marks.length).toBe(2)
+  for (const b of marks) expect(b.props.hotkey).toBeUndefined()
+  const hotkeys = buttons.map(b => b.props.hotkey).filter((h): h is string => h !== undefined)
+  expect(hotkeys.sort()).toEqual(['0', '1', '2', '3', 'r'])
+  await ui.unmount()
+})
+
+test('pane: with no item row the footer has no priority keys', async ($, on) => {
+  world(on)
+  await track($)
+  const ui = (await mountPane($)) as MarkUi
+  expect(await ui.find({ key: 'prio-1' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('/track prio sets a level by ref and saves it before the reply, for claude -p', async ($, on) => {
+  const { clock, calls, store } = world(on)
+  await $.session.append(prompt('Look at issue #5 and https://acme.atlassian.net/browse/ISS-1'))
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await sleep(20)
+  await track($)
+  await quiet(calls)
+  let text = (await track($, 'prio #5 high')).text ?? ''
+  expect(text).toContain('▲ #5')
+  expect(storedItem(store, GH5)?.priority).toBe('high') // no clock advance: the store has it already
+  text = (await track($, 'prio ISS-1 LOW')).text ?? ''
+  expect(text).toContain('▽ ISS-1')
+  text = (await track($, 'prio proj-202 high')).text ?? '' // a Jira child, by its key, in any case
+  expect(text).toContain('▲ PROJ-202')
+  expect(lineOf(text, 'PROJ-202')).toBeLessThan(lineOf(text, 'PROJ-201'))
+  text = (await track($, 'prio https://github.com/acme/web/issues/5 auto')).text ?? ''
+  expect(text).not.toContain('▲ #5')
+  expect('priority' in (storedItem(store, GH5) ?? {})).toBe(false)
+})
+
+test('/track prio: an untracked ref says so; a bad level or a missing part prints the usage', async ($, on) => {
+  const { clock, calls } = world(on)
+  await $.session.append(prompt('Look at issue #5'))
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  expect((await track($, 'prio #99 high')).text).toBe('Not tracked: #99')
+  expect((await track($, 'prio #5 urgent')).text).toContain(
+    'Usage: /track [refresh|clear|prio <ref> <high|normal|low|auto>]',
+  )
+  expect((await track($, 'prio #5')).text).toContain('Usage: /track')
+  expect((await track($)).text).not.toContain('▲')
+})
+
+// ---------------------------------------------------------------- priority across /clear, restart and re-track
+
+test('/clear carries a mark into the new session, and the new copy holds it', async ($, on) => {
+  const { ui, clock, store } = await twoLinks($, on, { isolateState: true })
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-1' })
+  await ui.unmount()
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  current.id = 'sess-2' // /clear: a new id and an empty state
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('▲ two.example')
+  expect(lineOf(text, 'two.example')).toBeLessThan(lineOf(text, 'one.example'))
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  const copy = store.get('s:sess-2') as { items: ItemRecord[] }
+  expect(copy.items.find(i => i.key === TWO)?.priority).toBe('high')
+})
+
+test('/clear right after a reset keeps no mark: the live list wins over the older stored copy', async ($, on) => {
+  const { ui, clock, store } = await twoLinks($, on, { isolateState: true })
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-1' })
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  expect(storedItem(store, TWO)?.priority).toBe('high')
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-0' }) // the flush of this change has not run yet
+  await ui.unmount()
+  current.id = 'sess-2'
+  expect((await track($)).text).not.toContain('▲')
+})
+
+test('x then /clear: the dismissed item stays gone, also before its flush ran', async ($, on) => {
+  const w = world(on, { isolateState: true })
+  await $.session.start(START) // pins the run's root, so the dismiss list outlives /clear
+  await $.session.append(response('See https://one.example/ and https://two.example/'))
+  await w.clock.advance(LIMITS.flushMs + 10)
+  await quiet(w.calls)
+  await sleep(20)
+  await track($)
+  const ui = (await mountPane($)) as MarkUi
+  await ui.press({ key: `dismiss-${TWO}` })
+  await ui.unmount()
+  current.id = 'sess-2'
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('one.example')
+  expect(text).not.toContain('two.example')
+})
+
+test('the x button saves the shorter list soon, with no other change', async ($, on) => {
+  const { ui, clock, store } = await twoLinks($, on)
+  expect(storedItem(store, TWO)).toBeDefined()
+  await ui.press({ key: `dismiss-${TWO}` })
+  await ui.unmount()
+  await clock.advance(LIMITS.flushMs + 10)
+  await sleep(20)
+  expect(storedItem(store, TWO)).toBeUndefined()
+})
+
+test('session.start restores the marks of a stored copy and sorts by them', async ($, on) => {
+  const seed = { items: [webRec('https://other.example/', 'other'), { ...KEPT, priority: 'high' }] }
+  world(on, { seed: { index: [SESSION], ['s:' + SESSION]: seed } })
+  await $.session.start(START)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('▲ Kept page')
+  expect(lineOf(text, 'Kept page')).toBeLessThan(lineOf(text, 'other'))
+})
+
+test('an item tracked again after /track clear starts with no mark', async ($, on) => {
+  const { ui, clock, calls } = await twoLinks($, on)
+  await pick($, ui, TWO)
+  await ui.press({ key: 'prio-1' })
+  await ui.unmount()
+  expect((await track($, 'clear')).text).toBe('Tracking list cleared.')
+  await $.session.append(response('Again https://two.example/'))
+  await clock.advance(LIMITS.captureDebounceMs + 10)
+  await quiet(calls)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('two.example')
+  expect(text).not.toContain('▲')
+})
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`pane: the marker of a high and a low row is drawn (${surface})`, async ($, on) => {
+    const { clock, calls } = world(on)
+    await $.session.append(response('See https://one.example/'))
+    await clock.advance(LIMITS.captureDebounceMs + 10)
+    await quiet(calls)
+    await track($)
+    const ui = (await $.ui.mount({ ...PANE, surface } as never)) as unknown as MarkUi
+    expect(await ui.find({ text: '▲' })).toBeUndefined()
+    await pick($, ui, ONE)
+    await ui.press({ key: 'prio-1' })
+    expect(await ui.find({ text: '▲' })).toBeDefined()
+    await pick($, ui, ONE) // the mark has a new key now: the row's level is in it
+    await ui.press({ key: 'prio-3' })
+    expect(await ui.find({ text: '▽' })).toBeDefined()
+    expect(await ui.find({ text: '▲' })).toBeUndefined()
+    await ui.unmount()
+  })
+}
+
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`band: shows the counts and keeps what the engine draws (${surface})`, async ($, on) => {
     const { clock, calls } = world(on)
@@ -1305,4 +1624,648 @@ test('after /clear the tick brings items back with short #N keys for the session
   expect(await ui.find({ text: 'Web five' })).toBeDefined()
   expect(await ui.find({ text: 'acme/web#5' })).toBeUndefined()
   await ui.unmount()
+})
+
+test('repos: a repo found by a Bash cd is stored after the flush delay, without any other update', async ($, on) => {
+  const { clock, store, calls, fake } = world(on)
+  await $.session.start(START) // pins the root (/work), so the tracker knows which repo is its own
+  fake.run = argv => {
+    if (argv[0] !== 'git' || argv[1] !== '-C' || argv[2] !== '/x/sdk') return undefined
+    if (argv[3] === 'rev-parse') return res('/x/sdk\n/x/sdk/.git\n')
+    if (argv[3] === 'remote') return res('git@github.com:acme/sdk.git\n')
+    return res('main\n')
+  }
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_1' } as never)
+  await quiet(calls)
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  const saved = store.get('s:' + SESSION) as { repos?: { key: string }[] } | undefined
+  expect(saved?.repos?.map(r => r.key)).toEqual(['remote:github.com/acme/sdk'])
+})
+
+test('repos: a Bash cd inside the session root adds no Repos row', async ($, on) => {
+  const { clock, store, calls, fake } = world(on)
+  await $.session.start(START)
+  fake.run = argv => {
+    if (argv[0] !== 'git' || argv[1] !== '-C' || !String(argv[2]).startsWith('/work')) return undefined
+    if (argv[3] === 'rev-parse') return res('/work\n/work/.git\n')
+    if (argv[3] === 'remote') return res('git@gitlab.com:grp/app.git\n')
+    return res('main\n')
+  }
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /work/src && ls', tool_use_id: 'toolu_cd_2' } as never)
+  await quiet(calls)
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  const saved = store.get('s:' + SESSION) as { repos?: { key: string }[] } | undefined
+  expect(saved?.repos ?? []).toEqual([])
+})
+
+// ---------------------------------------------------------------- repos: store, restore, carry-over, clear
+
+const SDK_KEY = 'remote:github.com/acme/sdk'
+const STORED_SDK = {
+  key: SDK_KEY,
+  name: 'acme/sdk',
+  root: '/x/sdk',
+  branch: 'old',
+  touchedBy: ['main', 'planner'],
+  firstSeen: 10,
+  lastSeen: 50,
+}
+type SavedRepos = { repos?: { key: string; firstSeen: number; branch?: string; touchedBy: string[] }[] }
+
+type GitRes = ReturnType<typeof res>
+function sdkGit(
+  fake: { run: ((argv: string[]) => GitRes | undefined | Promise<GitRes | undefined>) | undefined },
+  branch = 'new',
+) {
+  fake.run = argv => {
+    if (argv[0] !== 'git' || argv[1] !== '-C' || argv[2] !== '/x/sdk') return undefined
+    if (argv[3] === 'rev-parse') return res('/x/sdk\n/x/sdk/.git\n')
+    if (argv[3] === 'remote') return res('git@github.com:acme/sdk.git\n')
+    return res(branch + '\n')
+  }
+}
+
+test('repos: a restored stored row keeps its firstSeen and every agent', async ($, on) => {
+  const { clock, store, calls } = world(on, {
+    seed: { index: [SESSION], ['s:' + SESSION]: { items: [], repos: [STORED_SDK] } },
+  })
+  await $.session.start(START)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('acme/sdk')
+  expect(text).toContain('main, planner')
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await sleep(20)
+  const saved = store.get('s:' + SESSION) as SavedRepos
+  expect(saved.repos?.[0]).toMatchObject({ key: SDK_KEY, firstSeen: 10, touchedBy: ['main', 'planner'] })
+})
+
+test('repos: /resume does not let the older stored branch overwrite a live row', async ($, on) => {
+  // No isolateState: the kit keeps the live rows across the id change, so the restore merges into them.
+  const { calls, fake } = world(on, {
+    seed: { index: ['sess-b'], 's:sess-b': { items: [], repos: [STORED_SDK] } },
+  })
+  await $.session.start(START)
+  sdkGit(fake, 'new')
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_r1' } as never)
+  await quiet(calls)
+  current.id = 'sess-b' // /resume: the store knows sess-b, so its copy is restored over the live rows
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('new')
+  expect(text).not.toContain('old')
+  expect(text).toContain('main, planner')
+})
+
+test('repos: /clear carries the repo rows over to the new session', async ($, on) => {
+  const { clock, store, calls, fake } = world(on, { isolateState: true })
+  await $.session.start(START)
+  sdkGit(fake)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_c1' } as never)
+  await quiet(calls)
+  current.id = 'sess-2' // /clear: new id, empty state
+  await track($)
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await sleep(20)
+  expect((await track($)).text ?? '').toContain('acme/sdk')
+  const saved = store.get('s:sess-2') as SavedRepos | undefined
+  expect(saved?.repos?.map(r => r.key)).toEqual([SDK_KEY])
+})
+
+test('repos: /track clear empties the rows, deletes the stored copy and a later flush writes nothing', async ($, on) => {
+  const { clock, store, calls, fake } = world(on)
+  await $.session.start(START)
+  sdkGit(fake)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_x1' } as never)
+  await quiet(calls)
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  expect(store.has('s:' + SESSION)).toBe(true)
+  await track($, 'clear')
+  expect(store.has('s:' + SESSION)).toBe(false)
+  expect((await track($)).text).toBe('No tracked items yet.')
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await sleep(20)
+  expect(store.has('s:' + SESSION)).toBe(false)
+})
+
+test('repos: a second visit of the same repo a moment later makes no new repos write', async ($, on) => {
+  const { calls, fake } = world(on, { isolateState: true })
+  await $.session.start(START)
+  sdkGit(fake)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_w1' } as never)
+  await quiet(calls)
+  const writes = fake.stateSets.repos
+  expect(writes).toBeGreaterThan(0)
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_w2' } as never)
+  await quiet(calls)
+  expect(fake.stateSets.repos).toBe(writes)
+})
+
+// ---------------------------------------------------------------- repos: file tools, off the hook path
+
+type Fake = ReturnType<typeof world>['fake']
+const SDK_REMOTE = 'git@github.com:acme/sdk.git'
+const LIB_REMOTE = 'git@github.com:acme/lib.git'
+const RAN = { stdout: '', stderr: '', interrupted: false }
+
+/**
+ * Git answers for repos at the given tops (top to remote). Every git call takes a few ms, so overlapping calls show in
+ * `seen.peak`. `held` makes a rev-parse wait for a promise that the test releases.
+ */
+function gitAt(fake: Fake, tops: Record<string, string>, held?: Promise<undefined>) {
+  const seen = { revParse: [] as string[], branchCalls: 0, branch: 'main', inFlight: 0, peak: 0 }
+  fake.run = async argv => {
+    if (argv[0] !== 'git' || argv[1] !== '-C') return undefined
+    const dir = String(argv[2])
+    const top = Object.keys(tops).find(t => dir === t || dir.startsWith(t + '/'))
+    if (top === undefined) return undefined
+    if (argv[3] === 'rev-parse') {
+      seen.revParse.push(dir)
+      if (held) await held
+    }
+    seen.inFlight++
+    seen.peak = Math.max(seen.peak, seen.inFlight)
+    try {
+      await sleep(3)
+    } finally {
+      seen.inFlight--
+    }
+    if (argv[3] === 'rev-parse') return res(`${top}\n${top}/.git\n`)
+    if (argv[3] === 'remote') return res(tops[top] + '\n')
+    if (argv[3] === 'branch') seen.branchCalls++
+    return res(`${seen.branch}\n`)
+  }
+  return seen
+}
+
+const holdOne = () => {
+  let release: () => void = () => {}
+  const held = new Promise<undefined>(resolve => {
+    release = () => resolve(undefined)
+  })
+  return { held, release }
+}
+
+/** Waits for the queue, the flush delay and the write. */
+async function drain(w: ReturnType<typeof world>): Promise<void> {
+  await quiet(w.calls)
+  await w.clock.advance(LIMITS.flushMs + 10)
+  await quiet(w.calls)
+  await sleep(20)
+}
+
+const savedKeys = (w: ReturnType<typeof world>): string[] =>
+  ((w.store.get('s:' + SESSION) as SavedRepos | undefined)?.repos ?? []).map(r => r.key)
+
+test('repos: a file tool returns before the repo lookup ends', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const { held, release } = holdOne()
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE }, held)
+  w.fake.tools.Read = { type: 'text' }
+  try {
+    const out = await Promise.race([
+      $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't1' } as never),
+      sleep(200).then(() => 'blocked'),
+    ])
+    expect(out).not.toBe('blocked')
+  } finally {
+    release()
+  }
+  await drain(w)
+})
+
+for (const [tool, field] of [
+  ['Read', 'file_path'],
+  ['Edit', 'file_path'],
+  ['Write', 'file_path'],
+  ['NotebookEdit', 'notebook_path'],
+  ['Grep', 'path'],
+  ['Glob', 'path'],
+] as const) {
+  test(`repos: a ${tool} of a file in another repo adds the repo row`, async ($, on) => {
+    const w = world(on)
+    await $.session.start(START)
+    gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+    w.fake.tools[tool] = RAN
+    await $.tool.call({ tool, [field]: '/x/sdk/src/a.ts', tool_use_id: 't1' } as never)
+    await drain(w)
+    expect(savedKeys(w)).toEqual([SDK_KEY])
+    expect((w.store.get('s:' + SESSION) as SavedRepos).repos?.[0]?.touchedBy).toEqual(['main'])
+  })
+}
+
+const savedMode = (w: ReturnType<typeof world>): string | undefined =>
+  (w.store.get('s:' + SESSION) as { repos?: { mode?: string }[] } | undefined)?.repos?.[0]?.mode
+
+test('repos: a Read then an Edit in one repo store mode edit', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Read = RAN
+  w.fake.tools.Edit = RAN
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't1' } as never)
+  await quiet(w.calls)
+  await $.tool.call({ tool: 'Edit', file_path: '/x/sdk/a.ts', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(savedMode(w)).toBe('edit')
+})
+
+test('repos: an Edit then a Read in one repo keep mode edit', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Read = RAN
+  w.fake.tools.Edit = RAN
+  await $.tool.call({ tool: 'Edit', file_path: '/x/sdk/a.ts', tool_use_id: 't1' } as never)
+  await quiet(w.calls)
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/b.ts', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(savedMode(w)).toBe('edit')
+})
+
+test('repos: a Read alone stores mode read, and a Bash git -C commit then stores edit', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Read = RAN
+  w.fake.tools.Bash = RAN
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(savedMode(w)).toBe('read')
+  await $.tool.call({ tool: 'Bash', command: 'git -C /x/sdk commit -m m', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(savedMode(w)).toBe('edit')
+})
+
+test('repos: a Bash git -C checkout re-reads the branch at once, a git status keeps the cached one', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Bash = RAN
+  const branchOf = () => (w.store.get('s:' + SESSION) as SavedRepos | undefined)?.repos?.[0]?.branch
+  await $.tool.call({ tool: 'Bash', command: 'git -C /x/sdk status', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(branchOf()).toBe('main')
+  expect(seen.branchCalls).toBe(1)
+
+  seen.branch = 'feat'
+  await $.tool.call({ tool: 'Bash', command: 'git -C /x/sdk log', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(branchOf()).toBe('main')
+  expect(seen.branchCalls).toBe(1)
+
+  await $.tool.call({ tool: 'Bash', command: 'git -C /x/sdk checkout feat', tool_use_id: 't3' } as never)
+  await drain(w)
+  expect(branchOf()).toBe('feat')
+  expect(seen.branchCalls).toBe(2)
+})
+
+test('repos: a main-loop Read with a relative file_path resolves from the session cwd', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.cwd = '/x/sdk'
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Read = RAN
+  await $.tool.call({ tool: 'Read', file_path: 'src/a.ts', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(savedKeys(w)).toEqual([SDK_KEY])
+})
+
+test('repos: a subagent Read with a relative file_path adds no row and runs no rev-parse', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.cwd = '/x/sdk'
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Read = RAN
+  await $.tool.call({ tool: 'Read', file_path: 'src/a.ts', agentId: 'a1', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(seen.revParse).toEqual([])
+  expect(savedKeys(w)).toEqual([])
+})
+
+test('repos: a Read of a file in /tmp adds no row', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  gitAt(w.fake, { '/tmp': SDK_REMOTE })
+  w.fake.tools.Read = RAN
+  await $.tool.call({ tool: 'Read', file_path: '/tmp/x', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(savedKeys(w)).toEqual([])
+})
+
+test('repos: two Reads at once in one repo look it up once, and the lookups of two repos never overlap', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE, '/x/lib': LIB_REMOTE })
+  w.fake.tools.Read = RAN
+  await Promise.all([
+    $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't1' } as never),
+    $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't2' } as never),
+    $.tool.call({ tool: 'Read', file_path: '/x/lib/b.ts', tool_use_id: 't3' } as never),
+  ])
+  await drain(w)
+  expect(seen.revParse.filter(d => d.startsWith('/x/sdk'))).toHaveLength(1)
+  expect(seen.peak).toBe(1)
+  expect(savedKeys(w).sort()).toEqual(['remote:github.com/acme/lib', SDK_KEY])
+})
+
+test('repos: a denied or failed file tool adds no row', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.toolAnswers.Read = { deny: 'no' }
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't1' } as never)
+  w.fake.toolAnswers.Read = { isError: true, result: 'ENOENT', text: 'ENOENT' }
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/b.ts', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(seen.revParse).toEqual([])
+  expect(savedKeys(w)).toEqual([])
+})
+
+test('repos: a denied Bash cd adds no row, a failing one does', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.toolAnswers.Bash = { deny: 'no' }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(seen.revParse).toEqual([])
+  expect(savedKeys(w)).toEqual([])
+  w.fake.toolAnswers.Bash = { isError: true, result: 'exit 1', text: 'exit 1' }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && false', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(savedKeys(w)).toEqual([SDK_KEY])
+})
+
+test('repos: a tool outside the path tools makes no git call', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  await $.tool.call({ tool: 'Skill', file_path: '/x/sdk/a', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(seen.revParse).toEqual([])
+  expect(savedKeys(w)).toEqual([])
+})
+
+// A persisted `cd` moves the session cwd while the tool runs. The hook must resolve the command from the cwd it had before.
+test('repos: a relative cd in Bash resolves from the cwd before the command, not after it', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.cwd = '/w/repo'
+  gitAt(w.fake, { '/w/other/sdk': SDK_REMOTE })
+  Object.defineProperty(w.fake.tools, 'Bash', {
+    configurable: true,
+    get() {
+      w.fake.cwd = '/w/other/sdk' // the persisted cd
+      return RAN
+    },
+  })
+  await $.tool.call({ tool: 'Bash', command: 'cd ../other/sdk && ls', tool_use_id: 't1' } as never)
+  await drain(w)
+  expect(savedKeys(w)).toEqual([SDK_KEY])
+})
+
+test('repos: pushd and git -c .. -C with a relative path resolve from the session cwd', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.cwd = '/w/repo'
+  gitAt(w.fake, { '/w/sdk': SDK_REMOTE, '/w/lib': LIB_REMOTE })
+  w.fake.tools.Bash = RAN
+  await $.tool.call({ tool: 'Bash', command: 'pushd ../sdk', tool_use_id: 't1' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'git -c a=b -C ../lib status', tool_use_id: 't2' } as never)
+  await drain(w)
+  expect(savedKeys(w).sort()).toEqual(['remote:github.com/acme/lib', SDK_KEY])
+})
+
+// ---------------------------------------------------------------- repos: agent.spawn cwd and the touchedBy label
+
+test('repos: a workflow agent.spawn cwd in another repo adds a row labelled with the agent', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.spawnId = 'w1'
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  await $.agent.spawn({ ...ev.WORKFLOW_SPAWN_INPUT, cwd: '/x/sdk' } as never)
+  await drain(w)
+  const rows = (w.store.get('s:' + SESSION) as SavedRepos).repos ?? []
+  expect(rows.map(r => [r.key, r.touchedBy])).toEqual([[SDK_KEY, ['architect']]])
+})
+
+test('repos: a spawn with no name, description or type is labelled agent:<first 8 of the id>', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.spawnId = 'abcdefghij'
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  await $.agent.spawn({
+    ...ev.WORKFLOW_SPAWN_INPUT,
+    name: '',
+    description: '',
+    subagentType: '',
+    cwd: '/x/sdk',
+  } as never)
+  await drain(w)
+  const rows = (w.store.get('s:' + SESSION) as SavedRepos).repos ?? []
+  expect(rows.map(r => r.touchedBy)).toEqual([['agent:abcdefgh']])
+})
+
+test('repos: the main loop and a spawned agent share one row', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.spawnId = 'w1'
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.tools.Bash = RAN
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 't1' } as never)
+  await drain(w)
+  await $.agent.spawn({ ...ev.WORKFLOW_SPAWN_INPUT, cwd: '/x/sdk' } as never)
+  await drain(w)
+  const rows = (w.store.get('s:' + SESSION) as SavedRepos).repos ?? []
+  expect(rows.map(r => [r.key, r.touchedBy])).toEqual([[SDK_KEY, ['main', 'architect']]])
+})
+
+test('repos: a nested child with no cwd gets the cwd of its parent and adds a row', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  w.fake.spawnId = 'w1'
+  await $.agent.spawn({ ...ev.WORKFLOW_SPAWN_INPUT, cwd: '/x/sdk' } as never)
+  w.fake.spawnId = 'w2'
+  await $.agent.spawn({
+    ...ev.WORKFLOW_SPAWN_INPUT,
+    parentAgentId: 'w1',
+    description: 'child',
+    name: '',
+    cwd: undefined,
+  } as never)
+  await drain(w)
+  const rows = (w.store.get('s:' + SESSION) as SavedRepos).repos ?? []
+  expect(rows.map(r => [r.key, r.touchedBy])).toEqual([[SDK_KEY, ['architect', 'child']]])
+})
+
+test('repos: a spawn in the root folder or with no cwd adds no row', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  w.fake.spawnId = 'w1'
+  const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
+  await $.agent.spawn({ ...ev.WORKFLOW_SPAWN_INPUT, cwd: '/work' } as never)
+  w.fake.spawnId = 'w2'
+  await $.agent.spawn({ ...ev.WORKFLOW_SPAWN_INPUT, cwd: undefined } as never)
+  await drain(w)
+  expect(seen.revParse).toEqual([])
+  expect(savedKeys(w)).toEqual([])
+})
+
+// ---------------------------------------------------------------- repos: /track clear while a lookup waits
+
+test('repos: a lookup that ends after /track clear leaves no row', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const { held, release } = holdOne()
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE }, held)
+  w.fake.tools.Bash = RAN
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 't1' } as never)
+  await sleep(30) // the job waits on git
+  await track($, 'clear')
+  release()
+  await drain(w)
+  expect(savedKeys(w)).toEqual([])
+  expect(w.store.has('s:' + SESSION)).toBe(false)
+  expect((await track($)).text).toBe('No tracked items yet.')
+})
+
+test('repos: a visit that waits in the queue during /track clear does not swallow the same visit made after it', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  const { held, release } = holdOne()
+  gitAt(w.fake, { '/x/sdk': SDK_REMOTE, '/x/lib': LIB_REMOTE }, held)
+  w.fake.tools.Read = RAN
+  // The lib job runs and waits on git. The first sdk visit waits behind it in the queue.
+  await $.tool.call({ tool: 'Read', file_path: '/x/lib/b.ts', tool_use_id: 't1' } as never)
+  await sleep(30)
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't2' } as never)
+  await track($, 'clear')
+  await $.tool.call({ tool: 'Read', file_path: '/x/sdk/a.ts', tool_use_id: 't3' } as never)
+  release()
+  await drain(w)
+  expect(savedKeys(w)).toEqual([SDK_KEY])
+})
+
+test('repos: restoring more than maxRepos stored rows keeps maxRepos', async ($, on) => {
+  const rows = Array.from({ length: LIMITS.maxRepos + 1 }, (_, i) => ({
+    ...STORED_SDK,
+    key: `local:/r${i}`,
+    name: `r${i}`,
+    lastSeen: 100 + i,
+  }))
+  const { clock, store, calls } = world(on, {
+    seed: { index: [SESSION], ['s:' + SESSION]: { items: [], repos: rows } },
+  })
+  await $.session.start(START)
+  await clock.advance(LIMITS.flushMs + 10)
+  await quiet(calls)
+  await sleep(20)
+  const saved = store.get('s:' + SESSION) as SavedRepos
+  expect(saved.repos).toHaveLength(LIMITS.maxRepos)
+  expect(saved.repos?.map(r => r.key)).not.toContain('local:/r0')
+})
+
+// ---------------------------------------------------------------- repos: dismiss with the x button
+
+const SDK_ROW_ID = 'rp:' + SDK_KEY
+type PressUi = PaneUi & { press(q: unknown): Promise<void> }
+
+/** A Bash `cd` into the sdk repo, the queue drained. */
+async function visitSdk($: Engine, w: ReturnType<typeof world>, id: string): Promise<void> {
+  sdkGit(w.fake)
+  w.fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: id } as never)
+  await quiet(w.calls)
+}
+
+async function dismissSdk($: Engine): Promise<void> {
+  const ui = (await mountPane($)) as PressUi
+  await ui.press({ key: 'dismiss-' + SDK_ROW_ID })
+  await ui.unmount()
+}
+
+const bandHas = async ($: Engine, text: string): Promise<boolean> => {
+  const ui = (await $.ui.mount({ ...BAND, surface: 'terminal' } as never)) as unknown as {
+    find(q: unknown): Promise<unknown>
+    unmount(): Promise<void>
+  }
+  const found = (await ui.find({ text })) !== undefined
+  await ui.unmount()
+  return found
+}
+
+test('repos dismiss: the x button hides the row from /track and the band', async ($, on) => {
+  const w = world(on)
+  on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine band'] }))
+  await $.session.start(START)
+  await visitSdk($, w, 'toolu_dm_1')
+  expect((await track($)).text ?? '').toContain('acme/sdk')
+  expect(await bandHas($, 'Repos 1')).toBe(true)
+  await dismissSdk($)
+  await quiet(w.calls)
+  expect((await track($)).text ?? '').not.toContain('Repos')
+  expect(await bandHas($, 'Repos')).toBe(false)
+})
+
+test('repos dismiss: a later visit of the dismissed repo adds no row, a flush stores none', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await visitSdk($, w, 'toolu_dm_2')
+  await dismissSdk($)
+  await visitSdk($, w, 'toolu_dm_3')
+  await drain(w)
+  expect((await track($)).text ?? '').not.toContain('acme/sdk')
+  expect(savedKeys(w)).not.toContain(SDK_KEY)
+})
+
+test('repos dismiss: a restore of a stored copy that holds the dismissed repo keeps it hidden', async ($, on) => {
+  const w = world(on, { seed: { index: ['sess-b'], 's:sess-b': { items: [], repos: [STORED_SDK] } } })
+  await $.session.start(START)
+  await visitSdk($, w, 'toolu_dm_4')
+  await dismissSdk($)
+  current.id = 'sess-b' // /resume: the stored copy still holds the repo
+  expect((await track($)).text ?? '').not.toContain('acme/sdk')
+})
+
+test('repos dismiss: /clear carry-over keeps the dismissed repo hidden', async ($, on) => {
+  const w = world(on, { isolateState: true })
+  await $.session.start(START)
+  await visitSdk($, w, 'toolu_dm_5')
+  await dismissSdk($)
+  current.id = 'sess-2' // /clear
+  expect((await track($)).text ?? '').not.toContain('acme/sdk')
+})
+
+test('repos dismiss: another repo touched after the dismiss still appears', async ($, on) => {
+  const w = world(on)
+  await $.session.start(START)
+  await visitSdk($, w, 'toolu_dm_6')
+  await dismissSdk($)
+  const git = w.fake.run
+  w.fake.run = argv => {
+    if (argv[0] === 'git' && argv[2] === '/x/lib') {
+      if (argv[3] === 'rev-parse') return res('/x/lib\n/x/lib/.git\n')
+      if (argv[3] === 'remote') return res('git@github.com:acme/lib.git\n')
+      return res('main\n')
+    }
+    return git?.(argv)
+  }
+  await $.tool.call({ tool: 'Bash', command: 'cd /x/lib && ls', tool_use_id: 'toolu_dm_7' } as never)
+  await quiet(w.calls)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('acme/lib')
+  expect(text).not.toContain('acme/sdk')
 })

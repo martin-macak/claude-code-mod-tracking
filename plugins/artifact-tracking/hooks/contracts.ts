@@ -10,6 +10,7 @@ import type {
   ItemError,
   ItemRecord,
   JiraFields,
+  JiraNode,
   PrSkip,
   Source,
   ToolName,
@@ -20,7 +21,7 @@ export type * from '../types'
 
 // ---------------------------------------------------------------- process runner
 
-export type RunInit = { timeoutMs?: number; cwd?: string }
+export type RunInit = { timeoutMs?: number; cwd?: string; env?: Record<string, string> }
 
 export type RunResult = {
   exitCode: number
@@ -188,21 +189,50 @@ export const LIMITS = {
   maxDismissed: 500,
   /** `.md` paths read from one prompt or reply row (issue #28). Each one costs a stat. */
   maxMentionsPerRow: 20,
+  maxRepos: 50,
+  maxRepoAgents: 8,
+  maxRepoQueue: 32,
+  /** R12: the newest manual-high items the cap never drops. Below `maxItems`, so the cap can always be met. */
+  maxPinned: 100,
 } as const
 
 export const JIRA_KEY = /^[A-Z][A-Z0-9_]+-\d+$/
+
+/** The item key of a resolved GitHub issue or PR (spec 6.2). `model/keys.ts` and the gh refresh both build it here. */
+export const githubKey = (host: string, owner: string, repo: string, number: number): string =>
+  `gh:${host.toLowerCase()}/${owner.toLowerCase()}/${repo.toLowerCase()}#${number}`
 
 // ---------------------------------------------------------------- auto tracking (spec 5.3, 6.3)
 
 /** Sources that discovery adds. The transcript backfill and the capture hooks never write them. */
 export const AUTO_SOURCES: ReadonlySet<Source> = new Set<Source>(['auto', 'pr-body'])
 
+/**
+ * A fetched child tree with the marks the person set. A node matches by key, level by level.
+ * A refresh carries no mark of its own, so `old` decides for each node it holds, also when that node has no mark:
+ * the person may have reset it while the fetch ran. A node `old` lacks keeps what `fresh` has.
+ * Here and not in `model/`: `tools/acli-tool.ts` and `model/registry.ts` both need it.
+ */
+export function carryPriorities(fresh: readonly JiraNode[], old: readonly JiraNode[]): JiraNode[] {
+  const byKey = new Map(old.map(n => [n.key, n]))
+  return fresh.map(n => {
+    const prev = byKey.get(n.key)
+    const out = { ...n, children: carryPriorities(n.children, prev?.children ?? []) }
+    const priority = prev ? prev.priority : n.priority
+    if (priority === undefined) delete out.priority
+    else out.priority = priority
+    return out
+  })
+}
+
 // Row ids of the auto sections (spec 6.2). An item key never starts with `wt:` or `ag:`. Build and test ids here only.
 export const MASTER_ID = 'ag:master'
 export const worktreeId = (path: string): string => `wt:${path}`
 export const agentRowId = (agentId: string): string => `ag:${agentId}`
-/** True for the id of a worktree or agent row, false for an item key. */
-export const isRowId = (id: string): boolean => id.startsWith('wt:') || id.startsWith('ag:')
+/** The id of a repo row (`rp:` + the repo key). A repo key starts with `remote:` or `local:`, so it is no item key. */
+export const repoRowId = (key: string): string => `rp:${key}`
+/** True for the id of a worktree, agent or repo row, false for an item key. */
+export const isRowId = (id: string): boolean => id.startsWith('wt:') || id.startsWith('ag:') || id.startsWith('rp:')
 
 export type GitWorktree = {
   path: string

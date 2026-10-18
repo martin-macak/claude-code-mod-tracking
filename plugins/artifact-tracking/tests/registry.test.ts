@@ -9,6 +9,7 @@ import type {
   GitHubRef,
   GitHubToolApi,
   ItemRecord,
+  JiraNode,
   JiraRecord,
   JiraRef,
   JiraToolApi,
@@ -23,6 +24,7 @@ import { GitHubItem } from '../hooks/model/github-item'
 import { JiraItem } from '../hooks/model/jira-item'
 import { artifactOrigin, fileKey, keyOf } from '../hooks/model/keys'
 import {
+  carryOver,
   hydrate,
   markArtifactDeleted,
   mergeFiles,
@@ -362,6 +364,41 @@ test('mergeResults: takes status fields, keeps sightings, clears an absent error
   })
   expect('error' in r).toBe(false)
 })
+test('mergeResults: a child keeps the priority the list holds, even when the refresh was fetched earlier', () => {
+  const child = (key: string, priority: 'high' | 'low' | 'normal', children: JiraNode[] = []): JiraNode => ({
+    key,
+    priority,
+    summary: key,
+    issueType: 'Task',
+    status: 'To Do',
+    children,
+  })
+  const base = {
+    ...(recordFromRef(jiraRef(), s(1)) as JiraRecord),
+    children: [child('A-1', 'high', [child('A-2', 'low')]), child('A-3', 'normal')],
+  }
+  // A fetched tree carries no mark: acli knows nothing of the person's levels.
+  const fresh = (key: string, children: JiraNode[] = []): JiraNode => ({
+    key,
+    summary: key,
+    issueType: 'Task',
+    status: 'To Do',
+    children,
+  })
+  const refreshed: JiraRecord = {
+    ...base,
+    children: [fresh('A-1', [fresh('A-2')]), fresh('A-3'), fresh('A-4')],
+    refreshedAt: 100,
+  }
+  const out = mergeResults([base], [refreshed])[0] as JiraRecord
+  expect(out.children.map(c => [c.key, c.priority])).toEqual([
+    ['A-1', 'high'],
+    ['A-3', 'normal'],
+    ['A-4', undefined],
+  ])
+  expect(out.children[0]?.children.map(c => [c.key, c.priority])).toEqual([['A-2', 'low']])
+})
+
 test('mergeResults: drops records refreshed as not-found', () => {
   const base = recordFromRef(jiraRef(), s(1)) as JiraRecord
   const refreshed: JiraRecord = {
@@ -676,6 +713,37 @@ test('cap: a mentioned item that also has an auto source is not counted and not 
   expect(r.find(x => x.key === oldest.key)).toBeDefined()
 })
 
+test('R12: the oldest manual-high item survives the cap; the cap still holds', () => {
+  const oldestHigh = webAt(0, ['prompt'], { priority: 'high' })
+  const r = unionRecords([oldestHigh, ...many(1, LIMITS.maxItems, ['prompt'])], [])
+  expect(r).toHaveLength(LIMITS.maxItems)
+  expect(r.find(x => x.key === oldestHigh.key)).toBeDefined()
+  expect(r.find(x => x.key === 'web:https://e.example/1')).toBeUndefined()
+  const lowOld = webAt(0, ['prompt'], { priority: 'low' })
+  expect(unionRecords([lowOld, ...many(1, LIMITS.maxItems, ['prompt'])], []).some(x => x.key === lowOld.key)).toBe(
+    false,
+  )
+})
+
+test('R12: only the newest maxPinned high items are pinned, so the cap can always be met', () => {
+  const highs = Array.from({ length: LIMITS.maxPinned + 1 }, (_, i) => webAt(i, ['prompt'], { priority: 'high' }))
+  const r = unionRecords([...highs, ...many(1000, LIMITS.maxItems, ['prompt'])], [])
+  expect(r).toHaveLength(LIMITS.maxItems)
+  expect(r.find(x => x.key === highs[0]!.key)).toBeUndefined()
+  expect(r.filter(x => x.priority === 'high')).toHaveLength(LIMITS.maxPinned)
+  const all = unionRecords(
+    Array.from({ length: LIMITS.maxItems + 50 }, (_, i) => webAt(i, ['prompt'], { priority: 'high' })),
+    [],
+  )
+  expect(all).toHaveLength(LIMITS.maxItems)
+})
+
+test('R12: mergeRefs keeps a high item over a newer unmarked one', () => {
+  const list = [webAt(1, ['prompt'], { priority: 'high' }), webAt(2, ['prompt'])]
+  const fresh = webRef({ url: 'https://new.example/', label: 'new' })
+  expect(mergeRefs(list, [fresh], s(10), 2).list.map(x => x.key)).toEqual(['web:https://e.example/1', keyOf(fresh)])
+})
+
 test('mergeRefs applies the same cap rule', () => {
   const list = [webAt(1, ['prompt']), webAt(2, ['prompt']), webAt(3, ['pr-body'])]
   const fresh = webRef({ url: 'https://new.example/', label: 'new' })
@@ -691,11 +759,140 @@ test('fold and unionRecords merge via (union, a first); a record without via sta
   expect(plain[0]?.via).toBeUndefined()
 })
 
+test('unionRecords keeps the highest priority when one key appears twice', () => {
+  const high = webAt(1, ['prompt'], { priority: 'high' })
+  const low = webAt(1, ['tool'], { priority: 'low' })
+  expect(unionRecords([low], [high])[0]?.priority).toBe('high')
+  expect(unionRecords([high], [low])[0]?.priority).toBe('high')
+})
+
+test('resolveBareRefs fold keeps the highest priority across merged keys', () => {
+  const target = {
+    ...(recordFromRef(ghRef({ type: 'issue' }), s(10)) as GitHubRecord),
+    priority: 'low' as const,
+  }
+  const bare = {
+    ...(recordFromRef(unresolved(5), s(3)) as GitHubRecord),
+    priority: 'high' as const,
+  }
+  const out = resolveBareRefs([bare, target], { host: 'github.com', owner: 'acme', repo: 'web' })
+  expect(out).toHaveLength(1)
+  expect(out[0]?.priority).toBe('high')
+})
+
+test('a new record has no priority: no mark until the person sets one', () => {
+  for (const ref of [ghRef(), jiraRef(), webRef(), unresolved(3)])
+    expect('priority' in recordFromRef(ref, s(1))).toBe(false)
+  expect('priority' in mergeRefs([], [webRef()], s(1)).list[0]!).toBe(false)
+  expect('priority' in unionRecords([webAt(1, ['prompt'])], [])[0]!).toBe(false)
+})
+
+test('a set low beats a copy with no mark, in unionRecords both ways and in resolveBareRefs', () => {
+  const low = webAt(1, ['prompt'], { priority: 'low' })
+  const unset = webAt(1, ['tool'])
+  expect(unionRecords([low], [unset])[0]?.priority).toBe('low')
+  expect(unionRecords([unset], [low])[0]?.priority).toBe('low')
+  const target = { ...(recordFromRef(ghRef({ type: 'issue' }), s(10)) as GitHubRecord), priority: 'low' as const }
+  const bare = recordFromRef(unresolved(5), s(3)) as GitHubRecord
+  const out = resolveBareRefs([bare, target], { host: 'github.com', owner: 'acme', repo: 'web' })
+  expect(out[0]?.priority).toBe('low')
+})
+
+test('unionRecords keeps the child marks of the copy that loses the fold', () => {
+  const mk = (at: number, refreshedAt: number, root?: 'low', child?: 'high'): JiraRecord => ({
+    ...(recordFromRef(jiraRef(), s(at)) as JiraRecord),
+    ...(root ? { priority: root } : {}),
+    refreshedAt,
+    children: [
+      { key: 'ISS-2', ...(child ? { priority: child } : {}), summary: '', issueType: '', status: '', children: [] },
+    ],
+  })
+  // The newer copy wins the status fields and the tree; the older one holds the marks.
+  const out = unionRecords([mk(1, 10, 'low', 'high')], [mk(2, 20)])[0] as JiraRecord
+  expect(out.refreshedAt).toBe(20)
+  expect(out.priority).toBe('low')
+  expect(out.children[0]?.priority).toBe('high')
+})
+
+test('mergeResults keeps the root mark of the list when a refresh result carries another', () => {
+  const base = { ...(recordFromRef(jiraRef(), s(1)) as JiraRecord), priority: 'high' as const }
+  const refreshed: JiraRecord = { ...base, priority: 'low', summary: 'New', refreshedAt: 100 }
+  const out = mergeResults([base], [refreshed])[0] as JiraRecord
+  expect(out.summary).toBe('New')
+  expect(out.priority).toBe('high')
+  const unset = recordFromRef(jiraRef(), s(1)) as JiraRecord
+  expect('priority' in mergeResults([unset], [{ ...unset, priority: 'high', refreshedAt: 100 }])[0]!).toBe(false)
+})
+
+test('mergeResults: a child the person reset during a refresh stays unset', () => {
+  const kid = (priority?: 'high'): JiraNode => ({
+    key: 'A-1',
+    ...(priority ? { priority } : {}),
+    summary: '',
+    issueType: '',
+    status: '',
+    children: [],
+  })
+  const now = { ...(recordFromRef(jiraRef(), s(1)) as JiraRecord), children: [kid()] }
+  // The refresh started while A-1 was high, so its tree still holds the old mark.
+  const refreshed: JiraRecord = { ...now, children: [kid('high')], refreshedAt: 100 }
+  const out = mergeResults([now], [refreshed])[0] as JiraRecord
+  expect('priority' in out.children[0]!).toBe(false)
+})
+
+test('carryOver: the live marks win over the older stored copy, on the root and on a Jira child, absence too', () => {
+  const kid = (priority?: 'high'): JiraNode => ({
+    key: 'A-1',
+    ...(priority ? { priority } : {}),
+    summary: '',
+    issueType: '',
+    status: '',
+    children: [],
+  })
+  const live = { ...(recordFromRef(jiraRef(), s(2)) as JiraRecord), children: [kid()] } // the person reset both
+  const stored = {
+    ...(recordFromRef(jiraRef(), s(1)) as JiraRecord),
+    priority: 'high' as const,
+    children: [kid('high')],
+  }
+  const out = carryOver([live], [stored])[0] as JiraRecord
+  expect('priority' in out).toBe(false)
+  expect('priority' in out.children[0]!).toBe(false)
+  expect(unionRecords([live], [stored])[0]?.priority).toBe('high') // the plain union would bring it back
+  const onlyStored = webAt(9, ['prompt'], { priority: 'low' })
+  expect(carryOver([live], [onlyStored]).find(r => r.key === onlyStored.key)?.priority).toBe('low')
+})
+
+test('a record stored before priority existed reads as no mark and round-trips without one', () => {
+  const legacy = recordFromRef(jiraRef(), s(1)) as JiraRecord
+  expect('priority' in unionRecords([legacy], [])[0]!).toBe(false)
+  expect('priority' in hydrate(legacy, tools).toRecord()).toBe(false)
+})
+
 test('mergeRefs and unionRecords copy via, so the output never shares the input array', () => {
   const rec = webAt(1, ['pr-body'], { via: ['k1'] })
   const out = mergeRefs([rec], [], s(5)).list[0]!
   expect(out.via).toEqual(['k1'])
   expect(out.via).not.toBe(rec.via)
+})
+
+test('mergeResults and unionRecords keep the closing refs of a PR and never share the array', () => {
+  const pr = { ...(recordFromRef(ghRef(), s(1)) as GitHubRecord), closes: ['gh:github.com/acme/web#9'] }
+  const merged = mergeResults([pr], [{ ...pr, closes: undefined, title: 'T', refreshedAt: 5 } as GitHubRecord])[0]
+  expect((merged as GitHubRecord).closes).toEqual(['gh:github.com/acme/web#9'])
+  const union = unionRecords([pr], [])[0] as GitHubRecord
+  expect(union.closes).toEqual(pr.closes)
+  expect(union.closes).not.toBe(pr.closes)
+})
+
+test('mergeResults takes the closing refs a refresh found, an empty list too; none found keeps the stored ones', () => {
+  const pr = { ...(recordFromRef(ghRef(), s(1)) as GitHubRecord), closes: ['gh:github.com/acme/web#9'] }
+  const fresh = (closes?: string[]) => [{ ...pr, ...(closes ? { closes } : { closes: undefined }), refreshedAt: 5 }]
+  expect((mergeResults([pr], fresh(['gh:github.com/acme/web#8']))[0] as GitHubRecord).closes).toEqual([
+    'gh:github.com/acme/web#8',
+  ])
+  expect((mergeResults([pr], fresh([]))[0] as GitHubRecord).closes).toEqual([])
+  expect((mergeResults([pr], fresh())[0] as GitHubRecord).closes).toEqual(['gh:github.com/acme/web#9'])
 })
 
 test('mergeResults keeps via, headRefName and baseRefName of the stored record', () => {

@@ -2,7 +2,7 @@
 // No `$`: it gets a Runner and a clock. It never runs `acli jira auth switch`, `login` or `logout`.
 
 import type { JiraNode, JiraTarget, JiraToolApi, Now, Runner, ToolStatus } from '../contracts'
-import { JIRA_KEY, LIMITS } from '../contracts'
+import { carryPriorities, JIRA_KEY, LIMITS } from '../contracts'
 import type { CircuitBreaker } from './circuit-breaker'
 import type { Outcome } from './tool'
 import { firstLine, Tool } from './tool'
@@ -219,7 +219,7 @@ export class AcliTool extends Tool<JiraTarget> implements JiraToolApi {
       t.issueType = node.issueType
       t.status = node.status
       t.statusCategory = node.statusCategory
-      if (children) t.children = children.map(cloneNode)
+      if (children) t.children = carryPriorities(children, t.children)
       delete t.error
       t.refreshedAt = at
     }
@@ -277,8 +277,4 @@ export class AcliTool extends Tool<JiraTarget> implements JiraToolApi {
     this.record('ok')
     child.children = node.children
   }
-}
-
-function cloneNode(n: JiraNode): JiraNode {
-  return { ...n, children: n.children.map(cloneNode) }
 }

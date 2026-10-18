@@ -11,8 +11,22 @@ import type {
   ToolStatus,
   WebRecord,
 } from '../hooks/contracts'
+import { markerOf } from '../hooks/model/priority'
 import { composeBand, composeCommandText } from '../hooks/ui/auto-view'
-import { ago, bandParts, buildPane, columnsFor, EMPTY_TEXT, textOf, toolNote, type ViewContext } from '../hooks/ui/view'
+import {
+  ago,
+  bandParts,
+  buildPane,
+  columnsFor,
+  dismissKey,
+  EMPTY_TEXT,
+  focusTargets,
+  foldKey,
+  markKeys,
+  textOf,
+  toolNote,
+  type ViewContext,
+} from '../hooks/ui/view'
 import { PAGE_CODE_URL, PAGE_ID, PAGE_KEY, PAGE_URL, PAGE_UUID } from './fixtures/artifacts'
 
 const NOW = 1_000_000
@@ -112,9 +126,115 @@ test('sections come in order jira, github, artifacts, web, files and empty ones 
   expect(buildPane([], ctx())).toEqual([])
 })
 
-test('rows sort by firstSeen inside a section', () => {
-  const rows = buildPane([pr(2, { firstSeen: 50 }), pr(1, { firstSeen: 5 })], ctx())[0]!.rows
-  expect(rows.map(r => r.key)).toEqual(['o/r#1', 'o/r#2'])
+test('rows sort by priority first, then by firstSeen inside a section', () => {
+  const rows = buildPane(
+    [
+      pr(4, { firstSeen: 3, priority: 'low' }),
+      pr(3, { firstSeen: 2 }),
+      pr(2, { firstSeen: 50, priority: 'high' }),
+      pr(1, { firstSeen: 5, priority: 'high' }),
+    ],
+    ctx(),
+  )[0]!.rows
+  expect(rows.map(r => r.key)).toEqual(['o/r#1', 'o/r#2', 'o/r#3', 'o/r#4'])
+})
+
+test('jira child rows sort by priority inside their parent and stay in the tree', () => {
+  const withPriority = jira('ISS-1', {
+    summary: 'Parent',
+    issueType: 'Epic',
+    children: [
+      node('ISS-2', 'In Progress', 'indeterminate'),
+      { ...node('ISS-3', 'To Do', 'new'), priority: 'high' },
+      { ...node('ISS-4', 'Done', 'done'), priority: 'low' },
+    ],
+  })
+  const rows = buildPane([withPriority], ctx())[0]!.rows
+  expect(rows.map(r => r.key)).toEqual(['ISS-1', 'ISS-3', 'ISS-2', 'ISS-4'])
+})
+
+test('rows carry priority markers for high and low', () => {
+  const rows = buildPane(
+    [pr(1, { priority: 'high' }), pr(2), pr(3, { priority: 'low' }), jira('ISS-9', { priority: 'high' })],
+    ctx(),
+  )
+  const github = rows.find(s => s.id === 'github')!.rows
+  expect(github.map(r => markerOf(r.prio?.level))).toEqual(['▲', '', '▽'])
+  const jiraRows = rows.find(s => s.id === 'jira')!.rows
+  expect(markerOf(jiraRows[0]?.prio?.level)).toBe('▲')
+})
+
+test('every item section is marked, and every row in it has a mark, Jira children too', () => {
+  const sections = buildPane(
+    [jira('ISS-1', { children: [node('ISS-2', 'To Do', 'new')] }), pr(1), web('https://a.dev/x', 'A')],
+    ctx(),
+  )
+  expect(sections.map(s => s.prio)).toEqual([true, true, true])
+  expect(sections.flatMap(s => s.rows.map(r => r.prio !== undefined))).toEqual([true, true, true, true])
+})
+
+test('the Files section has levels too: rows sort by level, and the text puts the marker first', () => {
+  const sections = buildPane(
+    [
+      file('/work/a.md', {}, 1),
+      file('/work/b.md', { priority: 'high' }, 2),
+      file('/work/c.md', { priority: 'low' }, 3),
+    ],
+    ctx(rooted('/work')),
+  )
+  const files = sections.find(s => s.id === 'file')!
+  expect(files.prio).toBe(true)
+  expect(files.rows.map(r => [r.title, r.prio])).toEqual([
+    ['b.md', { level: 'high' }],
+    ['a.md', {}],
+    ['c.md', { level: 'low' }],
+  ])
+  const text = textOf(sections)
+  expect(text).toContain('\n  ▲  b.md  created')
+  expect(text).toContain('\n  a.md  created')
+  expect(text).toContain('\n  ▽  c.md  created')
+  expect([...markKeys(sections).keys()]).toEqual(['file:/work/b.md', 'file:/work/a.md', 'file:/work/c.md'])
+})
+
+test('the /track text puts the marker before the key; a row with no mark or normal has none', () => {
+  const text = textOf(
+    buildPane(
+      [
+        pr(1, { priority: 'high' }),
+        pr(2),
+        pr(3, { priority: 'low' }),
+        pr(4, { priority: 'normal' }),
+        jira('ISS-1', { children: [{ ...node('ISS-2', 'To Do', 'new'), priority: 'high' }] }),
+      ],
+      ctx(),
+    ),
+  )
+  expect(text).toContain('\n  ▲ o/r#1  ')
+  expect(text).toContain('\n  o/r#2')
+  expect(text).toContain('\n  o/r#4')
+  expect(text).toContain('\n  ▽ o/r#3')
+  expect(text).toContain('\n    ▲ ISS-2  ')
+})
+
+test('markKeys: a key per marked row with its place and its level; a moved or re-levelled row gets a new one', () => {
+  const before = markKeys(buildPane([pr(1), pr(2, { firstSeen: 30 })], ctx()))
+  expect([...before.values()]).toEqual(['mark:0:-:gh:github.com/o/r#1', 'mark:1:-:gh:github.com/o/r#2'])
+  const after = markKeys(buildPane([pr(1), pr(2, { firstSeen: 30, priority: 'high' })], ctx()))
+  expect(after.get('gh:github.com/o/r#2')).toBe('mark:0:high:gh:github.com/o/r#2')
+  expect(after.get('gh:github.com/o/r#1')).toBe('mark:1:-:gh:github.com/o/r#1')
+})
+
+test('focusTargets: the mark, fold and x of a row all pick that row; a child picks itself', () => {
+  const sections = buildPane([jira('ISS-1', { children: [node('ISS-2', 'To Do', 'new')] })], ctx())
+  const keys = markKeys(sections)
+  const targets = focusTargets(sections)
+  const root = 'jira:acme.atlassian.net/ISS-1'
+  const child = `${root}/ISS-2`
+  expect(targets.get(keys.get(root)!)).toBe(root)
+  expect(targets.get(foldKey(root))).toBe(root)
+  expect(targets.get(dismissKey(root))).toBe(root)
+  expect(targets.get(keys.get(child)!)).toBe(child)
+  expect(targets.size).toBe(4)
 })
 
 const epic = jira('ISS-101', {
@@ -279,6 +399,7 @@ test('artifact rows: the name links to the page, the id is the title, the origin
     tone: 'plain',
     foldable: false,
     folded: false,
+    prio: {}, // an item row with no mark (issue #30)
   })
   expect(artifactRow(artifact({ url: PAGE_CODE_URL, label: 'Design notes' }))).toMatchObject({
     key: 'Design notes',
@@ -286,6 +407,18 @@ test('artifact rows: the name links to the page, the id is the title, the origin
     title: PAGE_UUID,
     type: 'mentioned',
   })
+})
+
+test('the Artifacts section has levels too: a high artifact sorts first and the text shows its marker', () => {
+  const low = artifact({ priority: 'low', label: 'Low page' })
+  const high = { ...artifact({ priority: 'high', label: 'High page' }), key: 'art:other', firstSeen: 99 }
+  const section = buildPane([low, high], ctx()).find(s => s.id === 'artifact')!
+  expect(section.prio).toBe(true)
+  expect(section.rows.map(r => [r.key, r.prio?.level])).toEqual([
+    ['High page', 'high'],
+    ['Low page', 'low'],
+  ])
+  expect(textOf([section])).toContain('\n  ▲ High page  ')
 })
 
 test('artifact rows: a row without a name shows the id once', () => {
