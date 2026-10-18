@@ -92,6 +92,7 @@ test: build ## Run the plugin tests (after build)
 check: test ## Alias of test (validate, type-check, test)
 
 test-scripts: ## Test the repo scripts (no claude needed)
+	scripts/hooks/verify-gate.test.sh
 	scripts/dev/gh-check.test.sh
 	bash scripts/release/release.test.sh
 	bash scripts/release/ci-guards.test.sh
