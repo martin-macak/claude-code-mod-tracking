@@ -1,10 +1,9 @@
 // Base class of a tracked item (spec section 5). Plain TypeScript: no `$`.
 // An item is rebuilt from an ItemRecord for each operation and turned back into a record afterwards.
 
-import type { Priority, Refreshable } from '../../core/interfaces/items'
-import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
-import type { BaseRecord, ItemError } from '../../core/lib/records'
-import type { Category, ItemRecord } from '../contracts'
+import type { Priority, Refreshable, StoredItem } from '../interfaces/items'
+import { GLOBAL_DEFAULTS } from './global-config'
+import type { BaseRecord, ItemError } from './records'
 
 /** The fields every record shares, without the kind's `category`. */
 type BaseFields = Pick<
@@ -21,7 +20,7 @@ export function omitUndefined<T extends object>(obj: T): T {
 
 export abstract class TrackedItem implements Refreshable {
   readonly key: string
-  abstract readonly category: Category
+  abstract readonly category: string
   url: string
   label: string
   /** The person's manual mark. Absent: no mark. */
@@ -55,7 +54,7 @@ export abstract class TrackedItem implements Refreshable {
 
   abstract canRefresh(now: number): boolean
   abstract refresh(): Promise<void>
-  abstract toRecord(): ItemRecord
+  abstract toRecord(): StoredItem
 
   /** False when the tool said not-found. True when never refreshed. Else true once the item is stale. */
   isDue(now: number): boolean {

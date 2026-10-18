@@ -1,7 +1,7 @@
 // A Claude artifact (issue #29). No tool reads its status, so it never refreshes. The origin comes from the sources.
 
+import { StaticItem } from '../../core/lib/tracked-item'
 import type { ArtifactRecord } from '../../hooks/contracts'
-import { StaticItem } from '../../hooks/model/tracked-item'
 
 export class ArtifactItem extends StaticItem {
   readonly category = 'artifact' as const

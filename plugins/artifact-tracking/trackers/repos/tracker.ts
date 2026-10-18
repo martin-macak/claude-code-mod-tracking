@@ -1,4 +1,4 @@
-import { CircuitBreaker } from '../../core/infra/circuit-breaker'
+import { CircuitBreaker } from '../../core/lib/circuit-breaker'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import { normPath } from '../../core/lib/porcelain'
 import { resolvePath } from '../../core/lib/shell'

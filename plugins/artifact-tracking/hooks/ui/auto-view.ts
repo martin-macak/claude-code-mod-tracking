@@ -1,6 +1,8 @@
 // The auto sections of the pane (spec 10): Worktrees, Agents, Pull requests, the band parts and the composers.
 // Imports `view.ts` and the contracts. Pure: no `$`, no JSX, no clock.
 
+import { byLevel } from '../../core/lib/levels'
+import { ago, compactIds, toolNote } from '../../core/lib/text'
 import { processBandPart, processSection } from '../../trackers/processes/view'
 import { repoBandPart, repoSection } from '../../trackers/repos/view'
 import type {
@@ -13,21 +15,8 @@ import type {
   RepoRecord,
 } from '../contracts'
 import { MASTER_ID } from '../contracts'
-import { byLevel } from '../model/priority'
 import type { PaneRow, PaneSection, RowPrio, ViewContext } from './view'
-import {
-  ago,
-  bandParts,
-  buildPane,
-  compactIds,
-  EMPTY_TEXT,
-  githubRow,
-  isWide,
-  lastRefreshOf,
-  levelsOf,
-  textOf,
-  toolNote,
-} from './view'
+import { bandParts, buildPane, EMPTY_TEXT, githubRow, isWide, lastRefreshOf, levelsOf, textOf } from './view'
 
 export { compactIds } // kept here for the callers that import it from the auto view
 

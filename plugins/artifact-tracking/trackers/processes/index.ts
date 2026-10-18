@@ -3,10 +3,10 @@
 // them on the tick and on `/track`. It publishes the probe state as the fact `processes.ui`.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 8.
 
-import { CircuitBreaker } from '../../core/infra/circuit-breaker'
 import type { CommandEvent, RowEvent, ToolCallEvent } from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
 import type { Handler, Tracker } from '../../core/interfaces/tracker'
+import { CircuitBreaker } from '../../core/lib/circuit-breaker'
 import { isRecord } from '../../core/lib/json'
 import { type ProcessesConfig, processesConfig } from './config'
 import {

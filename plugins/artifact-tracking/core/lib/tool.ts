@@ -3,19 +3,19 @@
 
 import type { RefreshTool } from '../interfaces/items'
 import type { Now, Runner, RunOpts, RunResult } from '../interfaces/ports'
-import type { ToolStatus } from '../interfaces/tracker'
-import { GLOBAL_DEFAULTS } from '../lib/global-config'
+import type { ToolOutcome, ToolStatus } from '../interfaces/tracker'
 import { CircuitBreaker } from './circuit-breaker'
+import { GLOBAL_DEFAULTS } from './global-config'
+import { firstLine, message } from './text'
+
+// `firstLine` and `message` moved to text.ts (plan L5, Task 2). The tool classes import them from here.
+export { firstLine, message }
 
 /** The two timeouts of a tool, read at each call so a changed config file shows at the next one (`global.tools`). */
 export type ToolTimeouts = () => { timeoutMs: number; probeTimeoutMs: number }
 
-/**
- * How one call ended, for the breaker.
- * `ok` and `item-error` (not found, no permission) are successes for the tool.
- * `tool-failure` (cannot start, timeout, network, 401, unparsable) and `auth` (not logged in) count.
- */
-export type Outcome = 'ok' | 'item-error' | 'tool-failure' | 'auth'
+/** How one call ended, for the breaker. The contract type, under its old name. */
+export type Outcome = ToolOutcome
 
 export abstract class Tool<T> implements RefreshTool<T> {
   protected available: boolean | null = null
@@ -115,12 +115,4 @@ export abstract class Tool<T> implements RefreshTool<T> {
         return
     }
   }
-}
-
-export function firstLine(s: string): string {
-  return s.trim().split('\n')[0]?.trim() ?? ''
-}
-
-export function message(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
 }

@@ -2,8 +2,8 @@
 //   closed --3rd failure in a row--> open --openMs passed--> half-open (one call) --ok--> closed
 //                                                                     \--fail--> open
 
-import type { BreakerState } from '../../hooks/contracts'
-import { GLOBAL_DEFAULTS } from '../lib/global-config'
+import type { BreakerState } from '../../types'
+import { GLOBAL_DEFAULTS } from './global-config'
 
 export class CircuitBreaker {
   private st: BreakerState = 'closed'

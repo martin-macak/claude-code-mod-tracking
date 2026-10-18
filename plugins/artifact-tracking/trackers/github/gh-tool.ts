@@ -1,9 +1,9 @@
 // GhTool: refreshes GitHub issues and PRs with `gh` (spec section 7.2, KB github.md).
 // One batched GraphQL call per host and chunk. No `$`: it gets a Runner and a clock.
 
-import type { CircuitBreaker } from '../../core/infra/circuit-breaker'
-import { firstLine, Tool, type ToolTimeouts } from '../../core/infra/tool'
+import type { CircuitBreaker } from '../../core/lib/circuit-breaker'
 import { dig, isRecord, type Json } from '../../core/lib/json'
+import { firstLine, Tool, type ToolTimeouts } from '../../core/lib/tool'
 import type {
   Checks,
   GitHubDiscoveryApi,

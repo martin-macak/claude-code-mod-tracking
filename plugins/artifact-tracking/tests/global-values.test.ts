@@ -2,9 +2,9 @@
 // the stale times of an item and the item cap. Each test uses a value that is not the default, so it fails on the old
 // constant. Plan: L4 Task 7 (decisions C2, C5).
 import { expect, test } from 'claude-code/testing'
-import { CircuitBreaker } from '../core/infra/circuit-breaker'
 import { RefreshCoordinator } from '../core/infra/coordinator'
-import type { ToolTimeouts } from '../core/infra/tool'
+import { CircuitBreaker } from '../core/lib/circuit-breaker'
+import type { ToolTimeouts } from '../core/lib/tool'
 import type { GitHubRecord, GitHubToolApi, ItemRecord, JiraToolApi, RunInit, Runner, Tools } from '../hooks/contracts'
 import { enforceCap, hydrate, MAX_PINNED, mergeRefs } from '../hooks/model/registry'
 import { GhTool } from '../trackers/github/gh-tool'

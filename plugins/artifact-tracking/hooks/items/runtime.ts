@@ -8,15 +8,15 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.7, 5.8 and 5.9.
 // Plan: L3 Task 11, D13. L4 Task 6, C12.
 
-import { CircuitBreaker } from '../../core/infra/circuit-breaker'
 import { RefreshCoordinator } from '../../core/infra/coordinator'
-import type { ToolTimeouts } from '../../core/infra/tool'
 import type { GlobalConfig } from '../../core/interfaces/config'
 import type { ReplayItem, RowEvent, SessionChangedEvent } from '../../core/interfaces/events'
 import type { Claim, HostContext, ItemsHost, Json, StoredItem } from '../../core/interfaces/items'
 import type { StatePorts } from '../../core/interfaces/ports'
 import type { DataSlot } from '../../core/interfaces/slots'
+import { CircuitBreaker } from '../../core/lib/circuit-breaker'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
+import type { ToolTimeouts } from '../../core/lib/tool'
 import type { AutoGithub } from '../../trackers/auto'
 import { FILE_DEFAULTS, type FileConfig } from '../../trackers/file/config'
 import { FileSight } from '../../trackers/file/sighting'

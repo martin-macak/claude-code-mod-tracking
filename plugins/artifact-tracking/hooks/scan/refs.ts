@@ -2,6 +2,7 @@
 // Pure code. No `$`, no I/O. Every regex is linear. Input is capped at MAX_TEXT before any regex runs.
 
 import { MAX_TEXT, normalizeUrl, scanMarkdown, schemeOf } from '../../core/lib/links'
+import { maskForBare } from '../../core/lib/mask'
 import { parseArtifactUrl } from '../../trackers/artifact/artifact-url'
 import { GITHUB_DEFAULTS } from '../../trackers/github/config'
 import type { ExtractOptions, GitHubRef, JiraRef, Ref, RepoRef, WebRef } from '../contracts'
@@ -128,68 +129,6 @@ export function hostPath(url: string): string {
   const raw = u ? u.host + u.pathname : url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
   const s = trimEnd(raw, '/')
   return s.length > MAX_LABEL ? s.slice(0, MAX_LABEL - 1) + '\u2026' : s
-}
-
-// ---------------------------------------------------------------- masking for bare #N
-
-const blanks = (s: string): string => ' '.repeat(s.length)
-
-/** Blank fenced code blocks (``` and ~~~). An unclosed fence runs to the end. */
-function maskFences(text: string): string {
-  const lines = text.split('\n')
-  let fence: { ch: string; len: number } | null = null
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!
-    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line)
-    if (fence) {
-      if (m && m[1]![0] === fence.ch && m[1]!.length >= fence.len && m[2]!.trim() === '') fence = null
-      lines[i] = blanks(line)
-    } else if (m && !(m[1]![0] === '`' && m[2]!.includes('`'))) {
-      fence = { ch: m[1]![0]!, len: m[1]!.length }
-      lines[i] = blanks(line)
-    }
-  }
-  return lines.join('\n')
-}
-
-/** Blank inline code spans: a backtick run closes at the next run of the same length. Linear. */
-function maskCodeSpans(text: string): string {
-  const runs: Array<[number, number]> = []
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] !== '`') continue
-    let j = i
-    while (text[j] === '`') j++
-    runs.push([i, j - i])
-    i = j - 1
-  }
-  if (runs.length < 2) return text
-  const next = new Array<number>(runs.length).fill(-1)
-  const last = new Map<number, number>()
-  for (let k = runs.length - 1; k >= 0; k--) {
-    const len = runs[k]![1]
-    next[k] = last.get(len) ?? -1
-    last.set(len, k)
-  }
-  let out = ''
-  let pos = 0
-  for (let k = 0; k < runs.length; k++) {
-    const close = next[k]!
-    if (close === -1) continue
-    const from = runs[k]![0]
-    const to = runs[close]![0] + runs[close]![1]
-    out += text.slice(pos, from) + blanks(text.slice(from, to))
-    pos = to
-    k = close // runs inside the span are consumed
-  }
-  return out + text.slice(pos)
-}
-
-/** Replace what a bare `#N` must not be read from with spaces of equal length. */
-function maskForBare(text: string): string {
-  return maskCodeSpans(maskFences(text))
-    .replace(/<[^<>\s]*>/g, blanks)
-    .replace(/\]\([^()\n]*\)?/g, blanks)
-    .replace(/https?:\/\/\S+/g, blanks)
 }
 
 // ---------------------------------------------------------------- extraction

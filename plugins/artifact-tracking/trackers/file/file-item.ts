@@ -1,5 +1,5 @@
+import { StaticItem } from '../../core/lib/tracked-item'
 import type { FileRecord } from '../../hooks/contracts'
-import { StaticItem } from '../../hooks/model/tracked-item'
 
 /** A tracked Markdown file (issue #28). It is track-only: never due, never refreshed. */
 export class FileItem extends StaticItem {
