@@ -17,6 +17,13 @@ import type { TrackerHost } from './tracker-host'
 /** How a start was reached. `session.start` carries the cwd and loads the stored session; a lazy start does neither (D5). */
 export type Launch = { cwd?: string; fromSessionStart: boolean }
 
+/**
+ * What the first start of a load made of the `pendingEnd` that an earlier load left in `v2:run` (D20). `carried`: the
+ * switch it names is honoured. `awaited`: it is a recent end of the id that is still current, so the reload came before
+ * the id flipped, and the flip may still come in this load with no snapshot (the reload gap). `stale`: it is nothing.
+ */
+type RunFate = 'carried' | 'awaited' | 'stale'
+
 export interface StartDeps {
   items: ItemsHost
   persistence: Persistence
@@ -58,34 +65,49 @@ export class StartSequence {
     await this.soft('tracker init', () => host.init(), undefined)
     await this.soft('bus fill', async () => host.fill(bus), undefined)
     await bus.emit('start', { ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}), cold }, ports)
-    await this.soft('session load', () => this.begin(ports, launch, run, first), undefined)
+    const fate = await this.soft<RunFate | undefined>(
+      'session load',
+      () => this.begin(ports, launch, run, first),
+      undefined,
+    )
+    // The first start of a load that carries no pending end, and awaits none, has nothing to carry: what `v2:run` holds
+    // is an older process's, and a switch with no snapshot must not take it for this session's. A start whose session
+    // load failed (no fate) leaves it: the end may have been honourable.
+    if (first && fate === 'stale') await this.soft('stale run', () => persistence.dropRun(run), undefined)
     await scheduler.ensure()
     await this.reattach(ports)
   }
 
   /**
    * Learns the session id and, on a cold `session.start`, loads the stored copy and replays the transcript. A
-   * `pendingEnd` that a reload left behind makes the first start carry the session that ended (D20).
+   * `pendingEnd` that a reload left behind makes the first start carry the session that ended (D20). Resolves to what
+   * the first start made of that record.
    */
-  private async begin(ports: Ports, launch: Launch, run: RunCopy, first: boolean): Promise<void> {
+  private async begin(ports: Ports, launch: Launch, run: RunCopy, first: boolean): Promise<RunFate> {
     const { watch, switcher } = this.d
     const id = await ports.session.id()
     const pending = run.pendingEnd
-    if (first && pending && (await this.honours(ports, pending, id))) {
+    const fate = first && pending ? await this.judge(ports, pending, id) : 'stale'
+    if (fate === 'carried' && pending) {
       watch.resumeFrom(pending)
       await watch.check()
-      return
+      return fate
     }
     if (watch.lastId === undefined) watch.seed(id)
-    else if (await watch.check()) return // a switch moved the data already
+    else if (await watch.check()) return 'stale' // a switch moved the data already
     if (launch.fromSessionStart && (await switcher.itemsEmpty())) await switcher.loadSession(id, 'the start')
+    return fate
   }
 
-  /** A pending end counts when it was a `/clear` or `/resume` of another id, not older than two ticks (D20). */
-  private async honours(ports: Ports, pending: PendingEnd, id: string): Promise<boolean> {
-    if (pending.reason !== 'clear' && pending.reason !== 'resume') return false
-    if (pending.fromId === id) return false
-    return (await ports.clock.now()) - pending.at <= 2 * this.d.tickMs()
+  /**
+   * A pending end counts when it was a `/clear` or `/resume`, not older than two ticks (D20). Of another id than the
+   * current one it is carried. Of the current id it is awaited: the end ran in the last load, and the id has not flipped.
+   */
+  private async judge(ports: Ports, pending: PendingEnd, id: string): Promise<RunFate> {
+    if (pending.reason !== 'clear' && pending.reason !== 'resume') return 'stale'
+    const recent = (await ports.clock.now()) - pending.at <= 2 * this.d.tickMs()
+    if (!recent) return 'stale'
+    return pending.fromId === id ? 'awaited' : 'carried'
   }
 
   /** The engine keeps a pane across a hot reload. Draw it again. */

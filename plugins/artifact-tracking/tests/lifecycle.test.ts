@@ -761,6 +761,95 @@ test('start ignores a pendingEnd on a later start of the load', async () => {
   expect(t.m.watch.lastId).toBe('sess-1')
 })
 
+test('the first start that honours no pendingEnd drops the v2:run.run an older process left', async () => {
+  const cases: Record<string, Json | undefined> = {
+    'no pendingEnd': undefined,
+    'older than two ticks': { reason: 'clear', fromId: 'sess-0', at: 0 },
+    'an exit reason': { reason: 'prompt_input_exit', fromId: 'sess-0', at: 50000 },
+    'the same session, older than two ticks': { reason: 'clear', fromId: 'sess-1', at: 0 },
+    'a malformed record': { reason: 'clear', fromId: 'sess-0' },
+  }
+  for (const [name, pendingEnd] of Object.entries(cases)) {
+    const t = setup({
+      items: [],
+      repos: [],
+      seed: { 'v2:run': { ...(pendingEnd ? { pendingEnd } : {}), run: { auto: { root: '/stale' } } } },
+    })
+    t.w.clock.now = 60001
+    await t.m.entry(t.w.ports)
+    expect([name, t.w.store.has('v2:run')]).toEqual([name, false])
+    // The end hook never ran in this load, so the switch has no snapshot and would fall back to v2:run.run.
+    t.auto.live = undefined
+    t.w.session.id = 'sess-2'
+    t.log.length = 0
+    await t.m.entry(t.w.ports)
+    expect([name, t.log, t.auto.live]).toEqual([name, ['host:resume'], undefined])
+  }
+})
+
+test('the reload gap: a recent end of the same id keeps v2:run, because the id may flip later in the load', async () => {
+  for (const reason of ['clear', 'resume'] as const) {
+    const seed = { pendingEnd: { reason, fromId: 'sess-1', at: 0 }, run: { auto: { root: '/kept' } } }
+    const t = setup({ items: [], repos: [], seed: { 'v2:s:sess-1': { items: ['mine'] }, 'v2:run': seed } })
+    await t.m.entry(t.w.ports) // the id is still sess-1: the new module has seen no end and no flip yet
+    expect([reason, t.w.store.get('v2:run')]).toEqual([reason, seed])
+    t.auto.live = undefined
+    t.w.session.id = 'sess-2' // the flip comes after the start
+    t.log.length = 0
+    await t.m.entry(t.w.ports)
+    expect([reason, t.log, t.auto.live]).toEqual([reason, ['host:resume', 'auto:carry'], { root: '/kept' }])
+    expect(t.w.store.has('v2:run')).toBe(true) // clearRun drops the pendingEnd and keeps the run values
+    expect(t.w.store.get('v2:run')).toEqual({ run: { auto: { root: '/kept' } } })
+  }
+})
+
+test('the reload gap lasts two ticks, the edge included', async () => {
+  const gap = 2 * GLOBAL_DEFAULTS.refresh.tickMs
+  const seed = { pendingEnd: { reason: 'clear', fromId: 'sess-1', at: 1000 }, run: { auto: { root: '/kept' } } }
+  const edge = setup({ items: [], repos: [], seed: { 'v2:run': seed } })
+  edge.w.clock.now = 1000 + gap
+  await edge.m.entry(edge.w.ports)
+  expect(edge.w.store.get('v2:run')).toEqual(seed)
+  const past = setup({ items: [], repos: [], seed: { 'v2:run': seed } })
+  past.w.clock.now = 1000 + gap + 1
+  await past.m.entry(past.w.ports)
+  expect(past.w.store.has('v2:run')).toBe(false)
+})
+
+test('a session id that cannot be read at the start leaves v2:run for the next switch', async () => {
+  const seed = { pendingEnd: { reason: 'clear', fromId: 'sess-0', at: 10 }, run: { auto: { root: '/kept' } } }
+  const t = setup({ items: [], repos: [], seed: { 'v2:run': seed } })
+  t.w.clock.now = 20
+  const { id } = t.w.ports.session
+  let first = true
+  t.w.ports.session.id = async () => {
+    if (!first) return id()
+    first = false
+    throw new Error('no id')
+  }
+  await t.m.start(t.w.ports, { fromSessionStart: true })
+  expect(t.w.logs).toContain('lifecycle: session load failed in the start: no id')
+  expect(t.w.store.get('v2:run')).toEqual(seed) // the honourable end is not dropped on a failed read
+})
+
+test('a failing drop of the stale run is logged and the start still completes', async () => {
+  const t = setup({ items: [], seed: { 'v2:run': { run: { auto: { root: '/stale' } } } } })
+  t.w.ports.store.delete = async () => {
+    throw new Error('no delete')
+  }
+  await t.m.start(t.w.ports, { fromSessionStart: true })
+  expect(t.w.logs).toEqual(['lifecycle: stale run failed in the start: no delete'])
+  expect(t.m.watch.lastId).toBe('sess-1')
+})
+
+test('a later start of the load keeps the v2:run.run that is there', async () => {
+  const t = setup({ items: [], repos: [] })
+  await t.m.start(t.w.ports, { fromSessionStart: true })
+  t.w.store.set('v2:run', { run: { auto: { root: '/kept' } } })
+  await t.m.start(t.w.ports, { fromSessionStart: true })
+  expect(t.w.store.get('v2:run')).toEqual({ run: { auto: { root: '/kept' } } })
+})
+
 test('a second start finds a switch that came between the starts, and loads nothing twice', async () => {
   const trace: string[] = []
   const t = setup({ log: trace, items: [], repos: [], seed: { 'v2:s:sess-2': { items: ['two'] } } })
