@@ -3,6 +3,10 @@ import { commandArgs, extractRefs, hostPath, parseGitHubUrl, parseJiraUrl, parse
 import { PAGE_CODE_URL, PAGE_ID, PAGE_URL, PAGE_UUID } from './fixtures/artifacts'
 
 const repo = { host: 'github.com', owner: 'acme', repo: 'web' }
+// Wall-clock budget for the two big-input tests. They take 20 to 80 ms on a laptop. Under node
+// coverage on a CI runner one run took 415 ms. A quadratic scan of a 200 KB input needs about
+// 4e10 steps, so 2 s still catches it.
+const BIG_INPUT_MS = 2000
 const full = (t: string, defaultRepo: typeof repo | null = repo) => extractRefs(t, { mode: 'full', defaultRepo })
 const fullStrict = (t: string, defaultRepo: typeof repo | null = repo) =>
   extractRefs(t, { mode: 'full', defaultRepo, strictShortRefs: true })
@@ -155,7 +159,7 @@ test('huge input is capped and fast', () => {
   const t0 = Date.now()
   extractRefs(big, { mode: 'full', defaultRepo: repo })
   extractRefs(big, { mode: 'urls-only' })
-  expect(Date.now() - t0).toBeLessThan(400)
+  expect(Date.now() - t0).toBeLessThan(BIG_INPUT_MS)
 })
 
 test('parseRemote: scp, ssh, https with token, .git, garbage', () => {
@@ -207,7 +211,7 @@ test('pathological inputs stay linear: backtick runs, link openers, angle bracke
   ]
   const t0 = Date.now()
   for (const t of inputs) extractRefs(t, { mode: 'full', defaultRepo: repo })
-  expect(Date.now() - t0).toBeLessThan(400)
+  expect(Date.now() - t0).toBeLessThan(BIG_INPUT_MS)
 })
 
 test('parseRemote: single-letter host is not a remote', () => {
