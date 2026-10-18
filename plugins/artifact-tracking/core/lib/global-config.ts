@@ -1,6 +1,6 @@
 // The `global` block of the config file: its schema, its defaults and the rule that normalises a raw block.
-// Infra collaborators and trackers read their numbers from here, never from `LIMITS`. It lives in `core/lib` so a tracker
-// can name `GLOBAL_DEFAULTS` as a default parameter without importing `core/infra` (plan decision C13).
+// Infra collaborators and trackers read their numbers from here. It lives in `core/lib` so a tracker can name
+// `GLOBAL_DEFAULTS` as a default parameter without importing `core/infra` (plan decision C13).
 // Bounds: the Defaults table of the L4 plan. The spec gives none.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.7. Plan: L4 Task 2.
 

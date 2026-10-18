@@ -4,10 +4,10 @@
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
-import { LIMITS } from '../hooks/contracts'
 import * as ev from './fixtures/events'
 import { prNode } from './fixtures/gh-discovery'
 import { porcelain as gitPorcelain } from './fixtures/git'
+import { LIMITS } from './fixtures/limits'
 import { BAND, clearSession, PANE, prompt, quiet, response, START, sleep, track, world } from './fixtures/world'
 
 const MAIN = '/work'

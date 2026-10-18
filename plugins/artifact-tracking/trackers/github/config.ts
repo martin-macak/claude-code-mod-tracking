@@ -1,5 +1,5 @@
 // The config of the github tracker: its schema, its defaults and its `ConfigSpec`. Bounds: the Defaults table of the
-// L4 plan. The values are the ones the code held before L4: `LIMITS` and the `CHUNK` of the `gh` tool.
+// L4 plan. Each default is the value the code used before the config file.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.7. Plan: L4 Task 2 (decisions C2, C15).
 
 import { bool, type ConfigOf, int, type Schema, specOf, words } from '../../core/lib/normalise'
@@ -9,7 +9,7 @@ export const GITHUB_SCHEMA = {
   /** Items per `gh api graphql` call (today `CHUNK` in `gh-tool.ts`). */
   chunkSize: int(50, 1, 100),
   pendingStaleMs: int(60000, 10000, 3600000),
-  /** The `gh` discovery call (today `LIMITS.discoveryTimeoutMs`). */
+  /** The `gh` discovery call. */
   discoveryTimeoutMs: int(10000, 1000, 120000),
   closingRefsPerPr: int(10, 1, 50),
   headPrsPerBranch: int(5, 1, 50),

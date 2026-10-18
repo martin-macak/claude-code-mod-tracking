@@ -1,8 +1,8 @@
 // trackWorktrees: proven children only, row states, tracked branches. Pure.
 import { expect, test } from 'claude-code/testing'
 import type { AgentProof, AutoState, GitWorktree, WorktreeProof } from '../hooks/contracts'
-import { LIMITS } from '../hooks/contracts'
 import { trackWorktrees } from '../trackers/auto/worktrees'
+import { LIMITS } from './fixtures/limits'
 
 const AT = 5_000
 const MAIN = '/x/repo'

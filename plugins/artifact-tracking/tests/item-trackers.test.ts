@@ -1,10 +1,10 @@
 // The github, jira and web trackers: identity and config only in L3 (plan decision D13). The config rules are the
 // ones the config file will use: a bad value falls back to the default and warns, unknown keys stay.
 import { expect, test } from 'claude-code/testing'
-import { LIMITS } from '../hooks/contracts'
 import { githubConfig, githubTracker } from '../trackers/github'
 import { jiraConfig, jiraTracker } from '../trackers/jira'
 import { webConfig, webTracker } from '../trackers/web'
+import { LIMITS } from './fixtures/limits'
 import { hostWorld } from './fixtures/tracker-host'
 
 const warnings = () => {

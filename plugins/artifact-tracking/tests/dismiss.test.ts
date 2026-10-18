@@ -2,8 +2,8 @@
 import { expect, test } from 'claude-code/testing'
 import { autoIds, dismiss } from '../core/infra/dismiss'
 import type { AgentRow, AutoSnapshot, AutoState, ItemRecord, WorktreeRow } from '../hooks/contracts'
-import { LIMITS } from '../hooks/contracts'
 import { emptyAuto, pinRoot } from '../trackers/auto/ledger'
+import { LIMITS } from './fixtures/limits'
 
 const wt = (path: string, depth: 0 | 1): WorktreeRow => ({
   id: `wt:${path}`,

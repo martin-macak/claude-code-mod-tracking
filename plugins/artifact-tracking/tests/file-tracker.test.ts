@@ -4,8 +4,8 @@
 import { expect, test } from 'claude-code/testing'
 import type { Json } from '../core/interfaces/items'
 import type { FileRecord } from '../hooks/contracts'
-import { LIMITS } from '../hooks/contracts'
 import { fileConfig, fileTracker } from '../trackers/file'
+import { LIMITS } from './fixtures/limits'
 import { managerWorld } from './fixtures/manager'
 
 const created = (filePath: string) => ({

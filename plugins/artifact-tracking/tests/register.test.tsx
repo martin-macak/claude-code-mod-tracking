@@ -5,8 +5,8 @@
 import type { Engine } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 import type { ItemRecord, ProcessRecord } from '../hooks/contracts'
-import { LIMITS } from '../hooks/contracts'
 import * as ev from './fixtures/events'
+import { LIMITS } from './fixtures/limits'
 import {
   BAND,
   clearSession,

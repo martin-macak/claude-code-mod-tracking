@@ -1,9 +1,9 @@
 // GhTool: batched GraphQL refresh, outcome classification, host and repo probes. Pure, fake Runner.
 import { expect, test } from 'claude-code/testing'
 import type { GitHubTarget, RunInit, Runner, RunResult } from '../hooks/contracts'
-import { LIMITS } from '../hooks/contracts'
 import { buildQuery, classifyReply, GhTool, rollupToChecks } from '../trackers/github/gh-tool'
 import * as fx from './fixtures/gh'
+import { LIMITS } from './fixtures/limits'
 
 const NOW = 1_000_000
 const ok = (stdout = '', exitCode = 0, stderr = ''): RunResult => ({ exitCode, stdout, stderr })

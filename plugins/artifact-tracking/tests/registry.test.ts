@@ -17,7 +17,6 @@ import type {
   WebRecord,
   WebRef,
 } from '../hooks/contracts'
-import { LIMITS } from '../hooks/contracts'
 import { artifactOrigin, fileKey, keyOf } from '../hooks/model/keys'
 import {
   carryOver,
@@ -38,6 +37,7 @@ import { GitHubItem } from '../trackers/github/github-item'
 import { JiraItem } from '../trackers/jira/jira-item'
 import { WebLink } from '../trackers/web/web-link'
 import { PAGE_CODE_URL, PAGE_ID, PAGE_KEY, PAGE_URL, PAGE_UUID, PAIRS } from './fixtures/artifacts'
+import { LIMITS } from './fixtures/limits'
 
 const ghRef = (over: Partial<GitHubRef> = {}): GitHubRef => ({
   category: 'github',

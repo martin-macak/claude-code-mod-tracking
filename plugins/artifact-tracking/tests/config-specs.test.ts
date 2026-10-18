@@ -7,7 +7,6 @@ import type { ConfigSpec } from '../core/interfaces/config'
 import type { JsonObject } from '../core/interfaces/items'
 import { GLOBAL_DEFAULTS, GLOBAL_SCHEMA, normaliseGlobal } from '../core/lib/global-config'
 import { defaultsOf, type Schema } from '../core/lib/normalise'
-import { LIMITS as OLD } from '../hooks/contracts'
 import { buildTrackers } from '../trackers'
 import { ARTIFACT_DEFAULTS, ARTIFACT_SCHEMA, artifactConfig } from '../trackers/artifact/config'
 import { AUTO_DEFAULTS, AUTO_SCHEMA, autoConfig } from '../trackers/auto/config'
@@ -69,7 +68,6 @@ const THE_LIMITS_OF_D391552 = {
 
 test('the defaults equal the LIMITS of d391552', () => {
   expect(LIMITS).toEqual(THE_LIMITS_OF_D391552)
-  expect(LIMITS).toEqual(OLD) // Task 9 removes this line with the old object
 })
 
 test("the values outside LIMITS equal today's constants", () => {

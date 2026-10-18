@@ -164,43 +164,6 @@ export type HydratedItem =
 
 export type Sighting = { source: Source; at: number }
 
-// ---------------------------------------------------------------- limits (spec sections 6.2, 7, 8, 10)
-
-export const LIMITS = {
-  maxItems: 500,
-  keepSessions: 20,
-  staleMs: 5 * 60_000,
-  pendingStaleMs: 60_000,
-  tickMs: 30_000,
-  captureDebounceMs: 1_000,
-  flushMs: 1_500,
-  breakerThreshold: 3,
-  breakerOpenMs: 5 * 60_000,
-  toolTimeoutMs: 30_000,
-  acliConcurrency: 3,
-  epicChildLimit: 50,
-  autoDebounceMs: 750,
-  gitTimeoutMs: 5_000,
-  discoveryTimeoutMs: 10_000,
-  workflowIdleMs: 60 * 60_000,
-  maxBranches: 12,
-  headPrsPerBranch: 5,
-  basePrsPerBranch: 10,
-  closingRefsPerPr: 10,
-  maxBodyRefs: 50,
-  maxAutoItems: 100,
-  maxProofs: 100,
-  maxAgents: 200,
-  maxDismissed: 500,
-  /** `.md` paths read from one prompt or reply row (issue #28). Each one costs a stat. */
-  maxMentionsPerRow: 20,
-  maxRepos: 50,
-  maxRepoAgents: 8,
-  maxRepoQueue: 32,
-  /** R12: the newest manual-high items the cap never drops. Below `maxItems`, so the cap can always be met. */
-  maxPinned: 100,
-} as const
-
 export const JIRA_KEY = /^[A-Z][A-Z0-9_]+-\d+$/
 
 /** The item key of a resolved GitHub issue or PR (spec 6.2). `model/keys.ts` and the gh refresh both build it here. */
@@ -310,7 +273,7 @@ export type DiscoveryApplied = { list: ItemRecord[]; added: string[]; untracked:
 
 /** A new interface, so the existing GitHubToolApi fakes in tests still compile. */
 export interface GitHubDiscoveryApi extends GitHubToolApi {
-  /** One `gh api graphql --hostname <host> -f query=<q>` through the breaker, with `LIMITS.discoveryTimeoutMs` (A21). */
+  /** One `gh api graphql --hostname <host> -f query=<q>` through the breaker, with `trackers.github.discoveryTimeoutMs` (A21). */
   graphql(host: string, query: string): Promise<GraphqlOutcome>
 }
 

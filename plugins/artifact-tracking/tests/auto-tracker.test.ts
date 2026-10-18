@@ -15,7 +15,6 @@ import type {
   ToolStatus,
   WorktreeProof,
 } from '../hooks/contracts'
-import { LIMITS } from '../hooks/contracts'
 import { type AutoGithub, autoConfig, autoTracker } from '../trackers/auto'
 import { autoDismiss } from '../trackers/auto/dismiss-store'
 import { emptyAuto } from '../trackers/auto/ledger'
@@ -23,6 +22,7 @@ import { fakeConfig } from './fixtures/config-fs'
 import * as ev from './fixtures/events'
 import { discoveryData, prNode } from './fixtures/gh-discovery'
 import { porcelain } from './fixtures/git'
+import { LIMITS } from './fixtures/limits'
 import { fakePorts } from './fixtures/ports'
 import { hostWorld } from './fixtures/tracker-host'
 

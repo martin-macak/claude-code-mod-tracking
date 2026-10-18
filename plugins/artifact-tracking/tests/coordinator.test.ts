@@ -11,7 +11,7 @@ import type {
   JiraToolApi,
   Tools,
 } from '../hooks/contracts'
-import { LIMITS } from '../hooks/contracts'
+import { LIMITS } from './fixtures/limits'
 
 const NOW = 10_000_000
 const base = { sources: ['prompt' as const], firstSeen: 1, lastSeen: 1, seenCount: 1 }
