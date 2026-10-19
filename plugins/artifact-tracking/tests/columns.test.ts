@@ -177,6 +177,32 @@ test('the tree column shrinks toward its min plus the glyph box, and no further'
   expect(widthOf(solveColumns('s', cols, rows, 3), 'key')).toBe(4 + GLYPH_BOX)
 })
 
+test('a fixed tree column keeps its cells, whatever its text, its depth and its header', () => {
+  const cols = (cells: number) => [tree('A long header', { width: { kind: 'fixed', cells } })]
+  const deep = [at(0, row('a', { key: 'x'.repeat(30) })), at(3, row('b', { key: 'y'.repeat(30) }))]
+  resetWidths()
+  expect(widthOf(solveColumns('s', cols(12), deep, 100), 'key')).toBe(12)
+  expect(widthOf(solveColumns('s', cols(12), [at(0, row('a', { key: 'x' }))], 100), 'key')).toBe(12)
+  expect(widthOf(solveColumns('s', cols(1), deep, 100), 'key')).toBe(GLYPH_BOX)
+})
+
+test('a fixed tree column neither drops nor shrinks, even with a priority', () => {
+  const cols = [tree('K', { width: { kind: 'fixed', cells: 12 }, priority: 1 }), content('type', 'Type')]
+  resetWidths()
+  const s = solveColumns('s', cols, [at(0, row('a', { key: 'x'.repeat(30), type: 'PR' }))], 10)
+  expect(widthOf(s, 'key')).toBe(12)
+  expect(s.dropped).toEqual([])
+})
+
+test('a flex tree column starts at its min and takes the rest, whatever its text', () => {
+  const cols = [tree('K', { width: { kind: 'flex', min: 6 } }), content('type', 'Type')]
+  const rows = [at(0, row('a', { key: 'x'.repeat(30), type: 'PR' }))]
+  resetWidths()
+  const s = solveColumns('s', cols, rows, 20)
+  expect([widthOf(s, 'key'), widthOf(s, 'type')]).toEqual([15, 4]) // 20 less one gap and the 4 of the type column
+  expect(widthOf(solveColumns('s', [tree('K', { width: { kind: 'flex', min: 1 } })], rows, 1), 'key')).toBe(GLYPH_BOX)
+})
+
 test('at 24 columns only the tree and flex columns stay, each at least 1 wide', () => {
   resetWidths()
   const prs: ColumnDef[] = [

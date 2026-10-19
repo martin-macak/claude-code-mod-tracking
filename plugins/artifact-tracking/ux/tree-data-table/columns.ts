@@ -3,11 +3,12 @@
 //
 // Order, as the tests pin it:
 //   1. leave out a content column whose visible cells are all empty (the header alone does not count);
-//   2. natural widths: fixed as given, content as its widest header or cell clamped to min and max (grow-only memo),
-//      the tree column as its widest indent plus text (grow-only memo), clamped, plus the glyph box, flex as its min;
+//   2. natural widths: fixed as given, flex as its min (the tree column too, at least the glyph box), content as its
+//      widest header or cell clamped to min and max (grow-only memo), a content tree column as its widest indent plus
+//      text (grow-only memo), clamped, plus the glyph box;
 //   3. over `avail`: drop whole columns by `priority` (highest number first, ties the rightmost), until it fits;
-//   4. still over: shrink content columns toward their min, the widest first (a tie: the leftmost). The tree column is one of them: its min
-//      counts the text only, so its floor is min plus the glyph box;
+//   4. still over: shrink content columns toward their min, the widest first (a tie: the leftmost). A content tree
+//      column is one of them: its min counts the text only, so its floor is min plus the glyph box;
 //   5. under `avail`: the flex columns share the rest evenly, the remainder to the leftmost.
 // A tree or flex column never drops, and a column without `priority` never drops. When nothing is left to drop or
 // shrink, the columns stay wider than `avail`: only a pane of about 20 cells or less gets there.
@@ -58,6 +59,10 @@ const widest = (widths: number[]): number => widths.reduce((a, b) => Math.max(a,
 
 function naturalWidth(sectionId: string, def: ColumnDef, rows: Laid): number {
   const w = def.width
+  // Fixed and flex come first, also for the tree column: it never measures its text then. Its floor is the glyph box.
+  const floor = isTree(def) ? GLYPH_BOX : 1
+  if (w.kind === 'fixed') return Math.max(floor, w.cells)
+  if (w.kind === 'flex') return Math.max(floor, w.min)
   const head = cellWidth(def.header)
   const key = `${sectionId}/${def.id}`
   if (isTree(def)) {
@@ -65,11 +70,8 @@ function naturalWidth(sectionId: string, def: ColumnDef, rows: Laid): number {
     const body = widest(textOf(rows, def.id).map((t, i) => INDENT * (depths[i] ?? 0) + cellWidth(t)))
     const tall = Math.max(memo.get(key) ?? 0, body)
     memo.set(key, tall)
-    const limits: { min?: number; max?: number } = w.kind === 'content' ? w : {}
-    return Math.max(GLYPH_BOX, head, clamp(tall, limits.min, limits.max) + GLYPH_BOX)
+    return Math.max(GLYPH_BOX, head, clamp(tall, w.min, w.max) + GLYPH_BOX)
   }
-  if (w.kind === 'fixed') return Math.max(1, w.cells)
-  if (w.kind === 'flex') return Math.max(1, w.min)
   const grown = Math.max(memo.get(key) ?? 0, head, widest(textOf(rows, def.id).map(cellWidth)))
   memo.set(key, grown)
   return Math.max(1, clamp(grown, w.min, w.max))
