@@ -8,6 +8,7 @@ import type { Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
 import { type ArtifactConfig, artifactConfig } from './config'
 import { artifactKind } from './kind'
+import { artifactPrompt } from './prompt'
 import { sections } from './sections'
 
 export { type ArtifactConfig, artifactConfig, artifactKind }
@@ -21,5 +22,6 @@ export function artifactTracker(): Tracker<ArtifactConfig, Json> {
     init: () => {},
     store: ctx => ctx.config.slice(),
     sections,
+    prompt: artifactPrompt,
   }
 }

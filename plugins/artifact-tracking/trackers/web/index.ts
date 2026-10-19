@@ -6,6 +6,7 @@ import type { Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
 import { type WebConfig, webConfig } from './config'
 import { webKind } from './kind'
+import { webPrompt } from './prompt'
 import { sections } from './sections'
 
 export { type WebConfig, webConfig, webKind }
@@ -19,5 +20,6 @@ export function webTracker(): Tracker<WebConfig, Json> {
     init: () => {},
     store: ctx => ctx.config.slice(),
     sections,
+    prompt: webPrompt,
   }
 }

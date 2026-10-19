@@ -8,6 +8,7 @@ import type { Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
 import { type FileConfig, fileConfig } from './config'
 import { fileKind } from './kind'
+import { filePrompt } from './prompt'
 import { sections } from './sections'
 
 export { type FileConfig, fileConfig, fileKind }
@@ -21,5 +22,6 @@ export function fileTracker(): Tracker<FileConfig, Json> {
     init: () => {},
     store: ctx => ctx.config.slice(),
     sections,
+    prompt: filePrompt,
   }
 }
