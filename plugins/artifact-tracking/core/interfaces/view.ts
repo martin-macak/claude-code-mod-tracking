@@ -5,7 +5,7 @@
 import type { ToolStatus } from '../../types'
 import type { ConfigView } from './config'
 import type { Effective, Json, JsonObject, StoredItem } from './items'
-import type { FactsPort } from './tracker'
+import type { FactsPort, TrackerContext } from './tracker'
 
 /** A closed set by design. `ux/theme.ts` maps each token to a theme key or a named color. */
 export type ColorToken = 'success' | 'warning' | 'error' | 'claude' | 'inactive' | 'subtle' | 'accent' | 'selected'
@@ -103,13 +103,52 @@ export interface ViewContext<C = JsonObject, D = Json> {
   levelOf(key: string): Effective
 }
 
-/** What a key does, built at render. `state` says if the key works for the selected row. */
-export type ActionImpls = Readonly<
-  Record<
-    string,
-    {
-      readonly run: () => void | Promise<void>
-      readonly state?: () => 'enabled' | 'disabled'
-    }
-  >
+/** Where a key shows and what it acts on: the whole `pane`, the selected `row`, or the tracker's `section`. */
+export type KeyScope = 'pane' | 'row' | 'section'
+
+/** A key of the pane. `owner` is `core` or a tracker id. */
+export interface PaneKey {
+  readonly id: string
+  readonly key: string
+  readonly label: string
+  readonly scope: KeyScope
+  readonly owner: string
+}
+
+/** A key as the footer draws it. A disabled key stays on the footer, dim and inert (a letter with no Button leaves the pane). */
+export interface FooterKey extends PaneKey {
+  readonly enabled: boolean
+}
+
+/** What the key routing needs of a drawn row. */
+export interface RowRef {
+  readonly id: string
+  readonly owner: string
+  readonly section: string
+  readonly can: TreeRow['can']
+}
+
+export interface HelpGroup {
+  readonly title: string
+  readonly keys: readonly PaneKey[]
+}
+
+/** What the help view shows: every key by group, the config file path and the problems. */
+export interface HelpModel {
+  readonly groups: readonly HelpGroup[]
+  readonly configPath: string | undefined
+  readonly problems: readonly string[]
+}
+
+/**
+ * What a key does, built at render. `run` gets the row id the key acts on, or `null` when no row is selected.
+ * `state` says if the key works for that row. Method syntax keeps both bivariant, so a `Tracker<MyConfig>` fits a list.
+ */
+export interface ActionImpl<C extends JsonObject = JsonObject, D extends Json = Json> {
+  run(ctx: TrackerContext<C, D>, rowId: string | null): void | Promise<void>
+  state?(rowId: string | null): 'enabled' | 'disabled'
+}
+
+export type ActionImpls<C extends JsonObject = JsonObject, D extends Json = Json> = Readonly<
+  Record<string, ActionImpl<C, D>>
 >
