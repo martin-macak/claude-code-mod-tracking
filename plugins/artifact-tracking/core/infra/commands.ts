@@ -1,40 +1,19 @@
-// Commands: the router of `/track <args>`. Core answers the empty command, `refresh`, `clear` and `prio`; then the first
-// sub-command a live tracker declared runs; any other word prints the usage line. The host does the work and this holds
-// only the order of the calls and the text of the answer. The list text comes in as a function (the draw path is not core).
-// A reply that prints the list ends with the problems of the config file, when there are any.
+// Commands: the router of `/track <args>`. Core answers the empty command, `refresh`, `clear`, `help` and `prio`; then the
+// first sub-command a live tracker declared runs; any other word prints the usage line. The host does the work and this
+// holds only the order of the calls and the text of the answer. The list text and the help text come in as functions
+// (the draw path is not core). A reply that prints the list ends with the problems of the config file, when there are
+// any. The help text lists them itself. The fixed words sit in command-text.ts.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.3, 5.7 and 5.12.
-// Plan: L3 Task 12, D12. L4 Task 6, C6. L5 Task 9, K15, K19.
+// Plan: L3 Task 12, D12. L4 Task 6, C6. L5 Task 9, K15, K19. L6 Task 12, G14.
 
 import type { ConfigSource } from '../interfaces/config'
 import type { CommandEvent } from '../interfaces/events'
 import type { ItemsHost, Priority } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { CommandSpec } from '../interfaces/tracker'
+import { CORE_HINT, CORE_SUBS, PRIO_WORDS, problemsText, USAGE } from './command-text'
 
-export const USAGE = 'Usage: /track [refresh|clear|prio <ref> <high|normal|low|auto>]'
-/** The argument hint while no tracker declares a sub-command. */
-export const CORE_HINT = '[refresh|clear|prio <ref> <level>]'
-/** `/track prio` levels: `auto` removes the person's mark. */
-export const PRIO_WORDS: ReadonlySet<string> = new Set(['high', 'normal', 'low', 'auto'])
-/** The subs core answers. A tracker cannot take one of them. */
-const CORE_SUBS: ReadonlySet<string> = new Set(['refresh', 'clear', 'prio'])
-
-/** How many problems the block names before it counts the rest. */
-const SHOWN_PROBLEMS = 10
-
-/**
- * The config problems as a block: a header with the path, then each problem on its own line, indented two spaces. Over
- * ten, the first ten and a count. Empty text when all is well.
- */
-export function problemsText(path: string | undefined, problems: readonly string[]): string {
-  if (problems.length === 0) return ''
-  const rest = problems.length - SHOWN_PROBLEMS
-  return [
-    path === undefined ? 'Config problems:' : `Config problems in ${path}:`,
-    ...problems.slice(0, SHOWN_PROBLEMS).map(p => `  ${p}`),
-    ...(rest > 0 ? [`  and ${rest} more ${rest === 1 ? 'problem' : 'problems'}.`] : []),
-  ].join('\n')
-}
+export { CORE_HINT, PRIO_WORDS, problemsText, USAGE } from './command-text'
 
 /** What the router needs of the rest of core. The LifecycleManager builds it. */
 export interface CommandHost {
@@ -62,6 +41,7 @@ export class Commands {
   constructor(
     private readonly host: CommandHost,
     private readonly listText: (p: Ports) => Promise<string>,
+    private readonly helpText: (p: Ports) => Promise<string> = async () => '',
   ) {}
 
   /** `CORE_HINT` while no tracker declares a sub-command, else with `|<sub> <hint>` for each, before the closing `]`. */
@@ -80,6 +60,7 @@ export class Commands {
     const arg = args.trim().toLowerCase()
     if (arg === '') return this.open(p)
     if (arg === 'refresh') return this.refresh(p)
+    if (arg === 'help') return this.help(p)
     if (arg === 'clear') return this.clear(p)
     // R11: the pane's keys for `claude -p`. The ref keeps its case: item keys and repo names need it.
     const prio = /^prio\s+(\S+)\s+(\S+)$/i.exec(args.trim())
@@ -107,6 +88,12 @@ export class Commands {
     // The trackers refresh too: the auto tracker runs a round and waits for it and its PR step.
     await this.host.broadcast(p, { sub: 'refresh', args: '', wait: true })
     return this.list(p)
+  }
+
+  /** The help view as text, for `claude -p`. It lists the config problems itself, so the block is not appended. */
+  private async help(p: Ports): Promise<Reply> {
+    await this.host.refreshConfig(p)
+    return { text: await this.helpText(p) }
   }
 
   private async clear(p: Ports): Promise<Reply> {

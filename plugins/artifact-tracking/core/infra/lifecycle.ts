@@ -18,9 +18,9 @@ import type { Ports } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
 import { EventBus } from './bus'
-import { Commands } from './commands'
+import type { Commands } from './commands'
 import { Facts } from './facts'
-import { commandHostOf, configRefresher, itemHostOf, persistenceOf, schedulerOf } from './lifecycle-parts'
+import { commandsOf, configRefresher, itemHostOf, persistenceOf, schedulerOf } from './lifecycle-parts'
 import { PaneApi } from './pane-api'
 import { PaneKeys } from './pane-keys'
 import type { Persistence } from './persistence'
@@ -59,6 +59,8 @@ export interface LifecycleDeps {
    * router appends the problems of the config file itself.
    */
   listText?(ports: Ports): Promise<string>
+  /** The help view as text, for `/track help`. Absent: the reply holds no text. */
+  helpText?(ports: Ports): Promise<string>
 }
 
 export class LifecycleManager extends PaneApi {
@@ -166,10 +168,7 @@ export class LifecycleManager extends PaneApi {
       items: this.items,
       log: ports.log,
     })
-    this.commands = new Commands(
-      commandHostOf(this, { items: this.items, host: this.host, bus: this.bus, config: this.cfg }),
-      async p => (await d.listText?.(p)) ?? '',
-    )
+    this.commands = commandsOf(this, { items: this.items, host: this.host, bus: this.bus, config: this.cfg }, d)
   }
 
   get generation(): number {

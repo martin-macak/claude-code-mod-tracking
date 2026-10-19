@@ -1,14 +1,14 @@
 // A LifecycleManager over its own ItemService and the real tracker list, on fakePorts. The tests of `/track`, the pane
 // actions and the artifact and file trackers use it: they need the whole chain (the start sequence, the bus, the item
 // host, the router and the slots), with no engine and no `$`. `extra` adds trackers after the real ones, e.g. a recorder.
-// The `/track` text is the legacy list text, as register.tsx injects it.
+// The `/track` list and help text are the texts of the sections, as register.tsx injects them.
 
 import { LifecycleManager } from '../../core/infra/lifecycle'
 import type { ConfigService } from '../../core/interfaces/config'
 import type { ToolCallEvent } from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
-import { listText } from '../../hooks/list-text'
+import { helpTextOf, listText } from '../../hooks/pane-session'
 import { TRACKERS } from '../../trackers'
 import { autoDismiss } from '../../trackers/auto/dismiss-store'
 import { fakeConfig } from './config-fs'
@@ -44,6 +44,7 @@ export function managerWorld(o: ManagerOpts = {}) {
       config: () => cfg,
       paneId: 'track',
       listText: p => listText(p, m as LifecycleManager),
+      helpText: p => helpTextOf(p, m as LifecycleManager),
     },
     w.ports,
   )

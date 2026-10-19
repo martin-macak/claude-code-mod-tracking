@@ -13,8 +13,8 @@ import type { ToolStatus, UiState } from '../types'
 import { bandText, renderBand } from '../ux/band'
 import { renderSections } from '../ux/pane'
 import { rowEvent, spawnEvent, toolCallEvent, turnEvent } from './events'
-import { listText } from './list-text'
 import { type PaneFocus, paneActions, pickRow } from './pane-actions'
+import { helpTextOf, listText } from './pane-session'
 import { composePane } from './ui/auto-view'
 import { focusTargets } from './ui/view'
 import { IDLE_ACLI, IDLE_GH, viewInputs } from './view-inputs'
@@ -164,8 +164,10 @@ function managerOf($: EngineInterface): LifecycleManager {
       // only as `{ id, config }`.
       config: p => new ConfigManager({ fs: p.fs, env: p.env, specs: TRACKERS, log: p.log }),
       paneId: PANE,
-      // The text of the list for /track: the legacy composers until L6 (K19). Read at call time, the manager is set by then.
+      // The text of the list and of the help view for /track: the text of the sections the pane draws (K19). Read at call
+      // time, the manager is set by then.
       listText: p => listText(p, managerOf($)),
+      helpText: p => helpTextOf(p, managerOf($)),
     },
     portsOf($),
   )
