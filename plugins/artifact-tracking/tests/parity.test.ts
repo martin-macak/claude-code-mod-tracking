@@ -12,6 +12,8 @@ import type { Tone } from '../core/lib/rows'
 import { composeBand, composeCommandText, composePane } from '../hooks/ui/auto-view'
 import type { PaneSection } from '../hooks/ui/view'
 import { viewInputs } from '../hooks/view-inputs'
+import { bandText } from '../ux/band'
+import { sectionsText } from '../ux/tree-data-table/text'
 import {
   NOW,
   paneItems,
@@ -21,7 +23,6 @@ import {
   WORLD_BRANCHES,
   WORLD_SNAPSHOT,
 } from './fixtures/pane-world'
-import { sectionsText } from './fixtures/section-text'
 
 type World = Awaited<ReturnType<typeof paneWorld>>
 
@@ -101,16 +102,6 @@ function newLines(s: SectionSpec): Line[] {
   }
   walk(s.rows, 0)
   return out
-}
-
-/** `Jira 6`, `GitHub 4 (1 ✗)`: the band the sections give, as the legacy band prints it. A zero count is left out. */
-function bandText(band: readonly SectionSpec[]): string | null {
-  const parts = band.flatMap(s =>
-    s.band && s.band.count > 0
-      ? [`${s.band.label} ${s.band.count}${s.band.failing > 0 ? ` (${s.band.failing} ✗)` : ''}`]
-      : [],
-  )
-  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 /** The three comparisons, over any world. */

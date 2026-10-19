@@ -6,18 +6,18 @@ import type { BoxProps, ButtonProps, Elements, LinkProps, RenderChildren, Render
 /** The element table `ui.resolve(e)` hands out, cut to the four tags the pane draws. */
 export type TableElements = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button' | 'Link'>
 
-export function box(el: TableElements, props: BoxProps, ...children: RenderChildren[]): RenderElement {
+export function box(el: Pick<TableElements, 'Box'>, props: BoxProps, ...children: RenderChildren[]): RenderElement {
   return h(el.Box, props, ...children) as RenderElement
 }
 
-export function text(el: TableElements, props: TextProps, ...children: RenderChildren[]): RenderElement {
+export function text(el: Pick<TableElements, 'Text'>, props: TextProps, ...children: RenderChildren[]): RenderElement {
   return h(el.Text, props, ...children) as RenderElement
 }
 
-export function button(el: TableElements, props: ButtonProps): RenderElement {
+export function button(el: Pick<TableElements, 'Button'>, props: ButtonProps): RenderElement {
   return h(el.Button, props) as RenderElement
 }
 
-export function link(el: TableElements, props: LinkProps, ...children: RenderChildren[]): RenderElement {
+export function link(el: Pick<TableElements, 'Link'>, props: LinkProps, ...children: RenderChildren[]): RenderElement {
   return h(el.Link, props, ...children) as RenderElement
 }

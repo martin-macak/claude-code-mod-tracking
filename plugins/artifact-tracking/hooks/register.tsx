@@ -10,12 +10,12 @@ import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
 import { DISMISS, parseRemote, TRACKERS } from '../trackers'
 import type { ToolStatus, UiState } from '../types'
-import { renderBand } from '../ux/band'
+import { bandText, renderBand } from '../ux/band'
 import { renderSections } from '../ux/pane'
 import { rowEvent, spawnEvent, toolCallEvent, turnEvent } from './events'
 import { listText } from './list-text'
 import { type PaneFocus, paneActions, pickRow } from './pane-actions'
-import { composeBand, composePane } from './ui/auto-view'
+import { composePane } from './ui/auto-view'
 import { focusTargets } from './ui/view'
 import { IDLE_ACLI, IDLE_GH, viewInputs } from './view-inputs'
 
@@ -255,20 +255,12 @@ export const register: Register = on => {
     return <Text dimColor>Tracking is unavailable. Run /track to try again.</Text>
   })
 
-  // One line above the prompt. The engine's own band stays inside our Box.
+  // One line above the prompt, made from the sections that carry a band part. The engine's own band stays inside our Box.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const m = managerOf($)
-    const v = await viewInputs(portsOf($), m.facts, { live: id => m.live(id) })
-    const text = composeBand(v.items, v.processes, v.ctx.auto ?? null, v.repos)
-    if (text === null || e.props.hasSurvey) return next(e)
-    const el = $.ui.resolve(e)
-    const { Box } = el
-    return (
-      <Box flexDirection="column">
-        {renderBand(el, text)}
-        {await next(e)}
-      </Box>
-    )
+    if (e.props.hasSurvey) return next(e)
+    const line = bandText(await managerOf($).bandData(portsOf($)))
+    if (line === null) return next(e)
+    return renderBand($.ui.resolve(e), line, await next(e))
   }).catch((_$, e, next) => next(e)) // a failed read leaves the band to the engine
 
   // These two hooks only observe. The entry (the lazy start, the session check) runs beside the key: after a /resume
