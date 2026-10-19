@@ -42,7 +42,7 @@ Exit codes: 0 done, 1 error, 2 wrong usage, 3 the token cannot read or write the
 1. Run `sync` or `next` first. Read the plan.
 2. With a token that has the `project` scope, run `sync --apply` when every change is expected (a blocker closed, an issue was added). A cycle or an Order inversion is for the owner: report it, and do not change `Order` to hide it.
 3. Move an item with `status`, at the steps that the Duties in `AGENTS.md` list.
-4. Stack layers (`AGENTS.md`, "Stack layers"): read the draft's Order, Area and Release from `items` in `sync --json`. Run `add --apply` for the PR with the same values. Then delete the draft: `gh project item-delete 3 --owner martin-macak --id <draft item id>` (`items[].id`).
+4. Stack layers (`AGENTS.md`, "Planning and delivery", "Stack layers"): the sub-issue of a layer is its item, and the layer PR is none. Read the draft's Order, Area and Release from `items` in `sync --json`. Run `add --apply` for the sub-issue with the same values (the workflow may have added it already; `add` keeps the item and sets the fields). Then delete the draft: `gh project item-delete 3 --owner martin-macak --id <draft item id>` (`items[].id`).
 
 ## Place a new issue
 
