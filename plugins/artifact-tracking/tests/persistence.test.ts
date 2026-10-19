@@ -401,6 +401,34 @@ test('end logs a rejected write and still returns the snapshot', async () => {
   expect(w.logs).toEqual(['store: write of v2:s:sess-1 failed: full', 'store: write of v2:run failed: full'])
 })
 
+/** A store whose `get` of the listed keys rejects. */
+const unreadable =
+  (...keys: string[]) =>
+  (real: StorePort): StorePort => ({
+    ...real,
+    get: async k => {
+      if (keys.includes(k)) throw new Error('timeout')
+      return real.get(k)
+    },
+  })
+
+test('end settles the live slots when the stored copy cannot be read, and still writes both keys', async () => {
+  const { w, p } = setup({ fake: { store: { 'v2:s:sess-1': { items: ['old'] } } }, store: unreadable('v2:s:sess-1') })
+  const snap = await p.end('sess-1', 1000, PENDING)
+  const live = { items: ['i1'], repos: ['r1'], processes: [] }
+  expect(snap).toEqual({ from: 'sess-1', slots: live })
+  expect(w.store.get('v2:s:sess-1')).toEqual(live)
+  expect((w.store.get('v2:run') as { pendingEnd: PendingEnd }).pendingEnd).toEqual(PENDING)
+  expect(w.logs).toEqual(['store: read of v2:s:sess-1 failed: timeout'])
+})
+
+test('read and loadRun log a rejected store read and answer nothing stored', async () => {
+  const { w, p } = setup({ store: unreadable('v2:s:sess-1', 'v2:run') })
+  expect(await p.read('sess-1')).toBeUndefined()
+  expect(await p.loadRun()).toEqual({})
+  expect(w.logs).toEqual(['store: read of v2:s:sess-1 failed: timeout', 'store: read of v2:run failed: timeout'])
+})
+
 test('beforeFlush runs before the slots are read', async () => {
   const seen: string[] = []
   const { w, p, slots } = setup({

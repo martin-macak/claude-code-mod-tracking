@@ -73,7 +73,7 @@ These are the user's decisions from the brainstorm of 2026-10-17 and 2026-10-18.
 | Key legend | The footer shows the basic keys. `h` swaps the pane to a help view with every key. |
 | Big lists | A row cap per section with an "N more" row, short element keys, a budget guard. |
 | `/clear` | Carry over, as today: items, repos, processes, the dismiss list and the pinned root go into the new session. |
-| `/resume`, `/branch` | Load stored data for the new session id, else start empty. |
+| `/resume`, `/branch` | Load stored data for the new session id, else start empty. The run-scoped values (the dismiss list and the pinned root) stay (§5.6, D9). |
 | Delivery | GitHub native stacked PRs (`gh stack`). Order: core first, UX last. |
 
 ## 4. Engine constraints
@@ -670,7 +670,7 @@ The `PluginState` contract in `types/index.d.ts` imports nothing (E4). It declar
 | `v2:index` | Session ids, newest first, at most `global.store.keepSessions` |
 | `v2:run` | `{ pendingEnd?: { reason: string, fromId: string, at: number }, run?: { [slotId]: Json } }` (D2, D20). `run` holds the `persist: false` slots. The dismiss list, the pinned root and the proofs sit in auto's slot, so they travel as `run.auto`. `at` is engine time at the end. SessionWatch sets `pendingEnd` at the end and clears it after the switch (§5.6). Persistence does the writes, and `clearRun` drops `pendingEnd` and keeps `run`. It deletes the key when nothing is left. |
 
-On the first load after the upgrade, Persistence deletes the old keys (`s:*`, `index`) once, through `ports.store.keys()`. Old data is dropped. Before each write, Persistence bounds the total size at `global.store.maxBytes` (default 3,000,000, under E18) and evicts the oldest sessions first. The bound counts the stored copies, the index and the `v2:run` that goes with the write (the new one at `session.end`, else the stored one), in JSON characters, not UTF-8 bytes. The copy being written always stays, even when it alone is over the bound. Persistence writes the copy first and deletes the evicted sessions after it, so a refused write loses no history. Only when the store would hold the evicted sessions and the new copy together over 4,000,000 characters (E18) do the evicted ones go first. A rejected `$.store.set` logs one line, and the next change tries again. Persistence is the only writer of `$.store`.
+On the first load after the upgrade, Persistence deletes the old keys (`s:*`, `index`) once, through `ports.store.keys()`. Old data is dropped. Before each write, Persistence bounds the total size at `global.store.maxBytes` (default 3,000,000, under E18) and evicts the oldest sessions first. The bound counts the stored copies, the index and the `v2:run` that goes with the write (the new one at `session.end`, else the stored one), in JSON characters, not UTF-8 bytes. The copy being written always stays, even when it alone is over the bound. Persistence writes the copy first and deletes the evicted sessions after it, so a refused write loses no history. Only when the store would hold the evicted sessions and the new copy together over 4,000,000 characters (E18) do the evicted ones go first. A rejected `$.store.set` logs one line, and the next change tries again. A rejected `$.store.get` logs one line and counts as nothing stored: no copy, an empty `v2:run`. `session.end` and the switch go on. Persistence is the only writer of `$.store`.
 
 ## 6. Error handling
 

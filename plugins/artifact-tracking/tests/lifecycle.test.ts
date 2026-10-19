@@ -375,6 +375,72 @@ test('a slot that fails to restore is logged and the other slots and the host st
   expect((t.w.store.get('v2:run') as { pendingEnd?: unknown }).pendingEnd).toBeUndefined()
 })
 
+/** Makes `store.get` of the listed keys reject until the returned function heals it. */
+function unreadable(t: ReturnType<typeof setup>, ...keys: string[]): () => void {
+  const { store } = t.w.ports
+  const real = store.get.bind(store)
+  store.get = async k => {
+    if (keys.includes(k)) throw new Error('store timeout')
+    return real(k)
+  }
+  return () => {
+    store.get = real
+  }
+}
+
+test('an end that cannot read the stored copy keeps the live state, so /clear carries it and v2:run is written', async () => {
+  const t = setup({ seed: { 'v2:s:sess-1': { items: ['old'] } } })
+  await t.m.entry(t.w.ports)
+  t.items.live = ['live-a', 'live-b'] // changed since the last flush
+  const heal = unreadable(t, 'v2:s:sess-1')
+  await t.m.end(t.w.ports, 'clear', 1500)
+  heal()
+  expect(t.w.logs).toEqual(['store: read of v2:s:sess-1 failed: store timeout'])
+  expect((t.w.store.get('v2:run') as { pendingEnd: { fromId: string } }).pendingEnd.fromId).toBe('sess-1')
+  t.items.live = []
+  t.repos.live = []
+  t.auto.live = undefined // $.state is empty in the new session (E6)
+  t.w.session.id = 'sess-2'
+  await t.m.entry(t.w.ports)
+  expect(t.items.live).toEqual(['live-a', 'live-b'])
+  expect(t.repos.live).toEqual(['r1'])
+  expect(t.auto.live).toEqual({ root: '/work' })
+})
+
+test('a v2:run read that fails in a switch is logged and the switch still carries and tells the trackers', async () => {
+  const trace: string[] = []
+  const t = setup({ log: trace, trackers: [rec('a', 10, trace)], seed: { 'v2:s:sess-1': { items: ['old'] } } })
+  await t.m.entry(t.w.ports)
+  await leave(t, 'sess-2', 'clear') // the end kept a full snapshot
+  t.items.live = []
+  t.auto.live = undefined
+  const heal = unreadable(t, 'v2:run')
+  trace.length = 0
+  await t.m.entry(t.w.ports)
+  heal()
+  expect(t.w.logs.filter(l => l.startsWith('session: switch'))).toEqual([])
+  expect(t.w.logs).toContain('store: read of v2:run failed: store timeout')
+  expect(trace).toContain('switch:a:clear')
+  expect(t.items.live).toEqual(['old', 'i1'])
+  expect(t.auto.live).toEqual({ root: '/work' })
+  await t.m.entry(t.w.ports) // nothing is left to retry: the new session is already carried
+  expect(t.items.live).toEqual(['old', 'i1'])
+})
+
+test('a stored copy that cannot be read in a resume switch is logged and the switch still completes', async () => {
+  const trace: string[] = []
+  const t = setup({ log: trace, trackers: [rec('a', 10, trace)], seed: { 'v2:s:sess-b': { items: ['b-item'] } } })
+  await t.m.entry(t.w.ports)
+  await leave(t, 'sess-b', 'resume')
+  t.items.live = []
+  const heal = unreadable(t, 'v2:s:sess-b')
+  trace.length = 0
+  await t.m.entry(t.w.ports)
+  heal()
+  expect(t.w.logs).toEqual(['store: read of v2:s:sess-b failed: store timeout'])
+  expect(trace).toContain('switch:a:resume')
+})
+
 test('the switch drops the pending end from v2:run and keeps the run values', async () => {
   const t = setup()
   await t.m.entry(t.w.ports)
@@ -721,7 +787,7 @@ test('a failing step of the start is logged and the start still completes', asyn
   }
   await t.m.start(t.w.ports, { fromSessionStart: true })
   expect(t.w.logs).toEqual([
-    'lifecycle: run load failed in the start: store down',
+    'store: read of v2:run failed: store down',
     'lifecycle: legacy sweep failed in the start: no keys',
     'lifecycle: item runtime failed in the start: no tools',
   ])

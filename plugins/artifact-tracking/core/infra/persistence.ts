@@ -87,8 +87,14 @@ export class Persistence {
     await this.flush()
   }
 
+  /** The stored copy of `id`. A failed read is logged and counts as no copy: the caller goes on without it. */
   async read(id: string): Promise<SessionCopy | undefined> {
-    return (await this.d.store.get(KEYS.session(id))) as SessionCopy | undefined
+    try {
+      return (await this.d.store.get(KEYS.session(id))) as SessionCopy | undefined
+    } catch (e) {
+      this.d.log(`store: read of ${KEYS.session(id)} failed: ${reason(e)}`)
+      return undefined
+    }
   }
 
   /**
@@ -150,10 +156,16 @@ export class Persistence {
     return { from: id, slots: Object.fromEntries(settled.map(([s, v]) => [s.id, v])) }
   }
 
+  /** The `v2:run` record. A failed read is logged and answers an empty record. The size stays as it was. */
   async loadRun(): Promise<RunCopy> {
-    const run = (await this.d.store.get(KEYS.run)) as RunCopy | undefined
-    this.runSize = size(run)
-    return run ?? {}
+    try {
+      const run = (await this.d.store.get(KEYS.run)) as RunCopy | undefined
+      this.runSize = size(run)
+      return run ?? {}
+    } catch (e) {
+      this.d.log(`store: read of ${KEYS.run} failed: ${reason(e)}`)
+      return {}
+    }
   }
 
   /** After the switch: drops `pendingEnd` and keeps the run values. Nothing left means no key. */
