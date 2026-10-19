@@ -91,7 +91,7 @@ The spikes and live probes proved these rules on 2.1.302. The KB pages hold the 
 | E7 | A hot reload sends nothing to the old copy. Its timers die. Module variables reset. `session.start` fires in the new copy. Panes survive. An edit in any imported file, also beside `hooks/`, reloads the mod. | same |
 | E8 | The engine skips a hook on its own `$` calls, also through timers and cycles. The bus needs no re-entry guard for engine events. A render hook must never call `$.ui.invalidate`. | [dispatch-and-guards](../../knowledge-base/claude-code-mods/concepts/dispatch-and-guards.md) |
 | E9 | A `ui.render` hook cannot write `$.state`. A `ui.focus` hook can. Reads in a render subscribe it. | [tree-table §3.3](../../knowledge-base/claude-code-mod-architecture/tree-table.md#33-selection-state) |
-| E10 | Tab and Shift+Tab walk every Button. Up and Down scroll a tall pane. A `Client` gets keys only after a mouse click. Not proved: where the ring sits after a re-sort or a data refresh (§12, L6 live check). | [tree-table §3.2](../../knowledge-base/claude-code-mod-architecture/tree-table.md#32-keyboard), [§3.3](../../knowledge-base/claude-code-mod-architecture/tree-table.md#33-selection-state) |
+| E10 | Tab and Shift+Tab walk every Button. Up and Down scroll a tall pane. A `Client` gets keys only after a mouse click. The ring stays on its Button key `r<n>` when a data change inserts or re-sorts rows, so the key can name another row. The L6 live check proved it (§5.10 Selection, §12). | [tree-table §3.2](../../knowledge-base/claude-code-mod-architecture/tree-table.md#32-keyboard), [§3.3](../../knowledge-base/claude-code-mod-architecture/tree-table.md#33-selection-state) |
 | E11 | A hotkey is one of `a-z` or `0-9`. It fires from any Button position while the pane has focus. The later duplicate wins in silence. No letter is reserved. `?` is not a hotkey. | same |
 | E12 | A tree over 20,000 counted values (nodes plus string children) is refused: the pane is blank. Past 100,000 characters (text, labels, Box keys, hrefs) the later Buttons vanish, the footer too. The mod sees neither. | [tree-table §3.6](../../knowledge-base/claude-code-mod-architecture/tree-table.md#36-size-limits-of-a-pane-tree) |
 | E13 | Each Tab costs one full render, about 0.17 ms per row. 300 rows settle in about 60 ms. | [tree-table](../../knowledge-base/claude-code-mod-architecture/tree-table.md) |
@@ -121,7 +121,7 @@ plugins/artifact-tracking/
       ports.ts                 # Ports and its parts
       config.ts                # ConfigSpec, ConfigView, GlobalConfig
       items.ts                 # StoredItem, ItemKind, Claim (re-exports contract types)
-      view.ts                  # SectionSpec, TreeRow, ColumnDef, Cell, ColorToken
+      view.ts                  # SectionSpec, TreeRow, ColumnDef, Cell, ColorToken, and for the pane keys: KeyScope, PaneKey, FooterKey, RowRef, HelpGroup, HelpModel, ActionImpl
       events.ts                # domain events the bus carries
     infra/
       lifecycle.ts             # LifecycleManager: sequences the others (single flight, entry, end, clear, tick)
@@ -311,7 +311,7 @@ Hook order inside each hook:
 
 The pane's `x` button calls `dismiss(ports, ids)`: the dismiss list first, the item keys second, then the `dismissed` event.
 
-The pane reads and writes through the manager (L5b, K1). Reads: `viewOf(ports, owner, view)` (the `ViewContext` of one tracker), `paneData(ports, view)` (the sections of the live trackers, sorted by `rank`), `bandData(ports)` and `levels(ports)`. They run no session check and write nothing. Writes: `setPriority(ports, rowId, level)` (`level` is `Level | undefined`; `undefined` removes the mark, and a row marked `top` by a rule does nothing) and `refreshManual(ports)`. Both run `entry` first. The tracker list and `TrackerHost.ctx` stay private to the manager. A render path outside `lifecycle.ts` needs a getter or a method added there (L6 checks this).
+The pane reads and writes through the manager (L5b, K1). Reads: `viewOf(ports, owner, view)` (the `ViewContext` of one tracker), `paneData(ports, view)` (the sections of the live trackers, sorted by `rank`), `bandData(ports)` and `levels(ports)`. They run no session check and write nothing. Since L6 they come from the abstract base `PaneApi` (`core/infra/pane-api.ts`), which the manager extends and which forwards to `Views` and `PaneKeys` (P6). `PaneApi` also gives the pane its keys: the getter `keys` (the current `KeyRegistry`), `isItemOwner(owner)`, `problems()` (the key problems, then the trackers that failed to start), `footer(ports, row, help)` and `runAction(ports, owner, id, rowId)`. `footer` is a read and runs no `entry`. `runAction` runs no `entry` either: the tracker context guards its own writes. Writes: `setPriority(ports, rowId, level)` (`level` is `Level | undefined`; `undefined` removes the mark, and a row marked `top` by a rule does nothing) and `refreshManual(ports)`. Both run `entry` first. The tracker list and `TrackerHost.ctx` stay private to the manager. Code outside `lifecycle.ts` reaches them through the methods above.
 
 The door list is the full superset as a literal, `queue` and `compaction` included (E17). In L3 it is one `session.append` hook with 12 doors (it replaced four hooks). A tracker declares its doors as data, and the bus filters. `tool.call` is one matcherless hook, and the bus dispatches by tool name. So a new tool or door needs no edit in `register.tsx`. A new engine event family edits `register.tsx` once (§11).
 
@@ -333,12 +333,13 @@ export interface Ports {
   session: { id(): Promise<string>; cwd(): Promise<string>; repo(): Promise<RepoRemote | null>; messages(): Promise<readonly SessionRow[]> }
   agents: { list(): Promise<readonly AgentInfo[]> }
   state: StatePorts                                                        // closures per atom, refs inline
-  ui: { open(): Promise<boolean>; focus(key: string): Promise<void>; panes(): Promise<readonly PaneInfo[]>; invalidate(): void; toast(t: string): void }
+  ui: { open(): Promise<boolean>; focus(key: string): Promise<boolean>; panes(): Promise<readonly PaneInfo[]>; invalidate(): void; toast(t: string): void }  // focus: true when the ring moved, false when the engine refused (L6, P1)
   log(line: string): void
 }
 
-// In L3: StatePorts = { items, tools, ui, slot }. items, tools and ui are AtomPort<T> { get(), update(fn) }.
-// slot is a SlotPort { get(id), update(id, fn) } over the `trackers` family. L6 adds expanded, selected, shown and help.
+// StatePorts = { items, tools, slot, expanded, selected, shown, help }. items, tools, expanded, selected and help are AtomPort<T> { get(), update(fn) }.
+// slot is a SlotPort { get(id), update(id, fn) } over the `trackers` family. shown is a ShownPort { get(id), update(id, fn) } over the `shown` family (a member never written reads 0).
+// L3 had a `ui` atom (`folded`). L6 added the four pane atoms and deleted `ui` (§5.13).
 ```
 
 - `clock.now()` is engine time. Timers, debounces and the tick use it, so the kit's mock clock drives them. `clock.wall()` is `Date.now`, for record stamps (as today).
@@ -392,7 +393,7 @@ stateDiagram-v2
 
 1. ConfigManager checks the file and reads it again when its signature moved (§5.7). A failing read is logged, and the defaults stand. TrackerHost then reads the toggles, once per load (`enabled: false` turns a tracker off).
 2. Persistence loads `v2:run` (the `pendingEnd` and the run-scoped slots, §5.13). Once per load it deletes the keys of the old layout (`s:*`, `index`).
-3. The item host starts. TrackerHost runs `init` and then `store` (§5.8) for each tracker in `order`. A tracker that is off gets `store` only. ConfigManager then reconciles the file with the store results (§5.7): the first-run write or the missing-key merge, at most once per load. A lazy start inside `session.end` skips this write (E6). TrackerHost fills the bus with the declared handlers (§5.5). The bus emits `start`.
+3. The item host starts. TrackerHost runs `init` and then `store` (§5.8) for each tracker in `order`. A tracker that is off gets `store` only. ConfigManager then reconciles the file with the store results (§5.7): the first-run write or the missing-key merge, at most once per load. A lazy start inside `session.end` skips this write (E6). TrackerHost fills the bus with the declared handlers (§5.5). The bus emits `start`. The pane keys are rebuilt right after `init` and `store`, as a soft step named `pane keys` (`StartDeps.keys.rebuild`): each start builds a fresh `KeyRegistry` from the core keys and the keys of the trackers that are on, so a tracker that is off or failed adds no key and a second start leaves no duplicate problem (§5.10 Keys).
 4. The session load. It runs only on a cold `session.start`, that is, when the items slot is empty. The first start of a load also judges the `pendingEnd` that `v2:run` holds (D20, C19):
    - Carried: reason `clear` or `resume`, from another id than the current one, and `now - at <= 2 * tickMs`. SessionWatch resumes from it, and the switch (below) carries or loads.
    - Awaited: the same reason and age, but `fromId` is the current id. The reload came before the id flipped. `v2:run` stays, because the flip may still come in this load. It has no snapshot, so it carries `v2:run.run` (the reload gap).
@@ -522,7 +523,7 @@ export interface Tracker<C extends JsonObject = JsonObject, D extends Json = Jso
   init(ctx: TrackerContext<C, D>): void | Promise<void>
   store(ctx: TrackerContext<C, D>): C          // the slice this tracker wants in the file
   sections?(ctx: ViewContext<C, D>): readonly SectionSpec[]
-  actions?(ctx: ViewContext<C, D>): ActionImpls // run and state per key id, at render
+  actions?(ctx: ViewContext<C, D>): ActionImpls<C, D> // run and state per key id, at render. ActionImpl<C, D> { run(ctx: TrackerContext<C, D>, rowId: string | null): void | Promise<void>; state?(rowId: string | null): 'enabled' | 'disabled' } (method syntax, so a Tracker<MyConfig> fits a list)
   prompt?(ctx: ViewContext<C, D>): readonly string[]  // one line per item
   dispose?(): void
 }
@@ -694,23 +695,45 @@ export interface ColumnDef {
   priority?: number                   // dropped first when the pane is narrow
 }
 export interface Cell { text: string; fg?: ColorToken; bg?: ColorToken; weight?: 'regular' | 'bold'; dim?: boolean; href?: string }
+
+// The pane keys (L6), in the same file. KeySpec.scope in core/interfaces/tracker.ts stays 'row' | 'section': 'pane' is for core keys only.
+export type KeyScope = 'pane' | 'row' | 'section'
+export interface PaneKey { id: string; key: string; label: string; scope: KeyScope; owner: string }      // owner: 'core' or a tracker id
+export interface FooterKey extends PaneKey { enabled: boolean; buttonKey: string }                          // a disabled key stays on the footer, dim and inert
+export interface RowRef { id: string; owner: string; section: string; can: TreeRow['can'] }                // what the routing needs of a drawn row
+export interface HelpGroup { title: string; keys: readonly PaneKey[] }
+export interface HelpModel { groups: readonly HelpGroup[]; configPath: string | undefined; problems: readonly string[] }
+export interface ActionImpl<C, D> { run(ctx: TrackerContext<C, D>, rowId: string | null): void | Promise<void>; state?(rowId: string | null): 'enabled' | 'disabled' }
+export type ActionImpls<C, D> = Readonly<Record<string, ActionImpl<C, D>>>
 ```
 
-`ColorToken` is a closed set by design. `ux/theme.ts` maps each token to a theme key or a named color. A tracker cannot pass a raw color string (E14).
+`ColorToken` is a closed set by design. `ux/theme.ts` maps each token to a theme key or a named color. A tracker cannot pass a raw color string (E14). `accent` and `selected` are no theme keys: `COLOR` maps `accent` to `suggestion` and `selected` to the named color `blue`, which the engine paints from the theme palette. The other six tokens map to the theme key of the same name. `GLYPH` holds `▸` (closed), `▾` (open), `>` (selected) and a space (unselected), each one cell wide. `cellText(cell, rowDim)` gives `{ wrap: 'truncate-end' }` plus `color`, `weight` and `dimColor`, each only when set. `cellBox(cell)` gives `backgroundColor` from `bg`, else `{}`.
 
 `ViewContext` (what `sections(ctx)` reads) holds `now`, `config`, `data`, `items`, `facts` (read only), `tools`, `root`, `isDismissed(id)`, `levelOf(key)` and the view state `selected` and `expanded`. `PaneView { selected, expanded }` is the view state alone: the manager takes it from the atoms (L5b, K1). All of it is read. A render writes nothing (E8, E9).
 
 **Rows.** Each row has one focus Button, the row handle, with a short key `r<n>` (its index in the drawn tree). Its label is the expand glyph. Enter on it toggles the row id in the `expanded` atom. Detail rows hold no Button, so Tab skips them. A row with no `detail` and no `children` gets a default detail: the full text of every clipped cell and the href.
 
-**Selection.** Each render fills a module map from `r<n>` to `TreeRow.id`. The `ui.focus` hook calls `next(e)` first. Without a deny, it maps the key and writes the row id to the `selected` atom. A focus on a footer Button or the close mark leaves `selected` alone (sticky selection). The selected row draws with the `selected` background token. After `x` or a priority key, `PaneSession` writes the selection and calls `ports.ui.focus('r<newIndex>')` best effort, because the ring may stay at its old place. That is unproved (E10): the L6 live check settles it (§12). `Ports.ui.focus` answers true when the ring moved and false when the engine denied it. The request (the key and the row it is meant for) lives in `Refocus` until the `ui.focus` hook answers it once, the engine refuses (false or a throw), or a drawing holds the key. A later Tab onto that key then selects the row drawn there. `r` does not refocus: its data lands later. `autoFocus` is set on the first row handle only while `selected` is unset.
+**Selection.** Each render fills a module map from `r<n>` to `TreeRow.id`. The `ui.focus` hook calls `next(e)` first. Without a deny, it maps the key and writes the row id to the `selected` atom. A focus on a footer Button or the close mark leaves `selected` alone (sticky selection). The selected row draws with the `selected` background token and a `>` in a one-cell gutter, because a terminal with no color shows no background and the e2e harness reads plain text (G10). After `x` or a priority key, `PaneSession` writes `selected` itself, then calls `ports.ui.focus('r<newIndex>')` best effort, so the ring follows the selection. After `x` the selection goes to the next drawn row at the same or a lower depth, else the drawn row before it, else it clears (`neighbourOf` in `ux/tree-data-table/layout.ts`). `Ports.ui.focus` answers true when the ring moved and false when the engine denied it. The request (the key and the row it is meant for) lives in `Refocus` until the `ui.focus` hook answers it once, the engine refuses (false or a throw), or a drawing holds the key. This one-shot request stops a stale handle map from selecting another row. A later Tab onto that key then selects the row drawn there. `r` does not refocus: its data lands later. `autoFocus` is set on the first row handle while `selected` is unset or names no drawn row.
 
-**Columns.** The solver flattens the visible rows and measures each column with `cellWidth` over the header and the visible cells. The tree column adds the indent and the glyph. It clamps each width to min and max, drops columns by `priority` while the sum is over `e.props.bodyColumns`, and gives the rest to the flex column. Every cell is `<Box width={n} justifyContent={...}><Text wrap="truncate-end">`. A grow-only width memo per column (a module variable in `ux/`, reset by `r`) stops jumps on expand. Cell text is normalised first: tabs, newlines, control characters and ANSI become spaces.
+The L6 live check settled E10 (`verified-live`, Claude Code 2.1.303; evidence in [tree-table §3.3](../../knowledge-base/claude-code-mod-architecture/tree-table.md#33-selection-state), the L6 live row). The ring stays on its Button key `r<n>`, so a background change that inserts a row above the ring puts the ring on another row. `selected` is a row id and keeps its row: the `>` gutter stays on it. A hotkey (`x`, `0`-`3`) acts on `selected`, not on the ring. After `x` or a digit key the mod focuses the handle of the selected row's new place, so the ring is on the selection again. After `x` the next Tab goes to the footer `r: refresh` and leaves the selection alone. `r` leaves the ring where it was. After the chord ctrl+x Tab gives the pane its keys again, no Button has the ring, and the first Tab lands on the first row and writes `selected`. The engine does raise `ui.focus` for `autoFocus` when `/track` opens, so the `>` gutter is on the first row before any key. The kit does not raise it. No `j` and `k` fallback was added (§12).
+
+**Columns.** The solver flattens the visible rows and measures each column with `cellWidth` over the header and the visible cells. The tree column adds the indent (2 cells per level) and the glyph box (2 cells). It clamps each content width to min and max. Then, while the sum (columns and one-cell gaps) is over `e.props.bodyColumns` (80 when unknown):
+
+1. Columns drop whole, the highest `priority` number first, a tie the rightmost. Only a column with a `priority` that is neither the tree column nor a flex column can drop. A fixed column with a `priority` can. A column with no `priority` never drops.
+2. Then the content columns shrink toward their `min`, the widest first. The tree column is one of them: its floor is its `min` plus the glyph box.
+3. The flex columns share what is left evenly, and the leftmost gets the remainder.
+
+A non-tree content column whose visible cells are all empty is left out (its header alone does not count). Every width stays at 1 or more, and the tree column at 2 or more. Only a pane of about 20 cells or less ends with the columns wider than the pane. Every cell is `<Box width={n} justifyContent={...}><Text wrap="truncate-end">`, also an empty one (a `Text` with an empty string child). An empty fixed-width cell keeps its width in the live renderer: the `prio` column lines up with and without a marker ([tree-table §3.3](../../knowledge-base/claude-code-mod-architecture/tree-table.md#33-selection-state), the L6 live row). Every cell is clipped to its width first (`clipTo`), so the engine never cuts, and a path shows in full in the detail. A grow-only width memo stops jumps on expand. It is a module variable in `ux/tree-data-table/columns.ts`, keyed `<section>/<column>`, holds the unclamped width of content columns only, and `resetWidths()` clears it (`r` calls it). Cell text is normalised first: tabs, newlines, control characters and ANSI become spaces.
 
 **Header.** A normal first row per section, with the same widths, in `weight="bold"`. It is not sticky.
 
-**Budget.** Before it returns a tree, the guard counts nodes plus string children, and the characters of text, labels, Box keys and hrefs. It reserves the footer's cost first, so a cut never removes the keys. Limits: 15,000 counted values and 80,000 characters, a margin below E12. Over a limit, it drops detail rows first, then lowers the per-section cap, then shows one "pane too large" row. The defaults are `global.ui.sectionRows` 50 per section and `global.ui.maxRows` 300 in total (E13). A section over its cap ends in an "N more" row. Its handle shows the next chunk, kept in a `shown` family atom per section.
+**Budget.** Before it returns a tree, the guard counts nodes plus string children, and the characters of text, labels, Box keys and hrefs. It reserves the footer's cost first, so a cut never removes the keys. Limits: `BUDGET` is 15,000 counted values and 80,000 characters, a margin below E12. The guard is generic: `guard<T>(footer, attempts: (() => T)[], tooLarge, limit = BUDGET): { body, step }`. It measures the footer once and subtracts it from each limit. It runs the attempts lazily in order and returns the first body that fits, with its index as `step`. If none fits it returns `tooLarge()` and `step` is `attempts.length`. `measure` counts one value for each node with a string type, and one value plus its length for each string or number child. A Button counts its label, a Box its key, a Link its href and label, as characters. A Button key and every other prop count nothing.
 
-**Keys.** KeyRegistry (`core/infra/keys.ts`) collects the core keys and each tracker's static `keys` at init. A key is one of `a-z` or `0-9`, folded to lowercase. A duplicate or an invalid key is rejected at init: the later key is dropped and a problem is recorded. A test asserts that the shipped set has no conflict. At render, `actions(ctx)` supplies `run` and `state` per key id. A row-scoped action reads `selected` at press time.
+The attempts are: the full tree, the tree with no detail lines, then the tree with the per-section caps halved (`max(1, floor(want / 2^k))`, k = 1, 2, …, also with no detail lines) until every cap is 1, then one dim line (`The pane is too large to draw. /track prints the list.`) above the footer. A handle for a refocus ignores the guard: it is best effort.
+
+The caps count top-level rows. The defaults are `global.ui.sectionRows` 50 per section and `global.ui.maxRows` 300 in total (E13). The total is `maxRows` plus the `shown` chunks of every section. In pane order each section takes the least of its rows, `sectionRows` plus its own `shown`, and what is left of the total. Open children count against the budget only. A section over its cap ends in an "N more" row, which counts the top-level rows left. Its handle adds `sectionRows` to the `shown` family atom of that section (a chunk). The `empty` text of a section shows only when the section has no rows. A section whose rows are all capped out shows its "N more" row instead.
+
+**Keys.** KeyRegistry (`core/infra/keys.ts`) collects the core keys and each tracker's static `keys` at init. A key is one of `a-z` or `0-9`, folded to lowercase. The registry rejects three things at init: a key that is not one letter or one digit, a key another owner already holds (the later key is dropped), and a key id its owner already holds. Each one records a problem and the key is off. Each start builds a fresh registry (`PaneKeys.rebuild`, §5.6), so a tracker that is off or failed adds no key. A test asserts that the shipped set has no conflict. At render, `actions(ctx)` supplies `run` and `state` per key id (`ActionImpls<C, D>`). `PaneSession` reads `selected` at press time and passes the row id to `run(ctx, rowId)` and to `state(rowId)`. The `ctx` of `actions` has `selected` set to that row. A tracker's own work runs after the entry and outside the chain of presses.
 
 Core keys (my call): `r` refresh, `h` help, `x` dismiss, `0`-`3` priority. `x` works on a row with `can.dismiss`: it calls `dismiss(ports, [id])`, so the dismiss list and the `dismissed` event reach the owner. `0`-`3` need a row of an item owner (a tracker with `kinds`) with `can.priority`. A tracker key goes to its owner while one of its rows is selected. An absent `can` flag counts as false. Processes cannot be dismissed, as today.
 
@@ -743,7 +766,7 @@ The Commands router claims first:
 | `help` | core | Print the help view as text (L6). |
 | a tracker's `commands` | tracker, in `order` | The first tracker that declares the sub-command runs it. |
 
-The argument hint is built from the core list (`CORE_HINT`) plus `|<sub> <hint>` for each declared command (`Commands.hint()`). While no tracker declares one, it stays today's literal. `TrackerHost.commands()` lists `{ owner, spec }` of the live trackers in `order`. A tracker cannot take a core sub-command, and the usage line is `Usage: /track [refresh|clear|prio <ref> <high|normal|low|auto>]`. `LifecycleManager.track(ports, args)` runs the router (K15); `command(ports, ev)` stays the broadcast to the trackers. The list text is a function that `register.tsx` supplies (`LifecycleDeps.listText`, K19), because core does not draw. A reply that prints the list ends with the problems of the config file.
+The argument hint is built from the core list (`CORE_HINT`, `[refresh|clear|help|prio <ref> <level>]`) plus `|<sub> <hint>` for each declared command (`Commands.hint()`). While no tracker declares one, it is `CORE_HINT` alone. `TrackerHost.commands()` lists `{ owner, spec }` of the live trackers in `order`. A tracker cannot take a core sub-command, and the usage line is `Usage: /track [refresh|clear|help|prio <ref> <high|normal|low|auto>]`. The fixed words (`USAGE`, `CORE_HINT`, the `prio` levels and the config problems block) sit in `core/infra/command-text.ts`. `LifecycleManager.track(ports, args)` runs the router (K15); `command(ports, ev)` stays the broadcast to the trackers. The list text and the help text are functions that `register.tsx` supplies (`LifecycleDeps.listText`, K19, and `LifecycleDeps.helpText`), because core does not draw. A reply that prints the list ends with the problems of the config file. `help` runs the config check first and prints the help view as text with no problems block, because the help view lists the config problems itself.
 
 ### 5.13 State and persistence
 
@@ -754,13 +777,14 @@ The `PluginState` contract in `types/index.d.ts` imports nothing (E4). It declar
 | `items` | `StoredItem[]` | The ItemStore's live copy. L3 types it as `ItemRecord[]`. L5 moves `StoredItem` into the contract. |
 | `trackers` | `StateFamily<Json>` | One slot per tracker id. |
 | `tools` | `Record<string, ToolStatus>` | One status per tool id. |
-| `ui` | `{ folded: string[] }` | Folded tree rows (D14). The pane tests pin the `fold-<id>` keys. |
-| `expanded` | `string[]` | L6. Expanded row ids. |
-| `selected` | `string \| null` | L6. The selected row id. |
-| `shown` | `StateFamily<number>` | L6. Rows shown per section beyond the cap. |
+| `expanded` | `string[]` | L6. The ids of the rows whose open state differs from the row's default (G3). |
+| `selected` | `string \| null` | L6. The selected row id, `null` when none. The `ui.focus` hook and the row keys write it. |
+| `shown` | `StateFamily<number>` | L6. Top-level rows shown per section beyond the cap, one member per section id. A member never written reads 0. |
 | `help` | `boolean` | L6. The help view is on. |
 
-`processUi` and `ui.paneOpen` are removed. The processes probe state is the fact `processes.ui` now. `types/index.d.ts` declares `Json`, `JsonObject` (a readonly form), `Level`, `StoredItem`, `ToolStatus`, `BreakerState`, `UiState`, `Via`, `Captured` and `PluginState` (`items: StoredItem[]`), and no tracker type. Each record and slot type lives in `trackers/<id>/types.ts`. `BaseRecord` (the fields of every record) and `ItemError` live in `core/lib/records.ts`, which trackers may import.
+L3 had a seventh member, `ui` (`{ folded: string[] }`, D14). L6 deleted it with the old renderers. `claude plugin validate` lists `declares state: artifact-tracking.items, trackers, tools, expanded, selected, shown, help`. In `Ports`, `StatePorts` holds `items`, `tools`, `slot`, `expanded`, `selected`, `help` (atoms) and `shown` (a `ShownPort`, §5.4).
+
+`processUi` and `ui.paneOpen` are removed. The processes probe state is the fact `processes.ui` now. `types/index.d.ts` declares `Json`, `JsonObject` (a readonly form), `Level`, `StoredItem`, `ToolStatus`, `BreakerState`, `Via`, `Captured` and `PluginState` (`items: StoredItem[]`), and no tracker type. Each record and slot type lives in `trackers/<id>/types.ts`. `BaseRecord` (the fields of every record) and `ItemError` live in `core/lib/records.ts`, which trackers may import.
 
 | `$.store` key | Value |
 | --- | --- |
@@ -797,7 +821,7 @@ The baseline before the work: 825 tests pass in 36 files.
 | Kit wiring | `tests/fixtures/world.ts` gets a Map-backed `fs.read`, `fs.write`, `fs.exists`, `fs.stat` block with deny switches, and a `clearSession($, world, nextId, reason)` helper that fires `session.end`, then flips the stub id. The id-flip `/clear` tests move to the helper. Store-key seeds change to `v2:`. The asserted behavior stays: carry-over on `/clear` (about 18 tests), replay on `--resume`, late results dropped after `/clear`. New: first-run config write, a disabled tracker, a prompt section on and off. |
 | Pane (rewritten in L6) | The header row, one Button per row, `r<n>` keys, `selected` by row id from a driven `ui.focus`, the refocus after a re-sort, Enter toggles detail and the default detail, footer keys, `h` help, "N more", the budget guard at 600 and 1,400 rows, the `/track` text and the band. |
 | Contract checks | Added in the layer that makes each true. L3: only `H/register.tsx` has a `$` call, an `on(` call, a value import from `claude-code`, the type `EngineInterface` or the literal `plugin: 'artifact-tracking'`. The test is `scripts/contracts/source-contracts.test.mjs`, run by `make test-scripts`, because the kit has no fs (D18). L5: no `\b(github\|jira\|gh\|acli)\b` in `core/`, `ux/` and `types/` (K8; since L6 `hooks/` too, but for the command text of `register.tsx`), and the import rules of §5.1, in `scripts/contracts/tracker-contracts.test.mjs`, run by `make test-scripts`. The test reads every `import`, `export ... from` and `import()` of the tree, indented ones too, and fails on an import it cannot follow. A catch-all rule keeps `core/` clear of `hooks/`, `trackers/` and `ux/` in any folder. The legacy draw path was one named allowlist (K7); L6 deleted it. L6: no section renderer outside `ux/` (no JSX tag, no `h(` call, no value import of the typed wrappers). A test lists every key and asserts no duplicate. |
-| e2e (local, `make e2e`) | The harness sets `CLAUDE_TRACKER_CONFIG_DIR` to a temp folder for every scenario and deletes it afterwards, so no run touches the developer's real config. `DEMO_KEEP=1` keeps the folder with the clone and the tmux session, for a look at the written file. Update `priority.feature` and `tracking.feature` for the new keys. Add a scenario: Tab moves the highlight, `x` dismisses the selected row, `h` shows help, a config file turns a tracker off. The L6 live checks also cover the ring after a data-driven re-sort and `autoFocus`. |
+| e2e (local, `make e2e`) | The harness sets `CLAUDE_TRACKER_CONFIG_DIR` to a temp folder for every scenario and deletes it afterwards, so no run touches the developer's real config. `DEMO_KEEP=1` keeps the folder with the clone and the tmux session, for a look at the written file. L6 updated `priority.feature` and `tracking.feature` for the new keys, and added `pane.feature`: Tab moves the selection, `x` dismisses the selected row, `h` shows help, Enter opens a row, and "N more" shows the next chunk (a config file that turns a tracker off came in L4). The L6 live checks covered the ring after a data-driven re-sort and `autoFocus` (§5.10 Selection). |
 
 `make verify` passes on every layer (§8).
 
@@ -809,7 +833,7 @@ The user set a floor of 90% coverage. The kit has no coverage option, so the pur
 - The gate is `--test-coverage-lines=90 --test-coverage-branches=90 --test-coverage-functions=90` over `core/**`, `ux/**`, `trackers/**` and the rest of `hooks/**`. Only `H/register.tsx` is excluded: it is the composition root, and the kit wiring tests cover it.
 - `make test` runs `make coverage`, so the pre-push hook and CI enforce the gate on every layer.
 - Node reports only the files a test loaded, so a module that no pure test imports has no row. `scripts/coverage/check.mjs` reads the lcov report and fails when a source file under `core/`, `ux/`, `trackers/` or `hooks/` is missing from it. It skips declaration files, `.tsx` files, `core/interfaces/` and `trackers/<id>/types.ts` (types only: the CI Node 24.21.0 leaves a module with no code out of the report).
-- Every file except `H/register.tsx` must be loadable by Node. So `ux/` is written in `.ts` with explicit calls to the global `h`, not JSX. The Node shim defines a fake `h` that builds plain objects. Type-only imports use `import type`. L6 rewrote the legacy `ux/pane.tsx` and `ux/band.tsx` as `.ts`, so the gate covers all of `ux/`.
+- Every file except `H/register.tsx` must be loadable by Node. So `ux/` is written in `.ts` with explicit calls to the global `h`, not JSX. The Node shim defines a fake `h` that builds plain objects. Type-only imports use `import type`. The kit proves the rule live: an imported `.ts` module beside `hooks/` reaches the engine's global `h` (`tests/el.kit.test.ts`), and `tests/h-shape.kit.test.ts` checks that the engine `h` builds what the stand-in builds. L6 rewrote the legacy `ux/pane.tsx` and `ux/band.tsx` as `.ts`, so the gate covers all of `ux/`.
 - Baseline (measured on L2, 2026-10-18): 634 pure tests pass under Node, with 97.25% lines, 93.85% branches and 98.86% functions over `core/`, `ux/`, `trackers/` and `hooks/`, without `H/register.tsx` and the `.tsx` files. The kit still runs all 826 tests.
 
 ## 8. Delivery
@@ -1007,7 +1031,7 @@ Building L5b settled these points. Code comments cite `K1` to `K24` (the decisio
 
 ### 10.5 Decisions made in L6
 
-Building and reviewing L6 settled these points. Code comments cite `G1` to `G22` (the decisions of the L6 plan). `P1` to `P8` came from the review of L6.
+Building and reviewing L6 settled these points. Code comments cite `G1` to `G22` (the decisions of the L6 plan, a local file that is not committed: §5.10 holds each rule that shapes the code). `P1` to `P8` came from the review of L6.
 
 | # | L6 does | Why |
 | --- | --- | --- |
@@ -1046,7 +1070,7 @@ Building and reviewing L6 settled these points. Code comments cite `G1` to `G22`
 
 | Item | Settled in |
 | --- | --- |
-| The ring across a data-driven redraw (insert, remove, re-sort) | L6 live checks. Fallback: `j`/`k` hotkeys inside the same selection model. |
+| The ring across a data-driven redraw (insert, remove, re-sort) | Settled in L6, live (§5.10 Selection, E10). The ring stays on its key `r<n>` and `selected` keeps its row, so the keys act on `selected` and `x` and the digit keys refocus it. The `j`/`k` fallback was not needed and is not built. |
 | Behavior on desktop, VS Code, mobile surfaces | L6 kit mounts on `terminal` and `desktop`. Others best effort. |
 | The prompt cache cost of a changing section | L7, measured live. |
 | Two sessions writing the config at once | Rare by design (§5.7). No test. |
