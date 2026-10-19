@@ -338,7 +338,7 @@ Rules for the lines:
 When the mod changes the text:
 
 - At the start, after `/clear` or `/resume`, and after a turn of the main agent ends. A turn of a subagent does not change it.
-- When you dismiss an item or run `/track clear`. The item leaves the text at once, so the model does not read it in the next request.
+- When you dismiss an item, run `/track clear` or change a priority (the keys `0` to `3` or `/track prio`). A dismissed item leaves the text at once, and a new order shows at once. So the model reads the change in the next request.
 - When you edit the config file. The mod reads the file at the next tick (30 s by default), or at `/track`.
 - Not for a data change in the middle of a turn. A new item shows up after the turn that follows it ends. A config edit applies at the next tick, which can fall inside a turn. While the list stays the same, the mod keeps the same text.
 - A render for a teammate and the `/context` render never get the block, so `/context` does not show it.

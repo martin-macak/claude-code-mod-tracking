@@ -1,6 +1,7 @@
 // PromptRebuild: when the prompt text is rebuilt and what it is built from. It owns the PromptComposer of one load. The
 // text is rebuilt eagerly, with the ports of a normal hook, at the start, after a session switch, at the end of a
-// main-loop turn, when the config file changed and when the person dismisses an item or clears the list (S1, S2, S14).
+// main-loop turn, when the config file changed and when the person dismisses an item, clears the list or marks a
+// priority (S1, S2, S14).
 // `compose` only reads memory: it takes no ports, writes no state and never rebuilds, so the one `prompt.compose` hook
 // needs no engine call. A data change alone does not rebuild, because a changed text would rewrite the prompt cache in
 // the middle of a turn.

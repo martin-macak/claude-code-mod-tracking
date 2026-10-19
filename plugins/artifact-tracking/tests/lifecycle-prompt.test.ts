@@ -290,6 +290,34 @@ test('a dismiss drops the item from the text at once, with no turn between', asy
   expect(has()).toBe(false)
 })
 
+/** Two web links in the order of the first sight, a then b, and the order of the lines of the text. */
+async function twoLinks() {
+  const { t } = await realWorld()
+  await t.m.row(t.w.ports, promptRow('and https://docs.example/b'))
+  await t.m.turnComplete(t.w.ports, MAIN)
+  const order = (): string[] =>
+    (t.m.compose({ traits: [] }, []).find(s => s.id === PROMPT_SECTION_ID)?.text ?? '')
+      .split('\n')
+      .flatMap(line => /docs\.example\/(\w)/.exec(line)?.[1] ?? [])
+  return { t, order }
+}
+
+test('a priority mark from the pane reorders the text at once, with no turn between (review of L7)', async () => {
+  const { t, order } = await twoLinks()
+  expect(order()).toEqual(['a', 'b'])
+  await t.m.setPriority(t.w.ports, 'web:https://docs.example/b', 'high')
+  expect(order()).toEqual(['b', 'a'])
+  await t.m.setPriority(t.w.ports, 'web:https://docs.example/b', undefined)
+  expect(order()).toEqual(['a', 'b'])
+})
+
+test('/track prio reorders the text at once, with no turn between (review of L7)', async () => {
+  const { t, order } = await twoLinks()
+  expect(order()).toEqual(['a', 'b'])
+  await t.m.track(t.w.ports, 'prio https://docs.example/b high')
+  expect(order()).toEqual(['b', 'a'])
+})
+
 test('/track clear drops the items from the text at once, with no turn between', async () => {
   const { t, has } = await realWorld()
   expect(has()).toBe(true)

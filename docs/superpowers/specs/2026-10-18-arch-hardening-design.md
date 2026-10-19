@@ -745,7 +745,7 @@ The caps count top-level rows. The defaults are `global.ui.sectionRows` 50 per s
 
 **Keys.** KeyRegistry (`core/infra/keys.ts`) collects the core keys and each tracker's static `keys` at init. A key is one of `a-z` or `0-9`, folded to lowercase. The registry rejects three things at init: a key that is not one letter or one digit, a key another owner already holds (the later key is dropped), and a key id its owner already holds. Each one records a problem and the key is off. Each start builds a fresh registry (`PaneKeys.rebuild`, §5.6), so a tracker that is off or failed adds no key. A test asserts that the shipped set has no conflict. At render, `actions(ctx)` supplies `run` and `state` per key id (`ActionImpls<C, D>`). `PaneSession` reads `selected` at press time and passes the row id to `run(ctx, rowId)` and to `state(rowId)`. The `ctx` of `actions` has `selected` set to that row. A tracker's own work runs after the entry and outside the chain of presses.
 
-Core keys (my call): `r` refresh, `h` help, `x` dismiss, `0`-`3` priority. `x` works on a row with `can.dismiss`: it calls `dismiss(ports, [id])`, so the dismiss list and the `dismissed` event reach the owner. `0`-`3` need a row of an item owner (a tracker with `kinds`) with `can.priority`. A tracker key goes to its owner while one of its rows is selected. An absent `can` flag counts as false. Processes cannot be dismissed, as today.
+Core keys (my call): `r` refresh, `h` help, `x` dismiss, `0`-`3` priority. `x` works on a row with `can.dismiss`: it calls `dismiss(ports, [id])`, so the dismiss list and the `dismissed` event reach the owner. `0`-`3` need a row of an item owner (a tracker with `kinds`) with `can.priority`. They call `setPriority(ports, rowId, level)`, which rebuilds the prompt text (S14), as `/track prio` does through the same call. A tracker key goes to its owner while one of its rows is selected. An absent `can` flag counts as false. Processes cannot be dismissed, as today.
 
 **Press order.** A press that reads `selected` (`x`, `0`-`3`, a tracker key) waits in one chain, so a second press sees the selection the first one made. Enter, "N more", `h` and `r` read no selection and run at once. A press that waits for the entry (after a `/resume` it can be slow) never holds them. A tracker's own action runs outside the chain too.
 
@@ -769,7 +769,7 @@ Core keys (my call): `r` refresh, `h` help, `x` dismiss, `0`-`3` priority. `x` w
 | A session switch | Switch step 6 |
 | The end of a main-loop turn | `turnComplete`, after the bus. A turn with an `agentId` is a subagent's and is no boundary: its items reach the next main-loop boundary |
 | A change of the config file | `refreshConfig`: the tick, `/track` and the pane read the file |
-| A dismiss or `/track clear` | The end of `dismiss` and of `clear` (S14) |
+| A dismiss, `/track clear` or a priority mark | The end of `dismiss`, of `clear` and of `setPriority`, which `/track prio` also calls (S14) |
 
 A data change alone is no boundary (S2): a changed text would rewrite the prompt cache in the middle of a turn. A config change applies at the next tick, which can fall inside a turn. `session.end` drops the text (§5.6).
 
@@ -1110,7 +1110,7 @@ Building and reviewing L7 settled these points. Code comments cite `S1` to `S18`
 | S11 | `/context` cannot show the section. The kit checks the compose result. | The `analysis` exclusion is the spec's call. |
 | S12 | The rebuild inside a switch is a read, with no session check. | It cannot wait for the single flight that it runs under. |
 | S13 | Only `analysis` and `teammate` are excluded. | The spec names two traits. |
-| S14 | A dismiss and `/track clear` rebuild the text at once. | They are actions of the person, and usually come between turns. A dismiss during a turn can rewrite the cache there, which S2 avoids for a data change. The person asked for the item to go, and it must not stay in the next request. |
+| S14 | A dismiss, `/track clear` and a priority mark (the pane keys and `/track prio`) rebuild the text at once. | They are actions of the person, and usually come between turns. One during a turn can rewrite the cache there, which S2 avoids for a data change. The person asked for the item to go, or to come first, and the next request must show it. The review of L7 found the priority mark. |
 | S15 | One rebuild reads the state once: `Views.viewsOf(ports, ids)` builds the views of all sources over one read. With no source on, nothing is read. | Five trackers read the state five times at each boundary, 25 extra port calls. |
 | S16 | The composer holds no rebuild flag. Every boundary calls `rebuild`, one build runs at a time, and a build that a `reset` made stale stores nothing. | PromptRebuild always flagged first, so the flag added state and no behavior. |
 | S17 | `promptLine` takes the raw text and its cap, and gives the quoted text the room that the head and the facts leave in 200 characters. With no room it leaves the text out. | The composer clips a line after the tracker quoted it, and a long line lost its closing quote. |

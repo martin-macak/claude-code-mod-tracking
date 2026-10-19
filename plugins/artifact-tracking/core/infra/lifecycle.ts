@@ -208,10 +208,7 @@ export class LifecycleManager extends PaneApi {
 
   // ---------------------------------------------------------------- entry, tick, events
 
-  /**
-   * The first step of every hook that reads or writes session data: the start (once per load), the session check,
-   * then the watchdog of the tick. `ports` are the dispatch's own.
-   */
+  /** The first step of every hook that touches session data: the start (once per load), the session check, the tick. */
   async entry(ports: Ports): Promise<void> {
     await this.ensureStarted(ports)
     await this.watch.check()
@@ -290,10 +287,11 @@ export class LifecycleManager extends PaneApi {
 
   // ---------------------------------------------------------------- the pane (its reads and keys come from PaneApi)
 
-  /** The person's mark on a row; `undefined` removes it. `top` comes from a rule and does nothing. */
+  /** The person's mark on a row; `undefined` removes it. `top` is a rule's and does nothing. The prompt follows. */
   async setPriority(ports: Ports, rowId: string, level: Level | undefined): Promise<void> {
     await this.entry(ports)
     await this.items.setPriority(rowId, level)
+    await this.prompt.rebuild(ports)
   }
 
   /** The Refresh key: the item host refreshes at once and the trackers hear `manual`, with no wait. */
