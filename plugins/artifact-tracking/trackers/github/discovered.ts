@@ -2,13 +2,10 @@
 // Pure: no `$`. A call that changes nothing returns its input list (A22).
 
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
-import type { DiscoveredPr, DiscoveryApplied, GitHubRecord, ItemRecord, Ref, Source } from '../../hooks/contracts'
-import { AUTO_SOURCES } from '../../hooks/contracts'
+import type { DiscoveredPr, DiscoveryApplied, GitHubRecord, ItemRecord, Ref } from '../../hooks/contracts'
 import { isAutoOnly, keyOf, prKey } from '../../hooks/model/keys'
 import { enforceCap, recordFromRef } from '../../hooks/model/registry'
 import { PR_LANE_DEFAULTS } from './config'
-
-const isAuto = (s: Source): boolean => AUTO_SOURCES.has(s)
 
 /** The issue keys of the PR's closing references, in reply order. */
 const closesOf = (pr: DiscoveredPr): string[] =>
@@ -194,21 +191,5 @@ export function applyDiscovery(
   return { list: changed ? capped : (list as ItemRecord[]), added, untracked: notAdded.size }
 }
 
-/** Removes `auto`, `pr-body` and `via` from the given keys. A record left with no source goes. */
-export function dropAuto(list: readonly ItemRecord[], keys: ReadonlySet<string>): ItemRecord[] {
-  let changed = false
-  const out: ItemRecord[] = []
-  for (const rec of list) {
-    if (!keys.has(rec.key) || (!rec.sources.some(isAuto) && rec.via === undefined)) {
-      out.push(rec)
-      continue
-    }
-    changed = true
-    const sources = rec.sources.filter(s => !isAuto(s))
-    if (sources.length === 0) continue
-    const next: ItemRecord = { ...rec, sources }
-    delete next.via
-    out.push(next)
-  }
-  return changed ? out : (list as ItemRecord[])
-}
+// `dropAuto` moved to the record algebra in plan L5, Task 4. The store imports it from here until Task 8.
+export { dropAuto } from '../../core/lib/records'

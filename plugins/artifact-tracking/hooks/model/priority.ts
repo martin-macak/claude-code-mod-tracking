@@ -1,185 +1,75 @@
 // Priority of a tracked item (issue #30): the order of the levels, their markers and the merge of manual marks.
 // Pure: no `$`. A record's `priority` is the person's manual mark only. Absent means no mark.
+// A binding over `core/infra/priority.ts` and the rules of the shipped kinds (plan L5, Task 6): each function keeps its
+// old signature, and Task 15 moves it to the test fixtures.
 
-import type { GitHubRecord, ItemRecord, JiraNode, Priority, RepoRef } from '../contracts'
-import { JIRA_KEY } from '../contracts'
-import { extractRefs } from '../scan/refs'
-import { childId, keyOf } from './keys'
+import { effectiveLevels as levelsOf, rowIdOf as rowOf, setLevel } from '../../core/infra/priority'
+import type { Effective, Json, PriorityRule } from '../../core/interfaces/items'
+import { scanContext } from '../../core/lib/kind-context'
+import type { Priority } from '../../core/lib/levels'
+import type { KindTable } from '../../core/lib/records'
+import { GITHUB_DEFAULTS } from '../../trackers/github/config'
+import { BRANCH_PR, CLOSED_BY_PR } from '../../trackers/github/rules'
+import { mergeNodePriorities } from '../../trackers/jira/nodes'
+import type { ItemRecord, RepoRef } from '../contracts'
+import { REF_KINDS } from '../scan/refs'
+import { KINDS } from './registry'
 
-/** A level, highest first. `top` comes from an auto rule only; a person sets `high`, `normal` or `low`. */
-export type Level = 'top' | Priority
+export type { Level } from '../../core/lib/levels'
+// The level helpers moved to core/lib/levels.ts in plan L5, Task 2. The old callers import them from here until Task 15.
+export { byLevel, markerOf, mergePriority, rankOf, withPriority } from '../../core/lib/levels'
+export type { Effective }
+export { mergeNodePriorities }
 
-const LEVELS: readonly Level[] = ['top', 'high', 'normal', 'low']
-
-/** The place of a level in LEVELS: lower is higher. No level reads as `normal`. */
-export const rankOf = (level: Level | undefined): number => LEVELS.indexOf(level ?? 'normal')
-
-/** Sort comparator, higher level first. Equal levels give 0, so a stable sort keeps the old order. */
-export const byLevel = (a: Level | undefined, b: Level | undefined): number => rankOf(a) - rankOf(b)
-
-const MARKER = { top: '★', high: '▲', normal: '', low: '▽' } as const
-
-/** The glyph of a level. Normal, and no level, have none. */
-export const markerOf = (level: Level | undefined): '' | '★' | '▲' | '▽' => MARKER[level ?? 'normal']
-
-/** Two manual marks of one item: a set mark beats no mark, and of two set marks the higher wins. */
-export function mergePriority(a: Priority | undefined, b: Priority | undefined): Priority | undefined {
-  if (a === undefined) return b
-  if (b === undefined) return a
-  return rankOf(a) <= rankOf(b) ? a : b
-}
-
-/** `node` with `priority` set, or without the key when it is undefined. */
-export function withPriority<T extends { priority?: Priority }>(node: T, priority: Priority | undefined): T {
-  const out = { ...node }
-  if (priority === undefined) delete out.priority
-  else out.priority = priority
-  return out
-}
-
-/** Child trees of one Jira item: `a` gives the shape; each node merges the mark of the same key in `b`, level by level. */
-export function mergeNodePriorities(a: readonly JiraNode[], b: readonly JiraNode[]): JiraNode[] {
-  const byKey = new Map(b.map(n => [n.key, n]))
-  return a.map(n => {
-    const other = byKey.get(n.key)
-    const children = mergeNodePriorities(n.children, other?.children ?? [])
-    return withPriority({ ...n, children }, mergePriority(n.priority, other?.priority))
-  })
-}
-
-/** `nodes` with the mark of child row `id` set, or undefined when no node of the tree is `id` or nothing changes. */
-function setNode(
-  nodes: readonly JiraNode[],
-  parentId: string,
-  id: string,
-  level: Priority | undefined,
-): JiraNode[] | undefined {
-  for (const [i, n] of nodes.entries()) {
-    const nid = childId(parentId, n.key)
-    if (nid !== id && !id.startsWith(`${nid}/`)) continue
-    let next: JiraNode | undefined
-    if (nid === id) next = n.priority === level ? undefined : withPriority(n, level)
-    else {
-      const children = setNode(n.children, nid, id, level)
-      if (children) next = { ...n, children }
-    }
-    return next ? nodes.map((x, j) => (j === i ? next : x)) : undefined
-  }
-  return undefined
-}
+const table: KindTable = category => KINDS.find(kind => kind.category === category)
 
 /**
  * The list with the person's mark on row `id` set to `level`, or removed when `level` is undefined. `id` is an item
  * key, or the `childId` path of a Jira child. An unknown id, or a mark that does not change, gives the input list.
  */
 export function setPriority(list: readonly ItemRecord[], id: string, level: Priority | undefined): ItemRecord[] {
-  const i = list.findIndex(r => r.key === id || (r.category === 'jira' && id.startsWith(`${r.key}/`)))
-  const rec = list[i]
-  if (!rec) return list as ItemRecord[]
-  let next: ItemRecord | undefined
-  if (rec.key === id) next = rec.priority === level ? undefined : withPriority(rec, level)
-  else if (rec.category === 'jira') {
-    const children = setNode(rec.children, rec.key, id, level)
-    if (children) next = { ...rec, children }
-  }
-  return next ? list.map((r, j) => (j === i ? next : r)) : (list as ItemRecord[])
+  return setLevel(list, id, level, table) as unknown as ItemRecord[]
 }
 
 // ---------------------------------------------------------------- auto levels (study section 5)
 
-/** The level an item shows: its manual mark, else what a rule gives (`auto`), else none. */
-export type Effective = { level?: Level; auto?: true }
-
-/** What the rules read besides the records. `currentBranch` absent: detached HEAD or not known yet. */
+/** What the auto rules read: the session repo, and the branch of this session's cwd. `currentBranch` absent: detached HEAD or not known yet. */
 export type LevelContext = { sessionRepo?: RepoRef | null; currentBranch?: string }
 
-export type ItemClass = 'github-pr' | 'github-issue' | 'jira' | 'artifact' | 'web' | 'file'
-
-/** What a rule may read: the context, the levels found so far, and the tracked PRs that close an issue. */
-export type RuleEnv = {
-  ctx: LevelContext
-  levelOf(key: string): Level | undefined
-  closers(issueKey: string): readonly GitHubRecord[]
+/** R9: the rules of the github kind by id. The other kinds have none yet. */
+export const RULES: Readonly<Record<string, PriorityRule>> = {
+  [BRANCH_PR.id]: BRANCH_PR,
+  [CLOSED_BY_PR.id]: CLOSED_BY_PR,
 }
 
-/** A rule of one item class. It gives an auto level or none. A manual mark always wins over it. */
-export type Rule = (rec: ItemRecord, env: RuleEnv) => Level | undefined
-
-/** A GitHub item of unknown type has no class, so no rule. */
-export function classOf(rec: ItemRecord): ItemClass | undefined {
-  if (rec.category !== 'github') return rec.category
-  return rec.type === 'pr' ? 'github-pr' : rec.type === 'issue' ? 'github-issue' : undefined
-}
-
-const lower = (s: string | undefined): string => (s ?? '').toLowerCase()
-const inRepo = (rec: GitHubRecord, repo: RepoRef): boolean =>
-  lower(rec.host) === lower(repo.host) && lower(rec.owner) === lower(repo.owner) && lower(rec.repo) === lower(repo.repo)
-
-/** R7: an open PR (a draft too) of the session repo whose head is the current branch is `top`. */
-const branchPr: Rule = (rec, { ctx }) =>
-  rec.category === 'github' &&
-  rec.state === 'open' &&
-  ctx.currentBranch !== undefined &&
-  rec.headRefName === ctx.currentBranch &&
-  ctx.sessionRepo &&
-  inRepo(rec, ctx.sessionRepo)
-    ? 'top'
-    : undefined
-
-/** R8: an issue takes the highest level of the tracked PRs that close it, `low` included. Normal is no level. */
-const closedByPr: Rule = (rec, env) => {
-  let best: Level | undefined
-  for (const pr of env.closers(rec.key)) {
-    const level = env.levelOf(pr.key) ?? 'normal'
-    if (best === undefined || rankOf(level) < rankOf(best)) best = level
+/** The shipped kinds, each with the rules of `extra` whose id is its category. */
+function withRules(extra: readonly PriorityRule[]): KindTable {
+  return category => {
+    const kind = table(category)
+    const own = extra.filter(rule => rule.id === category)
+    return kind && own.length > 0 ? { ...kind, rules: [...(kind.rules ?? []), ...own] } : kind
   }
-  return best === 'normal' ? undefined : best
 }
-
-/** R9: the rules per item class. Jira, artifacts, web links and files have none yet. */
-export const RULES: Readonly<Partial<Record<ItemClass, Rule>>> = { 'github-pr': branchPr, 'github-issue': closedByPr }
 
 /**
- * The level of every record, by key: the manual mark, else the rule of its class, else none. Issues go last, so they
- * read the final level of each PR, manual or auto. One pass over the records and one map: O(n), no I/O.
+ * The level of every record, by key: the manual mark, else the rules of its kind in stages, else none. `extra` rules
+ * join the kind whose category is the rule's id. The facts the rules read come from `ctx`.
  */
 export function effectiveLevels(
   records: readonly ItemRecord[],
   ctx: LevelContext,
-  rules: Readonly<Partial<Record<ItemClass, Rule>>> = RULES,
+  extra: readonly PriorityRule[] = [],
 ): Map<string, Effective> {
-  const out = new Map<string, Effective>()
-  const closing = new Map<string, GitHubRecord[]>()
-  for (const r of records)
-    if (r.category === 'github' && r.type === 'pr')
-      for (const k of r.closes ?? []) closing.set(k, [...(closing.get(k) ?? []), r])
-  const env: RuleEnv = { ctx, levelOf: key => out.get(key)?.level, closers: key => closing.get(key) ?? [] }
-  const resolve = (rec: ItemRecord): void => {
-    if (rec.priority !== undefined) {
-      out.set(rec.key, { level: rec.priority })
-      return
-    }
-    const cls = classOf(rec)
-    const level = cls === undefined ? undefined : rules[cls]?.(rec, env)
-    out.set(rec.key, level === undefined ? {} : { level, auto: true })
+  const facts: Record<string, Json | undefined> = {
+    'session.repo': (ctx.sessionRepo ?? undefined) as unknown as Json | undefined,
+    'auto.branches': ctx.currentBranch === undefined ? undefined : { current: ctx.currentBranch },
   }
-  for (const rec of records) if (classOf(rec) !== 'github-issue') resolve(rec)
-  for (const rec of records) if (classOf(rec) === 'github-issue') resolve(rec)
-  return out
+  return levelsOf(records, extra.length === 0 ? table : withRules(extra), {
+    read: <T extends Json>(name: string) => facts[name] as T | undefined,
+  })
 }
 
 // ---------------------------------------------------------------- /track prio (R11)
-
-/** The row id of the first node in a Jira tree whose key is `key`, depth first. */
-function childRow(nodes: readonly JiraNode[], parentId: string, key: string): string | undefined {
-  for (const n of nodes) {
-    const id = childId(parentId, n.key)
-    if (n.key === key) return id
-    const deeper = childRow(n.children, id, key)
-    if (deeper !== undefined) return deeper
-  }
-  return undefined
-}
 
 /**
  * The row id a `/track prio` ref names, or undefined when it names no tracked row. A Jira key, in any case, names a
@@ -190,22 +80,11 @@ export function rowIdOf(
   ref: string,
   opts: { defaultRepo: RepoRef | null; githubHosts: readonly string[] },
 ): string | undefined {
-  const upper = ref.toUpperCase()
-  if (JIRA_KEY.test(upper)) {
-    for (const rec of list) {
-      if (rec.category !== 'jira') continue
-      if (rec.issueKey === upper) return rec.key
-      const child = childRow(rec.children, rec.key, upper)
-      if (child !== undefined) return child
-    }
-    return undefined
-  }
-  const [first] = extractRefs(ref, {
+  const ctx = scanContext({
     mode: 'full',
-    strictShortRefs: false,
-    ...opts,
-    githubHosts: [...opts.githubHosts],
+    purpose: 'lookup',
+    facts: { 'session.repo': opts.defaultRepo as unknown as Json, 'github.hosts': [...opts.githubHosts] },
+    slice: { shortRefKeywords: [...GITHUB_DEFAULTS.shortRefKeywords] },
   })
-  const key = first === undefined ? undefined : keyOf(first)
-  return key !== undefined && list.some(r => r.key === key) ? key : undefined
+  return rowOf(list, ref, REF_KINDS, ctx)
 }

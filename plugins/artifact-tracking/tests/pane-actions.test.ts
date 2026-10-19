@@ -1,4 +1,4 @@
-// The pane's write callbacks on fakePorts, through a real LifecycleManager and item runtime: fold, refresh, dismiss,
+// The pane's write callbacks on fakePorts, through a real LifecycleManager and item service: fold, refresh, dismiss,
 // focus and the priority keys, and the rules that pick the row a key acts on. Plan: L3 Task 12.
 import { expect, test } from 'claude-code/testing'
 import type { Tracker } from '../core/interfaces/tracker'

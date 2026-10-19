@@ -1,7 +1,7 @@
 // Tool base class: probe cache, exec rejection, outcome bookkeeping. Pure, fake Runner.
 import { expect, test } from 'claude-code/testing'
-import type { Outcome } from '../core/infra/tool'
-import { Tool } from '../core/infra/tool'
+import type { Outcome } from '../core/lib/tool'
+import { Tool } from '../core/lib/tool'
 import type { Runner, RunResult } from '../hooks/contracts'
 
 const ok = (stdout = '', exitCode = 0, stderr = ''): RunResult => ({ exitCode, stdout, stderr })

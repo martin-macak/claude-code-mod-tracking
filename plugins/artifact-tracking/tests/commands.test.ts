@@ -1,0 +1,323 @@
+// `/track` through the Commands router. The moved L3 cases run on a real LifecycleManager over fakePorts (the empty
+// command, refresh, clear, prio and the usage line, each mirroring the kit test of the same subject in
+// register.test.tsx). The cases of the router alone run on a fake CommandHost, so they see the order of the calls.
+// Plan: L3 Task 12 (the moved cases), L5 Task 9 (the router, K15, K19).
+import { expect, test } from 'claude-code/testing'
+import { CORE_HINT, type CommandHost, Commands, PRIO_WORDS, USAGE } from '../core/infra/commands'
+import { LifecycleManager } from '../core/infra/lifecycle'
+import type { CommandEvent } from '../core/interfaces/events'
+import type { CommandSpec, Tracker } from '../core/interfaces/tracker'
+import { autoDismiss } from '../trackers/auto/dismiss-store'
+import { fakeConfig } from './fixtures/config-fs'
+import { promptRow } from './fixtures/items'
+import { managerWorld } from './fixtures/manager'
+import { fakePorts } from './fixtures/ports'
+
+const USAGE_LITERAL = 'Usage: /track [refresh|clear|prio <ref> <high|normal|low|auto>]'
+
+/** A tracker that writes the commands it hears to `log`, with the number of items at that moment. */
+function recorder(log: string[], count: () => number): Tracker {
+  return {
+    id: 'recorder',
+    order: 5,
+    config: { defaults: { enabled: true }, normalise: (_raw, defaults) => defaults },
+    init: () => {},
+    store: ctx => ctx.config.slice(),
+    events: { command: (_ctx, ev) => void log.push(`command:${ev.sub || '-'}:${ev.wait}:${count()}`) },
+  }
+}
+
+function world() {
+  const log: string[] = []
+  const w = managerWorld({ extra: [recorder(log, () => w.keys().length)] })
+  const run = (args: string) => w.m.track(w.w.ports, args)
+  const see = (text: string) => w.m.row(w.w.ports, promptRow(text))
+  return { ...w, log, run, see }
+}
+
+test('the empty command opens the pane, runs the tracker commands and prints the text', async () => {
+  const t = world()
+  expect((await t.run('')).text).toBe('No tracked items yet.')
+  expect(t.w.ui.opened).toBe(1)
+  expect(t.w.ui.toasts).toEqual([])
+  expect(t.log).toEqual(['command:-:true:0'])
+  await t.see('look at https://docs.example/a')
+  expect((await t.run('')).text).toContain('docs.example/a')
+  expect(t.w.calls.filter(c => c[0] === 'gh' && c[1] === '--version').length).toBe(1) // the probes are cached
+})
+
+test('the empty command toasts when the pane has no room, and still prints the text', async () => {
+  const t = world()
+  t.w.ui.placed = false
+  expect((await t.run('')).text).toBe('No tracked items yet.')
+  expect(t.w.ui.toasts).toEqual(['Widen the terminal to see the tracking pane'])
+})
+
+test('refresh refreshes the items, then runs the tracker commands', async () => {
+  const t = world()
+  const order: string[] = []
+  const refreshAll = t.rt.refreshAll.bind(t.rt)
+  t.rt.refreshAll = async () => {
+    order.push('items')
+    await refreshAll()
+    order.push('items done')
+  }
+  await t.see('https://github.com/acme/web/issues/9')
+  t.log.length = 0
+  const out = await t.run('refresh')
+  expect(order).toEqual(['items', 'items done'])
+  expect(t.log).toEqual(['command:refresh:true:1']) // after the items were refreshed, with the item still listed
+  expect(out.text).toContain('#9')
+})
+
+test('clear runs the tracker commands, then clears the list and the stored copy', async () => {
+  const t = world()
+  await t.see('look at https://docs.example/a')
+  await t.w.clock.advance(1600) // the flush writes the stored copy
+  expect(t.w.store.has('v2:s:sess-1')).toBe(true)
+  const out = await t.run('clear')
+  expect(out.text).toBe('Tracking list cleared.')
+  expect(t.log).toEqual(['command:clear:true:1']) // the trackers hear it while the list is still there
+  expect(t.keys()).toEqual([])
+  expect(t.w.store.has('v2:s:sess-1')).toBe(false)
+})
+
+test('prio sets a level by ref and saves it before the reply', async () => {
+  const t = world()
+  await t.see('see https://github.com/acme/web/issues/9')
+  expect(t.w.store.has('v2:s:sess-1')).toBe(false) // the flush is 1.5 s away
+  const out = await t.run('prio #9 high')
+  expect(out.text).toContain('#9')
+  const copy = t.w.store.get('v2:s:sess-1') as unknown as { items: { priority?: string }[] }
+  expect(copy.items[0]?.priority).toBe('high') // flushed now, no clock advance
+  await t.run('PRIO #9 auto')
+  expect((t.items()[0] as { priority?: string }).priority).toBeUndefined()
+})
+
+test('prio of an untracked ref says Not tracked', async () => {
+  const t = world()
+  expect((await t.run('prio #99 high')).text).toBe('Not tracked: #99')
+})
+
+test('a bad level or a bogus argument prints the usage', async () => {
+  const t = world()
+  await t.see('see https://github.com/acme/web/issues/9')
+  for (const args of ['prio #9 urgent', 'prio #9', 'bogus', 'refresh now']) expect((await t.run(args)).text).toBe(USAGE)
+  expect((t.items()[0] as { priority?: string }).priority).toBeUndefined()
+})
+
+// ---------------------------------------------------------------- the router alone, on a fake host
+
+type Declared = { owner: string; spec: CommandSpec }
+
+/** A CommandHost that writes each call to `calls`, in order. `LIST` stands for the text of the list. */
+function fakeHost(
+  o: {
+    ready?: boolean
+    declared?: readonly Declared[]
+    rowId?: (ref: string) => string | undefined
+    problems?: readonly string[]
+    flush?: () => Promise<void>
+  } = {},
+) {
+  const calls: string[] = []
+  const note = (line: string) => void calls.push(line)
+  const host: CommandHost = {
+    entry: async () => note('entry'),
+    items: {
+      ready: o.ready ?? true,
+      prepare: async () => note('prepare'),
+      settle: async () => note('settle'),
+      kick: reason => note(`kick:${reason}`),
+      refreshAll: async () => note('refreshAll'),
+      rowIdOf: async ref => {
+        note(`rowIdOf:${ref}`)
+        return o.rowId?.(ref)
+      },
+      setPriority: async (id, level) => {
+        note(`setPriority:${id}:${level}`)
+        return true
+      },
+    },
+    broadcast: async (_p, ev: CommandEvent) => note(`broadcast:${ev.sub || '-'}:${ev.args}:${ev.wait}`),
+    declared: () => o.declared ?? [],
+    runDeclared: async (_p, owner, ev) => note(`run:${owner}:${ev.sub}:${ev.args}:${ev.wait}`),
+    openPane: async () => note('openPane'),
+    clear: async () => note('clear'),
+    flushNow: async () => {
+      note('flushNow')
+      await o.flush?.()
+    },
+    refreshConfig: async () => {
+      note('refreshConfig')
+      return false
+    },
+    config: { path: () => '/p/config.json', problems: () => o.problems ?? [] },
+  }
+  const commands = new Commands(host, async () => 'LIST')
+  return { commands, calls, ports: fakePorts().ports }
+}
+
+const notes = (owner: string, hint = '<id>'): Declared => ({ owner, spec: { sub: 'notes', hint } })
+
+test('the empty command keeps the order: config, probes, repo, trackers, pane, kick, list', async () => {
+  const t = fakeHost()
+  expect((await t.commands.run(t.ports, '')).text).toBe('LIST')
+  expect(t.calls).toEqual([
+    'entry',
+    'refreshConfig',
+    'settle',
+    'prepare',
+    'broadcast:-::true',
+    'openPane',
+    'kick:open',
+    'prepare', // the list waits for the repo too
+  ])
+})
+
+test('refresh and clear keep their order, and clear prints no list', async () => {
+  const t = fakeHost()
+  expect((await t.commands.run(t.ports, ' REFRESH ')).text).toBe('LIST')
+  expect(t.calls).toEqual(['entry', 'refreshConfig', 'refreshAll', 'broadcast:refresh::true', 'prepare'])
+  t.calls.length = 0
+  expect((await t.commands.run(t.ports, 'clear')).text).toBe('Tracking list cleared.')
+  expect(t.calls).toEqual(['entry', 'broadcast:clear::true', 'clear'])
+})
+
+test('an item host that never started says it is not ready', async () => {
+  const t = fakeHost({ ready: false })
+  expect((await t.commands.run(t.ports, '')).text).toBe('artifact-tracking: not ready.')
+  expect(t.calls).toEqual(['entry']) // no pane, no refresh, no broadcast
+})
+
+test('prio #5 with no session repo finds the unresolved gh:?#5', async () => {
+  const t = fakeHost({ rowId: ref => (ref === '#5' ? 'gh:?#5' : undefined) })
+  expect((await t.commands.run(t.ports, 'prio #5 high')).text).toBe('LIST')
+  expect(t.calls).toEqual(['entry', 'rowIdOf:#5', 'setPriority:gh:?#5:high', 'flushNow', 'prepare'])
+})
+
+test('prio auto removes the mark, a word keeps the case of the ref, and a failed flush does not fail the reply', async () => {
+  const t = fakeHost({
+    rowId: ref => ref,
+    flush: async () => {
+      throw new Error('disk full')
+    },
+  })
+  expect((await t.commands.run(t.ports, 'Prio  ISS-9   AUTO')).text).toBe('LIST')
+  expect(t.calls).toContain('rowIdOf:ISS-9')
+  expect(t.calls).toContain('setPriority:ISS-9:undefined')
+  expect([...PRIO_WORDS].sort()).toEqual(['auto', 'high', 'low', 'normal'])
+})
+
+test('a ref that names no row says Not tracked and sets nothing', async () => {
+  const t = fakeHost()
+  expect((await t.commands.run(t.ports, 'prio nope low')).text).toBe('Not tracked: nope')
+  expect(t.calls).toEqual(['entry', 'rowIdOf:nope'])
+})
+
+test('a declared command runs only its first owner and prints the list', async () => {
+  const t = fakeHost({ declared: [notes('a'), notes('b')] })
+  expect((await t.commands.run(t.ports, 'notes 7')).text).toBe('LIST')
+  expect(t.calls).toEqual(['entry', 'run:a:notes:7:true', 'prepare'])
+})
+
+test('a declared command takes its sub in any case, with no argument, and keeps the rest as typed', async () => {
+  const t = fakeHost({ declared: [{ owner: 'a', spec: { sub: 'Notes', hint: '' } }] })
+  await t.commands.run(t.ports, 'NOTES')
+  await t.commands.run(t.ports, '  notes   Keep  The CASE  ')
+  expect(t.calls.filter(c => c.startsWith('run:'))).toEqual(['run:a:Notes::true', 'run:a:Notes:Keep  The CASE:true'])
+})
+
+test('a sub that no tracker declared, or that core claims, prints the usage', async () => {
+  const claimed: Declared[] = ['refresh', 'clear', 'prio'].map(sub => ({ owner: 'a', spec: { sub, hint: '' } }))
+  const t = fakeHost({ declared: [...claimed, notes('a')] })
+  for (const args of ['nope', 'refresh now', 'clear all', 'prio #1 urgent', 'notesx'])
+    expect((await t.commands.run(t.ports, args)).text).toBe(USAGE)
+  expect(t.calls.some(c => c.startsWith('run:'))).toBe(false)
+})
+
+test("the hint is today's literal with no declared command and grows with one", () => {
+  expect(fakeHost().commands.hint()).toBe('[refresh|clear|prio <ref> <level>]')
+  expect(CORE_HINT).toBe('[refresh|clear|prio <ref> <level>]')
+  const one = fakeHost({ declared: [notes('a')] }).commands.hint()
+  expect(one).toBe('[refresh|clear|prio <ref> <level>|notes <id>]')
+  const more = fakeHost({
+    declared: [
+      notes('a'),
+      notes('b', '<other>'), // the same sub again: the first owner runs it, so the hint lists it once
+      { owner: 'b', spec: { sub: 'refresh', hint: '' } }, // core claims it first
+      { owner: 'b', spec: { sub: 'sweep', hint: '' } }, // no hint text: no trailing space
+    ],
+  }).commands.hint()
+  expect(more).toBe('[refresh|clear|prio <ref> <level>|notes <id>|sweep]')
+})
+
+test("the usage line is today's literal", () => {
+  expect(USAGE).toBe(USAGE_LITERAL)
+})
+
+test('the replies that print the list end with the config problems after one blank line; clear and the usage do not', async () => {
+  const t = fakeHost({ problems: ['X.'], rowId: ref => ref })
+  const block = '\n\nConfig problems in /p/config.json:\n  X.'
+  for (const args of ['', 'refresh', 'prio a high'])
+    expect((await t.commands.run(t.ports, args)).text).toBe(`LIST${block}`)
+  expect((await t.commands.run(t.ports, 'clear')).text).toBe('Tracking list cleared.')
+  expect((await t.commands.run(t.ports, 'bogus')).text).toBe(USAGE)
+})
+
+// ---------------------------------------------------------------- the router on the real manager
+
+/** A tracker that declares `/track notes` and writes each command it hears to `log`. */
+function noter(id: string, order: number, log: string[]): Tracker {
+  return {
+    id,
+    order,
+    config: {
+      defaults: { enabled: true },
+      normalise: (raw, defaults) => ({ ...defaults, enabled: raw.enabled !== false }),
+    },
+    init: () => {},
+    store: ctx => ctx.config.slice(),
+    commands: [{ sub: 'notes', hint: '<id>' }],
+    events: { command: (_ctx, ev) => void log.push(`${id}:${ev.sub || '-'}:${ev.args}:${ev.wait}`) },
+  }
+}
+
+test('a declared command of a live tracker runs through the manager: its first owner only, no broadcast', async () => {
+  const log: string[] = []
+  const t = managerWorld({ extra: [noter('second', 7, log), noter('first', 6, log)] })
+  expect(t.m.commands.hint()).toBe('[refresh|clear|prio <ref> <level>|notes <id>]')
+  expect((await t.m.track(t.w.ports, 'notes 7')).text).toBe('No tracked items yet.')
+  expect(log).toEqual(['first:notes:7:true'])
+})
+
+test('a tracker the config turned off declares no command', async () => {
+  const log: string[] = []
+  const t = managerWorld({
+    extra: [noter('first', 6, log)],
+    config: specs => fakeConfig({ specs, file: { trackers: { first: { enabled: false } } } }),
+  })
+  await t.m.entry(t.w.ports) // the start reads the toggles
+  expect(t.m.commands.hint()).toBe(CORE_HINT)
+  expect((await t.m.track(t.w.ports, 'notes 7')).text).toBe(USAGE)
+  expect(log).toEqual([])
+})
+
+test('a declared command that throws is logged and the list still prints', async () => {
+  const t = managerWorld({
+    extra: [{ ...noter('first', 6, []), events: { command: () => Promise.reject(new Error('boom')) } }],
+  })
+  expect((await t.m.track(t.w.ports, 'notes 7')).text).toBe('No tracked items yet.')
+  expect(t.w.logs.some(l => l.includes('bus: command failed in first: boom'))).toBe(true)
+})
+
+test('a manager with no listText in its deps prints no list text', async () => {
+  const w = fakePorts()
+  const m = new LifecycleManager(
+    { trackers: [], dismiss: p => autoDismiss(p.state.slot), config: () => fakeConfig({ specs: [] }), paneId: 'track' },
+    w.ports,
+  )
+  await m.start(w.ports, { fromSessionStart: true, cwd: '/work' })
+  expect(m.items.ready).toBe(true)
+  expect((await m.track(w.ports, 'refresh')).text).toBe('')
+})

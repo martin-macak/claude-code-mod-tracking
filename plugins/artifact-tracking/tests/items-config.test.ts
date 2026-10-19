@@ -1,11 +1,11 @@
-// The item runtime reads its numbers from the config views at the moment it needs them: a changed file shows at the
+// The item service reads its numbers from the config views at the moment it needs them: a changed file shows at the
 // next refresh, the next row or the next merge, with no restart (decision C5). Each test uses a value that is not the
 // default. Plan: L4 Task 7 (C12).
 import { expect, test } from 'claude-code/testing'
 import type { Claim } from '../core/interfaces/items'
 import type { GitHubRef, ItemRecord, Ref, WebRef } from '../hooks/contracts'
 import { recordFromRef } from '../hooks/model/registry'
-import { graphqlCalls, itemsWorld, promptRow, replayRow, sleep, until } from './fixtures/items'
+import { claimOf, fakeItems, graphqlCalls, promptRow, replayRow, sleep, until } from './fixtures/items'
 
 const gh = (owner: string, repo: string, n: number): GitHubRef => ({
   category: 'github',
@@ -17,8 +17,7 @@ const gh = (owner: string, repo: string, n: number): GitHubRef => ({
 })
 const rec = (ref: Ref, at = 10): ItemRecord => recordFromRef(ref, { source: 'prompt', at })
 const web = (i: number): WebRef => ({ category: 'web', url: `https://h${i}.example/`, label: `h${i}` })
-const claims = (from: number, n: number): Claim[] =>
-  Array.from({ length: n }, (_, i) => web(from + i)) as unknown as Claim[]
+const claims = (from: number, n: number): Claim[] => Array.from({ length: n }, (_, i) => claimOf(web(from + i)))
 const threeIssues = (at = 10) => [
   rec(gh('acme', 'web', 5), at),
   rec(gh('acme', 'web', 9), at),
@@ -26,7 +25,7 @@ const threeIssues = (at = 10) => [
 ]
 
 test('a changed github slice reaches the next refresh with no restart', async () => {
-  const t = itemsWorld()
+  const t = fakeItems()
   t.w.state.set('items', threeIssues() as unknown as never)
   const rt = await t.started()
   await rt.refreshAll()
@@ -37,7 +36,7 @@ test('a changed github slice reaches the next refresh with no restart', async ()
 })
 
 test('a changed staleMs reaches the due check of the next run', async () => {
-  const t = itemsWorld()
+  const t = fakeItems()
   t.w.clock.now = 400_000
   t.w.state.set('items', threeIssues().map(r => ({ ...r, refreshedAt: 300_000 })) as unknown as never) // 100 s old
   const rt = await t.started()
@@ -50,7 +49,7 @@ test('a changed staleMs reaches the due check of the next run', async () => {
 })
 
 test('maxMentionsPerRow 1 keeps one mention', async () => {
-  const t = itemsWorld({ file: { trackers: { file: { maxMentionsPerRow: 1 } } } })
+  const t = fakeItems({ file: { trackers: { file: { maxMentionsPerRow: 1 } } } })
   t.w.files['/work/a.md'] = '# a'
   t.w.files['/work/b.md'] = '# b'
   const rt = await t.started()
@@ -59,7 +58,7 @@ test('maxMentionsPerRow 1 keeps one mention', async () => {
 })
 
 test('maxMentionsPerRow 0 keeps no mention', async () => {
-  const t = itemsWorld({ file: { trackers: { file: { maxMentionsPerRow: 0 } } } })
+  const t = fakeItems({ file: { trackers: { file: { maxMentionsPerRow: 0 } } } })
   t.w.files['/work/a.md'] = '# a'
   const rt = await t.started()
   await rt.capture(promptRow('please read a.md'))
@@ -67,7 +66,7 @@ test('maxMentionsPerRow 0 keeps no mention', async () => {
 })
 
 test('with the default maxMentionsPerRow two mentions are kept', async () => {
-  const t = itemsWorld()
+  const t = fakeItems()
   t.w.files['/work/a.md'] = '# a'
   t.w.files['/work/b.md'] = '# b'
   const rt = await t.started()
@@ -76,7 +75,7 @@ test('with the default maxMentionsPerRow two mentions are kept', async () => {
 })
 
 test('a replay follows maxMentionsPerRow too', async () => {
-  const t = itemsWorld({ file: { trackers: { file: { maxMentionsPerRow: 1 } } } })
+  const t = fakeItems({ file: { trackers: { file: { maxMentionsPerRow: 1 } } } })
   t.w.files['/work/a.md'] = '# a'
   t.w.files['/work/b.md'] = '# b'
   const rt = await t.started()
@@ -85,24 +84,24 @@ test('a replay follows maxMentionsPerRow too', async () => {
 })
 
 test('the merge cap follows global.store.maxItems', async () => {
-  const t = itemsWorld({ file: { global: { store: { maxItems: 200 } } } })
+  const t = fakeItems({ file: { global: { store: { maxItems: 200 } } } })
   const rt = await t.started()
-  await rt.track(claims(0, 200), 'prompt')
+  await rt.track(claims(0, 200))
   expect(t.list().length).toBe(200)
-  await rt.track(claims(200, 1), 'prompt') // one more: the oldest goes (a record added in the same call never does)
+  await rt.track(claims(200, 1)) // one more: the oldest goes (a record added in the same call never does)
   expect(t.list().length).toBe(200)
 })
 
 test('with the default maxItems the same 201 records stay', async () => {
-  const t = itemsWorld()
+  const t = fakeItems()
   const rt = await t.started()
-  await rt.track(claims(0, 200), 'prompt')
-  await rt.track(claims(200, 1), 'prompt')
+  await rt.track(claims(0, 200))
+  await rt.track(claims(200, 1))
   expect(t.list().length).toBe(201)
 })
 
 test('shortRefKeywords from the file reach capture', async () => {
-  const t = itemsWorld({ file: { trackers: { github: { shortRefKeywords: ['ticket'] } } } })
+  const t = fakeItems({ file: { trackers: { github: { shortRefKeywords: ['ticket'] } } } })
   const rt = await t.started()
   await rt.capture(promptRow('see issue #5'))
   expect(t.keys()).toEqual([])
@@ -111,14 +110,14 @@ test('shortRefKeywords from the file reach capture', async () => {
 })
 
 test('shortRefKeywords from the file reach the replay', async () => {
-  const t = itemsWorld({ file: { trackers: { github: { shortRefKeywords: ['ticket'] } } } })
+  const t = fakeItems({ file: { trackers: { github: { shortRefKeywords: ['ticket'] } } } })
   const rt = await t.started()
   await rt.replay([replayRow('prompt', 'see issue #5'), replayRow('response', 'done with ticket #5')])
   expect(t.keys()).toEqual(['gh:github.com/acme/web#5'])
 })
 
 test('the default keywords make issue #5 a short ref', async () => {
-  const t = itemsWorld()
+  const t = fakeItems()
   const rt = await t.started()
   await rt.capture(promptRow('see issue #5'))
   expect(t.keys()).toEqual(['gh:github.com/acme/web#5'])

@@ -2,9 +2,8 @@
 // hooks/register.tsx. It writes the states it found to the slot and publishes the probe's state as the fact
 // `processes.ui`, which the pane and the `/track` text read. Plan: L3 Task 8.
 
-import type { CircuitBreaker } from '../../core/infra/circuit-breaker'
 import type { Json } from '../../core/interfaces/items'
-import type { TrackerContext } from '../../core/interfaces/tracker'
+import type { Breaker, TrackerContext } from '../../core/interfaces/tracker'
 import type { ProcessRecord, ProcessUiState } from '../../hooks/contracts'
 import {
   composeState,
@@ -25,7 +24,7 @@ export const IDLE_UI: ProcessUiState = { breaker: 'closed' }
 
 /** The tracker's state for one load: the breaker that stops probing after repeated failures. */
 export interface ProbeState {
-  readonly breaker: CircuitBreaker
+  readonly breaker: Breaker
 }
 
 type ProbeCtx = Pick<TrackerContext<{ probeTimeoutMs: number }, Json>, 'data' | 'tools' | 'clock' | 'facts' | 'config'>

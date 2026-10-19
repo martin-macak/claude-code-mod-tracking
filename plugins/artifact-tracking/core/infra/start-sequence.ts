@@ -54,8 +54,8 @@ export class StartSequence {
   constructor(private readonly d: StartDeps) {}
 
   /**
-   * The steps: the config file, the run record and the old layout, then the item runtime and the trackers (the item
-   * restore needs the active Jira site, so init comes before the session load), the config write, the start event, the
+   * The steps: the config file, the run record and the old layout, then the item host and the trackers (the item
+   * restore needs the site a tool acts on, so init comes before the session load), the config write, the start event, the
    * session load, the tick and the pane. Nothing in here may call `entry` or `ensureStarted`. A failing step is logged
    * and the sequence goes on.
    */
@@ -64,7 +64,7 @@ export class StartSequence {
     const first = this.starts++ === 0
     // The toggles and the limits of this load come from the file, so it is read before anything else uses them.
     await this.soft('config refresh', () => config.refresh(), false)
-    await this.soft('toggles', async () => host.readToggles(), undefined) // once per load; the item runtime asks first
+    await this.soft('toggles', async () => host.readToggles(), undefined) // once per load; the item host asks first
     const run = await this.soft('run load', () => persistence.loadRun(), {} as RunCopy)
     if (!this.swept) {
       this.swept = true // set first: a sweep that throws is not tried again in this load

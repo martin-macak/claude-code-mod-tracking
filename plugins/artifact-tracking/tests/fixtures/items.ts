@@ -1,18 +1,20 @@
-// An item runtime over fakePorts for the tests of the store, the funnel, the replay and the runtime. No engine, no `$`.
-// `gh` and `acli` are answered by `w.run`: the same shapes the kit world answers. The runtime gets the context a
+// An item service over fakePorts for the tests of the store, the capture, the replay and the service. No engine, no `$`.
+// `gh` and `acli` are answered by `w.run`: the same shapes the kit world answers. The service gets the context a
 // TrackerHost gives the item host (`hostCtx`), so the session check, the dismiss list and the persist signal are the
-// fakes of `hostWorld`.
+// fakes of `hostWorld`. The service comes back un-started: a test calls `await items.start(hostCtx)` itself, so it sees
+// every probe `start` issues.
+import { ItemService } from '../../core/infra/items'
 import type { ReplayItem, RowEvent } from '../../core/interfaces/events'
-import type { Json, JsonObject } from '../../core/interfaces/items'
+import type { Claim, Json, JsonObject } from '../../core/interfaces/items'
 import type { RepoRemote, RunResult } from '../../core/interfaces/ports'
 import type { Tracker } from '../../core/interfaces/tracker'
-import type { ItemRecord } from '../../hooks/contracts'
-import { ItemRuntime } from '../../hooks/items/runtime'
-import { artifactConfig } from '../../trackers/artifact/config'
-import { fileConfig } from '../../trackers/file/config'
-import { githubConfig } from '../../trackers/github/config'
-import { jiraConfig } from '../../trackers/jira/config'
-import { webConfig } from '../../trackers/web/config'
+import type { ItemRecord, Ref } from '../../hooks/contracts'
+import { keyOf } from '../../hooks/model/keys'
+import { artifactTracker } from '../../trackers/artifact'
+import { fileTracker } from '../../trackers/file'
+import { githubTracker } from '../../trackers/github'
+import { jiraTracker } from '../../trackers/jira'
+import { webTracker } from '../../trackers/web'
 import * as acliFx from './acli'
 import * as ghFx from './gh'
 import { hostWorld } from './tracker-host'
@@ -48,32 +50,21 @@ function withKey(json: string, key: string): string {
   return JSON.stringify(o)
 }
 
-/**
- * The five item kinds as bare trackers with their real config specs, so the host's config turns one off
- * (`{ trackers: { web: { enabled: false } } }`) and serves the slice with every default filled.
- */
-const KINDS = [
-  ['github', githubConfig],
-  ['jira', jiraConfig],
-  ['artifact', artifactConfig],
-  ['file', fileConfig],
-  ['web', webConfig],
-] as const
-const kindTrackers = (): Tracker[] =>
-  KINDS.map(([id, config], i) => ({
-    id,
-    order: 10 * (i + 1),
-    config: config as unknown as Tracker['config'],
-    init: () => {},
-    store: ctx => ctx.config.slice(),
-  }))
-
 export type ItemsOpts = {
   /** The session repo `ports.session.repo()` answers. Default `acme/web` on github.com. */
   remote?: RepoRemote | null
   /** Answers first. undefined falls through to the defaults. */
   run?: (argv: string[]) => RunResult | undefined | Promise<RunResult | undefined>
 }
+
+/** The five item trackers, as TRACKERS lists them: each brings its kind and its tool. */
+export const itemTrackers = (): Tracker[] => [
+  githubTracker(),
+  jiraTracker(),
+  webTracker(),
+  artifactTracker(),
+  fileTracker(),
+]
 
 /** The answers of gh and acli that the item tests share: versions, auth, GraphQL nodes, a Jira view. */
 export function ghAcliRun(o: ItemsOpts = {}): (argv: string[]) => Promise<RunResult | undefined> {
@@ -95,28 +86,59 @@ export function ghAcliRun(o: ItemsOpts = {}): (argv: string[]) => Promise<RunRes
 }
 
 /**
- * `off` turns item kinds off in the host's config (`github`, `jira`, `artifact`, `file`, `web`). `file` is the config file
- * the host reads, e.g. `{ trackers: { github: { chunkSize: 2 } } }`; `off` adds to its `trackers`.
+ * `off` turns item trackers off in the host's config (`github`, `jira`, `artifact`, `file`, `web`). `file` is the config file
+ * the host reads, e.g. `{ trackers: { github: { chunkSize: 2 } } }`; `off` adds to its `trackers`. `live` replaces what the
+ * TrackerHost says is on. `trackers` replaces the five item trackers.
  */
-export function itemsWorld(o: ItemsOpts & { off?: readonly string[]; file?: JsonObject } = {}) {
-  const trackers = {
+export function fakeItems(
+  o: ItemsOpts & {
+    off?: readonly string[]
+    file?: JsonObject
+    live?: (id: string) => boolean
+    trackers?: readonly Tracker[]
+  } = {},
+) {
+  const trackers = o.trackers ?? itemTrackers()
+  const config = {
     ...Object.fromEntries((o.off ?? []).map(id => [id, { enabled: false }])),
     ...((o.file?.trackers as JsonObject | undefined) ?? {}),
   }
-  const t = hostWorld(kindTrackers(), { file: { ...(o.file ?? {}), trackers } })
-  t.host.readToggles() // the start sequence does this before the item runtime starts
+  const t = hostWorld(trackers, { file: { ...(o.file ?? {}), trackers: config } })
+  t.host.readToggles() // the start sequence does this before the item host starts
   t.w.session.repo = o.remote === undefined ? { host: 'github.com', owner: 'acme', repo: 'web' } : o.remote
   t.w.run = ghAcliRun(o)
-  const rt = new ItemRuntime(t.w.ports.state)
-  const ctx = t.host.hostCtx(t.w.ports)
+  const dismiss = {
+    list: async () => t.dismissed as ReadonlySet<string>,
+    add: async (ids: readonly string[]) => {
+      for (const id of ids) t.dismissed.add(id)
+    },
+  }
+  const items = new ItemService({
+    trackers,
+    live: o.live ?? (id => t.host.live(id)),
+    config: t.cfg,
+    facts: t.facts,
+    dismiss,
+    watch: t.watch,
+    persisted: () => void t.persisted.push('items'),
+    state: t.w.ports.state,
+    log: t.w.ports.log,
+  })
+  const hostCtx = t.host.hostCtx(t.w.ports)
   const started = async () => {
-    await rt.start(ctx)
-    await rt.settleProbes()
-    return rt
+    await items.start(hostCtx)
+    await items.settle()
+    return items
   }
   const list = () => (t.w.state.get('items') ?? []) as unknown as ItemRecord[]
   const keys = () => list().map(r => r.key)
-  return { ...t, rt, ctx, started, list, keys }
+  return { ...t, world: t.w, items, hostCtx, dismiss, started, list, keys }
+}
+
+/** A claim of a ref, as a kind makes it: the ref fields under the category, seen at `at` from `source`. */
+export function claimOf(ref: Ref, source = 'prompt', at = 10): Claim {
+  const { category, ...fields } = ref
+  return { category, key: keyOf(ref), source, at, fields: fields as unknown as JsonObject }
 }
 
 /** Waits until a condition holds, for work the runtime starts and does not return (a refresh kick, a repo lookup). */

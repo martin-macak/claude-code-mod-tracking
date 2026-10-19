@@ -1,4 +1,4 @@
-// Helpers for untrusted JSON: engine results and `gh` replies. Pure. One copy for every reader.
+// Helpers for untrusted JSON: engine results and tool replies. Pure. One copy for every reader.
 
 export type Json = Record<string, unknown>
 

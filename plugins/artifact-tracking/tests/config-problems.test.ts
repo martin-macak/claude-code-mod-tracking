@@ -1,7 +1,7 @@
 // Config problems in `/track`: the text block (copy H), and which replies carry it. The config is a fake with a path and a
 // list of problems, so the test sees the order of the calls and the exact text. Plan: L4 Task 6 (decision C6).
 import { expect, test } from 'claude-code/testing'
-import { problemsText, trackCommand } from '../hooks/command'
+import { problemsText } from '../core/infra/commands'
 import { type FakeConfig, fakeConfig } from './fixtures/config-fs'
 import { promptRow } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
@@ -45,7 +45,7 @@ function world(o: { problems?: readonly string[]; path?: string | undefined } = 
       (cfg = fakeConfig({ specs, ...(o.path !== undefined ? { path: o.path } : {}), problems: o.problems ?? [] })),
   })
   const fake = cfg as FakeConfig
-  const run = (args: string) => trackCommand(w.w.ports, w.m, w.rt, args)
+  const run = (args: string) => w.m.track(w.w.ports, args)
   const refreshes = () => fake.calls.filter(c => c === 'refresh').length
   return { ...w, fake, run, refreshes }
 }

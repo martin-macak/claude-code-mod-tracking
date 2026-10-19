@@ -1,6 +1,6 @@
 // CircuitBreaker: pure, fake time.
 import { expect, test } from 'claude-code/testing'
-import { CircuitBreaker } from '../core/infra/circuit-breaker'
+import { CircuitBreaker } from '../core/lib/circuit-breaker'
 
 const MIN = 60_000
 

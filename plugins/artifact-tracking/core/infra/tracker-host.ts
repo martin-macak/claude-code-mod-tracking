@@ -10,7 +10,15 @@ import type { TickEvent } from '../interfaces/events'
 import type { HostContext, ItemStorePort, Json, JsonObject } from '../interfaces/items'
 import type { EnvName, Ports, RunOpts, Timer } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
-import type { DismissPort, FactsPort, Handler, Tracker, TrackerContext } from '../interfaces/tracker'
+import type {
+  CommandSpec,
+  DismissPort,
+  FactsPort,
+  Handler,
+  ToolPort,
+  Tracker,
+  TrackerContext,
+} from '../interfaces/tracker'
 import { isRecord } from '../lib/json'
 import type { BusKind, EventBus } from './bus'
 import type { SessionWatch } from './session'
@@ -24,6 +32,13 @@ export interface TrackerHostDeps {
   facts: FactsPort
   dismiss: DismissPort
   items: ItemStorePort
+  /**
+   * What `ctx.items` is for one tracker. The item host exists after this host (it reads `live` from it), so the manager
+   * hands a function. Absent: every tracker gets `items`.
+   */
+  itemsOf?(owner: string): ItemStorePort
+  /** The tools of one tracker: the handles of the ToolRunner. undefined before the tools are built. */
+  toolsOf?(owner: string): ToolPort | undefined
   watch: Pick<SessionWatch, 'generation' | 'check' | 'current'>
   /** True once per period per owner (the Scheduler). */
   due(owner: string, everyMs: number, now: number): boolean
@@ -104,6 +119,13 @@ export class TrackerHost {
     return this.slices
   }
 
+  /** The `/track` sub-commands of the live trackers, in `order`. The Commands router asks for them. */
+  commands(): readonly { owner: string; spec: CommandSpec }[] {
+    return this.ordered
+      .filter(t => this.live(t.id))
+      .flatMap(t => (t.commands ?? []).map(spec => ({ owner: t.id, spec })))
+  }
+
   /** The data of every live tracker that declares any, as slots for Persistence and the switch. Run-scoped when `persist` is false. */
   slots(): readonly DataSlot[] {
     return this.ordered.filter(t => t.data && t.id !== ITEMS && !this.failedIds.has(t.id)).map(t => this.slotOf(t))
@@ -161,10 +183,7 @@ export class TrackerHost {
 
   /** The item host's context: no data and no items of its own, and a signal that its list changed. */
   hostCtx(ports: Ports): HostContext {
-    return this.make(ITEMS, ports, {
-      persisted: () => this.d.persisted(ITEMS),
-      trackers: { live: (id: string) => this.live(id), slice: (id: string) => this.d.config.slice(id) },
-    }) as unknown as HostContext
+    return this.make(ITEMS, ports, { persisted: () => this.d.persisted(ITEMS) }) as unknown as HostContext
   }
 
   /** Cancels the timers the trackers started, then calls each tracker's `dispose` once. A throw is logged. */
@@ -210,7 +229,7 @@ export class TrackerHost {
           return next
         },
       },
-      items: d.items,
+      items: d.itemsOf?.(t.id) ?? d.items,
     })
   }
 
@@ -239,7 +258,11 @@ export class TrackerHost {
           return isRecord(root) && typeof root.cwd === 'string' ? root.cwd : undefined
         },
       },
-      tools: { run: (_tool: string, argv: readonly string[], opts: RunOpts) => ports.run(argv, opts) },
+      // The handles come from the ToolRunner of the item host; a raw run goes through the ports of this dispatch.
+      tools: {
+        handle: (id: string) => d.toolsOf?.(owner)?.handle(id),
+        run: (_tool: string, argv: readonly string[], opts: RunOpts) => ports.run(argv, opts),
+      },
       fs: {
         stat: (path: string, opts?: { resolve?: boolean }) => ports.fs.stat(path, opts),
         exists: (path: string) => ports.fs.exists(path),

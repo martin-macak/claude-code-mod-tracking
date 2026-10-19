@@ -110,8 +110,9 @@ plugins/artifact-tracking/
   hooks/
     hooks.json                 # { "modules": ["./register.tsx"] }
     register.tsx               # composition root: the only file with on and $
-    events.ts  command.ts  pane-actions.ts  view-inputs.ts   # L3: pure helpers register.tsx calls
-    items/                     # L3, transitional: ItemRuntime (runtime, store, capture, replay). L5 dissolves it.
+    events.ts  pane-actions.ts  view-inputs.ts  list-text.ts   # L3 and L5a: pure helpers register.tsx calls
+    auto-github.ts             # L5a, transitional: the GitHub side of auto's PR lane. L5b moves the lane to github and deletes it.
+    contracts.ts  model/  scan/  ui/   # L5a: bindings over the new code and the legacy draw path. L5b moves the bindings to tests/fixtures/; L6 deletes the draw path.
   core/
     interfaces/                # contracts only, no logic
       tracker.ts               # Tracker, TrackerContext, TrackerEvents, ToolSpec, KeySpec
@@ -131,21 +132,31 @@ plugins/artifact-tracking/
       scheduler.ts             # Scheduler: one tick, watchdog, per-tracker periods (the PR-step AutoScheduler is trackers/auto/scheduler.ts)
       persistence.ts           # $.store layout, write-through, end flush, size bound
       replay.ts                # transcript replay on a cold resume
-      capture.ts               # one scan per text: offers spans to kinds by rank
+      capture.ts               # scanClaims: one scan per text. Offers URLs to the kinds by rank, masks the claimed spans, lets each kind scan the rest. Pure.
+      capture-runtime.ts       # Capture: prepare, scan, accept for one row or text, and the replay of a transcript batch
+      doors.ts                 # the rows that carry text, by door: what each reads and how
       config-manager.ts        # ConfigManager: read, cache by signature, reconcile (the only writer)
       config-file.ts           # pure file format: parseConfig, mergeMissing, renderConfig, normaliseDoc
       config-path.ts           # resolveConfigPath: the path rule of §5.7
-      item-store.ts            # ItemStore, kind registry, eviction
-      priority.ts              # PriorityService, rules from kinds
+      items.ts                 # ItemService: the item host (ItemsHost) over the parts below (split from the L3 ItemRuntime in L5a)
+      item-lifecycle.ts        # ItemLifecycle: the context of the load, the tools and the refresh, start, tick, switch, replay
+      item-store.ts            # ItemStore: the list, the checked and the raw writers, the merges
+      item-slot.ts  item-port.ts  item-refresh.ts  item-levels.ts   # the `items` DataSlot, the store port, the tools and lanes, the priority
+      kinds.ts                 # Kinds: the kinds of a load, who owns them, which are live, the context of each
+      priority.ts              # effectiveLevels, setLevel, rowIdOf: the staged rules of the kinds (pure)
       dismiss.ts               # DismissList (run-scoped)
       facts.ts                 # Facts: named values one tracker publishes
-      refresh.ts               # Refresher: queue per kind and tool id
-      tools.ts                 # ToolRunner: probe, timeout, circuit breaker per tool
+      refresh.ts               # RefreshCoordinator: one lane per kind that refreshes (was coordinator.ts)
+      tools.ts                 # ToolRunner: one handle per ToolSpec (probe, timeout, circuit breaker)
       keys.ts                  # KeyRegistry
-      commands.ts              # /track sub-command routing
+      commands.ts              # Commands: /track sub-command routing (L5a)
+      lifecycle-parts.ts       # the item host, the Persistence, the Scheduler and the router host that the manager's constructor wires
       prompt.ts                # PromptComposer
     lib/                       # generic pure helpers any tracker may use
       json.ts  links.ts  paths.ts  shell.ts  git.ts
+      records.ts               # L5a: the generic record algebra (merge, fold, union, carry, migrate) over a KindTable
+      mask.ts  text.ts  levels.ts  kind-context.ts   # L5a: span masks, text helpers, priority levels, a context for a pure scan
+      tool.ts  circuit-breaker.ts  tracked-item.ts   # L5a: CliTool (a ToolHandle), CircuitBreaker, the refreshable-item base (moved from infra and hooks)
       normalise.ts             # L4: schema rules (int, bool, words, obj), normaliseWith, specOf, deepFreeze
       global-config.ts         # L4: GLOBAL_SCHEMA, GLOBAL_DEFAULTS, normaliseGlobal
   ux/
@@ -180,12 +191,14 @@ Dependency rules:
 
 The names `github`, `jira`, `gh` and `acli` appear only under `trackers/` and in `trackers/index.ts`. Only `H/register.tsx` touches `$` or calls `on`.
 
-L3 breaks the rules above in four places. L5 closes them.
+L3 broke the rules above in four places. L5a closed the first two in part, and L5b closes the rest.
 
-- `hooks/` holds more than `register.tsx`: `events.ts`, `command.ts`, `pane-actions.ts`, `view-inputs.ts` and `items/`. These files are not `core/infra/`, so they may import trackers. `hooks/items/` uses the `gh`, `acli`, file and artifact tools of the trackers (D13, §10.1).
-- `trackers/` imports `core/infra/`: `CircuitBreaker` (repos, processes, and the `gh` and `acli` tools), `Tool` (the `gh` and `acli` tools), and `autoIds` and `dismiss` (auto). L5's ToolRunner takes the breaker and the tool wrapper. The dismiss code moves with the DismissList.
-- `core/infra/circuit-breaker.ts`, `coordinator.ts`, `dismiss.ts` and `tool.ts`, and `core/lib/porcelain.ts`, import types from `hooks/contracts.ts` (a move of L2). L4 deleted `LIMITS`: the defaults live in `core/lib/global-config.ts` and in each `trackers/<id>/config.ts`. L5 moves the types.
+- `hooks/` held more than `register.tsx`. L5a removed `command.ts` and `items/` (Commands and the ItemService are in `core/infra/`). `events.ts`, `pane-actions.ts`, `view-inputs.ts` and `list-text.ts` stay: they are not `core/infra/`, so they may import trackers. `auto-github.ts` also stays until the PR lane moves to github (L5b, Task 12). The bindings (`contracts.ts`, `model/`, `scan/`, `ui/`) are thin delegations over the new code, so the older unit tests run unchanged. L5b moves the bindings to `tests/fixtures/`, and L6 deletes the draw path.
+- `trackers/` imported `core/infra/`. L5a moved `CircuitBreaker` and `Tool` to `core/lib/`, and `ToolRunner` (`core/infra/tools.ts`) builds one handle per `ToolSpec` for `gh` and `acli` (K13). `autoIds` and `dismiss` (auto) move with the DismissList in L5b (K16).
+- `core/infra/dismiss.ts` and `core/lib/porcelain.ts` still import types from `hooks/contracts.ts` (a move of L2). The other infra files moved off it in L5a. L5b Task 15 moves the rest. L4 deleted `LIMITS`: the defaults live in `core/lib/global-config.ts` and in each `trackers/<id>/config.ts`.
 - `AutoScheduler` is auto-only (it uses `AutoReason`), so it lives in `trackers/auto/scheduler.ts` (D17).
+
+`trackers/repos/tracker.ts` no longer imports `hooks/scan/refs`: it passes its own alias table to `core/lib/git.ts` (K23). The new `kind.ts` files of the five item trackers, and `trackers/file/sight.ts`, import no `hooks/` file directly. The older files of the tracker folders still import `hooks/contracts.ts` for their record types until L5b Task 15.
 
 ### 5.2 Components
 
@@ -261,7 +274,7 @@ Hook order inside each hook:
 
 - **Observe-only hooks** (`session.append`, `turn.complete`): `await next(e)`, then the manager call in a `try/catch`, then return the result.
 - **`command.run`**: the hook answers `/track` and never calls `next` (D12). It is the implementation of the command.
-- **Pre-state hooks** (`tool.call`, `agent.spawn`): read `$.session.cwd()` first (a persisted `cd` moves it during the run, `T/register.test.tsx:2021`), then `await next(e)`, then the manager call with `cwdBefore`. `tool.call` reads the cwd only when `wants(tool)` says a tracker declared that tool. Any other tool goes straight through with no entry.
+- **Pre-state hooks** (`tool.call`, `agent.spawn`): read `$.session.cwd()` first (a persisted `cd` moves it during the run, `T/register.test.tsx:2021`), then `await next(e)`, then the manager call with `cwdBefore`. `tool.call` reads the cwd only when `wants(tool)` says a tracker declared that tool or a kind reads it (`ItemKind.fromTool`). Any other tool goes straight through with no entry.
 - **`session.end`**: the manager writes first, within the budget, then `next(e)` (§5.6).
 - **`ui.focus`**: `await next(e)`, then write the selection only when the result has no deny (§5.10). In L3 the hook maps the key (`pickRow`) and starts `entry()` beside the key, then calls `next(e)`. The key does not wait for the entry, because after a `/resume` the entry can load the stored copy and call `gh`. The selection atoms come in L6.
 - **`ui.render`**: reads only, no writes, no SessionWatch, no invalidate (E8, E9).
@@ -274,7 +287,7 @@ Hook order inside each hook:
 | `tool.call` | none | `toolCall(ports, ToolCallEvent)`, built by `toolCallEvent(e, ran, cwdBefore)` |
 | `agent.spawn` | none | `agentSpawn(ports, AgentSpawnEvent)` |
 | `turn.complete` | none | `turnComplete(ports, TurnCompleteEvent)` |
-| `command.run` | `{ command: 'track' }` | `trackCommand(ports, manager, items, args)`: `entry`, then `command(ports, CommandEvent)` and `clear(ports)` as the sub-command needs |
+| `command.run` | `{ command: 'track' }` | `track(ports, args)`: the Commands router (§5.12) runs `entry`, answers a core sub-command, or sends `command(ports, CommandEvent)` to the tracker that declared it. The list text comes from `register.tsx` as `LifecycleDeps.listText` (K19) |
 | `ui.render` | `{ component: 'Pane', requestId: 'track' }` | L3: `viewInputs` then `composePane` and `renderSections`. L6: `paneData(view)` then `TreeDataTable.render` |
 | `ui.render` | `{ component: 'AbovePrompt' }` | L3: `viewInputs` then `composeBand`. L6: `bandData(view)` then `band` |
 | `ui.focus` | `{ requestId: 'track' }` | L3: `pickRow`, then `entry(ports)` beside the key. L6: `focus(ports, element)` |
@@ -335,7 +348,7 @@ The bus maps a domain event kind to handlers. TrackerHost fills it at init from 
 | `dismissed` (ids) | `LifecycleManager.dismiss` | sequential, in `order` |
 | `replay` (a batch of `row` and `toolCall` items) | start sequence, cold resume | parallel (§5.6.1) |
 
-`input`, `result` and `answer` are raw `Json`. A handler parses them with guards, because they come from the engine. `row` carries `task` for a task-notification row.
+`EventBus.emit(kind, ev, via, only?)` runs only the handlers of one owner when `only` is set. The Commands router uses it for a declared sub-command (§5.12). `input`, `result` and `answer` are raw `Json`. A handler parses them with guards, because they come from the engine. `row` carries `task` for a task-notification row.
 
 `start`, `agentSpawn`, `sessionChanged`, `command` and `dismissed` run one handler after the other in `order`, so a later tracker sees the earlier one's write (repos reads the ledger row that auto writes for the same spawn, D11). The other kinds start every handler at once. `order` follows the pane: auto 10, jira 20, github 30, artifact 40, repos 50, web 60, file 70, processes 80.
 
@@ -406,7 +419,9 @@ A `claude --resume` load fires no append hooks. Today `restore` merges the store
 
 Replay runs on a cold `session.start` and on a cold resume switch, whether or not a stored copy exists. It does not run on a lazy start or on `/clear`. Capture and the `row` handlers skip a replayed row.
 
-The restore filters move to the kinds: `ItemKind.restore?(item): StoredItem | null` drops not-found items, Jira tool sightings off the active site and auto sources, and clears `refreshedAt` (today `H/register.tsx:1136-1149`). In L3 they stay in `hooks/items/store.ts` (`storedForLoad`). That function also re-keys artifacts and drops dismissed items. L5 moves it.
+The restore filters are in the `items` slot and in the kinds (L5a). `load` re-keys what moved (`ItemKind.migrate`, R13), drops auto sources, lets each live kind filter its own records (`ItemKind.restore(items, ctx)`, a batch: the Jira kind drops tool sightings off the active site, which it learns from `acli`), and drops not-found items and dismissed keys. Every record comes back due (`refreshedAt` goes).
+
+**Replay waits for nothing slow.** A replay runs inside the session load or a switch, which hold the session check. So `ItemService.replay` starts the `prepare` of each live kind without waiting, and Capture asks the kinds for the quick part only (`prepare(ctx, { quick: true })`). The github kind reads the git remote, which is no CLI call. A github.com remote is final then: `session.repo` is published, and a keyworded short `#N` of the transcript counts. Any other answer (a GHE host, an ssh alias, no remote) needs `gh`. That lookup runs on in the background, and the transcript is read with what is known: a short `#N` is not tracked, a GHE URL falls to web. When the lookup ends, `afterLoad` runs a full `prepare` and bare `#N` records move to their real keys. This is the rule before L5a: `ensureRepo` was never awaited in the replay. A live row still waits for the whole lookup (§5.9).
 
 ### 5.7 ConfigManager
 
@@ -505,7 +520,7 @@ export interface TrackerContext<C, D> {
   readonly facts: FactsPort                    // publish(name, Json | undefined), read<T>(name)
   readonly dismiss: DismissPort                // list(): Promise<ReadonlySet<string>>, add(ids)
   readonly session: { id(): Promise<string>; cwd(): Promise<string>; repo(): Promise<RepoRemote | null>; root(): string | undefined }
-  readonly tools: ToolPort                     // L3: raw run(tool, argv, opts). L5: probe, timeout, breaker
+  readonly tools: ToolPort                     // handle(id): ToolHandle | undefined, and a raw run(tool, argv, opts)
   readonly fs: Pick<Ports['fs'], 'stat' | 'exists'>
   readonly env: { get(name: EnvName): Promise<string | undefined>; settings(): Promise<Json | undefined>; agents(): Promise<readonly AgentInfo[]> }
   readonly clock: { now(): Promise<number>; wall(): number; after(ms: number, fn: () => void): Timer }
@@ -526,7 +541,7 @@ A handler runs in a dispatch and every `$` call is async, so `data.get()` is asy
 
 **Data.** A tier-2 tracker (repos, processes, auto) keeps its data in `ctx.data`, one member of the `StateFamily` key `trackers` with `id` = tracker id (E4). Core turns `Tracker.data` into a `DataSlot` (`read`, `empty`, `settle`, `restore`, `clear`) for Persistence and the switch. Persistence stores the persisted slots in `v2:s:<id>`. A slot with `persist: false` is run-scoped: it goes to `v2:run` and carries on every switch (D9). Auto sets `persist: false`, as today (auto is rebuilt from git and the agent list). Item trackers keep their records in the ItemStore. `/track clear` empties the persisted slots and keeps the run-scoped ones, after auto dismisses its ids (D10). A tracker guards the shape of its slot, because the contract types it as `Json`. The id `items` belongs to the item list, and TrackerHost refuses it at init.
 
-**Tools.** A `ToolSpec` is `{ id, probe: argv, timeoutMs?, breaker? }`. ToolRunner owns one circuit breaker per tool id. Tool status lives in one atom, `tools: Record<string, ToolStatus>`, so a status change redraws the pane. A tool has one owner tracker: github owns `gh`, jira owns `acli`, repos owns `git`, processes owns `docker`, `tmux`, `screen` and `ps`. L3 builds none of this yet: `ToolPort.run` is a raw runner, and `gh`, `acli`, the refresh coordinator and the session repo stay in the item runtime (D13). The auto tracker gets the PR-lane dependencies by injection, `buildTrackers({ autoGithub })`. L5 moves them.
+**Tools.** A `ToolSpec` is `{ id, probe: argv, timeoutMs?, breaker? }`. ToolRunner owns one circuit breaker per tool id. Tool status lives in one atom, `tools: Record<string, ToolStatus>`, so a status change redraws the pane. A tool has one owner tracker. L5a builds `ToolSpec`s for `gh` (github) and `acli` (jira) only (K13). `git` (repos, auto), `docker`, `tmux`, `screen` and `ps` (processes) stay raw runs (`ctx.tools.run`) behind the breakers of their trackers: one spec per id would split the one breaker of processes into four and make the `git` calls of auto count against repos. ToolRunner builds one `CliTool` handle per spec: the probe, a timeout (`spec.timeoutMs`, else `global.tools.timeoutMs`) and a breaker (`global.tools.breaker` under `spec.breaker`). A tracker reaches its handle with `ctx.tools.handle(id)`. A kind reaches the handle of its owner. A `ToolHandle` has `probe`, `isAvailable`, `canCall(now)`, `peek(now)` (the breaker alone), `reset`, `status`, `exec` (through the breaker; `null` when it blocks), `raw` (on the timeout, outside the breaker), `record(outcome)` and `setSite`. A `ToolOutcome` is `ok`, `item-error`, `tool-failure` or `auth`. The auto tracker still gets the GitHub side of its PR lane by injection, `buildTrackers({ autoGithub })`, until the lane moves to github (L5b).
 
 **Facts.** A tracker publishes named values that others read: `ctx.facts.publish(name, value)` and `ctx.facts.read(name)`. Names are strings owned by the publisher: github publishes `session.repo` (the resolved repo with host aliases), auto publishes `auto.root` and `auto.branches`. This replaces today's getters across trackers (`H/register.tsx:180-189, 766-771`). A missing fact reads as `undefined`. A value is `Json`, and `publish(name, undefined)` withdraws it. In L3 the item runtime publishes `session.repo` and `github.hosts`, and auto publishes `auto.root`, `auto.agents` and `auto.checkedAt`. Processes publishes its probe state as `processes.ui`. The pane and the `/track` text read it.
 
@@ -554,19 +569,28 @@ interface StoredItem {
   [field: string]: Json | undefined  // kind-owned fields, flat, as today
 }
 
-// core/interfaces/items.ts
+// core/interfaces/items.ts (the shape L5a built; every hook but `decode` and `merge` is optional)
 export interface ItemKind<T extends StoredItem = StoredItem> {
   readonly category: string
   readonly rank: number                                      // claim order; web is last
+  prepare?(ctx: PrepareContext, o?: { quick?: boolean }): Promise<void>  // before each scan; memoised per session
+  sessionChanged?(ctx: PrepareContext): void | Promise<void> // forget what belonged to the old session
   claimUrl?(url: string, label: string | undefined, ctx: KindContext): Claim | null
   scan?(maskedText: string, mode: 'full' | 'urls-only', ctx: KindContext): readonly Claim[]
+  readonly fromTool?: Readonly<Record<string, (ev: ToolCallEvent, ctx: KindContext) => Promise<readonly Claim[]>>>  // claims of a tool call, by tool name
   accept?(claims: readonly Claim[], ctx: KindContext): Promise<readonly Claim[]>  // async filter
   decode(item: StoredItem): T | null                        // guard
-  merge(cur: T | null, seen: Claim): T                      // returns cur when nothing changed
-  restore?(item: T): T | null                               // filters at load
-  refresh?: { tool: string; due(item: T, now: number): boolean; run(items: readonly T[], tools: ToolPort): Promise<readonly T[]> }
-  rules?: readonly PriorityRule[]
-  row(item: T, ctx: ViewContext): TreeRow
+  merge(cur: T | null, seen: Claim): T | null               // cur when nothing changed; null: the claim adds no item
+  fold?(winner: T, loser: T, out: T): T                     // two records of one key
+  keepMarks?(merged: T, live: T): T                         // marks a refresh does not own
+  migrate?(item: StoredItem): T | null                      // re-home a record of another kind (R13)
+  restore?(items: readonly T[], ctx: KindContext): Promise<readonly T[]>  // filters at load, a batch
+  replayWins?(fresh: T, stored: T): boolean                 // the transcript beats the stored copy
+  readonly refresh?: RefreshSpec<T>                         // { tool, fields, hydrate, refreshItems, apply?, reset? }
+  readonly rules?: readonly PriorityRule[]                  // { id, stage, level(item, env: RuleEnv) }, run stage by stage; RuleEnv is { facts, items, levelOf }
+  setLevel?(item: T, rowId: string, level: Level | undefined): T | null  // the mark of a row inside an item
+  findRow?(item: T, ref: string): string | undefined        // the row a typed ref names
+  row?(item: T, ctx: ViewContext): TreeRow                  // optional in L5a, required from L5b Task 13 (K24)
 }
 ```
 
@@ -575,21 +599,31 @@ Records stay flat, so today's record shapes and most test assertions survive. Th
 **Store port.** A tracker sees the store through `ctx.items`, an `ItemStorePort`. Every call is async, because the list lives in the plugin state:
 
 - `list()` gives the records.
-- `update(change, { since })` runs the session check, reads the list, calls `change(list, dismissed)` and writes the result. It writes nothing when `change` returns its input. An older `since` drops the write. It resolves to whether it wrote.
-- `track(refs, source)` offers claims to the kinds and merges the result. In L3 a `Claim` is today's `Ref` (`hooks/contracts.ts`).
+- `update(change, { since })` runs the session check, reads the list, calls `change(list, dismissed)` and writes the result. It writes nothing when `change` returns its input. An older `since` drops the write. It resolves to whether it wrote. Before the item host started, it rejects with `items: not started`, and so does `track`.
+- `track(claims)` merges claims into the list through their kinds (`ItemKind.merge`), less the dismissed keys and the claims of a kind that is off. A claim carries its source. The keys it adds queue for refresh.
 - `refresh(keys?)` marks the keys due, or all items when none is named, and kicks the refresh. It does not wait.
+- `scan(text, { mode, purpose, facts? })` gives the claims of the live kinds in a text, with no `prepare` and no `accept`. `build(claim)` gives the record a claim makes. A PR body and a lookup use them.
 
-**In L3** the store, capture, refresh and replay are one transitional `ItemRuntime` in `hooks/items/` (runtime, store, capture, replay). It implements `ItemsHost`, which extends `ItemStorePort` with `slot` (the `items` `DataSlot`), `start(HostContext)`, `capture(RowEvent)`, `replay(batch)`, `tick()`, `sessionChanged(ev)` and `dispose()`. A `HostContext` is a tracker context without `items` and `data`, plus `persisted()`, which tells Persistence the list changed. L5 splits the runtime into ItemStore, Capture, ItemKind and ToolSpec (D13).
+**The item host.** Since L5a the `ItemService` (`core/infra/items.ts`) implements `ItemsHost`, which extends `ItemStorePort` with `slot` (the `items` `DataSlot`), `start(HostContext)`, `capture(RowEvent)`, `toolCall(ev, ctx?)`, `wants(tool)`, `replay(batch)`, `tick()`, `sessionChanged(ev)`, `prepare()`, `settle()`, `kick(reason)`, `refreshAll()`, `setPriority(rowId, level)`, `rowIdOf(ref)`, `levels()`, `port(owner)`, `tools(owner)` and `dispose()`. A `HostContext` is a tracker context without `items` and `data`, plus `persisted()`, which tells Persistence the list changed. The service only wires and delegates (150 lines). Each part is about 150 lines or fewer (`Kinds` is a little over, §12):
 
-**Capture.** Capture runs once per text, in core:
+- `ItemStore` holds the list. The checked writers (`update`, `track`) run the session check. The raw writers (`set`, `rawUpdate`) do not, because the switch, the load and a `prepare` write inside a check that would wait for them.
+- `Kinds` holds the kinds of the load, the tracker that owns each, which are live, and the context each is given (the config slice of its owner, its tool handles, the facts, the ports of the dispatch).
+- `Capture` turns a row or a text into claims (below). `doors.ts` holds what each row door reads.
+- `ItemLifecycle` holds the context of the first hook and builds the tools and the refresh once per load (D16). It runs the item host's share of the start, the beat, the switch and the replay.
+- `ItemRefresh` builds the ToolRunner, one `RefreshLane` (`{ category, canCall, reset, hydrate, refreshItems }`) per kind with a `refresh` spec, hands the lanes to the `RefreshCoordinator` (`core/infra/refresh.ts`), and saves the results.
+- `ItemLevels` joins the pure priority code (`core/infra/priority.ts`) to the list.
 
-1. `core/lib/links.ts` extracts generic candidates: URLs, Markdown link labels, positions.
-2. Capture offers each URL to the enabled and disabled kinds by `rank`: github, jira, artifact, then web. The first claim wins. Today's order (`H/scan/refs.ts:186`) stays.
-3. Capture masks the claimed spans. Then it calls each kind's `scan` on the masked text for kind syntax: bare `#N` refs and short-ref keywords (github, using the `session.repo` fact), Jira keys, `.md` paths.
-4. Each kind's `accept` filters its claims asynchronously: the `gh` open check for short refs (`H/register.tsx:708-725`), the active `acli` site for Jira tool sightings (`:657`).
-5. ItemStore merges the accepted claims. A disabled kind's claims are dropped.
+`HostContext.trackers` is gone: the service asks `TrackerHost.live` and each kind reads its owner's slice (K9). `AutoGithub.lane()` stays in `hooks/auto-github.ts` until L5b.
 
-`mode` is `urls-only` for tool-result rows, `full` otherwise, as today.
+**Capture.** Capture runs once per text, in core. First it waits for each live kind to `prepare` (K21): the github kind finds the session repo, publishes `session.repo` and `github.hosts`, and re-keys a bare `#N` of the list. A replay waits for the quick part only (§5.6.1). Then:
+
+1. `core/lib/links.ts` extracts generic candidates: in `full` mode the Markdown links with an `http` or `https` scheme, each with the span it fills (a `[label](url)` link fills the whole link); in `urls-only` mode the explicit URLs, trailing punctuation cut.
+2. Capture offers each candidate to all kinds, also to a kind that is off, by `rank`: github `10`, jira `20`, artifact `30`, file `80`, web `90`. The first `claimUrl` that answers wins. A kind that does not read tool output (`urls-only`) answers null there, so no fallback claims a bare URL. Today's order stays.
+3. Capture masks the claimed spans. **A claimed `[label](url)` link is masked whole, label included.** The kinds do not read the label again as plain text. So a keyworded `#N` or a `.md` name inside the label of any `http(s)` link no longer tracks, because the web kind claims every `http(s)` link in `full` mode. `extractRefs` read the label; this is a deliberate change of L5a (K25). Then Capture calls each kind's `scan` on the masked text for kind syntax: `owner/repo#N` and a bare `#N` with a lead word that names the `session.repo` (github, issue #8), and `.md` paths (file; conversation text only). Jira has no `scan`: a key in plain text is not tracked, and a lookup reads it through `findRow`. K22: the github scan, not `core/lib/links.ts`, asks the link scanner for issue refs.
+4. The claims sort by where they sit (one with no span goes last) and the first claim of a key stays. Then each live kind's `accept` filters its own claims asynchronously: the `gh` open check for short refs, the active `acli` site for Jira tool output, and the existence check of a `.md` mention (file). A kind whose `accept` throws loses its own claims, the log says `items: accept failed in <category>: <reason>`, and the claims of the other kinds still count (K26). A kind with no `accept` passes its claims.
+5. ItemStore merges the accepted claims. The claims of a kind that is off are dropped (K27: `ItemStorePort.scan` and a `/track prio` lookup scan with every kind and drop the claims of a kind that is off afterwards, so such a URL names no row and never falls to web).
+
+`mode` is `urls-only` for tool-result rows, `full` otherwise, as today. A tool call is read by the kind's `fromTool[tool]` handler (a Write, Edit or Read of a `.md` file; the Artifact tool), and its claims go through `accept` as well.
 
 **The PR lane.** PR discovery is GitHub code, so it moves into the github tracker. Auto publishes `auto.branches`. The github tracker's tick discovers PRs for those branches and writes items with source `auto`. The github tracker draws two sections: "GitHub" (without auto-only items) and "Pull requests" (auto items). Its priority rule "the PR on the session branch is top" reads the `auto.branches` fact. Auto no longer calls `gh`.
 
@@ -669,11 +703,11 @@ The Commands router claims first:
 | (empty) | core | Open the pane and print the text. |
 | `refresh` | core | Reset every breaker, refresh all kinds now. |
 | `clear` | core | Empty the items and every persisted tracker slot, bump the generation, delete `v2:s:<id>`. Run-scoped slots (auto's root and proofs) stay (D10). |
-| `prio <ref> <level>` | core | The ref resolves through the kinds' `claimUrl` and `scan`. |
+| `prio <ref> <level>` | core | The ref resolves through a kind's `findRow` (a row inside an item), else through the capture scan with the purpose `lookup`, and the first claim names the row when the list holds its key (K27). |
 | `help` | core | Print the help view as text. Not in L3: `help` prints the usage line until L6. |
 | a tracker's `commands` | tracker, in `order` | The first tracker that declares the sub-command runs it. |
 
-The argument hint is built from the core list plus the declared commands. While no tracker declares one, it stays today's literal.
+The argument hint is built from the core list (`CORE_HINT`) plus `|<sub> <hint>` for each declared command (`Commands.hint()`). While no tracker declares one, it stays today's literal. `TrackerHost.commands()` lists `{ owner, spec }` of the live trackers in `order`. A tracker cannot take a core sub-command, and the usage line is `Usage: /track [refresh|clear|prio <ref> <high|normal|low|auto>]`. `LifecycleManager.track(ports, args)` runs the router (K15); `command(ports, ev)` stays the broadcast to the trackers. The list text is a function that `register.tsx` supplies (`LifecycleDeps.listText`, K19), because core does not draw. A reply that prints the list ends with the problems of the config file.
 
 ### 5.13 State and persistence
 
@@ -690,7 +724,7 @@ The `PluginState` contract in `types/index.d.ts` imports nothing (E4). It declar
 | `shown` | `StateFamily<number>` | L6. Rows shown per section beyond the cap. |
 | `help` | `boolean` | L6. The help view is on. |
 
-`processUi` and `ui.paneOpen` are removed. The processes probe state is the fact `processes.ui` now. The contract declares `Json`, `JsonObject` (a readonly form), `Level` and `ToolStatus`. L3 declares `StoredItem` and `Level` in `core/interfaces/items.ts`. L5 moves `StoredItem` into the contract.
+`processUi` and `ui.paneOpen` are removed. The processes probe state is the fact `processes.ui` now. `types/index.d.ts` declares `Json`, `JsonObject` (a readonly form), `Level`, `StoredItem`, `ToolStatus`, `BreakerState`, `UiState`, `Via`, `Captured` and `PluginState` (`items: StoredItem[]`), and no tracker type. Each record and slot type lives in `trackers/<id>/types.ts`. `BaseRecord` (the fields of every record) and `ItemError` live in `core/lib/records.ts`, which trackers may import.
 
 | `$.store` key | Value |
 | --- | --- |
@@ -872,12 +906,46 @@ Building L4 settled these points where the text above left them open. Code comme
 | C20 | `reconcile` writes only when it adds a key or upgrades the file. | The file is the user's. A rewrite for layout alone changes their indent, newline and order, with no gain. |
 | C21 | The problem text quotes the reason of an engine refusal, without the `<plugin>: <call>:` prefix. | The copy table names the reason only. |
 
+### 10.3 Decisions made in L5a
+
+Building L5a settled these points where the text above left them open. Code comments cite `K3` to `K24` (the decisions of the L5 plan that L5a builds). `K25` to `K29` came from the review of L5a. The sections above already show the result.
+
+| # | L5a does | Why |
+| --- | --- | --- |
+| K3 | `ItemStorePort` keeps the async shape of L3 (`list`, `update`, `track`, `refresh`) and adds `scan` and `build`. `track(claims)` takes claims that carry their source. | L2's sync sketch cannot read a list that lives in the plugin state. |
+| K4 | `ItemKind` has optional `prepare`, `fromTool`, `fold`, `keepMarks`, `migrate`, `replayWins`, `setLevel` and `findRow`. `merge` returns `T \| null`. `restore` is a batch with a context. | Carry, union, R13, the Jira site and a lone Read need a two-record fold, kind marks, a re-home and a tool entry. |
+| K5 | `refresh` is `{ tool, fields, hydrate, refreshItems, apply?, reset? }` (a `RefreshContext` is `{ tools, config, facts, now() }`), not `{ tool, due, run }`. | `GhTool`, `AcliTool` and their 64 tests refresh records in place. |
+| K6 | A `PriorityRule` is `{ id, stage, level(item, env) }`. A generic staged resolver in `core/infra/priority.ts` runs them. | R8 (an issue takes the level of the PR that closes it) reads the levels of an earlier stage. |
+| K9 | `HostContext.trackers` is gone. The item service asks `TrackerHost.live`, and each kind reads its owner's slice. `AutoGithub.lane()` stays until L5b. | One owner for "which tracker is on". |
+| K13 | `ToolSpec`s exist for `gh` and `acli` only. | See §5.8 (Tools). `ToolStatus.name` is a `string`. |
+| K15 | `LifecycleManager.track(ports, args)` routes `/track`. `command(ports, ev)` stays the broadcast. | §5.3 names `command(ports, args)` for the router; L3 used `command(p, CommandEvent)` for the bus. |
+| K17 | `StaticItem`, `WebLink`, `ArtifactItem`, `FileItem` and the other item classes on records are gone. Only github and jira kinds refresh. | Anti-goal §2. |
+| K19 | The list text comes in as `LifecycleDeps.listText`. | `core/infra` cannot import `hooks/` or `ux/`. |
+| K20 | `auto.branches` is `{ seq, reasons, current?, branches, overflow }`. `current` is the master branch, and rule R7 reads it. | R7 read the master agent's branch directly. |
+| K21 | `ItemKind.prepare` runs before each scan. The github kind finds the session repo and publishes `session.repo` and `github.hosts`, memoised per session. | Capture awaited the session repo before the scan. |
+| K22 | `core/lib/links.ts` has no default `issueHost`. The github scan asks for issue refs. | The default was a tracker name in `core/lib`. |
+| K23 | `parseRemote(remote, aliases)` is generic. Github and repos each pass `{ 'ssh.github.com': 'github.com' }`. | Both need the alias, and trackers cannot import each other. |
+| K24 | `ItemKind.row` is optional in L5a. | There are no sections yet. |
+| K25 | A claimed `[label](url)` link is masked whole, so its label is not scanned again (§5.9, step 3). | `extractRefs` read the label as plain text, and the kinds now share one mask. |
+| K26 | A kind whose `accept` throws loses its own claims. The others count. One log line. | Before L5a a file fault was swallowed so that the URL refs of the same row still landed. |
+| K27 | `ItemStorePort.scan` and the `/track prio` lookup scan with every kind and drop the claims of a kind that is off afterwards. | A kind that is off still owns its spans (§10, call 10). |
+| K28 | A replay prepares the kinds quickly (§5.6.1). | A load must not wait for a CLI. |
+| K29 | `update` and `track` reject with `items: not started` before the item host started. | It is the guard of L3. No hook runs before `entry`, so nothing reaches it. |
+
+**What L5a changes for the user.** The layer is a refactor, and the kit suite is green. These points differ from the code before L5a, and the first two are visible:
+
+1. The label of a Markdown link that the web kind claims is not scanned (K25).
+2. The new rows of one prompt land in a different order: by where they sit in the text, with the claims that have no span (a `.md` mention) last. The `/track` text is the same.
+3. Github hosts of an earlier session no longer carry over a session switch. Before L5a the `hostList` was never reset.
+4. The acli site is learned when a Jira claim of tool output asks for it, not at the start of a replay.
+5. `auto.branches` is a new fact (K20).
+
 ## 11. Architecture rules
 
 | Principle | How the design meets it | Accepted exception |
 | --- | --- | --- |
 | Open-closed | A tracker is a folder and one `TRACKERS` line. Kinds, tools, keys, commands, columns, ticks, facts and config specs are data the tracker returns. | A new engine event family edits `register.tsx` once. A new `$` capability edits `portsOf` once. A new color token edits `ux/theme.ts` (the token set is closed by design). |
-| Single responsibility | `register.tsx` only wires. Each infra collaborator has one job and stays under about 150 lines. | none |
+| Single responsibility | `register.tsx` only wires. Each infra collaborator has one job and stays under about 150 lines. | Five files are over, waived in L5a (§12). |
 | Liskov | Optional capabilities are optional fields. No tracker implements a method as a no-op. | none |
 | Interface segregation | `Ports` is split. A tracker gets a `TrackerContext` with scoped ports only. | none |
 | Dependency inversion | Infra and trackers depend on `core/interfaces/`. Only `register.tsx` knows `$`. Infra never imports `ux/` or `trackers/`. | none |
@@ -895,8 +963,9 @@ Building L4 settled these points where the text above left them open. Code comme
 | Whether a later `gh stack push` overwrites an edited PR body | Checked at the first push (§8). |
 | A `$.state` write from a `prompt.compose` dispatch | Not needed: SessionWatch never runs there (§5.6). Proven by the L3 validate run. |
 | Delete the trial repo `martin-macak/gh-stack-trial-20261017` | Manual. The token lacks the `delete_repo` scope. |
-| `ToolSpec.timeoutMs` and `ToolSpec.breaker` are declared and not read | L5 wires them in ToolRunner. Until then the tools take `global.tools.*`. |
-| `HostContext.trackers` and `AutoGithub.lane()` (C12) | L5 removes both when the item kinds get handlers. |
-| `PR_LANE_DEFAULTS` repeats two auto defaults (C15) | L5 gives them one owner. |
-| `GITHUB_DEFAULTS.pendingStaleMs` is read by `GitHubItem` through `hydrate` | L5 moves freshness into `ItemKind`. |
+| `AutoGithub.lane()` and `hooks/auto-github.ts` (C12). L5a removed `HostContext.trackers` (K9) and wired `ToolSpec.timeoutMs` and `ToolSpec.breaker` into ToolRunner. | L5b Task 12 moves the PR lane to github and deletes the file. |
+| `PR_LANE_DEFAULTS` repeats two auto defaults (C15) | L5b Task 12 gives them one owner. |
+| The `trackers/<id>/` files older than the kinds, `core/infra/dismiss.ts` and `core/lib/porcelain.ts` import `hooks/contracts.ts` | L5b Task 15 moves the types and the bindings. |
+| `ItemKind.row` is optional, and no tracker has `sections()` | L5b Task 13 (K24). |
+| `core/infra` files over about 150 lines (§11): `lifecycle.ts` 345 (320 before L5a), `tracker-host.ts` 307 (284), `refresh.ts` 193 (`coordinator.ts` was 177), `kinds.ts` 166, `commands.ts` 158 | Waived in L5a. Each grew by a duty of the layer (the `/track` routing, the kind lanes, `commands()` and the tool handles of the host). `items.ts` (150) and `lifecycle.ts` were split to `item-lifecycle.ts` and `lifecycle-parts.ts`. The next layer that edits one of the five splits it. |
 | `tests/global-defaults.test.ts` compares most defaults with a `LIMITS` that `tests/fixtures/limits.ts` rebuilds from the same defaults | L5 deletes it or pins its values as literals. `config-specs` already pins the defaults and the keys. |

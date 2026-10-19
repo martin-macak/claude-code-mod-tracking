@@ -1,9 +1,9 @@
 // GhTool: refreshes GitHub issues and PRs with `gh` (spec section 7.2, KB github.md).
 // One batched GraphQL call per host and chunk. No `$`: it gets a Runner and a clock.
 
-import type { CircuitBreaker } from '../../core/infra/circuit-breaker'
-import { firstLine, Tool, type ToolTimeouts } from '../../core/infra/tool'
+import type { Breaker, ToolHandle } from '../../core/interfaces/tracker'
 import { dig, isRecord, type Json } from '../../core/lib/json'
+import { firstLine, Tool, type ToolTimeouts } from '../../core/lib/tool'
 import type {
   Checks,
   GitHubDiscoveryApi,
@@ -131,9 +131,9 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
   private readonly limits: GhLimits
 
   constructor(
-    run: Runner,
+    run: Runner | ToolHandle,
     now: Now,
-    breaker?: CircuitBreaker,
+    breaker?: Breaker,
     opts: { limits?: GhLimits; timeouts?: ToolTimeouts } = {},
   ) {
     super('gh', run, now, breaker, opts.timeouts)
@@ -174,7 +174,7 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
   private async refreshChunk(host: string, items: GitHubTarget[]): Promise<boolean> {
     const { query, aliases } = buildQuery(items, this.limits().closingRefsPerPr)
     const r = await this.exec(['gh', 'api', 'graphql', '--hostname', host, '-f', 'query=' + query])
-    if (!r) return this.breaker.peek(this.now()) // blocked, or rejected and already recorded
+    if (!r) return this.breakerAllows // blocked, or rejected and already recorded
 
     const c = classifyReply(r)
     if (c.kind === 'data') {
@@ -187,17 +187,17 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
       return false
     }
     this.record('tool-failure', firstLine(r.stderr) || 'unparsable gh output')
-    return this.breaker.peek(this.now())
+    return this.breakerAllows
   }
 
   /**
-   * One discovery call (spec A21). `available`, `breaker` and `exec` are protected in `Tool`, so `tool.ts` does not change.
+   * One discovery call (spec A21). `available`, `breakerAllows` and `exec` are protected in `Tool`.
    * Only auth and transport failures count against the breaker. A query-level error or a cut reply is an item error:
    * the tool worked, the answer was not usable.
    */
   async graphql(host: string, query: string): Promise<GraphqlOutcome> {
     if (this.available !== true) return { ok: false, kind: 'no-gh' }
-    if (!this.breaker.peek(this.now())) return { ok: false, kind: 'blocked' }
+    if (!this.breakerAllows) return { ok: false, kind: 'blocked' }
     const r = await this.exec(['gh', 'api', 'graphql', '--hostname', host, '-f', 'query=' + query], {
       timeoutMs: this.limits().discoveryTimeoutMs,
     })
@@ -275,7 +275,7 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
 
   private async askHost(host: string): Promise<boolean> {
     try {
-      const r = await this.run(['gh', 'auth', 'status', '--hostname', host], { timeoutMs: this.timeouts().timeoutMs })
+      const r = await this.raw(['gh', 'auth', 'status', '--hostname', host])
       const authed = r.exitCode === 0
       this.hosts.set(host, authed)
       return authed
@@ -293,9 +293,7 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
   private async loadRepo(): Promise<RepoRef | null> {
     let r: RunResult
     try {
-      r = await this.run(['gh', 'repo', 'view', '--json', 'nameWithOwner,url'], {
-        timeoutMs: this.timeouts().timeoutMs,
-      })
+      r = await this.raw(['gh', 'repo', 'view', '--json', 'nameWithOwner,url'])
     } catch {
       return null
     }

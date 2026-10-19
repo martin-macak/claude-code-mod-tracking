@@ -22,6 +22,7 @@ import { fakeConfig } from './fixtures/config-fs'
 import * as ev from './fixtures/events'
 import { discoveryData, prNode } from './fixtures/gh-discovery'
 import { porcelain } from './fixtures/git'
+import { IDLE_ITEMS } from './fixtures/items-host'
 import { LIMITS } from './fixtures/limits'
 import { fakePorts } from './fixtures/ports'
 import { hostWorld } from './fixtures/tracker-host'
@@ -63,6 +64,7 @@ function setup(o: SetupOpts = {}) {
   }
   const held = { list: o.items ?? ([] as StoredItem[]), refreshed: [] as string[][] }
   const host: ItemsHost = {
+    ...IDLE_ITEMS,
     slot: {
       id: 'items',
       persist: true,

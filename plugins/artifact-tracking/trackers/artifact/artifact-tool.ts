@@ -3,9 +3,8 @@
 
 import { dig, isRecord } from '../../core/lib/json'
 import { basename } from '../../core/lib/porcelain'
-import type { ArtifactRef } from '../../hooks/contracts'
-import { keyOf } from '../../hooks/model/keys'
-import { clipLabel, parseArtifactUrl } from './artifact-url'
+import { artifactKeyOf, clipLabel, parseArtifactUrl } from './artifact-url'
+import type { ArtifactRef } from './types'
 
 export type ArtifactEvent = { kind: 'published'; ref: ArtifactRef } | { kind: 'deleted'; key: string }
 
@@ -41,7 +40,7 @@ export function artifactEvent(input: unknown, ran: unknown): ArtifactEvent | nul
     const del = result.artifact_delete
     if (!isRecord(del) || del.deleted !== true || typeof del.url !== 'string') return null
     const ref = parseArtifactUrl(del.url)
-    return ref ? { kind: 'deleted', key: keyOf(ref) } : null
+    return ref ? { kind: 'deleted', key: artifactKeyOf(ref) } : null
   }
   if ((call.action !== undefined && call.action !== 'publish') || result.opened === true) return null
   if (call.asset === true) {

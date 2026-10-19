@@ -52,6 +52,8 @@ export function hostWorld(
     update: async () => false,
     track: async () => {},
     refresh: () => {},
+    scan: () => [],
+    build: () => null,
   }
   const dues: string[] = []
   const host = new TrackerHost({

@@ -1,7 +1,7 @@
 // Claude artifact URLs (issue #29). `/artifact/<id>` and `/code/artifact/<uuid>` name one artifact:
 // the id is the UUID in base58 (Bitcoin alphabet). Pure code. No `$`, no I/O.
 
-import type { ArtifactRef } from '../../hooks/contracts'
+import type { ArtifactRef } from './types'
 
 const MAX_LABEL = 60
 const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
@@ -54,6 +54,9 @@ export function parseArtifactUrl(url: string, label?: string): ArtifactRef | nul
   const named = label === undefined || label === url ? '' : clipLabel(label)
   return { category: 'artifact', uuid, url: canonical, label: named || id }
 }
+
+/** The item key of an artifact: its UUID, so both URL forms of one artifact share it. */
+export const artifactKeyOf = (ref: Pick<ArtifactRef, 'uuid'>): string => `art:${ref.uuid}`
 
 /** The id segment of a stored artifact URL: the label a row shows when it has no name. */
 export const artifactIdOf = (url: string): string => url.slice(url.lastIndexOf('/') + 1)

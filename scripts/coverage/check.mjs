@@ -7,13 +7,14 @@
 // Checked: every .ts, .mts, .cts, .js, .mjs and .cjs file under
 // <plugin dir>/{core,ux,trackers,hooks}, except
 //   - declaration files (*.d.ts) and *.tsx (node cannot load JSX; the kit tests cover them),
-//   - core/interfaces/** (types only, so Node reports no lines for them).
+//   - core/interfaces/** and trackers/<id>/types.ts (types only, so Node reports no lines for them; Node 24.21
+//     leaves such a module out of the report, Node 24.15 lists it with no lines).
 // A folder that does not exist is skipped.
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 
 const ROOTS = ['core', 'ux', 'trackers', 'hooks']
-const TYPE_ONLY = ['core/interfaces/']
+const TYPE_ONLY = [/^core\/interfaces\//, /^trackers\/[^/]+\/types\.ts$/]
 // A source file: .ts, .mts, .cts, .js, .mjs or .cjs. A .tsx file does not match.
 const SOURCE = /\.[cm]?[jt]s$/
 const DECLARATION = /\.d\.[cm]?ts$/
@@ -51,7 +52,7 @@ const reported = new Set(
 
 const missing = ROOTS.flatMap(root => walk(pluginDir, join(pluginDir, root)))
   .filter(f => SOURCE.test(f) && !DECLARATION.test(f))
-  .filter(f => !TYPE_ONLY.some(prefix => f.startsWith(prefix)))
+  .filter(f => !TYPE_ONLY.some(re => re.test(f)))
   .filter(f => !reported.has(f))
   .sort()
 

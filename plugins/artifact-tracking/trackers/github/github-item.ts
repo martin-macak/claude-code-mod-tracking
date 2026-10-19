@@ -1,7 +1,7 @@
 // A GitHub issue or pull request. GhTool fills the status fields in place.
 
+import { omitUndefined, TrackedItem } from '../../core/lib/tracked-item'
 import type { Checks, GitHubRecord, GitHubState, GitHubTarget, GitHubToolApi, GitHubType } from '../../hooks/contracts'
-import { omitUndefined, TrackedItem } from '../../hooks/model/tracked-item'
 import { GITHUB_DEFAULTS } from './config'
 
 export class GitHubItem extends TrackedItem implements GitHubTarget {

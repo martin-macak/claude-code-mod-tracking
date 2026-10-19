@@ -46,7 +46,7 @@ export interface TreeRow {
   readonly owner: string
   readonly cells: Readonly<Record<string, Cell>>
   readonly children?: readonly TreeRow[]
-  /** E.g. Jira child trees, as today. */
+  /** E.g. child trees of an item, as today. */
   readonly expandedByDefault?: boolean
   readonly detail?: () => readonly DetailLine[]
   readonly can?: { readonly dismiss?: boolean; readonly priority?: boolean }
@@ -56,7 +56,7 @@ export interface TreeRow {
 export interface SectionSpec {
   readonly id: string
   readonly title: string
-  /** E.g. `gh · ok 2m ago`, from the tool status. */
+  /** E.g. `tool · ok 2m ago`, from the tool status. */
   readonly note?: Cell
   /** Today's band words and counts. */
   readonly band?: { readonly label: string; readonly count: number; readonly failing: number }

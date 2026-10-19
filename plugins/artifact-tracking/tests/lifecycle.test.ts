@@ -8,6 +8,7 @@ import type { DataSlot } from '../core/interfaces/slots'
 import type { Tracker } from '../core/interfaces/tracker'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { fakeConfig } from './fixtures/config-fs'
+import { IDLE_ITEMS } from './fixtures/items-host'
 import { fakePorts } from './fixtures/ports'
 
 type TestSlot = DataSlot & { live: Json | undefined; log: string[]; cleared: number }
@@ -59,6 +60,7 @@ function setup(o: SetupOpts = {}) {
   /** What the item host holds for `list` and `update`. */
   const held = { list: [] as StoredItem[], started: 0, disposed: 0, dismissed: new Set<string>() }
   const host: ItemsHost = {
+    ...IDLE_ITEMS,
     slot: items,
     start: async () => {
       held.started++

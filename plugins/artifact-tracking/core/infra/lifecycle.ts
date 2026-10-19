@@ -4,7 +4,11 @@
 // the TrackerHost from the ports of the first hook of a load. It names no tracker and holds no `$`.
 // `end` stores the leaving session and keeps a snapshot. The switch that follows carries it (`/clear`) or loads the
 // stored copy of the new id (`/resume`).
+// Without an item host of its own it builds the ItemService after the TrackerHost, whose `live` the service reads.
+// `/track` is routed by Commands (core/infra/commands.ts), which the manager hands the calls it needs. The parts
+// the constructor wires for them are in lifecycle-parts.ts.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.6. Plan: L3 Tasks 5 to 8, D4 to D9, D20.
+// L5 Task 9, K15, K19.
 
 import type { ConfigService, ConfigSource } from '../interfaces/config'
 import type { AgentSpawnEvent, CommandEvent, RowEvent, ToolCallEvent, TurnCompleteEvent } from '../interfaces/events'
@@ -13,10 +17,12 @@ import type { Ports } from '../interfaces/ports'
 import type { DataSlot, PendingEnd, Snapshot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
 import { EventBus } from './bus'
+import { Commands } from './commands'
 import { Facts } from './facts'
-import { Persistence } from './persistence'
+import { commandHostOf, itemHostOf, persistenceOf, schedulerOf } from './lifecycle-parts'
+import type { Persistence } from './persistence'
 import { Replay } from './replay'
-import { Scheduler } from './scheduler'
+import type { Scheduler } from './scheduler'
 import { SessionWatch } from './session'
 import { type Launch, StartSequence } from './start-sequence'
 import { guard, reason } from './steps'
@@ -27,8 +33,11 @@ export type { Launch } from './start-sequence'
 
 export interface LifecycleDeps {
   trackers: readonly Tracker[]
-  /** The item host: its list is the `items` slot, and it owns capture, replay and its share of every beat. */
-  items: ItemsHost
+  /**
+   * The item host: its list is the `items` slot, and it owns capture, replay and its share of every beat. Absent, the
+   * manager builds the ItemService from `trackers`.
+   */
+  items?: ItemsHost
   /**
    * Slots that no tracker owns. register.tsx passes none since the last tracker took its slot (L3 Task 10). The
    * lifecycle unit tests use it to run the switch over fake slots.
@@ -40,6 +49,11 @@ export interface LifecycleDeps {
   config(ports: Ports): ConfigService
   /** The pane the start sequence reattaches when the engine kept it across a hot reload. */
   paneId: string
+  /**
+   * The text of the tracking list for `/track` (the draw path is not core). Absent: the reply holds no list text. The
+   * router appends the problems of the config file itself.
+   */
+  listText?(ports: Ports): Promise<string>
 }
 
 /** `session.end` reasons after which the process goes away. `clear` and `resume` are switches. */
@@ -50,6 +64,10 @@ export class LifecycleManager {
   readonly watch: SessionWatch
   /** The session store. Public for the lifecycle tests; the hooks reach it through the manager only. */
   readonly persistence: Persistence
+  /** The item host of this load: the one the deps gave, else the ItemService the manager built. */
+  readonly items: ItemsHost
+  /** The router of `/track`. The hook asks it for the answer and for the argument hint. */
+  readonly commands: Commands
   private readonly cfg: ConfigService
   private readonly scheduler: Scheduler
   private readonly bus: EventBus
@@ -71,31 +89,22 @@ export class LifecycleManager {
       onSwitch: sw => this.switcher.run(sw),
       log: ports.log,
     })
-    this.scheduler = new Scheduler({
-      now: () => ports.clock.now(),
-      every: (ms, fn) => ports.clock.every(ms, fn),
-      periodMs: () => g().refresh.tickMs,
-      beat: () => this.tick(),
-      log: ports.log,
-    })
+    this.scheduler = schedulerOf(ports, this.cfg, () => this.tick())
     this.bus = new EventBus({ log: ports.log })
-    this.persistence = new Persistence({
-      store: ports.store,
-      clock: ports.clock,
-      sessionId: () => ports.session.id(),
-      slots: () => this.slots(),
-      limits: () => ({
-        flushMs: g().refresh.flushMs,
-        keepSessions: g().store.keepSessions,
-        maxBytes: g().store.maxBytes,
-      }),
-      beforeFlush: async () => {
-        await this.watch.check() // a flush is an entry: a /clear since the last change is carried first
-      },
-      log: ports.log,
+    this.persistence = persistenceOf(ports, this.cfg, this.watch, () => this.slots())
+    const dismiss = d.dismiss(ports, this.cfg)
+    this.items = itemHostOf(d.items, {
+      trackers: d.trackers,
+      config: this.cfg,
+      facts: this.facts,
+      dismiss,
+      watch: this.watch,
+      persistence: this.persistence,
+      host: () => this.host,
+      ports,
     })
     this.switcher = new SwitchRunner({
-      items: d.items,
+      items: this.items,
       persistence: this.persistence,
       bus: this.bus,
       replayer: new Replay({ messages: () => ports.session.messages(), log: ports.log }),
@@ -107,15 +116,17 @@ export class LifecycleManager {
       ports,
       config: this.cfg,
       facts: this.facts,
-      dismiss: d.dismiss(ports, this.cfg),
-      items: d.items,
+      dismiss,
+      items: this.items,
+      itemsOf: owner => this.items.port(owner),
+      toolsOf: owner => this.items.tools(owner),
       watch: this.watch,
       due: (owner, everyMs, now) => this.scheduler.due(owner, everyMs, now),
       persisted: () => void this.persistence.touch(),
       log: ports.log,
     })
     this.sequence = new StartSequence({
-      items: d.items,
+      items: this.items,
       persistence: this.persistence,
       host: this.host,
       bus: this.bus,
@@ -127,6 +138,10 @@ export class LifecycleManager {
       tickMs: () => g().refresh.tickMs,
       ports,
     })
+    this.commands = new Commands(
+      commandHostOf(this, { items: this.items, host: this.host, bus: this.bus, config: this.cfg }),
+      async p => (await d.listText?.(p)) ?? '',
+    )
   }
 
   get generation(): number {
@@ -206,24 +221,29 @@ export class LifecycleManager {
     } catch {
       // The beat still does what it can.
     }
-    await this.guard('item tick', () => this.d.items.tick(), 'a beat')
+    await this.guard('item tick', () => this.items.tick(), 'a beat')
     await this.bus.emit('tick', { now: await this.ports.clock.now() }, this.ports)
   }
 
-  /** True when a tracker declared a `toolCall` handler for the tool. Static: it needs no start. */
+  /** True when a tracker declared a `toolCall` handler for the tool, or a kind reads it. Static: it needs no start. */
   wants(tool: string): boolean {
-    return this.d.trackers.some(t => t.events?.toolCall !== undefined && Object.hasOwn(t.events.toolCall, tool))
+    return (
+      this.d.trackers.some(t => t.events?.toolCall !== undefined && Object.hasOwn(t.events.toolCall, tool)) ||
+      this.items.wants(tool)
+    )
   }
 
   /** A row was appended: capture first (the item host), then the handlers of the declared doors. */
   async row(ports: Ports, ev: RowEvent): Promise<void> {
     await this.entry(ports)
-    await this.guard('capture', () => this.d.items.capture(ev), 'a row')
+    await this.guard('capture', () => this.items.capture(ev), 'a row')
     await this.bus.emit('row', ev, ports)
   }
 
+  /** A finished tool call: the kinds that read the tool (the item host), then the handlers of the trackers. */
   async toolCall(ports: Ports, ev: ToolCallEvent): Promise<void> {
     await this.entry(ports)
+    await this.guard('item toolCall', () => this.items.toolCall(ev, this.host.hostCtx(ports)), 'a tool call')
     await this.bus.emit('toolCall', ev, ports)
   }
 
@@ -237,7 +257,12 @@ export class LifecycleManager {
     await this.bus.emit('turnComplete', ev, ports)
   }
 
-  /** A `/track <sub>` that core does not answer itself. Each tracker takes the subs it knows. */
+  /** `/track <args>`: the Commands router answers it. A failure rejects. */
+  track(ports: Ports, args: string): Promise<{ text: string }> {
+    return this.commands.run(ports, args)
+  }
+
+  /** A `/track <sub>` for the trackers: the broadcast of the router. Each tracker takes the subs it knows. */
   async command(ports: Ports, ev: CommandEvent): Promise<void> {
     await this.entry(ports)
     await this.bus.emit('command', ev, ports)
@@ -248,7 +273,7 @@ export class LifecycleManager {
     await this.entry(ports)
     await this.d.dismiss(ports, this.cfg).add(ids)
     const gone = new Set(ids)
-    await this.d.items.update(list => {
+    await this.items.update(list => {
       const kept = list.filter(rec => !gone.has(rec.key))
       return kept.length === list.length ? list : kept
     })
@@ -297,7 +322,7 @@ export class LifecycleManager {
     }
     if (EXITS.has(endReason)) {
       this.host.dispose()
-      await this.guard('item dispose', async () => this.d.items.dispose(), 'the end')
+      await this.guard('item dispose', async () => this.items.dispose(), 'the end')
     }
   }
 
@@ -311,7 +336,7 @@ export class LifecycleManager {
   // ---------------------------------------------------------------- slots
 
   private slots(): readonly DataSlot[] {
-    return [this.d.items.slot, ...(this.d.extraSlots ?? []), ...this.host.slots()]
+    return [this.items.slot, ...(this.d.extraSlots ?? []), ...this.host.slots()]
   }
 
   private guard(what: string, step: () => Promise<unknown>, where = 'a switch'): Promise<void> {

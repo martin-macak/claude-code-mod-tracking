@@ -4,10 +4,10 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.3 and 5.10. Plan: L3 Task 12.
 
 import type { LifecycleManager } from '../core/infra/lifecycle'
+import type { ItemsHost } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
 import type { PaneActions } from '../ux/pane'
 import type { Priority } from './contracts'
-import type { ItemRuntime } from './items/runtime'
 import { composePane } from './ui/auto-view'
 import { markKeys } from './ui/view'
 import { viewInputs } from './view-inputs'
@@ -37,7 +37,7 @@ export function pickRow(focus: PaneFocus, e: { element?: string; origin?: { kind
 async function prioritize(
   p: Ports,
   m: LifecycleManager,
-  items: ItemRuntime,
+  items: ItemsHost,
   focus: PaneFocus,
   level: Priority | undefined,
 ): Promise<void> {
@@ -60,7 +60,7 @@ async function prioritize(
 
 const quiet = (task: Promise<unknown>): void => void task.catch(() => {})
 
-export function paneActions(p: Ports, m: LifecycleManager, items: ItemRuntime, focus: PaneFocus): PaneActions {
+export function paneActions(p: Ports, m: LifecycleManager, items: ItemsHost, focus: PaneFocus): PaneActions {
   return {
     fold: id =>
       quiet(

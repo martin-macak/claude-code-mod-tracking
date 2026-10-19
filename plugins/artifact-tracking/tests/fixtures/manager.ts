@@ -1,14 +1,16 @@
-// A LifecycleManager over a real ItemRuntime and the real tracker list, on fakePorts. The tests of `/track`, the pane
+// A LifecycleManager over its own ItemService and the real tracker list, on fakePorts. The tests of `/track`, the pane
 // actions and the artifact and file trackers use it: they need the whole chain (the start sequence, the bus, the item
-// host and the slots), with no engine and no `$`. `extra` adds trackers after the real ones, e.g. a recorder.
+// host, the router and the slots), with no engine and no `$`. `extra` adds trackers after the real ones, e.g. a recorder.
+// The `/track` text is the legacy list text, as register.tsx injects it.
 
 import { LifecycleManager } from '../../core/infra/lifecycle'
 import type { ConfigService } from '../../core/interfaces/config'
 import type { ToolCallEvent } from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
+import { autoGithubOf } from '../../hooks/auto-github'
 import type { ItemRecord } from '../../hooks/contracts'
-import { ItemRuntime } from '../../hooks/items/runtime'
+import { listText } from '../../hooks/list-text'
 import { buildTrackers } from '../../trackers'
 import { autoDismiss } from '../../trackers/auto/dismiss-store'
 import { fakeConfig } from './config-fs'
@@ -16,7 +18,7 @@ import { ghAcliRun, type ItemsOpts } from './items'
 import { type FakeOpts, fakePorts } from './ports'
 
 export type ManagerOpts = ItemsOpts & {
-  trackers?: (rt: ItemRuntime) => readonly Tracker[]
+  trackers?: () => readonly Tracker[]
   extra?: readonly Tracker[]
   fake?: FakeOpts
   /** The config over the trackers of this world. Default: `fakeConfig({ specs })`, no problem, every tracker on. */
@@ -33,23 +35,26 @@ export function managerWorld(o: ManagerOpts = {}) {
     },
   })
   w.run = ghAcliRun(o)
-  const rt = new ItemRuntime(w.ports.state)
-  const trackers = [...(o.trackers ? o.trackers(rt) : buildTrackers({ autoGithub: rt.autoGithub })), ...(o.extra ?? [])]
+  let m: LifecycleManager | undefined
+  const autoGithub = autoGithubOf({ manager: () => m, now: w.ports.clock.wall })
+  const trackers = [...(o.trackers ? o.trackers() : buildTrackers({ autoGithub })), ...(o.extra ?? [])]
   const cfg = (o.config ?? (specs => fakeConfig({ specs })))(trackers)
-  const m = new LifecycleManager(
+  m = new LifecycleManager(
     {
       trackers,
-      items: rt,
       dismiss: p => autoDismiss(p.state.slot),
       config: () => cfg,
       paneId: 'track',
+      listText: p => listText(p, m as LifecycleManager),
     },
     w.ports,
   )
+  const rt = m.items
   const items = () => (w.state.get('items') ?? []) as unknown as ItemRecord[]
   const keys = () => items().map(r => r.key)
   /** One finished tool call, as the manager hears it. */
   const call = (tool: string, input: Record<string, unknown>, result: unknown, extra: Partial<ToolCallEvent> = {}) =>
     m.toolCall(w.ports, { tool, input: { tool, ...input } as Json, result: (result ?? null) as Json, ...extra })
-  return { w, rt, m, cfg, items, keys, call }
+  const manager = m
+  return { w, rt, m: manager, cfg, items, keys, call, autoGithub }
 }

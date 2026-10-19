@@ -1,5 +1,5 @@
 // Wiring for the artifact-tracking mod. The only file that touches `$` or calls `on`: the atoms, `portsOf`, one
-// LifecycleManager per load and one hook per engine event. The manager, the trackers and the item runtime do the work.
+// LifecycleManager per load and one hook per engine event. The manager, the trackers and the item host do the work.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.3 (the hook table).
 
 import type { EngineInterface, Register } from 'claude-code'
@@ -12,10 +12,10 @@ import { buildTrackers } from '../trackers'
 import { autoDismiss } from '../trackers/auto/dismiss-store'
 import { renderBand } from '../ux/band'
 import { renderSections } from '../ux/pane'
-import { trackCommand } from './command'
-import type { ItemRecord, ToolStatus, UiState } from './contracts'
+import { autoGithubOf } from './auto-github'
+import type { ToolStatus, UiState } from './contracts'
 import { rowEvent, spawnEvent, toolCallEvent, turnEvent } from './events'
-import { ItemRuntime } from './items/runtime'
+import { listText } from './list-text'
 import { type PaneFocus, paneActions, pickRow } from './pane-actions'
 import { parseRemote } from './scan/refs'
 import { composeBand, composePane } from './ui/auto-view'
@@ -25,7 +25,7 @@ import { IDLE_ACLI, IDLE_GH, viewInputs } from './view-inputs'
 // Working set in $.state (survives hot reload, reset by /clear). Persistence copies it to $.store, one key per session.
 // The contract (types/index.d.ts) has four keys: `items`, `tools` and `ui` are atoms; each tracker's data is one member
 // of the `trackers` family (spec 5.13, decision D14).
-const items = atom({ plugin: 'artifact-tracking', key: 'items' } as const, [] as ItemRecord[])
+const items = atom({ plugin: 'artifact-tracking', key: 'items' } as const, [] as StoredItem[])
 const tools = atom(
   { plugin: 'artifact-tracking', key: 'tools' } as const,
   { gh: IDLE_GH, acli: IDLE_ACLI } as Record<string, ToolStatus>,
@@ -112,8 +112,8 @@ function portsOf($: EngineInterface): Ports {
     },
     state: {
       items: {
-        get: async () => (await read($, items)) as StoredItem[],
-        update: async fn => (await update($, items, cur => fn(cur as StoredItem[]) as ItemRecord[])) as StoredItem[],
+        get: () => read($, items),
+        update: fn => update($, items, fn),
       },
       tools: { get: () => read($, tools), update: fn => update($, tools, fn) },
       ui: { get: () => read($, ui), update: fn => update($, ui, fn) },
@@ -139,34 +139,27 @@ function portsOf($: EngineInterface): Ports {
 const PANE = 'track'
 
 // Module state. A hot reload loses it. Each part is rebuilt on the next use.
-let runtime: ItemRuntime | undefined
 let manager: LifecycleManager | undefined
 /** The row the priority keys act on, and the element map of the last drawing. Never stored. */
 const focus: PaneFocus = { row: undefined, rows: new Map() }
 
-/** The item host of this load: the list, the capture funnel, the refresh coordinator, the tools, the session repo. */
-function runtimeOf($: EngineInterface): ItemRuntime {
-  runtime ??= new ItemRuntime(portsOf($).state)
-  return runtime
-}
-
 /**
  * The lifecycle of this load: the start sequence, the session switch (/clear, /resume, /branch), `session.end`, the
- * store and the bus. Built on the first hook; the ports of that hook serve its collaborators.
+ * store, the bus and the item host. Built on the first hook; the ports of that hook serve its collaborators.
  */
 function managerOf($: EngineInterface): LifecycleManager {
-  const host = runtimeOf($)
   if (manager) return manager
-  const trackers = buildTrackers({ autoGithub: host.autoGithub })
+  const trackers = buildTrackers({ autoGithub: autoGithubOf({ manager: () => manager, now: Date.now }) })
   manager = new LifecycleManager(
     {
       trackers,
-      items: host,
       dismiss: (p, c) => autoDismiss(p.state.slot, () => c.global().store.maxDismissed),
       // The config file: read at the start and on the tick, written once per load (L4). The manager knows the trackers
       // only as `{ id, config }`.
       config: p => new ConfigManager({ fs: p.fs, env: p.env, specs: trackers, log: p.log }),
       paneId: PANE,
+      // The text of the list for /track: the legacy composers until L6 (K19). Read at call time, the manager is set by then.
+      listText: p => listText(p, managerOf($)),
     },
     portsOf($),
   )
@@ -181,7 +174,7 @@ export const register: Register = on => {
       $.command.register({
         name: 'track',
         description: 'Show tracked GitHub, Jira, artifacts, web links and Markdown files',
-        argumentHint: '[refresh|clear|prio <ref> <level>]',
+        argumentHint: managerOf($).commands.hint(),
       }),
     ) // a refused command: capture and restore still work
     await soft(() => managerOf($).start(portsOf($), { cwd: e.cwd, fromSessionStart: true }))
@@ -248,9 +241,9 @@ export const register: Register = on => {
     return out
   }).catch((_$, e, next) => next(e))
 
-  on('command.run', { command: 'track' }, ($, e) => trackCommand(portsOf($), managerOf($), runtimeOf($), e.args)).catch(
-    () => ({ text: 'artifact-tracking: could not run the command.' }),
-  )
+  on('command.run', { command: 'track' }, ($, e) => managerOf($).track(portsOf($), e.args)).catch(() => ({
+    text: 'artifact-tracking: could not run the command.',
+  }))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const el = $.ui.resolve(e)
@@ -259,7 +252,7 @@ export const register: Register = on => {
     const v = await viewInputs(p, m.facts, { bodyColumns: e.props.bodyColumns, live: id => m.live(id) })
     const sections = composePane(v.items, v.processes, v.processUi, v.ctx, v.repos)
     focus.rows = focusTargets(sections)
-    return renderSections(el, sections, e.props.bodyColumns, paneActions(p, m, runtimeOf($), focus))
+    return renderSections(el, sections, e.props.bodyColumns, paneActions(p, m, m.items, focus))
   }).catch(($, e) => {
     // A failed read must not close the pane. Draw one line instead.
     const { Text } = $.ui.resolve(e)

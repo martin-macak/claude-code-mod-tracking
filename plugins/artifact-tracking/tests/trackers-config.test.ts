@@ -34,6 +34,7 @@ import { fakeConfig } from './fixtures/config-fs'
 import * as ev from './fixtures/events'
 import { discoveryData, prNode } from './fixtures/gh-discovery'
 import { porcelain } from './fixtures/git'
+import { IDLE_ITEMS } from './fixtures/items-host'
 import { type FakeWorld, fakePorts } from './fixtures/ports'
 
 declare function setTimeout(fn: () => void, ms: number): unknown
@@ -44,6 +45,7 @@ const RAN = { result: { stdout: '', stderr: '', interrupted: false } }
 /** An item host that holds nothing. */
 function stubHost(): ItemsHost {
   return {
+    ...IDLE_ITEMS,
     slot: {
       id: 'items',
       persist: true,

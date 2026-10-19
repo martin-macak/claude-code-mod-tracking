@@ -1082,15 +1082,21 @@ test('an ssh host alias is not kept as the session repo: gh resolves it and #N m
   expect((await track($)).text).toContain('Web five')
 })
 
+// The check of a non-github host takes AUTH_CHECK_MS. The start must not wait for it. The call also loads the module,
+// which takes about 100 to 130 ms on a laptop, 250 ms on a busy one and 270 ms on a CI runner. So the budget sits
+// between that and the check, not near it.
+const AUTH_CHECK_MS = 1000
+const START_BUDGET_MS = 600
+
 test('session.start does not wait for the check of a non-github host', async ($, on) => {
   world(on, {
     remote: 'git@ghe.corp:acme/web.git',
-    authMs: 400,
+    authMs: AUTH_CHECK_MS,
     seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items: [KEPT] } },
   })
   const t0 = Date.now()
   await $.session.start(START)
-  expect(Date.now() - t0).toBeLessThan(250)
+  expect(Date.now() - t0).toBeLessThan(START_BUDGET_MS)
   expect((await track($)).text).toContain('Kept page')
 })
 
