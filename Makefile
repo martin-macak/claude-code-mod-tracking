@@ -24,24 +24,6 @@ CLAUDE_CONFIG_DIR ?= $(HOME)/.claude
 SKILLS_DIR := $(CLAUDE_CONFIG_DIR)/skills
 LINK       := $(SKILLS_DIR)/$(NAME)
 
-# Project scope: <repo>/.claude/skills/<name>-dev, see install-local. The local copy
-# needs its own plugin name: the user-scope install already owns $(NAME), and a second
-# plugin with that name does not load.
-LOCAL_DIR        := $(ROOT)/.claude/skills
-LOCAL_NAME       := $(NAME)-dev
-LOCAL_LINK       := $(LOCAL_DIR)/$(LOCAL_NAME)
-EXCLUDE_LINE     := /.claude/skills/$(LOCAL_NAME)
-# Left by the earlier install-local (one symlink named $(NAME)). Removed on install.
-# That link still uses the name $(NAME), so it clashes with the user-scope install:
-# "the name is already taken". Each worktree can hold one, and the exclude file is
-# shared, so REMOVE_OLD_LINKS checks every worktree of the repo, not only this one.
-OLD_EXCLUDE_LINE := /.claude/skills/$(NAME)
-PLUGIN_REL       := $(patsubst $(ROOT)/%,%,$(PLUGIN_ABS))
-REMOVE_OLD_LINKS  = { echo "$(ROOT)"; git -C "$(ROOT)" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p'; } | sort -u | \
-  while IFS= read -r wt; do l="$$wt/.claude/skills/$(NAME)"; \
-    if [ -L "$$l" ] && [ "$$(readlink "$$l")" = "$$wt/$(PLUGIN_REL)" ]; then rm "$$l" && echo "Removed old link: $$l"; fi; \
-  done
-
 # TypeScript version where mise is absent. Keep it equal to the pin in test.yml.
 TYPESCRIPT_VERSION ?= 7.0.2
 # Runners. With mise, use mise's $(NODE). Without mise (CI, Copilot, the Claude
@@ -61,7 +43,7 @@ E2E_STAMP := $(E2E)/node_modules/.package-lock.json
 DEMO_GIF  := docs/assets/demo.gif
 
 .DEFAULT_GOAL := help
-.PHONY: help init build typecheck test test-scripts check verify project-sync e2e-deps e2e-unit e2e demo lint hooks dist release release-dry marketplace-release install uninstall install-local uninstall-local clean
+.PHONY: help init build typecheck test test-scripts check verify project-sync e2e-deps e2e-unit e2e demo lint hooks dist release release-dry marketplace-release install uninstall clean
 
 help: ## List the targets
 	@echo "Targets (PLUGIN=$(PLUGIN)):"
@@ -110,7 +92,6 @@ test: build ## Run the plugin tests (after build)
 check: test ## Alias of test (validate, type-check, test)
 
 test-scripts: ## Test the repo scripts (no claude needed)
-	scripts/dev/install-local-watch.test.sh
 	scripts/dev/gh-check.test.sh
 	bash scripts/release/release.test.sh
 	bash scripts/release/ci-guards.test.sh
@@ -201,58 +182,6 @@ uninstall: ## Remove the link made by install (idempotent)
 	elif [ -e "$(LINK)" ]; then echo "Skipped: $(LINK) is not a symlink."; \
 	else echo "Not installed: $(LINK)"; fi
 
-# install-local: load the mod only when Claude Code starts in THIS repo. The user
-# config dir is not touched.
-# Mechanism: a project-scope skills-directory plugin. A plugin folder under
-# <repo>/.claude/skills/<name> loads as <name>@skills-dir, only from the
-# .claude/skills/ of the session's primary working directory, so start claude at the
-# repo root (a subfolder does not load it). Claude Code asks the workspace trust
-# question first, and `-p` never counts as trust.
-# The copy gets its own name, <name>-dev: a second plugin with the same name is refused
-# while the user-scope install exists. It is a real copy, not symlinks: a symlinked
-# hooks folder fails with "Path escapes plugin directory". Rerun after code edits.
-# KB: docs/knowledge-base/claude-code-mods/workflow/develop.md, "4. Skills folder";
-# sources/code-claude-com-2026-10-09/plugins/loading.md, "Plugins shared through a
-# repository" (line 73). Rejected: CLAUDE_CODE_PLUGIN_DIRS cannot be set in project or
-# local settings (plugins/create.md line 223). enabledPlugins in settings.local.json
-# needs a marketplace entry, so it is not used.
-# The link is not tracked: its path goes into the repo's .git/info/exclude (local,
-# never committed). Idempotent. uninstall-local removes only our link and our line.
-install-local: ## Load the mod in this repo only, as $(LOCAL_NAME) (copy; rerun after edits)
-	@$(REMOVE_OLD_LINKS)
-	@if [ -e "$(LOCAL_LINK)" ] && ! grep -q '"name": "$(LOCAL_NAME)"' "$(LOCAL_LINK)/.claude-plugin/plugin.json" 2>/dev/null; then \
-	  echo "Refusing: $(LOCAL_LINK) exists and is not an install-local copy."; exit 1; fi
-	@rm -rf "$(LOCAL_LINK)"
-	@cp -R "$(PLUGIN_ABS)" "$(LOCAL_LINK)"
-	@awk -v n='$(LOCAL_NAME)' '!done && /"name"[[:space:]]*:/ { sub(/"name"[[:space:]]*:[[:space:]]*"[^"]*"/, "\"name\": \"" n "\""); done = 1 } { print }' "$(PLUGIN_ABS)/.claude-plugin/plugin.json" > "$(LOCAL_LINK)/.claude-plugin/plugin.json"
-	@# State is owned by the plugin name: $(NAME).* belongs to the user-scope install, and a write to it from
-	@# the copy is refused ("only a value's owner writes it"). So the copy owns $(LOCAL_NAME).* instead.
-	@sed -i.bak "s/plugin: '$(NAME)'/plugin: '$(LOCAL_NAME)'/g" "$(LOCAL_LINK)/hooks/register.tsx"
-	@sed -i.bak "s/^    '$(NAME)': {/    '$(LOCAL_NAME)': {/" "$(LOCAL_LINK)/types/index.d.ts"
-	@rm -f "$(LOCAL_LINK)/hooks/register.tsx.bak" "$(LOCAL_LINK)/types/index.d.ts.bak"
-	@grep -q "plugin: '$(LOCAL_NAME)'" "$(LOCAL_LINK)/hooks/register.tsx" || { echo "install-local: state owner rename failed"; exit 1; }
-	@ex="$$(git -C "$(ROOT)" rev-parse --path-format=absolute --git-path info/exclude 2>/dev/null)"; \
-	if [ -n "$$ex" ]; then \
-	  mkdir -p "$$(dirname "$$ex")"; touch "$$ex"; \
-	  grep -qxF '$(EXCLUDE_LINE)' "$$ex" || echo '$(EXCLUDE_LINE)' >> "$$ex"; \
-	  echo "Excluded from git in $$ex"; \
-	else echo 'Not a git repo: no exclude line added.'; fi
-	@echo "Installed: $(LOCAL_LINK) as $(LOCAL_NAME), copied from $(PLUGIN_ABS). Rerun make install-local after code changes."
-	@echo "Start claude at $(ROOT), accept the trust prompt, or run /reload-plugins."
-	@echo "Expect $(LOCAL_NAME)@skills-dir in /plugin, and no 'name already taken' error."
-
-uninstall-local: ## Remove the project copy made by install-local (idempotent)
-	@$(REMOVE_OLD_LINKS)
-	@if [ -f "$(LOCAL_LINK)/.claude-plugin/plugin.json" ] && grep -q '"name": "$(LOCAL_NAME)"' "$(LOCAL_LINK)/.claude-plugin/plugin.json"; then \
-	  rm -rf "$(LOCAL_LINK)" && echo "Removed: $(LOCAL_LINK)"; \
-	elif [ -e "$(LOCAL_LINK)" ] || [ -L "$(LOCAL_LINK)" ]; then echo "Skipped: $(LOCAL_LINK) is not an install-local copy."; \
-	else echo "Not installed: $(LOCAL_LINK)"; fi
-	@ex="$$(git -C "$(ROOT)" rev-parse --path-format=absolute --git-path info/exclude 2>/dev/null)"; \
-	if [ -n "$$ex" ] && [ -f "$$ex" ]; then \
-	  for l in '$(EXCLUDE_LINE)' '$(OLD_EXCLUDE_LINE)'; do \
-	    if grep -qxF "$$l" "$$ex"; then grep -vxF "$$l" "$$ex" > "$$ex.tmp"; cat "$$ex.tmp" > "$$ex"; rm -f "$$ex.tmp"; \
-	    echo "Removed exclude line $$l from $$ex"; fi; \
-	  done; fi
 
 # clean: generated files only. .claude-plugin/types/ is laid by the engine on a real
 # load. Source and tracked files stay.
