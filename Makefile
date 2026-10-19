@@ -43,7 +43,7 @@ E2E_STAMP := $(E2E)/node_modules/.package-lock.json
 DEMO_GIF  := docs/assets/demo.gif
 
 .DEFAULT_GOAL := help
-.PHONY: help init build typecheck test test-scripts check verify project-sync e2e-deps e2e-unit e2e demo lint hooks dist release release-dry marketplace-release install uninstall clean
+.PHONY: help init build typecheck test coverage test-scripts check verify project-sync e2e-deps e2e-unit e2e demo lint hooks dist release release-dry marketplace-release install uninstall clean
 
 help: ## List the targets
 	@echo "Targets (PLUGIN=$(PLUGIN)):"
@@ -81,18 +81,43 @@ build: ## Validate the plugin and the marketplace, then type-check (no output fi
 	cd "$(ROOT)" && claude plugin validate --strict .
 	@$(MAKE) --no-print-directory typecheck
 
-typecheck: e2e-deps ## Type-check the plugin and the e2e harness with tsc (no claude needed)
+# scripts/coverage takes @types/node from e2e/node_modules, so it needs e2e-deps too.
+typecheck: e2e-deps ## Type-check the plugin, the e2e harness and the coverage scripts with tsc (no claude needed)
 	cd $(PLUGIN) && $(TSC) -p .
 	cd $(E2E) && $(TSC) -p .
+	cd scripts/coverage && $(TSC) -p .
 
 # The suite takes about 3 s, so test depends on build.
+# The last step is the coverage gate, so the pre-push hook and CI enforce it.
 test: build ## Run the plugin tests (after build)
 	cd $(PLUGIN) && claude plugin test .
+	@$(MAKE) --no-print-directory coverage
+
+# coverage: the kit has no coverage option, so the pure tests also run under node.
+# scripts/coverage/loader.mjs maps claude-code/testing to a shim and claude-code to an
+# empty stub, and resolves extensionless imports. Rule: node runs every tests/**/*.test.ts
+# except *.kit.test.ts. A test that needs $ is .tsx or *.kit.test.ts and only the kit runs it.
+# Gate: 90% lines, branches and functions over core, ux, trackers and hooks. register.tsx
+# (the composition root) is out; the kit wiring tests cover it. check.mjs then fails when a
+# source file is missing from the report, because node reports only the files it loaded.
+# Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 7.1.
+COVERAGE_FLAGS := --experimental-transform-types --no-warnings --import $(ROOT)/scripts/coverage/loader.mjs \
+  --test --experimental-test-coverage \
+  --test-coverage-include='core/**' --test-coverage-include='ux/**' \
+  --test-coverage-include='trackers/**' --test-coverage-include='hooks/**' \
+  --test-coverage-exclude='hooks/register.tsx' --test-coverage-exclude='tests/**' \
+  --test-coverage-lines=90 --test-coverage-branches=90 --test-coverage-functions=90 \
+  --test-reporter=spec --test-reporter-destination=stdout \
+  --test-reporter=lcov --test-reporter-destination=coverage/lcov.info
+coverage: ## Run the pure tests under node with a 90% coverage gate
+	cd $(PLUGIN) && mkdir -p coverage && $(NODE_RUN) node $(COVERAGE_FLAGS) $$(find tests -name '*.test.ts' ! -name '*.kit.test.ts' | sort)
+	$(NODE_RUN) node $(ROOT)/scripts/coverage/check.mjs $(PLUGIN)/coverage/lcov.info $(PLUGIN)
 
 check: test ## Alias of test (validate, type-check, test)
 
 test-scripts: ## Test the repo scripts (no claude needed)
 	scripts/hooks/verify-gate.test.sh
+	$(NODE_RUN) node --experimental-transform-types --test scripts/coverage/kit-shim.test.ts scripts/coverage/check.test.mjs
 	scripts/dev/gh-check.test.sh
 	bash scripts/release/release.test.sh
 	bash scripts/release/ci-guards.test.sh

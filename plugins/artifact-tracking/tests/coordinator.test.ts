@@ -1,5 +1,7 @@
 // RefreshCoordinator: due picking, debounce, re-entry guard, force, logged-out tools, errors. Pure, fakes only.
 import { expect, test } from 'claude-code/testing'
+import type { CoordinatorDeps } from '../core/infra/coordinator'
+import { RefreshCoordinator } from '../core/infra/coordinator'
 import type {
   GitHubTarget,
   GitHubToolApi,
@@ -10,8 +12,6 @@ import type {
   Tools,
 } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
-import type { CoordinatorDeps } from '../hooks/refresh/coordinator'
-import { RefreshCoordinator } from '../hooks/refresh/coordinator'
 
 const NOW = 10_000_000
 const base = { sources: ['prompt' as const], firstSeen: 1, lastSeen: 1, seenCount: 1 }

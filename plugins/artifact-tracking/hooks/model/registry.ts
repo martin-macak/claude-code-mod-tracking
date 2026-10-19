@@ -1,6 +1,12 @@
 // Pure functions over lists of ItemRecord: keys, conversion, merge, dedupe, caps, re-key (spec 6.2, 10).
 // No input list or record is mutated.
 
+import { ArtifactItem } from '../../trackers/artifact/artifact-item'
+import { artifactIdOf, parseArtifactUrl } from '../../trackers/artifact/artifact-url'
+import { FileItem } from '../../trackers/file/file-item'
+import { GitHubItem } from '../../trackers/github/github-item'
+import { cloneNodes, JiraItem } from '../../trackers/jira/jira-item'
+import { WebLink } from '../../trackers/web/web-link'
 import type {
   ArtifactRecord,
   ArtifactRef,
@@ -21,15 +27,9 @@ import type {
   WebRef,
 } from '../contracts'
 import { AUTO_SOURCES, carryPriorities, LIMITS } from '../contracts'
-import { artifactIdOf, parseArtifactUrl } from '../scan/artifact-url'
 import { hostPath } from '../scan/refs'
-import { ArtifactItem } from './artifact-item'
-import { FileItem } from './file-item'
-import { GitHubItem } from './github-item'
-import { cloneNodes, JiraItem } from './jira-item'
 import { fileKey, keyOf } from './keys'
 import { mergeNodePriorities, mergePriority, withPriority } from './priority'
-import { WebLink } from './web-link'
 
 // ---------------------------------------------------------------- keys
 

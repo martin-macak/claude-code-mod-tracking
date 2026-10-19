@@ -1,8 +1,8 @@
 // The Artifact tool call as an event: every row of the table in the design study on #29 (§3). Pure.
 // The kit's `$.tool.call` drops `agentId`, so the subagent case is tested here: the hook never reads it (G10).
 import { expect, test } from 'claude-code/testing'
-import { artifactEvent } from '../hooks/capture/artifact-tool'
-import { artifactUuid } from '../hooks/scan/artifact-url'
+import { artifactEvent } from '../trackers/artifact/artifact-tool'
+import { artifactUuid } from '../trackers/artifact/artifact-url'
 import {
   ASSET,
   DELETE,

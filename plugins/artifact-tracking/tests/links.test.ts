@@ -3,7 +3,7 @@
 // from the OSC 8 bytes of a real Claude Code 2.1.295 terminal session (FORCE_HYPERLINK=1) that
 // drew the same Markdown. See the KB page, section 3.
 import { expect, test } from 'claude-code/testing'
-import type { Found } from '../hooks/scan/links'
+import type { Found } from '../core/lib/links'
 import {
   emittedUrl,
   MAX_TEXT,
@@ -12,7 +12,7 @@ import {
   scanMarkdown,
   scanOsc8,
   textOfContent,
-} from '../hooks/scan/links'
+} from '../core/lib/links'
 
 const links = (text: string, opts = {}) =>
   scanMarkdown(text, opts)

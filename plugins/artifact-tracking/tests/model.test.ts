@@ -2,9 +2,9 @@
 import { expect, test } from 'claude-code/testing'
 import type { GitHubRecord, GitHubToolApi, JiraRecord, JiraToolApi, ToolStatus } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
-import { GitHubItem } from '../hooks/model/github-item'
-import { JiraItem } from '../hooks/model/jira-item'
-import { WebLink } from '../hooks/model/web-link'
+import { GitHubItem } from '../trackers/github/github-item'
+import { JiraItem } from '../trackers/jira/jira-item'
+import { WebLink } from '../trackers/web/web-link'
 
 const status = (name: 'gh' | 'acli'): ToolStatus => ({ name, available: true, loggedIn: null, breaker: 'closed' })
 function ghTool(over: Partial<GitHubToolApi> = {}) {

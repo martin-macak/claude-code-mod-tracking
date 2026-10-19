@@ -8,7 +8,7 @@ Design: [`docs/superpowers/specs/2026-10-10-artifact-tracking-design.md`](../../
 
 ## Load it
 
-Mods are in early access. Tested on Claude Code 2.1.295 and 2.1.296.
+Mods are in early access. Tested with Claude Code 2.1.302.
 
 Install it from the marketplace of this repo. In a Claude Code session (2.1.275 or later):
 
@@ -219,18 +219,23 @@ claude plugin test .
 | Folder | Content |
 | --- | --- |
 | `hooks/register.tsx` | Hooks, command, timers, state, store, render. |
-| `hooks/scan/` | Text to references (`refs.ts`), artifact URLs and ids (`artifact-url.ts`), Markdown paths (`files.ts`) and the link scanner (`links.ts`). |
-| `hooks/capture/` | An Artifact tool call as an event (`artifact-tool.ts`), for the hook and the resume backfill. |
-| `hooks/model/` | Items, keys, merge, dedupe, caps. |
-| `hooks/tools/` | `GhTool`, `AcliTool`, the base `Tool` and the circuit breaker. |
-| `hooks/refresh/` | The refresh coordinator. |
-| `hooks/auto/` | Ledger, worktrees, agents, events, scheduler and round of auto tracking. |
-| `hooks/ui/` | The view model, the pane and the band. |
+| `hooks/` (rest) | Modules that mix concerns until later layers split them: `contracts.ts`, `model/` (keys, priority, registry, tracked item), `scan/refs.ts`, `ui/view.ts`, `ui/auto-view.ts`. |
+| `core/lib/` | Pure helpers: JSON parsing, `git status` porcelain, shell splitting and the link scanner. |
+| `core/infra/` | The base `Tool` and the circuit breaker, the refresh coordinator, the scheduler and the dismiss store. |
+| `ux/` | The pane and the band. |
+| `trackers/github/` | GitHub items, `GhTool`, PR discovery and the PR body scanner. |
+| `trackers/jira/` | Jira items and `AcliTool`. |
+| `trackers/web/` | Web links. |
+| `trackers/artifact/` | Artifact items, the Artifact tool call as an event (for the hook and the resume backfill) and artifact URLs and ids. |
+| `trackers/file/` | File items and the Markdown path scanner. |
+| `trackers/repos/` | Repository hints, identity, paths, queue, rows, tracker and view. |
+| `trackers/processes/` | Process parsing, probing and view. |
+| `trackers/auto/` | Ledger, worktrees, agents, events and round of auto tracking. |
 | `tests/` | Unit tests, fixtures, and the kit tests of the wiring (`register.test.tsx`, `artifact-wiring.test.tsx`). |
 
 ## CI
 
-`.github/workflows/test.yml` runs on every pull request, on each push to `main`, and by hand. It installs Claude Code 2.1.296 and TypeScript 7.0.2 at fixed versions. Then it runs `make test`: `claude plugin validate`, `tsc -p .`, `claude plugin test`. No login or secret is needed.
+`.github/workflows/test.yml` runs on every pull request, on each push to `main`, and by hand. It installs Claude Code 2.1.302 and TypeScript 7.0.2 at fixed versions. Then it runs `make test`: `claude plugin validate`, `tsc -p .`, `claude plugin test`, then `make coverage` (`node --test` over the pure tests, with a 90% gate on lines, branches and functions, and `scripts/coverage/check.mjs`). A drop below 90% fails CI and the pre-push hook. No login or secret is needed.
 
 ## Release
 
@@ -269,12 +274,13 @@ Run `make` from the repo root. `make help` lists the targets. Set `PLUGIN=<dir>`
 | --- | --- |
 | `init` | Checks `claude`, `mise` and node. Reports `gh`, `acli` and `pre-commit` as present or missing. A missing optional tool does not fail. Warns when the `gh` token lacks the `project` scope, or when `gh` is older than 2.94 (`scripts/dev/gh-check.sh`). Warms the TypeScript cache for offline runs. |
 | `build` | Runs `claude plugin validate` on the plugin, and `--strict` on the repo root (the marketplace), then `typecheck`. Nothing is emitted. Claude Code loads the `.ts` and `.tsx` files as they are. |
-| `typecheck` | Runs `tsc` only. The `typecheck` pre-commit hook calls it. |
+| `typecheck` | Runs `tsc` on the plugin, on `e2e/` and on `scripts/coverage/`. The `typecheck` pre-commit hook calls it. |
 | `lint` | Runs every pre-commit hook on all files. |
 | `hooks` | Installs the `pre-commit`, `commit-msg` and `pre-push` git hooks. |
 | `verify` | The gate before every push: `lint` with auto-fix, then `test`, `e2e-unit` and `test-scripts`. Fails on untracked files, because the hooks skip them. |
-| `test` | Runs `build`, then `claude plugin test`. `check` is an alias. |
-| `test-scripts` | Tests the GitHub scope check, release guards, packaging, smoke comparisons, and the `pr-review` and `project-sync` skills. It also checks the planning docs. Needs no `claude`. |
+| `test` | Runs `build`, then `claude plugin test`, then `coverage`. `check` is an alias. |
+| `coverage` | Runs every `tests/**/*.test.ts` except `*.kit.test.ts` under `node --test` and fails below 90% lines, branches or functions over `core/`, `ux/`, `trackers/` and `hooks/`. `scripts/coverage/check.mjs` then fails when a source file is missing from the report. |
+| `test-scripts` | Tests the verify gate (`scripts/hooks/verify-gate.sh`), the coverage shim and `check.mjs`, the GitHub scope check, release guards, packaging, smoke comparisons, and the `pr-review` and `project-sync` skills. It also checks the planning docs. Needs no `claude`. |
 | `project-sync` | Runs the `project-sync` skill: `ARGS='sync'` (default), `next`, `add`, `status`. `sync`, `next` and `add` are dry runs unless `ARGS` has `--apply`. `status` writes at once. See `AGENTS.md`, "Planning and delivery". |
 | `dist VERSION=x.y.z` | Builds both plugin zips from tracked `HEAD` files, stamps the supplied version in staging, and writes `dist/SHA256SUMS`. |
 | `release VERSION=x.y.z` | Checks clean, current `main`, SemVer order and milestone, runs `test`, then creates and pushes the tag. |

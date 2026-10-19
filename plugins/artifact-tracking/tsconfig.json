@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "target": "es2023",
-    "lib": ["es2023"],
+    "target": "es2024",
+    "lib": ["es2024"],
     "types": [],
     "module": "esnext",
     "moduleResolution": "bundler",
@@ -14,9 +14,13 @@
     "jsxFragmentFactory": "Fragment"
   },
   "include": [
-    "../../docs/knowledge-base/claude-code-mods/sources/claude-code-2.1.295/types/claude-code.d.ts",
+    "../../docs/knowledge-base/claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts",
     "hooks/**/*.ts",
     "hooks/**/*.tsx",
+    "core/**/*.ts",
+    "ux/**/*.ts",
+    "ux/**/*.tsx",
+    "trackers/**/*.ts",
     "types/**/*.d.ts",
     "tests/**/*.ts",
     "tests/**/*.tsx"

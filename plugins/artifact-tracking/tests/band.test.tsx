@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { renderBand } from '../hooks/ui/band'
-import type { PaneElements } from '../hooks/ui/pane'
+import { renderBand } from '../ux/band'
+import type { PaneElements } from '../ux/pane'
 
 test('band text parts all truncate to avoid wrapping in narrow columns', () => {
   const band = renderBand({ Box: 'Box', Text: 'Text' } as unknown as PaneElements, 'GitHub 3 · Links 1') as {

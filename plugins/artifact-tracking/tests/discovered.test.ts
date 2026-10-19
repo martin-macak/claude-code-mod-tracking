@@ -2,8 +2,8 @@
 import { expect, test } from 'claude-code/testing'
 import type { GitHubRecord, GitHubRef, ItemRecord, Ref, WebRef } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
-import { applyDiscovery, dropAuto } from '../hooks/model/discovered'
 import { isAutoOnly, keyOf, prKey } from '../hooks/model/keys'
+import { applyDiscovery, dropAuto } from '../trackers/github/discovered'
 import { discovered } from './fixtures/gh-discovery'
 
 const AT = 10_000_000

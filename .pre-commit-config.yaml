@@ -78,12 +78,12 @@ repos:
         args: [--negate, --multiline]
         stages: [commit-msg]
 
-      # Type-check the mod and the e2e harness. CI skips it: test.yml runs `make test`.
+      # Type-check the mod, the e2e harness and the coverage scripts. CI skips it: test.yml runs `make test`.
       - id: typecheck
-        name: tsc (plugins, e2e)
+        name: tsc (plugins, e2e, scripts/coverage)
         language: system
         entry: make typecheck
-        files: ^(plugins|e2e)/.*\.(ts|tsx|json)$
+        files: ^(plugins|e2e|scripts/coverage)/.*\.(ts|tsx|json)$
         pass_filenames: false
 
       # Tests before every push. CI runs the same in test.yml, so lint.yml skips it.

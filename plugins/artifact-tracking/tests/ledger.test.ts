@@ -1,5 +1,7 @@
 // Ledger: root pin, proofs, agent records, carry-over. Pure.
 import { expect, test } from 'claude-code/testing'
+import type { AutoState, SpawnFacts } from '../hooks/contracts'
+import { LIMITS } from '../hooks/contracts'
 import {
   carryAuto,
   emptyAuto,
@@ -11,9 +13,7 @@ import {
   recordSpawn,
   recordTurnEnd,
   setRootTop,
-} from '../hooks/auto/ledger'
-import type { AutoState, SpawnFacts } from '../hooks/contracts'
-import { LIMITS } from '../hooks/contracts'
+} from '../trackers/auto/ledger'
 
 const AT = 1_000_000
 const MIN = 60_000

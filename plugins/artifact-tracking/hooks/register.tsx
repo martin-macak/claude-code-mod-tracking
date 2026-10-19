@@ -5,8 +5,15 @@
 
 import type { EngineInterface, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
-import { autoIds, dismiss } from './auto/dismiss'
-import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from './auto/events'
+import { CircuitBreaker } from '../core/infra/circuit-breaker'
+import type { Timer } from '../core/infra/coordinator'
+import { RefreshCoordinator } from '../core/infra/coordinator'
+import { autoIds, dismiss } from '../core/infra/dismiss'
+import { AutoScheduler } from '../core/infra/scheduler'
+import { isRecord } from '../core/lib/json'
+import { textOfContent } from '../core/lib/links'
+import { artifactEvent } from '../trackers/artifact/artifact-tool'
+import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from '../trackers/auto/events'
 import {
   carryAuto,
   emptyAuto,
@@ -17,10 +24,48 @@ import {
   recordEnter,
   recordSpawn,
   recordTurnEnd,
-} from './auto/ledger'
-import { AutoRound } from './auto/round'
-import { AutoScheduler } from './auto/scheduler'
-import { artifactEvent } from './capture/artifact-tool'
+} from '../trackers/auto/ledger'
+import { AutoRound } from '../trackers/auto/round'
+import {
+  type FileTouch,
+  type IgnoreContext,
+  isIgnored,
+  mdCandidates,
+  normalizePath,
+  resolvePath,
+  touchFromToolResult,
+} from '../trackers/file/files'
+import { dropAuto } from '../trackers/github/discovered'
+import { GhTool } from '../trackers/github/gh-tool'
+import { AcliTool } from '../trackers/jira/acli-tool'
+import {
+  monitorRow,
+  parseBashProcesses,
+  processUpdateFromNotification,
+  processUpdateFromNotificationText,
+  processUpdateFromTaskStop,
+} from '../trackers/processes/parse'
+import {
+  composeState,
+  dockerEntryMatchesRow,
+  findDetachedPid,
+  parseDockerPs,
+  psStillMatches,
+  screenLive,
+  tmuxLive,
+} from '../trackers/processes/probe'
+import {
+  extractRepoPathsFromTool,
+  PATH_TOOLS,
+  parseRepoHintsFromBash,
+  type RepoHit,
+  repoBaseDir,
+} from '../trackers/repos/hints'
+import { RepoQueue } from '../trackers/repos/queue'
+import { capRepoRows, mergeRepoRows, upsertRepoRows } from '../trackers/repos/rows'
+import { RepoTracker, type RepoVisit } from '../trackers/repos/tracker'
+import { renderBand } from '../ux/band'
+import { renderSections } from '../ux/pane'
 import type {
   AutoReason,
   AutoState,
@@ -44,8 +89,6 @@ import type {
   UiState,
 } from './contracts'
 import { AUTO_SOURCES, isRowId, LIMITS, repoRowId } from './contracts'
-import { isRecord } from './json'
-import { dropAuto } from './model/discovered'
 import { artifactOrigin, keyOf } from './model/keys'
 import { rowIdOf, setPriority } from './model/priority'
 import {
@@ -60,45 +103,8 @@ import {
   resolveBareRefs,
   unionRecords,
 } from './model/registry'
-import {
-  monitorRow,
-  parseBashProcesses,
-  processUpdateFromNotification,
-  processUpdateFromNotificationText,
-  processUpdateFromTaskStop,
-} from './process/parse'
-import {
-  composeState,
-  dockerEntryMatchesRow,
-  findDetachedPid,
-  parseDockerPs,
-  psStillMatches,
-  screenLive,
-  tmuxLive,
-} from './process/probe'
-import type { Timer } from './refresh/coordinator'
-import { RefreshCoordinator } from './refresh/coordinator'
-import { extractRepoPathsFromTool, PATH_TOOLS, parseRepoHintsFromBash, type RepoHit, repoBaseDir } from './repos/hints'
-import { RepoQueue } from './repos/queue'
-import { capRepoRows, mergeRepoRows, upsertRepoRows } from './repos/rows'
-import { RepoTracker, type RepoVisit } from './repos/tracker'
-import {
-  type FileTouch,
-  type IgnoreContext,
-  isIgnored,
-  mdCandidates,
-  normalizePath,
-  resolvePath,
-  touchFromToolResult,
-} from './scan/files'
-import { textOfContent } from './scan/links'
 import { commandArgs, extractRefs, parseRemote } from './scan/refs'
-import { AcliTool } from './tools/acli-tool'
-import { CircuitBreaker } from './tools/circuit-breaker'
-import { GhTool } from './tools/gh-tool'
 import { composeBand, composeCommandText, composePane } from './ui/auto-view'
-import { renderBand } from './ui/band'
-import { renderSections } from './ui/pane'
 import type { ViewContext } from './ui/view'
 import { focusTargets, markKeys } from './ui/view'
 

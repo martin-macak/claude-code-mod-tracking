@@ -1,6 +1,6 @@
 // Porcelain parser, locate and the agent convention path. Pure.
 import { expect, test } from 'claude-code/testing'
-import { agentWorktreePath, findByPath, locate, normPath, parsePorcelain } from '../hooks/auto/porcelain'
+import { agentWorktreePath, findByPath, locate, normPath, parsePorcelain } from '../core/lib/porcelain'
 import type { GitWorktree } from '../hooks/contracts'
 import { PORCELAIN_SAMPLE, PORCELAIN_SESSION } from './fixtures/git'
 

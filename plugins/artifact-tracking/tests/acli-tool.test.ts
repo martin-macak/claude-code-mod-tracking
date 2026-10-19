@@ -1,7 +1,7 @@
 // AcliTool: active site, view, Epic tree, error classes, breaker, concurrency. Pure, fake Runner.
 import { expect, test } from 'claude-code/testing'
 import type { JiraTarget, Runner, RunResult } from '../hooks/contracts'
-import { AcliTool, classifyAcliFailure, limit, nodeFromIssue, parseAuthStatus } from '../hooks/tools/acli-tool'
+import { AcliTool, classifyAcliFailure, limit, nodeFromIssue, parseAuthStatus } from '../trackers/jira/acli-tool'
 import * as fx from './fixtures/acli'
 
 const SITE = '<site>.atlassian.net'

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { RepoQueue } from '../hooks/repos/queue'
+import { RepoQueue } from '../trackers/repos/queue'
 
 declare function setTimeout(fn: () => void, ms: number): unknown
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))

@@ -4,7 +4,7 @@ import {
   processUpdateFromNotification,
   processUpdateFromNotificationText,
   processUpdateFromTaskStop,
-} from '../hooks/process/parse'
+} from '../trackers/processes/parse'
 
 test('parseBashProcesses tracks background Bash and Monitor-style task ids', () => {
   const rows = parseBashProcesses(

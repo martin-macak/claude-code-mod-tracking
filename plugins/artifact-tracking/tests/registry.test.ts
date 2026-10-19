@@ -18,10 +18,6 @@ import type {
   WebRef,
 } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
-import { ArtifactItem } from '../hooks/model/artifact-item'
-import { FileItem } from '../hooks/model/file-item'
-import { GitHubItem } from '../hooks/model/github-item'
-import { JiraItem } from '../hooks/model/jira-item'
 import { artifactOrigin, fileKey, keyOf } from '../hooks/model/keys'
 import {
   carryOver,
@@ -36,7 +32,11 @@ import {
   resolveBareRefs,
   unionRecords,
 } from '../hooks/model/registry'
-import { WebLink } from '../hooks/model/web-link'
+import { ArtifactItem } from '../trackers/artifact/artifact-item'
+import { FileItem } from '../trackers/file/file-item'
+import { GitHubItem } from '../trackers/github/github-item'
+import { JiraItem } from '../trackers/jira/jira-item'
+import { WebLink } from '../trackers/web/web-link'
 import { PAGE_CODE_URL, PAGE_ID, PAGE_KEY, PAGE_URL, PAGE_UUID, PAIRS } from './fixtures/artifacts'
 
 const ghRef = (over: Partial<GitHubRef> = {}): GitHubRef => ({

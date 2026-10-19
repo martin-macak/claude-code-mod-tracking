@@ -1,6 +1,5 @@
 // View model: pure functions over ItemRecord[]. No engine, no files.
 import { expect, test } from 'claude-code/testing'
-import { emptyAuto } from '../hooks/auto/ledger'
 import type {
   ArtifactRecord,
   FileRecord,
@@ -28,6 +27,7 @@ import {
   toolNote,
   type ViewContext,
 } from '../hooks/ui/view'
+import { emptyAuto } from '../trackers/auto/ledger'
 import { PAGE_CODE_URL, PAGE_ID, PAGE_KEY, PAGE_URL, PAGE_UUID } from './fixtures/artifacts'
 
 const NOW = 1_000_000

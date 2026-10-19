@@ -1,6 +1,8 @@
 // View model for the pane, the band and the `/track` text. Pure: no `$`, no JSX, no clock.
 // Spec: docs/superpowers/specs/2026-10-10-artifact-tracking-design.md section 9.
 
+import { artifactIdOf } from '../../trackers/artifact/artifact-url'
+import { relativeToRoot } from '../../trackers/file/files'
 import type {
   ArtifactRecord,
   AutoState,
@@ -19,8 +21,6 @@ import { MASTER_ID } from '../contracts'
 import { artifactOrigin, childId } from '../model/keys'
 import type { Effective, LevelContext } from '../model/priority'
 import { byLevel, effectiveLevels, markerOf } from '../model/priority'
-import { artifactIdOf } from '../scan/artifact-url'
-import { relativeToRoot } from '../scan/files'
 
 /** The `/track` text when nothing is tracked. */
 export const EMPTY_TEXT = 'No tracked items yet.'

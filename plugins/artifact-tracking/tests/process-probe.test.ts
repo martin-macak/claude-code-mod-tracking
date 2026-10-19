@@ -10,7 +10,7 @@ import {
   psStillMatches,
   screenLive,
   tmuxLive,
-} from '../hooks/process/probe'
+} from '../trackers/processes/probe'
 
 test('dockerStateFromStatus maps Up/Exited/health states', () => {
   expect(dockerStateFromStatus('Up 12 seconds')).toBe('up')

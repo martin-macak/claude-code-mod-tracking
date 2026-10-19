@@ -15,7 +15,7 @@ concurrency:
 
 env:
   # Mods are in early access and change between releases. Bump these by hand.
-  CLAUDE_CODE_VERSION: 2.1.296
+  CLAUDE_CODE_VERSION: 2.1.302
   TYPESCRIPT_VERSION: 7.0.2
 
 jobs:
@@ -45,7 +45,9 @@ jobs:
           node --version
 
       # claude plugin validate and claude plugin test need no login and no API key.
-      # make test runs: plugin validate, tsc on the mod and e2e/, plugin test.
+      # make test runs: plugin validate, tsc on the mod, e2e/ and scripts/coverage/, plugin test,
+      # then make coverage (node --test over the pure tests, 90% lines/branches/functions gate,
+      # and scripts/coverage/check.mjs).
       # NODE_RUN= : CI has no mise. setup-node provides node 24.
       - name: Test the artifact-tracking mod
         run: make test TSC="npx -y -p typescript@${TYPESCRIPT_VERSION} tsc" NODE_RUN=

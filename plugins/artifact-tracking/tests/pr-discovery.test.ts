@@ -2,7 +2,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { GitHubDiscoveryApi, GraphqlOutcome, GraphqlReply, ToolStatus } from '../hooks/contracts'
 import { LIMITS } from '../hooks/contracts'
-import { buildDiscoveryQuery, discoverPrs, parseDiscovery } from '../hooks/tools/pr-discovery'
+import { buildDiscoveryQuery, discoverPrs, parseDiscovery } from '../trackers/github/pr-discovery'
 import { discoveryData, prNode, REPO } from './fixtures/gh-discovery'
 
 const NOW = 1_000_000

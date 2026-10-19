@@ -9,7 +9,7 @@ import {
   relativeToRoot,
   resolvePath,
   touchFromToolResult,
-} from '../hooks/scan/files'
+} from '../trackers/file/files'
 
 const write = (filePath: string, type: 'create' | 'update' = 'create') => ({
   result: { type, filePath, content: '# x', structuredPatch: [], originalFile: null, userModified: false },
