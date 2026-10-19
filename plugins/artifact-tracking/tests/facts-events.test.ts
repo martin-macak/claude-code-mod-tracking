@@ -133,6 +133,18 @@ test('Facts: a value edited in place and published again still counts as a chang
   expect(events).toHaveLength(2)
 })
 
+test('Facts: after an in-place edit the event still carries the earlier publish as previous', () => {
+  const { facts, events } = recording()
+  const list: Json[] = ['main']
+  facts.publish('branches', list)
+  list.push('feat/x')
+  facts.publish('branches', list)
+  expect(events[1]).toEqual({ name: 'branches', value: ['main', 'feat/x'], previous: ['main'] })
+  expect(events[1]?.previous).not.toBe(events[1]?.value)
+  list.push('feat/y') // a later edit must not reach an event that was sent already
+  expect(events[1]?.previous).toEqual(['main'])
+})
+
 test('Facts: with no onChange a publish only stores', () => {
   const facts = new Facts()
   facts.publish('a', 1)

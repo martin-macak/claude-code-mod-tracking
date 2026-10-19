@@ -29,7 +29,9 @@ export class Facts implements FactsPort {
       this.values.set(name, { value, text })
       if (text === previous?.text) return
     }
-    this.d.onChange?.({ name, value, previous: previous?.value })
+    // `previous` is rebuilt from its text, not taken from the store: a publisher that edited the old value in place
+    // would else hand the handler the new contents twice.
+    this.d.onChange?.({ name, value, previous: previous && (JSON.parse(previous.text) as Json) })
   }
 
   read<T extends Json>(name: string): T | undefined {
