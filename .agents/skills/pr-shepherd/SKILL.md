@@ -85,14 +85,29 @@ In interactive mode, show the table now and wait for agreement.
 
 ### 3. Rebase and resolve conflicts
 
-- When the branch is behind `main` or has conflicts: `git fetch origin main`, then `git rebase origin/main`. Never merge `main` into the branch.
+- When the branch is behind `main` or has conflicts: `git fetch origin main`, then `git rebase origin/main`. Never merge `main` into the branch. A stacked PR is different: see "Stacked PRs" below.
 - Resolve each conflict so that both sides keep their intent. Read the commit on `main` that caused it. When the intents clash, mark the item **needs human** and stop the rebase (`git rebase --abort`).
 - Squash fixup commits so the branch keeps the fewest commits with logical steps.
 - A rebase rewrites history. Push it with `git push --force-with-lease`, never `--force`. When your environment cannot force-push, do not merge `main` in. Report that a rebase is needed, and do the other steps.
 
+#### Stacked PRs
+
+A stack is a chain of PRs. Each PR is based on the branch of the PR below it. GitHub native stacks and the `gh stack` extension manage it. Some rules for a plain PR break a stack.
+
+- Detect a stack with `gh stack view --json`. The PR is stacked when its number is in `branches[].pr.number`. Always pass `--json` (or `--short`): bare `gh stack view` is an interactive view and can stall an agent. Work on the branch of the layer you fix (`gh stack checkout <branch>`).
+- Rebase with `gh stack rebase`. After you change a lower layer, run `gh stack rebase --upstack` from that layer. Never run `git rebase origin/main` on a mid-stack layer: the layers above lose their base.
+- Push with `gh stack push`. It pushes every layer with `--force-with-lease`. Do not push a single layer with `git push`.
+- Run `make verify` on every layer before the push. Start with `gh stack bottom`, run `make verify`, then `gh stack up` and run it again, up to the top. Each PR must pass on its own.
+- `gh stack submit` writes the commit subject as the PR title. It writes the commit body and an HTML footer as the PR body. The body has no `## Requirements` section, so `pr-body` fails. After `gh stack submit` or `gh stack push`, check each PR body against the template and edit it (step 8).
+- Never run `gh pr merge` on a stacked PR. It fails with `This pull request is part of a stack and must be merged using the asynchronous merge REST API`. The merge command is `gh stack merge --squash` (add `--yes` without a TTY). It lands the PR and every PR below it. It waits for the human: you never run it.
+- When `main` moves, the strict check policy blocks the whole stack. `gh stack merge` then fails with `Required status check ... is expected.` GitHub shows a check as `expected` when no status arrived for it. The text alone does not prove the stack is behind `main`: a check that never ran on the head gives it too. Find the cause first. Run `git fetch origin main`, then `git merge-base --is-ancestor origin/main <bottom-branch>`. A non-zero exit means the stack is behind. Run `gh pr checks <n>` on every layer. Each required check needs a run on the head of its layer.
+  - Behind `main`: run `gh stack rebase` and `gh stack push`. Then wait for CI on every layer.
+  - A check has no run on the head: find out why (the run can be cancelled; `gh run rerun <id>` restarts it). Do not rebase for this cause.
+
 ### 4. Fix
 
 - One logical change per commit. Conventional Commits, rules in `AGENTS.md`. Add `Refs #N` for the linked issue.
+- On a stack, fix a finding on the layer that owns the code. Check out that layer, commit there, then run `gh stack rebase --upstack`.
 - For a bug: write a test that fails first, then fix it (`test-driven-development` skill).
 - Fix a red check at its cause. Never weaken a test, an assertion or a lint rule to make a check green. When a test expectation must change, say why in the reply.
 - Never bypass hooks. The verify gate (`scripts/hooks/verify-gate.sh`) blocks the push until `make verify` passes. Run `make verify` yourself first.
@@ -106,7 +121,7 @@ In interactive mode, show the table now and wait for agreement.
 
 ### 6. Push
 
-Push only after step 5 is green. Then wait for the CI checks on the new head commit. When a check fails, go back to step 4. After three failed rounds, stop and report what blocks you.
+Push only after step 5 is green. On a stack, run `make verify` on every layer first, then push with `gh stack push`. Then wait for the CI checks on the new head commit. When a check fails, go back to step 4. After three failed rounds, stop and report what blocks you.
 
 ### 7. Reply and resolve
 
@@ -121,7 +136,7 @@ Resolve only threads you answered. Never resolve a thread to hide it. When you l
 
 ### 8. Update the PR body
 
-Rewrite the body with `.github/pull_request_template.md`. The `pr-body` check (`scripts/ci/check-pr-body.sh`) enforces it.
+Rewrite the body with `.github/pull_request_template.md`. The `pr-body` check (`scripts/ci/check-pr-body.sh`) enforces it. On a stack, rewrite the body of every layer you pushed, not only one.
 
 - **Summary**: what the PR does now, after your fixes.
 - **Linked issue**: `Closes #N`, or `None` when no issue exists. Keep every link line that is there. A stack layer keeps the `Closes` line of its sub-issue and the `Refs` line of the parent, and the top layer keeps the `Closes` line of the parent too (`AGENTS.md`, "Planning and delivery", "Stack layers").
@@ -138,7 +153,7 @@ Rewrite the body with `.github/pull_request_template.md`. The `pr-body` check (`
 
 ## Hard rules
 
-- Never merge the PR. Never push to `main`. Never push a tag.
+- Never merge the PR (`gh pr merge`, `gh stack merge`). Never push to `main`. Never push a tag.
 - Never use `--force`, `--no-verify`, `SKIP=` or `core.hooksPath`.
 - Never claim a check passes without fresh output (`verification-before-completion` skill).
 - Never delete or weaken a test to make it pass.
