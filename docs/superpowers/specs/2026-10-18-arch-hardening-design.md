@@ -111,8 +111,7 @@ plugins/artifact-tracking/
     hooks.json                 # { "modules": ["./register.tsx"] }
     register.tsx               # composition root: the only file with on and $
     events.ts  pane-actions.ts  view-inputs.ts  list-text.ts   # L3 and L5a: pure helpers register.tsx calls
-    auto-github.ts             # L5a, transitional: the GitHub side of auto's PR lane. L5b moves the lane to github and deletes it.
-    contracts.ts  model/  scan/  ui/   # L5a: bindings over the new code and the legacy draw path. L5b moves the bindings to tests/fixtures/; L6 deletes the draw path.
+    ui/                        # the legacy draw path (composers over records): view, auto-view, repo-view, process-view, levels. L5b keeps it; L6 deletes it.
   core/
     interfaces/                # contracts only, no logic
       tracker.ts               # Tracker, TrackerContext, TrackerEvents, ToolSpec, KeySpec
@@ -127,8 +126,11 @@ plugins/artifact-tracking/
       switch-runner.ts         # SwitchRunner: the steps of a session switch, loadSession, replay (split in L4)
       steps.ts                 # guard and soft: run a step that may fail, log one line, go on
       bus.ts                   # EventBus
+      tracker-events.ts        # the handlers a tracker declares, by event kind: the table TrackerHost fills the bus from (split in L5b)
       tracker-host.ts          # TrackerHost: init, store, dispose, isolation
       session.ts               # SessionWatch: id compare, pendingEnd, generation
+      session-end.ts           # SessionEnd: the steps of session.end (split from the manager in L5b)
+      views.ts                 # Views: viewOf, paneData, bandData. They read the state once and write nothing (L5b, K1)
       scheduler.ts             # Scheduler: one tick, watchdog, per-tracker periods (the PR-step AutoScheduler is trackers/auto/scheduler.ts)
       persistence.ts           # $.store layout, write-through, end flush, size bound
       replay.ts                # transcript replay on a cold resume
@@ -144,7 +146,7 @@ plugins/artifact-tracking/
       item-slot.ts  item-port.ts  item-refresh.ts  item-levels.ts   # the `items` DataSlot, the store port, the tools and lanes, the priority
       kinds.ts                 # Kinds: the kinds of a load, who owns them, which are live, the context of each
       priority.ts              # effectiveLevels, setLevel, rowIdOf: the staged rules of the kinds (pure)
-      dismiss.ts               # DismissList (run-scoped)
+      # no dismiss.ts: the dismiss list is run-scoped, so it lives in the auto slot (trackers/auto/dismiss.ts, K16)
       facts.ts                 # Facts: named values one tracker publishes
       refresh.ts               # RefreshCoordinator: one lane per kind that refreshes (was coordinator.ts)
       tools.ts                 # ToolRunner: one handle per ToolSpec (probe, timeout, circuit breaker)
@@ -157,8 +159,10 @@ plugins/artifact-tracking/
       records.ts               # L5a: the generic record algebra (merge, fold, union, carry, migrate) over a KindTable
       mask.ts  text.ts  levels.ts  kind-context.ts   # L5a: span masks, text helpers, priority levels, a context for a pure scan
       tool.ts  circuit-breaker.ts  tracked-item.ts   # L5a: CliTool (a ToolHandle), CircuitBreaker, the refreshable-item base (moved from infra and hooks)
-      normalise.ts             # L4: schema rules (int, bool, words, obj), normaliseWith, specOf, deepFreeze
+      normalise.ts             # L4: schema rules (int, bool, words, obj), normaliseWith, specOf, deepFreeze. L5b: movedKeys, a spec that names a key which moved to another slice
       global-config.ts         # L4: GLOBAL_SCHEMA, GLOBAL_DEFAULTS, normaliseGlobal
+      load-state.ts            # L5b: LoadState, what a tracker builds once per load, keyed by the facts of its context (K30)
+      porcelain.ts  rows.ts    # L5b: the git worktree parser (GitWorktree); the column and cell helpers of the sections
   ux/
     tree-data-table/
       table.tsx                # TreeDataTable.render(sections, view, el, actions)
@@ -171,11 +175,11 @@ plugins/artifact-tracking/
     band.tsx                   # band from section summaries
     theme.ts                   # ColorToken to engine color, glyphs
   trackers/
-    index.ts                   # TRACKERS: one line per tracker
+    index.ts                   # TRACKERS: one line per tracker. KINDS, DISMISS and parseRemote sit beside it.
     github/  jira/  web/  artifact/  file/
-    repos/   processes/  auto/   # each holds a config.ts (L4): schema, defaults and ConfigSpec of its slice
+    repos/   processes/  auto/   # each holds a config.ts (L4: schema, defaults and ConfigSpec of its slice) and, since L5b, a sections.ts. An item tracker also holds kind.ts and rows.ts (jira also nested.ts). github/lane.ts is the PR lane. auto holds facts.ts, ids.ts, dismiss.ts and dismiss-store.ts, and repos holds ids.ts (row ids).
   types/index.d.ts             # PluginState contract: no tracker types
-  tests/                       # mirrors the tree; tests/fixtures/limits.ts rebuilds the old LIMITS names from the defaults (test-only)
+  tests/                       # mirrors the tree; tests/fixtures/limits.ts rebuilds the old LIMITS names from the defaults (test-only). tests/fixtures/ also holds the bindings of the old modules (contracts.ts, registry.ts, keys.ts, refs.ts, priority.ts), which L5b moved out of hooks/.
 ```
 
 Dependency rules:
@@ -184,21 +188,22 @@ Dependency rules:
 | --- | --- | --- |
 | `hooks/register.tsx` | everything | |
 | `trackers/<id>/` | `core/interfaces/`, `core/lib/`, its own folder | another tracker, `core/infra/`, `ux/` |
-| `trackers/index.ts` | each `trackers/<id>/` | |
-| `core/infra/` | `core/interfaces/`, `core/lib/` | `trackers/`, `ux/` |
+| `trackers/index.ts` | each `trackers/<id>/index.ts`, `core/interfaces/` | |
+| `core/infra/` | `core/interfaces/`, `core/lib/` | `hooks/`, `trackers/`, `ux/` |
+| `core/lib/` | `core/lib/`, `core/interfaces/`, `types/` | `core/infra/`, `hooks/`, `trackers/`, `ux/` |
 | `ux/` | `core/interfaces/`, `ux/` | `core/infra/`, `trackers/` |
-| `core/interfaces/` | `types/` (types only) | everything else |
+| `core/interfaces/` | `core/interfaces/`, `types/` (types only) | everything else |
 
-The names `github`, `jira`, `gh` and `acli` appear only under `trackers/` and in `trackers/index.ts`. Only `H/register.tsx` touches `$` or calls `on`.
+The names `github`, `jira`, `gh` and `acli` appear only under `trackers/` and in `trackers/index.ts`. A test pins this for `core/`, `ux/` and `types/` (K8). `hooks/` joins when L6 deletes the legacy draw path. A `trackers/<id>/` path appears outside its folder only in `trackers/index.ts`, in `tests/`, and in the K7 allowlist of the legacy draw path. `ux/pane.tsx` and `ux/band.tsx` are on that allowlist: until L6 they also import `hooks/ui/` and `core/lib/`. Only `H/register.tsx` touches `$` or calls `on`.
 
-L3 broke the rules above in four places. L5a closed the first two in part, and L5b closes the rest.
+L3 broke the rules above in four places. L5a closed the first two in part, and L5b closed all four.
 
-- `hooks/` held more than `register.tsx`. L5a removed `command.ts` and `items/` (Commands and the ItemService are in `core/infra/`). `events.ts`, `pane-actions.ts`, `view-inputs.ts` and `list-text.ts` stay: they are not `core/infra/`, so they may import trackers. `auto-github.ts` also stays until the PR lane moves to github (L5b, Task 12). The bindings (`contracts.ts`, `model/`, `scan/`, `ui/`) are thin delegations over the new code, so the older unit tests run unchanged. L5b moves the bindings to `tests/fixtures/`, and L6 deletes the draw path.
-- `trackers/` imported `core/infra/`. L5a moved `CircuitBreaker` and `Tool` to `core/lib/`, and `ToolRunner` (`core/infra/tools.ts`) builds one handle per `ToolSpec` for `gh` and `acli` (K13). `autoIds` and `dismiss` (auto) move with the DismissList in L5b (K16).
-- `core/infra/dismiss.ts` and `core/lib/porcelain.ts` still import types from `hooks/contracts.ts` (a move of L2). The other infra files moved off it in L5a. L5b Task 15 moves the rest. L4 deleted `LIMITS`: the defaults live in `core/lib/global-config.ts` and in each `trackers/<id>/config.ts`.
+- `hooks/` held more than `register.tsx`. L5a removed `command.ts` and `items/` (Commands and the ItemService are in `core/infra/`). L5b removed `auto-github.ts` (the PR lane is the github tracker's) and moved the bindings (`contracts.ts`, `model/`, `scan/`) to `tests/fixtures/`: no production file imports them. `events.ts`, `pane-actions.ts`, `view-inputs.ts`, `list-text.ts` and `ui/` stay. They are composition helpers and the legacy draw path, so they may import trackers. A named allowlist in `scripts/contracts/tracker-contracts.test.mjs` says which files (K7, K18). L6 deletes the draw path.
+- `trackers/` imported `core/infra/`. L5a moved `CircuitBreaker` and `Tool` to `core/lib/`, and `ToolRunner` (`core/infra/tools.ts`) builds one handle per `ToolSpec` for `gh` and `acli` (K13). L5b moved `autoIds` and `dismiss` (auto) to `trackers/auto/dismiss.ts` (K16).
+- `core/infra/dismiss.ts` and `core/lib/porcelain.ts` imported types from `hooks/contracts.ts` (a move of L2). L5a moved the other infra files off it. L5b moved the dismiss helpers to `trackers/auto/` and `GitWorktree` to `core/lib/porcelain.ts`. No file under `core/` or `trackers/` imports `hooks/` now. L4 deleted `LIMITS`: the defaults live in `core/lib/global-config.ts` and in each `trackers/<id>/config.ts`.
 - `AutoScheduler` is auto-only (it uses `AutoReason`), so it lives in `trackers/auto/scheduler.ts` (D17).
 
-`trackers/repos/tracker.ts` no longer imports `hooks/scan/refs`: it passes its own alias table to `core/lib/git.ts` (K23). The new `kind.ts` files of the five item trackers, and `trackers/file/sight.ts`, import no `hooks/` file directly. The older files of the tracker folders still import `hooks/contracts.ts` for their record types until L5b Task 15.
+`trackers/repos/tracker.ts` passes its own alias table to `core/lib/git.ts` (K23). No file of a `trackers/<id>/` folder imports `hooks/`, and a node test fails when one does (§7).
 
 ### 5.2 Components
 
@@ -296,6 +301,8 @@ Hook order inside each hook:
 
 The pane's `x` button calls `dismiss(ports, ids)`: the dismiss list first, the item keys second, then the `dismissed` event.
 
+The pane reads and writes through the manager (L5b, K1). Reads: `viewOf(ports, owner, view)` (the `ViewContext` of one tracker), `paneData(ports, view)` (the sections of the live trackers, sorted by `rank`), `bandData(ports)` and `levels(ports)`. They run no session check and write nothing. Writes: `setPriority(ports, rowId, level)` (`level` is `Level | undefined`; `undefined` removes the mark, and a row marked `top` by a rule does nothing) and `refreshManual(ports)`. Both run `entry` first. The tracker list and `TrackerHost.ctx` stay private to the manager. A render path outside `lifecycle.ts` needs a getter or a method added there (L6 checks this).
+
 The door list is the full superset as a literal, `queue` and `compaction` included (E17). In L3 it is one `session.append` hook with 12 doors (it replaced four hooks). A tracker declares its doors as data, and the bus filters. `tool.call` is one matcherless hook, and the bus dispatches by tool name. So a new tool or door needs no edit in `register.tsx`. A new engine event family edits `register.tsx` once (§11).
 
 `agent.spawn` with `resume` set is a resumed agent, not a new one. The auto tracker dedupes by agent id.
@@ -346,13 +353,14 @@ The bus maps a domain event kind to handlers. TrackerHost fills it at init from 
 | `sessionChanged` (from, to, kind: `clear` or `resume`) | SessionWatch switch | sequential, in `order` |
 | `command` (sub, args, wait) | `/track <sub>` | sequential, in `order`. Commands router (§5.12). `wait`: the handler awaits its work before the command answers. |
 | `dismissed` (ids) | `LifecycleManager.dismiss` | sequential, in `order` |
+| `fact` (name, value, previous) | `Facts.publish` with a value that differs from the last one | parallel, and only the handlers that declared `events.facts[name]`. Every handler has started when `publish` returns. Nobody awaits them (K14). |
 | `replay` (a batch of `row` and `toolCall` items) | start sequence, cold resume | parallel (§5.6.1) |
 
 `EventBus.emit(kind, ev, via, only?)` runs only the handlers of one owner when `only` is set. The Commands router uses it for a declared sub-command (§5.12). `input`, `result` and `answer` are raw `Json`. A handler parses them with guards, because they come from the engine. `row` carries `task` for a task-notification row.
 
 `start`, `agentSpawn`, `sessionChanged`, `command` and `dismissed` run one handler after the other in `order`, so a later tracker sees the earlier one's write (repos reads the ledger row that auto writes for the same spawn, D11). The other kinds start every handler at once. `order` follows the pane: auto 10, jira 20, github 30, artifact 40, repos 50, web 60, file 70, processes 80.
 
-A handler has the form `(ctx, event) => void | Promise<void>`. TrackerHost passes the tracker's context. Each call runs in a `try/catch`. A failing handler logs one line through `ports.log`, and the others go on. Trackers never emit to each other. They share data through core services only: ItemStore, Facts, DismissList.
+A handler has the form `(ctx, event) => void | Promise<void>`. TrackerHost passes the tracker's context. Each call runs in a `try/catch`. A failing handler logs one line through `ports.log`, and the others go on. Trackers never emit to each other. They share data through core services only: ItemStore, Facts, DismissList. A tracker that must react to the data of another declares `events.facts[name]`. Core turns each change of that fact into a `fact` event (K14), so github starts its PR step when auto publishes `auto.branches`, and neither knows the other.
 
 In L3 the five item trackers declare no `row` or `toolCall` handler. The item host reads the `row` event through `ItemsHost.capture` before the bus (§5.9). A `tick` handler runs only when the Scheduler says its period is due (§5.6).
 
@@ -403,7 +411,7 @@ The lazy start (`ensureStarted`) runs the same steps without the session load an
 4. Else (`resume`, or no `pendingEnd`): load `v2:s:<newId>`, then run Replay (§5.6.1), only when the items slot is empty. A warm slot, kept by a reload, loads nothing. An id with no stored copy (`/branch`) starts empty.
 5. The bus emits `sessionChanged`. Then Persistence drops `pendingEnd` from `v2:run` and keeps the run values (`clearRun`).
 
-SessionWatch bumps the generation before the steps. A data write that carries an older `since` is dropped (`ctx.data.update(fn, { since })`, `items.update(change, { since })`). The repo queue and `/track clear` drop by generation. The PR lane of auto keeps today's rule: it runs the session check, then applies, so a discovery in flight during `/resume` lands (D8). This replaces `repoGen` and guards late results after `/clear`, `/track clear` or `/resume`.
+SessionWatch bumps the generation before the steps. A data write that carries an older `since` is dropped (`ctx.data.update(fn, { since })`, `items.update(change, { since })`). The repo queue and `/track clear` drop by generation. The PR lane of github keeps today's rule: it runs the session check, then applies, so a discovery in flight during `/resume` lands (D8). This replaces `repoGen` and guards late results after `/clear`, `/track clear` or `/resume`.
 
 Every data write runs the session check first. The steps of a switch, the start sequence, and the `start`, `sessionChanged` and `replay` handlers write without it. The check is single flight and would wait for the run it sits in.
 
@@ -441,7 +449,7 @@ The restore filters are in the `items` slot and in the kinds (L5a). `load` re-ke
   "trackers": {
     "github": {
       "enabled": true, "chunkSize": 50, "pendingStaleMs": 60000, "discoveryTimeoutMs": 10000, "closingRefsPerPr": 10,
-      "headPrsPerBranch": 5, "basePrsPerBranch": 10, "maxBodyRefs": 50,
+      "headPrsPerBranch": 5, "basePrsPerBranch": 10, "maxBodyRefs": 50, "maxAutoItems": 100,
       "shortRefKeywords": ["github", "bug", "issue", "issues", "enhancement", "chore"]
     },
     "jira": { "enabled": true, "concurrency": 3, "epicChildLimit": 50 }
@@ -459,13 +467,15 @@ Each tracker owns the shape of `trackers.<id>`. `enabled` is common to all. `pro
 | `global.tools` | `timeoutMs` (30000; 1000 to 300000), `probeTimeoutMs` (10000; 1000 to 120000), `breaker.threshold` (3; 1 to 100), `breaker.openMs` (300000; 1000 to 86400000) |
 | `global.store` | `keepSessions` (20; 1 to 200), `maxItems` (500; 200 to 5000), `maxDismissed` (500; 50 to 5000), `maxBytes` (3000000; 100000 to 4000000) |
 | `global.ui` | `maxRows` (300; 50 to 1000), `sectionRows` (50; 5 to 300) |
-| `github` | `chunkSize` (50; 1 to 100), `pendingStaleMs` (60000; 10000 to 3600000), `discoveryTimeoutMs` (10000; 1000 to 120000), `closingRefsPerPr` (10; 1 to 50), `headPrsPerBranch` (5; 1 to 50), `basePrsPerBranch` (10; 1 to 50), `maxBodyRefs` (50; 1 to 200), `shortRefKeywords` (a list of at most 32 words; the six words above) |
+| `github` | `chunkSize` (50; 1 to 100), `pendingStaleMs` (60000; 10000 to 3600000), `discoveryTimeoutMs` (10000; 1000 to 120000), `closingRefsPerPr` (10; 1 to 50), `headPrsPerBranch` (5; 1 to 50), `basePrsPerBranch` (10; 1 to 50), `maxBodyRefs` (50; 1 to 200), `maxAutoItems` (100; 1 to 200; the cap on the items that only the PR lane found), `shortRefKeywords` (a list of at most 32 words; the six words above) |
 | `jira` | `concurrency` (3; 1 to 10), `epicChildLimit` (50; 1 to 500) |
 | `file` | `maxMentionsPerRow` (20; 0 to 200; 0 turns mentions off) |
 | `repos` | `maxRepos` (50; 1 to 500), `maxRepoAgents` (8; 1 to 50), `maxRepoQueue` (32; 1 to 256), `gitTimeoutMs` (5000; 500 to 60000) |
 | `processes` | `probeTimeoutMs` (10000; 1000 to 120000) |
-| `auto` | `debounceMs` (750; 50 to 60000), `gitTimeoutMs` (5000; 500 to 60000), `workflowIdleMs` (3600000; 60000 to 86400000), `maxBranches` (12; 1 to 50), `maxAutoItems` (100; 1 to 200), `maxProofs` (100; 10 to 1000), `maxAgents` (200; 10 to 2000) |
+| `auto` | `debounceMs` (750; 50 to 60000), `gitTimeoutMs` (5000; 500 to 60000), `workflowIdleMs` (3600000; 60000 to 86400000), `maxBranches` (12; 1 to 50), `maxProofs` (100; 10 to 1000), `maxAgents` (200; 10 to 2000) |
 | `web`, `artifact` | `enabled` only |
+
+`maxAutoItems` moved from `auto` to `github` in L5b: the github tracker adds the items that only the PR lane found, so it owns the cap. A file that still sets `trackers.auto.maxAutoItems` gets the problem `trackers.auto.maxAutoItems: moved to trackers.github.maxAutoItems. The mod keeps it and ignores it here.`, and the cap is the default until the key moves (K32).
 
 A word of a list matches `/^[a-z][a-z0-9-]{0,31}$/` after lowercasing. A value is read at its next use, except `global.tools.breaker.*`, `jira.concurrency` and `repos.maxRepoQueue`, which size an object at construction and are read once per load (C5). `maxPinned` stays a code constant (100), below the minimum of `store.maxItems`.
 
@@ -534,24 +544,27 @@ A handler runs in a dispatch and every `$` call is async, so `data.get()` is asy
 
 | Phase | When | Contract |
 | --- | --- | --- |
-| `init` | Start sequence step 3, on each run of the sequence | Idempotent. A tracker builds its services once per load (`??=`). Reads its data from `ctx.data` and `ctx.items`. Timers only through `ctx.clock.after`, which TrackerHost tracks and cancels at dispose. Periodic work only through `events.tick`. A switch does not call `init` again: `DataSpec.restore` and the `sessionChanged` handler move the data. |
+| `init` | Start sequence step 3, on each run of the sequence | Idempotent. A tracker builds its services once per load. It keeps them in a `LoadState` keyed by the `facts` of its context (K30), because a tracker is a module constant and one process may hold many managers. Reads its data from `ctx.data` and `ctx.items`. Timers only through `ctx.clock.after`, which TrackerHost tracks and cancels at dispose. Periodic work only through `events.tick`. A switch does not call `init` again: `DataSpec.restore` and the `sessionChanged` handler move the data. |
 | `store` | Start sequence step 3, right after `init` | Returns the slice this tracker wants persisted. Today every tracker returns its normalised slice with defaults filled. ConfigManager merges only the missing keys into the file (§5.7). This is the only source of the tracker's part of the default file. Config only: data persistence stays in core. |
 | `sections`, `actions`, `prompt` | On render and on `prompt.compose` | Pure. Read the view context, return values, write nothing. |
 | `dispose` | `session.end` with an exit reason | Best effort, synchronous. A reload gives no call (E7). |
 
 **Data.** A tier-2 tracker (repos, processes, auto) keeps its data in `ctx.data`, one member of the `StateFamily` key `trackers` with `id` = tracker id (E4). Core turns `Tracker.data` into a `DataSlot` (`read`, `empty`, `settle`, `restore`, `clear`) for Persistence and the switch. Persistence stores the persisted slots in `v2:s:<id>`. A slot with `persist: false` is run-scoped: it goes to `v2:run` and carries on every switch (D9). Auto sets `persist: false`, as today (auto is rebuilt from git and the agent list). Item trackers keep their records in the ItemStore. `/track clear` empties the persisted slots and keeps the run-scoped ones, after auto dismisses its ids (D10). A tracker guards the shape of its slot, because the contract types it as `Json`. The id `items` belongs to the item list, and TrackerHost refuses it at init.
 
-**Tools.** A `ToolSpec` is `{ id, probe: argv, timeoutMs?, breaker? }`. ToolRunner owns one circuit breaker per tool id. Tool status lives in one atom, `tools: Record<string, ToolStatus>`, so a status change redraws the pane. A tool has one owner tracker. L5a builds `ToolSpec`s for `gh` (github) and `acli` (jira) only (K13). `git` (repos, auto), `docker`, `tmux`, `screen` and `ps` (processes) stay raw runs (`ctx.tools.run`) behind the breakers of their trackers: one spec per id would split the one breaker of processes into four and make the `git` calls of auto count against repos. ToolRunner builds one `CliTool` handle per spec: the probe, a timeout (`spec.timeoutMs`, else `global.tools.timeoutMs`) and a breaker (`global.tools.breaker` under `spec.breaker`). A tracker reaches its handle with `ctx.tools.handle(id)`. A kind reaches the handle of its owner. A `ToolHandle` has `probe`, `isAvailable`, `canCall(now)`, `peek(now)` (the breaker alone), `reset`, `status`, `exec` (through the breaker; `null` when it blocks), `raw` (on the timeout, outside the breaker), `record(outcome)` and `setSite`. A `ToolOutcome` is `ok`, `item-error`, `tool-failure` or `auth`. The auto tracker still gets the GitHub side of its PR lane by injection, `buildTrackers({ autoGithub })`, until the lane moves to github (L5b).
+**Tools.** A `ToolSpec` is `{ id, probe: argv, timeoutMs?, breaker? }`. ToolRunner owns one circuit breaker per tool id. Tool status lives in one atom, `tools: Record<string, ToolStatus>`, so a status change redraws the pane. A tool has one owner tracker. L5a builds `ToolSpec`s for `gh` (github) and `acli` (jira) only (K13). `git` (repos, auto), `docker`, `tmux`, `screen` and `ps` (processes) stay raw runs (`ctx.tools.run`) behind the breakers of their trackers: one spec per id would split the one breaker of processes into four and make the `git` calls of auto count against repos. ToolRunner builds one `CliTool` handle per spec: the probe, a timeout (`spec.timeoutMs`, else `global.tools.timeoutMs`) and a breaker (`global.tools.breaker` under `spec.breaker`). A tracker reaches its handle with `ctx.tools.handle(id)`. A kind reaches the handle of its owner. A `ToolHandle` has `probe`, `isAvailable`, `canCall(now)`, `peek(now)` (the breaker alone), `reset`, `status`, `exec` (through the breaker; `null` when it blocks), `raw` (on the timeout, outside the breaker), `record(outcome)` and `setSite`. A `ToolOutcome` is `ok`, `item-error`, `tool-failure` or `auth`.
 
-**Facts.** A tracker publishes named values that others read: `ctx.facts.publish(name, value)` and `ctx.facts.read(name)`. Names are strings owned by the publisher: github publishes `session.repo` (the resolved repo with host aliases), auto publishes `auto.root` and `auto.branches`. This replaces today's getters across trackers (`H/register.tsx:180-189, 766-771`). A missing fact reads as `undefined`. A value is `Json`, and `publish(name, undefined)` withdraws it. In L3 the item runtime publishes `session.repo` and `github.hosts`, and auto publishes `auto.root`, `auto.agents` and `auto.checkedAt`. Processes publishes its probe state as `processes.ui`. The pane and the `/track` text read it.
+**Facts.** A tracker publishes named values that others read: `ctx.facts.publish(name, value)` and `ctx.facts.read(name)`. Names are strings owned by the publisher. Github publishes `session.repo` (the resolved repo with host aliases) and `github.hosts`. Auto publishes `auto.root`, `auto.agents`, `auto.checkedAt` and `auto.branches`. Processes publishes its probe state as `processes.ui`. The pane and the `/track` text read them. This replaces today's getters across trackers (`H/register.tsx:180-189, 766-771`). A missing fact reads as `undefined`. A value is `Json`, and `publish(name, undefined)` withdraws it. `Facts` keeps the JSON text of each value. A publish whose text differs from the last one is a change. It runs the `onChange` callback of `Facts`, and the manager wires that to the `fact` bus event (§5.5, K14). `events.facts` maps a fact name to a handler `(ctx, { name, value, previous })`. A handler of a tracker that is off or failed never runs.
 
 **Registration.** `trackers/index.ts`:
 
 ```ts
-export const TRACKERS: readonly Tracker[] = [github, jira, web, artifact, file, repos, processes, auto]
+export const TRACKERS: readonly Tracker[] = [githubTracker(), jiraTracker(), webTracker(), artifactTracker(), fileTracker(), reposTracker(), processesTracker(), auto]
+export const KINDS: readonly ItemKind[] = TRACKERS.flatMap(t => t.kinds ?? [])
+export const DISMISS = autoDismiss                  // the run-scoped dismiss list lives in the auto slot (K16)
+export { parseRemote } from './github'
 ```
 
-An array is fine, because no tracker receives `on` or `$` (E1).
+An array is fine, because no tracker receives `on` or `$` (E1). `TRACKERS` is a constant, so a tracker holds nothing per load in its closure (K30, K11). `buildTrackers({ autoGithub })` is gone.
 
 ### 5.9 Item store, item kinds and capture
 
@@ -590,7 +603,7 @@ export interface ItemKind<T extends StoredItem = StoredItem> {
   readonly rules?: readonly PriorityRule[]                  // { id, stage, level(item, env: RuleEnv) }, run stage by stage; RuleEnv is { facts, items, levelOf }
   setLevel?(item: T, rowId: string, level: Level | undefined): T | null  // the mark of a row inside an item
   findRow?(item: T, ref: string): string | undefined        // the row a typed ref names
-  row?(item: T, ctx: ViewContext): TreeRow                  // optional in L5a, required from L5b Task 13 (K24)
+  row(item: T, ctx: ViewContext): TreeRow                   // the row of one record. Required since L5b (K24)
 }
 ```
 
@@ -613,7 +626,7 @@ Records stay flat, so today's record shapes and most test assertions survive. Th
 - `ItemRefresh` builds the ToolRunner, one `RefreshLane` (`{ category, canCall, reset, hydrate, refreshItems }`) per kind with a `refresh` spec, hands the lanes to the `RefreshCoordinator` (`core/infra/refresh.ts`), and saves the results.
 - `ItemLevels` joins the pure priority code (`core/infra/priority.ts`) to the list.
 
-`HostContext.trackers` is gone: the service asks `TrackerHost.live` and each kind reads its owner's slice (K9). `AutoGithub.lane()` stays in `hooks/auto-github.ts` until L5b.
+`HostContext.trackers` is gone: the service asks `TrackerHost.live` and each kind reads its owner's slice (K9). `AutoGithub` and `hooks/auto-github.ts` went in L5b: the github tracker reads its own slice, and auto never calls `gh`.
 
 **Capture.** Capture runs once per text, in core. First it waits for each live kind to `prepare` (K21): the github kind finds the session repo, publishes `session.repo` and `github.hosts`, and re-keys a bare `#N` of the list. A replay waits for the quick part only (§5.6.1). Then:
 
@@ -625,7 +638,15 @@ Records stay flat, so today's record shapes and most test assertions survive. Th
 
 `mode` is `urls-only` for tool-result rows, `full` otherwise, as today. A tool call is read by the kind's `fromTool[tool]` handler (a Write, Edit or Read of a `.md` file; the Artifact tool), and its claims go through `accept` as well.
 
-**The PR lane.** PR discovery is GitHub code, so it moves into the github tracker. Auto publishes `auto.branches`. The github tracker's tick discovers PRs for those branches and writes items with source `auto`. The github tracker draws two sections: "GitHub" (without auto-only items) and "Pull requests" (auto items). Its priority rule "the PR on the session branch is top" reads the `auto.branches` fact. Auto no longer calls `gh`.
+**The PR lane.** PR discovery is GitHub code, so it lives in the github tracker (`trackers/github/lane.ts`, L5b). The flow:
+
+1. Auto ends a round that ran (it reached the snapshot save; a round with no pinned root polled nothing and publishes nothing, K31). The scheduler publishes `auto.branches` with a new `seq` and the reasons of the round (K20).
+2. Core sees the new value and sends the `fact` event (K14). The github handler asks the lane for a step when `wantsStep` says so: the `seq` is new, and either a reason is one of `start`, `tick`, `manual` and `pr-event`, or the tracked branches changed. A fact published at `init` has no reasons and starts nothing.
+3. One step at a time. A request during a step queues as one more and runs after it. A step finds the PRs of the published branches with one `gh api graphql` query, then reads the refs in the PR bodies through the live kinds (`ctx.items.scan`), so a ref of a kind that is off makes no item. It writes the PRs and the refs into the item list with source `auto` or `pr-body` (`ctx.items.update`, which runs the session check and reads the dismiss list), and asks for the refresh of the keys it added (`ctx.items.refresh`). It caps the auto-only items at `github.maxAutoItems`.
+4. The note of the "Pull requests" section (`ok`, `skipped`, `error`, `untracked`) and the default branch live in the github slot, `{ prs, defaultBranch? }`. The slot is run-scoped (`persist: false`) like the auto slot: it goes to `v2:run`, and a switch carries it. A quiet step writes nothing (A22).
+5. `/track refresh` waits for the step: github handles `command` after auto (order 30 after 10), and awaits the lane when `wait` is set.
+
+The github tracker draws two sections: "GitHub" (without auto-only items) and "Pull requests" (auto items). Its priority rule "the PR on the session branch is top" reads the `auto.branches` fact. Auto no longer calls `gh`, and github imports nothing of auto.
 
 ### 5.10 TreeDataTable
 
@@ -638,7 +659,8 @@ export interface SectionSpec {
   id: string
   title: string
   note?: Cell                         // e.g. "gh · ok 2m ago" from the tool status
-  band?: { label: string; count: number; failing: number }  // today's band words and counts
+  rank?: number                       // where the pane places it. Default: the `order` of the tracker (K2)
+  band?: { label: string; count: number; failing: number; rank?: number }  // today's band words and counts; `rank` places the part in the band
   columns: readonly ColumnDef[]
   rows: readonly TreeRow[]
   empty?: string
@@ -665,6 +687,8 @@ export interface Cell { text: string; fg?: ColorToken; bg?: ColorToken; weight?:
 ```
 
 `ColorToken` is a closed set by design. `ux/theme.ts` maps each token to a theme key or a named color. A tracker cannot pass a raw color string (E14).
+
+`ViewContext` (what `sections(ctx)` reads) holds `now`, `config`, `data`, `items`, `facts` (read only), `tools`, `root`, `isDismissed(id)`, `levelOf(key)` and the view state `selected` and `expanded`. `PaneView { selected, expanded }` is the view state alone: the manager takes it from the atoms (L5b, K1). All of it is read. A render writes nothing (E8, E9).
 
 **Rows.** Each row has one focus Button, the row handle, with a short key `r<n>` (its index in the drawn tree). Its label is the expand glyph. Enter on it toggles the row id in the `expanded` atom. Detail rows hold no Button, so Tab skips them. A row with no `detail` and no `children` gets a default detail: the full text of every clipped cell and the href.
 
@@ -756,11 +780,11 @@ The baseline before the work: 825 tests pass in 36 files.
 | Layer | Tests |
 | --- | --- |
 | Pure units | `cellWidth` against Bun-generated vectors; the column solver; the budget guard (with the footer reserve); KeyRegistry (valid keys, duplicates, folding); `normalise` per tracker; ConfigManager over an in-memory `ConfigFs` fake (path rule, missing, invalid, torn read, signature change, first-run write, missing-slice merge, no write when unchanged, read-only higher version); EventBus isolation; SessionWatch (id compare, clear vs resume, generation, a switch after a reload reads `pendingEnd` from `v2:run`, and `pendingEnd` is cleared after the switch); Persistence (debounce, one write per key, budget check, size bound, old-key delete, `v2:run` round trip with `pendingEnd`); Capture (rank order, masking, `urls-only`, async accept); ItemStore (merge, eviction). |
-| OCP proof | A pure test runs LifecycleManager and TrackerHost with fake ports and a fake tracker list, including a new fake tracker. An import-graph test asserts that each `trackers/<id>/` path appears outside its folder only in `trackers/index.ts`. |
+| OCP proof | A pure test runs LifecycleManager and TrackerHost with fake ports and a fake tracker list, including a new fake tracker. An import-graph test asserts that each `trackers/<id>/` path appears outside its folder only in `trackers/index.ts`, in `tests/`, and in the allowlist of the legacy draw path until L6 (K7). |
 | Tracker units | Each tracker with fake ports. Its events produce the records today's tests expect. These are today's unit tests with new import paths and mechanical shape edits. |
 | Kit wiring | `tests/fixtures/world.ts` gets a Map-backed `fs.read`, `fs.write`, `fs.exists`, `fs.stat` block with deny switches, and a `clearSession($, world, nextId, reason)` helper that fires `session.end`, then flips the stub id. The id-flip `/clear` tests move to the helper. Store-key seeds change to `v2:`. The asserted behavior stays: carry-over on `/clear` (about 18 tests), replay on `--resume`, late results dropped after `/clear`. New: first-run config write, a disabled tracker, a prompt section on and off. |
 | Pane (rewritten in L6) | The header row, one Button per row, `r<n>` keys, `selected` by row id from a driven `ui.focus`, the refocus after a re-sort, Enter toggles detail and the default detail, footer keys, `h` help, "N more", the budget guard at 600 and 1,400 rows, the `/track` text and the band. |
-| Contract checks | Added in the layer that makes each true. L3: only `H/register.tsx` has a `$` call, an `on(` call, a value import from `claude-code`, the type `EngineInterface` or the literal `plugin: 'artifact-tracking'`. The test is `scripts/contracts/source-contracts.test.mjs`, run by `make test-scripts`, because the kit has no fs (D18). L5: no `\b(github\|jira\|gh\|acli)\b` in `core/` and `ux/`; the import rules of §5.1. L6: no section renderer outside `ux/`. A test lists every key and asserts no duplicate. |
+| Contract checks | Added in the layer that makes each true. L3: only `H/register.tsx` has a `$` call, an `on(` call, a value import from `claude-code`, the type `EngineInterface` or the literal `plugin: 'artifact-tracking'`. The test is `scripts/contracts/source-contracts.test.mjs`, run by `make test-scripts`, because the kit has no fs (D18). L5: no `\b(github\|jira\|gh\|acli)\b` in `core/`, `ux/` and `types/` (K8; `hooks/` stays out until L6), and the import rules of §5.1, in `scripts/contracts/tracker-contracts.test.mjs`, run by `make test-scripts`. The test reads every `import`, `export ... from` and `import()` of the tree, indented ones too, and fails on an import it cannot follow. A catch-all rule keeps `core/` clear of `hooks/`, `trackers/` and `ux/` in any folder. The legacy draw path is one named allowlist (K7). L6: no section renderer outside `ux/`. A test lists every key and asserts no duplicate. |
 | e2e (local, `make e2e`) | The harness sets `CLAUDE_TRACKER_CONFIG_DIR` to a temp folder for every scenario and deletes it afterwards, so no run touches the developer's real config. `DEMO_KEEP=1` keeps the folder with the clone and the tmux session, for a look at the written file. Update `priority.feature` and `tracking.feature` for the new keys. Add a scenario: Tab moves the highlight, `x` dismisses the selected row, `h` shows help, a config file turns a tracker off. The L6 live checks also cover the ring after a data-driven re-sort and `autoFocus`. |
 
 `make verify` passes on every layer (§8).
@@ -772,7 +796,7 @@ The user set a floor of 90% coverage. The kit has no coverage option, so the pur
 - `make coverage` runs every test file that does not use `$` (every `tests/**/*.test.ts` except `*.kit.test.ts`) with `node --experimental-transform-types --import scripts/coverage/loader.mjs --test --experimental-test-coverage`. The loader maps `claude-code/testing` to a Jest-like shim (`scripts/coverage/kit-shim.ts`: `test`, `expect` and its matchers), maps `claude-code` to an empty stub, and resolves extensionless relative imports.
 - The gate is `--test-coverage-lines=90 --test-coverage-branches=90 --test-coverage-functions=90` over `core/**`, `ux/**`, `trackers/**` and the rest of `hooks/**`. Only `H/register.tsx` is excluded: it is the composition root, and the kit wiring tests cover it.
 - `make test` runs `make coverage`, so the pre-push hook and CI enforce the gate on every layer.
-- Node reports only the files a test loaded, so a module that no pure test imports has no row. `scripts/coverage/check.mjs` reads the lcov report and fails when a source file under `core/`, `ux/`, `trackers/` or `hooks/` is missing from it. It skips declaration files, `.tsx` files and `core/interfaces/` (types only).
+- Node reports only the files a test loaded, so a module that no pure test imports has no row. `scripts/coverage/check.mjs` reads the lcov report and fails when a source file under `core/`, `ux/`, `trackers/` or `hooks/` is missing from it. It skips declaration files, `.tsx` files, `core/interfaces/` and `trackers/<id>/types.ts` (types only: the CI Node 24.21.0 leaves a module with no code out of the report).
 - Every file except `H/register.tsx` must be loadable by Node. So `ux/` is written in `.ts` with explicit calls to the global `h`, not JSX. The Node shim defines a fake `h` that builds plain objects. Type-only imports use `import type`. Until L6 rewrites them, the legacy `ux/pane.tsx` and `ux/band.tsx` stay outside the gate: Node cannot load JSX, and `check.mjs` skips `.tsx` files.
 - Baseline (measured on L2, 2026-10-18): 634 pure tests pass under Node, with 97.25% lines, 93.85% branches and 98.86% functions over `core/`, `ux/`, `trackers/` and `hooks/`, without `H/register.tsx` and the `.tsx` files. The kit still runs all 826 tests.
 
@@ -781,7 +805,7 @@ The user set a floor of 90% coverage. The kit has no coverage option, so the pur
 GitHub native stacked PRs. The trial on a throwaway private repo worked: an atomic full-stack squash merge, one commit per PR on `main`, linear history, an automatic retarget after a bottom-only merge ([stacked-prs](../../knowledge-base/claude-code-mod-architecture/stacked-prs.md)). It also found four problems this repo must handle:
 
 1. `scripts/hooks/verify-gate.sh:101` matches only `git push`. `gh stack submit`, `push`, `sync` and `merge` pass unseen. Extend the regex.
-2. `gh stack submit` writes the commit body plus an HTML footer as the PR body. Edit every body with `gh pr edit` to the PR template (issue link, ticked Requirements). Check the bodies again after every `gh stack push`. The squash commit message is the PR body.
+2. `gh stack submit` writes the commit body plus an HTML footer as the PR body. Edit every body with `gh pr edit` to the PR template (issue link, ticked Requirements). A later push does not overwrite an edited body: L5a measured it, and one submit and two pushes left every lower body byte-identical. Check the bodies after the submit and before the merge. The squash commit message is the PR body.
 3. When `main` moves, the strict check policy blocks the whole stack. Run `gh stack rebase`, `gh stack push`, wait for checks, then merge.
 4. `gh pr merge` fails on a stacked PR. Use `gh stack merge --squash`. The `pr-shepherd` skill must learn the stack commands.
 
@@ -800,7 +824,7 @@ Rules:
 | L2 | `refactor/layout-and-interfaces` | Pin CI and types to 2.1.302, `target: es2024`, `tsconfig` `include` for `core/**`, `ux/**`, `trackers/**`, the new folders, `core/interfaces/*`, file moves, test import paths. README states the minimum Claude Code version. No logic change. | none |
 | L3 | `refactor/lifecycle-bus-ports` | `register.tsx` becomes wiring. Ports, LifecycleManager, SessionWatch (`session.end`, snapshot, generation), Scheduler with watchdog, Persistence (`v2:` keys, size bound), Replay, EventBus, TrackerHost. The 8 trackers become `Tracker` objects whose handlers call today's modules through ports. The item runtime stays in `hooks/items/` until L5. Their `config` and `store` serve today's `LIMITS` from memory; no file is read or written before L4. Mirrors and polling go. `clearSession` helper. The `$` and `on` contract test. | storage layout; old data dropped; `/branch` (and a `/resume` to an id with no stored copy) now starts empty (today it carries the items over); a write in the last 1.5 s before exit is no longer lost |
 | L4 | `feat/config-manager` | ConfigManager, `config.json`, the schema normaliser, `LIMITS` deleted (its values moved into `global` and each tracker's `ConfigSpec`), toggles, the store phase, problems in `/track`. The lifecycle split into StartSequence and SwitchRunner. e2e: one config folder per scenario. | new config file, written once at the first start; the first start of a load deletes a stale `v2:run` |
-| L5 | `refactor/tracker-contracts` | Each tracker moves into `trackers/<id>/`. ItemStore, ItemKind, Capture, Facts, ToolSpec and the Commands router replace the closed unions. The PR lane moves to github. The name and import contract tests. May split into one layer per tracker. | the PR lane moves from auto to github; the "Pull requests" section looks the same |
+| L5 | `refactor/tracker-contracts` | Each tracker moves into `trackers/<id>/`. ItemStore, ItemKind, Capture, Facts, ToolSpec and the Commands router replace the closed unions. The PR lane moves to github. The name and import contract tests. Built as two layers: L5a `refactor/tracker-contracts` (the contracts, the item store, capture, tools, the router) and L5b `refactor/tracker-sections` (the PR lane, the sections, the bindings moved to `tests/fixtures/`, the contract tests). | the PR lane moves from auto to github; the "Pull requests" section looks the same. L5a: §10.3. L5b: §10.4 |
 | L6 | `feat/tree-data-table` | `ux/tree-data-table`, `cellWidth`, KeyRegistry, help view, budget guard, the new pane, text and band from sections. Pane tests rewritten. e2e updated. README demo GIF refreshed (`demo-scenario` skill). | new pane UX |
 | L7 | `feat/prompt-sections` | PromptComposer and `prompt()` on the item trackers, off by default. No `plugin.json` edit: the release tag `artifact-tracking--v0.2.0` sets the version. | opt-in prompt text |
 
@@ -940,6 +964,35 @@ Building L5a settled these points where the text above left them open. Code comm
 4. The acli site is learned when a Jira claim of tool output asks for it, not at the start of a replay.
 5. `auto.branches` is a new fact (K20).
 
+### 10.4 Decisions made in L5b
+
+Building L5b settled these points. Code comments cite `K1` to `K24` (the decisions of the L5 plan that L5b builds) and `K30` to `K32` (made while building and reviewing L5b).
+
+| # | L5b does | Why |
+| --- | --- | --- |
+| K1 | `viewOf(ports, owner, view = NO_VIEW)` gives the `ViewContext` of one tracker. The manager reads the state once and builds one context per live tracker. `paneData` and `bandData` only read: they run no session check and write nothing. `setPriority` and `refreshManual` are the write callbacks of the pane, on the manager. | L6 A5 names the three-argument form. L7 Task 6 calls `viewOf(ports, tracker.id)`. |
+| K2 | `SectionSpec.rank` places a section in the pane, and `SectionSpec.band.rank` places its part in the band. Both default to the `order` of the tracker. Github gives `Pull requests` rank 12 and `GitHub` rank 30. | The pane order is not the tracker order: `Pull requests` sits before `Jira work items`. |
+| K7 | One test (`scripts/contracts/tracker-contracts.test.mjs`) holds the import rules of §5.1 and a named allowlist of the legacy draw path (`hooks/ui/*`, `view-inputs.ts`, `pane-actions.ts`, `list-text.ts`, `ux/pane.tsx`, `ux/band.tsx`). `register.tsx` reaches trackers only through `trackers/index.ts`. | The draw path imports trackers until L6 swaps it. L6 deletes the allowlist with the files. |
+| K8 | The name test covers `core/`, `ux/` and `types/`, in any case. `hooks/` stays out until L6. | §5.1 says the names live under `trackers/`. The legacy draw path still names them. |
+| K10 | `maxAutoItems` moves from the `auto` config to the `github` config. `maxBranches` stays in auto (it caps the list auto publishes). `PR_LANE_DEFAULTS` is a pick of `GITHUB_DEFAULTS`. `PrLane.maxBranches` is optional: the lane polls every branch the fact lists. | Each number has one owner (C15). |
+| K11 | `TRACKERS` is a constant. `KINDS` and `DISMISS` sit beside it. `buildTrackers({ autoGithub })` is gone. | A module constant cannot take the GitHub side of the lane by injection, and the lane needs none. |
+| K12 | The legacy composers stay on records through L5b. `hooks/view-inputs.ts` adapts the github slot and the `tools` record to the legacy shapes. `tests/parity.test.ts` reads one world through both paths: the `/track` text, every row, every note and the band are equal. The one difference is Repos when there are no Web links: the sections place it by its rank, before Files. Two more are render-time only. The Pull requests section always puts the checks in an `extra` column (the narrow pane drops it by priority). The Jira section nests records as if nothing were folded. | L6 swaps the renderers with no change in bytes. |
+| K14 | A change of a fact is a `fact` bus event (§5.5). `Facts` keeps the JSON text of each value, so an equal publish tells nobody. The handlers start before `publish` returns and are not awaited. A throw logs `bus: fact failed in <id>`. | The PR step must start right after the round, as it did when auto called it. No tracker calls another. |
+| K16 | The dismiss helpers (`autoIds`, `dismiss`, the store over the auto slot) live in `trackers/auto/dismiss.ts` and `dismiss-store.ts`. `DISMISS` reaches `register.tsx` through `trackers/index.ts`. | The list is run-scoped and sits in the auto slot (D2). |
+| K18 | The composition helpers of `hooks/` may import trackers (K7). | They are not `core/infra/`. |
+| K24 | `ItemKind.row` is required. Every item tracker returns its sections. | The sections need a row per record. |
+| K30 | `LoadState` (`core/lib/load-state.ts`) keeps what a tracker builds once per load (the round and scheduler of auto, the PR lane, the lookup caches and queue of repos, the breaker of processes). The key is the `facts` of the context, one object per manager. | A tracker is a module constant, and one process may hold many managers. A closure would share the round of the first. |
+| K31 | The auto scheduler publishes `auto.branches` only after a round that reached the snapshot save (`AutoRound.run()` answers true). A round with no pinned root, or a round that threw, publishes nothing. | The old round started the PR step only after the save. A lazy start has no root, and an empty branch list would start a step that writes a `no-branches` note. |
+| K32 | `movedKeys(spec, { old: 'new.path' })` (`core/lib/normalise.ts`) replaces the unknown-key problem of a moved key with one that names the new path. The mod keeps the key and ignores it. Auto uses it for `maxAutoItems`. | A file that sets the old key must learn where it went. |
+
+**What L5b changes for the user.** The layer is a refactor, and the kit suite is green. These points differ from the code before L5b:
+
+1. `trackers.auto.maxAutoItems` is now `trackers.github.maxAutoItems` (K10). A file with the old key gets a problem in `/track` that names the new key, and the cap is the default (100) until the key moves (K32).
+2. With github off, `/track` no longer shows `Pull requests  gh not installed`. The lane does not run, so it has no note to show. A tracker that is off adds nothing to the pane.
+3. A PR body ref of a kind that is off makes no item. Before L5b the lane wrote the record.
+4. The note of the Pull requests section and the default branch moved from `auto.snapshot` to the github slot (`v2:run`, run-scoped). A session switch carries both.
+5. `trackers.github.maxAutoItems` shows in the first-run file (the missing-key merge writes it).
+
 ## 11. Architecture rules
 
 | Principle | How the design meets it | Accepted exception |
@@ -960,12 +1013,7 @@ Building L5a settled these points where the text above left them open. Code comm
 | The prompt cache cost of a changing section | L7, measured live. |
 | Two sessions writing the config at once | Rare by design (§5.7). No test. |
 | `$.fs` under managed settings or `claude -p` | Defaults on deny (§6). |
-| Whether a later `gh stack push` overwrites an edited PR body | Checked at the first push (§8). |
 | A `$.state` write from a `prompt.compose` dispatch | Not needed: SessionWatch never runs there (§5.6). Proven by the L3 validate run. |
 | Delete the trial repo `martin-macak/gh-stack-trial-20261017` | Manual. The token lacks the `delete_repo` scope. |
-| `AutoGithub.lane()` and `hooks/auto-github.ts` (C12). L5a removed `HostContext.trackers` (K9) and wired `ToolSpec.timeoutMs` and `ToolSpec.breaker` into ToolRunner. | L5b Task 12 moves the PR lane to github and deletes the file. |
-| `PR_LANE_DEFAULTS` repeats two auto defaults (C15) | L5b Task 12 gives them one owner. |
-| The `trackers/<id>/` files older than the kinds, `core/infra/dismiss.ts` and `core/lib/porcelain.ts` import `hooks/contracts.ts` | L5b Task 15 moves the types and the bindings. |
-| `ItemKind.row` is optional, and no tracker has `sections()` | L5b Task 13 (K24). |
-| `core/infra` files over about 150 lines (§11): `lifecycle.ts` 345 (320 before L5a), `tracker-host.ts` 307 (284), `refresh.ts` 193 (`coordinator.ts` was 177), `kinds.ts` 166, `commands.ts` 158 | Waived in L5a. Each grew by a duty of the layer (the `/track` routing, the kind lanes, `commands()` and the tool handles of the host). `items.ts` (150) and `lifecycle.ts` were split to `item-lifecycle.ts` and `lifecycle-parts.ts`. The next layer that edits one of the five splits it. |
-| `tests/global-defaults.test.ts` compares most defaults with a `LIMITS` that `tests/fixtures/limits.ts` rebuilds from the same defaults | L5 deletes it or pins its values as literals. `config-specs` already pins the defaults and the keys. |
+| `core/infra` files over about 150 lines (§11): `lifecycle.ts` 341 (320 before L5a), `tracker-host.ts` 280 (284), `refresh.ts` 193 (`coordinator.ts` was 177), `kinds.ts` 166, `commands.ts` 158 | Waived in L5a and kept in L5b: it split the `session.end` steps and the table of declared handlers out of the two largest, and added no line to the others. Each grew by a duty of the layer (the `/track` routing, the kind lanes, `commands()` and the tool handles of the host). `items.ts` (150) and `lifecycle.ts` were split to `item-lifecycle.ts` and `lifecycle-parts.ts`. The next layer that edits one of the five splits it. |
+| `tests/global-defaults.test.ts` compares most defaults with a `LIMITS` that `tests/fixtures/limits.ts` rebuilds from the same defaults | Not settled in L5: no task of L5 opened it. The next layer that edits `tests/fixtures/limits.ts` deletes the first test or pins its values as literals. `config-specs` already pins the defaults and the keys. |
