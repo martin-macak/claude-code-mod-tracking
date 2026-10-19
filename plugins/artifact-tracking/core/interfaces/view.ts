@@ -115,9 +115,13 @@ export interface PaneKey {
   readonly owner: string
 }
 
-/** A key as the footer draws it. A disabled key stays on the footer, dim and inert (a letter with no Button leaves the pane). */
+/**
+ * A key as the footer draws it. A disabled key stays on the footer, dim and inert (a letter with no Button leaves the pane).
+ * `buttonKey` is the key of the footer Button: the registry finds the key by it, and `ux/` only echoes it.
+ */
 export interface FooterKey extends PaneKey {
   readonly enabled: boolean
+  readonly buttonKey: string
 }
 
 /** What the key routing needs of a drawn row. */

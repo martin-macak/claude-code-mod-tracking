@@ -193,3 +193,11 @@ test('footerKeys in the help view: only r and h are enabled and h is labelled ba
   expect(keys.find(k => k.id === 'refresh')?.label).toBe('refresh')
   expect(keys.map(buttonKeyOf)).toEqual([...CORE_KEYS.map(k => k.id), 'a.open'])
 })
+
+test('footerKeys: each key carries its footer Button key, the one the registry finds it by', () => {
+  const reg = new KeyRegistry()
+  reg.add('a', [spec('open', 'o')])
+  const keys = footerKeys(reg, ref('a'), items, false)
+  expect(keys.map(k => k.buttonKey)).toEqual([...CORE_KEYS.map(k => k.id), 'a.open'])
+  for (const k of keys) expect(reg.get(k.buttonKey)?.id).toBe(k.id)
+})

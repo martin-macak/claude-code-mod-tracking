@@ -150,6 +150,6 @@ export function footerKeys(
     const live = help
       ? core && (k.id === 'refresh' || k.id === 'help')
       : route(k, row, isItemOwner).to !== 'none' && (core || state?.(k.owner, k.id) !== 'disabled')
-    return { ...k, label: help && core && k.id === 'help' ? 'back' : k.label, enabled: live }
+    return { ...k, label: help && core && k.id === 'help' ? 'back' : k.label, enabled: live, buttonKey: buttonKeyOf(k) }
   })
 }
