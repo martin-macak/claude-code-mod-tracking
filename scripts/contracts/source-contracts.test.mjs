@@ -5,7 +5,7 @@
 // Run: node --test scripts/contracts/source-contracts.test.mjs
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { dirname, join, normalize, relative, sep } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -119,4 +119,108 @@ test("the text plugin: 'artifact-tracking' appears only in register.tsx, in eith
   assert.ok(hits(REGISTER, PLUGIN_KEY).length > 0, 'no state ref in register.tsx')
   for (const src of ["plugin: 'artifact-tracking'", 'plugin: "artifact-tracking"', "plugin:'artifact-tracking'"])
     assert.ok(PLUGIN_KEY.test(src), `missed: ${src}`)
+})
+
+// ---------------------------------------------------------------- drawing (spec 7, decision G20 of plan L6)
+
+/** A JSX tag of the pane's elements, or a call of the global `h`. The `.h(` of a member and the `h(` inside a word pass. */
+const JSX_TAG = /<(Box|Text|Button|Link)[\s/>]/
+const H_CALL = /(^|[^.\w])h\(/
+
+test('only ux/ builds element trees', () => {
+  const outside = ALL.filter(f => !f.startsWith('ux/'))
+  const found = outside.flatMap(f => [...hits(f, JSX_TAG), ...hits(f, H_CALL)])
+  assert.deepEqual(found, [], `a tree of elements is built under ux/ only:\n${found.join('\n')}`)
+  const notTs = ALL.filter(f => f.startsWith('ux/') && !f.endsWith('.ts'))
+  assert.deepEqual(notTs, [], `every file under ux/ is .ts, so node loads and measures it:\n${notTs.join('\n')}`)
+})
+
+test('the drawing rule sees a tag or a call of h, and lets the look-alikes through', () => {
+  for (const line of [
+    'return <Box key="a">',
+    '<Text dimColor>x</Text>',
+    'a <Button/>',
+    '<Link href={u}>',
+    'x = h("Box", null)',
+    '(h(a))',
+  ])
+    assert.ok(JSX_TAG.test(line) || H_CALL.test(line), `missed: ${line}`)
+  for (const line of ['const x = a.h(1)', 'which(1)', 'push(1)', 'Array<Boxed>', 'a < Box', 'hash(2)', '<Boxes>'])
+    assert.ok(!JSX_TAG.test(line) && !H_CALL.test(line), `flagged: ${line}`)
+})
+
+// The typed wrappers box(), text(), button() and link() build the trees without a tag or an `h(` call, so the rule above
+// cannot see them: a file outside ux/ that imports them as values could draw a section. A type is erased and builds nothing.
+const EL_MODULE = 'ux/tree-data-table/el'
+
+/** True for a clause that imports no value: `type { A }`, `{ type A }`, `type A as B`. */
+const typeOnlyClause = clause =>
+  /^type\b/.test(clause) || clause.replace(/\btype\s+\w+(\s+as\s+\w+)?/g, '').replace(/[{}\s,]/g, '') === ''
+
+/** The imports of `text` (a file at `file`, relative to the plugin) that reach the value side of the wrappers. */
+function elImports(file, text) {
+  const reaches = spec => {
+    if (!spec.startsWith('.')) return false
+    const target = normalize(join(dirname(file), spec))
+      .split(sep)
+      .join('/')
+    return target === EL_MODULE || target === `${EL_MODULE}.ts`
+  }
+  const found = []
+  for (const m of text.matchAll(/^(?:import|export)\s+([^'"]*?)\s*from\s*['"]([^'"\n]+)['"]/gm))
+    if (reaches(m[2]) && !typeOnlyClause(m[1])) found.push(m[0])
+  for (const m of text.matchAll(/^import\s+['"]([^'"\n]+)['"]/gm)) if (reaches(m[1])) found.push(m[0])
+  for (const m of text.matchAll(/\b(?:import|require)\s*\(\s*['"]([^'"\n]+)['"]/g)) if (reaches(m[1])) found.push(m[0])
+  return found
+}
+
+test('no file outside ux/ imports the element wrappers as values', () => {
+  const found = ALL.filter(f => !f.startsWith('ux/')).flatMap(f => elImports(f, textOf(f)).map(x => `${f}: ${x}`))
+  assert.deepEqual(
+    found,
+    [],
+    `box, text, button and link build trees under ux/ only (type imports are fine):\n${found.join('\n')}`,
+  )
+  const inUx = ALL.filter(f => f.startsWith('ux/') && elImports(f, textOf(f)).length > 0)
+  assert.ok(
+    inUx.includes('ux/tree-data-table/table.ts'),
+    'table.ts imports no wrapper, so the rule cannot pass on an empty scan',
+  )
+})
+
+test('the wrapper rule sees every way to reach a value, and lets the type-only forms through', () => {
+  const at = 'hooks/x.ts'
+  const reaching = [
+    "import { box } from '../ux/tree-data-table/el'",
+    "import { text as t } from '../ux/tree-data-table/el.ts'",
+    "import * as el from '../ux/tree-data-table/el'",
+    "export { box } from '../ux/tree-data-table/el'",
+    "import { type TableElements, box } from '../ux/tree-data-table/el'",
+    "import '../ux/tree-data-table/el'",
+    "const el = await import('../ux/tree-data-table/el')",
+    "import { a } from './a'\nimport { link } from '../ux/tree-data-table/el'",
+  ]
+  for (const src of reaching) assert.notDeepEqual(elImports(at, src), [], `missed: ${src}`)
+  assert.notDeepEqual(elImports('core/infra/y.ts', "import { box } from '../../ux/tree-data-table/el'"), [])
+  const erased = [
+    "import type { TableElements } from '../ux/tree-data-table/el'",
+    "import { type TableElements } from '../ux/tree-data-table/el'",
+    "import {\n  type TableElements,\n} from '../ux/tree-data-table/el'",
+    "export type { TableElements } from '../ux/tree-data-table/el'",
+    "import { box } from '../ux/tree-data-table/table'",
+    "import { box } from './el'",
+    "import { box } from 'ux/tree-data-table/el'",
+  ]
+  for (const src of erased) assert.deepEqual(elImports(at, src), [], `flagged: ${src}`)
+  assert.equal(elImports('ux/tree-data-table/table.ts', "import { box } from './el'").length, 1)
+})
+
+test('ux/tree-data-table/table.ts builds elements, so the drawing rule cannot pass on an empty scan', () => {
+  const table = 'ux/tree-data-table/table.ts'
+  assert.ok(ALL.includes(table), `${table} is not in the scan`)
+  assert.ok(hits(table, /(^|[^.\w])h\(|\bbox\(/).length > 0, `no element call in ${table}`)
+  assert.ok(
+    ALL.some(f => f.startsWith('ux/') && hits(f, H_CALL).length > 0),
+    'no call of h under ux/',
+  )
 })

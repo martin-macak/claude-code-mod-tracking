@@ -243,7 +243,7 @@ export interface Tracker<C extends JsonObject = JsonObject, D extends Json = Jso
   /** Pure. Read the view context, return values, write nothing. */
   sections?(ctx: ViewContext<C, D>): readonly SectionSpec[]
   /** The `run` and `state` per key id, at render. */
-  actions?(ctx: ViewContext<C, D>): ActionImpls
+  actions?(ctx: ViewContext<C, D>): ActionImpls<C, D>
   /** One line per item. */
   prompt?(ctx: ViewContext<C, D>): readonly string[]
   /** Best effort, synchronous. A reload gives no call (E7). */

@@ -32,6 +32,8 @@ export interface StartDeps {
   items: ItemsHost
   persistence: Persistence
   host: TrackerHost
+  /** The pane keys: rebuilt right after the trackers ran `init`, so a tracker that is off or failed adds none. */
+  keys: { rebuild(): void }
   bus: EventBus
   watch: SessionWatch
   scheduler: Scheduler
@@ -73,6 +75,7 @@ export class StartSequence {
     const cold = await this.soft('items read', () => this.d.switcher.itemsEmpty(), false)
     await this.soft('item runtime', () => items.start(host.hostCtx(ports)), undefined)
     await this.soft('tracker init', () => host.init(), undefined)
+    await this.soft('pane keys', async () => this.d.keys.rebuild(), undefined)
     // The store phase is done: the first run writes the defaults, an upgrade adds the missing keys. Once per load.
     if (launch.reconcile !== false) await this.soft('config write', () => config.reconcile(host.stored()), undefined)
     await this.soft('bus fill', async () => host.fill(bus), undefined)

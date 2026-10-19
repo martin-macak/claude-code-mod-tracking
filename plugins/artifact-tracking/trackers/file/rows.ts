@@ -1,6 +1,6 @@
 // The row of a Markdown file: one cell per activity, each naming itself, and an activity that never happened leaves its
-// cell empty (issue #28). The path shows relative to the session root. Pure. The cells are today's `fileRow`
-// (hooks/ui/view.ts), which the parity test pins.
+// cell empty (issue #28). The path shows relative to the session root. Pure. The cells keep the text the pane
+// drew before L6; tests/item-sections.test.ts pins them.
 // Plan: L5 Task 13, L6 A1.
 
 import type { TreeRow, ViewContext } from '../../core/interfaces/view'

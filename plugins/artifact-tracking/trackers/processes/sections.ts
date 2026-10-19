@@ -1,6 +1,6 @@
 // The Processes section: background tasks, Monitor runs, Docker, tmux, screen and detached processes. Pure: it reads the
-// view context and writes nothing. Title, note, cell texts, tones and band are today's (the legacy process view), which
-// the parity test pins. The note reads the probe state, the fact `processes.ui`.
+// view context and writes nothing. Title, note, cell texts, tones and band keep the text the pane drew before
+// L6; tests/tracker-sections.test.ts pins them. The note reads the probe state, the fact `processes.ui`.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 14, L6 A1.
 
 import type { Json } from '../../core/interfaces/items'

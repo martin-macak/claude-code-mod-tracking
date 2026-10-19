@@ -7,6 +7,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { ItemRecord, ProcessRecord } from './fixtures/contracts'
 import * as ev from './fixtures/events'
 import { LIMITS } from './fixtures/limits'
+import { mountPane, select } from './fixtures/pane'
 import {
   BAND,
   clearSession,
@@ -311,8 +312,9 @@ test('files: a dismissed row stays dismissed after a later write, edit, read or 
   await $.session.start(START)
   fake.files['/work/docs/plan.md'] = '/work/docs/plan.md'
   await fileTool($, fake, 'Write', writeCreated('/work/docs/plan.md'))
-  const ui = (await mountPane($)) as PaneUi & { press(q: unknown): Promise<void> }
-  await ui.press({ key: 'dismiss-file:/work/docs/plan.md' })
+  const ui = await mountPane($)
+  await select($, ui, 'plan.md')
+  await ui.press({ key: 'dismiss' })
   await quiet(calls)
   expect(await files($)).toBe('No tracked items yet.')
   await fileTool($, fake, 'Write', writeUpdated('/work/docs/plan.md'))
@@ -371,8 +373,9 @@ test('files: a resume skips a file row dismissed in this run', async ($, on) => 
   })
   await $.session.start(START) // pins the root, so the dismiss list is carried over to the next id
   expect(await files($)).toContain('docs/plan.md')
-  const ui = (await mountPane($)) as PaneUi & { press(q: unknown): Promise<void> }
-  await ui.press({ key: 'dismiss-file:/work/docs/plan.md' })
+  const ui = await mountPane($)
+  await select($, ui, 'plan.md')
+  await ui.press({ key: 'dismiss' })
   await quiet(calls)
   await ui.unmount()
   await clearSession($, { calls }, 'sess-2', 'resume') // a /resume of a session whose stored copy holds the row
@@ -663,14 +666,15 @@ test('a URL and a bare #N for the same item make one item', async ($, on) => {
   expect(text.match(/Web five/g)?.length).toBe(1)
 })
 
-test('pane: the dismiss button removes a manually tracked row', async ($, on) => {
+test('pane: x removes a manually tracked row', async ($, on) => {
   const { clock, calls } = world(on)
   await $.session.append(prompt('check issue #5'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
   await track($)
-  const ui = (await mountPane($)) as PaneUi & { press(q: unknown): Promise<void> }
-  await ui.press({ key: 'dismiss-gh:github.com/acme/web#5' })
+  const ui = await mountPane($)
+  await select($, ui, '#5')
+  await ui.press({ key: 'dismiss' })
   await quiet(calls)
   expect((await track($)).text).toBe('No tracked items yet.')
   await ui.unmount()
@@ -804,7 +808,7 @@ test('tool-result row of 1 MB settles fast, is stored whole, and a URL near its 
 test('session.start registers /track with its hint', async ($, on) => {
   const { registered } = world(on)
   await $.session.start(START)
-  expect(registered).toEqual([{ name: 'track', argumentHint: '[refresh|clear|prio <ref> <level>]' }])
+  expect(registered).toEqual([{ name: 'track', argumentHint: '[refresh|clear|help|prio <ref> <level>]' }])
 })
 
 test('session.start backfills from the transcript with the same rules per role', async ($, on) => {
@@ -1005,12 +1009,6 @@ const webRec = (url: string, label: string): ItemRecord => ({
 })
 const KEPT = webRec('https://kept.example/', 'Kept page')
 
-type PaneUi = {
-  find(q: unknown): Promise<unknown>
-  unmount(): Promise<void>
-}
-const mountPane = ($: Engine) => $.ui.mount({ ...PANE, surface: 'terminal' } as never) as unknown as Promise<PaneUi>
-
 test('/clear while a flush is still pending: the items are saved under the old id and carried over', async ($, on) => {
   const { clock, store, calls } = world(on, { isolateState: true })
   await $.session.append(response('https://one.example/')) // the flush is due in flushMs
@@ -1182,32 +1180,6 @@ test('the transcript backfill skips system reminders and other meta wrappers', a
 
 // ---------------------------------------------------------------- pane and band
 
-for (const surface of ['terminal', 'desktop'] as const) {
-  test(`pane: rows are drawn, the Jira fold button hides the children (${surface})`, async ($, on) => {
-    const { clock, calls } = world(on)
-    await $.session.append(prompt('Look at issue #5 and https://acme.atlassian.net/browse/ISS-1'))
-    await clock.advance(LIMITS.captureDebounceMs + 10)
-    await quiet(calls)
-    await track($)
-    await quiet(calls)
-    const ui = (await $.ui.mount({ ...PANE, surface } as never)) as Awaited<ReturnType<Engine['ui']['mount']>> & {
-      find(q: unknown): Promise<unknown>
-      press(q: unknown): Promise<void>
-      unmount(): Promise<void>
-    }
-    expect(await ui.find({ text: 'ISS-1' })).toBeDefined()
-    expect(await ui.find({ text: 'Web five' })).toBeDefined()
-    expect(await ui.find({ type: 'Link' })).toBeDefined()
-    expect(await ui.find({ text: 'PROJ-201' })).toBeDefined()
-    await ui.press({ key: 'fold-jira:acme.atlassian.net/ISS-1' })
-    expect(await ui.find({ text: 'PROJ-201' })).toBeUndefined()
-    expect(await ui.find({ text: 'ISS-1' })).toBeDefined()
-    await ui.press({ key: 'fold-jira:acme.atlassian.net/ISS-1' })
-    expect(await ui.find({ text: 'PROJ-201' })).toBeDefined()
-    await ui.unmount()
-  })
-}
-
 test('pane: the Refresh button asks the coordinator for a manual refresh', async ($, on) => {
   const { clock, calls } = world(on, { ghAuthFails: 1 })
   await $.session.append(response('https://github.com/cli/cli/pull/14640'))
@@ -1227,33 +1199,11 @@ test('pane: the Refresh button asks the coordinator for a manual refresh', async
 
 // ---------------------------------------------------------------- priority keys
 
-type MarkUi = PaneUi & {
-  press(q: unknown): Promise<void>
-  findAll(q: unknown): Promise<{ key?: string; props: { hotkey?: string } }[]>
-}
 const ONE = 'web:https://one.example/'
 const TWO = 'web:https://two.example/'
 const JIRA_ROOT = 'jira:acme.atlassian.net/ISS-1'
 const GH5 = 'gh:github.com/acme/web#5'
 
-/** The key of the mark Button of row `id`, as last drawn. */
-async function markKeyOf(ui: MarkUi, id: string): Promise<string> {
-  const key = (await ui.findAll({ type: 'Button' }))
-    .map(b => b.key ?? '')
-    .find(k => k.startsWith('mark:') && k.endsWith(`:${id}`))
-  expect(key).toBeDefined()
-  return key ?? ''
-}
-/** The person moves the pane's ring onto the element keyed `key`, with Tab or the arrows. */
-const focusOn = ($: Engine, key: string) =>
-  $.ui.focus({
-    component: 'Pane',
-    requestId: 'track',
-    plugin: 'artifact-tracking',
-    element: key,
-    origin: { kind: 'person' },
-  } as never)
-const pick = async ($: Engine, ui: MarkUi, id: string) => focusOn($, await markKeyOf(ui, id))
 /** The line of the `/track` text that holds `s`. */
 const lineOf = (text: string, s: string) => text.split('\n').findIndex(l => l.includes(s))
 const storedItem = (store: Map<string, unknown>, key: string) =>
@@ -1272,14 +1222,14 @@ async function twoLinks($: Engine, on: Parameters<typeof world>[0], opts: Parame
   await quiet(w.calls)
   await w.clock.advance(LIMITS.flushMs + 10)
   await sleep(20)
-  return { ...w, ui: (await mountPane($)) as MarkUi }
+  return { ...w, ui: await mountPane($) }
 }
 
 test('pane: key 1 raises the focused row above its sibling and draws its marker', async ($, on) => {
   const { ui } = await twoLinks($, on)
   let text = (await track($)).text ?? ''
   expect(lineOf(text, 'one.example')).toBeLessThan(lineOf(text, 'two.example'))
-  await pick($, ui, TWO)
+  await select($, ui, 'two.example')
   await ui.press({ key: 'prio-1' })
   text = (await track($)).text ?? ''
   expect(lineOf(text, 'two.example')).toBeLessThan(lineOf(text, 'one.example'))
@@ -1290,7 +1240,7 @@ test('pane: key 1 raises the focused row above its sibling and draws its marker'
 
 test('pane: key 3 lowers the row, key 2 stores a manual normal, key 0 removes the mark', async ($, on) => {
   const { ui, clock, store } = await twoLinks($, on)
-  await pick($, ui, ONE)
+  await select($, ui, 'one.example')
   await ui.press({ key: 'prio-3' })
   let text = (await track($)).text ?? ''
   expect(lineOf(text, 'two.example')).toBeLessThan(lineOf(text, 'one.example'))
@@ -1309,31 +1259,7 @@ test('pane: key 3 lowers the row, key 2 stores a manual normal, key 0 removes th
   await ui.unmount()
 })
 
-test('pane: a priority key with no focused row changes nothing', async ($, on) => {
-  const { ui } = await twoLinks($, on)
-  const before = (await track($)).text
-  await ui.press({ key: 'prio-1' })
-  expect((await track($)).text).toBe(before)
-  await ui.unmount()
-})
-
-test('pane: the ring on a footer key keeps the pick; on Refresh or off the Buttons it drops it', async ($, on) => {
-  const { ui } = await twoLinks($, on)
-  await pick($, ui, TWO)
-  await focusOn($, 'prio-1') // Tab onto the footer, then Enter or the digit
-  await ui.press({ key: 'prio-1' })
-  expect((await track($)).text).toContain('▲ two.example')
-  await focusOn($, 'refresh')
-  await ui.press({ key: 'prio-3' })
-  expect((await track($)).text).not.toContain('▽')
-  await pick($, ui, ONE)
-  await $.ui.focus({ component: 'Pane', requestId: 'track', origin: { kind: 'person' } } as never) // the close mark
-  await ui.press({ key: 'prio-3' })
-  expect((await track($)).text).not.toContain('▽')
-  await ui.unmount()
-})
-
-test('pane: the keys work on a Jira root, a Jira child and a GitHub row, by its mark, fold or x', async ($, on) => {
+test('pane: the keys work on a Jira root, a Jira child and a GitHub row', async ($, on) => {
   const { clock, calls, store } = world(on)
   await $.session.append(prompt('Look at issue #5 and https://acme.atlassian.net/browse/ISS-1'))
   await clock.advance(LIMITS.flushMs + 10)
@@ -1341,12 +1267,12 @@ test('pane: the keys work on a Jira root, a Jira child and a GitHub row, by its 
   await sleep(20)
   await track($)
   await quiet(calls)
-  const ui = (await mountPane($)) as MarkUi
-  await focusOn($, `fold-${JIRA_ROOT}`) // the fold Button of the root picks the root
+  const ui = await mountPane($)
+  await select($, ui, 'ISS-1')
   await ui.press({ key: 'prio-1' })
-  await pick($, ui, `${JIRA_ROOT}/PROJ-201`)
+  await select($, ui, 'PROJ-201')
   await ui.press({ key: 'prio-3' })
-  await focusOn($, `dismiss-${GH5}`) // the x of a row picks that row
+  await select($, ui, '#5')
   await ui.press({ key: 'prio-1' })
   await ui.press({ key: 'prio-0' })
   await ui.unmount()
@@ -1370,7 +1296,7 @@ test('pane: the keys work on a Jira root, a Jira child and a GitHub row, by its 
 test('pane: a raised priority reaches the stored copy with no other change in between', async ($, on) => {
   const { ui, clock, store } = await twoLinks($, on)
   expect('priority' in (storedItem(store, TWO) ?? {})).toBe(false)
-  await pick($, ui, TWO)
+  await select($, ui, 'two.example')
   await ui.press({ key: 'prio-1' })
   await ui.unmount()
   await clock.advance(LIMITS.flushMs + 10)
@@ -1380,30 +1306,11 @@ test('pane: a raised priority reaches the stored copy with no other change in be
 
 test('pane: a refresh keeps the order the person set', async ($, on) => {
   const { ui } = await twoLinks($, on)
-  await pick($, ui, TWO)
+  await select($, ui, 'two.example')
   await ui.press({ key: 'prio-1' })
   await ui.unmount()
   const text = (await track($, 'refresh')).text ?? ''
   expect(lineOf(text, 'two.example')).toBeLessThan(lineOf(text, 'one.example'))
-})
-
-test('pane: mark Buttons claim no hotkey, and each footer key is on one Button only', async ($, on) => {
-  const { ui } = await twoLinks($, on)
-  const buttons = await ui.findAll({ type: 'Button' })
-  const marks = buttons.filter(b => b.key?.startsWith('mark:'))
-  expect(marks.length).toBe(2)
-  for (const b of marks) expect(b.props.hotkey).toBeUndefined()
-  const hotkeys = buttons.map(b => b.props.hotkey).filter((h): h is string => h !== undefined)
-  expect(hotkeys.sort()).toEqual(['0', '1', '2', '3', 'r'])
-  await ui.unmount()
-})
-
-test('pane: with no item row the footer has no priority keys', async ($, on) => {
-  world(on)
-  await track($)
-  const ui = (await mountPane($)) as MarkUi
-  expect(await ui.find({ key: 'prio-1' })).toBeUndefined()
-  await ui.unmount()
 })
 
 test('/track prio sets a level by ref and saves it before the reply, for claude -p', async ($, on) => {
@@ -1434,7 +1341,7 @@ test('/track prio: an untracked ref says so; a bad level or a missing part print
   await quiet(calls)
   expect((await track($, 'prio #99 high')).text).toBe('Not tracked: #99')
   expect((await track($, 'prio #5 urgent')).text).toContain(
-    'Usage: /track [refresh|clear|prio <ref> <high|normal|low|auto>]',
+    'Usage: /track [refresh|clear|help|prio <ref> <high|normal|low|auto>]',
   )
   expect((await track($, 'prio #5')).text).toContain('Usage: /track')
   expect((await track($)).text).not.toContain('▲')
@@ -1444,7 +1351,7 @@ test('/track prio: an untracked ref says so; a bad level or a missing part print
 
 test('/clear carries a mark into the new session, and the new copy holds it', async ($, on) => {
   const { ui, clock, store, calls } = await twoLinks($, on, { isolateState: true })
-  await pick($, ui, TWO)
+  await select($, ui, 'two.example')
   await ui.press({ key: 'prio-1' })
   await ui.unmount()
   await clock.advance(LIMITS.flushMs + 10)
@@ -1461,12 +1368,12 @@ test('/clear carries a mark into the new session, and the new copy holds it', as
 
 test('/clear right after a reset keeps no mark: the live list wins over the older stored copy', async ($, on) => {
   const { ui, clock, store, calls } = await twoLinks($, on, { isolateState: true })
-  await pick($, ui, TWO)
+  await select($, ui, 'two.example')
   await ui.press({ key: 'prio-1' })
   await clock.advance(LIMITS.flushMs + 10)
   await sleep(20)
   expect(storedItem(store, TWO)?.priority).toBe('high')
-  await pick($, ui, TWO)
+  await select($, ui, 'two.example')
   await ui.press({ key: 'prio-0' }) // the flush of this change has not run yet
   await ui.unmount()
   await clearSession($, { calls }, 'sess-2', 'clear')
@@ -1481,8 +1388,9 @@ test('x then /clear: the dismissed item stays gone, also before its flush ran', 
   await quiet(w.calls)
   await sleep(20)
   await track($)
-  const ui = (await mountPane($)) as MarkUi
-  await ui.press({ key: `dismiss-${TWO}` })
+  const ui = await mountPane($)
+  await select($, ui, 'two.example')
+  await ui.press({ key: 'dismiss' })
   await ui.unmount()
   await clearSession($, w, 'sess-2', 'clear')
   const text = (await track($)).text ?? ''
@@ -1490,10 +1398,11 @@ test('x then /clear: the dismissed item stays gone, also before its flush ran', 
   expect(text).not.toContain('two.example')
 })
 
-test('the x button saves the shorter list soon, with no other change', async ($, on) => {
+test('the x key saves the shorter list soon, with no other change', async ($, on) => {
   const { ui, clock, store } = await twoLinks($, on)
   expect(storedItem(store, TWO)).toBeDefined()
-  await ui.press({ key: `dismiss-${TWO}` })
+  await select($, ui, 'two.example')
+  await ui.press({ key: 'dismiss' })
   await ui.unmount()
   await clock.advance(LIMITS.flushMs + 10)
   await sleep(20)
@@ -1511,7 +1420,7 @@ test('session.start restores the marks of a stored copy and sorts by them', asyn
 
 test('an item tracked again after /track clear starts with no mark', async ($, on) => {
   const { ui, clock, calls } = await twoLinks($, on)
-  await pick($, ui, TWO)
+  await select($, ui, 'two.example')
   await ui.press({ key: 'prio-1' })
   await ui.unmount()
   expect((await track($, 'clear')).text).toBe('Tracking list cleared.')
@@ -1530,12 +1439,12 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await clock.advance(LIMITS.captureDebounceMs + 10)
     await quiet(calls)
     await track($)
-    const ui = (await $.ui.mount({ ...PANE, surface } as never)) as unknown as MarkUi
+    const ui = await mountPane($, { surface })
     expect(await ui.find({ text: '▲' })).toBeUndefined()
-    await pick($, ui, ONE)
+    await select($, ui, 'one.example')
     await ui.press({ key: 'prio-1' })
     expect(await ui.find({ text: '▲' })).toBeDefined()
-    await pick($, ui, ONE) // the mark has a new key now: the row's level is in it
+    await select($, ui, 'one.example') // the selection is by row id, so the row keeps it after the move
     await ui.press({ key: 'prio-3' })
     expect(await ui.find({ text: '▽' })).toBeDefined()
     expect(await ui.find({ text: '▲' })).toBeUndefined()
@@ -2191,9 +2100,6 @@ test('repos: restoring more than maxRepos stored rows keeps maxRepos', async ($,
 
 // ---------------------------------------------------------------- repos: dismiss with the x button
 
-const SDK_ROW_ID = 'rp:' + SDK_KEY
-type PressUi = PaneUi & { press(q: unknown): Promise<void> }
-
 /** A Bash `cd` into the sdk repo, the queue drained. */
 async function visitSdk($: Engine, w: ReturnType<typeof world>, id: string): Promise<void> {
   sdkGit(w.fake)
@@ -2203,8 +2109,9 @@ async function visitSdk($: Engine, w: ReturnType<typeof world>, id: string): Pro
 }
 
 async function dismissSdk($: Engine): Promise<void> {
-  const ui = (await mountPane($)) as PressUi
-  await ui.press({ key: 'dismiss-' + SDK_ROW_ID })
+  const ui = await mountPane($)
+  await select($, ui, 'sdk')
+  await ui.press({ key: 'dismiss' })
   await ui.unmount()
 }
 
@@ -2218,7 +2125,7 @@ const bandHas = async ($: Engine, text: string): Promise<boolean> => {
   return found
 }
 
-test('repos dismiss: the x button hides the row from /track and the band', async ($, on) => {
+test('repos dismiss: the x key hides the row from /track and the band', async ($, on) => {
   const w = world(on)
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine band'] }))
   await $.session.start(START)

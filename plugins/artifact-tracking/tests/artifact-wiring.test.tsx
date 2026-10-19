@@ -21,7 +21,8 @@ import {
 } from './fixtures/artifacts'
 import type { ArtifactRecord, ItemRecord } from './fixtures/contracts'
 import { LIMITS } from './fixtures/limits'
-import { clearSession, PANE, prompt, quiet, response, SESSION, START, toolResult, track, world } from './fixtures/world'
+import { mountPane, select } from './fixtures/pane'
+import { clearSession, prompt, quiet, response, SESSION, START, toolResult, track, world } from './fixtures/world'
 
 type World = ReturnType<typeof world>
 type Shape = { input: Record<string, unknown>; result: unknown }
@@ -188,16 +189,14 @@ test('delete: a rejected delete changes nothing; an unknown artifact gets no row
 
 // ---------------------------------------------------------------- dismiss, clear, store
 
-type PaneUi = { press(q: unknown): Promise<void>; unmount(): Promise<void> }
-const mountPane = ($: Engine) => $.ui.mount({ ...PANE, surface: 'terminal' } as never) as unknown as Promise<PaneUi>
-
 test('pane: a dismissed artifact stays out after a new publish', async ($, on) => {
   const w = world(on)
   await call($, w, PUBLISH)
   await settle(w)
   await track($)
   const ui = await mountPane($)
-  await ui.press({ key: `dismiss-${PAGE_KEY}` })
+  await select($, ui, 'Probe Page 29')
+  await ui.press({ key: 'dismiss' })
   await quiet(w.calls)
   await call($, w, REPUBLISH)
   await settle(w)

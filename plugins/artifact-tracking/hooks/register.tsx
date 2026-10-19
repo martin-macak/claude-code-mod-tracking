@@ -9,25 +9,31 @@ import { LifecycleManager } from '../core/infra/lifecycle'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
 import { DISMISS, parseRemote, TRACKERS } from '../trackers'
-import type { ToolStatus, UiState } from '../types'
-import { renderBand } from '../ux/band'
-import { renderSections } from '../ux/pane'
+import type { ToolStatus } from '../types'
+import { bandText, renderBand } from '../ux/band'
+import { TreeDataTable } from '../ux/tree-data-table/table'
 import { rowEvent, spawnEvent, toolCallEvent, turnEvent } from './events'
-import { listText } from './list-text'
-import { type PaneFocus, paneActions, pickRow } from './pane-actions'
-import { composeBand, composePane } from './ui/auto-view'
-import { focusTargets } from './ui/view'
-import { IDLE_ACLI, IDLE_GH, viewInputs } from './view-inputs'
+import { helpTextOf, listText, PaneSession } from './pane-session'
 
 // Working set in $.state (survives hot reload, reset by /clear). Persistence copies it to $.store, one key per session.
-// The contract (types/index.d.ts) has four keys: `items`, `tools` and `ui` are atoms; each tracker's data is one member
-// of the `trackers` family (spec 5.13, decision D14).
+// The contract (types/index.d.ts): `items` and `tools` are atoms; each tracker's data is one member of the `trackers`
+// family (spec 5.13, decision D14).
 const items = atom({ plugin: 'artifact-tracking', key: 'items' } as const, [] as StoredItem[])
+/** A tool nobody asked yet: not probed, nothing broken. */
+const idle = (name: string): ToolStatus => ({ name, available: null, loggedIn: null, breaker: 'closed' })
+// One entry per tool the trackers declare, so a new tool is declared by its tracker alone.
 const tools = atom(
   { plugin: 'artifact-tracking', key: 'tools' } as const,
-  { gh: IDLE_GH, acli: IDLE_ACLI } as Record<string, ToolStatus>,
+  Object.fromEntries(TRACKERS.flatMap(t => t.tools ?? []).map(spec => [spec.id, idle(spec.id)])) as Record<
+    string,
+    ToolStatus
+  >,
 )
-const ui = atom({ plugin: 'artifact-tracking', key: 'ui' } as const, { folded: [] } as UiState)
+// The pane state (spec 5.13): the row ids the person opened, the selected row, the help view. `shown` is a family and
+// has no atom: its ref is a literal inside each closure of `portsOf`.
+const expanded = atom({ plugin: 'artifact-tracking', key: 'expanded' } as const, [] as string[])
+const selected = atom({ plugin: 'artifact-tracking', key: 'selected' } as const, null as string | null)
+const help = atom({ plugin: 'artifact-tracking', key: 'help' } as const, false)
 
 /** A tracker fault or a refused write must not change what the engine returns: run the step, ignore a failure. */
 async function soft(step: () => unknown): Promise<void> {
@@ -113,7 +119,13 @@ function portsOf($: EngineInterface): Ports {
         update: fn => update($, items, fn),
       },
       tools: { get: () => read($, tools), update: fn => update($, tools, fn) },
-      ui: { get: () => read($, ui), update: fn => update($, ui, fn) },
+      expanded: { get: () => read($, expanded), update: fn => update($, expanded, fn) },
+      selected: { get: () => read($, selected), update: fn => update($, selected, fn) },
+      help: { get: () => read($, help), update: fn => update($, help, fn) },
+      shown: {
+        get: async id => (await read($, { plugin: 'artifact-tracking', key: 'shown', id } as const)) ?? 0,
+        update: (id, fn) => update($, { plugin: 'artifact-tracking', key: 'shown', id } as const, cur => fn(cur ?? 0)),
+      },
       slot: {
         get: id => read($, { plugin: 'artifact-tracking', key: 'trackers', id } as const),
         update: (id, fn) => update($, { plugin: 'artifact-tracking', key: 'trackers', id } as const, cur => fn(cur)),
@@ -122,9 +134,7 @@ function portsOf($: EngineInterface): Ports {
     ui: {
       open: async () =>
         (await $.ui.open({ id: 'track', title: 'Tracking', focus: true, closeOnEscape: true })).isPlaced,
-      focus: async key => {
-        await $.ui.focus({ requestId: 'track', key })
-      },
+      focus: async key => (await $.ui.focus({ requestId: 'track', key })).deny === undefined,
       panes: () => $.ui.panes(),
       invalidate: () => void soft(() => $.ui.invalidate('ui.render')), // a refused redraw: the next one fixes it
       toast: text => $.ui.toast(text),
@@ -137,8 +147,8 @@ const PANE = 'track'
 
 // Module state. A hot reload loses it. Each part is rebuilt on the next use.
 let manager: LifecycleManager | undefined
-/** The row the priority keys act on, and the element map of the last drawing. Never stored. */
-const focus: PaneFocus = { row: undefined, rows: new Map() }
+/** What the pane keeps outside the engine state: the last drawing and the work behind its Buttons. One per load (E7). */
+const pane = new PaneSession()
 
 /**
  * The lifecycle of this load: the start sequence, the session switch (/clear, /resume, /branch), `session.end`, the
@@ -154,8 +164,10 @@ function managerOf($: EngineInterface): LifecycleManager {
       // only as `{ id, config }`.
       config: p => new ConfigManager({ fs: p.fs, env: p.env, specs: TRACKERS, log: p.log }),
       paneId: PANE,
-      // The text of the list for /track: the legacy composers until L6 (K19). Read at call time, the manager is set by then.
+      // The text of the list and of the help view for /track: the text of the sections the pane draws (K19). Read at call
+      // time, the manager is set by then.
       listText: p => listText(p, managerOf($)),
+      helpText: p => helpTextOf(p, managerOf($)),
     },
     portsOf($),
   )
@@ -241,47 +253,36 @@ export const register: Register = on => {
     text: 'artifact-tracking: could not run the command.',
   }))
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const el = $.ui.resolve(e)
-    const p = portsOf($)
-    const m = managerOf($)
-    const v = await viewInputs(p, m.facts, { bodyColumns: e.props.bodyColumns, live: id => m.live(id) })
-    const sections = composePane(v.items, v.processes, v.processUi, v.ctx, v.repos)
-    focus.rows = focusTargets(sections)
-    return renderSections(el, sections, e.props.bodyColumns, paneActions(p, m, focus))
-  }).catch(($, e) => {
-    // A failed read must not close the pane. Draw one line instead.
-    const { Text } = $.ui.resolve(e)
-    return <Text dimColor>Tracking is unavailable. Run /track to try again.</Text>
-  })
+  // The sections of every tracker, drawn by one TreeDataTable. A render only reads (E9). A failed read must not close
+  // the pane: it draws one line instead.
+  on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) =>
+    pane.draw(portsOf($), managerOf($), $.ui.resolve(e), e.props.bodyColumns),
+  ).catch(($, e) => TreeDataTable.unavailable($.ui.resolve(e)))
 
-  // One line above the prompt. The engine's own band stays inside our Box.
+  // One line above the prompt, made from the sections that carry a band part. The engine's own band stays inside our Box.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const m = managerOf($)
-    const v = await viewInputs(portsOf($), m.facts, { live: id => m.live(id) })
-    const text = composeBand(v.items, v.processes, v.ctx.auto ?? null, v.repos)
-    if (text === null || e.props.hasSurvey) return next(e)
-    const el = $.ui.resolve(e)
-    const { Box } = el
-    return (
-      <Box flexDirection="column">
-        {renderBand(el, text)}
-        {await next(e)}
-      </Box>
-    )
+    if (e.props.hasSurvey) return next(e)
+    const line = bandText(await managerOf($).bandData(portsOf($)))
+    if (line === null) return next(e)
+    return renderBand($.ui.resolve(e), line, await next(e))
   }).catch((_$, e, next) => next(e)) // a failed read leaves the band to the engine
 
-  // These two hooks only observe. The entry (the lazy start, the session check) runs beside the key: after a /resume
-  // it can load the stored copy and read the transcript, which may call `gh`, and the key must not wait for that.
+  // The ring moved. `next` runs first: a write before a deny would stick (tree-table 3.3). A row handle selects its row.
+  // The entry (the lazy start, the session check) runs beside the key: after a /resume it can load the stored copy and
+  // read the transcript, which may call a tracker's tool, and the key must not wait for that.
   on('ui.focus', { requestId: PANE }, async ($, e, next) => {
-    pickRow(focus, e)
-    void soft(() => managerOf($).entry(portsOf($)))
-    return next(e)
+    const p = portsOf($)
+    void soft(() => managerOf($).entry(p))
+    const r = await next(e)
+    if (r.deny === undefined) await pane.focused(p, e.element)
+    return r
   }).catch((_$, e, next) => next(e))
 
+  // The pane closed: no selection, no help view.
   on('ui.close', { id: PANE }, async ($, e, next) => {
-    focus.row = undefined
-    void soft(() => managerOf($).entry(portsOf($)))
+    const p = portsOf($)
+    void soft(() => managerOf($).entry(p))
+    await pane.closed(p)
     return next(e)
   }).catch((_$, e, next) => next(e))
 

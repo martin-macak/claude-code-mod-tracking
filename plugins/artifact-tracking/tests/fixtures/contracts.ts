@@ -73,13 +73,11 @@ export type { RepoRecord } from '../../trackers/repos/types'
 export type { WebRecord, WebRef } from '../../trackers/web/types'
 export type * from '../../types'
 
-// ---------------------------------------------------------------- the auto state, as the legacy views read it
+// ---------------------------------------------------------------- the auto state, with the old snapshot fields
 
 /**
  * The snapshot with the two fields that lived in it before plan L5, Task 12: the note of the Pull requests section and the
- * default branch. They are the state of the PR lane in the github slot now. The legacy composers (`hooks/ui/*`) and their
- * tests still read them from the snapshot, and `hooks/view-inputs.ts` puts them there. `hooks/ui/view.ts` has the same two
- * aliases for the draw path; the tests keep their own, so L6 can delete that file alone.
+ * default branch. They are the state of the PR lane in the github slot now. Some tests still build their fixtures with them.
  */
 export type AutoSnapshot = Snapshot & { prs?: LaneState['prs']; defaultBranch?: string }
 export type AutoState = Omit<State, 'snapshot'> & { snapshot: AutoSnapshot | null }

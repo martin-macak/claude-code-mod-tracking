@@ -1,0 +1,88 @@
+// Helpers to read what TreeDataTable.render draws: the plain-data tree of `{ type, props, children }` nodes, a table
+// view with the defaults of a normal pane, and a recording TableActions. Node and kit tests use them alike.
+import { footerKeys, KeyRegistry } from '../../core/infra/keys'
+import type { TableActions, TableView } from '../../ux/tree-data-table/table'
+
+export interface Node {
+  type: string
+  props: Record<string, unknown>
+  children: unknown[]
+}
+
+export const isNode = (x: unknown): x is Node => typeof x === 'object' && x !== null && 'type' in x
+
+/** Every node of `type` below `tree` (itself included), depth first. */
+export function nodes(tree: unknown, type: string): Node[] {
+  if (!isNode(tree)) return []
+  return [...(tree.type === type ? [tree] : []), ...tree.children.flatMap(c => nodes(c, type))]
+}
+
+/** The string leaves below `node`, in order. */
+export function leaves(node: unknown): string[] {
+  if (typeof node === 'string') return [node]
+  return isNode(node) ? node.children.flatMap(leaves) : []
+}
+
+/** The Texts that hold exactly one string child, as `[props, string]`. */
+export const texts = (tree: unknown): [Node['props'], string][] =>
+  nodes(tree, 'Text')
+    .filter(t => t.children.length === 1 && typeof t.children[0] === 'string')
+    .map(t => [t.props, t.children[0] as string])
+
+/** The child Boxes of a section Box that draw a row: the first child is the gutter Text and a row handle sits inside. */
+export function rowBoxes(tree: unknown): Node[] {
+  return nodes(tree, 'Box').filter(b => {
+    const first = b.children[0]
+    const gutter = isNode(first) && first.type === 'Text' && (first.children[0] === ' ' || first.children[0] === '>')
+    return gutter && nodes(b, 'Button').some(x => /^r\d+$/.test(String(x.props.key)))
+  })
+}
+
+/** The row handles, in drawing order. */
+export const handlesOf = (tree: unknown): string[] =>
+  nodes(tree, 'Button')
+    .map(b => String(b.props.key))
+    .filter(k => /^r\d+$/.test(k))
+
+/** The footer Buttons: the ones with a hotkey. */
+export const footerOf = (tree: unknown): Node[] => nodes(tree, 'Button').filter(b => b.props.hotkey !== undefined)
+
+/** The one Button with this key. */
+export function buttonOf(tree: unknown, key: string): Node {
+  const hit = nodes(tree, 'Button').filter(b => b.props.key === key)
+  if (hit.length !== 1) throw new Error(`expected one Button ${key}, found ${hit.length}`)
+  return hit[0] as Node
+}
+
+/** Press a Button the way the engine does. */
+export const press = (b: Node): void => (b.props.onPress as () => void)()
+
+/** The footer of a pane with no row selected. */
+export const NO_ROW_FOOTER = footerKeys(new KeyRegistry(), undefined, () => false, false)
+
+/** A view with the defaults of a normal pane: 80 columns, nothing selected, nothing opened, 50 rows per section. */
+export function view(over: Partial<TableView> = {}): TableView {
+  return {
+    bodyColumns: 80,
+    selected: null,
+    expanded: new Set(),
+    shown: () => 0,
+    limits: { sectionRows: 50, maxRows: 300 },
+    footer: NO_ROW_FOOTER,
+    help: null,
+    ...over,
+  }
+}
+
+/** `calls` lists each action as `toggle:<id>`, `more:<section>` or `press:<buttonKey>`. */
+export function recorder(): { calls: string[]; actions: TableActions } {
+  const calls: string[] = []
+  return {
+    calls,
+    actions: {
+      toggle: id => void calls.push(`toggle:${id}`),
+      more: id => void calls.push(`more:${id}`),
+      press: key => void calls.push(`press:${key}`),
+    },
+  }
+}

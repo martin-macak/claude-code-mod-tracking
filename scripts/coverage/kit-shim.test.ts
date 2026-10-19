@@ -363,3 +363,32 @@ nodeTest('a value import from claude-code fails to load', () => {
   assert.notEqual(r.code, 0)
   assert.match(r.out, /does not provide an export named 'atom'/)
 })
+
+// ---- the global h ----
+
+nodeTest('the fake h builds the plain-data shape the kit draws', () => {
+  assert.deepEqual(h('Box', { width: 3 }, h('Text', null, 'a'), ['b', null, false, [7]]), {
+    type: 'Box',
+    props: { width: 3 },
+    children: [{ type: 'Text', children: ['a'] }, 'b', '7'],
+  })
+  assert.deepEqual(
+    h(p => ({ type: 'X', props: p }), { k: 1 }, 'c'),
+    { type: 'X', props: { k: 1, children: ['c'] } },
+  )
+})
+
+// The engine leaves out an empty props and an empty children, drops a null or undefined prop and `children` in the
+// props of a string tag, and gives a function tag a children list always (tests/h-shape.kit.test.ts pins the same).
+nodeTest('the fake h leaves out what the engine leaves out', () => {
+  assert.deepEqual(h('Box', null), { type: 'Box' })
+  assert.deepEqual(h('Box', {}, null, false, true), { type: 'Box' })
+  assert.deepEqual(h('Box', { a: null, b: undefined, c: 0, d: false, e: '', children: ['z'] }), {
+    type: 'Box',
+    props: { c: 0, d: false, e: '' },
+  })
+  assert.deepEqual(
+    h(p => ({ type: 'X', props: p }), null),
+    { type: 'X', props: { children: [] } },
+  )
+})

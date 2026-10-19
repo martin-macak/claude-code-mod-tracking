@@ -1,5 +1,5 @@
 // The row of a Claude artifact: its name, its id and its origin. A deleted page is dimmed and has no link. Pure. The
-// cells are today's `artifactRow` (hooks/ui/view.ts), which the parity test pins.
+// cells keep the text the pane drew before L6; tests/item-sections.test.ts pins them.
 // Plan: L5 Task 13, L6 A1.
 
 import type { TreeRow, ViewContext } from '../../core/interfaces/view'

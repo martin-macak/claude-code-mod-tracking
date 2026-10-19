@@ -5,9 +5,9 @@
 // `end` keeps a snapshot of the leaving session. The switch that follows carries it (`/clear`) or loads the stored copy
 // of the new id (`/resume`).
 // Without an item host of its own it builds the ItemService after the TrackerHost, whose `live` the service reads.
-// `/track` is routed by Commands (core/infra/commands.ts), `session.end` is run by SessionEnd and the pane is read by
-// Views (viewOf, paneData, bandData): the manager hands them the calls they need. The parts the constructor wires are
-// in lifecycle-parts.ts.
+// `/track` is routed by Commands (core/infra/commands.ts), `session.end` by SessionEnd, the pane is read by Views
+// and its keys are served by PaneKeys (the manager extends PaneApi, which hands both their calls). The parts the
+// constructor wires are in lifecycle-parts.ts.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.6. Plan: L3 Tasks 5 to 8, D4 to D9, D20.
 // L5 Tasks 9 and 13, K15, K19.
 
@@ -18,9 +18,11 @@ import type { Ports } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
 import { EventBus } from './bus'
-import { Commands } from './commands'
+import type { Commands } from './commands'
 import { Facts } from './facts'
-import { commandHostOf, configRefresher, itemHostOf, persistenceOf, schedulerOf } from './lifecycle-parts'
+import { commandsOf, configRefresher, itemHostOf, persistenceOf, schedulerOf } from './lifecycle-parts'
+import { PaneApi } from './pane-api'
+import { PaneKeys } from './pane-keys'
 import type { Persistence } from './persistence'
 import { Replay } from './replay'
 import type { Scheduler } from './scheduler'
@@ -57,9 +59,11 @@ export interface LifecycleDeps {
    * router appends the problems of the config file itself.
    */
   listText?(ports: Ports): Promise<string>
+  /** The help view as text, for `/track help`. Absent: the reply holds no text. */
+  helpText?(ports: Ports): Promise<string>
 }
 
-export class LifecycleManager {
+export class LifecycleManager extends PaneApi {
   readonly facts: FactsPort = new Facts({ onChange: ev => void this.bus.emit('fact', ev, this.ports) })
   readonly watch: SessionWatch
   /** The session store. Public for the lifecycle tests; the hooks reach it through the manager only. */
@@ -77,7 +81,8 @@ export class LifecycleManager {
   private readonly ending: SessionEnd
   /** Checks the config file; when it changed, re-arms the tick and redraws the pane. Never rejects. */
   readonly refreshConfig: (ports: Ports) => Promise<boolean>
-  private readonly views: Views
+  protected readonly views: Views
+  protected readonly paneKeys: PaneKeys
   /** The start sequence of this load. Set by the first start, lazy or from `session.start`. */
   private started: Promise<void> | undefined
 
@@ -85,6 +90,7 @@ export class LifecycleManager {
     private readonly d: LifecycleDeps,
     private readonly ports: Ports,
   ) {
+    super()
     this.cfg = d.config(ports)
     // Read per call, never held: a changed file shows on the next read.
     const g = () => this.cfg.global()
@@ -130,10 +136,21 @@ export class LifecycleManager {
       persisted: () => void this.persistence.touch(),
       log: ports.log,
     })
+    this.views = new Views({
+      trackers: d.trackers,
+      config: this.cfg,
+      facts: this.facts,
+      dismiss: p => d.dismiss(p, this.cfg),
+      levels: list => this.items.levels(list),
+      live: id => this.host.live(id),
+      log: ports.log,
+    })
+    this.paneKeys = new PaneKeys({ trackers: d.trackers, host: this.host, views: this.views, log: ports.log })
     this.sequence = new StartSequence({
       items: this.items,
       persistence: this.persistence,
       host: this.host,
+      keys: this.paneKeys,
       bus: this.bus,
       watch: this.watch,
       scheduler: this.scheduler,
@@ -151,19 +168,7 @@ export class LifecycleManager {
       items: this.items,
       log: ports.log,
     })
-    this.views = new Views({
-      trackers: d.trackers,
-      config: this.cfg,
-      facts: this.facts,
-      dismiss: p => d.dismiss(p, this.cfg),
-      levels: list => this.items.levels(list),
-      live: id => this.host.live(id),
-      log: ports.log,
-    })
-    this.commands = new Commands(
-      commandHostOf(this, { items: this.items, host: this.host, bus: this.bus, config: this.cfg }),
-      async p => (await d.listText?.(p)) ?? '',
-    )
+    this.commands = commandsOf(this, { items: this.items, host: this.host, bus: this.bus, config: this.cfg }, d)
   }
 
   get generation(): number {
@@ -284,13 +289,7 @@ export class LifecycleManager {
     await this.bus.emit('dismissed', { ids }, ports)
   }
 
-  // ---------------------------------------------------------------- the pane
-  // The reads below run no session check: a render must not write (E9). `Views` documents them.
-
-  readonly viewOf: Views['viewOf'] = (...a) => this.views.viewOf(...a)
-  readonly paneData: Views['paneData'] = (...a) => this.views.paneData(...a)
-  readonly bandData: Views['bandData'] = (...a) => this.views.bandData(...a)
-  readonly levels: Views['levels'] = (...a) => this.views.levels(...a)
+  // ---------------------------------------------------------------- the pane (its reads and keys come from PaneApi)
 
   /** The person's mark on a row; `undefined` removes it. `top` comes from a rule and does nothing. */
   async setPriority(ports: Ports, rowId: string, level: Level | undefined): Promise<void> {

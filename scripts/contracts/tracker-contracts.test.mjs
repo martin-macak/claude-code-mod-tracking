@@ -1,9 +1,10 @@
-// Tracker contracts (spec 5.1 dependency rules, spec 7 "Contract checks"; plan L5, Task 16; decisions K7 and K8).
+// Tracker contracts (spec 5.1 dependency rules, spec 7 "Contract checks"; plan L5, Task 16; decisions K7 and K8; L6).
 // Two kinds of check keep tracker code inside `trackers/`:
-//   names:   the words github, jira, gh and acli appear in no file of core/, ux/ or types/ (K8). A line that holds one
-//            fails, a comment included.
+//   names:   the words github, jira, gh and acli appear in no file of core/, ux/, types/ or hooks/ (K8), except the
+//            one line of the composition root `hooks/register.tsx` that describes the command it registers. A line that
+//            holds one fails, a comment included.
 //   imports: each folder imports only what spec 5.1 lets it import, and a `trackers/<id>/` path appears outside its
-//            folder only in `trackers/index.ts` and the legacy draw path that L6 deletes (K7).
+//            folder only in `trackers/index.ts`.
 // The kit has no fs, so this check runs under node in `make test-scripts`.
 // Run: node --test scripts/contracts/tracker-contracts.test.mjs
 import assert from 'node:assert/strict'
@@ -14,26 +15,15 @@ import { fileURLToPath } from 'node:url'
 
 const PLUGIN = fileURLToPath(new URL('../../plugins/artifact-tracking/', import.meta.url))
 
-/** The folders whose files may not name a tracker (K8). `hooks/` stays out until L6 removes the legacy draw path. */
-const NAMELESS = ['core', 'ux', 'types']
+/** The folders whose files may not name a tracker (K8). L6 deleted the legacy draw path, so `hooks/` joins. */
+const NAMELESS = ['core', 'ux', 'types', 'hooks']
+/** The composition root. It builds the `tools` atom from the trackers' specs, so only the command text names trackers. */
+const NAMING_ROOT = 'hooks/register.tsx'
 const TRACKER_NAMES = /\b(github|jira|gh|acli)\b/i
-
-/**
- * The legacy draw path (L6 A8, K7): it draws the pane and the band from records and may import the trackers' own
- * folders until L6 swaps it. L6 deletes every file of this list, so an entry whose file is gone is simply unused.
- */
-const LEGACY_IMPORTERS = [
-  'hooks/ui/view.ts',
-  'hooks/ui/auto-view.ts',
-  'hooks/ui/repo-view.ts',
-  'hooks/ui/process-view.ts',
-  'hooks/view-inputs.ts',
-  'hooks/pane-actions.ts',
-  'hooks/list-text.ts',
-]
-
-/** The legacy renderers of the UI. They may also import `hooks/ui/` and `core/lib/` (K7). */
-const LEGACY_UX = ['ux/pane.tsx', 'ux/band.tsx']
+/** The lines that may name a tracker, by file, as `hits` prints them: the description of the command (K8). */
+const NAMING_LINES = { [NAMING_ROOT]: /^hooks\/register\.tsx:\d+: description: 'Show tracked [^']*',$/ }
+/** The lines of `file` that name a tracker and are not on the allowlist. */
+const namedLines = file => hits(file, TRACKER_NAMES).filter(line => !NAMING_LINES[file]?.test(line))
 
 // ---------------------------------------------------------------- reading the tree
 
@@ -169,12 +159,9 @@ const RULES = {
     allows: t => inFolder(t, 'core/infra') || inFolder(t, 'core/interfaces') || inFolder(t, 'core/lib'),
   },
   ux: {
-    name: 'ux imports only core/interfaces and ux, and the legacy renderers also hooks/ui and core/lib',
+    name: 'ux imports only core/interfaces and ux',
     scope: f => inFolder(f, 'ux'),
-    allows: (t, f) =>
-      inFolder(t, 'core/interfaces') ||
-      inFolder(t, 'ux') ||
-      (LEGACY_UX.includes(f) && (inFolder(t, 'hooks/ui') || inFolder(t, 'core/lib'))),
+    allows: t => inFolder(t, 'core/interfaces') || inFolder(t, 'ux'),
   },
   tracker: {
     name: 'a tracker imports only core/interfaces, core/lib and its own folder',
@@ -188,9 +175,8 @@ const RULES = {
     allows: t => inFolder(t, 'core/interfaces') || /^trackers\/[^/]+\/index\.ts$/.test(t),
   },
   outside: {
-    name: 'a trackers/<id>/ path appears outside its folder only in trackers/index.ts and the legacy draw path',
-    scope: f =>
-      trackerOf(f) === null && f !== 'trackers/index.ts' && !LEGACY_IMPORTERS.includes(f) && !inFolder(f, 'tests'),
+    name: 'a trackers/<id>/ path appears outside its folder only in trackers/index.ts',
+    scope: f => trackerOf(f) === null && f !== 'trackers/index.ts' && !inFolder(f, 'tests'),
     allows: t => trackerOf(t) === null,
   },
   register: {
@@ -216,11 +202,32 @@ function assertClean(rule) {
 
 // ---------------------------------------------------------------- names
 
-test('no tracker name in core, ux or types', () => {
+test('no tracker name in core, ux, types or hooks, but the command text of the composition root', () => {
   const files = sourcesUnder(NAMELESS)
-  const found = files.flatMap(f => hits(f, TRACKER_NAMES))
+  const found = files.flatMap(namedLines)
   assert.deepEqual(found, [], `the names github, jira, gh and acli belong under trackers/:\n${found.join('\n')}`)
   assert.ok(files.length > 40, `only ${files.length} files scanned`)
+  assert.ok(files.includes(NAMING_ROOT), `${NAMING_ROOT} is not in the scan`)
+  assert.ok(
+    files.some(f => inFolder(f, 'hooks')),
+    'no file of hooks/ is in the name scan',
+  )
+  // The allowlist is used, and by one line: a stale pattern or a second naming line fails here.
+  const allowed = hits(NAMING_ROOT, TRACKER_NAMES).filter(line => NAMING_LINES[NAMING_ROOT].test(line))
+  assert.equal(allowed.length, 1, `${NAMING_ROOT} has ${allowed.length} allowed naming lines`)
+})
+
+test('the naming allowlist lets the command text through and nothing else of the composition root', () => {
+  const allowed = NAMING_LINES[NAMING_ROOT]
+  assert.ok(allowed.test("hooks/register.tsx:184: description: 'Show tracked GitHub, Jira and more',"))
+  for (const line of [
+    "hooks/register.tsx:26: { gh: idle('gh'), acli: idle('acli') },",
+    '// read the transcript, which may call `gh`',
+    "hooks/register.tsx:5: const x = 'Show tracked GitHub'",
+    "hooks/register.tsx:7: label: 'Show tracked GitHub, Jira',",
+    "hooks/other.ts:3: description: 'Show tracked GitHub',",
+  ])
+    assert.ok(!allowed.test(line), `allowed: ${line}`)
 })
 
 test('the names appear under trackers', () => {
@@ -242,7 +249,7 @@ test('the scan sees the whole source tree', () => {
     'core/infra/lifecycle.ts',
     'core/interfaces/tracker.ts',
     'core/lib/records.ts',
-    'ux/pane.tsx',
+    'ux/tree-data-table/table.ts',
     'trackers/index.ts',
     'trackers/github/index.ts',
     'hooks/register.tsx',
@@ -340,16 +347,15 @@ test('the rules fail on a synthetic breach, naming the file and the line', () =>
     'core/lib/l.ts': "import { i } from '../infra/i'",
     'core/infra/i.ts': "import { t } from '../../trackers/github/index'",
     'ux/u.ts': "import { n } from '../core/infra/i'",
-    'ux/pane.tsx':
-      "import { v } from '../hooks/ui/view'\nimport { l } from '../core/lib/l'\nimport { i } from '../core/infra/i'",
+    'ux/table.ts':
+      "import { v } from '../hooks/view'\nimport { l } from '../core/lib/l'\nimport { i } from '../core/infra/i'",
     'trackers/github/index.ts': "import { x } from '../jira/index'\nimport { l } from '../../core/lib/l'",
     'trackers/jira/index.ts': '',
     'trackers/index.ts': "import { g } from './github/index'\nimport { k } from './github/kind'",
     'trackers/github/kind.ts': '',
     'hooks/register.tsx': "import { g } from '../trackers/github/index'\nimport { t } from '../trackers'",
     'hooks/events.ts': "import { g } from '../trackers/jira/index'",
-    'hooks/view-inputs.ts': "import { g } from '../trackers/jira/index'",
-    'hooks/ui/view.ts': '',
+    'hooks/view.ts': '',
     'types/index.d.ts':
       "import type { J } from './other'\nimport type { E } from 'claude-code'\ndeclare module 'x' {\n  import type { F } from 'some-pkg'\n}",
     'types/other.d.ts': '',
@@ -368,7 +374,9 @@ test('the rules fail on a synthetic breach, naming the file and the line', () =>
   ])
   assert.deepEqual(violations(g, RULES.ux), [
     'ux/u.ts:1: imports ../core/infra/i (core/infra/i.ts)',
-    'ux/pane.tsx:3: imports ../core/infra/i (core/infra/i.ts)',
+    'ux/table.ts:1: imports ../hooks/view (hooks/view.ts)',
+    'ux/table.ts:2: imports ../core/lib/l (core/lib/l.ts)',
+    'ux/table.ts:3: imports ../core/infra/i (core/infra/i.ts)',
   ])
   assert.deepEqual(violations(g, RULES.tracker), [
     'trackers/github/index.ts:1: imports ../jira/index (trackers/jira/index.ts)',

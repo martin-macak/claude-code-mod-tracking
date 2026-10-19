@@ -26,7 +26,7 @@ export const TRACKERS: readonly Tracker[] = [
   auto,
 ]
 
-/** The item kinds of the trackers. The test bindings and the legacy views take theirs from here. */
+/** The item kinds of the trackers. The test bindings take theirs from here. */
 export const KINDS: readonly ItemKind[] = TRACKERS.flatMap(t => t.kinds ?? [])
 
 /** The run-scoped dismiss list: the auto tracker keeps it in its slot (plan K16), and the wiring reaches it from here. */

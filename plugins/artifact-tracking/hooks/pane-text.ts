@@ -1,0 +1,53 @@
+// The host contract of the pane and the text the pane's data makes: the list `/track` prints and the help view as text.
+// Both read the sections the pane draws (`paneData`) with nothing selected, so the text and the pane never differ in
+// content. PaneHost is what the pane session needs of the LifecycleManager; the manager fits it as it is.
+// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.10 and 5.12. Plan: L6 Task 11, G14, G15.
+
+import type { KeyRegistry } from '../core/infra/keys'
+import type { ConfigSource } from '../core/interfaces/config'
+import type { Level } from '../core/interfaces/items'
+import type { Ports } from '../core/interfaces/ports'
+import type { FooterKey, HelpModel, PaneView, RowRef, SectionSpec } from '../core/interfaces/view'
+import { helpModel, helpText } from '../ux/tree-data-table/help'
+import { sectionsText } from '../ux/tree-data-table/text'
+
+/** What the pane session calls on the LifecycleManager. */
+export interface PaneHost {
+  entry(p: Ports): Promise<void>
+  paneData(p: Ports, view: PaneView): Promise<readonly SectionSpec[]>
+  footer(p: Ports, row: RowRef | undefined, help: boolean): Promise<readonly FooterKey[]>
+  dismiss(p: Ports, ids: readonly string[]): Promise<void>
+  setPriority(p: Ports, rowId: string, level: Level | undefined): Promise<void>
+  refreshManual(p: Ports): Promise<void>
+  runAction(p: Ports, owner: string, id: string, rowId: string | null): Promise<void>
+  problems(): readonly string[]
+  isItemOwner(owner: string): boolean
+  readonly keys: KeyRegistry
+  readonly config: Pick<ConfigSource, 'global' | 'path' | 'problems'>
+}
+
+/** `shown` of each section id, read once. */
+export async function shownOf(p: Ports, sections: readonly SectionSpec[]): Promise<ReadonlyMap<string, number>> {
+  return new Map(await Promise.all(sections.map(async s => [s.id, await p.state.shown.get(s.id)] as const)))
+}
+
+/** The view the text reads: nothing selected, nothing opened. */
+export const TEXT_VIEW: PaneView = { selected: null, expanded: new Set() }
+
+/** The list as `/track` prints it: the text of the sections. */
+export async function listText(p: Ports, m: Pick<PaneHost, 'paneData'>): Promise<string> {
+  return sectionsText(await m.paneData(p, TEXT_VIEW))
+}
+
+/** The help view's data: every key, the config file, the config problems and the key and tracker problems. */
+export function helpOf(m: Pick<PaneHost, 'keys' | 'config' | 'problems'>, sections: readonly SectionSpec[]): HelpModel {
+  return helpModel(m.keys.all(), sections, m.config.path(), [...m.config.problems(), ...m.problems()])
+}
+
+/** The help view as text, for `/track help` (`claude -p` has no pane). */
+export async function helpTextOf(
+  p: Ports,
+  m: Pick<PaneHost, 'paneData' | 'keys' | 'config' | 'problems'>,
+): Promise<string> {
+  return helpText(helpOf(m, await m.paneData(p, TEXT_VIEW)))
+}

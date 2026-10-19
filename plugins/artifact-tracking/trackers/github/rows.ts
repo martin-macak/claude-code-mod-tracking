@@ -1,6 +1,6 @@
 // The rows of the GitHub and Pull requests sections: an issue or a PR as the pane shows it. A PR row is the GitHub row
 // with the branch in the type cell. Pure: it reads the record, the session repo fact and the level of the item.
-// The cells are today's `githubRow` and `prRow` (hooks/ui/auto-view.ts), which the parity test pins.
+// The cells keep the text the pane drew before L6; tests/item-sections.test.ts pins them.
 // Plan: L5 Task 13, L6 A1.
 
 import type { Json } from '../../core/interfaces/items'
@@ -75,7 +75,10 @@ export function prRow(item: GitHubRecord, env: GithubEnv, defaultBranch: string 
     cells: {
       ...base.cells,
       title: { text: item.title ?? '' },
-      type: { text: compactIds(stacked ? `→${item.baseRefName}` : (item.headRefName ?? '')) },
+      // A head branch keeps both ends; `→base` is cut at the end, so the arrow and the start of the base stay.
+      type: stacked
+        ? { text: compactIds(`→${item.baseRefName}`), clip: 'end' }
+        : { text: compactIds(item.headRefName ?? '') },
     },
     ...(done ? { dim: true } : {}),
   }

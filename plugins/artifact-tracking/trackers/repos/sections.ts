@@ -1,6 +1,6 @@
 // The Repos section: one row for each git repository the session read from or edited, oldest first. Pure: it reads the view
-// context and writes nothing. Title, note, cell texts, tones and band are today's (the legacy repo view), which the parity
-// test pins.
+// context and writes nothing. Title, note, cell texts, tones and band keep the text the pane drew before L6;
+// tests/tracker-sections.test.ts pins them.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 14, L6 A1.
 
 import type { ColumnDef, SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
@@ -13,8 +13,8 @@ import type { RepoRecord } from './types'
 
 const COLUMNS: readonly ColumnDef[] = [
   { id: 'key', header: 'Repo', width: content(6, 24), role: 'tree' },
-  { id: 'title', header: 'Branch', width: flex(10) },
-  { id: 'type', header: 'Agents', width: content(undefined, 20), priority: 1 },
+  { id: 'title', header: 'Branch', width: flex(10), clip: 'middle' },
+  { id: 'type', header: 'Agents', width: content(undefined, 20), priority: 1, clip: 'middle' },
   // `edit` and `read` are 4 wide.
   { id: 'status', header: 'Mode', width: fixed(4) },
 ]

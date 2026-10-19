@@ -73,11 +73,6 @@ export type ToolStatus = {
   site?: string
 }
 
-export type UiState = {
-  /** Keys of folded tree rows (item keys or child node ids). */
-  folded: string[]
-}
-
 declare module 'claude-code' {
   interface PluginState {
     'artifact-tracking': {
@@ -86,7 +81,14 @@ declare module 'claude-code' {
       trackers: StateFamily<Json>
       /** One status per tool id. */
       tools: Record<string, ToolStatus>
-      ui: UiState
+      /** L6. Ids of the rows whose open state differs from the row's default (the Enter presses). */
+      expanded: string[]
+      /** L6. The id of the selected row, `null` when none. Written from `ui.focus` and the row keys. */
+      selected: string | null
+      /** L6. Top-level rows shown beyond the cap, one member per section id. */
+      shown: StateFamily<number>
+      /** L6. The help view is on. */
+      help: boolean
     }
   }
 }

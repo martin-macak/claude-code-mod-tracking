@@ -21,15 +21,14 @@ Feature: Track the work a session mentions
     And the screen matches /│GitHub gh · refreshed \d+s ago/
     And I pause for 3 seconds
 
-    Given the caption "Tab picks a row, 1 marks it high and moves it up"
-    # The ring walks each row's mark, then its x: Tab 5 times lands on the mark of #16, the third row.
+    Given the caption "Tab moves the selection, 1 marks it high and moves it up"
+    # The pane selects the first row (#15) when it opens. Two Tabs reach #16, the third row.
     When I press "Tab"
     And I press "Tab"
-    And I press "Tab"
-    And I press "Tab"
-    And I press "Tab"
-    And I press "1"
-    Then the screen matches /│GitHub gh[^\n]*\n[^\n]*│▲\s+#16\s[^\n]*\n[^\n]*│\s+#15\s/
+    Then the selected row shows "#16"
+    And I pause for 1.5 seconds
+    When I press "1"
+    Then the screen matches /│GitHub gh[^\n]*\n[^\n]*│ +Ref[^\n]*\n[^\n]*│> ▲ ▸ #16\s[^\n]*\n[^\n]*│ +▸ #15\s/
     And I pause for 3 seconds
 
     Given the caption "r refreshes every item, Esc closes the pane"

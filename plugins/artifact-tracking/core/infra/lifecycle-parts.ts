@@ -11,7 +11,7 @@ import type { Ports } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
 import type { EventBus } from './bus'
-import type { CommandHost } from './commands'
+import { type CommandHost, Commands } from './commands'
 import { ItemService } from './items'
 import { Persistence } from './persistence'
 import { Scheduler } from './scheduler'
@@ -81,6 +81,18 @@ export function commandHostOf(
     refreshConfig: p => m.refreshConfig(p),
     config: w.config,
   }
+}
+
+/** The texts the router prints for the list and for `help`. Absent: the reply holds no text. */
+export type CommandTexts = Partial<Record<'listText' | 'helpText', (ports: Ports) => Promise<string>>>
+
+/** The `/track` router over the manager's calls and the texts that `register.tsx` injects. */
+export function commandsOf(m: CommandOwner, w: Parameters<typeof commandHostOf>[1], texts: CommandTexts): Commands {
+  return new Commands(
+    commandHostOf(m, w),
+    async p => (await texts.listText?.(p)) ?? '',
+    async p => (await texts.helpText?.(p)) ?? '',
+  )
 }
 
 /** The session store over the ports. A flush is an entry: a `/clear` since the last change is carried first. */

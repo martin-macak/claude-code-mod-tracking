@@ -1,6 +1,6 @@
 // The sections of the auto tracker: Worktrees (the root and the children this run proved) and Agents (the master and the
 // agents of this run). Pure: it reads the view context and writes nothing. Titles, notes, cell texts, tones and bands
-// are today's (hooks/ui/auto-view.ts), which the parity test pins. Both sections are trees: a row holds its children.
+// keep the text the pane drew before L6; tests/tracker-sections.test.ts pins them. Both sections are trees: a row holds its children.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 14, L6 A1.
 
 import type { ColumnDef, SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
@@ -16,14 +16,14 @@ const OWNER = 'auto'
 
 const WORKTREE_COLUMNS: readonly ColumnDef[] = [
   { id: 'key', header: 'Worktree', width: content(8, 32), role: 'tree' },
-  { id: 'title', header: 'Branch', width: flex(10) },
+  { id: 'title', header: 'Branch', width: flex(10), clip: 'middle' },
   { id: 'status', header: 'State', width: content(undefined, 9), priority: 1 },
 ]
 
 const AGENT_COLUMNS: readonly ColumnDef[] = [
   { id: 'key', header: 'Agent', width: content(8, 26), role: 'tree' },
-  { id: 'title', header: 'Branch', width: flex(10) },
-  { id: 'type', header: 'Worktree', width: content(undefined, 20), priority: 1 },
+  { id: 'title', header: 'Branch', width: flex(10), clip: 'middle' },
+  { id: 'type', header: 'Worktree', width: content(undefined, 20), priority: 1, clip: 'middle' },
 ]
 
 /** What the person can do with the row. These rows have no level, so `priority` is always off. */

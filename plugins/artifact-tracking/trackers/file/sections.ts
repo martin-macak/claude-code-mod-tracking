@@ -1,5 +1,5 @@
-// The Files section. Pure: it reads the view context and writes nothing. Title, note, columns and band are today's
-// (hooks/ui/view.ts), which the parity test pins.
+// The Files section. Pure: it reads the view context and writes nothing. Title, note, columns and band keep the
+// text the pane drew before L6; tests/item-sections.test.ts pins them.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 13, L6 A1.
 
 import type { Json } from '../../core/interfaces/items'
@@ -12,7 +12,7 @@ const COLUMNS: readonly ColumnDef[] = [
   PRIO_COLUMN,
   // The row's handle sits in this column, so it holds no text.
   { id: 'key', header: '', width: content(0, 0), role: 'tree' },
-  { id: 'title', header: 'File', width: flex(10) },
+  { id: 'title', header: 'File', width: flex(10), clip: 'middle' },
   { id: 'type', header: 'Origin', width: content(undefined, 9) },
   { id: 'status', header: 'Edits', width: content(undefined, 10), priority: 2 },
   { id: 'extra', header: 'Views', width: content(undefined, 10), priority: 2 },

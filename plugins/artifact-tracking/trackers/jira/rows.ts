@@ -1,6 +1,6 @@
 // The rows of the Jira section: an issue, with the child tree of its snapshot nested below it. Pure: it reads the record,
-// the tool status of `acli` and the levels. The cells are today's `jiraRows` and `nodeRows` (hooks/ui/view.ts), which
-// the parity test pins. A row always holds its whole tree: folding is the renderer's job.
+// the tool status of `acli` and the levels. The cells keep the text the pane drew
+// before L6; tests/item-sections.test.ts pins them. A row always holds its whole tree: folding is the renderer's job.
 // Plan: L5 Task 13, L6 A1.
 
 import type { Effective, Priority, StoredItem } from '../../core/interfaces/items'

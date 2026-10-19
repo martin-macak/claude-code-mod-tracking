@@ -1,6 +1,6 @@
 // The sections of the github tracker: Pull requests (the PRs the PR lane found) and GitHub (the issues and PRs that
-// the conversation named). Pure: it reads the view context and writes nothing. Titles, notes, columns and the band are
-// today's (hooks/ui/view.ts and auto-view.ts), which the parity test pins.
+// the conversation named). Pure: it reads the view context and writes nothing. Titles, notes, columns and the band
+// keep the text the pane drew before L6; tests/item-sections.test.ts pins them.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 13, L6 A1.
 
 import type { Json } from '../../core/interfaces/items'
@@ -29,7 +29,7 @@ const PR_COLUMNS: readonly ColumnDef[] = [
   PRIO_COLUMN,
   { id: 'key', header: 'PR', width: content(4, 10), role: 'tree' },
   { id: 'title', header: 'Title', width: flex(10) },
-  { id: 'type', header: 'Branch', width: content(undefined, 26), priority: 2 },
+  { id: 'type', header: 'Branch', width: content(undefined, 26), priority: 2, clip: 'middle' },
   { id: 'status', header: 'State', width: content(undefined, 8) },
   { id: 'extra', header: 'Checks', width: content(undefined, 10), priority: 1 },
 ]
