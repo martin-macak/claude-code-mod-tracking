@@ -8,7 +8,7 @@
 // A source is a live tracker that defines `prompt`, is on in the config and has `prompt.enabled`. The views of all the
 // sources are read once per rebuild (S15): a failing read keeps the old text, and the next boundary tries again. A
 // throwing `prompt` skips only that tracker. It names no tracker and holds no engine API.
-// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.11. Plan: L7 Task 6 (S1, S2, S12).
+// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.11. Plan: L7 Task 6 (S1, S2, S12, S19).
 
 import type { ConfigSource } from '../interfaces/config'
 import type { TurnCompleteEvent } from '../interfaces/events'
@@ -56,7 +56,7 @@ export class PromptRebuild {
     }
   }
 
-  /** Rebuilds the text. A call during a build shares that build (see PromptComposer). Never rejects. */
+  /** Rebuilds the text. A call during a build waits for it and builds again (see PromptComposer). Never rejects. */
   async rebuild(ports: Ports): Promise<void> {
     await this.composer.rebuild(() => this.sources(ports))
   }

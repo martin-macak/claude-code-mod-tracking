@@ -773,7 +773,7 @@ Core keys (my call): `r` refresh, `h` help, `x` dismiss, `0`-`3` priority. `x` w
 
 A data change alone is no boundary (S2): a changed text would rewrite the prompt cache in the middle of a turn. A config change applies at the next tick, which can fall inside a turn. `session.end` drops the text (§5.6).
 
-One rebuild reads the state once. `viewsOf(ports, ids)` gives the views of all sources over one read, and nothing is read when no tracker is on (S15). A rebuild that starts during a build shares it. A failing read keeps the old text, logs one line, and the next boundary tries again. A `prompt` that throws costs only its own tracker, with one log line. A rebuild that finds the same text keeps the old string, so a stable list keeps the prompt cache (S16). A rebuild has no flag: every boundary builds.
+One rebuild reads the state once. `viewsOf(ports, ids)` gives the views of all sources over one read, and nothing is read when no tracker is on (S15). A rebuild that is called during a build waits for it and then runs one more build, which reads the state after the call (S19). Callers that come meanwhile share that one build, so one build runs and at most one waits. A failing read keeps the old text, logs one line, and the next boundary tries again. A `prompt` that throws costs only its own tracker, with one log line. A rebuild that finds the same text keeps the old string, so a stable list keeps the prompt cache (S16). A rebuild has no flag: every boundary builds.
 
 **Lines.** One line per item, in the order of the pane: the person's mark (`top`, `high`, none or `normal`, `low`), then `firstSeen`, then `key` (S5). Dismissed items are left out, and so are the children of a Jira work item. A line is `<id>: <ref>`, then the facts in parentheses, then the text of the outside system in double quotes (S9):
 
@@ -797,7 +797,7 @@ The Commands router claims first:
 | --- | --- | --- |
 | (empty) | core | Open the pane and print the text. |
 | `refresh` | core | Reset every breaker, refresh all kinds now. |
-| `clear` | core | Empty the items and every persisted tracker slot, bump the generation, delete `v2:s:<id>`. Run-scoped slots (auto's root and proofs) stay (D10). Then rebuild the prompt text (S14). |
+| `clear` | core | Run after auto dismisses its ids (D10). Empty the items and every persisted tracker slot, bump the generation, delete `v2:s:<id>`. Run-scoped slots (auto's root and proofs) stay. Then rebuild the prompt text (S14). |
 | `prio <ref> <level>` | core | The ref resolves through a kind's `findRow` (a row inside an item), else through the capture scan with the purpose `lookup`, and the first claim names the row when the list holds its key (K27). |
 | `help` | core | Print the help view as text (L6). |
 | a tracker's `commands` | tracker, in `order` | The first tracker that declares the sub-command runs it. |
@@ -1093,7 +1093,7 @@ Building and reviewing L6 settled these points. Code comments cite `G1` to `G22`
 
 ### 10.6 Decisions made in L7
 
-Building and reviewing L7 settled these points. Code comments cite `S1` to `S18` (the decisions of the L7 plan, a local file that is not committed: §5.11 holds each rule that shapes the code). `S1` to `S3` differ from the first spec text, which §5.7 and §5.11 now follow. `S14` to `S18` came from the review of L7.
+Building and reviewing L7 settled these points. Code comments cite `S1` to `S19` (the decisions of the L7 plan, a local file that is not committed: §5.11 holds each rule that shapes the code). `S1` to `S3` differ from the first spec text, which §5.7 and §5.11 now follow. `S14` to `S19` came from the review of L7.
 
 | # | L7 does | Why |
 | --- | --- | --- |
@@ -1115,6 +1115,7 @@ Building and reviewing L7 settled these points. Code comments cite `S1` to `S18`
 | S16 | The composer holds no rebuild flag. Every boundary calls `rebuild`, one build runs at a time, and a build that a `reset` made stale stores nothing. | PromptRebuild always flagged first, so the flag added state and no behavior. |
 | S17 | `promptLine` takes the raw text and its cap, and gives the quoted text the room that the head and the facts leave in 200 characters. With no room it leaves the text out. | The composer clips a line after the tracker quoted it, and a long line lost its closing quote. |
 | S18 | A fact has no parenthesis or double quote and is at most 30 characters. The Jira type and status are outside text and stay unquoted facts. | A name that a Jira admin sets could close its group or open a quote. |
+| S19 | A rebuild that is called during a build waits for it, and one more build runs after it. Callers that come meanwhile share that build, with the latest sources. A `reset` drops the build that waits. | The running build may have read the state before a dismiss, a clear, a priority mark or a config change. A caller that joined it got a text that missed its change, until the next boundary. The review of L7 found it. |
 
 **What L7 changes for the user.**
 

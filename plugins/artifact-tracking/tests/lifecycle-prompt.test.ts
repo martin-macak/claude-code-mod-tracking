@@ -4,6 +4,7 @@
 // The last tests run the real trackers: a dismiss and a clear drop the items, and one rebuild reads the state once.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.11. Plan: L7 Task 6 (S1, S2, S12).
 import { expect, test } from 'claude-code/testing'
+import type { LifecycleManager } from '../core/infra/lifecycle'
 import { PROMPT_FRAME, PROMPT_SECTION_ID } from '../core/infra/prompt'
 import type { JsonObject } from '../core/interfaces/items'
 import type { PromptSection } from '../core/interfaces/prompt'
@@ -11,6 +12,9 @@ import type { Tracker } from '../core/interfaces/tracker'
 import { type FakeConfig, fakeConfig } from './fixtures/config-fs'
 import { promptRow } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
+
+declare function setTimeout(fn: () => void, ms: number): unknown
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
 /** `a` has opted in, `b` has not. */
 const A_ON = { trackers: { a: { prompt: { enabled: true } } } }
@@ -352,6 +356,78 @@ test('a rebuild with every prompt key off reads no view', async () => {
   })
   await t.m.turnComplete(t.w.ports, MAIN)
   expect(views).toEqual([])
+})
+
+// ---------------------------------------------------------------- a change that comes during a build (review of L7)
+
+/**
+ * Holds the first build after it has read the state, for 20 ms of real time. A change that comes in that window is
+ * newer than what the build read. Resolves when the build holds. Everything between is microtasks, so 20 ms is long
+ * enough: a timer that fires early makes a test pass, never fail.
+ */
+function holdFirstRead(m: LifecycleManager): Promise<void> {
+  const real = m.viewsOf
+  let reached!: () => void
+  const held = new Promise<void>(resolve => {
+    reached = resolve
+  })
+  let first = true
+  Object.assign(m, {
+    viewsOf: async (...a: Parameters<typeof real>) => {
+      const views = await real(...a)
+      if (first) {
+        first = false
+        reached()
+        await sleep(20)
+      }
+      return views
+    },
+  })
+  return held
+}
+
+test('a dismiss during a build reaches the text (review of L7)', async () => {
+  const { t, has } = await realWorld()
+  const held = holdFirstRead(t.m)
+  const turn = t.m.turnComplete(t.w.ports, MAIN) // a build starts and reads the state
+  await held
+  await t.m.dismiss(t.w.ports, t.keys()) // the person's x comes after the read
+  await turn
+  expect(has()).toBe(false)
+})
+
+test('a priority mark during a build reaches the text (review of L7)', async () => {
+  const { t, order } = await twoLinks()
+  const held = holdFirstRead(t.m)
+  const turn = t.m.turnComplete(t.w.ports, MAIN)
+  await held
+  await t.m.setPriority(t.w.ports, 'web:https://docs.example/b', 'high')
+  await turn
+  expect(order()).toEqual(['b', 'a'])
+})
+
+test('/track clear during a build reaches the text (review of L7)', async () => {
+  const { t } = await realWorld()
+  const held = holdFirstRead(t.m)
+  const turn = t.m.turnComplete(t.w.ports, MAIN)
+  await held
+  await t.m.clear(t.w.ports)
+  await turn
+  expect(t.m.compose({ traits: [] }, [])).toEqual([])
+})
+
+test('a config change during a build reaches the text (review of L7)', async () => {
+  const t = setup({ trackers: { a: { prompt: { enabled: true, maxItems: 5 } } } })
+  t.state.a = Array.from({ length: 12 }, (_, i) => `a: item ${i + 1}`)
+  await t.m.start(t.w.ports, { fromSessionStart: true })
+  expect(t.text()?.split('\n').length).toBe(6) // the frame, four lines and "and 8 more"
+  const held = holdFirstRead(t.m)
+  const turn = t.m.turnComplete(t.w.ports, MAIN) // a build starts and reads maxItems 5
+  await held
+  t.fake.set({ trackers: { a: { prompt: { enabled: true, maxItems: 50 } } } })
+  expect(await t.m.refreshConfig(t.w.ports)).toBe(true) // the one change notification
+  await turn
+  expect(t.text()?.split('\n').length).toBe(13)
 })
 
 // ---------------------------------------------------------------- what a web link shows (review of L7)

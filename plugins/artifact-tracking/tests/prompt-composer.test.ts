@@ -6,6 +6,9 @@ import { PROMPT_FRAME, PROMPT_SECTION_ID, PROMPT_SKIP_TRAITS, PromptComposer } f
 import type { PromptSection, PromptSettings, PromptSource } from '../core/interfaces/prompt'
 import { PROMPT_LINE_MAX } from '../core/lib/prompt-text'
 
+declare function setTimeout(fn: () => void, ms: number): unknown
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
 const intro: PromptSection = { id: 'intro', text: 'engine intro', scope: 'shared' }
 const memory: PromptSection = { id: 'memory', text: 'engine memory', scope: 'session' }
 
@@ -225,7 +228,7 @@ test('a changed result logs lines and chars; a removal logs removed', async () =
   expect(log.at(-1)).toBe('prompt: section removed')
 })
 
-test('two rebuilds at once build once', async () => {
+test('a rebuild during a build waits for it and then builds again (S19)', async () => {
   const { c } = make()
   const g = gate()
   const spy = counted(src('a', ['a1']))
@@ -236,8 +239,112 @@ test('two rebuilds at once build once', async () => {
   const first = c.rebuild(waiting)
   const second = c.rebuild(waiting)
   g.open()
+  expect([await first, await second]).toEqual([true, false]) // the second build finds the same text
+  expect(spy.calls).toBe(2)
+})
+
+test('a rebuild asked after a change, during a build that has read, sees the change (review of L7)', async () => {
+  const { c } = make()
+  const g = gate()
+  let live = ['one']
+  const first = c.rebuild(async () => {
+    const read = live
+    await g.wait // the build has read its sources
+    return [src('a', read)]
+  })
+  live = ['two'] // a dismiss, a clear, a priority mark or a config change
+  const second = c.rebuild(sources(src('a', live))) // and its boundary asks for a rebuild
+  g.open()
   expect([await first, await second]).toEqual([true, true])
-  expect(spy.calls).toBe(1)
+  expect(itemLines(c)).toEqual(['two'])
+})
+
+test('calls during a build share one more build, which uses the latest sources, so no queue grows (S19)', async () => {
+  const { c, log } = make()
+  const g = gate()
+  const running = counted(src('a', ['r']))
+  const [b, c2, d] = [counted(src('a', ['b'])), counted(src('a', ['c'])), counted(src('a', ['d']))]
+  const first = c.rebuild(async () => {
+    await g.wait
+    return running.sources()
+  })
+  const rest = [b, c2, d].map(call => c.rebuild(call.sources))
+  g.open()
+  expect(await first).toBe(true)
+  expect(await Promise.all(rest)).toEqual([true, true, true]) // one result for the three
+  expect([b.calls, c2.calls, d.calls]).toEqual([0, 0, 1]) // only the latest sources are read
+  expect(itemLines(c)).toEqual(['d'])
+  expect(log).toHaveLength(2) // two builds in all: the running one and the one that waited
+  await c.rebuild(b.sources) // the chain is over: this call runs at once, and builds
+  expect(b.calls).toBe(1)
+})
+
+test('a build never asks for another: when the calls end, so do the builds (S19)', async () => {
+  const { c } = make()
+  const spy = counted(src('a', ['a1']))
+  await Promise.all([c.rebuild(spy.sources), c.rebuild(spy.sources), c.rebuild(spy.sources)])
+  const calls = spy.calls
+  await sleep(5)
+  expect(calls).toBe(2) // the running build and the one that waited
+  expect(spy.calls).toBe(calls)
+})
+
+test('a build that fails does not stop the one that waited for it', async () => {
+  const { c, log } = make()
+  const first = c.rebuild(async () => {
+    throw new Error('read refused')
+  })
+  const second = c.rebuild(sources(src('a', ['a1'])))
+  expect([await first, await second]).toEqual([false, true])
+  expect(log[0]).toBe('prompt: rebuild failed: read refused')
+  expect(itemLines(c)).toEqual(['a1'])
+})
+
+test('a reset drops the build that waits: it reads nothing and stores nothing (S19)', async () => {
+  const { c } = make()
+  const g = gate()
+  const waited = counted(src('a', ['new']))
+  const first = c.rebuild(async () => {
+    await g.wait
+    return [src('a', ['old'])]
+  })
+  const second = c.rebuild(waited.sources)
+  c.reset()
+  g.open()
+  expect([await first, await second]).toEqual([false, false])
+  expect(waited.calls).toBe(0)
+  expect(c.text).toBeUndefined()
+})
+
+test('a rebuild after a reset builds at once, and the build that waited before the reset stays dropped (S19)', async () => {
+  const { c } = make()
+  const g = gate()
+  const first = c.rebuild(async () => {
+    await g.wait
+    return [src('a', ['old'])]
+  })
+  const stale = c.rebuild(sources(src('a', ['stale'])))
+  c.reset()
+  expect(await c.rebuild(sources(src('a', ['new'])))).toBe(true) // no wait for the stale build
+  g.open()
+  expect([await first, await stale]).toEqual([false, false])
+  expect(itemLines(c)).toEqual(['new'])
+})
+
+test('a reset during the build that waited drops its result too (S19)', async () => {
+  const { c } = make()
+  const g = gate()
+  const first = c.rebuild(sources(src('a', ['old'])))
+  const waited = c.rebuild(async () => {
+    await g.wait
+    return [src('a', ['stale'])]
+  })
+  await first
+  await sleep(0) // the build that waited has started and holds at the gate
+  c.reset()
+  g.open()
+  expect(await waited).toBe(false)
+  expect(c.text).toBeUndefined()
 })
 
 test('reset drops the text; the next rebuild builds it again', async () => {
