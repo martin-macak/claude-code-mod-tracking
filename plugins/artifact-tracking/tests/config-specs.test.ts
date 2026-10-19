@@ -112,8 +112,8 @@ test('config-specs: a file that still sets trackers.auto.maxAutoItems is told wh
 })
 
 test('the slices hold exactly the keys of the Defaults table', () => {
-  expect(Object.keys(WEB_DEFAULTS)).toEqual(['enabled'])
-  expect(Object.keys(ARTIFACT_DEFAULTS)).toEqual(['enabled'])
+  expect(Object.keys(WEB_DEFAULTS)).toEqual(['enabled', 'prompt'])
+  expect(Object.keys(ARTIFACT_DEFAULTS)).toEqual(['enabled', 'prompt'])
   expect(Object.keys(GITHUB_DEFAULTS)).toEqual([
     'enabled',
     'chunkSize',
@@ -125,9 +125,10 @@ test('the slices hold exactly the keys of the Defaults table', () => {
     'maxBodyRefs',
     'maxAutoItems',
     'shortRefKeywords',
+    'prompt',
   ])
-  expect(Object.keys(JIRA_DEFAULTS)).toEqual(['enabled', 'concurrency', 'epicChildLimit'])
-  expect(Object.keys(FILE_DEFAULTS)).toEqual(['enabled', 'maxMentionsPerRow'])
+  expect(Object.keys(JIRA_DEFAULTS)).toEqual(['enabled', 'concurrency', 'epicChildLimit', 'prompt'])
+  expect(Object.keys(FILE_DEFAULTS)).toEqual(['enabled', 'maxMentionsPerRow', 'prompt'])
   expect(Object.keys(REPOS_DEFAULTS)).toEqual(['enabled', 'maxRepos', 'maxRepoAgents', 'maxRepoQueue', 'gitTimeoutMs'])
   expect(Object.keys(PROCESSES_DEFAULTS)).toEqual(['enabled', 'probeTimeoutMs'])
   expect(Object.keys(AUTO_DEFAULTS)).toEqual([
@@ -139,7 +140,6 @@ test('the slices hold exactly the keys of the Defaults table', () => {
     'maxProofs',
     'maxAgents',
   ])
-  for (const { defaults } of Object.values(SPECS)) expect('prompt' in defaults).toBe(false)
 })
 
 test('every slice has enabled first, on by default', () => {
@@ -188,9 +188,14 @@ const TABLE: readonly (readonly [string, number, number])[] = [
   ['trackers.github.basePrsPerBranch', 1, 50],
   ['trackers.github.maxBodyRefs', 1, 200],
   ['trackers.github.maxAutoItems', 1, 200],
+  ['trackers.github.prompt.maxItems', 5, 50],
   ['trackers.jira.concurrency', 1, 10],
   ['trackers.jira.epicChildLimit', 1, 500],
+  ['trackers.jira.prompt.maxItems', 5, 50],
+  ['trackers.web.prompt.maxItems', 5, 50],
+  ['trackers.artifact.prompt.maxItems', 5, 50],
   ['trackers.file.maxMentionsPerRow', 0, 200],
+  ['trackers.file.prompt.maxItems', 5, 50],
   ['trackers.repos.maxRepos', 1, 500],
   ['trackers.repos.maxRepoAgents', 1, 50],
   ['trackers.repos.maxRepoQueue', 1, 256],

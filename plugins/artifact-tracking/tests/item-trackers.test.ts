@@ -18,8 +18,9 @@ test('defaults serve today: github chunk 50, jira concurrency 3 and 50 epic chil
     enabled: true,
     concurrency: LIMITS.acliConcurrency,
     epicChildLimit: LIMITS.epicChildLimit,
+    prompt: { enabled: false, maxItems: 20 },
   })
-  expect(webConfig.defaults).toEqual({ enabled: true })
+  expect(webConfig.defaults).toEqual({ enabled: true, prompt: { enabled: false, maxItems: 20 } })
   expect(Object.isFrozen(githubConfig.defaults)).toBe(true)
 })
 
@@ -47,7 +48,7 @@ test('a bad value falls back to the default or the nearest bound with one warnin
   expect(
     jiraConfig.normalise({ enabled: 1, concurrency: 99, epicChildLimit: 'many' }, jiraConfig.defaults, w.warn),
   ).toEqual({ ...jiraConfig.defaults, concurrency: 10 })
-  expect(webConfig.normalise({ enabled: null }, webConfig.defaults, w.warn)).toEqual({ enabled: true })
+  expect(webConfig.normalise({ enabled: null }, webConfig.defaults, w.warn)).toEqual(webConfig.defaults)
   expect(w.list.length).toBe(6)
   expect(w.list[0]).toBe('enabled: "yes" is not true or false. Using true.')
 })
