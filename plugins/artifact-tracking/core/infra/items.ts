@@ -7,7 +7,7 @@
 
 import type { ConfigSource } from '../interfaces/config'
 import type { ReplayItem, RowEvent, SessionChangedEvent, ToolCallEvent } from '../interfaces/events'
-import type { Effective, HostContext, ItemStorePort, ItemsHost, Level } from '../interfaces/items'
+import type { Effective, HostContext, ItemStorePort, ItemsHost, Level, StoredItem } from '../interfaces/items'
 import type { StatePorts } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, ToolPort, Tracker } from '../interfaces/tracker'
@@ -116,7 +116,8 @@ export class ItemService implements ItemsHost {
   readonly tools = (owner: string): ToolPort | undefined => this.life.tools(owner)
   readonly setPriority = (rowId: string, level: Level | undefined) => this.priority.setPriority(rowId, level)
   readonly rowIdOf = (ref: string) => this.priority.rowIdOf(ref)
-  readonly levels = (): Promise<ReadonlyMap<string, Effective>> => this.priority.levels()
+  readonly levels = (list?: readonly StoredItem[]): Promise<ReadonlyMap<string, Effective>> =>
+    this.priority.levels(list)
   readonly wants = (tool: string) => this.kinds.wants(tool)
   /** Every owner sees the same list. */
   readonly port = (_owner: string): ItemStorePort => this.shared

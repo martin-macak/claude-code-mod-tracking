@@ -4,6 +4,7 @@
 import type { Claim, ItemKind } from '../../core/interfaces/items'
 import { hostPath, normalizeUrl } from '../../core/lib/links'
 import { sighted } from '../../core/lib/records'
+import { webRow } from './rows'
 import type { WebRecord, WebRef } from './types'
 
 const withoutFragment = (url: string): string => {
@@ -44,4 +45,5 @@ export const webKind: ItemKind<WebRecord> = {
   },
   decode: item => (item.category === 'web' ? (item as WebRecord) : null),
   merge: (cur, seen) => (cur === null ? webRecord(refOf(seen), seen) : sighted(cur, seen)),
+  row: webRow,
 }

@@ -9,6 +9,7 @@ import { ghOf } from './client'
 import type { GithubConfig } from './config'
 import { GitHubItem } from './github-item'
 import { ensureRepo, forgetRepo } from './repo'
+import { githubRow } from './rows'
 import { BRANCH_PR, CLOSED_BY_PR } from './rules'
 import { githubClaim, scanGitHub } from './scan'
 import type { GitHubRecord, GitHubRef, GitHubTarget } from './types'
@@ -124,4 +125,5 @@ export const githubKind: ItemKind<GitHubRecord> = {
     reset: c => clientOf(c).reset(),
   },
   rules: [BRANCH_PR, CLOSED_BY_PR],
+  row: githubRow,
 }

@@ -9,6 +9,7 @@ import { type BaseRecord, sighted } from '../../core/lib/records'
 import { artifactEvent } from './artifact-tool'
 import { artifactIdOf, artifactKeyOf, parseArtifactUrl } from './artifact-url'
 import { artifactFromWeb, artifactOrigin } from './records'
+import { artifactRow } from './rows'
 import type { ArtifactRecord, ArtifactRef } from './types'
 
 export { artifactKeyOf }
@@ -109,4 +110,5 @@ export const artifactKind: ItemKind<ArtifactRecord> = {
   replayWins: (fresh, stored) =>
     (artifactOrigin(fresh) === 'published' && artifactOrigin(stored) === 'mentioned') ||
     (!!fresh.deleted && !stored.deleted),
+  row: artifactRow,
 }

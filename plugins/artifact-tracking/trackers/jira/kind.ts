@@ -7,6 +7,7 @@ import { sighted } from '../../core/lib/records'
 import { acliOf } from './client'
 import { JiraItem } from './jira-item'
 import { carryPriorities, childRow, mergeNodePriorities, setNode } from './nodes'
+import { jiraRecords, jiraRow, trackedOf } from './rows'
 import type { JiraRecord, JiraRef, JiraTarget } from './types'
 import { JIRA_KEY, parseJiraUrl } from './urls'
 
@@ -117,4 +118,5 @@ export const jiraKind: ItemKind<JiraRecord> = {
     // A manual refresh also forgets a site that could not be loaded.
     reset: c => clientOf(c).reset(),
   },
+  row: (item, ctx) => jiraRow(item, ctx, trackedOf(jiraRecords(ctx.items), ctx.levelOf)),
 }

@@ -234,12 +234,19 @@ test('capture: kinds claim in rank order, the first claim wins, and a kind witho
     rank,
     decode: () => null,
     merge: () => null,
+    row: i => ({ id: i.key, owner: i.category, cells: {} }),
     claimUrl: (url, _label, ctx) => {
       calls.push(category)
       return win ? { category, key: `${category}:${url}`, source: ctx.source, at: ctx.now, fields: {} } : null
     },
   })
-  const plain: ItemKind = { category: 'plain', rank: 0, decode: () => null, merge: () => null }
+  const plain: ItemKind = {
+    category: 'plain',
+    rank: 0,
+    decode: () => null,
+    merge: () => null,
+    row: i => ({ id: i.key, owner: i.category, cells: {} }),
+  }
   const found = scanClaims(
     'https://x.example/a',
     'full',

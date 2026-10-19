@@ -249,7 +249,7 @@ export const register: Register = on => {
     const v = await viewInputs(p, m.facts, { bodyColumns: e.props.bodyColumns, live: id => m.live(id) })
     const sections = composePane(v.items, v.processes, v.processUi, v.ctx, v.repos)
     focus.rows = focusTargets(sections)
-    return renderSections(el, sections, e.props.bodyColumns, paneActions(p, m, m.items, focus))
+    return renderSections(el, sections, e.props.bodyColumns, paneActions(p, m, focus))
   }).catch(($, e) => {
     // A failed read must not close the pane. Draw one line instead.
     const { Text } = $.ui.resolve(e)

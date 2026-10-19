@@ -100,6 +100,7 @@ test('levels: a manual mark wins over every rule', () => {
     rank: 50,
     decode: i => i,
     merge: cur => cur,
+    row: i => ({ id: i.key, owner: 'note', cells: {} }),
     rules: [{ id: 'note', stage: 0, level: () => 'high' }],
   }
   const own = { key: 'note:a', category: 'note', priority: 'normal' } as unknown as StoredItem
@@ -227,6 +228,7 @@ test('setLevel prefers the item with the exact key; only a kind with setLevel ow
     rank: 50,
     decode: i => i,
     merge: cur => cur,
+    row: i => ({ id: i.key, owner: 'box', cells: {} }),
     setLevel: (item, rowId, level: Level | undefined) =>
       rowId === `${item.key}/inner` ? ({ ...item, priority: level } as StoredItem) : null,
   }
@@ -276,6 +278,7 @@ test('rowIdOf: the first row any kind names wins over a scan', () => {
     rank: 50,
     decode: i => i,
     merge: cur => cur,
+    row: i => ({ id: i.key, owner: 'box', cells: {} }),
     findRow: (item, ref) => (ref === 'hello' ? `${item.key}/hello` : undefined),
   }
   const list = [{ key: 'box:a', category: 'box' } as unknown as StoredItem]

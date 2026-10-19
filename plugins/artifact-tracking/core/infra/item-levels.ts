@@ -2,7 +2,7 @@
 // item (the marks, then the rules of the kinds). The pure parts are in `priority.ts`; this joins them to the list.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.9. Plan: L5 Task 6 and Task 8.
 
-import type { Effective, Level } from '../interfaces/items'
+import type { Effective, Level, StoredItem } from '../interfaces/items'
 import type { FactsPort } from '../interfaces/tracker'
 import type { ItemStore } from './item-store'
 import type { Kinds } from './kinds'
@@ -32,7 +32,8 @@ export class ItemLevels {
     return rowIdOf(await this.d.store.list(), ref, this.d.kinds.all, ctx, category => this.d.kinds.isLive(category))
   }
 
-  async levels(): Promise<ReadonlyMap<string, Effective>> {
-    return effectiveLevels(await this.d.store.list(), this.d.kinds.table, this.d.facts)
+  /** The levels of `list`, or of the store's list. The pane passes the list it read, so both agree. */
+  async levels(list?: readonly StoredItem[]): Promise<ReadonlyMap<string, Effective>> {
+    return effectiveLevels(list ?? (await this.d.store.list()), this.d.kinds.table, this.d.facts)
   }
 }

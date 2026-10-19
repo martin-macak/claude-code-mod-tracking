@@ -14,6 +14,7 @@ import * as processesTypes from '../trackers/processes/types'
 import * as reposTypes from '../trackers/repos/types'
 import * as webTypes from '../trackers/web/types'
 
+// `row` is required since plan L5 Task 13 (K24): the kind builds its own pane row.
 test('a kind with only decode and merge fits ItemKind and joins a Tracker', () => {
   const k = {
     category: 'note',
@@ -21,6 +22,7 @@ test('a kind with only decode and merge fits ItemKind and joins a Tracker', () =
     decode: i => (i.category === 'note' ? i : null),
     merge: (cur, seen) =>
       cur ?? { key: seen.key, category: 'note', sources: [seen.source], firstSeen: seen.at, lastSeen: seen.at },
+    row: i => ({ id: i.key, owner: 'notes', cells: {} }),
   } satisfies ItemKind
   const config = specOf({ enabled: bool(true) } as const satisfies Schema)
   const t = {

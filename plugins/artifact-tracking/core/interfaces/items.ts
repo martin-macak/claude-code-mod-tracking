@@ -182,8 +182,8 @@ export interface ItemKind<T extends StoredItem = StoredItem> {
   setLevel?(item: T, rowId: string, level: Level | undefined): T | null
   /** The row id inside an item that a typed reference names. */
   findRow?(item: T, ref: string): string | undefined
-  /** Optional in L5a, required from Task 13 (K24). */
-  row?(item: T, ctx: ViewContext): TreeRow
+  /** The row of an item in the pane, for the sections of the owning tracker (plan L5, K24). */
+  row(item: T, ctx: ViewContext): TreeRow
 }
 
 /**
@@ -260,8 +260,8 @@ export interface ItemsHost extends ItemStorePort {
   setPriority(rowId: string, level: Level | undefined): Promise<boolean>
   /** The row id a typed ref names (`#5`, a URL, a key a kind names). undefined: it names no tracked row. */
   rowIdOf(ref: string): Promise<string | undefined>
-  /** The level of every item, by key: the person's mark, or a rule's. */
-  levels(): Promise<ReadonlyMap<string, Effective>>
+  /** The level of every item, by key: the person's mark, or a rule's. `list` is a list already read; default: the store's. */
+  levels(list?: readonly StoredItem[]): Promise<ReadonlyMap<string, Effective>>
   /** What `ctx.items` is for the tracker `owner`. */
   port(owner: string): ItemStorePort
   /** The tools of the tracker `owner`. undefined before `start`. */

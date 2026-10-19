@@ -2,32 +2,35 @@
 // `session.end`, `/track clear`, the tick and the domain events. The steps of the start live in StartSequence and the
 // steps of a session switch in SwitchRunner. It builds SessionWatch, Persistence, Scheduler, Replay, the EventBus and
 // the TrackerHost from the ports of the first hook of a load. It names no tracker and holds no `$`.
-// `end` stores the leaving session and keeps a snapshot. The switch that follows carries it (`/clear`) or loads the
-// stored copy of the new id (`/resume`).
+// `end` keeps a snapshot of the leaving session. The switch that follows carries it (`/clear`) or loads the stored copy
+// of the new id (`/resume`).
 // Without an item host of its own it builds the ItemService after the TrackerHost, whose `live` the service reads.
-// `/track` is routed by Commands (core/infra/commands.ts), which the manager hands the calls it needs. The parts
-// the constructor wires for them are in lifecycle-parts.ts.
+// `/track` is routed by Commands (core/infra/commands.ts), `session.end` is run by SessionEnd and the pane is read by
+// Views (viewOf, paneData, bandData): the manager hands them the calls they need. The parts the constructor wires are
+// in lifecycle-parts.ts.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.6. Plan: L3 Tasks 5 to 8, D4 to D9, D20.
-// L5 Task 9, K15, K19.
+// L5 Tasks 9 and 13, K15, K19.
 
 import type { ConfigService, ConfigSource } from '../interfaces/config'
 import type { AgentSpawnEvent, CommandEvent, RowEvent, ToolCallEvent, TurnCompleteEvent } from '../interfaces/events'
-import type { ItemsHost } from '../interfaces/items'
+import type { ItemsHost, Level } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
-import type { DataSlot, PendingEnd, Snapshot } from '../interfaces/slots'
+import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
 import { EventBus } from './bus'
 import { Commands } from './commands'
 import { Facts } from './facts'
-import { commandHostOf, itemHostOf, persistenceOf, schedulerOf } from './lifecycle-parts'
+import { commandHostOf, configRefresher, itemHostOf, persistenceOf, schedulerOf } from './lifecycle-parts'
 import type { Persistence } from './persistence'
 import { Replay } from './replay'
 import type { Scheduler } from './scheduler'
 import { SessionWatch } from './session'
+import { SessionEnd } from './session-end'
 import { type Launch, StartSequence } from './start-sequence'
-import { guard, reason } from './steps'
+import { guard } from './steps'
 import { SwitchRunner } from './switch-runner'
 import { TrackerHost } from './tracker-host'
+import { Views } from './views'
 
 export type { Launch } from './start-sequence'
 
@@ -56,9 +59,6 @@ export interface LifecycleDeps {
   listText?(ports: Ports): Promise<string>
 }
 
-/** `session.end` reasons after which the process goes away. `clear` and `resume` are switches. */
-const EXITS: ReadonlySet<string> = new Set(['prompt_input_exit', 'logout', 'other'])
-
 export class LifecycleManager {
   readonly facts: FactsPort = new Facts({ onChange: ev => void this.bus.emit('fact', ev, this.ports) })
   readonly watch: SessionWatch
@@ -74,6 +74,10 @@ export class LifecycleManager {
   private readonly host: TrackerHost
   private readonly switcher: SwitchRunner
   private readonly sequence: StartSequence
+  private readonly ending: SessionEnd
+  /** Checks the config file; when it changed, re-arms the tick and redraws the pane. Never rejects. */
+  readonly refreshConfig: (ports: Ports) => Promise<boolean>
+  private readonly views: Views
   /** The start sequence of this load. Set by the first start, lazy or from `session.start`. */
   private started: Promise<void> | undefined
 
@@ -90,6 +94,7 @@ export class LifecycleManager {
       log: ports.log,
     })
     this.scheduler = schedulerOf(ports, this.cfg, () => this.tick())
+    this.refreshConfig = configRefresher(this.cfg, this.scheduler)
     this.bus = new EventBus({ log: ports.log })
     this.persistence = persistenceOf(ports, this.cfg, this.watch, () => this.slots())
     const dismiss = d.dismiss(ports, this.cfg)
@@ -138,6 +143,23 @@ export class LifecycleManager {
       tickMs: () => g().refresh.tickMs,
       ports,
     })
+    this.ending = new SessionEnd({
+      started: p => this.ensureStarted(p, { reconcile: false }),
+      watch: this.watch,
+      persistence: this.persistence,
+      host: this.host,
+      items: this.items,
+      log: ports.log,
+    })
+    this.views = new Views({
+      trackers: d.trackers,
+      config: this.cfg,
+      facts: this.facts,
+      dismiss: p => d.dismiss(p, this.cfg),
+      levels: list => this.items.levels(list),
+      live: id => this.host.live(id),
+      log: ports.log,
+    })
     this.commands = new Commands(
       commandHostOf(this, { items: this.items, host: this.host, bus: this.bus, config: this.cfg }),
       async p => (await d.listText?.(p)) ?? '',
@@ -156,24 +178,6 @@ export class LifecycleManager {
   /** True unless the config turned the tracker off at the first start of this load, or it failed to start. */
   live(id: string): boolean {
     return this.host.live(id)
-  }
-
-  /**
-   * Checks the config file and, when it changed, re-arms the tick (a new `tickMs`) and redraws the pane (a toggle, a
-   * problem). Never rejects: a failure is logged and counts as no change. The file is read when its signature moved.
-   */
-  async refreshConfig(ports: Ports): Promise<boolean> {
-    try {
-      const changed = await this.cfg.refresh()
-      if (changed) {
-        await this.scheduler.ensure()
-        ports.ui.invalidate()
-      }
-      return changed
-    } catch (e) {
-      ports.log(`config: refresh failed: ${reason(e)}`)
-      return false
-    }
   }
 
   // ---------------------------------------------------------------- start
@@ -280,6 +284,27 @@ export class LifecycleManager {
     await this.bus.emit('dismissed', { ids }, ports)
   }
 
+  // ---------------------------------------------------------------- the pane
+  // The reads below run no session check: a render must not write (E9). `Views` documents them.
+
+  readonly viewOf: Views['viewOf'] = (...a) => this.views.viewOf(...a)
+  readonly paneData: Views['paneData'] = (...a) => this.views.paneData(...a)
+  readonly bandData: Views['bandData'] = (...a) => this.views.bandData(...a)
+  readonly levels: Views['levels'] = (...a) => this.views.levels(...a)
+
+  /** The person's mark on a row; `undefined` removes it. `top` comes from a rule and does nothing. */
+  async setPriority(ports: Ports, rowId: string, level: Level | undefined): Promise<void> {
+    await this.entry(ports)
+    await this.items.setPriority(rowId, level)
+  }
+
+  /** The Refresh key: the item host refreshes at once and the trackers hear `manual`, with no wait. */
+  async refreshManual(ports: Ports): Promise<void> {
+    await this.entry(ports)
+    this.items.kick('manual')
+    await this.command(ports, { sub: 'manual', args: '', wait: false })
+  }
+
   /** Reads the transcript back and gives it to the item host and the bus, on a cold load (SwitchRunner). */
   replay(): Promise<void> {
     return this.switcher.replay()
@@ -292,38 +317,9 @@ export class LifecycleManager {
 
   // ---------------------------------------------------------------- end, clear
 
-  /**
-   * `session.end`: stores the leaving session within `budgetMs` and keeps its snapshot for the switch. Run it before
-   * `next(e)`. A failure is logged: the switch then carries from the stored copy. An exit reason disposes the trackers.
-   * The reads of the id and the clock may fail too (a `$` call over its bound). The end then goes on with the last id
-   * the watch saw and the wall clock, so the next switch still knows how the session left.
-   */
-  async end(ports: Ports, endReason: string, budgetMs: number): Promise<void> {
-    await this.ensureStarted(ports, { reconcile: false }) // an end can be the first hook of a load (a hot reload, then /clear)
-    let id = this.watch.lastId
-    let at = ports.clock.wall()
-    try {
-      await this.watch.check() // a switch no hook has seen yet is carried before this one is saved
-      id = await ports.session.id()
-      at = await ports.clock.now()
-    } catch (e) {
-      this.ports.log(`lifecycle: end could not read the session: ${reason(e)}`)
-    }
-    if (id !== undefined) {
-      const pending: PendingEnd = { reason: endReason, fromId: id, at }
-      let snapshot: Snapshot
-      try {
-        snapshot = await this.persistence.end(id, budgetMs, pending)
-      } catch (e) {
-        this.ports.log(`lifecycle: end of ${id} failed: ${reason(e)}`)
-        snapshot = { from: id, slots: {} }
-      }
-      this.watch.ended(pending, snapshot)
-    }
-    if (EXITS.has(endReason)) {
-      this.host.dispose()
-      await this.guard('item dispose', async () => this.items.dispose(), 'the end')
-    }
+  /** `session.end`: stores the leaving session and keeps its snapshot for the switch (SessionEnd). Run it before `next(e)`. */
+  end(ports: Ports, endReason: string, budgetMs: number): Promise<void> {
+    return this.ending.run(ports, endReason, budgetMs)
   }
 
   /** `/track clear`: older jobs stop writing, the persisted slots empty, the stored copy goes. Run-scoped slots stay (D10). */
