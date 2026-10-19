@@ -13,7 +13,7 @@ File a bug issue with reproduction steps the user confirmed and a short root cau
 
 - Ask every question with `AskUserQuestion`. 1–4 questions per call. Preferred option first, with ` (Recommended)`. The user can always pick "Other" for free text.
 - Ask one topic per call; questions on the same topic may share a call. Wait for the answer before the next topic.
-- Never run `gh issue create` before the user picks "Create" in step 7.
+- Never run `gh issue create` before the user picks "Create" in step 8.
 
 ## Steps
 
@@ -30,13 +30,20 @@ File a bug issue with reproduction steps the user confirmed and a short root cau
    - "Looks right (Recommended)"
    - "Looks wrong" (then ask what they saw, and update or mark it disputed)
    - "Skip, I can't judge" (this is fine; record it as not verified)
-7. **Preview and create.** Write the body to the scratchpad dir. Show the title and the full body. Ask: "Create", "Edit", "Cancel". On "Create":
+7. **Place it.** The issue joins the delivery plan: `AGENTS.md`, "Planning and delivery". Read the Area options and the Order of the open items first (`project-sync` skill, "Place a new issue"). Ask in one `AskUserQuestion` call:
+   - Milestone: the open milestone that fits, or none.
+   - Blockers: open issues that must close first (seen in step 2), or none.
+   - Area: an Area option of the project.
+   - Order: a number among the open items. Propose one that fits the severity. The owner has the last word.
+8. **Preview and create.** Write the body to the scratchpad dir. Show the title, the full body and the placement (milestone, blockers, Area, Order). Ask: "Create", "Edit", "Cancel". On "Create":
 
    ```bash
-   gh issue create --title "<title>" --label bug --body-file <scratchpad>/bug-body.md
+   gh issue create --title "<title>" --label bug --body-file <scratchpad>/bug-body.md \
+     [--milestone "<milestone>"] [--blocked-by <n>[,<n>]]
+   node .agents/skills/project-sync/scripts/sync.mjs add <number from the URL> --order <order> --area <area> --release <release> --apply
    ```
 
-   Pass `--label bug` by hand; `gh` does not apply the issue form. Give the user the issue URL as a link.
+   Pass `--label bug` by hand; `gh` does not apply the issue form. Pass `--milestone` and `--blocked-by` only when the user chose them. Get `Release` by the rule in `AGENTS.md`, "Planning and delivery", "Fields". When `add` cannot write (exit 3), say so and give the user the command to run later. Give the user the issue URL as a link.
 
 ## Title
 
@@ -74,4 +81,6 @@ Write in short, active sentences. Use `#N` for other issues and PRs.
 | RCA turns into a fix | Stop at the cause. The fix is a separate PR. |
 | Asking the user for the version | Run `claude --version` yourself. |
 | Issue created without the `bug` label | Pass `--label bug`. |
+| A blocker named only in the body | Pass `--blocked-by`. The native link is the source of the plan. |
+| Issue left out of the project | Step 8 ends with `project-sync add`. |
 | Questions in plain text | Use `AskUserQuestion`. |

@@ -133,6 +133,7 @@ Rewrite the body with `.github/pull_request_template.md`. The `pr-body` check (`
 
 - Ready means: all checks green, no **fix** row left, the PR body passes `pr-body`, the branch is up to date with `main`.
 - When the PR is ready and still a draft, mark it ready for review. When rows are **needs human** or **won't fix**, leave the draft state alone and say so.
+- When the PR is ready and it closes its issue (`Closes` or `Fixes`), run `node .agents/skills/project-sync/scripts/sync.mjs status <issue number> "In review"`. For `Refs` (partial work, a stack layer), leave the issue alone. The layer has its own item (`AGENTS.md`, "Planning and delivery", "Stack layers"). When the command exits 3 (no `project` scope) or 1 (the issue is not in the project), do not retry and do not run `add`, which needs an `Order`. Name the Status move in the report instead.
 - End with a short report: the triage table with the final verdicts, the commits you pushed, the check results, and what the human must still do.
 
 ## Hard rules
@@ -141,4 +142,5 @@ Rewrite the body with `.github/pull_request_template.md`. The `pr-body` check (`
 - Never use `--force`, `--no-verify`, `SKIP=` or `core.hooksPath`.
 - Never claim a check passes without fresh output (`verification-before-completion` skill).
 - Never delete or weaken a test to make it pass.
+- Never set `Done` or `Order` in the GitHub Project.
 - Leave the PR's scope alone. New ideas become **follow-up** rows.

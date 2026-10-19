@@ -156,7 +156,7 @@ Run `make help` for every target.
 | [`e2e/`](e2e/) | Gherkin scenarios that drive a real `claude` in tmux, the demo recorder and their tests. |
 | [`docs/knowledge-base/`](docs/knowledge-base/AGENTS.md) | Research notes, one folder per problem. Start with `claude-code-mods/`. |
 | [`docs/superpowers/specs/`](docs/superpowers/specs/) | Design specs. |
-| [`AGENTS.md`](AGENTS.md) | Rules for agents and contributors: lint, branches, commits, PRs, issues. |
+| [`AGENTS.md`](AGENTS.md) | Rules for agents and contributors: lint, branches, commits, PRs, issues, planning and delivery. |
 | [`Makefile`](Makefile) | Build, test, lint and install targets. |
 
 ### Lint
@@ -187,6 +187,8 @@ Release steps: [`plugins/artifact-tracking/README.md`](plugins/artifact-tracking
 ## Contributing
 
 Read [`AGENTS.md`](AGENTS.md) first. In short: branch `<type>/<summary>`, Conventional Commits with a sentence-case subject, one PR per change with `Closes #N`, squash merge. Run `make verify` before you push.
+
+The order of work is in the public [GitHub Project](https://github.com/users/martin-macak/projects/3). See [Planning and delivery](AGENTS.md#planning-and-delivery).
 
 ## License
 

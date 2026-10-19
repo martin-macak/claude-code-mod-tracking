@@ -44,6 +44,34 @@ Enforcement, so a skipped step fails loudly:
 - A release is a tag `<plugin>--v<version>`. Bump `version` in `plugin.json` in a PR. After the merge, run `make release` on `main`. CI (`.github/workflows/release.yml`) publishes the GitHub release with the zip.
 - Never push a release tag from a feature branch. Steps: `plugins/artifact-tracking/README.md`, "Release". Background: `docs/knowledge-base/claude-code-mods/workflow/release.md`.
 
+## Planning and delivery
+
+The delivery order lives in three places: the public [GitHub Project 3](https://github.com/users/martin-macak/projects/3) (owner `martin-macak`), the milestone of each issue and the native "blocked by" links between issues. Read them before you pick, start or file work. This section is the only source. Other files link here.
+
+- **Milestone.** Name it `<plugin> <version>`, for example `artifact-tracking 0.2.0`. Set it on issues only, never on PRs.
+- **Blockers.** Record a dependency as a native "blocked by" link (`gh issue create --blocked-by`, `gh issue edit --add-blocked-by`), not as text. These commands need gh 2.94 or newer. A PR or a draft item cannot be a native blocker. Link the issue behind it. When the work can start earlier, add a note to "Blocked by", for example `#55 (can start when L3 merges)`.
+- **Fields.**
+  - `Status`: Blocked, Ready, In progress, In review or Done.
+  - `Wave`: 0 when the issue has no open blocker. Else 1 plus the highest Wave of its open blockers.
+  - `Order`: the owner's priority. A lower number goes first. Set it only when the owner gives the number.
+  - `Release`: 0.2.0, Later or Tooling. Take it from the milestone: `artifact-tracking 0.2.0` gives `0.2.0`. With no milestone, use `Tooling` for repo tooling and `Later` for the rest.
+  - `Area`: core, ux, trackers, tooling or release.
+  - `Blocked by`: the open blockers as `#a, #b`. A draft item keeps its own text.
+- **Duties.**
+  - Pick: run `make project-sync ARGS=next`. It prints the Ready item with the lowest Wave, then the lowest Order.
+  - Start: run `make project-sync ARGS='status <n> "In progress"'` and assign yourself.
+  - File: set the milestone and the native blockers, then place the issue with `project-sync add`. The `issue-bug` and `issue-enhancement` skills do both.
+  - PR ready: when the PR closes its issue, set the issue to `In review`. A PR with `Refs #N` (partial work, a stack layer) leaves the issue alone. When you cannot write, or the issue has no item yet, name the move in your report. Do not add the item: that needs an `Order`. The `pr-shepherd` skill does it.
+  - Merge: GitHub sets `Done`. Never set `Done` yourself.
+  - Release: the milestone closes. The guard for it is [#64](https://github.com/martin-macak/claude-code-mod-tracking/issues/64).
+- **Tool.** The `project-sync` skill (`.agents/skills/project-sync/`) holds the commands and the rules of the script. Do not set the Wave of an issue by hand: the skill computes it from the native links.
+- **Order and positions.** `Order` also sets the manual position of each item, so a view with no sort shows the same sequence. Change `Order` to move an item. A drag in the web UI does not last.
+- **Who writes.** Only a session whose `gh` token has the `project` scope (`gh auth refresh -s project`, or put a classic token with the project scope in `GH_TOKEN`; `make init` warns when it is missing). Copilot, Codex and Actions read the project when their token can (see No access), and report each change they want in the PR.
+- **No access.** Pick by milestone, then by native links (no open blocker), then by the lowest issue number. It is unverified whether a token without the `project` scope can read this public project with `gh api graphql`.
+- **Workflows.** The owner turns these on once, in the web UI. Keep on: the built-in workflows "Item closed" and "Pull request merged" (both set `Done`), and "Auto-add to project" for `is:issue is:open` from this repo. No API turns a workflow on.
+- **Views.** Plan: grouped by `Wave`, sorted by `Order`. 0.2.0: sorted by `Order`. Waves: a board with `Wave` columns, sorted by `Order`. No API edits the group or the sort of a view in place. To change them, an agent with the `project` scope creates a new view by API and deletes the old one.
+- **Stack layers.** A PR for one layer of a stacked change replaces the draft item of that layer. Add the PR with the same Order, Area and Release, then delete the draft.
+
 ## GitHub conventions
 
 These rules apply to every agent and person. CI checks the PR title and the branch name. The `commit-msg` hook checks commits.
@@ -94,6 +122,7 @@ One list for branches, commits and PR titles:
   - Copilot: pick it in the Agents tab, or comment `@copilot Shepherd this PR. Use the pr-shepherd skill.` on any PR.
 - Review a PR against its linked issue and design study with the `pr-review` skill (`.agents/skills/pr-review/`). It traces each requirement item, checks open items again for feasibility, and ranks findings by severity, each with a fix.
 - Link the issue with `Closes #N` (or `Fixes #N`) so the merge closes it. Use `Refs #N` for partial work.
+- Move the linked issue to `In review` when the PR is ready and closes it (`Closes`, `Fixes`). A `Refs` PR leaves the issue alone. A PR for a stack layer replaces its draft item in the project. See [Planning and delivery](#planning-and-delivery).
 - Keep history linear. Rebase onto `main`; never merge `main` into the branch. Squash to the fewest commits that keep logical steps. Use `git push --force-with-lease`, never `--force`.
 - Open a draft PR for work in progress. Mark it ready when CI passes.
 - Delete temporary files before you push: plans, scratch notes, logs. Keep design specs.
@@ -102,6 +131,7 @@ One list for branches, commits and PR titles:
 ### Issues
 
 - Use an issue form: Bug report, Feature request or Task. Blank issues are off.
+- Place every new issue in the plan: milestone, native blockers and project fields. The issue skills do it. See [Planning and delivery](#planning-and-delivery).
 - Agents file issues with the `issue-bug` and `issue-enhancement` skills (`.agents/skills/`). They ask the user, run a short root cause analysis (RCA) for bugs, and show a preview before `gh issue create`.
 - Agents run a feasibility study and a design draft for an issue with the `design-study` skill (`.agents/skills/design-study/`). It scores each item and the whole feature, and saves the evidence in a KB slug.
 - Title: sentence case, no type prefix, no trailing period, at most 72 characters.

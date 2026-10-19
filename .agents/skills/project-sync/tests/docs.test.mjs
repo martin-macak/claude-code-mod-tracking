@@ -1,0 +1,151 @@
+// Keeps AGENTS.md, "Planning and delivery" the only source of the planning rules (issue #66).
+// A skill, an agent file or an instruction file points to the section and copies none of it.
+// The README links and the two pointer files are checked here too: markdownlint (MD051)
+// checks only anchors in the same file, so a heading rename would break them unseen.
+import assert from 'node:assert/strict'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
+
+const ROOT = fileURLToPath(new URL('../../../../', import.meta.url))
+const read = path => readFileSync(join(ROOT, path), 'utf8')
+
+const HEADING = '## Planning and delivery'
+const PROJECT_URL = 'https://github.com/users/martin-macak/projects/3'
+// `AGENTS.md`, "Planning and delivery" in either order, or a link to the anchor.
+const POINTER =
+  /AGENTS\.md[^\n]{0,8}"Planning and delivery"|"Planning and delivery"[^\n]{0,8}AGENTS\.md|AGENTS\.md#planning-and-delivery/
+// A file touches the plan when it names the tool, the project, the milestone or the native links.
+const PLAN = /project-sync|GitHub Project|blocked-?by|milestone/i
+// The shortest run of shared words that counts as a copy. 7 keeps short script rules out,
+// such as "never touches In progress, In review or Done" (6 words).
+const RUN = 7
+
+// The body of the section, one entry per line, with its line number in AGENTS.md.
+function sectionLines() {
+  const lines = read('AGENTS.md').split('\n')
+  const start = lines.indexOf(HEADING)
+  assert.ok(start >= 0, `AGENTS.md has no "${HEADING}" heading.`)
+  const end = lines.findIndex((line, i) => i > start && line.startsWith('## '))
+  return lines.slice(start + 1, end < 0 ? undefined : end).map((text, i) => ({ text, line: start + 2 + i }))
+}
+
+// Skills, agent files and instruction files that touch the plan.
+function planFiles() {
+  const files = []
+  for (const dir of readdirSync(join(ROOT, '.agents/skills'))) {
+    const path = `.agents/skills/${dir}/SKILL.md`
+    if (existsSync(join(ROOT, path))) files.push(path)
+  }
+  for (const dir of ['.claude/agents', '.github/agents']) {
+    if (!existsSync(join(ROOT, dir))) continue
+    for (const name of readdirSync(join(ROOT, dir))) if (name.endsWith('.md')) files.push(`${dir}/${name}`)
+  }
+  files.push('.github/copilot-instructions.md')
+  return files.filter(path => PLAN.test(read(path)))
+}
+
+// Lower-case words. Markup, quotes and punctuation only split words, and a list marker is no word.
+const words = text =>
+  text
+    .toLowerCase()
+    .replace(/^\s*(?:[-*]|\d+\.)\s+/, '')
+    .replace(/[`*"“”()]/g, ' ')
+    .replace(/[^a-z0-9#<>\- ]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+
+// The anchors of the markdown links in a file that point at the root AGENTS.md. A link to another
+// AGENTS.md, such as docs/AGENTS.md, does not count.
+function agentsAnchors(path) {
+  const dir = dirname(join(ROOT, path))
+  const anchors = []
+  for (const m of read(path).matchAll(/\]\(([^)#\s]+)#([^)\s]+)\)/g)) {
+    if (resolve(dir, m[1]) === join(ROOT, 'AGENTS.md')) anchors.push({ path, slug: m[2] })
+  }
+  return anchors
+}
+
+// The anchor that GitHub gives a heading: lower case, no punctuation, spaces to hyphens,
+// and -1, -2 for a heading that repeats. Headings inside a code fence do not count.
+function headingSlugs(markdown) {
+  const slugs = new Set()
+  const seen = new Map()
+  let fenced = false
+  for (const line of markdown.split('\n')) {
+    if (/^\s*```/.test(line)) fenced = !fenced
+    const heading = fenced ? null : /^#{1,6}\s+(.+?)\s*$/.exec(line)
+    if (!heading) continue
+    const base = heading[1]
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+      .replace(/\s/g, '-')
+    const n = seen.get(base) ?? 0
+    seen.set(base, n + 1)
+    slugs.add(n === 0 ? base : `${base}-${n}`)
+  }
+  return slugs
+}
+
+test('AGENTS.md has the Planning and delivery section, and it has a body', () => {
+  assert.ok(sectionLines().filter(l => l.text.trim() !== '').length >= 5)
+})
+
+test('each skill and agent file that touches the plan points to the section', () => {
+  const files = planFiles()
+  assert.ok(files.includes('.agents/skills/project-sync/SKILL.md'), 'the file search finds the project-sync skill')
+  assert.deepEqual(
+    files.filter(path => !POINTER.test(read(path))),
+    [],
+  )
+})
+
+test('no skill or agent file copies a run of words from the section', () => {
+  const runs = new Map() // a run of RUN words -> the first AGENTS.md line that has it
+  for (const { text, line } of sectionLines()) {
+    const w = words(text)
+    for (let k = 0; k + RUN <= w.length; k += 1) {
+      const run = w.slice(k, k + RUN).join(' ')
+      if (!runs.has(run)) runs.set(run, line)
+    }
+  }
+  const copies = []
+  for (const path of planFiles()) {
+    read(path)
+      .split('\n')
+      .forEach((text, i) => {
+        const w = words(text)
+        const hits = new Set()
+        for (let k = 0; k + RUN <= w.length; k += 1) {
+          const at = runs.get(w.slice(k, k + RUN).join(' '))
+          if (at) hits.add(at)
+        }
+        for (const at of hits) copies.push(`${path}:${i + 1} copies AGENTS.md:${at}`)
+      })
+  }
+  assert.deepEqual(copies, [])
+})
+
+test('each AGENTS.md#anchor link in the READMEs matches a heading of AGENTS.md', () => {
+  const slugs = headingSlugs(read('AGENTS.md'))
+  assert.ok(slugs.has('planning-and-delivery'), 'the section has the anchor planning-and-delivery')
+  const links = ['README.md', 'plugins/artifact-tracking/README.md'].flatMap(agentsAnchors)
+  assert.ok(links.length > 0, 'a README links an AGENTS.md anchor, or this check proves nothing')
+  assert.deepEqual(
+    links.filter(l => !slugs.has(l.slug)).map(l => `${l.path} links AGENTS.md#${l.slug}`),
+    [],
+  )
+})
+
+test('the Copilot instructions and the PR template name the section', () => {
+  const missing = ['.github/copilot-instructions.md', '.github/pull_request_template.md'].filter(
+    path => !read(path).includes('Planning and delivery'),
+  )
+  assert.deepEqual(missing, [])
+})
+
+test('both READMEs link the project', () => {
+  const missing = ['README.md', 'plugins/artifact-tracking/README.md'].filter(path => !read(path).includes(PROJECT_URL))
+  assert.deepEqual(missing, [])
+})

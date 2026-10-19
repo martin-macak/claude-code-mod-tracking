@@ -8,3 +8,4 @@ The rules you MUST follow on every task:
 - When a fixer changes files, review the diff, stage it, and run `make verify` again.
 - Before you finish, re-read the issue and the review comments. Prove each requirement with a test. List them, ticked, in the PR's "Requirements" section.
 - Never claim "done" or "passing" without fresh output. Never bypass the hooks.
+- Work is planned in the GitHub Project, the milestone and the native "blocked by" links. Read "Planning and delivery" in `AGENTS.md` before you pick or file work.

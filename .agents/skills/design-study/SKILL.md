@@ -23,7 +23,7 @@ Do them in order. Go back when a later step changes an earlier answer.
 8. **Testing.** Check each claim the design builds on against the PoC logs. Re-run a probe when a claim has no log. Write the implementer's test plan: unit cases from the observed shapes, and a live check.
 9. **Score.** Final per-item scores, ranking and overall verdict with `scripts/score.mjs`. Never do the arithmetic by hand.
 10. **Final review.** An independent reviewer (same order as step 6) checks every claim against its cited evidence, the verdict gates, and that the output stands alone. Fix every finding, or name it as an open question.
-11. **Summary and publish.** Write the KB slug and the issue comment from `templates.md`. If the user forbids repo writes, write the slug in the scratchpad and list the move as a pending step. Show the user the verdict, the weakest items, the open questions, and what was not tested.
+11. **Summary and publish.** Write the KB slug and the issue comment from `templates.md`. If the user forbids repo writes, write the slug in the scratchpad and list the move as a pending step. Show the user the verdict, the weakest items, the open questions, and what was not tested. Name the issues that this one waits for, and the issues that it blocks. Name them under "Related" in the comment too. After the user agrees (`AskUserQuestion`), link them: `gh issue edit <this issue> --add-blocked-by <issue it waits for>` and `gh issue edit <this issue> --add-blocking <issue it blocks>`. Without `AskUserQuestion`, list them under Open questions and add no link. `project-sync sync --apply` copies the links to the project (`AGENTS.md`, "Planning and delivery").
 
 ## Scoring
 
@@ -78,3 +78,4 @@ Rules:
 | Evidence only in `/tmp` | Save it under `docs/knowledge-base/<slug>/sources/`. Scrub user names. Drop system-prompt text. |
 | Probe leftovers (containers, sessions, processes) | List them, remove only yours, check again. |
 | Design without the user's decisions | Ask with `AskUserQuestion`, or list them under Open questions. |
+| A dependency found, but only named in the comment | After a yes from the user, add the native "blocked by" link (step 11). |

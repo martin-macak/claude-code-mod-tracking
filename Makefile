@@ -62,7 +62,7 @@ E2E_STAMP := $(E2E)/node_modules/.package-lock.json
 DEMO_GIF  := docs/assets/demo.gif
 
 .DEFAULT_GOAL := help
-.PHONY: help init build typecheck test test-scripts check verify e2e-deps e2e-unit e2e demo lint hooks dist release release-dry install uninstall install-local uninstall-local clean
+.PHONY: help init build typecheck test test-scripts check verify project-sync e2e-deps e2e-unit e2e demo lint hooks dist release release-dry install uninstall install-local uninstall-local clean
 
 help: ## List the targets
 	@echo "Targets (PLUGIN=$(PLUGIN)):"
@@ -81,6 +81,7 @@ init: ## Check the tools, print versions, warm the TypeScript cache
 	  if command -v $$t >/dev/null 2>&1; then printf '%-9s: present (optional)\n' "$$t"; \
 	  else printf '%-9s: missing (optional, the mod still works)\n' "$$t"; fi; \
 	done; \
+	"$(ROOT)/scripts/dev/gh-check.sh"; \
 	for t in tmux asciinema agg gifsicle; do \
 	  if command -v $$t >/dev/null 2>&1; then printf '%-9s: present (for make e2e / make demo)\n' "$$t"; \
 	  else printf '%-9s: missing (needed by make e2e / make demo, brew install %s)\n' "$$t" "$$t"; fi; \
@@ -111,7 +112,9 @@ check: test ## Alias of test (validate, type-check, test)
 
 test-scripts: ## Test the repo scripts (no claude needed)
 	scripts/dev/install-local-watch.test.sh
+	scripts/dev/gh-check.test.sh
 	cd .agents/skills/pr-review && $(NODE_RUN) node --test 'tests/*.test.mjs'
+	cd .agents/skills/project-sync && $(NODE_RUN) node --test 'tests/*.test.mjs'
 
 # verify: the gate before every commit and push. Rules: AGENTS.md, "Before you
 # commit or push". Lint runs first: its fixers rewrite files. Then the gate fails,
@@ -125,6 +128,15 @@ verify: ## Lint with auto-fix, test, unit-test the e2e harness and the scripts (
 	@$(MAKE) --no-print-directory e2e-unit
 	@$(MAKE) --no-print-directory test-scripts
 	@echo 'verify passed: lint, test and e2e-unit are green.'
+
+# project-sync: keeps the GitHub Project current. The skill holds the modes and rules:
+# .agents/skills/project-sync/SKILL.md. Plan: AGENTS.md, "Planning and delivery".
+# sync, next and add are dry runs unless ARGS has --apply. status writes at once.
+# Examples: make project-sync ARGS=next
+#   make project-sync ARGS='sync --apply'    make project-sync ARGS='status 64 "In progress"'
+ARGS ?= sync
+project-sync: ## Run the project-sync skill (ARGS='sync' by default; see its SKILL.md)
+	@$(NODE_RUN) node .agents/skills/project-sync/scripts/sync.mjs $(ARGS)
 
 e2e-deps: $(E2E_STAMP) ## Install the e2e harness dependencies (npm ci)
 
