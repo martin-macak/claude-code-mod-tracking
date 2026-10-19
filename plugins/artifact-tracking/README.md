@@ -51,7 +51,7 @@ Repo tracking has two limits:
 - Bash is read only for `cd`, `pushd`, `git -C` and `gh -R`. Other paths in a command are not tracked. A `cd` or `-C` target with `$`, a backtick, `*` or `?`, or with `-`, `~` or `~name`, is skipped.
 - A relative path in a file-tool call of a subagent is ignored.
 
-Each Repos row has an `x` button. It hides the repo for the rest of the run: a later visit, a restore and `/clear` do not bring it back. The dismiss list is not stored, so a new run shows the repo again. When the last repo is dismissed, the flush skips the empty list, so the stored copy may still hold it until the next write.
+Select a Repos row and press `x`. It hides the repo for the rest of the run: a later visit, a restore and `/clear` do not bring it back. The dismiss list is not stored, so a new run shows the repo again. When the last repo is dismissed, the flush skips the empty list, so the stored copy may still hold it until the next write.
 
 Not captured: notifications from background tasks, meta rows, prompts that a subagent or a coordinator wrote, and our own `/track` output.
 
@@ -76,9 +76,26 @@ An artifact row shows its name: the page title from the Artifact tool, else the 
 | `/track` | Opens the pane and starts a refresh of the due items. Prints a short list. |
 | `/track refresh` | Forgets "not logged in" and "not found", closes open circuit breakers, refreshes every item, waits, and prints the list. Use it in `claude -p`. |
 | `/track clear` | Removes all items of this session and its stored copy. |
+| `/track help` | Prints the help view as text: every pane key, the config file path and the problems. Use it in `claude -p`. |
 | `/track prio <ref> <level>` | Sets the priority of one item: `high`, `normal`, `low`, or `auto` to remove your mark. See [Priority](#priority). |
 
-The pane has one section for each of Jira, GitHub, Artifacts, Repos, web links and files. A Jira row with children has a `[-]` or `[+]` button. The `Refresh` button (key `r`) does what `/track refresh` does. Esc closes the pane. A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
+The pane has one section for each source: Worktrees, Agents, Pull requests, Jira, GitHub, Artifacts, Repos, Web links, Files and Processes. A section with nothing to show is left out. Each section starts with a title line and a bold header row of column names. A narrow terminal drops the less important columns first. The title, the key and the flexible column stay.
+
+The pane keeps one selected row. A `>` in the first column and a highlight mark it. The selection follows the row, not its place: a re-sort, a refresh or a new row above it does not move it. A footer lists the keys. A key that does not fit the selected row draws dim and does nothing.
+
+| Key | Action |
+| --- | --- |
+| Tab, Shift+Tab | Select the next or the previous row. |
+| Enter | Opens or closes the selected row. Every row opens. A Jira row shows its children. A leaf shows its full cells and its link. On an `N more` row, Enter shows the next rows of that section. |
+| `r` | Refreshes. Does what `/track refresh` does. |
+| `h` | Swaps the pane to the help view: every key, the config file path and the problems. `h` again goes back. |
+| `x` | Dismisses the selected row. It stays out for the run, also after `/clear`. |
+| `1` `2` `3` `0` | Set the priority of the selected row. See [Priority](#priority). |
+| Esc | Closes the pane. |
+
+A section shows at most `global.ui.sectionRows` rows (50). When rows are left, the section ends in an `N more` row. The whole pane shows at most `global.ui.maxRows` rows (300), plus the chunks you opened. Open children do not count against these caps. If the pane is still too large to draw, it drops the detail lines first, then shows fewer rows, and last shows one line: `The pane is too large to draw. /track prints the list.`
+
+A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
 
 A deleted artifact stays in its section, dim and without a link.
 
@@ -114,7 +131,7 @@ Rules:
 - Mentions: by default at most 20 paths per prompt or reply (`trackers.file.maxMentionsPerRow`), each checked with one stat. A URL, a missing file and tool output are not mentions. A trailing line number (`a.md:42`) or anchor (`a.md#L7`) is cut.
 - Ignored paths, fixed: a `.git` or `node_modules` folder, auto-memory under `<config dir>/projects/<project>/memory/` or under the `autoMemoryDirectory` setting, and the Claude scratchpad (`claude-<uid>/<project>/<session>/scratchpad/` under any temp folder). The config dir is `CLAUDE_CONFIG_DIR`, else `~/.claude`. Below the session root, only a `.git` or `node_modules` folder below the root counts, so a project inside such a folder keeps its files. `CLAUDE.md`, `AGENTS.md` and plans stay tracked.
 - File rows count against the session item cap (500 by default) like other items. The oldest row goes first.
-- The `x` button dismisses a file row for the run. A later write, edit, read or mention of the same file does not bring it back.
+- Select a file row and press `x` to hide it for the run. A later write, edit, read or mention of the same file does not bring it back.
 - A resume restores file rows from the stored copy, then from the `Write`, `Edit` and `Read` results and the mentions in the transcript. A subagent's writes come back from the stored copy only: its transcript holds no results.
 - Paths only. The mod never reads or stores file contents.
 
@@ -122,14 +139,14 @@ Rules:
 
 Each row in the Jira, GitHub, Artifacts, Web links, Files and Pull requests sections starts with a mark. Worktrees, Agents, Repos and Processes rows have none.
 
-| Key | Action on the picked row |
+| Key | Action on the selected row |
 | --- | --- |
 | `1` | Sets `high`. The row shows `▲`. |
 | `2` | Sets `normal`. No marker. It overrides an auto level. |
 | `3` | Sets `low`. The row shows `▽`. |
 | `0` | Removes your mark. The auto level shows again, if a rule gives one. |
 
-Pick a row first: move the pane's focus ring onto its mark, its fold button or its `x`. Tab always works. The arrows move the ring only while the pane fits its window. In a taller pane they scroll. Then press the digit. The keys work while the pane has the keyboard, and the footer lists them: `1: high  2: normal  3: low  0: auto`. After a key, the ring follows the row to its new place.
+Select a row first: Tab and Shift+Tab move the selection, and a `>` and a highlight mark it. Then press the digit. The keys work while the pane has the keyboard, and the footer lists them: `1 high  2 normal  3 low  0 auto`. On a row that cannot take a mark (Worktrees, Agents, Repos, Processes), the digits draw dim and do nothing. After a key, the selection stays on the row and the row moves to its new place.
 
 Sections sort by level first, then by their usual order. A Jira child row sorts inside its parent. The `/track` text shows the same marker before the key.
 
@@ -167,7 +184,7 @@ flowchart LR
   R --> U[pane and band]
 ```
 
-Press `x` on an auto row to hide it for the run. `/track clear` hides every auto row that is on screen. A gh failure trips the same circuit breaker as item refresh. It never stops worktree or agent tracking.
+Select an auto row and press `x` to hide it for the run. `/track clear` hides every auto row that is on screen. A gh failure trips the same circuit breaker as item refresh. It never stops worktree or agent tracking.
 
 Limits: peer sessions in other processes are not tracked. A worktree that git created without this session is not shown. Design: [`docs/superpowers/specs/2026-10-10-auto-tracking-design.md`](../../docs/superpowers/specs/2026-10-10-auto-tracking-design.md).
 
@@ -262,8 +279,8 @@ Every key. Time values are in milliseconds.
 | `global.store.maxItems` | 500 | 200 | 5000 | Items kept for one session. |
 | `global.store.maxDismissed` | 500 | 50 | 5000 | Hidden auto rows remembered. |
 | `global.store.maxBytes` | 3000000 | 100000 | 4000000 | Size cap of the stored copies. The oldest sessions go first. |
-| `global.ui.maxRows` | 300 | 50 | 1000 | Reserved, no effect yet. |
-| `global.ui.sectionRows` | 50 | 5 | 300 | Reserved, no effect yet. |
+| `global.ui.maxRows` | 300 | 50 | 1000 | Rows the whole pane shows at most, plus the chunks you opened with `N more`. Open children do not count. |
+| `global.ui.sectionRows` | 50 | 5 | 300 | Rows one section shows at most. Each Enter on its `N more` row adds this many. |
 | `trackers.<id>.enabled` | true | | | Switch of each of `github`, `jira`, `web`, `artifact`, `file`, `repos`, `processes` and `auto`. |
 | `trackers.github.chunkSize` | 50 | 1 | 100 | Items in one GraphQL call. |
 | `trackers.github.pendingStaleMs` | 60000 | 10000 | 3600000 | Age at which a PR with pending checks is due again. |
@@ -292,7 +309,7 @@ Every key. Time values are in milliseconds.
 ## Known limits
 
 - **False positives.** `rank #1` counts as issue 1 of the session repo. The scanner cannot tell it from `fixed in #1`.
-- **Focus after a background change.** A refresh or a round can move a row while the focus ring is on it. The ring stays at its old place. Tab moves it again. The keys still act on the row you picked.
+- **Focus after a background change.** A row that appears above the focus ring moves the ring onto another row: the ring sits on a position, not on a row. The `>` and the highlight stay on your row, and `x` and the digits act on it, not on the ring. Tab moves the ring again. After `x` or a digit, the ring goes back to the selected row. After a `ctrl+x Tab` chord that gives the keys back to the pane, no row has the ring until the first Tab. `r` leaves the ring where it was.
 - **Closing references.** An issue takes a PR's level only from the first closing references that GitHub lists for the PR (10 by default).
 - **Jira sites.** `acli` works on one site at a time. A work item on any other site is `track-only`. The mod never runs `acli jira auth switch`. A host that is not `*.atlassian.net` is also `track-only`.
 - **GitHub Enterprise.** A GHE issue URL is a web link, unless the host is the host of the session repo and `gh` is logged in to it.
@@ -321,10 +338,10 @@ claude plugin test .
 | Folder | Content |
 | --- | --- |
 | `hooks/register.tsx` | Hooks, command, timers, state, store, render. |
-| `hooks/` (rest) | Modules that mix concerns until later layers split them: `contracts.ts`, `model/` (keys, priority, registry, tracked item), `scan/refs.ts`, `ui/view.ts`, `ui/auto-view.ts`. |
+| `hooks/` (rest) | The hook events (`events.ts`) and the pane state: `pane-session.ts` (selection, help, `N more`, key presses), `pane-queue.ts` and `pane-text.ts` (the `/track` text and the help text). |
 | `core/lib/` | Pure helpers: JSON parsing, `git status` porcelain, shell splitting, the link scanner, the config schema rules (`normalise.ts`) and the global config (`global-config.ts`). |
-| `core/infra/` | The base `Tool` and the circuit breaker, the refresh coordinator, the scheduler, the dismiss store, and the config path rule, file format and `ConfigManager` (`config-path.ts`, `config-file.ts`, `config-manager.ts`). |
-| `ux/` | The pane and the band. |
+| `core/infra/` | The base `Tool` and the circuit breaker, the refresh coordinator, the scheduler, the dismiss store, the pane key registry and key routing (`keys.ts`, `pane-keys.ts`), and the config path rule, file format and `ConfigManager` (`config-path.ts`, `config-file.ts`, `config-manager.ts`). |
+| `ux/` | Pure drawing code, one component for every section: `tree-data-table/` (the table, the column solver, the budget guard, the help view and the `/track` text), `band.ts`, `theme.ts` and `text/cell-width.ts`. It imports only `core/interfaces/`. |
 | `trackers/github/` | GitHub items, `GhTool`, PR discovery and the PR body scanner. |
 | `trackers/jira/` | Jira items and `AcliTool`. |
 | `trackers/web/` | Web links. |

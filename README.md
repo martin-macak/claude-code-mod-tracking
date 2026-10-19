@@ -46,9 +46,9 @@ The first mod is [`artifact-tracking`](plugins/artifact-tracking/README.md). A s
 
 ## Demo
 
-![artifact-tracking in a Claude Code session: a prompt mentions GitHub items and a link, the band counts them, /track shows their live state, and the 1 key moves a row to the top](docs/assets/demo.gif)
+![artifact-tracking in a Claude Code session: a prompt mentions GitHub items and a link, the band counts them, /track shows their live state, Tab moves the selection, the 1 key moves the selected row to the top, and r refreshes](docs/assets/demo.gif)
 
-You mention two PRs, an issue and a docs link in a normal prompt. The mod finds them, and the band above the prompt counts them, with `(1 ✗)` for the PR with failing checks. `/track` opens a pane with the live title, state and checks of each item from `gh`, and a section for web links. Tab picks a row, and `1` marks it high: the row moves to the top with `▲`. Press `r` to refresh every item and `Esc` to close the pane.
+You mention two PRs, an issue and a docs link in a normal prompt. The mod finds them, and the band above the prompt counts them, with `(1 ✗)` for the PR with failing checks. `/track` opens a pane with the live title, state and checks of each item from `gh`, and a section for web links. Tab moves the selection (a `>` and a highlight), and `1` marks the selected row high: the row moves to the top with `▲` and stays selected. Press `r` to refresh every item and `Esc` to close the pane.
 
 The GIF comes from a Gherkin scenario, [`e2e/features/tracking.feature`](e2e/features/tracking.feature), that `make demo` records. The same scenario runs as a test under `make e2e`.
 
@@ -57,8 +57,8 @@ The GIF comes from a Gherkin scenario, [`e2e/features/tracking.feature`](e2e/fea
 - **Zero-effort capture.** Finds GitHub issue and PR URLs, `owner/repo#N`, bare `#N`, Jira URLs and web links in your prompts and in Claude's replies, also from subagents. Tool output gives explicit GitHub and Jira URLs only.
 - **Live state.** Shows title, open, closed or merged, failing checks, Jira status and the Epic tree. Data comes from `gh` (one GraphQL call for each host) and `acli`.
 - **Always in view.** A one-line band above the prompt counts the items: `tracking  Jira 6 · GitHub 4 (1 ✗) · Links 2  /track`.
-- **Interactive pane.** `/track` opens a pane with one section for each source. Press `r` to refresh, `x` to hide an auto row, `Esc` to close.
-- **Priority.** Pick a row and press `1` high, `2` normal, `3` low or `0` to remove your mark. Rows sort by level. The open PR of your current branch, and the issues it closes, rise on their own. `/track prio` does the same from the prompt.
+- **Interactive pane.** `/track` opens a pane with one section for each source, and a header row of column names in each. Tab and Shift+Tab move the selection. Enter opens a row: a leaf shows its full cells and its link. `r` refreshes, `x` hides the selected row, `h` shows every key, the config file and the problems, `Esc` closes. A long section ends in an `N more` row.
+- **Priority.** Select a row and press `1` high, `2` normal, `3` low or `0` to remove your mark. Rows sort by level. The open PR of your current branch, and the issues it closes, rise on their own. `/track prio` does the same from the prompt.
 - **Auto tracking.** Tracks the worktrees, agents and pull requests of the session with no mention, also stacked PRs and the refs in a PR body.
 - **Survives restarts.** Keeps the items across `/clear`, `--resume` and `--continue`.
 - **Fails soft.** Without `gh` or `acli`, the items stay in the list and the section says why. A circuit breaker pauses a failing tool for 5 minutes.
@@ -118,6 +118,7 @@ Work as usual. Mention issues, PRs, Jira keys and links in your prompts. The ban
 | `/track` | Opens the pane and refreshes the items that are due. |
 | `/track refresh` | Refreshes every item and waits. Use it in `claude -p`. |
 | `/track clear` | Removes all items of this session. |
+| `/track help` | Prints every pane key, the config file path and the problems. Use it in `claude -p`. |
 
 The [mod README](plugins/artifact-tracking/README.md) lists every captured pattern, the auto-tracking rules, persistence and the known limits.
 
