@@ -321,6 +321,7 @@ Every key. Time values are in milliseconds.
 - **Artifact tool.** `claude -p` does not offer it, so nothing is published there. A mentioned artifact URL is still tracked.
 - **Artifacts after `--resume`.** The stored copy keeps the origin, the title and the delete mark. Without a stored copy, the transcript gives them back, except for a subagent's publish: the main transcript does not hold it, so its URL comes back `mentioned` at most. Only deletes in this session mark a row.
 - **Older versions** stored artifact URLs as web links. A session moves them to Artifacts when it loads its list.
+- **Upgrade in a running session.** An upgrade inside a running session keeps the tracked items. It drops the Repos and Processes rows until the mod sees them again, and it forgets the dismiss list, so a dismissed row can come back.
 - **A narrow terminal.** The pane may wait until you widen the terminal. The mod shows a toast.
 - **Out of scope:** page titles of web links, switching Jira sites, Jira levels above Epic, click capture, write actions on GitHub or Jira, and surfaces other than the terminal.
 
