@@ -353,3 +353,23 @@ test('a rebuild with every prompt key off reads no view', async () => {
   await t.m.turnComplete(t.w.ports, MAIN)
   expect(views).toEqual([])
 })
+
+// ---------------------------------------------------------------- what a web link shows (review of L7)
+
+const textOf = (t: Awaited<ReturnType<typeof realWorld>>['t']): string =>
+  t.m.compose({ traits: [] }, []).find(s => s.id === PROMPT_SECTION_ID)?.text ?? ''
+
+test('a web link that URL rejects reaches the text with no userinfo, query or fragment', async () => {
+  const { t } = await realWorld()
+  await t.m.row(t.w.ports, promptRow('see https://u:tok@localhost:99999/cb?token=secret#frag')) // the port is out of range
+  await t.m.turnComplete(t.w.ports, MAIN)
+  expect(textOf(t)).toContain('web: https://localhost:99999/cb')
+  expect(textOf(t)).not.toMatch(/secret|tok@|frag/)
+})
+
+test('a file: or mailto: link is no web item: the text lists none', async () => {
+  const { t } = await realWorld()
+  await t.m.row(t.w.ports, promptRow('see [r](file:///tmp/report?token=secret) and [m](mailto:u@e.com?body=secret)'))
+  await t.m.turnComplete(t.w.ports, MAIN)
+  expect(textOf(t)).not.toMatch(/file:|mailto:|secret/)
+})

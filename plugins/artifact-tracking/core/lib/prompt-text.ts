@@ -57,10 +57,18 @@ export function quoted(s: string, max: number): string {
   return text === '' ? '' : `"${text}"`
 }
 
-/** The host (with the port) and the path of a URL. No userinfo, query, fragment or trailing slash: a query can hold a token. */
+/** What can hold a secret in a URL text: from the first `?` or `#` on, and the userinfo before an `@` of the authority. */
+const TAIL = /[?#].*$/su
+const USERINFO = /^([a-z][a-z0-9+.-]*:\/\/)[^/?#]*@/i
+
+/**
+ * The host (with the port) and the path of a URL. No userinfo, query, fragment or trailing slash: a query can hold a
+ * token. A URL with no host (`file:`, `mailto:`) or one that `URL` rejects (a port out of range) has no host and path
+ * to show: its text is cut at the first `?` or `#`, loses its userinfo and is clipped, whatever its scheme.
+ */
 export function hostAndPath(url: string): string {
   const parts = urlParts(url)
-  return parts && parts.host !== '' ? parts.host + parts.path : plain(url, 80)
+  return parts && parts.host !== '' ? parts.host + parts.path : plain(url.replace(TAIL, '').replace(USERINFO, '$1'), 80)
 }
 
 const RANK: ReadonlyMap<string, number> = new Map([

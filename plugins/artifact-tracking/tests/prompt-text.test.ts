@@ -85,8 +85,17 @@ test('hostAndPath drops userinfo, query, fragment and trailing slashes', () => {
   expect(hostAndPath('not a url')).toBe('not a url')
 })
 
-test('hostAndPath of a URL with no host falls back to the plain text', () => {
+test('hostAndPath of a URL with no host, or that URL rejects, shows no query, fragment or userinfo (review of L7)', () => {
+  // No host: the text is cut at the first `?` or `#`.
   expect(hostAndPath('file:///tmp/x')).toBe('file:///tmp/x')
+  expect(hostAndPath('file:///tmp/report?token=secret')).toBe('file:///tmp/report')
+  expect(hostAndPath('file:///tmp/r#frag-secret')).toBe('file:///tmp/r')
+  expect(hostAndPath('mailto:user@example.com?body=secret')).toBe('mailto:user@example.com')
+  // `URL` rejects it (a port out of range, a bad host): the userinfo goes too.
+  expect(hostAndPath('https://localhost:99999/cb?token=secret')).toBe('https://localhost:99999/cb')
+  expect(hostAndPath('https://user:tok@exa%mple.com/x?q=1#frag')).toBe('https://exa%mple.com/x')
+  expect(hostAndPath('not a url?x=secret')).toBe('not a url')
+  // The rest is plain and clipped.
   const mail = `mailto:${'a'.repeat(100)}`
   expect(hostAndPath(mail)).toBe(`${mail.slice(0, 79)}…`)
 })
