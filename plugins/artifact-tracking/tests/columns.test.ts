@@ -249,6 +249,20 @@ test('the width memo grows only, per section and column; resetWidths forgets it'
   expect(solve('s', 'ab')).toBe(2)
 })
 
+test('the tree column keeps its width when a deeper row closes; resetWidths forgets it', () => {
+  const open = [at(0, row('a', { key: 'ISS-1' })), at(1, row('b', { key: 'PROJ-201' }))]
+  const shut = [at(0, row('a', { key: 'ISS-1' }))]
+  resetWidths()
+  expect(widthOf(solveColumns('s', [tree()], open, 100), 'key')).toBe(2 + 8 + GLYPH_BOX)
+  expect(widthOf(solveColumns('s', [tree()], shut, 100), 'key')).toBe(2 + 8 + GLYPH_BOX)
+  expect(widthOf(solveColumns('other', [tree()], shut, 100), 'key')).toBe(5 + GLYPH_BOX)
+  resetWidths()
+  expect(widthOf(solveColumns('s', [tree()], shut, 100), 'key')).toBe(5 + GLYPH_BOX)
+  const capped = [tree('K', { width: { kind: 'content', max: 6 } })]
+  expect(widthOf(solveColumns('c', capped, [at(0, row('a', { key: 'x'.repeat(20) }))], 100), 'key')).toBe(6 + GLYPH_BOX)
+  expect(widthOf(solveColumns('c', capped, [at(0, row('a', { key: 'ab' }))], 100), 'key')).toBe(6 + GLYPH_BOX)
+})
+
 test('the memo holds the unclamped width, so a clamped column stays at its max', () => {
   resetWidths()
   const wide = [content('t', 'T', { width: { kind: 'content', max: 5 } })]

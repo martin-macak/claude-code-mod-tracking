@@ -4,7 +4,7 @@
 // Order, as the tests pin it:
 //   1. leave out a content column whose visible cells are all empty (the header alone does not count);
 //   2. natural widths: fixed as given, content as its widest header or cell clamped to min and max (grow-only memo),
-//      the tree column as its widest indent plus text, clamped, plus the glyph box, flex as its min;
+//      the tree column as its widest indent plus text (grow-only memo), clamped, plus the glyph box, flex as its min;
 //   3. over `avail`: drop whole columns by `priority` (highest number first, ties the rightmost), until it fits;
 //   4. still over: shrink content columns toward their min, the widest first (a tie: the leftmost). The tree column is one of them: its min
 //      counts the text only, so its floor is min plus the glyph box;
@@ -40,7 +40,8 @@ interface Slot {
   width: number
 }
 
-/** The widest width a content column had, by `section/column`. It only grows, so a column holds still when a row opens. */
+/** The widest width a content or tree column had, by `section/column`. It only grows, so a column holds still when a row
+ * opens or closes. */
 const memo = new Map<string, number>()
 
 /** Forget the memo. `r` (refresh) calls it. */
@@ -56,15 +57,17 @@ const widest = (widths: number[]): number => widths.reduce((a, b) => Math.max(a,
 function naturalWidth(sectionId: string, def: ColumnDef, rows: Laid): number {
   const w = def.width
   const head = cellWidth(def.header)
+  const key = `${sectionId}/${def.id}`
   if (isTree(def)) {
     const depths = rows.map(r => r.depth)
     const body = widest(textOf(rows, def.id).map((t, i) => INDENT * (depths[i] ?? 0) + cellWidth(t)))
+    const tall = Math.max(memo.get(key) ?? 0, body)
+    memo.set(key, tall)
     const limits: { min?: number; max?: number } = w.kind === 'content' ? w : {}
-    return Math.max(GLYPH_BOX, head, clamp(body, limits.min, limits.max) + GLYPH_BOX)
+    return Math.max(GLYPH_BOX, head, clamp(tall, limits.min, limits.max) + GLYPH_BOX)
   }
   if (w.kind === 'fixed') return Math.max(1, w.cells)
   if (w.kind === 'flex') return Math.max(1, w.min)
-  const key = `${sectionId}/${def.id}`
   const grown = Math.max(memo.get(key) ?? 0, head, widest(textOf(rows, def.id).map(cellWidth)))
   memo.set(key, grown)
   return Math.max(1, clamp(grown, w.min, w.max))
