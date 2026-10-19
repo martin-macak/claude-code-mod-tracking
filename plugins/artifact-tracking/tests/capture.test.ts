@@ -91,6 +91,28 @@ test('capture: the label of any claimed Markdown link hides from the kind scans,
   expect(keys('see plan.md and https://example.com/x')).toEqual(['web:https://example.com/x', 'file:plan.md']) // a claim with no span goes last
 })
 
+test('capture: the span of a Markdown link is the link itself, also when its URL sits earlier in skipped text', () => {
+  const url = 'https://example.com/x'
+  const link = `[issue #5](${url})`
+  const before = [
+    `\`${url}\` `, // a code span
+    `\`\`\`\ncurl ${url}\n\`\`\`\n`, // a fenced block
+    `para\n\n    curl ${url}\n\n`, // an indented block
+    `![i](${url}) `, // an image
+    `<a href="${url}">x</a> `, // a tag
+  ]
+  for (const lead of before) {
+    const text = lead + link
+    const found = claims(text)
+    // Only the link claims: its label is masked, so the keyworded #5 in it is not read again as a GitHub item.
+    expect(found.map(c => c.key)).toEqual([`web:${url}`])
+    expect(text.slice(found[0]!.span!.start, found[0]!.span!.end)).toBe(link)
+  }
+  // Two links in order: the first one's URL in code does not push the second one's span.
+  const two = `\`https://a.example/1\` [issue #5](https://a.example/1) and [issue #6](https://b.example/2)`
+  expect(keys(two)).toEqual(['web:https://a.example/1', 'web:https://b.example/2'])
+})
+
 test('capture: urls-only keeps explicit github and jira URLs only', () => {
   const text = [
     'https://x.example/doc',

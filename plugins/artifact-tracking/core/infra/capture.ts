@@ -38,18 +38,13 @@ function markdownLinks(text: string): Candidate[] {
     if (f.kind !== 'link') continue
     const scheme = schemeOf(f.url)
     if (scheme !== 'http' && scheme !== 'https') continue
-    const hit = locate(text, [f.url, f.label], cursor)
+    // Look for the whole `[label](url` first: the URL may also sit earlier in text the scanner skips (code, an image).
+    const whole = f.label === undefined ? undefined : `[${f.label}](${f.url}`
+    const hit = locate(text, [whole, f.url, f.label], cursor)
     cursor = hit.next
-    let start = hit.pos
+    const start = hit.pos
     let end = hit.pos + hit.length
-    if (f.label !== undefined && text.startsWith(f.url, hit.pos)) {
-      const open = `[${f.label}](`
-      const from = hit.pos - open.length
-      if (from >= 0 && text.startsWith(open, from)) {
-        start = from
-        if (text[end] === ')') end++
-      }
-    }
+    if (whole !== undefined && text.startsWith(whole, start) && text[end] === ')') end++
     out.push({ url: f.url, ...(f.label !== undefined ? { label: f.label } : {}), start, end })
   }
   return out
