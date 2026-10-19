@@ -2,7 +2,7 @@
 // both use it, so a refocus finds the handle the next drawing gives a row. Pure.
 // Decisions G3 (open state) and G4 (caps) of plan L6. Spec 5.10 "Rows".
 import type { RowRef, SectionSpec, TreeRow } from '../../core/interfaces/view'
-import type { TableView } from './shape'
+import type { DrawnRow, TableView } from './shape'
 
 export interface LaidRow {
   readonly row: TreeRow
@@ -71,4 +71,12 @@ export function findRow(sections: readonly SectionSpec[], rowId: string | null):
     if (hit !== undefined) return hit
   }
   return undefined
+}
+
+/** The row to select once `id` is gone: the next drawn row at the same or a lower depth, else the one before. */
+export function neighbourOf(rows: readonly DrawnRow[], id: string): string | null {
+  const at = rows.findIndex(r => r.id === id)
+  if (at < 0) return null
+  const depth = rows[at]?.depth ?? 0
+  return (rows.slice(at + 1).find(r => r.depth <= depth) ?? rows[at - 1])?.id ?? null
 }

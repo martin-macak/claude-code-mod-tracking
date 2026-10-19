@@ -126,12 +126,25 @@ export interface SlotPort {
   update(id: string, fn: (cur: Json | undefined) => Json): Promise<Json>
 }
 
-/** The state contract in L3: `items`, `tools`, `ui` and the `trackers` family (plan decision D14). */
+/** The `shown` StateFamily: rows shown beyond the cap, one member per section id. A member never written reads 0. */
+export interface ShownPort {
+  get(id: string): Promise<number>
+  update(id: string, fn: (cur: number) => number): Promise<number>
+}
+
+/**
+ * The state contract: `items`, `tools`, `ui` and the `trackers` family (L3, decision D14), then the pane state of L6
+ * (spec 5.13): the ids the person opened, the selected row id, the rows shown past each cap and the help view.
+ */
 export interface StatePorts {
   readonly items: AtomPort<StoredItem[]>
   readonly tools: AtomPort<Record<string, ToolStatus>>
   readonly ui: AtomPort<{ folded: string[] }>
   readonly slot: SlotPort
+  readonly expanded: AtomPort<string[]>
+  readonly selected: AtomPort<string | null>
+  readonly shown: ShownPort
+  readonly help: AtomPort<boolean>
 }
 
 /** The plugin store: the plugin's key-value store. Persistence is its only writer. */
@@ -178,7 +191,8 @@ export interface Ports {
   readonly state: StatePorts
   readonly ui: {
     open(): Promise<boolean>
-    focus(key: string): Promise<void>
+    /** Asks the engine to move the ring to the element `key`. True when the ring moved, false when the engine refused. */
+    focus(key: string): Promise<boolean>
     panes(): Promise<readonly PaneInfo[]>
     /** Call from event handlers and the tick only, never from a render. */
     invalidate(): void

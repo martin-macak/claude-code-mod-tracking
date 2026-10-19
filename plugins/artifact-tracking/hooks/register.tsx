@@ -28,6 +28,11 @@ const tools = atom(
   { gh: IDLE_GH, acli: IDLE_ACLI } as Record<string, ToolStatus>,
 )
 const ui = atom({ plugin: 'artifact-tracking', key: 'ui' } as const, { folded: [] } as UiState)
+// The pane state (spec 5.13): the row ids the person opened, the selected row, the help view. `shown` is a family and
+// has no atom: its ref is a literal inside each closure of `portsOf`.
+const expanded = atom({ plugin: 'artifact-tracking', key: 'expanded' } as const, [] as string[])
+const selected = atom({ plugin: 'artifact-tracking', key: 'selected' } as const, null as string | null)
+const help = atom({ plugin: 'artifact-tracking', key: 'help' } as const, false)
 
 /** A tracker fault or a refused write must not change what the engine returns: run the step, ignore a failure. */
 async function soft(step: () => unknown): Promise<void> {
@@ -114,6 +119,13 @@ function portsOf($: EngineInterface): Ports {
       },
       tools: { get: () => read($, tools), update: fn => update($, tools, fn) },
       ui: { get: () => read($, ui), update: fn => update($, ui, fn) },
+      expanded: { get: () => read($, expanded), update: fn => update($, expanded, fn) },
+      selected: { get: () => read($, selected), update: fn => update($, selected, fn) },
+      help: { get: () => read($, help), update: fn => update($, help, fn) },
+      shown: {
+        get: async id => (await read($, { plugin: 'artifact-tracking', key: 'shown', id } as const)) ?? 0,
+        update: (id, fn) => update($, { plugin: 'artifact-tracking', key: 'shown', id } as const, cur => fn(cur ?? 0)),
+      },
       slot: {
         get: id => read($, { plugin: 'artifact-tracking', key: 'trackers', id } as const),
         update: (id, fn) => update($, { plugin: 'artifact-tracking', key: 'trackers', id } as const, cur => fn(cur)),
@@ -122,9 +134,7 @@ function portsOf($: EngineInterface): Ports {
     ui: {
       open: async () =>
         (await $.ui.open({ id: 'track', title: 'Tracking', focus: true, closeOnEscape: true })).isPlaced,
-      focus: async key => {
-        await $.ui.focus({ requestId: 'track', key })
-      },
+      focus: async key => (await $.ui.focus({ requestId: 'track', key })).deny === undefined,
       panes: () => $.ui.panes(),
       invalidate: () => void soft(() => $.ui.invalidate('ui.render')), // a refused redraw: the next one fixes it
       toast: text => $.ui.toast(text),

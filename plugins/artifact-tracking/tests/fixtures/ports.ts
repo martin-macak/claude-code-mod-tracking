@@ -45,7 +45,7 @@ export type FakeWorld = {
   store: Map<string, Json>
   /** Calls of `store.set`. */
   storeSets: number
-  /** The `$.state` data by member: `items`, `tools`, `ui`, and one entry per slot id. */
+  /** The `$.state` data by member: `items`, `tools`, `ui`, the pane state, one entry per slot id and `shown:<section id>`. */
   state: Map<string, Json>
   /** Writes by member, like the kit world counts them. */
   stateSets: Record<string, number>
@@ -169,6 +169,19 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       items: atom<StoredItem[]>('items', () => []),
       tools: atom<Record<string, ToolStatus>>('tools', () => ({})),
       ui: atom<{ folded: string[] }>('ui', () => ({ folded: [] })),
+      expanded: atom<string[]>('expanded', () => []),
+      selected: atom<string | null>('selected', () => null),
+      help: atom<boolean>('help', () => false),
+      // A family member sits under `shown:<id>`: a bare section id would collide with a tracker slot of the same id.
+      shown: {
+        get: async id => (world.state.get(`shown:${id}`) as number | undefined) ?? 0,
+        update: async (id, fn) => {
+          const next = fn(((world.state.get(`shown:${id}`) as number | undefined) ?? 0) as number)
+          world.state.set(`shown:${id}`, next)
+          world.stateSets[`shown:${id}`] = (world.stateSets[`shown:${id}`] ?? 0) + 1
+          return next
+        },
+      },
       slot: {
         async get(id) {
           return clone(world.state.get(id))
@@ -188,6 +201,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       },
       async focus(key) {
         world.ui.focused.push(key)
+        return true
       },
       panes: async () => world.ui.panes,
       invalidate() {

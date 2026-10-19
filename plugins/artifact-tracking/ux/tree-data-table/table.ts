@@ -12,7 +12,7 @@ import { type Draw, drawSection } from './rows'
 import { type Drawn, type DrawnRow, type TableActions, type TableView, TOO_LARGE, UNAVAILABLE } from './shape'
 import { EMPTY_TEXT } from './text'
 
-export { findRow, handleOf, type LaidRow, type LaidSection, layout } from './layout'
+export { findRow, handleOf, type LaidRow, type LaidSection, layout, neighbourOf } from './layout'
 export {
   DEFAULT_BODY_COLUMNS,
   DETAIL_CELLS,
