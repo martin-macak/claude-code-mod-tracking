@@ -13,12 +13,11 @@ NAME := $(shell sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' $
 ifeq ($(NAME),)
 NAME := $(notdir $(PLUGIN_ABS))
 endif
-# Release version. Read from plugin.json. The release tag is $(NAME)--v$(VERSION).
-VERSION := $(shell sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' $(PLUGIN)/.claude-plugin/plugin.json 2>/dev/null | head -n 1)
+# A person chooses VERSION only when making the release tag.
+VERSION ?=
 
 # Release artifacts. `dist` writes them, the release workflow uploads them.
 DIST := $(ROOT)/dist
-ZIP  := $(DIST)/$(NAME)-$(VERSION).zip
 
 # Config dir of Claude Code. Same rule as the CLI: $CLAUDE_CONFIG_DIR, else ~/.claude.
 CLAUDE_CONFIG_DIR ?= $(HOME)/.claude
@@ -62,7 +61,7 @@ E2E_STAMP := $(E2E)/node_modules/.package-lock.json
 DEMO_GIF  := docs/assets/demo.gif
 
 .DEFAULT_GOAL := help
-.PHONY: help init build typecheck test test-scripts check verify project-sync e2e-deps e2e-unit e2e demo lint hooks dist release release-dry install uninstall install-local uninstall-local clean
+.PHONY: help init build typecheck test test-scripts check verify project-sync e2e-deps e2e-unit e2e demo lint hooks dist release release-dry marketplace-release install uninstall install-local uninstall-local clean
 
 help: ## List the targets
 	@echo "Targets (PLUGIN=$(PLUGIN)):"
@@ -113,6 +112,9 @@ check: test ## Alias of test (validate, type-check, test)
 test-scripts: ## Test the repo scripts (no claude needed)
 	scripts/dev/install-local-watch.test.sh
 	scripts/dev/gh-check.test.sh
+	bash scripts/release/release.test.sh
+	bash scripts/release/ci-guards.test.sh
+	bash scripts/release/smoke.test.sh
 	cd .agents/skills/pr-review && $(NODE_RUN) node --test 'tests/*.test.mjs'
 	cd .agents/skills/project-sync && $(NODE_RUN) node --test 'tests/*.test.mjs'
 
@@ -160,38 +162,18 @@ lint: ## Run every pre-commit hook on all files
 hooks: ## Install the pre-commit, commit-msg and pre-push git hooks
 	pre-commit install --install-hooks
 
-# dist: the release zip and its checksum, built from the committed tree at HEAD.
-# The zip holds one folder, $(NAME)/, with the plugin. `claude --plugin-dir <zip>`
-# and `claude --plugin-url <url>` load it. Uncommitted edits are not in the zip.
-# KB: docs/knowledge-base/claude-code-mods/workflow/release.md.
-dist: ## Build dist/<name>-<version>.zip and dist/SHA256SUMS from HEAD
-	@[ -n "$(VERSION)" ] || { echo 'dist failed: no "version" in plugin.json.'; exit 1; }
-	@[ -z "$$(git -C "$(ROOT)" status --porcelain -- "$(PLUGIN)")" ] || \
-	  echo "Warning: $(PLUGIN) has uncommitted changes. The zip holds HEAD only."
-	@rm -rf "$(DIST)" && mkdir -p "$(DIST)"
-	git -C "$(ROOT)" archive --format=zip --prefix="$(NAME)/" -o "$(ZIP)" "HEAD:$(PLUGIN)"
-	@cd "$(DIST)" && if command -v sha256sum >/dev/null 2>&1; then sha256sum -- *.zip; \
-	  else shasum -a 256 -- *.zip; fi > SHA256SUMS
-	@cat "$(DIST)/SHA256SUMS"
+# HEAD files, with the tag version stamped only in the staged archive.
+dist: ## Build both release zips and SHA256SUMS; requires VERSION=x.y.z
+	@bash "$(ROOT)/scripts/release/dist.sh" "$(VERSION)"
 
-# release: tag the version in plugin.json and push the tag. The tag push runs
-# .github/workflows/release.yml, which tests, builds and publishes the release.
-# Flow: bump "version" in plugin.json in a PR, merge it, then run this on main.
-# `claude plugin tag` names the tag $(NAME)--v$(VERSION), checks that plugin.json
-# and the marketplace entry agree, and refuses a tag that exists.
-release: ## Tag plugin.json's version on main and push it (starts the release)
-	@[ "$$(git -C "$(ROOT)" rev-parse --abbrev-ref HEAD)" = main ] || \
-	  { echo 'Refusing: release runs on main only.'; exit 1; }
-	@[ -z "$$(git -C "$(ROOT)" status --porcelain)" ] || \
-	  { echo 'Refusing: the working tree has changes.'; exit 1; }
-	git -C "$(ROOT)" fetch --quiet origin main
-	@[ "$$(git -C "$(ROOT)" rev-parse HEAD)" = "$$(git -C "$(ROOT)" rev-parse origin/main)" ] || \
-	  { echo 'Refusing: HEAD is not origin/main. Pull or push first.'; exit 1; }
-	@$(MAKE) --no-print-directory test
-	cd $(PLUGIN) && claude plugin tag --push
+release: ## Check main, SemVer and milestone, then tag and push; VERSION=x.y.z
+	@bash "$(ROOT)/scripts/release/release.sh" "$(VERSION)"
 
-release-dry: ## Show the tag that release would create
-	cd $(PLUGIN) && claude plugin tag --dry-run
+release-dry: ## Run release guards without testing, tagging or pushing; requires VERSION
+	@bash "$(ROOT)/scripts/release/release.sh" "$(VERSION)" --dry-run
+
+marketplace-release: ## Switch to the archive after latest has the asset; submit the diff in a PR
+	@bash "$(ROOT)/scripts/release/ci.sh" activate-marketplace
 
 # install: make the mod load in every session of this config dir, no marketplace.
 # Mechanism: the "skills folder". A plugin folder (with .claude-plugin/plugin.json)

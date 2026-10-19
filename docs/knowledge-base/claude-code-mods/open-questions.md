@@ -38,8 +38,8 @@ Precedence when sources conflict: types file > bundled `reference.md` / `SKILL.m
 | 17 | The value exports of `'claude-code'` (`atom`, `read`, `update`, ...) work at run time. The types header says "at run time the import is empty". | Settled in practice: the bundled examples import them and pass `claude plugin test`. Clarify the header's meaning. |
 | 18 | The built-in `telemetry` mod at `e47cc82` fails `validate` as a user plugin (observed). The CLI gives no hint about tiers. | Note only. It matters if we copy patterns from it. |
 | 19 | Why does the built-in `sec-default` guard load on this machine: managed settings, or a Team/Enterprise sign-in? | Check `/plugin` and the managed settings. |
-| 20 | Does `--plugin-url` follow the redirect of a GitHub release asset URL to `objects.githubusercontent.com`? The limits table covers only `archive` entries ([host-marketplace:49-54](sources/code-claude-com-2026-10-09/plugins/host-marketplace.md#L49)). | After the first release: `claude --plugin-url <asset URL> plugin list`. |
-| 21 | Does `claude plugin tag --push` pass the ruleset on `main` of this repo? The ruleset targets branches, so a tag push should pass. | Run `make release` for the first release. Record the output in [workflow/release.md](workflow/release.md). |
+| 20 | **Resolved, 2026-10-18:** `--plugin-url` loads the GitHub 0.1.0 release asset through its redirect on Claude Code 2.1.302. | Isolated CLI probe loaded `artifact-tracking@inline`, version 0.1.0. See [recorded checks](workflow/release.md#recorded-checks-and-rollout-status). |
+| 21 | **Closed as obsolete:** the tag-first pipeline uses `git tag -a` and `git push`, not `claude plugin tag --push`. | The old 0.1.0 tag has a published release. A push from the new pipeline remains a rollout check. See [release flow](workflow/release.md#the-pipeline-in-this-repo). |
 
 ## See also
 

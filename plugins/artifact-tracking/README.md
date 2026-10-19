@@ -234,19 +234,25 @@ claude plugin test .
 
 ## Release
 
-A release is a git tag `artifact-tracking--v<version>`. The `<version>` is the `version` in `.claude-plugin/plugin.json`. Marketplace users get a new copy only when that `version` changes.
+A release is a git tag `artifact-tracking--v<version>`. The tag sets the version. Do not edit `plugin.json` to make a release. Its value on `main` does not control the stamped zip.
 
-1. In a PR, bump `version` in `.claude-plugin/plugin.json`. Use semver. Merge the PR.
-2. On `main`, in a clean and current checkout, run `make release-dry`. Check the tag name.
-3. Run `make release`. It runs `make test`, then `claude plugin tag --push`.
+1. Merge the release changes. Use a clean `main` equal to `origin/main`.
+2. Run `make release-dry VERSION=0.2.0-rc.1`. It checks the branch, tree, remote and SemVer order without tagging or pushing.
+3. Run `make release VERSION=0.2.0-rc.1`. It runs `make test`, creates an annotated tag and pushes it.
+4. For a stable release, use `VERSION=0.2.0`. If `gh` is present, milestone `artifact-tracking 0.2.0` must have no open issues. A missing `gh` skips this guard with a message. API errors stop the release. Pre-releases skip the milestone check.
 
 The tag push runs `.github/workflows/release.yml`. The workflow:
 
-- checks that the tag equals `<name>--v<version>` of `plugin.json` and that the tagged commit is on `main`,
-- runs `claude plugin validate --strict` on the plugin and the marketplace, then `make test`,
-- runs `make dist`: `artifact-tracking-<version>.zip` (the plugin folder at the tag) and `SHA256SUMS`,
-- signs a build provenance attestation for the zip,
-- creates the GitHub release with both files and notes generated from the merged PRs. A version with a `-` suffix, such as `0.3.0-rc.1`, becomes a prerelease.
+- rejects a bad tag or a tagged commit outside `main` before the build,
+- stamps the tag version with `jq`, then validates the plugin and marketplace and runs `make test`,
+- runs `make dist VERSION=<version>`: tracked plugin files at `HEAD`, with only the manifest version stamped in staging,
+- publishes identical `artifact-tracking-<version>.zip` and `artifact-tracking.zip`, their `SHA256SUMS`, and build provenance,
+- marks `x.y.z-*` as a pre-release with `--latest=false`; stable releases use `--latest` and close their milestone,
+- installs the published archive in a temporary `CLAUDE_CONFIG_DIR`, compares the installed version and all files, and tests an update from the old 0.1.0 path entry. An RC also checks that `latest` did not change.
+
+The marketplace cutover is a second PR. After the first stable release carries `artifact-tracking.zip`, run `make marketplace-release`. It checks the latest release asset before changing `.claude-plugin/marketplace.json` to `https://github.com/martin-macak/claude-code-mod-tracking/releases/latest/download/artifact-tracking.zip`. Run `make verify` and merge that diff. Until then, the path entry still installs `main`; bootstrap smoke uses a temporary archive catalog. An RC before the first stable alias checks its own archive and leaves the stable install/update checks pending.
+
+After cutover, fresh installs and `claude plugin update artifact-tracking@mod-tracking` fetch the latest stable archive. Pre-releases remain available by their versioned URL. Tag-based dependency resolution against the source tree is no longer supported: the tagged manifest keeps its development value. See [the release workflow](../../docs/knowledge-base/claude-code-mods/workflow/release.md).
 
 Verify a downloaded zip:
 
@@ -268,11 +274,12 @@ Run `make` from the repo root. `make help` lists the targets. Set `PLUGIN=<dir>`
 | `hooks` | Installs the `pre-commit`, `commit-msg` and `pre-push` git hooks. |
 | `verify` | The gate before every push: `lint` with auto-fix, then `test`, `e2e-unit` and `test-scripts`. Fails on untracked files, because the hooks skip them. |
 | `test` | Runs `build`, then `claude plugin test`. `check` is an alias. |
-| `test-scripts` | Tests `scripts/dev/install-local-watch.sh`, `scripts/dev/gh-check.sh` and the scripts of the `pr-review` and `project-sync` skills. It also checks that the docs point to `AGENTS.md`, "Planning and delivery". Needs no `claude`. |
+| `test-scripts` | Tests the local watcher, GitHub scope check, release guards, packaging, smoke comparisons, and the `pr-review` and `project-sync` skills. It also checks the planning docs. Needs no `claude`. |
 | `project-sync` | Runs the `project-sync` skill: `ARGS='sync'` (default), `next`, `add`, `status`. `sync`, `next` and `add` are dry runs unless `ARGS` has `--apply`. `status` writes at once. See `AGENTS.md`, "Planning and delivery". |
-| `dist` | Builds `dist/<name>-<version>.zip` from the committed plugin folder at `HEAD`, and `dist/SHA256SUMS`. Uncommitted edits are not in the zip. |
-| `release` | On a clean `main` equal to `origin/main`: runs `test`, then `claude plugin tag --push`. See [Release](#release). |
-| `release-dry` | Prints the tag that `release` would create. |
+| `dist VERSION=x.y.z` | Builds both plugin zips from tracked `HEAD` files, stamps the supplied version in staging, and writes `dist/SHA256SUMS`. |
+| `release VERSION=x.y.z` | Checks clean, current `main`, SemVer order and milestone, runs `test`, then creates and pushes the tag. |
+| `release-dry VERSION=x.y.z` | Runs the release guards and prints the tag without testing or pushing. |
+| `marketplace-release` | Checks the latest archive asset, then edits the marketplace for a cutover PR. |
 | `install` | Links the mod into `$CLAUDE_CONFIG_DIR/skills/`. Without that variable, it uses `~/.claude/skills/`. |
 | `uninstall` | Removes that link. It removes only a link that points at this plugin. |
 | `install-local` | Copies the mod into `<repo>/.claude/skills/artifact-tracking-dev/` as `artifact-tracking-dev`. Only a session that starts in this repo loads it. The user config dir stays untouched. The `.envrc` runs it for you. |
