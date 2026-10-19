@@ -116,3 +116,31 @@ export function clipTo(text: string, cells: number): string {
   }
   return `${out}…`
 }
+
+/**
+ * The text cut to at most `cells` cells, with `…` in the middle: both ends stay, as a branch or a path needs. The head
+ * takes at most half of the cells, the tail takes the rest. Same limits as `clipTo`: it cuts by grapheme, and nothing
+ * fits in 0 cells or fewer.
+ */
+export function clipMiddle(text: string, cells: number): string {
+  if (cells <= 0) return ''
+  if (cellWidth(text) <= cells) return text
+  const parts = Array.from(segmenter.segment(text), s => s.segment)
+  let head = ''
+  let used = 0
+  for (const part of parts) {
+    const width = cellWidth(part)
+    if (used + width > Math.floor(cells / 2)) break
+    head += part
+    used += width
+  }
+  let tail = ''
+  let room = cells - 1 - used
+  for (let i = parts.length - 1; i >= 0 && room > 0; i--) {
+    const width = cellWidth(parts[i]!)
+    if (width > room) break
+    tail = parts[i] + tail
+    room -= width
+  }
+  return `${head}…${tail}`
+}

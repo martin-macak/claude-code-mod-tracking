@@ -1,6 +1,6 @@
 // Cell width, one-line cells and clipping by cell. Pure.
 import { expect, test } from 'claude-code/testing'
-import { cellWidth, clipTo, normaliseCell } from '../ux/text/cell-width'
+import { cellWidth, clipMiddle, clipTo, normaliseCell } from '../ux/text/cell-width'
 import { VECTORS } from './fixtures/width-vectors'
 
 test('cellWidth matches Bun.stringWidth on the vectors', () => {
@@ -45,4 +45,33 @@ test('clipTo to 1 is …, to 0 or below is empty', () => {
   expect(clipTo('abc', 1)).toBe('…')
   expect(clipTo('abc', 0)).toBe('')
   expect(clipTo('abc', -3)).toBe('')
+})
+
+test('clipMiddle keeps a text that fits', () => {
+  expect(clipMiddle('feat/x', 6)).toBe('feat/x')
+  expect(clipMiddle('', 3)).toBe('')
+})
+
+test('clipMiddle keeps both ends and puts … in the middle', () => {
+  expect(clipMiddle('feat/band-auto-tracking', 12)).toBe('feat/b…cking')
+  expect(clipMiddle('ABCDEFGHIJ', 8)).toBe('ABCD…HIJ')
+  expect(cellWidth(clipMiddle('feat/band-auto-tracking', 12))).toBe(12)
+  expect(clipMiddle('abcdef', 2)).toBe('a…')
+})
+
+test('clipMiddle never splits a wide character or an emoji', () => {
+  const cook = '👩\u200D🍳' // one grapheme, 2 cells
+  expect(clipMiddle('日本語日本語', 5)).toBe('日…語')
+  expect(clipMiddle('😀😀😀😀😀', 6)).toBe('😀…😀')
+  expect(clipMiddle(`a${cook}bc${cook}d`, 5)).toBe(`a…${cook}d`)
+  for (const cells of [2, 3, 4, 5, 6, 7]) {
+    expect(cellWidth(clipMiddle('日本語日本語', cells))).toBeLessThanOrEqual(cells)
+    expect(cellWidth(clipMiddle(`x${cook}y${cook}z`, cells))).toBeLessThanOrEqual(cells)
+  }
+})
+
+test('clipMiddle to 1 is …, to 0 or below is empty', () => {
+  expect(clipMiddle('abc', 1)).toBe('…')
+  expect(clipMiddle('abc', 0)).toBe('')
+  expect(clipMiddle('abc', -3)).toBe('')
 })

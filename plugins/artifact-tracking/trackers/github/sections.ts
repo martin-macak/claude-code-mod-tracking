@@ -29,7 +29,7 @@ const PR_COLUMNS: readonly ColumnDef[] = [
   PRIO_COLUMN,
   { id: 'key', header: 'PR', width: content(4, 10), role: 'tree' },
   { id: 'title', header: 'Title', width: flex(10) },
-  { id: 'type', header: 'Branch', width: content(undefined, 26), priority: 2 },
+  { id: 'type', header: 'Branch', width: content(undefined, 26), priority: 2, clip: 'middle' },
   { id: 'status', header: 'State', width: content(undefined, 8) },
   { id: 'extra', header: 'Checks', width: content(undefined, 10), priority: 1 },
 ]

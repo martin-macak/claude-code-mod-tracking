@@ -31,6 +31,8 @@ export interface ColumnDef {
   readonly role?: 'tree'
   /** Dropped first when the pane is narrow. */
   readonly priority?: number
+  /** Where a cell too long for its column is cut. Default 'end'. 'middle' keeps both ends of a branch or a path. */
+  readonly clip?: 'end' | 'middle'
 }
 
 /** One line of a row's detail. */

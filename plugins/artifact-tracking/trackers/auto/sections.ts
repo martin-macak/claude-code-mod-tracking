@@ -16,14 +16,14 @@ const OWNER = 'auto'
 
 const WORKTREE_COLUMNS: readonly ColumnDef[] = [
   { id: 'key', header: 'Worktree', width: content(8, 32), role: 'tree' },
-  { id: 'title', header: 'Branch', width: flex(10) },
+  { id: 'title', header: 'Branch', width: flex(10), clip: 'middle' },
   { id: 'status', header: 'State', width: content(undefined, 9), priority: 1 },
 ]
 
 const AGENT_COLUMNS: readonly ColumnDef[] = [
   { id: 'key', header: 'Agent', width: content(8, 26), role: 'tree' },
-  { id: 'title', header: 'Branch', width: flex(10) },
-  { id: 'type', header: 'Worktree', width: content(undefined, 20), priority: 1 },
+  { id: 'title', header: 'Branch', width: flex(10), clip: 'middle' },
+  { id: 'type', header: 'Worktree', width: content(undefined, 20), priority: 1, clip: 'middle' },
 ]
 
 /** What the person can do with the row. These rows have no level, so `priority` is always off. */

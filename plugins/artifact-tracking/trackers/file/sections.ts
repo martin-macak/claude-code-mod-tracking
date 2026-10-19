@@ -12,7 +12,7 @@ const COLUMNS: readonly ColumnDef[] = [
   PRIO_COLUMN,
   // The row's handle sits in this column, so it holds no text.
   { id: 'key', header: '', width: content(0, 0), role: 'tree' },
-  { id: 'title', header: 'File', width: flex(10) },
+  { id: 'title', header: 'File', width: flex(10), clip: 'middle' },
   { id: 'type', header: 'Origin', width: content(undefined, 9) },
   { id: 'status', header: 'Edits', width: content(undefined, 10), priority: 2 },
   { id: 'extra', header: 'Views', width: content(undefined, 10), priority: 2 },

@@ -26,6 +26,8 @@ export interface SolvedColumn {
   readonly width: number
   readonly justify: 'flex-start' | 'center' | 'flex-end'
   readonly tree: boolean
+  /** Where a cell too long for the column is cut. */
+  readonly clip: 'end' | 'middle'
 }
 
 export interface Solved {
@@ -127,6 +129,7 @@ export function solveColumns(sectionId: string, columns: readonly ColumnDef[], r
       width: s.width,
       justify: JUSTIFY[s.def.align ?? 'left'],
       tree: isTree(s.def),
+      clip: s.def.clip ?? 'end',
     })),
     dropped,
   }

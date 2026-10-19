@@ -13,8 +13,8 @@ import type { RepoRecord } from './types'
 
 const COLUMNS: readonly ColumnDef[] = [
   { id: 'key', header: 'Repo', width: content(6, 24), role: 'tree' },
-  { id: 'title', header: 'Branch', width: flex(10) },
-  { id: 'type', header: 'Agents', width: content(undefined, 20), priority: 1 },
+  { id: 'title', header: 'Branch', width: flex(10), clip: 'middle' },
+  { id: 'type', header: 'Agents', width: content(undefined, 20), priority: 1, clip: 'middle' },
   // `edit` and `read` are 4 wide.
   { id: 'status', header: 'Mode', width: fixed(4) },
 ]

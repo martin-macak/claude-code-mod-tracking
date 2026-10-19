@@ -7,6 +7,7 @@ import type { Json } from '../core/interfaces/items'
 import type { Tracker } from '../core/interfaces/tracker'
 import type { Cell, SectionSpec, TreeRow } from '../core/interfaces/view'
 import { listText } from '../hooks/pane-text'
+import { bandText } from '../ux/band'
 import { fakeConfig } from './fixtures/config-fs'
 import { managerWorld } from './fixtures/manager'
 import { KEYS, NOW, paneItems, paneWorld, seedPaneWorld, setBranches } from './fixtures/pane-world'
@@ -181,6 +182,22 @@ test('bandData orders by band rank: Jira, GitHub, Artifacts, Links, Files, …, 
   ])
 })
 
+// Main pinned `GitHub 1 (1 ✗)` in view.test.ts. The world has no failing PR that the conversation named.
+test('the GitHub band part counts the PRs the conversation named and the ones with failing checks', async () => {
+  const t = await paneWorld()
+  const keep: readonly string[] = [KEYS.pr, KEYS.draft, KEYS.head] // two named PRs, and one that only the lane found
+  const items = paneItems()
+    .filter(i => keep.includes(i.key))
+    .map(i => (i.key === KEYS.pr || i.key === KEYS.head ? { ...i, checks: 'failure' } : i))
+  t.w.state.set('items', items as unknown as Json)
+  const band = (await t.m.bandData(t.w.ports)).filter(s => s.id === 'github' || s.id === 'prs')
+  expect(band.map(s => s.band)).toEqual([
+    { label: 'GitHub', count: 2, failing: 1, rank: 2 }, // the lane's PR is not counted here
+    { label: 'PRs', count: 1, failing: 1, rank: 9 },
+  ])
+  expect(bandText(band)).toBe('GitHub 2 (1 ✗) · PRs 1 (1 ✗)')
+})
+
 test('paneData leaves out the sections of a tracker that is off', async () => {
   const t = await paneWorld({ off: ['web', 'github'] })
   expect(ids(await t.m.paneData(t.w.ports, NO_VIEW))).toEqual([
@@ -273,6 +290,27 @@ test('the github columns are A1’s, in order', async () => {
     2,
     1,
   ])
+})
+
+// Main cut these cells in the middle (`truncate-middle`): a branch or a path keeps both ends. Every other column is cut at the end.
+test('the branch and path columns cut in the middle, every other column at the end', async () => {
+  const t = await paneWorld()
+  const sections = await t.m.paneData(t.w.ports, NO_VIEW)
+  const middle = sections.flatMap(s => s.columns.filter(c => c.clip === 'middle').map(c => [s.id, c.id, c.header]))
+  expect(middle).toEqual([
+    ['worktrees', 'title', 'Branch'],
+    ['agents', 'title', 'Branch'],
+    ['agents', 'type', 'Worktree'],
+    ['prs', 'type', 'Branch'],
+    ['repos', 'title', 'Branch'],
+    ['repos', 'type', 'Agents'],
+    ['file', 'title', 'File'],
+  ])
+  const titles = section(sections, 'github').columns.find(c => c.id === 'title')
+  expect(titles?.clip ?? 'end').toBe('end')
+  expect(section(sections, 'prs').columns.find(c => c.id === 'title')?.clip ?? 'end').toBe('end')
+  for (const id of ['jira', 'web', 'artifact', 'processes'])
+    expect(section(sections, id).columns.filter(c => c.clip === 'middle')).toEqual([])
 })
 
 test('every section is placed by its rank and band rank (K2)', async () => {
@@ -510,6 +548,24 @@ test('artifact, web and file rows', async () => {
     'mentioned',
     '',
   ])
+})
+
+// Main pinned this on `buildPane` (view.test.ts). A trailing trim that backtracks takes seconds on this input; the tracker
+// trims with a backward loop. The slash run sits at the end of one URL and before an `x` in the other.
+test('the web section stays fast on a URL with a long slash run', async () => {
+  const t = await paneWorld()
+  const web = paneItems().find(i => i.key === KEYS.web)!
+  const urls = ['https://example.com/' + '/'.repeat(60_000), 'https://example.com/' + '/'.repeat(60_000) + 'x']
+  t.w.state.set(
+    'items',
+    urls.map((url, i) => ({ ...web, key: `web:${url}`, url, label: `Big ${i}`, via: undefined })) as unknown as Json,
+  )
+  const t0 = Date.now()
+  const sections = await t.m.paneData(t.w.ports, NO_VIEW)
+  expect(Date.now() - t0).toBeLessThan(200)
+  const titles = section(sections, 'web').rows.map(r => cell(r, 'title').text)
+  expect(titles[0]).toBe('example.com')
+  expect(titles[1]?.length).toBe('example.com'.length + 60_001 + 1)
 })
 
 test('can is always written', async () => {

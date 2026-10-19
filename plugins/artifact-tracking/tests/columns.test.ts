@@ -292,6 +292,13 @@ test('align maps to justify', () => {
   expect(s.columns.map(c => c.tree)).toEqual([false, false, false, false])
 })
 
+test('clip maps to the solved column: end by default, middle when the column says so', () => {
+  resetWidths()
+  const cols = [content('a', 'A'), content('b', 'B', { clip: 'middle' }), content('c', 'C', { clip: 'end' })]
+  const s = solveColumns('s', cols, [at(0, row('r', { a: 'x', b: 'y', c: 'z' }))], 100)
+  expect(s.columns.map(c => c.clip)).toEqual(['end', 'middle', 'end'])
+})
+
 test('a tree column is flagged', () => {
   resetWidths()
   expect(solveColumns('s', [tree('K')], [at(0, row('a', { key: 'x' }))], 100).columns[0]?.tree).toBe(true)

@@ -137,6 +137,21 @@ test('cells align with justifyContent from the column (U3)', () => {
   expect(head.slice(1).map(c => c.props.justifyContent)).toEqual(['flex-end', 'center', 'flex-start'])
 })
 
+test('a column with clip middle cuts a long cell as head…tail; an end column still cuts as head…', () => {
+  const cols: ColumnDef[] = [
+    { id: 'key', header: 'K', width: { kind: 'content' }, role: 'tree' },
+    { id: 'title', header: 'Branch', width: { kind: 'content', max: 12 }, clip: 'middle' },
+    { id: 'type', header: 'Name', width: { kind: 'content', max: 12 } },
+  ]
+  const long = 'feat/band-auto-tracking'
+  const { drawn } = draw([section('s', cols, [row('a', { key: 'a', title: long, type: long })])])
+  const [, middle, end] = cellsOf(only(rowBoxes(drawn.tree)))
+  expect(leaves(middle)).toEqual(['feat/b…cking'])
+  expect(leaves(end)).toEqual(['feat/band-a…'])
+  const short = draw([section('s', cols, [row('a', { key: 'a', title: 'feat/x', type: 'feat/y' })])])
+  expect(leaves(cellsOf(only(rowBoxes(short.drawn.tree)))[1])).toEqual(['feat/x'])
+})
+
 test('fg and bg map through the theme; bg sits on the cell Box (U4)', () => {
   const cell: Cell = { text: 'ok', fg: 'success', bg: 'accent' }
   const { drawn } = draw([section('web', COLS, [row('a', { key: 'k', title: cell })])])

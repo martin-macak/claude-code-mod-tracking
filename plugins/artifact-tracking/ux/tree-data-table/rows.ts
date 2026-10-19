@@ -3,7 +3,7 @@
 // Decisions G10, G19 of plan L6.
 import type { RenderElement } from 'claude-code'
 import type { Cell, DetailLine } from '../../core/interfaces/view'
-import { clipTo, normaliseCell } from '../text/cell-width'
+import { clipMiddle, clipTo, normaliseCell } from '../text/cell-width'
 import { COLOR, cellBox, cellText, GLYPH } from '../theme'
 import { cellNode, headerRow, shown, titleRow } from './cells'
 import { GAP, GLYPH_BOX, INDENT, type Solved, type SolvedColumn, solveColumns } from './columns'
@@ -54,7 +54,7 @@ function rowLine(d: Draw, solved: Solved, r: LaidRow): RenderElement {
     return box(
       d.el,
       { width: col.width, flexShrink: 0, justifyContent: col.justify, ...cellBox(cell) },
-      cellNode(d.el, cell, clipTo(normaliseCell(cell.text), col.width), dim),
+      cellNode(d.el, cell, (col.clip === 'middle' ? clipMiddle : clipTo)(normaliseCell(cell.text), col.width), dim),
     )
   })
   return box(
