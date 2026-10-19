@@ -3,11 +3,14 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.7. Plan: L4 Task 2.
 
 import { bool, type ConfigOf, int, type Schema, specOf } from '../../core/lib/normalise'
+import { PROMPT_RULE } from '../../core/lib/prompt-config'
 
 export const FILE_SCHEMA = {
   enabled: bool(true),
   /** `.md` paths read from one prompt or reply row. Each one costs a stat. 0 reads none (issue #28). */
   maxMentionsPerRow: int(20, 0, 200),
+  /** The opt-in list of tracked items in the model's system prompt. Off by default. */
+  prompt: PROMPT_RULE,
 } as const satisfies Schema
 
 export type FileConfig = ConfigOf<typeof FILE_SCHEMA>

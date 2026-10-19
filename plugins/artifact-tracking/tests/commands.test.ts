@@ -134,11 +134,8 @@ function fakeHost(
         note(`rowIdOf:${ref}`)
         return o.rowId?.(ref)
       },
-      setPriority: async (id, level) => {
-        note(`setPriority:${id}:${level}`)
-        return true
-      },
     },
+    setPriority: async (_p, id, level) => note(`setPriority:${id}:${level}`),
     broadcast: async (_p, ev: CommandEvent) => note(`broadcast:${ev.sub || '-'}:${ev.args}:${ev.wait}`),
     declared: () => o.declared ?? [],
     runDeclared: async (_p, owner, ev) => note(`run:${owner}:${ev.sub}:${ev.args}:${ev.wait}`),

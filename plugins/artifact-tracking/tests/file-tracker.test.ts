@@ -200,10 +200,19 @@ test('a refused item write does not reject the dispatch', async () => {
 test('config: enabled is a flag and maxMentionsPerRow a whole number from 0; bad values warn', () => {
   const list: string[] = []
   const warn = (p: string) => void list.push(p)
-  expect(fileConfig.defaults).toEqual({ enabled: true, maxMentionsPerRow: LIMITS.maxMentionsPerRow })
+  expect(fileConfig.defaults).toEqual({
+    enabled: true,
+    maxMentionsPerRow: LIMITS.maxMentionsPerRow,
+    prompt: { enabled: false, maxItems: 20 },
+  })
   expect(Object.isFrozen(fileConfig.defaults)).toBe(true)
   const good = fileConfig.normalise({ enabled: false, maxMentionsPerRow: 5, extra: 1 }, fileConfig.defaults, warn)
-  expect(good).toEqual({ enabled: false, maxMentionsPerRow: 5, extra: 1 })
+  expect(good).toEqual({
+    enabled: false,
+    maxMentionsPerRow: 5,
+    extra: 1,
+    prompt: { enabled: false, maxItems: 20 },
+  })
   expect(list).toEqual(['extra: unknown key. The mod keeps it and ignores it.'])
   // 0 is valid (read no mention). A decimal is no whole number: the default.
   expect(fileConfig.normalise({ maxMentionsPerRow: 0 }, fileConfig.defaults, warn).maxMentionsPerRow).toBe(0)

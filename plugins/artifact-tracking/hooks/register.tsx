@@ -286,6 +286,11 @@ export const register: Register = on => {
     return next(e)
   }).catch((_$, e, next) => next(e))
 
-  // PromptComposer comes in layer L7. Until then the hook passes the prompt on (decision D19).
-  on('prompt.compose', (_$, e, next) => next(e)).catch((_$, e, next) => next(e))
+  // The tracked items as one session section, added after the engine's own (spec 5.11). The manager builds its text at
+  // the boundaries of the lifecycle, so this reads module memory only: no engine call, no start, no state write, and no
+  // session check. A load that has no manager yet returns the engine's list.
+  on('prompt.compose', async (_$, e, next) => {
+    const answer = await next(e)
+    return { sections: manager?.compose(e, answer.sections) ?? answer.sections }
+  }).catch((_$, e, next) => next(e))
 }

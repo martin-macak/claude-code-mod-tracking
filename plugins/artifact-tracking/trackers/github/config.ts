@@ -3,6 +3,7 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.7. Plan: L4 Task 2 (decisions C2, C15).
 
 import { bool, type ConfigOf, int, type Schema, specOf, words } from '../../core/lib/normalise'
+import { PROMPT_RULE } from '../../core/lib/prompt-config'
 
 export const GITHUB_SCHEMA = {
   enabled: bool(true),
@@ -19,6 +20,8 @@ export const GITHUB_SCHEMA = {
   maxAutoItems: int(100, 1, 200),
   /** The lead words that opt a conversation `#N` in (today the regex in `hooks/scan/refs.ts`). */
   shortRefKeywords: words(['github', 'bug', 'issue', 'issues', 'enhancement', 'chore'], 32),
+  /** The opt-in list of tracked items in the model's system prompt. Off by default. */
+  prompt: PROMPT_RULE,
 } as const satisfies Schema
 
 export type GithubConfig = ConfigOf<typeof GITHUB_SCHEMA>

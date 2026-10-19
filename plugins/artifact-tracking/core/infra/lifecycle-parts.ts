@@ -1,12 +1,11 @@
 // The parts the LifecycleManager hands to the collaborators it builds: the item host (the ItemService, unless a host was
 // given), the host of the `/track` router, the Persistence and the Scheduler. They sit here so the manager's constructor
-// only wires; each one reads the manager and the other parts lazily, because the parts are built in an order in which one
-// needs another.
+// only wires. Each reads the manager and the other parts lazily, because one is built before another that it needs.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.6. Plan: L5 Tasks 8 and 9, K15, K19.
 
 import type { ConfigService, ConfigSource } from '../interfaces/config'
 import type { CommandEvent } from '../interfaces/events'
-import type { ItemsHost } from '../interfaces/items'
+import type { ItemsHost, Level } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
@@ -54,6 +53,7 @@ export function itemHostOf(given: ItemsHost | undefined, w: ItemHostWiring): Ite
 export interface CommandOwner {
   entry(p: Ports): Promise<void>
   command(p: Ports, ev: CommandEvent): Promise<void>
+  setPriority(p: Ports, rowId: string, level: Level | undefined): Promise<void>
   clear(p: Ports): Promise<void>
   flushNow(): Promise<void>
   refreshConfig(p: Ports): Promise<boolean>
@@ -76,6 +76,7 @@ export function commandHostOf(
     openPane: async p => {
       if (!(await p.ui.open())) p.ui.toast('Widen the terminal to see the tracking pane')
     },
+    setPriority: (p, rowId, level) => m.setPriority(p, rowId, level),
     clear: p => m.clear(p),
     flushNow: () => m.flushNow(),
     refreshConfig: p => m.refreshConfig(p),
@@ -132,8 +133,7 @@ export function schedulerOf(ports: Ports, config: ConfigSource, beat: () => Prom
 }
 
 /**
- * Checks the config file and, when it changed, re-arms the tick (a new `tickMs`) and redraws the pane (a toggle, a
- * problem). Never rejects: a failure is logged and counts as no change. The file is read when its signature moved.
+ * Checks the config file; a change re-arms the tick and redraws the pane. Never rejects: a failure counts as no change.
  */
 export function configRefresher(
   config: Pick<ConfigService, 'refresh'>,

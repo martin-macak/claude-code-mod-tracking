@@ -68,6 +68,24 @@ test('viewOf of an id no list holds rejects', async () => {
   await expect(t.m.viewOf(t.w.ports, 'nobody')).rejects.toThrow('views: no tracker nobody')
 })
 
+test('viewsOf gives the contexts in the order asked, over one read of the atoms', async () => {
+  const t = await paneWorld()
+  const [jira, github] = await t.m.viewsOf(t.w.ports, ['jira', 'github'])
+  expect(jira?.config.slice()).toEqual(t.m.config.slice('jira'))
+  expect(github?.config.slice()).toEqual(t.m.config.slice('github'))
+  expect(github?.data).toEqual((await t.m.viewOf(t.w.ports, 'github')).data)
+  expect(jira?.items).toBe(github?.items) // one read: the same list
+  expect(jira?.selected).toBeNull()
+  expect(await t.m.viewsOf(t.w.ports, [])).toEqual([])
+})
+
+test('viewsOf rejects an id no list holds, and gives every context the view it was asked for', async () => {
+  const t = await paneWorld()
+  await expect(t.m.viewsOf(t.w.ports, ['github', 'nobody'])).rejects.toThrow('views: no tracker nobody')
+  const [github] = await t.m.viewsOf(t.w.ports, ['github'], { selected: KEYS.issue, expanded: new Set() })
+  expect(github?.selected).toBe(KEYS.issue)
+})
+
 test('a view leaves out the items of a tracker that is off', async () => {
   const t = await paneWorld({ off: ['web'] })
   const ctx = await t.m.viewOf(t.w.ports, 'github')

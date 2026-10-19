@@ -15,7 +15,7 @@ import type { JsonObject } from '../core/interfaces/items'
 import type { FsStat } from '../core/interfaces/ports'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { GITHUB_DEFAULTS, githubConfig } from '../trackers/github/config'
-import { webConfig } from '../trackers/web/config'
+import { WEB_DEFAULTS, webConfig } from '../trackers/web/config'
 
 const SPECS: readonly DocSpec[] = [
   { id: 'github', config: githubConfig },
@@ -137,7 +137,7 @@ test('normaliseDoc: an empty object gives the defaults, version 1, no problem', 
   expect(doc.readOnly).toBe(false)
   expect(doc.global).toEqual(GLOBAL_DEFAULTS)
   expect(doc.slices.get('github')).toEqual(GITHUB_DEFAULTS)
-  expect(doc.slices.get('web')).toEqual({ enabled: true })
+  expect(doc.slices.get('web')).toEqual(WEB_DEFAULTS)
   expect(doc.problems).toEqual([])
 })
 
@@ -153,7 +153,7 @@ test('normaliseDoc: a complete file gives its values and no problem', () => {
   expect(doc.global.refresh.tickMs).toBe(60000)
   expect(doc.global.refresh.staleMs).toBe(GLOBAL_DEFAULTS.refresh.staleMs)
   expect(doc.slices.get('github')?.chunkSize).toBe(10)
-  expect(doc.slices.get('web')).toEqual({ enabled: false })
+  expect(doc.slices.get('web')).toEqual({ ...WEB_DEFAULTS, enabled: false })
   expect(doc.problems).toEqual([])
 })
 
@@ -241,7 +241,7 @@ test('normaliseDoc: trackers that is not an object gives the default slices and 
   for (const bad of [[], 'x', null]) {
     const doc = normaliseDoc({ trackers: bad }, SPECS)
     expect(doc.slices.get('github')).toEqual(GITHUB_DEFAULTS)
-    expect(doc.slices.get('web')).toEqual({ enabled: true })
+    expect(doc.slices.get('web')).toEqual(WEB_DEFAULTS)
     expect(doc.problems).toEqual([`trackers: ${JSON.stringify(bad)} is not an object. Using the defaults.`])
   }
 })
@@ -254,7 +254,7 @@ test('normaliseDoc: an unknown tracker id is kept and named', () => {
 
 test('normaliseDoc: an inherited name is not a tracker slice', () => {
   const doc = normaliseDoc({ trackers: {} }, [{ id: 'constructor', config: webConfig }])
-  expect(doc.slices.get('constructor')).toEqual({ enabled: true })
+  expect(doc.slices.get('constructor')).toEqual(WEB_DEFAULTS)
   expect(doc.problems).toEqual([])
 })
 

@@ -93,7 +93,7 @@ test('a missing file reads the defaults; reconcile writes the defaults and the s
   expect(parsed(text)).toEqual({
     version: 1,
     global: GLOBAL_DEFAULTS,
-    trackers: { github: GITHUB_DEFAULTS, web: { enabled: true } },
+    trackers: { github: GITHUB_DEFAULTS, web: WEB_DEFAULTS },
   })
   expect(text.startsWith('{\n  "version": 1,\n  "global": {\n    "refresh": {\n      "tickMs": 30000,')).toBe(true)
   expect(text.endsWith('}\n')).toBe(true)
@@ -148,7 +148,7 @@ test('a file that lacks a key is written once, with version, global and trackers
   expect(fake.writes).toHaveLength(1)
   const file = parsed(fake.files.get(P))
   expect(Object.keys(file)).toEqual(['version', 'global', 'trackers', 'zeta', 'alpha'])
-  expect(file.trackers.web).toEqual({ enabled: false })
+  expect(file.trackers.web).toEqual({ enabled: false, prompt: { enabled: false, maxItems: 20 } })
 })
 
 test('a migrated file is written even when no key is missing', async () => {
@@ -178,7 +178,7 @@ test('a partial file gains version first, global and the missing tracker; user v
   await manager.reconcile(STORED)
   const file = parsed(fake.files.get(P))
   expect(Object.keys(file)).toEqual(['version', 'global', 'trackers'])
-  expect(file.trackers.web).toEqual({ enabled: false })
+  expect(file.trackers.web).toEqual({ enabled: false, prompt: { enabled: false, maxItems: 20 } })
   expect(file.trackers.github).toEqual(GITHUB_DEFAULTS)
   expect(Object.keys(file.trackers)).toEqual(['web', 'github'])
   expect(manager.enabled('web')).toBe(false)
@@ -188,7 +188,7 @@ test('a partial file gains version first, global and the missing tracker; user v
 test('a store result is written only for a tracker that has one', async () => {
   const { fake, manager } = make()
   await manager.reconcile(new Map<string, JsonObject>([['web', WEB_DEFAULTS]]))
-  expect(parsed(fake.files.get(P)).trackers).toEqual({ web: { enabled: true } })
+  expect(parsed(fake.files.get(P)).trackers).toEqual({ web: WEB_DEFAULTS })
 })
 
 test('an equal signature is not read again; a changed one is', async () => {

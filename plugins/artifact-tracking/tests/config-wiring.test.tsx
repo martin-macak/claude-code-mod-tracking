@@ -64,7 +64,7 @@ test('web off: a web link is not tracked, a GitHub item is, and /track shows no 
   expect(text).not.toContain('example.com')
   // The first start completed the file: the user's off switch stays, the global block and the other slices come in.
   const doc = written(w)
-  expect(doc.trackers.web).toEqual({ enabled: false })
+  expect(doc.trackers.web).toEqual({ enabled: false, prompt: { enabled: false, maxItems: 20 } })
   expect(doc.global.refresh.tickMs).toBe(30000)
   expect(doc.trackers.github!.enabled).toBe(true)
 })

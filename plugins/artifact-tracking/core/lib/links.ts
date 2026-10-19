@@ -66,16 +66,21 @@ export function trimEnd(s: string, chars: string): string {
   return s.slice(0, e)
 }
 
+/** The host (with the port) and the path of a URL, the path with no trailing slash. Null when `url` does not parse. */
+export function urlParts(url: string): { host: string; path: string } | null {
+  try {
+    const u = new URL(url)
+    return { host: u.host, path: trimEnd(u.pathname, '/') }
+  } catch {
+    return null
+  }
+}
+
 /** `host/path` of a URL for a label: no scheme, query or trailing slash, at most 60 chars. */
 export function hostPath(url: string): string {
-  let u: URL | null = null
-  try {
-    u = new URL(url)
-  } catch {
-    // Not a URL: the label is the text without its scheme.
-  }
-  const raw = u ? u.host + u.pathname : url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
-  const s = trimEnd(raw, '/')
+  const parts = urlParts(url)
+  // Not a URL: the label is the text without its scheme.
+  const s = parts ? parts.host + parts.path : trimEnd(url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, ''), '/')
   return s.length > MAX_LABEL ? s.slice(0, MAX_LABEL - 1) + '\u2026' : s
 }
 

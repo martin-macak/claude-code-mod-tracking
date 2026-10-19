@@ -19,7 +19,9 @@ export { CORE_HINT, PRIO_WORDS, problemsText, USAGE } from './command-text'
 export interface CommandHost {
   /** The first step of every hook that reads session data: the start, the session check. */
   entry(p: Ports): Promise<void>
-  readonly items: Pick<ItemsHost, 'ready' | 'prepare' | 'settle' | 'kick' | 'refreshAll' | 'rowIdOf' | 'setPriority'>
+  readonly items: Pick<ItemsHost, 'ready' | 'prepare' | 'settle' | 'kick' | 'refreshAll' | 'rowIdOf'>
+  /** The person's mark on a row: the item host stores it and the prompt text follows (S14). */
+  setPriority(p: Ports, rowId: string, level: Priority | undefined): Promise<void>
   /** The `command` event to every live tracker, in `order`. */
   broadcast(p: Ports, ev: CommandEvent): Promise<void>
   /** The sub-commands of the live trackers, in `order`. */
@@ -110,7 +112,7 @@ export class Commands {
     const { items } = this.host
     const id = await items.rowIdOf(ref)
     if (id === undefined) return { text: `Not tracked: ${ref}` }
-    await items.setPriority(id, word === 'auto' ? undefined : (word as Priority))
+    await this.host.setPriority(p, id, word === 'auto' ? undefined : (word as Priority))
     try {
       await this.host.flushNow() // `claude -p` can exit right after the reply: save now, not after flushMs
     } catch {

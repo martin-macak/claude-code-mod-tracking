@@ -6,12 +6,14 @@ import { expect, test } from 'claude-code/testing'
 import type { Found } from '../core/lib/links'
 import {
   emittedUrl,
+  hostPath,
   MAX_TEXT,
   mergeLinks,
   normalizeUrl,
   scanMarkdown,
   scanOsc8,
   textOfContent,
+  urlParts,
 } from '../core/lib/links'
 
 const links = (text: string, opts = {}) =>
@@ -376,4 +378,18 @@ test('mergeLinks: a repeat only counts up; kinds and web flags are kept apart; t
   expect(capped.list.map(c => c.url)).toEqual(['https://y.org/', 'https://z.org/'])
   expect(normalizeUrl(' https://x.org ')).toBe('https://x.org/')
   expect(normalizeUrl('tel:+1')).toBe('tel:+1')
+})
+
+test('urlParts gives the host with its port and the path with no trailing slash, and null for a text that is no URL', () => {
+  expect(urlParts('https://user:tok@example.com:8443/a/b/?q=1#f')).toEqual({ host: 'example.com:8443', path: '/a/b' })
+  expect(urlParts('https://example.com/')).toEqual({ host: 'example.com', path: '' })
+  expect(urlParts('file:///tmp/x//')).toEqual({ host: '', path: '/tmp/x' })
+  expect(urlParts('not a url')).toBeNull()
+})
+
+test('hostPath builds on urlParts: a URL with no host keeps its path, a text that is no URL loses only its scheme', () => {
+  expect(hostPath('https://example.com:8443/a/b/?q=1')).toBe('example.com:8443/a/b')
+  expect(hostPath('file:///tmp/x/')).toBe('/tmp/x')
+  expect(hostPath('mailto:a@b.example')).toBe('a@b.example')
+  expect(hostPath('example.com/a/')).toBe('example.com/a')
 })
