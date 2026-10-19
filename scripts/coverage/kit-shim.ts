@@ -6,8 +6,21 @@
 // The matchers follow the kit's `expect`, checked against `claude plugin test`
 // 2.1.302 (see kit-shim.test.ts). Where the kit differs from Jest, the kit wins:
 // `toEqual` does not compare Errors by message, ignores symbol keys and array holes.
+//
+// It also sets the global `h` when none exists. A `ux/` module is `.ts` and calls `h(tag, props, ...children)` by name
+// (spec 7.1), so node can load and measure it. The engine's own `h` is a global of the kit, so the shim never runs
+// there; tests/h-shape.kit.test.ts pins the shape built here to the shape the engine builds.
 import { test as nodeTest } from 'node:test'
 import { inspect } from 'node:util'
+
+declare global {
+  // The engine's signature (claude-code 2.1.302 d.ts, `const h`), with the return left open: a node test reads plain data.
+  var h: (
+    tag: string | ((props: never) => unknown),
+    props: Record<string, unknown> | null | undefined,
+    ...children: unknown[]
+  ) => unknown
+}
 
 type Body = ($: unknown, on: unknown) => unknown
 
@@ -280,3 +293,39 @@ export const expect = Object.assign(expectation, {
   stringMatching: (pattern: string | RegExp) =>
     new Asymmetric(`StringMatching ${show(pattern)}`, v => typeof v === 'string' && new RegExp(pattern).test(v)),
 })
+
+// ---- the global h ----
+
+/** The flat list of children without null, undefined, false and true. A number becomes its string. */
+function flatChildren(list: readonly unknown[], out: unknown[] = []): unknown[] {
+  for (const child of list) {
+    if (Array.isArray(child)) flatChildren(child, out)
+    else if (child === null || child === undefined || typeof child === 'boolean') continue
+    else out.push(typeof child === 'number' ? String(child) : child)
+  }
+  return out
+}
+
+/**
+ * What the engine builds, checked on `claude plugin test` 2.1.302 (tests/h-shape.kit.test.ts). A string tag gives
+ * `{ type, props, children }`, but the engine leaves out `props` when no prop is left and `children` when there is none,
+ * and it drops a prop that holds null or undefined, and `children` in the props. A function tag is called with the props
+ * as given and `children`, always a list. The engine also checks a tag (a Button needs `onPress`, a Text takes no `key`)
+ * and moves `onPress` to a handle. The stand-in does none of that: it is for a table of plain elements (`EL`).
+ */
+function fakeH(
+  tag: string | ((props: never) => unknown),
+  props: Record<string, unknown> | null | undefined,
+  ...children: unknown[]
+): unknown {
+  const flat = flatChildren(children)
+  if (typeof tag === 'function') return tag({ ...props, children: flat } as never)
+  const kept = Object.entries(props ?? {}).filter(([k, v]) => k !== 'children' && v !== null && v !== undefined)
+  return {
+    type: tag,
+    ...(kept.length > 0 ? { props: Object.fromEntries(kept) } : {}),
+    ...(flat.length > 0 ? { children: flat } : {}),
+  }
+}
+
+if (globalThis.h === undefined) globalThis.h = fakeH
