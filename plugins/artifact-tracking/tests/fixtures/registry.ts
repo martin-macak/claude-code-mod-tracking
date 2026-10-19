@@ -1,9 +1,9 @@
 // Pure functions over lists of ItemRecord: conversion, merge, dedupe, caps, re-key (spec 6.2, 10).
-// A binding over the item kinds and the record algebra (plan L5, Task 4): each function keeps its old signature and
-// forwards to `core/lib/records.ts` with the table of the five shipped kinds. Task 15 moves it to the test fixtures.
-// No input list or record is mutated.
+// A test binding over the item kinds and the record algebra (plan L5, Tasks 4 and 15): each function keeps its old
+// signature and forwards to `core/lib/records.ts` with the table of the five shipped kinds. Production code does not
+// import it. No input list or record is mutated.
 
-import type { Claim, ItemKind, JsonObject, StoredItem } from '../../core/interfaces/items'
+import type { Claim, JsonObject, StoredItem } from '../../core/interfaces/items'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import {
   applyRefresh,
@@ -17,22 +17,17 @@ import {
   migrateRecords,
   unionRecords as unionKinds,
 } from '../../core/lib/records'
-import { artifactKind } from '../../trackers/artifact/kind'
+import { KINDS } from '../../trackers'
 import { markArtifactDeleted } from '../../trackers/artifact/records'
-import { fileKind, fileRecord } from '../../trackers/file/kind'
+import { fileRecord } from '../../trackers/file/kind'
 import { resolveBareRefs as resolveBare } from '../../trackers/github/bare'
 import { GitHubItem } from '../../trackers/github/github-item'
-import { githubKind } from '../../trackers/github/kind'
 import { JiraItem } from '../../trackers/jira/jira-item'
-import { jiraKind } from '../../trackers/jira/kind'
-import { webKind } from '../../trackers/web/kind'
-import type { FileActivity, FileRecord, HydratedItem, ItemRecord, Ref, RepoRef, Sighting, Tools } from '../contracts'
+import type { FileActivity, FileRecord, HydratedItem, ItemRecord, Ref, RepoRef, Sighting, Tools } from './contracts'
 import { keyOf } from './keys'
 
-export { enforceCap, MAX_PINNED, markArtifactDeleted }
+export { enforceCap, KINDS, MAX_PINNED, markArtifactDeleted }
 
-/** The shipped item kinds, in claim order. */
-export const KINDS: readonly ItemKind[] = [githubKind, jiraKind, artifactKind, fileKind, webKind]
 const byCategory = new Map(KINDS.map(k => [k.category, k]))
 const table: KindTable = category => byCategory.get(category)
 
@@ -56,6 +51,11 @@ export function recordFromFile(
   s: Sighting,
 ): FileRecord {
   return fileRecord(hit, s)
+}
+
+/** The record a claim makes, or null when its kind makes none (`ItemStorePort.build` over the shipped kinds). */
+export function buildRecord(claim: Claim): StoredItem | null {
+  return table(claim.category)?.merge(null, claim) ?? null
 }
 
 // ---------------------------------------------------------------- merge
@@ -164,8 +164,7 @@ function plainItem(rec: ItemRecord): HydratedItem {
 /**
  * `ttl` is how long an item stays current. It is read at each check; the default is today's. The item classes of the
  * two kinds that refresh take their tool from `tools`. No production code calls it since plan L5, Task 7: the coordinator's
- * lanes build items through `ItemKind.refresh.hydrate`. The registry, global-values and kinds tests still do, until Task 15
- * moves this binding to the test fixtures.
+ * lanes build items through `ItemKind.refresh.hydrate`. The registry, global-values and kinds tests still do.
  */
 export function hydrate(rec: ItemRecord, tools: Tools, ttl?: () => Ttl): HydratedItem {
   const staleMs = ttl && (() => ttl().staleMs)

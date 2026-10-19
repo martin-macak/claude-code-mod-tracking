@@ -1,7 +1,7 @@
 // AutoScheduler: fixed window, immediate tick and manual, busy guard, errors, refused timers. Pure, fake clock.
 import { expect, test } from 'claude-code/testing'
-import type { AutoReason } from '../hooks/contracts'
 import { AutoScheduler } from '../trackers/auto/scheduler'
+import type { AutoReason } from './fixtures/contracts'
 import { LIMITS } from './fixtures/limits'
 
 type FakeTimer = { at: number; fn: () => void | Promise<void>; cancelled: boolean; refused: boolean; fired: boolean }

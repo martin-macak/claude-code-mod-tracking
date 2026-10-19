@@ -1,6 +1,17 @@
 // Parse `git worktree list --porcelain` (spec 9.1). Pure: no `$`, no I/O.
 
-import type { GitWorktree } from '../../hooks/contracts'
+/** One entry of `git worktree list --porcelain`. */
+export type GitWorktree = {
+  path: string
+  head?: string
+  /** Without `refs/heads/`. Absent when detached or bare. */
+  branch?: string
+  detached: boolean
+  bare: boolean
+  /** Lock reason ('' when locked with none). */
+  locked?: string
+  prunable?: string
+}
 
 /** A path without trailing slashes. The root `/` stays. */
 export function normPath(path: string): string {

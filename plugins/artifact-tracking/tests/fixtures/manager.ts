@@ -8,12 +8,11 @@ import type { ConfigService } from '../../core/interfaces/config'
 import type { ToolCallEvent } from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
-import { autoGithubOf } from '../../hooks/auto-github'
-import type { ItemRecord } from '../../hooks/contracts'
 import { listText } from '../../hooks/list-text'
-import { buildTrackers } from '../../trackers'
+import { TRACKERS } from '../../trackers'
 import { autoDismiss } from '../../trackers/auto/dismiss-store'
 import { fakeConfig } from './config-fs'
+import type { ItemRecord } from './contracts'
 import { ghAcliRun, type ItemsOpts } from './items'
 import { type FakeOpts, fakePorts } from './ports'
 
@@ -36,8 +35,7 @@ export function managerWorld(o: ManagerOpts = {}) {
   })
   w.run = ghAcliRun(o)
   let m: LifecycleManager | undefined
-  const autoGithub = autoGithubOf({ manager: () => m, now: w.ports.clock.wall })
-  const trackers = [...(o.trackers ? o.trackers() : buildTrackers({ autoGithub })), ...(o.extra ?? [])]
+  const trackers = [...(o.trackers ? o.trackers() : TRACKERS), ...(o.extra ?? [])]
   const cfg = (o.config ?? (specs => fakeConfig({ specs })))(trackers)
   m = new LifecycleManager(
     {
@@ -56,5 +54,5 @@ export function managerWorld(o: ManagerOpts = {}) {
   const call = (tool: string, input: Record<string, unknown>, result: unknown, extra: Partial<ToolCallEvent> = {}) =>
     m.toolCall(w.ports, { tool, input: { tool, ...input } as Json, result: (result ?? null) as Json, ...extra })
   const manager = m
-  return { w, rt, m: manager, cfg, items, keys, call, autoGithub }
+  return { w, rt, m: manager, cfg, items, keys, call }
 }

@@ -30,7 +30,7 @@ export const LIMITS = {
   basePrsPerBranch: GITHUB_DEFAULTS.basePrsPerBranch,
   closingRefsPerPr: GITHUB_DEFAULTS.closingRefsPerPr,
   maxBodyRefs: GITHUB_DEFAULTS.maxBodyRefs,
-  maxAutoItems: AUTO_DEFAULTS.maxAutoItems,
+  maxAutoItems: GITHUB_DEFAULTS.maxAutoItems,
   maxProofs: AUTO_DEFAULTS.maxProofs,
   maxAgents: AUTO_DEFAULTS.maxAgents,
   maxDismissed: GLOBAL_DEFAULTS.store.maxDismissed,

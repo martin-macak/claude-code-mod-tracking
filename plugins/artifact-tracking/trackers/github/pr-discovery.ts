@@ -1,17 +1,11 @@
 // PR discovery (spec A8, 8.3, 9.2): one aliased GraphQL query for the PRs whose head or base is a tracked branch.
 // Pure around an injected GitHubDiscoveryApi. No `$`.
 
+import type { RepoRef } from '../../core/interfaces/ports'
 import { dig, isRecord } from '../../core/lib/json'
-import type {
-  DiscoveredPr,
-  DiscoveryOutcome,
-  GitHubDiscoveryApi,
-  GitHubState,
-  GraphqlReply,
-  RepoRef,
-} from '../../hooks/contracts'
 import { GITHUB_DEFAULTS, PR_LANE_DEFAULTS, type PrLane } from './config'
 import { rollupToChecks } from './gh-tool'
+import type { DiscoveredPr, DiscoveryOutcome, DiscoveryTool, GitHubState, GraphqlReply } from './types'
 
 export type Alias = { branch: string; by: 'head' | 'base' }
 
@@ -27,7 +21,7 @@ const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : und
 
 /**
  * A head alias (open, merged, closed) and a base alias (open) per branch. The known default branch gets none.
- * `lane` holds the `first:` counts. The auto round passes the github slice; a direct caller gets today's numbers.
+ * `lane` holds the `first:` counts. The PR lane passes the github slice; a direct caller gets today's numbers.
  */
 export function buildDiscoveryQuery(
   repo: RepoRef,
@@ -155,7 +149,7 @@ export function parseDiscovery(
 
 /** Skip reasons first (spec 8.3 step 1), then one query. A failed outcome becomes a skip or an error. */
 export async function discoverPrs(
-  gh: GitHubDiscoveryApi,
+  gh: DiscoveryTool,
   repo: RepoRef | null,
   branches: readonly string[],
   now: number,

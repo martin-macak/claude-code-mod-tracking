@@ -7,7 +7,7 @@ import type { ConfigSpec } from '../core/interfaces/config'
 import type { JsonObject } from '../core/interfaces/items'
 import { GLOBAL_DEFAULTS, GLOBAL_SCHEMA, normaliseGlobal } from '../core/lib/global-config'
 import { defaultsOf, type Schema } from '../core/lib/normalise'
-import { buildTrackers } from '../trackers'
+import { TRACKERS } from '../trackers'
 import { ARTIFACT_DEFAULTS, ARTIFACT_SCHEMA, artifactConfig } from '../trackers/artifact/config'
 import { AUTO_DEFAULTS, AUTO_SCHEMA, autoConfig } from '../trackers/auto/config'
 import { FILE_DEFAULTS, FILE_SCHEMA, fileConfig } from '../trackers/file/config'
@@ -16,6 +16,7 @@ import { JIRA_DEFAULTS, JIRA_SCHEMA, jiraConfig } from '../trackers/jira/config'
 import { PROCESSES_DEFAULTS, PROCESSES_SCHEMA, processesConfig } from '../trackers/processes/config'
 import { REPOS_DEFAULTS, REPOS_SCHEMA, reposConfig } from '../trackers/repos/config'
 import { WEB_DEFAULTS, WEB_SCHEMA, webConfig } from '../trackers/web/config'
+import { fakeConfig } from './fixtures/config-fs'
 import { LIMITS } from './fixtures/limits'
 
 /** Every spec by tracker id, with its schema and defaults. */
@@ -80,12 +81,34 @@ test("the values outside LIMITS equal today's constants", () => {
   expect(GLOBAL_DEFAULTS.ui).toEqual({ maxRows: 300, sectionRows: 50 })
 })
 
-test('PR_LANE_DEFAULTS agrees with AUTO_DEFAULTS and GITHUB_DEFAULTS', () => {
-  expect(PR_LANE_DEFAULTS.maxBranches).toBe(AUTO_DEFAULTS.maxBranches)
-  expect(PR_LANE_DEFAULTS.maxAutoItems).toBe(AUTO_DEFAULTS.maxAutoItems)
-  expect(PR_LANE_DEFAULTS.headPrsPerBranch).toBe(GITHUB_DEFAULTS.headPrsPerBranch)
-  expect(PR_LANE_DEFAULTS.basePrsPerBranch).toBe(GITHUB_DEFAULTS.basePrsPerBranch)
-  expect(PR_LANE_DEFAULTS.closingRefsPerPr).toBe(GITHUB_DEFAULTS.closingRefsPerPr)
+test('PR_LANE_DEFAULTS is the lane part of GITHUB_DEFAULTS', () => {
+  expect(PR_LANE_DEFAULTS).toEqual({
+    headPrsPerBranch: GITHUB_DEFAULTS.headPrsPerBranch,
+    basePrsPerBranch: GITHUB_DEFAULTS.basePrsPerBranch,
+    closingRefsPerPr: GITHUB_DEFAULTS.closingRefsPerPr,
+    maxBodyRefs: GITHUB_DEFAULTS.maxBodyRefs,
+    maxAutoItems: GITHUB_DEFAULTS.maxAutoItems,
+  })
+})
+
+test('config-specs: maxAutoItems and maxBranches have one owner each', () => {
+  expect('maxAutoItems' in GITHUB_DEFAULTS).toBe(true)
+  expect('maxAutoItems' in AUTO_DEFAULTS).toBe(false)
+  expect('maxBranches' in AUTO_DEFAULTS).toBe(true)
+  expect('maxBranches' in GITHUB_DEFAULTS).toBe(false)
+  expect('maxBranches' in PR_LANE_DEFAULTS).toBe(false) // the lane polls the branches auto publishes
+})
+
+test('config-specs: a file that still sets trackers.auto.maxAutoItems is told where the key went', () => {
+  const cfg = fakeConfig({ specs: TRACKERS, file: { trackers: { auto: { maxAutoItems: 2 } } } })
+  expect(cfg.problems()).toEqual([
+    'trackers.auto.maxAutoItems: moved to trackers.github.maxAutoItems. The mod keeps it and ignores it here.',
+  ])
+  expect(cfg.slice('github').maxAutoItems).toBe(GITHUB_DEFAULTS.maxAutoItems) // the old key sets nothing
+  expect(fakeConfig({ specs: TRACKERS, file: { trackers: { auto: { maxBranches: 3 } } } }).problems()).toEqual([])
+  const moved = fakeConfig({ specs: TRACKERS, file: { trackers: { github: { maxAutoItems: 2 } } } })
+  expect(moved.problems()).toEqual([])
+  expect(moved.slice('github').maxAutoItems).toBe(2)
 })
 
 test('the slices hold exactly the keys of the Defaults table', () => {
@@ -100,6 +123,7 @@ test('the slices hold exactly the keys of the Defaults table', () => {
     'headPrsPerBranch',
     'basePrsPerBranch',
     'maxBodyRefs',
+    'maxAutoItems',
     'shortRefKeywords',
   ])
   expect(Object.keys(JIRA_DEFAULTS)).toEqual(['enabled', 'concurrency', 'epicChildLimit'])
@@ -112,7 +136,6 @@ test('the slices hold exactly the keys of the Defaults table', () => {
     'gitTimeoutMs',
     'workflowIdleMs',
     'maxBranches',
-    'maxAutoItems',
     'maxProofs',
     'maxAgents',
   ])
@@ -164,6 +187,7 @@ const TABLE: readonly (readonly [string, number, number])[] = [
   ['trackers.github.headPrsPerBranch', 1, 50],
   ['trackers.github.basePrsPerBranch', 1, 50],
   ['trackers.github.maxBodyRefs', 1, 200],
+  ['trackers.github.maxAutoItems', 1, 200],
   ['trackers.jira.concurrency', 1, 10],
   ['trackers.jira.epicChildLimit', 1, 500],
   ['trackers.file.maxMentionsPerRow', 0, 200],
@@ -176,7 +200,6 @@ const TABLE: readonly (readonly [string, number, number])[] = [
   ['trackers.auto.gitTimeoutMs', 500, 60000],
   ['trackers.auto.workflowIdleMs', 60000, 86400000],
   ['trackers.auto.maxBranches', 1, 50],
-  ['trackers.auto.maxAutoItems', 1, 200],
   ['trackers.auto.maxProofs', 10, 1000],
   ['trackers.auto.maxAgents', 10, 2000],
 ]
@@ -266,18 +289,9 @@ test('the github keyword list is lowercased, deduped and capped at 32 words', ()
   )
 })
 
-test('buildTrackers uses the specs', () => {
-  const list = buildTrackers({
-    autoGithub: {
-      discovery: {} as never,
-      ready: async () => false,
-      repo: async () => null,
-      hosts: () => [],
-      lane: () => ({ headPrsPerBranch: 5, basePrsPerBranch: 10, closingRefsPerPr: 10, maxBodyRefs: 50 }),
-    },
-  })
-  expect(list.map(t => t.id).sort()).toEqual(Object.keys(SPECS).sort())
-  for (const tracker of list) {
+test('TRACKERS uses the specs', () => {
+  expect(TRACKERS.map(t => t.id).sort()).toEqual(Object.keys(SPECS).sort())
+  for (const tracker of TRACKERS) {
     expect(tracker.config).toBe(SPECS[tracker.id as keyof typeof SPECS].spec)
     expect((tracker.config.defaults as { enabled?: boolean }).enabled).toBe(true)
   }

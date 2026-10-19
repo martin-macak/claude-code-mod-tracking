@@ -9,6 +9,7 @@ import type {
   AgentSpawnEvent,
   CommandEvent,
   DismissedEvent,
+  FactEvent,
   ReplayItem,
   RowEvent,
   SessionChangedEvent,
@@ -63,7 +64,7 @@ export type Handler<C extends JsonObject = JsonObject, D extends Json = Json, E 
 /**
  * Handlers as data. TrackerHost fills the bus from them at init. Each call is isolated.
  * `start`, `agentSpawn`, `sessionChanged`, `command` and `dismissed` run one tracker after the other, in `order`.
- * `row`, `toolCall`, `turnComplete`, `tick` and `replay` run in parallel (plan decision D11).
+ * `row`, `toolCall`, `turnComplete`, `tick`, `replay` and `facts` run in parallel (plan decision D11).
  */
 export interface TrackerEvents<C extends JsonObject = JsonObject, D extends Json = Json> {
   readonly start?: Handler<C, D, StartEvent>
@@ -81,9 +82,17 @@ export interface TrackerEvents<C extends JsonObject = JsonObject, D extends Json
   readonly dismissed?: Handler<C, D, DismissedEvent>
   /** One batch: the transcript read back on a cold start or a cold resume (plan decision D7). */
   readonly replay?: Handler<C, D, readonly ReplayItem[]>
+  /**
+   * Keyed by fact name: runs when a publish gives that fact a new value. Core starts every such handler before `publish`
+   * returns, so the quick part of a handler runs first and `publish` never waits for the slow part (plan decision K14).
+   */
+  readonly facts?: Readonly<Record<string, Handler<C, D, FactEvent>>>
 }
 
-/** Named values one tracker publishes and others read. A missing fact reads as `undefined`. */
+/**
+ * Named values one tracker publishes and others read. A missing fact reads as `undefined`. A publish that changes the
+ * value starts the handlers that declared `events.facts[name]`.
+ */
 export interface FactsPort {
   /** `undefined` withdraws the fact. */
   publish(name: string, value: Json | undefined): void

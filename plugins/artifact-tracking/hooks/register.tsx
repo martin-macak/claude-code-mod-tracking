@@ -8,16 +8,13 @@ import { ConfigManager } from '../core/infra/config-manager'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
-import { buildTrackers } from '../trackers'
-import { autoDismiss } from '../trackers/auto/dismiss-store'
+import { DISMISS, parseRemote, TRACKERS } from '../trackers'
+import type { ToolStatus, UiState } from '../types'
 import { renderBand } from '../ux/band'
 import { renderSections } from '../ux/pane'
-import { autoGithubOf } from './auto-github'
-import type { ToolStatus, UiState } from './contracts'
 import { rowEvent, spawnEvent, toolCallEvent, turnEvent } from './events'
 import { listText } from './list-text'
 import { type PaneFocus, paneActions, pickRow } from './pane-actions'
-import { parseRemote } from './scan/refs'
 import { composeBand, composePane } from './ui/auto-view'
 import { focusTargets } from './ui/view'
 import { IDLE_ACLI, IDLE_GH, viewInputs } from './view-inputs'
@@ -149,14 +146,13 @@ const focus: PaneFocus = { row: undefined, rows: new Map() }
  */
 function managerOf($: EngineInterface): LifecycleManager {
   if (manager) return manager
-  const trackers = buildTrackers({ autoGithub: autoGithubOf({ manager: () => manager, now: Date.now }) })
   manager = new LifecycleManager(
     {
-      trackers,
-      dismiss: (p, c) => autoDismiss(p.state.slot, () => c.global().store.maxDismissed),
+      trackers: TRACKERS,
+      dismiss: (p, c) => DISMISS(p.state.slot, () => c.global().store.maxDismissed),
       // The config file: read at the start and on the tick, written once per load (L4). The manager knows the trackers
       // only as `{ id, config }`.
-      config: p => new ConfigManager({ fs: p.fs, env: p.env, specs: trackers, log: p.log }),
+      config: p => new ConfigManager({ fs: p.fs, env: p.env, specs: TRACKERS, log: p.log }),
       paneId: PANE,
       // The text of the list for /track: the legacy composers until L6 (K19). Read at call time, the manager is set by then.
       listText: p => listText(p, managerOf($)),
@@ -252,7 +248,7 @@ export const register: Register = on => {
     const v = await viewInputs(p, m.facts, { bodyColumns: e.props.bodyColumns, live: id => m.live(id) })
     const sections = composePane(v.items, v.processes, v.processUi, v.ctx, v.repos)
     focus.rows = focusTargets(sections)
-    return renderSections(el, sections, e.props.bodyColumns, paneActions(p, m, m.items, focus))
+    return renderSections(el, sections, e.props.bodyColumns, paneActions(p, m, focus))
   }).catch(($, e) => {
     // A failed read must not close the pane. Draw one line instead.
     const { Text } = $.ui.resolve(e)

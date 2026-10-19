@@ -1,17 +1,16 @@
 // Discovered items (spec A9 to A12, 8.4): PRs on tracked branches and the refs in their bodies.
 // Pure: no `$`. A call that changes nothing returns its input list (A22).
 
+import type { Claim, JsonObject, StoredItem } from '../../core/interfaces/items'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
-import type { DiscoveredPr, DiscoveryApplied, GitHubRecord, ItemRecord, Ref } from '../../hooks/contracts'
-import { isAutoOnly, keyOf, prKey } from '../../hooks/model/keys'
-import { enforceCap, recordFromRef } from '../../hooks/model/registry'
+import { type BaseRecord, enforceCap, isAutoOnly } from '../../core/lib/records'
 import { PR_LANE_DEFAULTS } from './config'
+import { githubKind } from './kind'
+import type { DiscoveredPr, DiscoveryApplied, GitHubRecord } from './types'
+import { githubKey, prKey } from './urls'
 
 /** The issue keys of the PR's closing references, in reply order. */
-const closesOf = (pr: DiscoveredPr): string[] =>
-  pr.closing.map(c =>
-    keyOf({ category: 'github', host: c.host, owner: c.owner, repo: c.repo, number: c.number, type: 'issue' }),
-  )
+const closesOf = (pr: DiscoveredPr): string[] => pr.closing.map(c => githubKey(c.host, c.owner, c.repo, c.number))
 
 /** The fields discovery writes on a PR record (spec 8.4 step 1). `closes` only when the PR closes an issue. */
 function discoveryFields(pr: DiscoveredPr) {
@@ -61,36 +60,45 @@ function withDiscovery(rec: GitHubRecord, pr: DiscoveredPr, at: number): GitHubR
   return next
 }
 
+/** The claim of a PR the lane found: seen now, from `auto`. The github kind makes the record of it. */
+function prClaim(pr: DiscoveredPr, at: number): Claim {
+  const fields = { host: pr.host, owner: pr.owner, repo: pr.repo, number: pr.number, type: 'pr', url: pr.url }
+  return { category: 'github', key: prKey(pr), source: 'auto', at, fields: fields as JsonObject }
+}
+
 function newPrRecord(pr: DiscoveredPr, at: number): GitHubRecord {
-  const base = recordFromRef(
-    { category: 'github', host: pr.host, owner: pr.owner, repo: pr.repo, number: pr.number, type: 'pr', url: pr.url },
-    { source: 'auto', at },
-  ) as GitHubRecord
+  const base = githubKind.merge(null, prClaim(pr, at)) as GitHubRecord
   return { ...base, seenCount: 0, ...discoveryFields(pr), refreshedAt: at }
 }
 
 /** The numbers `applyDiscovery` reads: how long a record stays current, and the two item caps. */
 export type DiscoveryCaps = { staleMs: number; maxAutoItems: number; maxItems: number }
 
+/** The source of a record that a PR body added. `build` gets each claim with it and the time of the step, whatever the scan said. */
+const BODY_SOURCE = 'pr-body'
+
 export function applyDiscovery(
-  list: readonly ItemRecord[],
+  list: readonly StoredItem[],
   input: {
     prs: readonly DiscoveredPr[]
-    refsByPr: ReadonlyMap<string, readonly Ref[]>
+    /** The claims in the body of each PR, by the key of the PR (`prBodyRefs`). */
+    refsByPr: ReadonlyMap<string, readonly Claim[]>
     complete: boolean
     dismissed: ReadonlySet<string>
     at: number
-    /** The auto round passes its own. A direct caller gets today's numbers. */
+    /** The record a claim of any kind makes (`ItemStorePort.build`). null: the claim adds no record. */
+    build: (claim: Claim) => StoredItem | null
+    /** The PR lane passes its own. A direct caller gets today's numbers. */
     caps?: DiscoveryCaps
   },
 ): DiscoveryApplied {
-  const { refsByPr, complete, dismissed, at } = input
+  const { refsByPr, complete, dismissed, at, build } = input
   const caps = input.caps ?? {
     staleMs: GLOBAL_DEFAULTS.refresh.staleMs,
     maxAutoItems: PR_LANE_DEFAULTS.maxAutoItems,
     maxItems: GLOBAL_DEFAULTS.store.maxItems,
   }
-  const out: ItemRecord[] = list.slice()
+  const out: StoredItem[] = list.slice()
   const index = new Map<string, number>(out.map((r, i) => [r.key, i]))
   const added: string[] = []
   const notAdded = new Set<string>()
@@ -107,8 +115,8 @@ export function applyDiscovery(
     const i = index.get(key)
     if (i !== undefined) {
       const rec = out[i]!
-      if (rec.category !== 'github' || isCurrent(rec, pr, at, caps.staleMs)) continue
-      out[i] = withDiscovery(rec, pr, at)
+      if (rec.category !== 'github' || isCurrent(rec as GitHubRecord, pr, at, caps.staleMs)) continue
+      out[i] = withDiscovery(rec as GitHubRecord, pr, at)
       changed = true
     } else if (budget > 0) {
       budget--
@@ -123,24 +131,26 @@ export function applyDiscovery(
   // 2. Body refs.
   for (const pr of livePrs) {
     const pk = prKey(pr)
-    for (const ref of refsByPr.get(pk) ?? []) {
-      const rk = keyOf(ref)
+    for (const claim of refsByPr.get(pk) ?? []) {
+      const rk = claim.key
       if (dismissed.has(rk)) continue
       const i = index.get(rk)
       if (i !== undefined) {
         const rec = out[i]!
-        const hasSource = rec.sources.includes('pr-body')
-        const hasVia = rec.via?.includes(pk) === true
+        const via = viaOf(rec)
+        const hasSource = rec.sources.includes(BODY_SOURCE)
+        const hasVia = via.includes(pk)
         if (hasSource && hasVia) continue
         out[i] = {
           ...rec,
-          sources: hasSource ? rec.sources : [...rec.sources, 'pr-body'],
-          via: hasVia ? (rec.via as string[]) : [...(rec.via ?? []), pk],
+          sources: hasSource ? rec.sources : [...rec.sources, BODY_SOURCE],
+          via: hasVia ? via : [...via, pk],
         }
         changed = true
       } else if (budget > 0) {
+        const rec = build({ ...claim, source: BODY_SOURCE, at }) as BaseRecord | null
+        if (!rec) continue // no kind makes a record of it
         budget--
-        const rec = recordFromRef(ref, { source: 'pr-body', at })
         rec.seenCount = 0
         rec.via = [pk]
         index.set(rk, out.length)
@@ -157,25 +167,26 @@ export function applyDiscovery(
   const drop = new Set<number>()
   if (complete) {
     // A `via` entry stays only while its PR is live and the body of that PR still lists the ref.
-    const listed = new Map(livePrs.map(pr => [prKey(pr), new Set((refsByPr.get(prKey(pr)) ?? []).map(keyOf))]))
+    const listed = new Map(livePrs.map(pr => [prKey(pr), new Set((refsByPr.get(prKey(pr)) ?? []).map(c => c.key))]))
     for (let i = 0; i < out.length; i++) {
       const rec = out[i]!
       let sources = rec.sources
-      let via = rec.via
+      const held = rec.via as string[] | undefined
+      let via = held
       if (sources.includes('auto') && !live.has(rec.key)) sources = sources.filter(s => s !== 'auto')
       if (via) {
         const kept = via.filter(k => listed.get(k)?.has(rec.key) === true)
         if (kept.length !== via.length) via = kept.length > 0 ? kept : undefined
       }
-      if (sources.includes('pr-body') && (via === undefined || via.length === 0))
-        sources = sources.filter(s => s !== 'pr-body')
-      if (sources === rec.sources && via === rec.via) continue
+      if (sources.includes(BODY_SOURCE) && (via === undefined || via.length === 0))
+        sources = sources.filter(s => s !== BODY_SOURCE)
+      if (sources === rec.sources && via === held) continue
       changed = true
       if (sources.length === 0) {
         drop.add(i)
         continue
       }
-      const next: ItemRecord = { ...rec, sources }
+      const next = { ...rec, sources } as BaseRecord
       if (via === undefined) delete next.via
       else next.via = via
       out[i] = next
@@ -188,8 +199,11 @@ export function applyDiscovery(
   if (capped !== kept) changed = true
 
   // 5. Quiet step: the input list itself.
-  return { list: changed ? capped : (list as ItemRecord[]), added, untracked: notAdded.size }
+  return { list: changed ? capped : (list as StoredItem[]), added, untracked: notAdded.size }
 }
+
+/** The keys of the PRs that name this record in their body. */
+const viaOf = (rec: StoredItem): string[] => (Array.isArray(rec.via) ? (rec.via as string[]) : [])
 
 // `dropAuto` moved to the record algebra in plan L5, Task 4. The store imports it from here until Task 8.
 export { dropAuto } from '../../core/lib/records'

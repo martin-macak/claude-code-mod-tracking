@@ -1,4 +1,5 @@
-// Domain events the bus carries. Plain data: the hooks in register.tsx build them from engine events. Types only.
+// Domain events the bus carries. Plain data: the hooks in register.tsx build them from engine events, and core builds
+// `FactEvent` when a fact changes. Types only.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.5.
 // Engine payloads (tool input, tool result, agent answer) travel as `Json`. The handler of a tracker parses them with guards.
 
@@ -86,3 +87,10 @@ export interface DismissedEvent {
 
 /** One item of a transcript replay: a row or a tool call, in transcript order. */
 export type ReplayItem = { kind: 'row'; ev: RowEvent } | { kind: 'toolCall'; ev: ToolCallEvent }
+
+/** A fact took a new value. `undefined` means the fact is not set: `previous` for a first publish, `value` for a withdraw. */
+export interface FactEvent {
+  readonly name: string
+  readonly value: Json | undefined
+  readonly previous: Json | undefined
+}

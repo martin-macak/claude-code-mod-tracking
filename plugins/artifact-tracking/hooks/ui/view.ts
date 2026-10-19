@@ -1,27 +1,32 @@
 // View model for the pane, the band and the `/track` text. Pure: no `$`, no JSX, no clock.
 // Spec: docs/superpowers/specs/2026-10-10-artifact-tracking-design.md section 9.
 
+import type { RepoRef } from '../../core/interfaces/ports'
+import { byLevel, markerOf, type Priority } from '../../core/lib/levels'
 import { toolNote } from '../../core/lib/text'
 import { artifactIdOf } from '../../trackers/artifact/artifact-url'
+import { artifactOrigin } from '../../trackers/artifact/records'
+import type { ArtifactRecord } from '../../trackers/artifact/types'
+import { MASTER_ID } from '../../trackers/auto/ids'
+import type { AutoSnapshot as Snapshot, AutoState as State } from '../../trackers/auto/types'
 import { relativeToRoot } from '../../trackers/file/files'
-import type {
-  ArtifactRecord,
-  AutoState,
-  Category,
-  FileRecord,
-  GitHubRecord,
-  ItemRecord,
-  JiraNode,
-  JiraRecord,
-  Priority,
-  RepoRef,
-  ToolStatus,
-  WebRecord,
-} from '../contracts'
-import { MASTER_ID } from '../contracts'
-import { artifactOrigin, childId } from '../model/keys'
-import type { Effective, LevelContext } from '../model/priority'
-import { byLevel, effectiveLevels, markerOf } from '../model/priority'
+import type { FileRecord } from '../../trackers/file/types'
+import type { GitHubRecord, LaneState } from '../../trackers/github/types'
+import { jiraSiteKey, nestedJira } from '../../trackers/jira/nested'
+import { childId } from '../../trackers/jira/nodes'
+import type { JiraNode, JiraRecord } from '../../trackers/jira/types'
+import type { WebRecord } from '../../trackers/web/types'
+import type { ToolStatus } from '../../types'
+import { type Effective, effectiveLevels, type LevelContext } from './levels'
+
+// ---------------------------------------------------------------- the records and the auto state, as this path reads them
+// The draw path reads records by their kind and the auto snapshot with the two fields that the PR lane keeps in the github
+// slot since plan L5, Task 12 (`hooks/view-inputs.ts` puts them back). L6 deletes this path with these aliases.
+
+export type Category = 'jira' | 'github' | 'artifact' | 'web' | 'file'
+export type ItemRecord = GitHubRecord | JiraRecord | ArtifactRecord | WebRecord | FileRecord
+export type AutoSnapshot = Snapshot & { prs?: LaneState['prs']; defaultBranch?: string }
+export type AutoState = Omit<State, 'snapshot'> & { snapshot: AutoSnapshot | null }
 
 // `ago`, `compactIds` and `toolNote` moved to core/lib/text.ts in plan L5, Task 2. The old callers import them from here.
 export { ago, compactIds, toolNote } from '../../core/lib/text'
@@ -183,8 +188,6 @@ export function cellsFor(bodyColumns: number | undefined, layout: Layout, dismis
 }
 
 const lower = (s: string | undefined): string => (s ?? '').toLowerCase()
-/** The identity of a Jira issue across records and nodes: lower-case site, upper-case key. */
-const jiraSiteKey = (site: string, key: string): string => `${lower(site)}/${key.toUpperCase()}`
 const byPriority = <T extends { priority?: Priority }>(a: T, b: T): number => byLevel(a.priority, b.priority)
 /** The level of a row whose level is the person's own mark: a Jira child, or an item no rule reads. */
 const prioOf = (priority: Priority | undefined): RowPrio => (priority === undefined ? {} : { level: priority })
@@ -414,61 +417,6 @@ const SECTIONS: { category: Category; title: string; band: string; unit?: string
   { category: 'web', title: 'Web links', band: 'Links', unit: 'links' },
   { category: 'file', title: 'Files', band: 'Files', unit: 'files', layout: 'files' },
 ]
-
-/** The `site/KEY` of every node that the root's rows draw, with the same folds as `jiraRows`. */
-function drawnKeys(root: JiraRecord, folded: ReadonlySet<string>): Set<string> {
-  const out = new Set<string>()
-  const walk = (parentId: string, nodes: readonly JiraNode[]): void => {
-    for (const n of nodes) {
-      const id = childId(parentId, n.key)
-      out.add(jiraSiteKey(root.site, n.key))
-      if (!(n.children.length > 0 && folded.has(id))) walk(id, n.children)
-    }
-  }
-  if (!(root.children.length > 0 && folded.has(root.key))) walk(root.key, root.children)
-  return out
-}
-
-/**
- * The `site/KEY` of each Jira record that renders nested under another shown root, so it gets no root row (#48).
- * Roots are chosen top down: a record that no other open record draws above it becomes a root, and its drawn
- * keys close the records they show. A fold or a short snapshot draws less, so the record stays a root.
- * Records in a cycle (stale data) reach each other, so they all stay roots.
- */
-function nestedJira(records: readonly JiraRecord[], folded: ReadonlySet<string>): Set<string> {
-  const idOf = (r: JiraRecord): string => jiraSiteKey(r.site, r.issueKey)
-  const drawn = new Map(records.map(r => [idOf(r), drawnKeys(r, folded)]))
-  const reaches = (from: string, to: string): boolean => {
-    const seen = new Set([from])
-    const stack = [from]
-    while (stack.length > 0) {
-      for (const k of drawn.get(stack.pop()!) ?? []) {
-        if (k === to) return true
-        if (drawn.has(k) && !seen.has(k)) {
-          seen.add(k)
-          stack.push(k)
-        }
-      }
-    }
-    return false
-  }
-  const above = (p: JiraRecord, r: JiraRecord): boolean =>
-    p !== r && drawn.get(idOf(p))!.has(idOf(r)) && !reaches(idOf(r), idOf(p))
-  const shown = new Set<string>()
-  const closed = new Set<string>()
-  let left = [...records]
-  for (;;) {
-    const open = left.filter(r => !closed.has(idOf(r)))
-    if (open.length === 0) break
-    const tops = open.filter(r => !open.some(p => above(p, r)))
-    for (const t of tops) {
-      shown.add(idOf(t))
-      for (const k of drawn.get(idOf(t))!) closed.add(k)
-    }
-    left = left.filter(r => !tops.includes(r))
-  }
-  return new Set(records.map(idOf).filter(id => !shown.has(id)))
-}
 
 export function lastRefreshOf(items: readonly ItemRecord[]): number | undefined {
   let last: number | undefined

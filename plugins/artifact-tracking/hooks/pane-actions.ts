@@ -4,10 +4,9 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.3 and 5.10. Plan: L3 Task 12.
 
 import type { LifecycleManager } from '../core/infra/lifecycle'
-import type { ItemsHost } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
+import type { Priority } from '../core/lib/levels'
 import type { PaneActions } from '../ux/pane'
-import type { Priority } from './contracts'
 import { composePane } from './ui/auto-view'
 import { markKeys } from './ui/view'
 import { viewInputs } from './view-inputs'
@@ -34,18 +33,11 @@ export function pickRow(focus: PaneFocus, e: { element?: string; origin?: { kind
  * key only the next drawing has (S4). In a test kit the engine's focus call has no implementation, and live it may be refused:
  * the move is best effort.
  */
-async function prioritize(
-  p: Ports,
-  m: LifecycleManager,
-  items: ItemsHost,
-  focus: PaneFocus,
-  level: Priority | undefined,
-): Promise<void> {
+async function prioritize(p: Ports, m: LifecycleManager, focus: PaneFocus, level: Priority | undefined): Promise<void> {
   const id = focus.row
   if (id === undefined) return
   try {
-    await m.entry(p)
-    await items.setPriority(id, level)
+    await m.setPriority(p, id, level)
   } catch {
     return // The mark stays. The person can press again.
   }
@@ -60,7 +52,7 @@ async function prioritize(
 
 const quiet = (task: Promise<unknown>): void => void task.catch(() => {})
 
-export function paneActions(p: Ports, m: LifecycleManager, items: ItemsHost, focus: PaneFocus): PaneActions {
+export function paneActions(p: Ports, m: LifecycleManager, focus: PaneFocus): PaneActions {
   return {
     fold: id =>
       quiet(
@@ -69,19 +61,12 @@ export function paneActions(p: Ports, m: LifecycleManager, items: ItemsHost, foc
           return { folded: folded.includes(id) ? folded.filter(x => x !== id) : [...folded, id] }
         }),
       ),
-    refresh: () =>
-      quiet(
-        (async () => {
-          await m.entry(p)
-          items.kick('manual')
-          await m.command(p, { sub: 'manual', args: '', wait: false })
-        })(),
-      ),
+    refresh: () => quiet(m.refreshManual(p)),
     // The manager adds the id to the dismiss list first, drops the item key second, then the trackers hear of it.
     dismiss: id => quiet(m.dismiss(p, [id])),
     focus: id => {
       focus.row = id
     },
-    prioritize: level => quiet(prioritize(p, m, items, focus, level)),
+    prioritize: level => quiet(prioritize(p, m, focus, level)),
   }
 }

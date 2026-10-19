@@ -190,14 +190,14 @@ The inventory found these hard-coded values. They are candidates, not a decision
 | Slice | Keys (today's value) |
 | --- | --- |
 | `global` | `tracker.enabled` per tracker; `refresh.tickMs` (30 s), `refresh.staleMs` (5 min), `refresh.pendingStaleMs` (60 s), `refresh.captureDebounceMs` (1 s), `refresh.flushMs` (1.5 s); `tools.timeoutMs` (30 s), `tools.probeTimeoutMs` (10 s), `tools.breaker.threshold` (3), `tools.breaker.openMs` (5 min); `store.keepSessions` (20), `store.maxItems` (500), `store.maxDismissed` (500), `store.maxPinned` (100) |
-| `github` | `chunkSize` (50), `extraHosts` (found at run time today), `shortRefKeywords` (`github`, `bug`, `issue`, `issues`, `enhancement`, `chore`), `closingRefsPerPr` (10) |
+| `github` | `chunkSize` (50), `extraHosts` (found at run time today), `shortRefKeywords` (`github`, `bug`, `issue`, `issues`, `enhancement`, `chore`), `closingRefsPerPr` (10), `headPrsPerBranch` (5), `basePrsPerBranch` (10), `maxBodyRefs` (50), `maxAutoItems` (100; moved here from `auto` in L5b) |
 | `jira` | `concurrency` (3), `epicChildLimit` (50), `fields`, `cloudDomains` (`.atlassian.net`) |
 | `web` | `schemes` (`http`, `https`, `file`), `maxUrlLength` (2048), host allow and deny lists |
 | `artifact` | accepted hosts (`claude.ai`, `www.claude.ai`) |
 | `files` | `extensions` (`.md`), `ignore` globs, `maxMentionsPerRow` (20) |
 | `repos` | `maxRepos` (50), `maxRepoAgents` (8), `maxRepoQueue` (32), `noisePaths`, `editGitSubcommands`, `toolPathFields`, `gitTimeoutMs` (5 s) |
 | `processes` | `probeKinds` (docker, tmux, screen, ps), `probeIntervalMs`, `discoveryTimeoutMs` (10 s), `cap` (none today), `nameLength` (80) |
-| `auto` | `debounceMs` (750), `workflowIdleMs` (1 h), `maxBranches` (12), `headPrsPerBranch` (5), `basePrsPerBranch` (10), `maxBodyRefs` (50), `maxAutoItems` (100), `maxProofs` (100), `maxAgents` (200), `agentWorktreePath` convention, `outputs` (worktrees, agents, PRs) |
+| `auto` | `debounceMs` (750), `workflowIdleMs` (1 h), `maxBranches` (12), `maxProofs` (100), `maxAgents` (200), `agentWorktreePath` convention, `outputs` (worktrees, agents, PRs) |
 | `ui` | pane id and title, columns and widths, hotkeys, colors, glyphs, section order |
 
 ## 7. Diagrams

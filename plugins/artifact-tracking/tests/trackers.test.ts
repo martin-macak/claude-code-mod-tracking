@@ -2,20 +2,14 @@
 // defaults with the tracker on. The OCP proof of the list: tests/tracker-host.test.ts runs a fake tracker with no edit
 // to core. The list holds all eight trackers, in the order of the pane.
 import { expect, test } from 'claude-code/testing'
-import { buildTrackers } from '../trackers'
-import type { AutoGithub } from '../trackers/auto'
+import { TRACKERS } from '../trackers'
+import type { AutoState } from './fixtures/contracts'
+import { porcelain as gitPorcelain } from './fixtures/git'
+import { res, sleep } from './fixtures/items'
+import { managerWorld } from './fixtures/manager'
 import { hostWorld } from './fixtures/tracker-host'
 
-/** The PR lane's GitHub side, not ready: the list only needs the object to build the auto tracker. */
-const autoGithub: AutoGithub = {
-  discovery: {} as AutoGithub['discovery'],
-  ready: async () => false,
-  repo: async () => null,
-  hosts: () => [],
-  lane: () => ({ headPrsPerBranch: 5, basePrsPerBranch: 10, closingRefsPerPr: 10, maxBodyRefs: 50 }),
-}
-const build = () => buildTrackers({ autoGithub })
-const list = build()
+const list = TRACKERS
 
 test('ids are unique and none is items', () => {
   const ids = list.map(t => t.id)
@@ -38,7 +32,7 @@ test('each store(ctx) equals its config.defaults and enabled is true', async () 
   }
 })
 
-test('eight trackers in order 10, 20, 30, 40, 50, 60, 70, 80: auto, jira, github, artifact, repos, web, file, processes', () => {
+test('trackers: eight trackers in order 10 … 80: auto, jira, github, artifact, repos, web, file, processes', () => {
   expect([...list].sort((a, b) => a.order - b.order).map(t => [t.id, t.order])).toEqual([
     ['auto', 10],
     ['jira', 20],
@@ -50,14 +44,46 @@ test('eight trackers in order 10, 20, 30, 40, 50, 60, 70, 80: auto, jira, github
     ['processes', 80],
   ])
   expect(list.find(t => t.id === 'auto')?.persist).toBe(false)
-  // The github, jira and web trackers declare their identity and config only (plan decision D13): no events, no data.
-  for (const id of ['github', 'jira', 'web']) {
+  // The jira and web trackers declare their identity and config only (plan decision D13): no events, no data. The github
+  // tracker runs the PR lane since plan L5, Task 12: it hears a fact and the commands, and keeps the lane state in a
+  // run-scoped slot like auto.
+  for (const id of ['jira', 'web']) {
     const t = list.find(x => x.id === id)
     expect(t?.events).toBeUndefined()
     expect(t?.data).toBeUndefined()
   }
+  const github = list.find(x => x.id === 'github')
+  expect(github?.persist).toBe(false)
+  expect(Object.keys(github?.events?.facts ?? {})).toEqual(['auto.branches'])
 })
 
-test('each call builds new trackers, so per-load state is not shared', () => {
-  expect(build()[0]).not.toBe(build()[0])
+test('the list is a constant: a second manager over it shares no per-load state', async () => {
+  const ROOT = '/work'
+  // Two managers over the same list, each with its own ports. A round runs `git worktree list` in the world it belongs to.
+  const world = () =>
+    managerWorld({
+      fake: { now: 1_000_000, session: { cwd: ROOT } },
+      run: async argv => {
+        if (argv[0] !== 'git') return undefined
+        return argv[1] === 'rev-parse' ? res(`${ROOT}\n`) : res(gitPorcelain(ROOT))
+      },
+    })
+  const a = world()
+  const b = world()
+  for (const t of [a, b]) await t.m.start(t.w.ports, { cwd: ROOT, fromSessionStart: true })
+  expect(a.m.facts).not.toBe(b.m.facts)
+  const rounds = (t: typeof a) => t.w.calls.filter(c => c[0] === 'git' && c[1] === 'worktree').length
+  const seq = (t: typeof a) => t.m.facts.read<{ seq: number }>('auto.branches')?.seq
+  // Each tick runs the round of its own manager. A list that shared the round, the scheduler or the lane would run the
+  // round of the first manager for both, in its world.
+  await a.m.tick()
+  await sleep(15)
+  expect([rounds(a), rounds(b)]).toEqual([1, 0])
+  expect([seq(a), seq(b)]).toEqual([1, 0])
+  await b.m.tick()
+  await sleep(15)
+  expect([rounds(a), rounds(b)]).toEqual([1, 1])
+  expect([seq(a), seq(b)]).toEqual([1, 1])
+  expect((b.w.state.get('auto') as unknown as AutoState).snapshot).not.toBeNull()
+  expect(b.w.stateSets.github).toBe(a.w.stateSets.github) // each lane wrote its own world, the same once
 })

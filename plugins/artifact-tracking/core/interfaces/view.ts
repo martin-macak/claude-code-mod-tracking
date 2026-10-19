@@ -4,7 +4,7 @@
 
 import type { ToolStatus } from '../../types'
 import type { ConfigView } from './config'
-import type { Json, JsonObject, StoredItem } from './items'
+import type { Effective, Json, JsonObject, StoredItem } from './items'
 import type { FactsPort } from './tracker'
 
 /** A closed set by design. `ux/theme.ts` maps each token to a theme key or a named color. */
@@ -58,11 +58,27 @@ export interface SectionSpec {
   readonly title: string
   /** E.g. `tool · ok 2m ago`, from the tool status. */
   readonly note?: Cell
-  /** Today's band words and counts. */
-  readonly band?: { readonly label: string; readonly count: number; readonly failing: number }
+  /**
+   * Where the pane places the section. Default: the `order` of the tracker. A tracker that draws two sections, or whose
+   * `order` is not today's pane order, sets it (plan L5, K2).
+   */
+  readonly rank?: number
+  /** Today's band words and counts. `rank` places the part in the band; default: the section's `rank`, else the `order`. */
+  readonly band?: {
+    readonly label: string
+    readonly count: number
+    readonly failing: number
+    readonly rank?: number
+  }
   readonly columns: readonly ColumnDef[]
   readonly rows: readonly TreeRow[]
   readonly empty?: string
+}
+
+/** What the pane remembers of the person's view: the selected row and the rows the person opened. */
+export interface PaneView {
+  readonly selected: string | null
+  readonly expanded: ReadonlySet<string>
 }
 
 /** What a tracker reads to draw. All reads, no writes: a render must not write (E8, E9). */
@@ -83,6 +99,8 @@ export interface ViewContext<C = JsonObject, D = Json> {
   /** The pinned session root. */
   readonly root: string | undefined
   isDismissed(id: string): boolean
+  /** The level of one item, by key: the person's mark, or a rule's. An item with no level, and an unknown key, give `{}`. */
+  levelOf(key: string): Effective
 }
 
 /** What a key does, built at render. `state` says if the key works for the selected row. */

@@ -87,7 +87,7 @@ test('MODE: start, agentSpawn, sessionChanged, command and dismissed are sequent
     .filter(([, mode]) => mode === 'parallel')
     .map(([kind]) => kind)
     .sort()
-  expect(parallel).toEqual(['replay', 'row', 'tick', 'toolCall', 'turnComplete'])
+  expect(parallel).toEqual(['fact', 'replay', 'row', 'tick', 'toolCall', 'turnComplete'])
 })
 
 test('a throwing handler logs one line with its owner; the others still run', async () => {

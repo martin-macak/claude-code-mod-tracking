@@ -1,11 +1,13 @@
-// The dismiss list (spec A14): ids of rows and keys of items that the person hid for this run.
+// The dismiss list (spec A14): ids of rows and keys of items that the person hid for this run. It is auto's: the list lives
+// in the auto slot (plan K16), and `dismiss-store.ts` hands it to core as a DismissPort.
 
-import type { AgentRow, AutoState, ItemRecord } from '../../hooks/contracts'
-import { AUTO_SOURCES } from '../../hooks/contracts'
-import { GLOBAL_DEFAULTS } from '../lib/global-config'
+import type { StoredItem } from '../../core/interfaces/items'
+import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
+import { AUTO_SOURCES } from '../../core/lib/records'
+import type { AgentRow, AutoState } from './types'
 
 /** The ids of every current auto row and item. Never the root or the master. */
-export function autoIds(s: AutoState, items: readonly ItemRecord[]): string[] {
+export function autoIds(s: AutoState, items: readonly StoredItem[]): string[] {
   const ids: string[] = []
   for (const r of s.snapshot?.worktrees ?? []) if (r.depth === 1) ids.push(r.id)
   for (const r of s.snapshot?.agents ?? []) if (r.kind !== 'master') ids.push(r.id)

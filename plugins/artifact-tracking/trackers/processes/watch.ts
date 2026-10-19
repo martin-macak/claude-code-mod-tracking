@@ -4,7 +4,6 @@
 
 import type { Json } from '../../core/interfaces/items'
 import type { Breaker, TrackerContext } from '../../core/interfaces/tracker'
-import type { ProcessRecord, ProcessUiState } from '../../hooks/contracts'
 import {
   composeState,
   dockerEntryMatchesRow,
@@ -15,6 +14,7 @@ import {
   tmuxLive,
 } from './probe'
 import { readRows, setProcesses } from './rows'
+import type { ProcessRecord, ProcessUiState } from './types'
 
 /** The fact that carries the probe's state. */
 export const UI_FACT = 'processes.ui'

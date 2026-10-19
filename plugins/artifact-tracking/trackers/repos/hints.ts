@@ -1,5 +1,5 @@
+import type { RepoRef } from '../../core/interfaces/ports'
 import { resolvePath, scopedDir, splitShell, stripWrappers } from '../../core/lib/shell'
-import type { RepoRef } from '../../hooks/contracts'
 import { isAbs, lower } from './paths'
 
 /**

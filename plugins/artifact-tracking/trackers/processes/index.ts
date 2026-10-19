@@ -8,6 +8,7 @@ import type { Json } from '../../core/interfaces/items'
 import type { Handler, Tracker } from '../../core/interfaces/tracker'
 import { CircuitBreaker } from '../../core/lib/circuit-breaker'
 import { isRecord } from '../../core/lib/json'
+import { type LoadKey, LoadState } from '../../core/lib/load-state'
 import { type ProcessesConfig, processesConfig } from './config'
 import {
   monitorRow,
@@ -17,6 +18,7 @@ import {
   processUpdateFromTaskStop,
 } from './parse'
 import { addProcessRows, applyTaskUpdate, asRows, mergeProcessRows, setProcesses } from './rows'
+import { sections } from './sections'
 import { type ProbeState, probeProcesses } from './watch'
 
 export { type ProcessesConfig, processesConfig }
@@ -24,16 +26,15 @@ export { type ProcessesConfig, processesConfig }
 type H<E> = Handler<ProcessesConfig, Json, E>
 
 /**
- * The tracker is built once per load, so its breaker lives as long as the load (plan decision D16). The breaker numbers
- * come from `global.tools.breaker`, read once, at `init`: the breaker is an object that holds them (decision C5).
+ * The breaker lives as long as the load (plan decision D16), so it is kept per load: the tracker is a module constant
+ * (`TRACKERS`). The breaker numbers come from `global.tools.breaker`, read once, at `init`: the breaker is an object that
+ * holds them (decision C5).
  */
-export function processesTracker(): Tracker<ProcessesConfig, Json> {
-  let state: ProbeState | undefined
-  const live = (b?: { threshold: number; openMs: number }): ProbeState => {
-    state ??= { breaker: b ? new CircuitBreaker(b.threshold, b.openMs) : new CircuitBreaker() }
-    return state
-  }
+const probes = new LoadState<ProbeState>()
+const probeOf = (ctx: LoadKey, b?: { threshold: number; openMs: number }): ProbeState =>
+  probes.of(ctx, () => ({ breaker: b ? new CircuitBreaker(b.threshold, b.openMs) : new CircuitBreaker() }))
 
+export function processesTracker(): Tracker<ProcessesConfig, Json> {
   // A task notice completes the task-backed row. The person can type the same text, so only the origin counts.
   const onRow: H<RowEvent> = (ctx, ev) => {
     if (ev.origin !== 'task-notification') return
@@ -64,13 +65,13 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> {
       ctx.clock.wall(),
     )
 
-  const onTick: H<unknown> = ctx => probeProcesses(ctx, live())
+  const onTick: H<unknown> = ctx => probeProcesses(ctx, probeOf(ctx))
 
   // `/track` probes. `/track refresh` lets an open breaker try again first.
   const onCommand: H<CommandEvent> = (ctx, ev) => {
-    if (ev.sub === 'refresh') live().breaker.reset()
+    if (ev.sub === 'refresh') probeOf(ctx).breaker.reset()
     else if (ev.sub !== '') return
-    return probeProcesses(ctx, live())
+    return probeProcesses(ctx, probeOf(ctx))
   }
 
   return {
@@ -78,7 +79,7 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> {
     order: 80,
     config: processesConfig,
     init: ctx => {
-      live(ctx.config.global().tools.breaker) // builds the breaker once; a second init keeps it
+      probeOf(ctx, ctx.config.global().tools.breaker) // builds the breaker once; a second init keeps it
     },
     store: ctx => ctx.config.slice(),
     data: {
@@ -91,6 +92,7 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> {
       },
       clear: ctx => setProcesses(ctx, () => []),
     },
+    sections,
     events: {
       row: { doors: ['prompt'], run: onRow },
       toolCall: { Bash: onBash, Monitor: onMonitor, TaskStop: onTaskStop },

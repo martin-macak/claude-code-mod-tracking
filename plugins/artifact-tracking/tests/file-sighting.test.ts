@@ -3,8 +3,8 @@
 import { expect, test } from 'claude-code/testing'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { FsStat } from '../core/interfaces/ports'
-import type { FileRecord, ItemRecord } from '../hooks/contracts'
-import { addFiles, captureFileTouch, captureMentions, FileSight, withoutLoneViews } from '../trackers/file/sighting'
+import type { FileRecord, ItemRecord } from './fixtures/contracts'
+import { addFiles, captureFileTouch, captureMentions, FileSight, withoutLoneViews } from './fixtures/file-sighting'
 
 type World = {
   env: Record<string, string | undefined>

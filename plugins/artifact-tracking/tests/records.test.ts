@@ -66,6 +66,7 @@ const tKind: ItemKind<TRec> = {
     apply: (out, fresh) => ({ ...out, n: fresh.n ?? out.n }),
   },
   keepMarks: (merged, live) => ({ ...merged, n: live.n }),
+  row: i => ({ id: i.key, owner: 't', cells: {} }),
 }
 /** Moves a record of category `old` to `t`. */
 const oldKind: ItemKind = {
@@ -73,6 +74,7 @@ const oldKind: ItemKind = {
   rank: 0,
   decode: item => (item.category === 'old' ? item : null),
   merge: cur => cur,
+  row: i => ({ id: i.key, owner: 'old', cells: {} }),
 }
 const mover: ItemKind = {
   ...tKind,

@@ -4,7 +4,7 @@
 // needs another.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.6. Plan: L5 Tasks 8 and 9, K15, K19.
 
-import type { ConfigSource } from '../interfaces/config'
+import type { ConfigService, ConfigSource } from '../interfaces/config'
 import type { CommandEvent } from '../interfaces/events'
 import type { ItemsHost } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
@@ -16,6 +16,7 @@ import { ItemService } from './items'
 import { Persistence } from './persistence'
 import { Scheduler } from './scheduler'
 import type { SessionWatch } from './session'
+import { reason } from './steps'
 import type { TrackerHost } from './tracker-host'
 
 /** What the item host reads of the parts built after it. */
@@ -116,4 +117,27 @@ export function schedulerOf(ports: Ports, config: ConfigSource, beat: () => Prom
     beat,
     log: ports.log,
   })
+}
+
+/**
+ * Checks the config file and, when it changed, re-arms the tick (a new `tickMs`) and redraws the pane (a toggle, a
+ * problem). Never rejects: a failure is logged and counts as no change. The file is read when its signature moved.
+ */
+export function configRefresher(
+  config: Pick<ConfigService, 'refresh'>,
+  scheduler: Pick<Scheduler, 'ensure'>,
+): (ports: Ports) => Promise<boolean> {
+  return async ports => {
+    try {
+      const changed = await config.refresh()
+      if (changed) {
+        await scheduler.ensure()
+        ports.ui.invalidate()
+      }
+      return changed
+    } catch (e) {
+      ports.log(`config: refresh failed: ${reason(e)}`)
+      return false
+    }
+  }
 }

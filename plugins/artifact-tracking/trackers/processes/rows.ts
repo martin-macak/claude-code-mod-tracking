@@ -4,7 +4,7 @@
 
 import type { Json, JsonObject } from '../../core/interfaces/items'
 import type { TrackerContext } from '../../core/interfaces/tracker'
-import type { ProcessRecord } from '../../hooks/contracts'
+import type { ProcessRecord } from './types'
 
 /** What the writes need of a context: the data slot only. */
 export type RowsCtx = Pick<TrackerContext<JsonObject, Json>, 'data'>

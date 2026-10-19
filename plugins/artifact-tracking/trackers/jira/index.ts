@@ -7,6 +7,7 @@ import type { Tracker } from '../../core/interfaces/tracker'
 import { ACLI_TOOL } from './client'
 import { type JiraConfig, jiraConfig } from './config'
 import { jiraKind } from './kind'
+import { sections } from './sections'
 
 export { ACLI_TOOL, type JiraConfig, jiraConfig, jiraKind }
 
@@ -19,5 +20,6 @@ export function jiraTracker(): Tracker<JiraConfig, Json> {
     tools: [ACLI_TOOL],
     init: () => {},
     store: ctx => ctx.config.slice(),
+    sections,
   }
 }

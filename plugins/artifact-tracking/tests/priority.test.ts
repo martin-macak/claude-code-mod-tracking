@@ -1,6 +1,6 @@
 // Priority levels: order, markers and the merge of two manual marks (issue #30). Pure.
 import { expect, test } from 'claude-code/testing'
-import type { GitHubRecord, ItemRecord, JiraNode, WebRecord } from '../hooks/contracts'
+import type { GitHubRecord, ItemRecord, JiraNode, WebRecord } from './fixtures/contracts'
 import {
   byLevel,
   effectiveLevels,
@@ -10,7 +10,7 @@ import {
   mergePriority,
   RULES,
   rankOf,
-} from '../hooks/model/priority'
+} from './fixtures/priority'
 
 const node = (key: string, priority?: 'high' | 'normal' | 'low', children: JiraNode[] = []): JiraNode => ({
   key,

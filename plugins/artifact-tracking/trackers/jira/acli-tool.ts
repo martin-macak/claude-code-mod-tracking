@@ -1,12 +1,14 @@
 // AcliTool: Jira work items through the Atlassian CLI (spec section 7.3, KB jira.md).
 // No `$`: it gets a Runner and a clock. It never runs `acli jira auth switch`, `login` or `logout`.
 
+import type { Now, Runner } from '../../core/interfaces/ports'
 import type { Breaker, ToolHandle } from '../../core/interfaces/tracker'
 import type { Outcome, ToolTimeouts } from '../../core/lib/tool'
 import { firstLine, Tool } from '../../core/lib/tool'
-import type { JiraNode, JiraTarget, JiraToolApi, Now, Runner } from '../../hooks/contracts'
-import { carryPriorities, JIRA_KEY } from '../../hooks/contracts'
 import { JIRA_DEFAULTS, type JiraConfig } from './config'
+import { carryPriorities } from './nodes'
+import type { JiraNode, JiraTarget, JiraToolApi } from './types'
+import { JIRA_KEY } from './urls'
 
 const VIEW_FIELDS = 'issuetype,status,summary,parent,subtasks'
 const SEARCH_FIELDS = 'issuetype,status,summary'

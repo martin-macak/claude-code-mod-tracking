@@ -176,6 +176,30 @@ export function normaliseWith<S extends Schema>(
   return { ...src, ...known } as unknown as ConfigOf<S>
 }
 
+/**
+ * A `ConfigSpec` that names the keys which moved to another slice. `moved` maps an old key to its new path. A file that
+ * still sets one gets a problem that says where it went, in place of the unknown-key line. The mod keeps the key and
+ * ignores it, as it keeps any unknown key (spec 10.4, K32).
+ */
+export function movedKeys<C extends JsonObject>(
+  spec: ConfigSpec<C>,
+  moved: Readonly<Record<string, string>>,
+): ConfigSpec<C> {
+  const gone = (key: string): boolean => Object.hasOwn(moved, key)
+  return {
+    defaults: spec.defaults,
+    normalise: (raw, defaults, warn) => {
+      // `fromEntries` defines own properties, so a `__proto__` key stays data. An assignment would call the setter.
+      const entries = Object.entries(raw)
+      const rest = Object.fromEntries(entries.filter(([key]) => !gone(key)))
+      const left = Object.fromEntries(entries.filter(([key]) => gone(key)))
+      const out = spec.normalise(rest as JsonObject, defaults, warn)
+      for (const key of Object.keys(left)) warn(`${key}: moved to ${moved[key]}. The mod keeps it and ignores it here.`)
+      return { ...out, ...left } as unknown as Readonly<C>
+    },
+  }
+}
+
 /** A `ConfigSpec` over a schema: frozen defaults and `normaliseWith` as the rule. */
 export function specOf<S extends Schema>(s: S): ConfigSpec<ConfigOf<S>> {
   return {

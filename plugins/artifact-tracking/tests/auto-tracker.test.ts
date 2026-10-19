@@ -1,26 +1,19 @@
 // The auto tracker on fakePorts, through the LifecycleManager: the events it hears, the run it keeps in the `auto`
-// member, the rounds it kicks and the facts it publishes. Git answers from a stub; the PR lane sees a gh that is not
-// ready, so a round stops after the snapshot. Each case mirrors a kit test of auto-wiring.test.tsx.
+// member, the rounds it kicks and the facts it publishes. Git answers from a stub. The PR lane is the github tracker's
+// since plan L5, Task 12 (tests/pr-lane.test.ts). Each case mirrors a kit test of auto-wiring.test.tsx.
 // Plan: L3 Task 10.
 import { expect, test } from 'claude-code/testing'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { ToolCallEvent } from '../core/interfaces/events'
 import type { ItemsHost, Json, StoredItem } from '../core/interfaces/items'
 import type { RunResult } from '../core/interfaces/ports'
-import type {
-  AgentProof,
-  AutoState,
-  GitHubDiscoveryApi,
-  GraphqlOutcome,
-  ToolStatus,
-  WorktreeProof,
-} from '../hooks/contracts'
-import { type AutoGithub, autoConfig, autoTracker } from '../trackers/auto'
+import { autoConfig, auto as autoTracker } from '../trackers/auto'
 import { autoDismiss } from '../trackers/auto/dismiss-store'
 import { emptyAuto } from '../trackers/auto/ledger'
+import { PR_REASONS } from '../trackers/github/lane'
 import { fakeConfig } from './fixtures/config-fs'
+import type { AgentProof, AutoState, WorktreeProof } from './fixtures/contracts'
 import * as ev from './fixtures/events'
-import { discoveryData, prNode } from './fixtures/gh-discovery'
 import { porcelain } from './fixtures/git'
 import { IDLE_ITEMS } from './fixtures/items-host'
 import { LIMITS } from './fixtures/limits'
@@ -41,27 +34,12 @@ const AFTER_START = START_AT + WINDOW
 
 type SetupOpts = {
   items?: StoredItem[]
-  /** The `gh` side of the PR lane. Default: not ready, no repo. */
-  ready?: () => Promise<boolean>
-  github?: Partial<AutoGithub>
   /** Answers `git worktree list`. */
   worktreeList?: () => Promise<string>
 }
 
 function setup(o: SetupOpts = {}) {
   const w = fakePorts({ now: START_AT, session: { cwd: ROOT } })
-  const seen = { ready: 0 }
-  const gh: AutoGithub = {
-    discovery: {} as AutoGithub['discovery'],
-    ready: async () => {
-      seen.ready++
-      return (await o.ready?.()) ?? false
-    },
-    repo: async () => null,
-    hosts: () => [],
-    lane: () => ({ headPrsPerBranch: 5, basePrsPerBranch: 10, closingRefsPerPr: 10, maxBodyRefs: 50 }),
-    ...o.github,
-  }
   const held = { list: o.items ?? ([] as StoredItem[]), refreshed: [] as string[][] }
   const host: ItemsHost = {
     ...IDLE_ITEMS,
@@ -90,7 +68,7 @@ function setup(o: SetupOpts = {}) {
     track: async () => {},
     refresh: keys => void held.refreshed.push([...(keys ?? [])]),
   }
-  const trackers = [autoTracker(gh)]
+  const trackers = [autoTracker]
   const m = new LifecycleManager(
     {
       trackers,
@@ -108,6 +86,8 @@ function setup(o: SetupOpts = {}) {
     return undefined
   }
   const auto = () => w.state.get('auto') as unknown as AutoState | undefined
+  /** The fact the round published last: its `seq` counts the rounds and its `reasons` say what started the last one. */
+  const branches = () => m.facts.read<{ seq: number; reasons: string[] }>('auto.branches')
   /** The rounds that ran: one `git worktree list` each. */
   const rounds = () => w.calls.filter(c => c[1] === 'worktree').length
   const call = (tool: string, input: Record<string, unknown>, result: unknown, extra: Partial<ToolCallEvent> = {}) =>
@@ -131,7 +111,7 @@ function setup(o: SetupOpts = {}) {
     await settle(WINDOW)
     return rounds()
   }
-  return { w, m, gh, seen, held, auto, rounds, call, spawn, start, settle, running }
+  return { w, m, held, auto, branches, rounds, call, spawn, start, settle, running }
 }
 
 test('start with a cwd pins the root and kicks start; a second start keeps the root', async () => {
@@ -141,7 +121,7 @@ test('start with a cwd pins the root and kicks start; a second start keeps the r
   expect(t.rounds()).toBe(0) // start joins the debounce window
   await t.settle(WINDOW)
   expect(t.rounds()).toBe(1)
-  expect(t.seen.ready).toBe(1) // start is a reason that opens the PR step
+  expect(t.branches()).toMatchObject({ seq: 1, reasons: ['start'] }) // start is a reason that opens the PR step
   t.w.clock.now += 5000
   await t.m.start(t.w.ports, { cwd: '/elsewhere', fromSessionStart: true })
   expect(t.auto()?.root).toEqual({ cwd: ROOT, at: START_AT, top: ROOT }) // a reload keeps the pin; the round set the top
@@ -154,6 +134,20 @@ test('a lazy start (no cwd) pins nothing and kicks nothing', async () => {
   expect(t.auto()).toBeUndefined()
   expect(t.rounds()).toBe(0)
   expect(t.m.facts.read('auto.root')).toBeUndefined()
+})
+
+test('a round with no pinned root publishes no branches: there is nothing for the PR step to poll', async () => {
+  const t = setup()
+  await t.m.ensureStarted(t.w.ports)
+  expect(t.branches()).toEqual({ seq: 0, reasons: [], branches: [], overflow: 0 }) // the init publish
+  await t.m.tick()
+  await t.m.tick()
+  await sleep(20)
+  expect(t.branches()?.seq).toBe(0) // the ticks ran rounds that returned at once
+  expect(t.m.facts.read('auto.checkedAt')).toBeDefined() // the Worktrees note still learns that a round ran
+  await t.start() // the cwd pins the root; from here a round has a run behind it
+  await t.settle(WINDOW)
+  expect(t.branches()).toMatchObject({ seq: 1, reasons: ['start'] })
 })
 
 test('EnterWorktree records a proof and kicks worktree', async () => {
@@ -199,21 +193,21 @@ test('an Agent result with a worktree records it', async () => {
   expect(t.rounds()).toBe(before + 1)
 })
 
-test('a Bash commit records the agent branch; a pr result kicks the PR step; a plain command kicks nothing', async () => {
+test('a Bash commit records the agent branch; a pr result kicks a round; a plain command kicks nothing', async () => {
   const t = setup()
   const before = await t.running()
-  const readyBefore = t.seen.ready
   await t.spawn()
   const id = ev.SPAWN_ANSWER.agentId
   await t.call('Bash', { command: 'git commit -m x' }, ev.BASH_COMMIT_RAN, { agentId: id })
   expect(t.auto()?.agents[0]?.branch).toBe('feat/x')
   await t.settle(WINDOW)
   expect(t.rounds()).toBe(before + 1) // the spawn and the commit joined one window
-  expect(t.seen.ready).toBe(readyBefore) // a git kick opens no PR step when the branches did not change
+  expect(t.branches()?.reasons).toEqual(expect.arrayContaining(['agent', 'git'])) // no reason of the PR step among them
+  expect(t.branches()?.reasons.filter(r => PR_REASONS.has(r))).toEqual([])
   await t.call('Bash', { command: 'gh pr create' }, ev.BASH_PR_RAN)
   await t.settle(WINDOW)
   expect(t.rounds()).toBe(before + 2)
-  expect(t.seen.ready).toBe(readyBefore + 1) // pr-event opens it
+  expect(t.branches()?.reasons).toEqual(['pr-event']) // pr-event opens the PR step
   await t.call('Bash', { command: 'echo ok' }, ev.BASH_PLAIN_RAN)
   await t.call('Bash', { command: 'echo ok' }, { result: null }) // no result: nothing
   await t.settle(WINDOW)
@@ -287,7 +281,7 @@ test('tick kicks tick: a round runs at once, with no window', async () => {
   await t.m.tick()
   await sleep(20)
   expect(t.rounds()).toBe(before + 1)
-  expect(t.seen.ready).toBe(2) // tick opens the PR step too
+  expect(t.branches()?.reasons).toEqual(['tick']) // tick opens the PR step too
 })
 
 test('command clear dismisses the auto ids of the current items', async () => {
@@ -300,87 +294,30 @@ test('command clear dismisses the auto ids of the current items', async () => {
   expect(t.auto()?.dismissed).toEqual(['gh:github.com/acme/web#7'])
 })
 
-test('command refresh with wait settles after the round and its PR step; manual does not wait', async () => {
+test('command refresh with wait settles after the round; manual does not wait', async () => {
   let listed = 0
-  let prDone = false
   const t = setup({
     worktreeList: async () => {
       await sleep(25)
       listed++
       return porcelain(ROOT)
     },
-    ready: async () => {
-      await sleep(25)
-      prDone = true
-      return false
-    },
   })
   await t.running()
-  prDone = false
   const before = listed
   await t.m.command(t.w.ports, { sub: 'refresh', args: '', wait: true })
   expect(listed).toBe(before + 1)
-  expect(prDone).toBe(true)
-  prDone = false
   await t.m.command(t.w.ports, { sub: 'manual', args: '', wait: false })
-  expect(prDone).toBe(false) // it returned before the round ended
+  expect(listed).toBe(before + 1) // it returned before the round ended
   await sleep(120)
   expect(listed).toBe(before + 2)
-  expect(prDone).toBe(true)
   await t.m.command(t.w.ports, { sub: 'other', args: '', wait: true }) // a sub the tracker does not know
   await sleep(40)
   expect(listed).toBe(before + 2)
 })
 
-/** A gh that answers every discovery query with the given nodes for the head branches it is asked about. */
-function discoveryGh(nodes: Record<string, unknown[]>, queries: string[]): GitHubDiscoveryApi {
-  return {
-    isAvailable: true,
-    canCall: () => true,
-    status: (): ToolStatus => ({ name: 'gh', available: true, loggedIn: true, breaker: 'closed' }),
-    isHostAuthed: () => true,
-    graphql: async (_host: string, q: string): Promise<GraphqlOutcome> => {
-      queries.push(q)
-      const data: Record<string, unknown[]> = {}
-      for (const m of q.matchAll(/(([hb])\d+): pullRequests\((head|base)RefName: ("(?:[^"\\]|\\.)*")/g))
-        data[m[1]!] = nodes[`${m[3]}:${JSON.parse(m[4]!) as string}`] ?? []
-      return { ok: true, reply: { data: discoveryData(data, 'main'), errors: [] } }
-    },
-  } as unknown as GitHubDiscoveryApi
-}
-
-test('the PR lane writes its items through the item store and asks for the refresh of the new keys', async () => {
-  const queries: string[] = []
-  const t = setup({
-    ready: async () => true,
-    worktreeList: async () => porcelain(ROOT, ['probe-wt', 'worktree-probe-wt']),
-    github: {
-      discovery: discoveryGh(
-        { 'head:worktree-probe-wt': [prNode({ number: 7, headRefName: 'worktree-probe-wt', body: 'Part of #1' })] },
-        queries,
-      ),
-      repo: async () => ({ host: 'github.com', owner: 'acme', repo: 'web' }),
-      hosts: () => ['github.com'],
-    },
-  })
-  await t.start()
-  await t.call(
-    'EnterWorktree',
-    { name: 'probe-wt' },
-    {
-      result: { worktreePath: `${ROOT}/.claude/worktrees/probe-wt`, worktreeBranch: 'worktree-probe-wt' },
-    },
-  )
-  await t.settle(WINDOW)
-  expect(queries.length).toBeGreaterThan(0)
-  expect(t.held.list.map(i => i.key)).toEqual(['gh:github.com/acme/web#7', 'gh:github.com/acme/web#1'])
-  expect(t.held.list.every(i => i.sources.every(s => s === 'auto' || s === 'pr-body'))).toBe(true)
-  expect(t.held.refreshed).toEqual([['gh:github.com/acme/web#1']]) // only the key the PR body added
-  expect(t.auto()?.snapshot?.prs).toMatchObject({ ok: true })
-})
-
 test('restore uses carryAuto: a held root fills an empty state and never replaces one', async () => {
-  const world = hostWorld([autoTracker({} as AutoGithub)])
+  const world = hostWorld([autoTracker])
   await world.host.init()
   const slot = world.host.slots().find(s => s.id === 'auto')
   if (!slot) throw new Error('no auto slot')
@@ -408,7 +345,7 @@ test('the facts auto.root, auto.agents and auto.checkedAt follow the slot', asyn
 })
 
 test('a hot reload keeps the slot and loses the facts: init publishes what the slot holds', async () => {
-  const world = hostWorld([autoTracker({} as AutoGithub)])
+  const world = hostWorld([autoTracker])
   world.w.state.set('auto', { ...emptyAuto(), root: { cwd: ROOT, at: 5 } } as unknown as Json)
   await world.host.init()
   expect(world.facts.read('auto.root')).toEqual({ cwd: ROOT, at: 5 })
@@ -417,7 +354,7 @@ test('a hot reload keeps the slot and loses the facts: init publishes what the s
 })
 
 test('an unreadable slot at init does not fail the tracker', async () => {
-  const world = hostWorld([autoTracker({} as AutoGithub)])
+  const world = hostWorld([autoTracker])
   world.w.ports.state.slot.get = async () => {
     throw new Error('state gone')
   }

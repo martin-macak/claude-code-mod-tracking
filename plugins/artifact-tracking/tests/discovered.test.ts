@@ -1,10 +1,12 @@
 // applyDiscovery and dropAuto: upsert, quiet steps, prune, caps. Pure.
 import { expect, test } from 'claude-code/testing'
-import type { GitHubRecord, GitHubRef, ItemRecord, Ref, WebRef } from '../hooks/contracts'
-import { isAutoOnly, keyOf, prKey } from '../hooks/model/keys'
+import type { Claim } from '../core/interfaces/items'
 import { applyDiscovery, dropAuto } from '../trackers/github/discovered'
+import type { GitHubRecord, GitHubRef, ItemRecord, WebRef } from './fixtures/contracts'
 import { discovered } from './fixtures/gh-discovery'
+import { claimsOf, isAutoOnly, keyOf, prKey } from './fixtures/keys'
 import { LIMITS } from './fixtures/limits'
+import { buildRecord } from './fixtures/registry'
 
 const AT = 10_000_000
 const K7 = 'gh:github.com/acme/web#7'
@@ -23,10 +25,11 @@ const webRef: WebRef = { category: 'web', url: 'https://example.com/spec', label
 
 const input = (over: Partial<Parameters<typeof applyDiscovery>[1]> = {}) => ({
   prs: [discovered({ number: 7 })],
-  refsByPr: new Map<string, readonly Ref[]>(),
+  refsByPr: new Map<string, readonly Claim[]>(),
   complete: true,
   dismissed: NONE as ReadonlySet<string>,
   at: AT,
+  build: buildRecord,
   ...over,
 })
 
@@ -167,7 +170,7 @@ test('a mentioned PR gains auto with no count change and takes the type pr', () 
 })
 
 test('body refs: new records get pr-body, via and seenCount 0, and are reported in added', () => {
-  const refsByPr = new Map<string, readonly Ref[]>([[K7, [ghRef(1), webRef]]])
+  const refsByPr = new Map<string, readonly Claim[]>([[K7, claimsOf([ghRef(1), webRef], 'pr-body', AT)]])
   const r = applyDiscovery([], input({ refsByPr }))
   expect(r.list.map(x => x.key)).toEqual([K7, 'gh:github.com/acme/web#1', keyOf(webRef)])
   expect(r.list[1]).toMatchObject({ sources: ['pr-body'], via: [K7], seenCount: 0 })
@@ -175,7 +178,7 @@ test('body refs: new records get pr-body, via and seenCount 0, and are reported 
 })
 
 test('an existing item named by the body gains pr-body and via; both there already keeps the object', () => {
-  const refsByPr = new Map<string, readonly Ref[]>([[K7, [ghRef(1)]]])
+  const refsByPr = new Map<string, readonly Claim[]>([[K7, claimsOf([ghRef(1)], 'pr-body', AT)]])
   const list = [mentioned(1, { type: 'issue' })]
   const first = applyDiscovery(list, input({ refsByPr }))
   const rec = first.list.find(x => x.key === 'gh:github.com/acme/web#1')
@@ -185,7 +188,7 @@ test('an existing item named by the body gains pr-body and via; both there alrea
 })
 
 test('a dismissed PR adds nothing, and neither do its refs; a dismissed ref is skipped', () => {
-  const refsByPr = new Map<string, readonly Ref[]>([[K7, [ghRef(1)]]])
+  const refsByPr = new Map<string, readonly Claim[]>([[K7, claimsOf([ghRef(1)], 'pr-body', AT)]])
   const none = applyDiscovery([], input({ refsByPr, dismissed: new Set([K7]) }))
   expect(none.list).toEqual([])
   const some = applyDiscovery([], input({ refsByPr, dismissed: new Set(['gh:github.com/acme/web#1']) }))
@@ -193,7 +196,7 @@ test('a dismissed PR adds nothing, and neither do its refs; a dismissed ref is s
 })
 
 test('prune runs only on a complete reply: a PR that left loses auto, and its auto-only refs go', () => {
-  const refsByPr = new Map<string, readonly Ref[]>([[K7, [ghRef(1)]]])
+  const refsByPr = new Map<string, readonly Claim[]>([[K7, claimsOf([ghRef(1)], 'pr-body', AT)]])
   const first = applyDiscovery([], input({ refsByPr })).list
   const gone = applyDiscovery(first, input({ prs: [], complete: true, at: AT + 1 }))
   expect(gone.list).toEqual([])
@@ -217,13 +220,13 @@ const bodyRef = (i: number): WebRef => ({ category: 'web', url: `https://x.examp
 
 test('prune cuts via to the PRs still in the result', () => {
   const both: ItemRecord = { ...autoWeb(1), via: [K7, K9] }
-  const refs = new Map<string, readonly Ref[]>([[K7, [bodyRef(1)]]])
+  const refs = new Map<string, readonly Claim[]>([[K7, claimsOf([bodyRef(1)], 'pr-body', AT)]])
   const r = applyDiscovery([both], input({ prs: [discovered({ number: 7 })], refsByPr: refs }))
   expect(r.list.find(x => x.key === both.key)?.via).toEqual([K7])
 })
 
 test('prune follows the body: a ref that an edited body no longer lists loses pr-body and via (A12)', () => {
-  const body = new Map<string, readonly Ref[]>([[K7, [bodyRef(1)]]])
+  const body = new Map<string, readonly Claim[]>([[K7, claimsOf([bodyRef(1)], 'pr-body', AT)]])
   const first = applyDiscovery([], input({ refsByPr: body }))
   expect(first.list.find(x => x.key === keyOf(bodyRef(1)))).toMatchObject({ sources: ['pr-body'], via: [K7] })
   // The body is edited: the PR stays in the reply and lists no ref.

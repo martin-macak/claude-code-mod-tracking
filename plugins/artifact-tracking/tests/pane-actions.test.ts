@@ -21,7 +21,7 @@ function world() {
   }
   const w = managerWorld({ extra: [recorder] })
   const focus: PaneFocus = { row: undefined, rows: new Map() }
-  const actions = paneActions(w.w.ports, w.m, w.rt, focus)
+  const actions = paneActions(w.w.ports, w.m, focus)
   const see = (text: string) => w.m.row(w.w.ports, promptRow(text))
   const marks = async () => {
     const v = await viewInputs(w.w.ports, w.m.facts, {})

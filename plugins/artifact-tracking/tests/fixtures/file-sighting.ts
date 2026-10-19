@@ -1,15 +1,16 @@
 // Markdown file sightings (issue #28): how a sighting joins the item list. The sighting service itself lives in
-// `sight.ts` (re-exported here). Since layer L5 the file kind makes claims of the sightings and the item service merges
-// them; the joins below serve the unit tests of the old path and the registry bindings.
-// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 11, L5 Task 8.
+// `trackers/file/sight.ts` (re-exported here). Since layer L5 the file kind makes claims of the sightings and the item
+// service merges them; the joins below serve the unit tests of the old path, over the registry binding. No production code
+// calls them, so they left the tracker folder with the other test bindings (plan L5, Task 15).
+// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 11, L5 Tasks 8 and 15.
 
 import type { ItemStorePort } from '../../core/interfaces/items'
-import type { FileRecord, ItemRecord, Source } from '../../hooks/contracts'
-import { mergeFiles } from '../../hooks/model/registry'
-import { type FileTouch, mdCandidates } from './files'
-import type { FileSight } from './sight'
+import { type FileTouch, mdCandidates } from '../../trackers/file/files'
+import type { FileSight } from '../../trackers/file/sight'
+import type { FileRecord, ItemRecord, Source } from './contracts'
+import { mergeFiles } from './registry'
 
-export { type FileCtx, type FileEnv, FileSight, type SightCache, type SightDeps } from './sight'
+export { type FileCtx, type FileEnv, FileSight, type SightCache, type SightDeps } from '../../trackers/file/sight'
 
 /** Drops the views of files that no earlier sighting tracks: a Read alone never adds a row. */
 export function withoutLoneViews(list: readonly ItemRecord[], recs: readonly FileRecord[]): FileRecord[] {

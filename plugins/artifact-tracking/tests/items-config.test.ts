@@ -3,9 +3,9 @@
 // default. Plan: L4 Task 7 (C12).
 import { expect, test } from 'claude-code/testing'
 import type { Claim } from '../core/interfaces/items'
-import type { GitHubRef, ItemRecord, Ref, WebRef } from '../hooks/contracts'
-import { recordFromRef } from '../hooks/model/registry'
+import type { GitHubRef, ItemRecord, Ref, WebRef } from './fixtures/contracts'
 import { claimOf, fakeItems, graphqlCalls, promptRow, replayRow, sleep, until } from './fixtures/items'
+import { recordFromRef } from './fixtures/registry'
 
 const gh = (owner: string, repo: string, n: number): GitHubRef => ({
   category: 'github',

@@ -2,8 +2,7 @@
 // Cells come from `cellsFor` in view.ts (spec 10.1): the only source of widths. Layout follows the live probe
 // (KB mod-api-notes section 6): fixed-width cells, a growing title, columnGap 1.
 import type { Color, Elements, RenderElement } from 'claude-code'
-import type { Priority } from '../hooks/contracts'
-import { markerOf } from '../hooks/model/priority'
+import { markerOf, type Priority } from '../core/lib/levels'
 import type { Cell, PaneRow, PaneSection, Tone } from '../hooks/ui/view'
 import { cellsFor, dismissKey, EMPTY_TEXT, foldKey, markKeys } from '../hooks/ui/view'
 

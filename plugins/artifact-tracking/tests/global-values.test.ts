@@ -5,9 +5,9 @@ import { expect, test } from 'claude-code/testing'
 import { RefreshCoordinator } from '../core/infra/refresh'
 import { CircuitBreaker } from '../core/lib/circuit-breaker'
 import type { ToolTimeouts } from '../core/lib/tool'
-import type { GitHubRecord, GitHubToolApi, ItemRecord, JiraToolApi, RunInit, Runner, Tools } from '../hooks/contracts'
-import { enforceCap, hydrate, MAX_PINNED, mergeRefs } from '../hooks/model/registry'
 import { GhTool } from '../trackers/github/gh-tool'
+import type { GitHubRecord, GitHubToolApi, ItemRecord, JiraToolApi, RunInit, Runner, Tools } from './fixtures/contracts'
+import { enforceCap, hydrate, MAX_PINNED, mergeRefs } from './fixtures/registry'
 
 const NOW = 10_000_000
 const base = { sources: ['prompt' as const], firstSeen: 1, lastSeen: 1, seenCount: 1 }

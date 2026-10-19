@@ -1,11 +1,12 @@
 // PR body scan: strip comments, run the matchers, add closing refs, drop the self ref, cap. Pure.
 import { expect, test } from 'claude-code/testing'
-import { keyOf } from '../hooks/model/keys'
 import { prBodyRefs, stripHtmlComments } from '../trackers/github/pr-body'
 import { BODY_WITH_COMMENT, discovered } from './fixtures/gh-discovery'
+import { keyOf } from './fixtures/keys'
 import { LIMITS } from './fixtures/limits'
+import { scanBody } from './fixtures/refs'
 
-const keys = (body: string, over = {}) => prBodyRefs(discovered({ body, ...over }), []).map(keyOf)
+const keys = (body: string, over = {}) => prBodyRefs(discovered({ body, ...over }), scanBody).map(keyOf)
 
 test('stripHtmlComments replaces a comment with one space', () => {
   expect(stripHtmlComments('a<!-- x -->b')).toBe('a b')
@@ -58,10 +59,14 @@ test('closing refs become issue refs with their URL, before the text refs', () =
         { host: 'github.com', owner: 'acme', repo: 'web', number: 1, url: 'https://github.com/acme/web/issues/1' },
       ],
     }),
-    [],
+    scanBody,
   )
   expect(refs.map(keyOf)).toEqual(['gh:github.com/acme/web#1', 'gh:github.com/acme/web#2'])
-  expect(refs[0]).toMatchObject({ category: 'github', type: 'issue', url: 'https://github.com/acme/web/issues/1' })
+  expect(refs[0]).toMatchObject({
+    category: 'github',
+    source: 'pr-body',
+    fields: { type: 'issue', url: 'https://github.com/acme/web/issues/1' },
+  })
 })
 
 test('a closing ref in another repo keeps that repo', () => {
@@ -69,7 +74,7 @@ test('a closing ref in another repo keeps that repo', () => {
     discovered({
       closing: [{ host: 'github.com', owner: 'o', repo: 'r', number: 5, url: 'https://github.com/o/r/issues/5' }],
     }),
-    [],
+    scanBody,
   )
   expect(refs.map(keyOf)).toEqual(['gh:github.com/o/r#5'])
 })
@@ -79,7 +84,7 @@ test('the PR own ref is dropped, as number and as URL', () => {
 })
 
 test('Jira and web URLs become refs; the commented ref and the self ref do not', () => {
-  const refs = prBodyRefs(discovered({ body: BODY_WITH_COMMENT }), [])
+  const refs = prBodyRefs(discovered({ body: BODY_WITH_COMMENT }), scanBody)
   expect(refs.map(keyOf).sort()).toEqual(
     ['gh:github.com/acme/web#1', 'jira:acme.atlassian.net/ISS-9', 'web:https://example.com/spec'].sort(),
   )
@@ -87,7 +92,7 @@ test('Jira and web URLs become refs; the commented ref and the self ref do not',
 
 test('refs are unique and capped at maxBodyRefs', () => {
   const body = Array.from({ length: 80 }, (_, i) => `#${i + 100}`).join(' ') + ' #100'
-  const refs = prBodyRefs(discovered({ body }), [])
+  const refs = prBodyRefs(discovered({ body }), scanBody)
   expect(refs).toHaveLength(LIMITS.maxBodyRefs)
   expect(new Set(refs.map(keyOf)).size).toBe(LIMITS.maxBodyRefs)
 })

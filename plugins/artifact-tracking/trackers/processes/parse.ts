@@ -1,6 +1,6 @@
 import { isRecord } from '../../core/lib/json'
 import { resolvePath, scopedDir, splitShell, stripWrappers } from '../../core/lib/shell'
-import type { ProcessRecord, ProcessState } from '../../hooks/contracts'
+import type { ProcessRecord, ProcessState } from './types'
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined)
 

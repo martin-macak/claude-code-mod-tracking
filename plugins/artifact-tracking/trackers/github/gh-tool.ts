@@ -1,23 +1,13 @@
 // GhTool: refreshes GitHub issues and PRs with `gh` (spec section 7.2, KB github.md).
 // One batched GraphQL call per host and chunk. No `$`: it gets a Runner and a clock.
 
+import type { Now, RepoRef, Runner, RunResult } from '../../core/interfaces/ports'
 import type { Breaker, ToolHandle } from '../../core/interfaces/tracker'
 import { dig, isRecord, type Json } from '../../core/lib/json'
 import { firstLine, Tool, type ToolTimeouts } from '../../core/lib/tool'
-import type {
-  Checks,
-  GitHubDiscoveryApi,
-  GitHubState,
-  GitHubTarget,
-  GraphqlOutcome,
-  Now,
-  ReplyClass,
-  RepoRef,
-  Runner,
-  RunResult,
-} from '../../hooks/contracts'
-import { githubKey } from '../../hooks/contracts'
 import { GITHUB_DEFAULTS, type GithubConfig } from './config'
+import type { Checks, GitHubDiscoveryApi, GitHubState, GitHubTarget, GraphqlOutcome, ReplyClass } from './types'
+import { githubKey } from './urls'
 
 const NAME_OK = /^[A-Za-z0-9_.-]+$/
 // Exit 4 and the "gh auth login" hint mean logged out. HTTP 401 is a plain failure for the breaker (spec section 8).

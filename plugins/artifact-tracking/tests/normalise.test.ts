@@ -1,7 +1,19 @@
 // The schema normaliser: the one rule set behind every config slice. Pure.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.7. Plan: L4 Task 1 (copy table N1 to N10).
 import { expect, test } from 'claude-code/testing'
-import { bool, deepFreeze, defaultsOf, int, normaliseWith, obj, show, specOf, WORD, words } from '../core/lib/normalise'
+import {
+  bool,
+  deepFreeze,
+  defaultsOf,
+  int,
+  movedKeys,
+  normaliseWith,
+  obj,
+  show,
+  specOf,
+  WORD,
+  words,
+} from '../core/lib/normalise'
 
 const S = {
   enabled: bool(true),
@@ -179,4 +191,34 @@ test('deepFreeze freezes nested objects and arrays', () => {
 
 test('a key that only Object.prototype has is an unknown key', () => {
   expect(run({ constructor: 1 }).out).toEqual(['constructor: unknown key. The mod keeps it and ignores it.'])
+})
+
+test('movedKeys: a key that moved gets one problem naming its new path, and the mod keeps it', () => {
+  const spec = movedKeys(specOf(S), { old: 'trackers.other.old' })
+  const out: string[] = []
+  const value = spec.normalise({ n: 60, old: 5, extra: 1 }, spec.defaults, w => void out.push(w))
+  expect(value).toMatchObject({ n: 60, old: 5, extra: 1 })
+  expect(out).toEqual([
+    'extra: unknown key. The mod keeps it and ignores it.',
+    'old: moved to trackers.other.old. The mod keeps it and ignores it here.',
+  ])
+  const quiet: string[] = []
+  expect(spec.normalise({ n: 7 }, spec.defaults, w => void quiet.push(w))).toEqual({ ...spec.defaults, n: 7 })
+  expect(quiet).toEqual([]) // a file that does not set the old key hears nothing
+  expect(spec.defaults).toEqual(specOf(S).defaults)
+})
+
+test('movedKeys: an own __proto__ key is data, so it is an unknown key and the mod keeps it', () => {
+  const spec = movedKeys(specOf(S), { old: 'trackers.other.old' })
+  const raw = JSON.parse('{"__proto__":{"polluted":true},"n":60,"old":5}') as Record<string, never>
+  const out: string[] = []
+  const value = spec.normalise(raw, spec.defaults, w => void out.push(w))
+  expect(out).toEqual([
+    '__proto__: unknown key. The mod keeps it and ignores it.',
+    'old: moved to trackers.other.old. The mod keeps it and ignores it here.',
+  ])
+  expect(Object.hasOwn(value, '__proto__')).toBe(true)
+  expect(Object.getPrototypeOf(value)).toBe(Object.prototype)
+  expect((value as { n: number }).n).toBe(60)
+  expect(({} as { polluted?: boolean }).polluted).toBeUndefined()
 })

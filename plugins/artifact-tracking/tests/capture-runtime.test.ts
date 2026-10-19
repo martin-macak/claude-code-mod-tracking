@@ -8,11 +8,11 @@ import { transcriptItems } from '../core/infra/replay'
 import type { ReplayItem } from '../core/interfaces/events'
 import type { Claim, Json } from '../core/interfaces/items'
 import { scanContext } from '../core/lib/kind-context'
-import type { ArtifactRecord, ItemRecord } from '../hooks/contracts'
 import { artifactKind } from '../trackers/artifact/kind'
 import { githubKind } from '../trackers/github/kind'
 import { jiraKind } from '../trackers/jira/kind'
 import { DELETE, PAGE_KEY, PAGE_URL, PUBLISH, REFUSED } from './fixtures/artifacts'
+import type { ArtifactRecord, ItemRecord } from './fixtures/contracts'
 import {
   commandRow,
   fakeItems,

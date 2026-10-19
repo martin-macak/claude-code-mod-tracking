@@ -2,13 +2,13 @@
 // list, the root and the proofs share one slot and one carry across a session switch (plan decision D2). Core sees it
 // only as a DismissPort. Moved out of hooks/register.tsx. Plan: L3 Task 10.
 
-import { dismiss } from '../../core/infra/dismiss'
 import type { Json } from '../../core/interfaces/items'
 import type { SlotPort } from '../../core/interfaces/ports'
 import type { DismissPort } from '../../core/interfaces/tracker'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
-import type { AutoState } from '../../hooks/contracts'
+import { dismiss } from './dismiss'
 import { emptyAuto } from './ledger'
+import type { AutoState } from './types'
 
 export const AUTO_SLOT = 'auto'
 

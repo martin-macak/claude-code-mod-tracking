@@ -1,8 +1,8 @@
 // A Jira work item. AcliTool fills the status fields and the child tree in place.
 
 import { omitUndefined, TrackedItem } from '../../core/lib/tracked-item'
-import type { JiraNode, JiraRecord, JiraTarget, JiraToolApi } from '../../hooks/contracts'
-import { JIRA_KEY } from '../../hooks/contracts'
+import type { JiraNode, JiraRecord, JiraTarget, JiraToolApi } from './types'
+import { JIRA_KEY } from './urls'
 
 /** Deep copy of a child tree. */
 export function cloneNodes(nodes: readonly JiraNode[]): JiraNode[] {

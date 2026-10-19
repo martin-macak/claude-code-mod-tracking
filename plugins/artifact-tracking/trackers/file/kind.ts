@@ -8,6 +8,7 @@ import type { Claim, ItemKind, Json, JsonObject, KindContext, ScanMode } from '.
 import { foldRecords, type KindTable } from '../../core/lib/records'
 import { FILE_DEFAULTS } from './config'
 import { mdCandidates, touchFromToolResult } from './files'
+import { fileRow } from './rows'
 import { FileSight, type SightCache } from './sight'
 import type { FileActivity, FileRecord } from './types'
 
@@ -132,4 +133,5 @@ export const fileKind: ItemKind<FileRecord> = {
     if (winner.bySubagent || loser.bySubagent) out.bySubagent = true
     return out
   },
+  row: fileRow,
 }

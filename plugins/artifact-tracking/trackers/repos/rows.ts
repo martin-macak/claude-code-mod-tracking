@@ -1,8 +1,12 @@
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
-import type { RepoRecord } from '../../hooks/contracts'
 import { REPOS_DEFAULTS, type ReposConfig } from './config'
 import type { RepoMode } from './hints'
 import type { RepoVisit } from './tracker'
+import type { RepoRecord } from './types'
+
+/** The slot value as rows. The family stores Json, so a value that is not a list reads as none. */
+export const asRepoRows = (v: readonly RepoRecord[] | undefined): RepoRecord[] =>
+  Array.isArray(v) ? (v as RepoRecord[]) : []
 
 const sameList = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((x, i) => x === b[i])

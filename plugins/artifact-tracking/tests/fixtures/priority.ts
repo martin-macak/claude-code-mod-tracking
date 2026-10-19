@@ -1,7 +1,7 @@
 // Priority of a tracked item (issue #30): the order of the levels, their markers and the merge of manual marks.
 // Pure: no `$`. A record's `priority` is the person's manual mark only. Absent means no mark.
-// A binding over `core/infra/priority.ts` and the rules of the shipped kinds (plan L5, Task 6): each function keeps its
-// old signature, and Task 15 moves it to the test fixtures.
+// A test binding over `core/infra/priority.ts` and the rules of the shipped kinds (plan L5, Tasks 6 and 15): each function
+// keeps its old signature. The legacy draw path has the small `hooks/ui/levels.ts` of its own, so L6 can delete that alone.
 
 import { effectiveLevels as levelsOf, rowIdOf as rowOf, setLevel } from '../../core/infra/priority'
 import type { Effective, Json, PriorityRule } from '../../core/interfaces/items'
@@ -11,12 +11,12 @@ import type { KindTable } from '../../core/lib/records'
 import { GITHUB_DEFAULTS } from '../../trackers/github/config'
 import { BRANCH_PR, CLOSED_BY_PR } from '../../trackers/github/rules'
 import { mergeNodePriorities } from '../../trackers/jira/nodes'
-import type { ItemRecord, RepoRef } from '../contracts'
-import { REF_KINDS } from '../scan/refs'
+import type { ItemRecord, RepoRef } from './contracts'
+import { REF_KINDS } from './refs'
 import { KINDS } from './registry'
 
 export type { Level } from '../../core/lib/levels'
-// The level helpers moved to core/lib/levels.ts in plan L5, Task 2. The old callers import them from here until Task 15.
+// The level helpers moved to core/lib/levels.ts in plan L5, Task 2. The tests import them from here.
 export { byLevel, markerOf, mergePriority, rankOf, withPriority } from '../../core/lib/levels'
 export type { Effective }
 export { mergeNodePriorities }
