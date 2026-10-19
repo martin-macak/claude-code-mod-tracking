@@ -1,0 +1,1 @@
+{ "name": "kit-fs", "version": "0.0.1", "description": "Spike G06: what $.fs.read/write/exists do in claude plugin test without a stub.", "author": { "name": "spike" } }

@@ -1,0 +1,1 @@
+{ "name": "lifecycle-mod", "version": "0.0.1", "description": "throwaway spike", "author": { "name": "spike" }, "types": "./types/index.d.ts" }

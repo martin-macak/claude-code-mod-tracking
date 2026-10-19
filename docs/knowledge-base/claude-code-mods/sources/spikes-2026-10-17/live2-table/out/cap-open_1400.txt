@@ -1,0 +1,40 @@
+                        │                                                                                             ✕
+  ⎿ arch-spike-tbl: tbl │
+    opened rows=600     │
+    titleLen=200        │
+    auto=false          │
+    sticky=true         │
+    long=false          │
+    placed=true         │
+                        │
+⏺ hooks:                │
+  ui.render             │
+  (Pane): 127920        │
+  characters of         │
+  text are              │
+  drawn up to           │
+  the first             │
+  100000                │
+                        │
+❯ /tbl                  │
+  ⎿ arch-spike-tbl: tbl │
+    opened rows=1400    │
+    titleLen=0          │
+    auto=false          │
+    sticky=true         │
+    long=false          │
+    placed=true         │
+                        │
+⏺ hooks:                │
+  ui.render             │
+  (Pane)                │
+  refused: more         │
+  than 20000            │
+  nodes; the            │
+  engine drew           │
+  its own               │
+                        │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 3 agents

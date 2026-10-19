@@ -1,0 +1,51 @@
+
+ ▐▛███▛█   Claude Code v2.1.302
+▝▜██████▀  Opus 5.5 · Claude Max
+ ▝▝   ▝▝   <SPIKES>/live2-lifecycle/cwd
+
+⚠ 1 MCP server needs authentication · run /mcp
+⚠ Your login expires in 3 days · run /login to renew
+
+❯ /clear
+
+❯ /spike-info
+  ⎿  lifecycle-mod: gen=gmvcwfmy7ggrs core=x1+y1 reg=r1 cmdCount=102 ticks=23 loadedAt=1792271933935 snap={"sid":"888e42bb-cc7f-4a83-b529-be923bbae564","marker":"","github":null,"jira":null}
+
+❯ /spike-fam
+  ⎿  lifecycle-mod: github: bump->1 get={"n":1} | jira: bump->1 get={"n":1}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 3 agents
+

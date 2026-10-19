@@ -1,0 +1,1 @@
+{ "name": "kit-end", "version": "0.0.1", "description": "Spike G11: does the kit run session.end for reason clear, and what do $.state and $.session.id() hold?", "author": { "name": "spike" }, "types": "./types/index.d.ts" }

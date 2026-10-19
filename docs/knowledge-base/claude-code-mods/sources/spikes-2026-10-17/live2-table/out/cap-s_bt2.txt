@@ -1,0 +1,40 @@
+⚠ 1 MCP server needs    │                                                                                             ✕
+  authentication · run  │>   #268 in webhook dispatcher for tenant billing export… open       33m
+  /mcp                  │>   #269 webhook dispatcher for tenant billing export wh… merged     34m
+⚠ Your login expires in │>   #270 dispatcher for tenant billing export when th     draft      35m
+  3 days · run /login to│>   #271 for tenant billing export when the queue stalls… closed     36m
+  renew                 │>   #272 tenant billing export when the queue stalls aft… open       37m
+                        │>   #273 billing export when the queue stalls after a sc… merged     38m
+▎ <debug-log notice>    │>   #274 export when the queue stalls after a schema mig… draft      39m
+▎                       │>   #275 when the queue stalls after a schema migration … closed     40m
+▎                       │>   #276 the queue stalls after a schema migration rol    open       41m
+▎                       │>   #277 queue stalls after a schema migration rolls bac… merged     42m
+▎                       │>   #278 stalls after a schema migration rolls back Add … draft      43m
+▎                       │>   #279 after a schema migration rolls back Add paginat… closed     44m
+▎                       │>   #280 a schema migration rolls back Add pagination to… open       45m
+▎                       │>   #281 schema migration rolls back Add pagination to a… merged     46m
+▎                       │>   #282 migration rolls back Add pagination to audit l   draft      47m
+▎                       │>   #283 rolls back Add pagination to audit log endpoint… closed     48m
+                        │>   #284 back Add pagination to audit log endpoint and c… open       49m
+❯ /tbl                  │>   #285 Add pagination to audit log endpoint and cache … merged     50m
+  ⎿ arch-spike-tbl: tbl │>   #286 pagination to audit log endpoint and cache inva… draft      51m
+    opened rows=300     │>   #287 to audit log endpoint and cache invalida         closed     52m
+    titleLen=0          │>   #288 audit log endpoint and cache invalidation on pe  open       53m
+    auto=false          │>   #289 log endpoint and cache invalidation on permissi… merged     54m
+    sticky=false        │>   #290 endpoint and cache invalidation on permission c… draft      55m
+    long=false          │>   #291 and cache invalidation on permission change Fix… closed     56m
+    placed=true         │>   #292 cache invalidation on permission change Fix fla… open       57m
+                        │>   #293 invalidation on permission change Fix fla        merged     58m
+❯ /tbl                  │>   #294 on permission change Fix flaky retry logic in we draft      59m
+  ⎿ arch-spike-tbl: tbl │>   #295 permission change Fix flaky retry logic in webh… closed      1m
+    opened rows=300     │>   #296 change Fix flaky retry logic in webhook dispatc… open        2m
+    titleLen=0          │>   #297 Fix flaky retry logic in webhook dispatcher for… merged      3m
+    auto=false          │>   #298 flaky retry logic in webhook dispatcher for ten… draft       4m
+    sticky=true         │>   #299 retry logic in webhook dispatcher for tena       closed      5m
+    long=false          │last action: x on row 0
+    placed=true         │x: act-x  y: act-y  d: dump
+                        │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 3 agents

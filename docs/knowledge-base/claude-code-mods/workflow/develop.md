@@ -1,6 +1,6 @@
 # Develop a mod
 
-How to lay out a mod, type it, load it into a session, and what a reload does. Pinned to Claude Code 2.1.295.
+How to lay out a mod, type it, load it into a session, and what a reload does. Pinned to the Claude Code 2.1.295 snapshot, with a checked delta for 2.1.302 ([changes](../reference/changes-2.1.302.md)). Text marked *2.1.302* was run there. Grades: *verified-kit* = seen in `validate` or `test`; *verified-live* = seen in an interactive session; *types-only*; *inference*.
 
 Link keys: `[types]` = [claude-code.d.ts](../sources/claude-code-2.1.295/types/claude-code.d.ts), `[ref]` = [reference.md](../sources/claude-code-2.1.295/reference.md), `[skill]` = [SKILL.md](../sources/claude-code-2.1.295/SKILL.md). Public docs live in [`../sources/code-claude-com-2026-10-09/`](../sources/code-claude-com-2026-10-09/).
 
@@ -32,9 +32,40 @@ Module rules ([ref:14](../sources/claude-code-2.1.295/reference.md#L14), [types:
 - Allowed suffixes: `.ts` `.tsx` `.jsx` `.js` `.mjs` `.cjs` `.mts` `.cts`. Another suffix is not loaded.
 - Every file is an ES module, whatever its suffix. There is no `require`.
 - Import plugin files with an `import` declaration. A module with `import()` does not load.
-- The only bare import is `claude-code` (types and a few helpers; empty at run time). Import only plugin files by relative path.
+- The only bare import is `claude-code` (types and a few helpers; empty at run time). Import only plugin files by relative path, and stay inside the plugin folder (see [Sibling folders](#sibling-folders-beside-hooks)).
 - No DOM and no Node. Everything outside reaches the module through `$`. JSX compiles against the global `h`.
 - `claude plugin init` makes a **different** plugin (command hooks under `~/.claude/skills`). It does not make a mod. ([ref:9](../sources/claude-code-2.1.295/reference.md#L9))
+
+### Sibling folders beside `hooks/`
+
+*(2.1.302, *verified-kit*, and the same load in a headless `claude -p --plugin-dir` run.)*
+
+`hooks/register.ts` may import runtime code from a folder beside `hooks/`, inside the plugin folder:
+
+```text
+<mod>/
+├── hooks/
+│   ├── hooks.json          { "modules": ["./register.ts"] }
+│   └── register.ts         import { installCore } from '../core/install'
+├── core/                   managers, ports, a tracker registry
+│   ├── install.ts          calls on('tool.call', { tool: 'Bash' }, …)
+│   └── x.ts
+└── trackers/
+```
+
+- `validate` follows the import. It printed `./register.ts hooks: tool.call{tool=Bash}, tool.call{tool=Read}` and `calls: $.session.id` for hooks registered in `core/install.ts`, and ended `✔ Validation passed`. The kit test `register.ts imports ../core/*.ts (outside hooks/)` passed. `tsc` exited 0 once `include` listed the new folder.
+- A file in `core/` may receive `on` and register hooks. The rules for `on` and `$` are in [ports-and-injection](../concepts/ports-and-injection.md).
+- The module `hooks.json` names is a path relative to `hooks.json`, so `register.ts` stays beside it. Nobody tried a `modules` path that climbs out of `hooks/`.
+- An import that **leaves the plugin folder** is refused by `validate` and by the loader. *verified-kit:*
+
+  ```text
+  plug: cannot import "../../shared/x" (from hooks/register.ts): it is outside the plugin's folder
+  HooksError: plug: hooks module did not load: cannot import "../../shared/x" …
+  ```
+
+- Add each new folder to `include` in the tsconfig (`"core/**/*.ts"`).
+- A zip or `git archive` of the plugin folder carries every file, so `core/` ships. This repo's `make dist` archives `HEAD:plugins/artifact-tracking` with no whitelist ([Makefile:160](../../../../Makefile#L160)).
+- *verified-live:* a save of a file in `core/` reloads the mod, exactly like a save of `hooks/register.tsx`. The same holds for a file that `core/` imports and for `trackers/a.ts`. A file that nothing imports does not reload it. Watching follows the import graph. See [lifecycle: what triggers a reload](../concepts/lifecycle.md#what-triggers-a-reload). [reference.md:73](../sources/claude-code-2.1.302/reference.md#L73) adds that a save which leaves a loaded file unchanged reloads nothing.
 
 ### plugin.json fields that matter to a mod
 
@@ -109,6 +140,7 @@ The header's `tsconfig.json` ([types:67-80](../sources/claude-code-2.1.295/types
 
 - `lib` names no DOM on purpose. The DOM `Text` type would shadow the `Text` element. ([types:85-87](../sources/claude-code-2.1.295/types/claude-code.d.ts#L85))
 - *Observed:* `claude plugin validate`, `claude plugin test` and a headless `claude -p "..." --plugin-dir <mod>` run did **not** create `.claude-plugin/types/` (checked on a clean mod folder). Consistent with [ref:50-53](../sources/claude-code-2.1.295/reference.md#L50). An interactive session load was not run here, so "the engine lays the types" is cited, not observed.
+- *2.1.302:* this repo's `plugins/artifact-tracking/tsconfig.json` lists the 2.1.295 snapshot file in `include`. The 2.1.302 file type-checks the spike mods too (`tsc` 7.0.2, exit 0; [spikes-2026-10-17](../sources/spikes-2026-10-17/README.md)). Move the path when the pin moves. See [validate-test-debug](validate-test-debug.md#2-tsc--p).
 - *Observed:* with the d.ts copied by hand to `.claude-plugin/types/claude-code/index.d.ts` and the tsconfig above, `tsc -p .` (TypeScript 5.6) passed on the bundled `tool-call.ts` example. For a mod outside a hot-reloaded folder, point `include` at the d.ts and the mod's `hooks`.
 
 ## Ways to load a mod
@@ -204,7 +236,11 @@ A plugin folder with `.claude-plugin/plugin.json` saved under `~/.claude/skills/
 | Question | Answer | Source |
 | --- | --- | --- |
 | What does a reload do? | Fresh load of the module. `register` runs again in a fresh environment. Timers of the old environment are dropped. | [skill:21](../sources/claude-code-2.1.295/SKILL.md#L21), [ref:73](../sources/claude-code-2.1.295/reference.md#L73) |
-| Does `session.start` fire again? | Yes. | [skill:21](../sources/claude-code-2.1.295/SKILL.md#L21) |
+| Does `session.start` fire again? | Yes. In 2.1.302 it came 0.46 to 0.73 s after the save (three reloads, *verified-live*), with `{ cwd, surface, isInteractive }` and the same session id. | [skill:21](../sources/claude-code-2.1.295/SKILL.md#L21), [lifecycle](../concepts/lifecycle.md#hot-reload) |
+| Does anything reach the old copy before it goes? | **No.** No `session.end`, `ui.close` or `plugin.register`, and with a catch-all hook no event of any kind (four reloads, *verified-live*). A pending `$.clock.after` never fires. There is no teardown event, so write through. | [lifecycle](../concepts/lifecycle.md#hot-reload) |
+| Which saves reload? | A save of any file in the module's import graph, in `hooks/` or in a sibling folder such as `core/` or `trackers/` (0.5 to 0.65 s to the new `session.start`). A file that nothing imports does not. *verified-live*, 2.1.302. | [lifecycle](../concepts/lifecycle.md#what-triggers-a-reload) |
+| Does a save with identical text reload? | **No.** A save that leaves a loaded file with the text it was loaded from reloads nothing. After a failed reload any new save tries again. New in 2.1.302. *verified-live* with `cp`. | [ref:73 (2.1.302)](../sources/claude-code-2.1.302/reference.md#L73) |
+| What happens to an open pane? | It stays open. The new copy draws it. No `ui.close` fires. Reattach with `$.ui.panes()`. *verified-live* | [lifecycle](../concepts/lifecycle.md#hot-reload) |
 | What survives? | `$.state` (session) and `$.store` (across sessions). | [skill:21](../sources/claude-code-2.1.295/SKILL.md#L21), [types:3378](../sources/claude-code-2.1.295/types/claude-code.d.ts#L3378) |
 | What resets? | The module's own variables. | [skill:21](../sources/claude-code-2.1.295/SKILL.md#L21) |
 | When do saves by the model reload? | Once, when the turn ends. Sooner when a tool or command the plugin registered is about to run, so the turn can try what it wrote. | [ref:73](../sources/claude-code-2.1.295/reference.md#L73) |
@@ -215,6 +251,8 @@ A plugin folder with `.claude-plugin/plugin.json` saved under `~/.claude/skills/
 Practical rules:
 
 - Keep drawn state in `$.state`, not in module variables. A hot reload loses variables. ([ref:118](../sources/claude-code-2.1.295/reference.md#L118))
+- Do not park work in a `$.clock` timer across a reload. The new copy drops it. Write through, or flush in `session.end`. ([lifecycle](../concepts/lifecycle.md))
+- Make `session.start` idempotent: it runs again on every reload.
 - Start long work in `session.start` with `$.clock.every` / `$.clock.after`. Timers run until cancelled or until reload. ([ref:157-161](../sources/claude-code-2.1.295/reference.md#L157))
 - Example: the public tutorial mod `first-mod` resets its `calls` counter to `0` on each reload, because `calls` is a module variable. ([docs: create:250](../sources/code-claude-com-2026-10-09/mods/create.md#L250))
 
@@ -234,3 +272,5 @@ Details: [validate-test-debug](validate-test-debug.md).
 - [../examples/README.md](../examples/README.md): complete mods to copy from
 - [../reference/testing-kit.md](../reference/testing-kit.md), [../reference/limits-and-diagnostics.md](../reference/limits-and-diagnostics.md)
 - [../concepts/state-and-storage.md](../concepts/state-and-storage.md): `$.state` and `$.store`
+- [../concepts/lifecycle.md](../concepts/lifecycle.md): start, reload, `/clear`, `session.end`
+- [../concepts/ports-and-injection.md](../concepts/ports-and-injection.md): hand `on` and `$` to other files

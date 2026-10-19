@@ -1,0 +1,40 @@
+                        │                                                                                             ✕ 
+  ⎿ arch-spike-tbl: tbl │>   #436 for tenant billing export when the queue stalls… open       24m                       
+    opened rows=600     │>   #437 tenant billing export when the queue stalls aft… merged     25m                       
+    titleLen=0          │>   #438 billing export when the queue stalls after a sc… draft      26m                       
+    auto=false          │>   #439 export when the queue stalls after a schema mig… closed     27m                       
+    sticky=true         │>   #440 when the queue stalls after a schema migration … open       28m                       
+    long=false          │>   #441 the queue stalls after a schema migration rolls… merged     29m                       
+    placed=true         │>   #442 queue stalls after a schema migration rolls bac… draft      30m                       
+                        │>   #443 stalls after a schema migration rolls back Add … closed     31m                       
+❯ /tbl                  │>   #444 after a schema migration rolls back Add paginat… open       32m                       
+  ⎿ arch-spike-tbl: tbl │>   #445 a schema migration rolls back Add pagination to… merged     33m                       
+    opened rows=600     │>   #446 schema migration rolls back Add pagination to a… draft      34m                       
+    titleLen=0          │>   #447 migration rolls back Add pagination to audit lo… closed     35m                       
+    auto=false          │>   #448 rolls back Add pagination to audit log endpoint… open       36m                       
+    sticky=true         │>   #449 back Add pagination to audit log endpoint and c… merged     37m                       
+    long=false          │>   #450 Add pagination to audit log endpoint and cache … draft      38m                       
+    placed=true         │>   #451 pagination to audit log endpoint and cache inva… closed     39m                       
+                        │>   #452 to audit log endpoint and cache invalidation on… open       40m                       
+❯ /tbl                  │>   #453 audit log endpoint and cache invalidation on pe… merged     41m                       
+  ⎿ arch-spike-tbl: tbl │>   #454 log endpoint and cache invalidation on permissi… draft      42m                       
+    opened rows=600     │>   #455 endpoint and cache invalidation on permission c… closed     43m                       
+    titleLen=200        │>   #456 and cache invalidation on permission change Fix… open       44m                       
+    auto=false          │>   #457 cache invalidation on permission change Fix fla… merged     45m                       
+    sticky=true         │>   #458 invalidation on permission change Fix flaky ret… draft      46m                       
+    long=false          │>   #459 on permission change Fix flaky retry logic in w… closed     47m                       
+    placed=true         │>   #460 permission change Fix flaky retry logic in webh… open       48m                       
+                        │>   #461 change Fix flaky retry logic in webhook dispatc… merged     49m                       
+⏺ hooks:                │>   #462 Fix flaky retry logic in webhook dispatcher for… draft      50m                       
+  ui.render             │>   #463 flaky retry logic in webhook dispatcher for ten… closed     51m                       
+  (Pane): 127920        │>   #464 retry logic in webhook dispatcher for tenant bi… open       52m                       
+  characters of         │>   #465 logic in webhook dispatcher for tenant billing … merged     53m                       
+  text are              │>   #466 in webhook dispatcher for tenant billing export… draft      54m                       
+  drawn up to           │>   #467 webhook dispatcher for tenant billing export wh… closed     55m                       
+  the first             │>   #468 dispatcher for tenant billing export when the q… open       56m                       
+  100000                │>   #469 for tenant                                                                            
+                        │                                                                                               
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯                             
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 3 agents                   

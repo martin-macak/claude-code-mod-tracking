@@ -50,7 +50,7 @@ Each row is a researcher claim that the review checked against a saved file.
 | N9 | Hierarchy levels above Epic (Premium). | Tree depth. | A Premium site. |
 | N10 | Does `acli --version` reach the network for its "outdated" notice? | It runs in `canRefresh()` probing. | Run it with `HTTPS_PROXY=http://127.0.0.1:9` and time it. |
 | N11 | Timer callbacks longer than 45 s. | Long refresh rounds. | Keep each round short; or test 120 s. |
-| N12 | Keyboard path into the pane (focus, Tab, Enter on a collapse `Button`). | Tree collapse by key. | tmux run, send keys. |
+| N12 | Keyboard path into the pane (focus, Tab, Enter on a collapse `Button`). | Tree collapse by key. | tmux run, send keys. **Answered 2026-10-17** (Claude Code 2.1.302, *verified-live*): Tab and Shift+Tab walk every `Button`, Enter presses it, Up and Down scroll when the tree overflows. See [ui: ring walk](../claude-code-mods/reference/ui.md#ring-walk-and-scroll). |
 | N13 | A pane in a non-fullscreen terminal. `dock` may need fullscreen (*inference*). | Layout. | Run without fullscreen. |
 | N14 | `prompt.submit` for a prompt queued while a turn runs. | Capture choice D4. | tmux run. |
 | N15 | Which interactive inputs produce origin `unclassified`. | Allow-list D3. | Log origins over a week of use. |

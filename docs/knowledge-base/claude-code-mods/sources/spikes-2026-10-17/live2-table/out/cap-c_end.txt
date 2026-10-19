@@ -1,0 +1,40 @@
+                        │                                                                                             ✕
+  ⎿ arch-spike-tbl: tbl │>   #437 tenant billing export when the queue stalls aft… merged     25m
+    opened rows=600     │>   #438 billing export when the queue stalls after a sc… draft      26m
+    titleLen=0          │>   #439 export when the queue stalls after a schema mig… closed     27m
+    auto=false          │>   #440 when the queue stalls after a schema migration … open       28m
+    sticky=true         │>   #441 the queue stalls after a schema migration rolls… merged     29m
+    long=false          │>   #442 queue stalls after a schema migration rolls bac… draft      30m
+    placed=true         │>   #443 stalls after a schema migration rolls back Add … closed     31m
+                        │>   #444 after a schema migration rolls back Add paginat… open       32m
+❯ /tbl                  │>   #445 a schema migration rolls back Add pagination to… merged     33m
+  ⎿ arch-spike-tbl: tbl │>   #446 schema migration rolls back Add pagination to a… draft      34m
+    opened rows=600     │>   #447 migration rolls back Add pagination to audit lo… closed     35m
+    titleLen=0          │>   #448 rolls back Add pagination to audit log endpoint… open       36m
+    auto=false          │>   #449 back Add pagination to audit log endpoint and c… merged     37m
+    sticky=true         │>   #450 Add pagination to audit log endpoint and cache … draft      38m
+    long=false          │>   #451 pagination to audit log endpoint and cache inva… closed     39m
+    placed=true         │>   #452 to audit log endpoint and cache invalidation on… open       40m
+                        │>   #453 audit log endpoint and cache invalidation on pe… merged     41m
+❯ /tbl                  │>   #454 log endpoint and cache invalidation on permissi… draft      42m
+  ⎿ arch-spike-tbl: tbl │>   #455 endpoint and cache invalidation on permission c… closed     43m
+    opened rows=600     │>   #456 and cache invalidation on permission change Fix… open       44m
+    titleLen=200        │>   #457 cache invalidation on permission change Fix fla… merged     45m
+    auto=false          │>   #458 invalidation on permission change Fix flaky ret… draft      46m
+    sticky=true         │>   #459 on permission change Fix flaky retry logic in w… closed     47m
+    long=false          │>   #460 permission change Fix flaky retry logic in webh… open       48m
+    placed=true         │>   #461 change Fix flaky retry logic in webhook dispatc… merged     49m
+                        │>   #462 Fix flaky retry logic in webhook dispatcher for… draft      50m
+⏺ hooks:                │>   #463 flaky retry logic in webhook dispatcher for ten… closed     51m
+  ui.render             │>   #464 retry logic in webhook dispatcher for tenant bi… open       52m
+  (Pane): 127920        │>   #465 logic in webhook dispatcher for tenant billing … merged     53m
+  characters of         │>   #466 in webhook dispatcher for tenant billing export… draft      54m
+  text are              │>   #467 webhook dispatcher for tenant billing export wh… closed     55m
+  drawn up to           │>   #468 dispatcher for tenant billing export when the q… open       56m
+  the first             │>   #469 for tenant
+  100000                │         … 189 more characters, not drawn
+                        │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 3 agents

@@ -2,6 +2,8 @@
 
 How an event moves through the chain. What `next` does. How matchers select hooks. What happens when a hook fails, and how to make a guard fail closed. Read [overview](overview.md) first.
 
+Citations are to the 2.1.295 snapshot unless a line says **2.1.302**. The one rule that changed its words is the re-entry rule: see [A hook is not run beneath its own call](#a-hook-is-not-run-beneath-its-own-call).
+
 ## The chain
 
 All hooks on one event form one chain. The first hook is outermost. It sees the event first and the result last. Each `next(e)` runs the hooks beneath again. Core (the engine's own behaviour) is last. Below core, `next` rejects. ([d.ts:6535](../sources/claude-code-2.1.295/types/claude-code.d.ts#L6535), [docs: events](../sources/code-claude-com-2026-10-09/mods/events.md#L289))
@@ -134,10 +136,10 @@ One dim line names the plugin, the event and the reason. In a hot-reloaded dev f
 | Member | Meaning |
 | --- | --- |
 | `next.called` | `true` when the failed hook had called `next()` or `next.to()` at least once (settled or in flight). The handler runs after that call settled. |
-| `next.error.kind` | `'throw'` (threw, wrong shape, or its worker ended), `'timeout'` (outran its budget), `'re-entry'` (no fault, see below). |
+| `next.error.kind` | `'throw'` (threw, wrong shape, or its worker ended), `'timeout'` (outran its budget). 2.1.295 also had `'re-entry'` (no fault, see below). **2.1.302:** the kind is gone ([d.ts 302:5269-5289](../sources/claude-code-2.1.302/types/claude-code.d.ts#L5269-L5289)). |
 | `next.error.message` | What was thrown. For a timeout, what the last `next()` rejected with. May be absent. |
 | `next.error.budget` | The handler's grace in ms. |
-| `next.error.cause` | `'lent'` on a `re-entry` raised beneath a noun's call. Absent otherwise. |
+| `next.error.cause` | 2.1.295: `'lent'` on a `re-entry` raised beneath a noun's call. **2.1.302:** the member is gone. |
 
 ([d.ts:5136](../sources/claude-code-2.1.295/types/claude-code.d.ts#L5136), [d.ts:5152](../sources/claude-code-2.1.295/types/claude-code.d.ts#L5152))
 
@@ -178,40 +180,57 @@ Per event, the refusal in the `else` arm changes ([d.ts:3955](../sources/claude-
 
 Why the `called` test: if the guard already let the event through, refusing now would not undo the work. Replay returns what already happened.
 
-### Re-entry and `cause: 'lent'`
+### A hook is not run beneath its own call
 
-A hook never runs under its own frame. If an event is raised **beneath a `$` call that the same hook made**, the engine does not run the hook again. The `.catch` handler answers in its place. ([reference.md:79](../sources/claude-code-2.1.295/reference.md#L79), [d.ts:5136](../sources/claude-code-2.1.295/types/claude-code.d.ts#L5136), [docs: reference](../sources/code-claude-com-2026-10-09/mods/reference.md#L42))
+A hook is not run under its own frame. If an event is raised **beneath a `$` call that the same hook made**, the engine does not run that hook again. In 2.1.295 this was the "re-entry rule", with a failure kind `'re-entry'`, a cause `'lent'` and a special `.catch` ask. **2.1.302 dropped those names, not the behaviour.**
 
-In a re-entry handler:
+What the 2.1.302 types say (*types-only*):
 
-- `next.error.kind === 're-entry'` and `next.called === false`.
-- `next(e)` runs what is beneath on the event **as it was raised**, whatever the handler passes.
-- Any `$` call the handler makes **rejects**. Decide from `e` and `next` alone. Wrap a read in `try`, or treat its rejection as a refusal. Otherwise the handler throws and the hook is left out of that call.
-- A hook with no handler is left out of such a call.
-- `cause: 'lent'` means a noun (a method another plugin added to `$`) fired the event, or something beneath that noun's call did. The work may be that noun's own or another caller's. The engine does not guess which. A plain re-entry has no `cause`.
-- The plain guard `next.called ? next(e) : { deny }` refuses every re-entry (`called` is false).
-- A handler that lets some through checks `e` alone:
+- "The engine raises its events through these same calls; a plugin's call runs the same chain with the calling hook alone skipped." ([d.ts 302:4843-4844](../sources/claude-code-2.1.302/types/claude-code.d.ts#L4843-L4844))
+- `$.tool.call` "runs through every hook but the calling one (the plugin's others see it)". ([d.ts 302:3099-3100](../sources/claude-code-2.1.302/types/claude-code.d.ts#L3099-L3100))
+- The calls the host serves, as events: "The calling hook alone is skipped, and `next.origin` names the caller." ([d.ts 302:6976](../sources/claude-code-2.1.302/types/claude-code.d.ts#L6976))
+- `HookFailure.kind` is only `'throw' | 'timeout'`, and the `CatchHandler` doc no longer mentions a re-entry ask. ([d.ts 302:5269-5289](../sources/claude-code-2.1.302/types/claude-code.d.ts#L5269-L5289), [d.ts 302:1197-1206](../sources/claude-code-2.1.302/types/claude-code.d.ts#L1197-L1206))
 
-```ts
-.catch(($, e, next) =>
-  next.error.kind === 're-entry'
-    ? (e.tool === 'Bash' ? { deny: 'why' } : next(e))
-    : next.called ? next(e) : { deny: 'why' })
-```
+What a run showed (*verified-kit*, 2.1.302; spikes `r01-append` to `r04-cycle` in [spikes-2026-10-17](../sources/spikes-2026-10-17/README.md#second-pass-re-entry-the-bus-and-composition); the kit and a headless `claude -p` run against a fake API gave byte-identical logs):
 
-Re-entry needs Claude Code 2.1.292 or later (public docs, [reference](../sources/code-claude-com-2026-10-09/mods/reference.md#L42)). The source adds a timing rule: "ten seconds after the noun was called the hook itself is asked again, unless its own dispatch is still above" ([reference.md:79](../sources/claude-code-2.1.295/reference.md#L79)). The meaning is unclear. See [open-questions](../open-questions.md).
+| Case | Result |
+| --- | --- |
+| An `on('session.append')` hook appends one row per run (cap 3) through its own `$` | The hook ran once (`invA=1`). It did not see its own row. |
+| The same for `on('tool.call')` calling `$.tool.call` (Read) | `invA=1`. |
+| The nested call goes through ports built from the `command.run` hook's `$`, or from the `session.start` hook's `$` | `invA=1`. The skip does not depend on which `$` the call used. |
+| The nested call comes from a `$.clock.after(0)` timer that the hook armed, after the hook returned | `invA=1`. |
+| With and without `.catch((_$, e, next) => next(e))`, same row text or unique, append before or after `next(e)` | `invA=1` in every variant. |
+| A cycle: hook S (`session.append`) calls `$.tool.call`, hook T (`tool.call`) calls `$.session.append`, capped at 6 | `invS=1 invT=1` from either start. |
+| A peer: a second hook B on `session.append{door=note}` that also appends per row it sees | `invA=2 invB=2`. The skip is per hook along the call chain. A's row raised under `B#1` is not seen by A, because `A#1` is the ancestor caller. B's second row is seen by `A#2`, because `A#1` only runs the chain. |
+
+Exceptions and limits:
+
+- **`ui.render` is run again.** A `ui.render` hook that calls `$.ui.invalidate('ui.render')` is run again for each call. With a cap of N invalidates it drew N+1 times (`p0` 1 draw, `p3` 4, `p20` 21) in the kit. The reason (*types-only*): `$.ui.invalidate` is not a member of `EventCalls`. It asks the engine to re-run the event, and "an invalidate is any plugin's whose matcher may select it", the caller's too ([d.ts 302:2381-2393](../sources/claude-code-2.1.302/types/claude-code.d.ts#L2381-L2393), [d.ts 302:4078-4079](../sources/claude-code-2.1.302/types/claude-code.d.ts#L4078-L4079)). The kit does not model the live pace (ten a second, thirty for a shown pane). Never call `$.ui.invalidate` from inside a render. Redraw by state: read an atom while drawing, and write it from a `ui.focus` or event hook.
+- **Plugin-declared nouns follow another rule.** For a noun a plugin adds to `$` (an `engine.create` noun), a hook with no `.catch` can be run again beneath its call, and "the third identical open call waits behind the second" ([d.ts 302:7801-7807](../sources/claude-code-2.1.302/types/claude-code.d.ts#L7801-L7807)). *types-only.* Not tested. The `tool`, `session` and `ui` nouns are not covered by it.
+- **A skip hides the row from every tracker on that hook.** One fan-out hook is one frame. A row that a tracker appends inside the dispatch of event X is invisible to every handler of that hook, not only to its author. A second `on()` with a matcher (the peer case) is the way to see it. A second matcherless `on()` for the same event is refused ([ports-and-injection](ports-and-injection.md#duplicates)). *inference* from the peer run.
+- **What a `.catch` does when its hook is skipped is not shown.** The runs counted hook-body invocations only. In 2.1.295 the handler answered in the hook's place, with `$` calls rejecting. 2.1.302 says nothing about it. Treat it as unresolved ([architecture Q24](../../claude-code-mod-architecture/open-questions.md#1-unknowns)).
+- **No in-process guard is needed for engine events.** The engine already cuts self-calls, calls from a timer the hook armed, and cycles across events. An in-process emit between trackers (plain JS the engine cannot see) still needs its own depth cap. *inference.*
+
+The 2.1.295 text, kept for older mods (*types-only*, [d.ts:5136](../sources/claude-code-2.1.295/types/claude-code.d.ts#L5136), [reference.md:79](../sources/claude-code-2.1.295/reference.md#L79)):
+
+- The skipped hook's `.catch` handler answered in its place. `next.error.kind === 're-entry'` and `next.called === false`. `next(e)` ran what is beneath on the event as it was raised. Any `$` call in the handler rejected.
+- `cause: 'lent'` meant a noun that another plugin added to `$` fired the event.
+- The plain guard `next.called ? next(e) : { deny }` refused every re-entry.
+- The source added a timing rule: "ten seconds after the noun was called the hook itself is asked again, unless its own dispatch is still above". Its meaning was unclear ([open-questions #13](../open-questions.md)). It is gone in 2.1.302.
+- It needed Claude Code 2.1.292 or later ([docs: reference](../sources/code-claude-com-2026-10-09/mods/reference.md#L42)).
+
+[reference.md 302:168](../sources/claude-code-2.1.302/reference.md#L168) still says a queued record "is raised under the hook's frames, so that hook is not run on it (the re-entry rule)". The sentence is right about the behaviour. Only the name is old.
 
 ### Guard outcomes
 
 ```mermaid
 flowchart TD
     A[Event reaches the guard hook] --> B{Event raised beneath the hook's own $ call?}
-    B -- yes --> RE[Hook not run. kind = re-entry, called = false]
+    B -- yes --> RE[Hook not run. The hooks beneath and core run. 2.1.302 names no failure kind. Whether a .catch is asked: not shown]
     B -- no --> C[Hook runs under its 10 s budget]
     C --> D{Result}
     D -- valid answer --> OK[Answer stands]
     D -- threw, wrong shape, or timeout --> F{Has a .catch?}
-    RE --> F
     F -- no --> S{Had it called next?}
     S -- no --> SK[Fail open: hook skipped. Hooks beneath and core run]
     S -- yes --> ST[Fail open: its next result stands. Nothing runs twice]

@@ -1,6 +1,6 @@
 # Events reference
 
-Every event a mod can hook in Claude Code 2.1.295. Four groups: 46 engine events, 62 API-call events, 33 `classic.<Event>` events, and events of plugin-declared nouns.
+Every event a mod can hook in Claude Code 2.1.295, with a [2.1.302 note](#changes-in-21302) for the five that changed. Four groups: 46 engine events, 62 API-call events, 33 `classic.<Event>` events, and events of plugin-declared nouns.
 
 Authority: [claude-code.d.ts](../sources/claude-code-2.1.295/types/claude-code.d.ts). Line links below point into it. If this page and the file disagree, the file wins.
 
@@ -142,6 +142,20 @@ Hooked by name or by `telemetry.*`. `*` does not select a telemetry event ([d.ts
 - `session.end` `reason` is one of `prompt_input_exit`, `clear`, `resume`, `logout`, `other` ([d.ts:11077](../sources/claude-code-2.1.295/types/claude-code.d.ts#L11077)). A `/clear` raises `session.end` with `clear` and no `session.start` ([reference.md](../sources/claude-code-2.1.295/reference.md#L26)).
 - `prompt.submit` result is `{ text, context?, origin? }` or `{ drop }` ([d.ts:9104](../sources/claude-code-2.1.295/types/claude-code.d.ts#L9104)). A `drop` after `next(e)` already let the prompt through fails the hook ([docs: events](../sources/code-claude-com-2026-10-09/mods/events.md)).
 - `session.start` fires once per process per loaded plugin. The first call is awaited, so a `$.tool.register` made there is listed by turn one ([d.ts:4334](../sources/claude-code-2.1.295/types/claude-code.d.ts#L4334)). Registering `session.start` twice without a matcher fails the load ([docs: events](../sources/code-claude-com-2026-10-09/mods/events.md)).
+
+### Changes in 2.1.302
+
+This page is pinned to 2.1.295. These five events changed in 2.1.302 (*types-only*, read from the [2.1.302 types](../sources/claude-code-2.1.302/types/claude-code.d.ts); the table above keeps the 2.1.295 rows). The full list of changes is in [changes-2.1.302](changes-2.1.302.md).
+
+| Event | 2.1.302 | d.ts |
+|---|---|---|
+| `turn.start` | Also fires for a subagent's or teammate's run, with `e.agentId`. `agentId` is absent on the main loop. In 2.1.295 a subagent's run raised no `turn.start`. An agent's start skips the hooks its spawn was nested in. To follow the main loop alone, return `next(e)` first when `e.agentId !== undefined`. | [d.ts 302:4554](../sources/claude-code-2.1.302/types/claude-code.d.ts#L4554), [d.ts 302:14060](../sources/claude-code-2.1.302/types/claude-code.d.ts#L14060) |
+| `agent.spawn` | New `resume: { agentId }`, set when the run resumes a subagent or brings a teammate back from disk. A hook can only refuse it. A deny parks the agent. Key a per-agent row by `agentId`: a resumed agent is not a new agent. | [d.ts 302:380](../sources/claude-code-2.1.302/types/claude-code.d.ts#L380) |
+| `prompt.change` | **New**, observe only. It fires after the main prompt box's text changed and no `prompt.edit` carried it (a recalled history entry, a clear, a plugin's fill). Input `{ text, cursor, origin }`. `origin.kind` is `history`, `clear`, `undo`, `plugin` (with `name`), `app` or `engine`. Treat an unknown kind as `engine`. One event per batch of changes. | [d.ts 302:4237-4247](../sources/claude-code-2.1.302/types/claude-code.d.ts#L4237-L4247), [d.ts 302:8482](../sources/claude-code-2.1.302/types/claude-code.d.ts#L8482), [d.ts 302:8509](../sources/claude-code-2.1.302/types/claude-code.d.ts#L8509) |
+| `prompt.submit` | Input gains `command: { name, args }` (the slash command the submission runs) and `isMeta` (a prompt the person does not see as typed). Both are pinned. A rewrite of `text` is not applied when `command` is set. `text` is "as typed, pastes already expanded". Mask a command's arguments at `command.run`, not here. | [d.ts 302:9421](../sources/claude-code-2.1.302/types/claude-code.d.ts#L9421), [d.ts 302:9444](../sources/claude-code-2.1.302/types/claude-code.d.ts#L9444) |
+| `session.append` | New door `queue`: the text of a message-queue record (the transcript's `queue-operation` entries), a prompt's or a machine-made one's, raised as a user row the conversation never keeps. The door set has 12 members now. A hook there that throws or takes over a second is passed by. A hook on named doors is not affected. A `*` hook, or one with no `door` matcher, now sees queue text. A plugin's own `$.session.append` still uses the door `note`. | [d.ts 302:10978](../sources/claude-code-2.1.302/types/claude-code.d.ts#L10978), [d.ts 302:10984](../sources/claude-code-2.1.302/types/claude-code.d.ts#L10984) |
+
+The door table in [section 6](#6-sessionappend-in-depth) has the 11 doors of 2.1.295 and a `queue` row for 2.1.302.
 
 ## 2. API calls as events (62)
 
@@ -354,6 +368,7 @@ Source: [reference.md, "The rows a conversation keeps"](../sources/claude-code-2
 | `note` | The loop's own nudges. Also the door of a plugin's `$.session.append` |
 | `compaction` | A compaction's boundary and summary |
 | `notice` | Notices the transcript shows |
+| `queue` | **2.1.302.** The text of a message-queue record (a prompt's or a machine-made one's). It is no row of the conversation. See [Changes in 2.1.302](#changes-in-21302) |
 
 **Origin.** `e.origin` says who caused the row: a prompt's sender, `{ kind: 'model', model }`, `{ kind: 'tool', tool }`, the engine, a settings hook, or a plugin ([d.ts:10644](../sources/claude-code-2.1.295/types/claude-code.d.ts#L10644)). `e.uuid` is the row's id in the transcript. It is the same on every later read.
 

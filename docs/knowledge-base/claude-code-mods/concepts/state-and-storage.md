@@ -2,6 +2,8 @@
 
 Where a mod keeps a value, how long it lives, and how a drawing reads it. Covers module variables, `$.state`, `$.store`, the type contract and the state library.
 
+Most links below go to the 2.1.295 snapshot. The `$.fs`, `$.store` and `$.state` blocks are byte-identical in 2.1.302 (`diff` of 2.1.295 lines 3223-3426 against 2.1.302 lines 3306-3509): [d.ts 302:3306-3509](../sources/claude-code-2.1.302/types/claude-code.d.ts#L3306-L3509) (`fs` from 3306, `store` from 3434, `state` from 3467). Links labelled `d.ts 302:N` go to the 2.1.302 snapshot. Links labelled `d.ts:N` go to 2.1.295. A claim graded *verified-live* or *verified-kit* was checked on 2.1.302 with a throwaway spike mod ([spikes-2026-10-17](../sources/spikes-2026-10-17/README.md)). For `/clear`, reload and `session.end` see [lifecycle](lifecycle.md). For what `validate` accepts as a reference see [State references and the scan](#state-references-and-the-scan).
+
 ## Three places for a value
 
 | Place | Lives until | Shared across sessions | Redraws readers | Use for |
@@ -28,6 +30,7 @@ Sources: [d.ts:3376-3430](../sources/claude-code-2.1.295/types/claude-code.d.ts#
 Rules to keep:
 
 - **Render hooks never write.** Write from a handler (`onPress`, `onSubmit`) or from a hook for another event. ([reference.md:118](../sources/claude-code-2.1.295/reference.md#L118), [docs: interface](../sources/code-claude-com-2026-10-09/mods/interface.md#L795))
+- **One dispatch reads one moment.** Every `get` of one hook run sees the same snapshot, whatever is written meanwhile. ([d.ts 302:3472](../sources/claude-code-2.1.302/types/claude-code.d.ts#L3472)) *verified-kit,* headless real engine (`claude -p --plugin-dir`, fake API, not an interactive session): a `command.run` hook read `{ version: 0 }` for a second after a timer's `update` had resolved in another dispatch. A hook that sleeps and re-reads does not see other dispatches' writes. Read at the start. To see later writes, wait for a new event or timer.
 - **Never write from a value the closure captured at draw time.** Use `update`. It reads, applies and writes with `ifVersion`, again on a miss. Two presses before the redraw both land. ([reference.md:118](../sources/claude-code-2.1.295/reference.md#L118))
 - **Only the owner writes.** Another plugin changes a value by hooking `state.set` with a matcher on `plugin` and `key`, and passing `next` another `value`. `plugin`, `key` and `id` are pinned. ([reference.md:118](../sources/claude-code-2.1.295/reference.md#L118), [d.ts:12060](../sources/claude-code-2.1.295/types/claude-code.d.ts#L12060))
 
@@ -45,6 +48,14 @@ Rules to keep:
     return next(e)
   })
   ```
+
+  **Live check, 2.1.302 (*verified-live*).** The recipe above did not work for a `--plugin-dir` mod on this machine. A `classic.SessionStart` or `classic.SessionEnd` **function hook** never ran, at startup, on `/clear` or on `/exit`. Shell hooks from settings for the same events ran. `claude plugin validate` warns that these events "pass over the plugins you install" where an organization manages Claude Code. What did work:
+
+  - Inside `session.end` with `reason: 'clear'`, `$.session.id()` is still the old id and `$.state` still holds the old value. Store there.
+  - The first `session.append` of the new session arrives 11 to 15 ms later. It carries the new id. `$.state` is already reset (`{ version: 0 }`). Restore there, or on the first use after a changed `await $.session.id()`.
+  - Module variables survive `/clear`. The module is not reloaded.
+
+  Details and the event order: [lifecycle](lifecycle.md#clear).
 
 ### The redraw loop
 
@@ -120,6 +131,64 @@ const { value = 0 } = await $.state.get(count)
 - Only a `StateFamily` member's `id` may be computed.
 - Use the const for nothing but `$.state` calls, state library calls, and a spread that adds a family member's `id`.
 - Hold an `atom` result in a `const`. A `let` fails validation with `takes a source the scan can read`. ([docs: interface](../sources/code-claude-com-2026-10-09/mods/interface.md#L793))
+
+## State references and the scan
+
+`claude plugin validate` and the loader read each `$.state` call and each state-library call by source. They want a reference whose `plugin` and `key` are string literals, **in the file that makes the call**. A module that breaks this does not load. ([d.ts 302:7887](../sources/claude-code-2.1.302/types/claude-code.d.ts#L7887), [d.ts 302:12633](../sources/claude-code-2.1.302/types/claude-code.d.ts#L12633), types-only) *verified-kit,* 2.1.302, the `g13*` spikes ([sources](../sources/spikes-2026-10-17/README.md#state-references-and-the-contract)).
+
+| Spelling | Result |
+| --- | --- |
+| An atom declared and used (`read`, `update`) in the same file | Pass. `state reads: g13.a`, `state writes: g13.a`. |
+| A reference with a computed `id` at the call: `atom({ plugin: 'g13', key: 'slots', id: tracker.id } as const, null)` | Pass. Only `id` of a `StateFamily` member may be computed. |
+| A same-file base `const SLOTS = { plugin, key } as const`, spread as `{ ...SLOTS, id: tracker.id }` | Pass. |
+| An atom created inside an install function, or a ref const with a computed `id` inside the hook | Pass. |
+| An atom or a plain ref `const` **imported** from another file and used in `register.ts` | Fail: `the state library's update takes a source the scan can read: a reference whose plugin and key are string literals, or what ato… [+291 chars]`. For `$.state.get`: `$.state.get takes a reference whose plugin and key are string literals ({ plugin: "p", key: "k" }, written there or … [+259 chars]`. |
+| A ref-builder `slot(id)`, imported or in the same file | Fail, same message. |
+| An atom created in a class constructor or field | Fail, same message. |
+| An imported base spread `{ ...SLOTS, id }` | Fail, same message. |
+| A generic port `{ read: a => read($, a), update: (a, f) => update($, a, f) }` | Fail: `the state library's read takes a source the scan can read: …` |
+| `export function bumpA($: EngineInterface)` in a tracker file, using a file-local atom, called from `register.ts` | Pass. `state writes: g13.a`. |
+| The same helper as `export const bumpA = ($) => …` | Fail: `$ is passed to "bumpA", a name bound to a function expression, outside the hook's own file`. See [ports-and-injection](ports-and-injection.md#passing-the-engine-interface). |
+
+So a tracker keeps its atoms and every `read` and `update` of them in its own file. Another file reaches them through an exported `function` declaration that takes `$`, or through a per-atom closure the tracker builds.
+
+The contract:
+
+- `validate` reads **one** file, the one `plugin.json` `types` names. The field is a string. `"types": ["./types/index.d.ts", "./x.d.ts"]` fails with `Invalid input: expected string, received array`. A key declared in a second `.d.ts` is not seen: `g13.zzz is not declared: the manifest's types contract must name it in interface PluginState`.
+- The contract exports types and nothing else, and imports nothing. A trailing `export {}` fails: `` `export` at the top level is followed by `type` or `interface`: a contract exports types and nothing else ``.
+- The plugin `name` in `plugin.json` must equal the outer key in `PluginState`. If not, `validate` says `$.state.set refers to g13.a, which g13 owns: only a value's owner writes it`.
+
+Adding a key means editing the contract. The one edit-free route is a **family key**. Declare one `StateFamily` key and give each tracker its own `id`:
+
+```ts
+// types/index.d.ts
+export type Slice = unknown   // keep the contract self-contained; narrow the type with a guard in the tracker
+
+declare module 'claude-code' {
+  interface PluginState {
+    'my-plugin': { trackers: StateFamily<Slice> }
+  }
+}
+```
+
+*verified-kit:* two trackers with `id: 'github'` and `id: 'jira'` from one install function kept separate values (`github=1 | github=2`, `jira=1`). `validate` printed `declares state: g13.slots` once, not one name per id. The `hooks:` line printed a computed matcher as `tool.call{tool=?}`. ([d.ts 302:12593](../sources/claude-code-2.1.302/types/claude-code.d.ts#L12593), [d.ts 302:12638](../sources/claude-code-2.1.302/types/claude-code.d.ts#L12638))
+
+*verified-live,* Claude Code 2.1.302, spike [`lifecycle-mod`](../sources/spikes-2026-10-17/lifecycle-mod/) (the earlier headless runs used literal ids only). A command wrote and read family members whose `id` came from tracker objects (`{ id: 'github' }`, `{ id: 'jira' }`) and from a bare string:
+
+```text
+/spike-fam zed
+github: bump->2 get={"n":2} | jira: bump->2 get={"n":2} | zed: get={"n":10}
+```
+
+- The members hold separate values, and a value written in one command is read back by another command in the same session.
+- `validate` lists the key once (`declares state: lifecycle-mod.marker, lifecycle-mod.slots`, `state writes` and `state reads` the same) and never the ids. `tsc` exited 0.
+- The form that passes is an inline literal at the call site, `{ plugin, key: 'slots', id: tracker.id } as const`, in the file that makes the call. It worked from an imported `function bump($, tracker)` declaration in `trackers/a.ts` and from `register.tsx`.
+- A ref-builder `slot(tracker)` passed to `$.state.get` fails `validate`: `$.state.get takes a reference whose plugin and key are string literals ({ plugin: "p", key: "k… [+241 chars]`. The validator cuts the message at about 200 characters, also with `--json`.
+- **The values do not survive a session change.** After `/clear` the members read back `undefined` and the counters restarted at 1 (`github: bump->1`). Before the `/clear`, `session.end` had seen both at 2. `/resume` and `/branch` reset them the same way, like all `$.state` ([lifecycle](lifecycle.md#resume-and-branch)). Data that must outlive a session change goes through `$.store` at `session.end`.
+
+Baseline: `claude plugin validate plugins/artifact-tracking` on 2.1.302 lists `declares state: artifact-tracking.items, repos, processes, processUi, tools, ui, auto`. Six of those seven keys appear under `state reads` and `state writes`. `processUi` is declared and never touched through `$.state`.
+
+An `atom` is not a reference. `$.state.get(atom)` fails `tsc` with `Atom<string> is not assignable to StateRef` (TS2345). Pass the atom to `read` or `update`. Pass a plain `{ plugin, key } as const` to `$.state.get`. *verified-kit*
 
 ## The state library
 
@@ -229,25 +298,30 @@ A key-value store of the plugin's own, kept between sessions and hot reloads. ([
 | `$.store.keys()` | Every key, in insertion order |
 
 - The file is JSON, in the user's Claude Code config directory ([d.ts:3350](../sources/claude-code-2.1.295/types/claude-code.d.ts#L3350)). Public docs name `~/.claude/plugins/store/` ([docs: interface](../sources/code-claude-com-2026-10-09/mods/interface.md#L732)). The dev-mods folder follows the config directory too (SKILL.md shows `~/.claude-personal/dev-mods/<session-id>`; the public docs show `~/.claude/dev-mods/<session-id>`).
+- *verified-live,* one machine: the file name carries the plugin and its provenance, as `<name>_<provenance>-<hash>.json` (for example `life-spike_inline-cd72fb26cb19.json`, mode 0600). A `--plugin-dir` run (`inline`), a skills-folder copy and an installed copy of one plugin are **separate stores**. A dev run and an installed copy do not share data. A file under `~/.config` does: see [reference/fs-and-config](../reference/fs-and-config.md).
 - **Every session on the machine shares one store.** `get` then `set` is not atomic. Two sessions can race and the second write wins. Give each item its own key, and read again right before you write. ([docs: interface](../sources/code-claude-com-2026-10-09/mods/interface.md#L842))
 - `$.store.set` is an event too (`store.set`). ([d.ts:7095](../sources/claude-code-2.1.295/types/claude-code.d.ts#L7095))
 - To keep a `$.state` value past the session, also write it to `$.store`. Save on every change. ([reference.md:118](../sources/claude-code-2.1.295/reference.md#L118), [docs: interface](../sources/code-claude-com-2026-10-09/mods/interface.md#L838))
 
 ## What survives what
 
-| | Reload (`register` again) | Worker loss | `/clear`, `/resume`, `/branch` | New session |
-| --- | --- | --- | --- | --- |
-| Module variable | Lost | Lost | Kept (same module) | Lost |
-| Timers (`$.clock`) | Dropped | Gone | Kept | Gone |
-| `$.state` | **Kept** | Kept (host holds it) | **Reset to default** | Gone |
-| `$.store` | Kept | Kept | Kept | Kept |
-| Open panes (`$.ui.panes()`) | Kept (engine's record) | n/a | n/a | Gone |
+| | Reload (`register` again) | Worker loss | `/clear` | `/resume`, `/branch` | New session |
+| --- | --- | --- | --- | --- | --- |
+| Module variable | Lost (*verified-live*) | Lost | **Kept**: same module copy, counter 101 to 102 (*verified-live*) | **Kept** (*verified-live*) | Lost |
+| Timers (`$.clock`) | Dropped (*verified-live*) | Gone | **Kept**, runs on (*verified-live*) | **Kept** (*verified-live*) | Gone |
+| `$.state` | **Kept** (*types-only*) | Kept (host holds it) | **Reset** by the first `session.append` of the new session. Intact inside `session.end` (*verified-live*) | **Empty after `/resume` and `/branch`**. The resumed session's old state is not restored (*verified-live*, [lifecycle](lifecycle.md#resume-and-branch)) | Gone |
+| `$.store` | Kept | Kept | Kept (*types-only*) | Kept (*types-only*) | Kept |
+| Open panes (`$.ui.panes()`) | Kept, drawn again by the new copy (*verified-live*) | n/a | Not tested | n/a | Gone |
+| Files written with `$.fs` | Kept | Kept | Kept (*types-only*) | Kept (*types-only*) | Kept |
 
-Sources: [reference.md:72](../sources/claude-code-2.1.295/reference.md#L72), [reference.md:162](../sources/claude-code-2.1.295/reference.md#L162), [d.ts:2527](../sources/claude-code-2.1.295/types/claude-code.d.ts#L2527), [docs: interface](../sources/code-claude-com-2026-10-09/mods/interface.md#L812). The worker-loss and `/clear` module-variable cells are *inference* from the cited text.
+Sources: [reference.md:72](../sources/claude-code-2.1.295/reference.md#L72), [reference.md:162](../sources/claude-code-2.1.295/reference.md#L162), [d.ts:2527](../sources/claude-code-2.1.295/types/claude-code.d.ts#L2527), [docs: interface](../sources/code-claude-com-2026-10-09/mods/interface.md#L812), and the live runs in [lifecycle](lifecycle.md). Seen live on 2.1.302: the module variable, timer and `$.state` cells of the `/clear` and `/resume`, `/branch` columns, and the pane cell of the reload column. A cell with no grade comes from the cited text (*types-only*), and a `$.store` or `$.fs` cell after `/clear`, `/resume` or `/branch` was not read back in a run. The worker-loss column is *inference*.
 
 ## See also
 
 - [overview](overview.md): the mental model.
+- [lifecycle](lifecycle.md): start, reload, `/clear`, `session.end`, and what survives each.
+- [ports-and-injection](ports-and-injection.md): hand `$` and `on` to other files; what `validate` accepts.
+- [reference/fs-and-config](../reference/fs-and-config.md): `$.fs` and files under `~/.config`.
 - [dispatch-and-guards](dispatch-and-guards.md): reload and worker-loss replay of calls.
 - [glossary](glossary.md): terms.
 - [reference/ui](../reference/ui.md): `ui.render`, panes, bands.

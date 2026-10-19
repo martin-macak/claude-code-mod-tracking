@@ -1,0 +1,40 @@
+▎ <debug-log notice>    │                                                                                             ✕
+▎                       │rows=300 tl=0 nodes=3313 str=1203 chars=21533 btn=300 sel=r0 foc=1 off=0
+▎                       │last action: -
+▎                       │   Section A (100 rows)
+▎                       │>     #0 Fix flaky retry logic in webhook dispatc         open        1m
+▎                       │>     #1 flaky retry logic in webhook dispatcher for ten  merged      2m
+▎                       │>     #2 retry logic in webhook dispatcher for tenant bi… draft       3m
+▎                       │>     #3 logic in webhook dispatcher for tenant billing … closed      4m
+▎                       │>     #4 in webhook dispatcher for tenant billing export… open        5m
+                        │>     #5 webhook dispatcher for tenant billing export wh… merged      6m
+❯ /tbl                  │>     #6 dispatcher for tenant billing export when        draft       7m
+  ⎿ arch-spike-tbl: tbl │>     #7 for tenant billing export when the queue stalls  closed      8m
+    opened rows=300     │>     #8 tenant billing export when the queue stalls aft… open        9m
+    titleLen=0          │>     #9 billing export when the queue stalls after a sc… merged     10m
+    auto=false          │>    #10 export when the queue stalls after a schema mig… draft      11m
+    sticky=false        │>    #11 when the queue stalls after a schema migration … closed     12m
+    long=false          │>    #12 the queue stalls after a schema migration        open       13m
+    placed=true         │>    #13 queue stalls after a schema migration rolls bac… merged     14m
+                        │>    #14 stalls after a schema migration rolls back Add … draft      15m
+❯ /tbl                  │>    #15 after a schema migration rolls back Add paginat… closed     16m
+  ⎿ arch-spike-tbl: tbl │>    #16 a schema migration rolls back Add pagination to… open       17m
+    opened rows=300     │>    #17 schema migration rolls back Add pagination to a… merged     18m
+    titleLen=0          │>    #18 migration rolls back Add pagination to audi      draft      19m
+    auto=false          │>    #19 rolls back Add pagination to audit log endpoint… closed     20m
+    sticky=true         │>    #20 back Add pagination to audit log endpoint and c… open       21m
+    long=false          │>    #21 Add pagination to audit log endpoint and cache … merged     22m
+    placed=true         │>    #22 pagination to audit log endpoint and cache inva… draft      23m
+                        │>    #23 to audit log endpoint and cache invalidation on… closed     24m
+❯ /tbl                  │>    #24 audit log endpoint and cache invalidation on     open       25m
+  ⎿ arch-spike-tbl: tbl │>    #25 log endpoint and cache invalidation on permissi… merged     26m
+    opened rows=300     │>    #26 endpoint and cache invalidation on permission c… draft      27m
+    titleLen=0 auto=true│>    #27 and cache invalidation on permission change Fix… closed     28m
+    sticky=true         │>    #28 cache invalidation on permission change Fix fla… open       29m
+    long=false          │>    #29 invalidation on permission change Fix flaky ret… merged     30m
+    placed=true         │>    #30 on permission change Fix flaky retry logic in    draft      31m
+                        │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 3 agents
