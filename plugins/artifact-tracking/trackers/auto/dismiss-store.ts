@@ -7,8 +7,8 @@ import type { Json } from '../../core/interfaces/items'
 import type { SlotPort } from '../../core/interfaces/ports'
 import type { DismissPort } from '../../core/interfaces/tracker'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
-import type { AutoState } from '../../hooks/contracts'
 import { emptyAuto } from './ledger'
+import type { AutoState } from './types'
 
 export const AUTO_SLOT = 'auto'
 

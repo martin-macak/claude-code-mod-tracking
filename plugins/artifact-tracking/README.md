@@ -272,6 +272,7 @@ Every key. Time values are in milliseconds.
 | `trackers.github.headPrsPerBranch` | 5 | 1 | 50 | PRs read for one branch as head. |
 | `trackers.github.basePrsPerBranch` | 10 | 1 | 50 | PRs read for one branch as base. |
 | `trackers.github.maxBodyRefs` | 50 | 1 | 200 | References read from one PR body. |
+| `trackers.github.maxAutoItems` | 100 | 1 | 200 | Items that only the PR lane added. It was `trackers.auto.maxAutoItems`. |
 | `trackers.github.shortRefKeywords` | `["github", "bug", "issue", "issues", "enhancement", "chore"]` | | 32 words | Lead words that make a bare `#N` in the conversation an issue. A word has 1 to 32 characters: a letter, then letters, digits or `-`. The mod lowercases it. |
 | `trackers.jira.concurrency` | 3 | 1 | 10 | Parallel `acli` calls. |
 | `trackers.jira.epicChildLimit` | 50 | 1 | 500 | Children read for one Epic. |
@@ -285,7 +286,6 @@ Every key. Time values are in milliseconds.
 | `trackers.auto.gitTimeoutMs` | 5000 | 500 | 60000 | Timeout of one `git` call of auto tracking. |
 | `trackers.auto.workflowIdleMs` | 3600000 | 60000 | 86400000 | Time with no sign of life after which a workflow agent ends as stale. |
 | `trackers.auto.maxBranches` | 12 | 1 | 50 | Branches that the PR lane polls. |
-| `trackers.auto.maxAutoItems` | 100 | 1 | 200 | Items that only auto tracking added. |
 | `trackers.auto.maxProofs` | 100 | 10 | 1000 | Worktree proofs kept. |
 | `trackers.auto.maxAgents` | 200 | 10 | 2000 | Agents kept. |
 

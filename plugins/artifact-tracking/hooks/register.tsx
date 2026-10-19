@@ -8,11 +8,9 @@ import { ConfigManager } from '../core/infra/config-manager'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
-import { buildTrackers } from '../trackers'
-import { autoDismiss } from '../trackers/auto/dismiss-store'
+import { DISMISS, TRACKERS } from '../trackers'
 import { renderBand } from '../ux/band'
 import { renderSections } from '../ux/pane'
-import { autoGithubOf } from './auto-github'
 import type { ToolStatus, UiState } from './contracts'
 import { rowEvent, spawnEvent, toolCallEvent, turnEvent } from './events'
 import { listText } from './list-text'
@@ -149,14 +147,13 @@ const focus: PaneFocus = { row: undefined, rows: new Map() }
  */
 function managerOf($: EngineInterface): LifecycleManager {
   if (manager) return manager
-  const trackers = buildTrackers({ autoGithub: autoGithubOf({ manager: () => manager, now: Date.now }) })
   manager = new LifecycleManager(
     {
-      trackers,
-      dismiss: (p, c) => autoDismiss(p.state.slot, () => c.global().store.maxDismissed),
+      trackers: TRACKERS,
+      dismiss: (p, c) => DISMISS(p.state.slot, () => c.global().store.maxDismissed),
       // The config file: read at the start and on the tick, written once per load (L4). The manager knows the trackers
       // only as `{ id, config }`.
-      config: p => new ConfigManager({ fs: p.fs, env: p.env, specs: trackers, log: p.log }),
+      config: p => new ConfigManager({ fs: p.fs, env: p.env, specs: TRACKERS, log: p.log }),
       paneId: PANE,
       // The text of the list for /track: the legacy composers until L6 (K19). Read at call time, the manager is set by then.
       listText: p => listText(p, managerOf($)),

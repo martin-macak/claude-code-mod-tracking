@@ -1,9 +1,6 @@
 // The slot, proof and fact types of the auto tracker. Moved from the shared contract in plan L5, Task 1.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.13.
 
-// Transitional: `AutoSnapshot.prs` names a github type. Task 12 moves the PR lane to the github tracker and drops it.
-import type { PrSkip } from '../github/types'
-
 /** `workflow`: the run-prefix proof (A4 proof 4). */
 export type WorktreeOrigin = 'enter' | 'agent' | 'workflow'
 
@@ -85,7 +82,10 @@ export type AgentRow = {
   workflow?: { runId: string; agentIndex: number }
 }
 
-/** What the last round computed. Derived: never written to the plugin store. Written only when it changed (A22). */
+/**
+ * What the last round computed. Derived: never written to the plugin store. Written only when it changed (A22). The
+ * pull requests are not part of it: the github tracker keeps their note and the default branch in its own slot.
+ */
 export type AutoSnapshot = {
   /** The round that last changed it. */
   at: number
@@ -99,9 +99,6 @@ export type AutoSnapshot = {
   overflow: number
   git: Health
   agentList: Health
-  /** `untracked`: auto-only items not added over `maxAutoItems` (A11). */
-  prs: { at?: number; ok: boolean; skipped?: PrSkip; error?: string; untracked?: number }
-  defaultBranch?: string
 }
 
 export type AutoState = {
@@ -121,7 +118,7 @@ export type AutoReason = 'start' | 'tick' | 'worktree' | 'agent' | 'git' | 'pr-e
  * priority rule R7). A new round always gives a new value, because `seq` moves.
  */
 export type BranchesFact = {
-  /** The number of rounds this load has run. A fact published at init or after a restore repeats the last one. */
+  /** The number of rounds this load has run. A fact published at init repeats the last one. A restore (a switch) counts as a publish and moves it. */
   seq: number
   /** What started the round. Empty for a fact published at init or after a restore. */
   reasons: readonly string[]

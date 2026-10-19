@@ -5,7 +5,6 @@ import { expect, test } from 'claude-code/testing'
 import { Facts } from '../core/infra/facts'
 import { transcriptItems } from '../core/infra/replay'
 import type { Json } from '../core/interfaces/items'
-import { autoGithubOf } from '../hooks/auto-github'
 import type { GitHubRef, ItemRecord, ProcessRecord, Ref, RepoRecord, WebRef } from '../hooks/contracts'
 import { recordFromRef } from '../hooks/model/registry'
 import { viewInputs } from '../hooks/view-inputs'
@@ -29,19 +28,11 @@ const rec = (ref: Ref): ItemRecord => recordFromRef(ref, { source: 'prompt', at:
 const asJson = (list: ItemRecord[]) => list as unknown as Json
 const argv0 = (calls: string[][], tool: string) => calls.filter(c => c[0] === tool)
 
-/** The facet of the auto tracker's PR lane over a fake item host, as the manager would wire it. */
-const facetOf = (t: ReturnType<typeof fakeItems>) =>
-  autoGithubOf({
-    manager: () => ({ items: t.items, live: id => t.host.live(id), config: t.cfg, facts: t.facts }),
-    now: () => 0,
-  })
-
-test('with github off, start runs no gh command and autoGithub is not ready', async () => {
+test('with github off, start runs no gh command', async () => {
   const t = fakeItems({ off: ['github'] })
   const rt = await t.started()
   await rt.capture(promptRow('see issue #5 and https://docs.example/a'))
   expect(argv0(t.w.calls, 'gh')).toEqual([])
-  expect(await facetOf(t).ready()).toBe(false)
   expect(argv0(t.w.calls, 'acli').length).toBeGreaterThan(0) // jira is on: its probe ran
   expect(t.keys()).toEqual(['web:https://docs.example/a']) // the bare #5 needs gh to check it is open
 })
@@ -61,7 +52,6 @@ test('with github on, the same start does run gh', async () => {
   const t = fakeItems()
   await t.started()
   expect(argv0(t.w.calls, 'gh').length).toBeGreaterThan(0)
-  expect(await facetOf(t).ready()).toBe(true)
 })
 
 test('with jira off, start runs no acli command', async () => {

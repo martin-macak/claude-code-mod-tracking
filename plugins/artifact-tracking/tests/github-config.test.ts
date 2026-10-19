@@ -2,7 +2,8 @@
 // keywords. Each test uses a value that is not the default, so it fails on the old constant. Plan: L4 Task 7 (C2, C15).
 import { expect, test } from 'claude-code/testing'
 import type { GitHubDiscoveryApi, GitHubTarget, GraphqlReply, ItemRecord, RunInit, Runner } from '../hooks/contracts'
-import { extractRefs } from '../hooks/scan/refs'
+import { buildRecord } from '../hooks/model/registry'
+import { extractRefs, scanBody } from '../hooks/scan/refs'
 import { GITHUB_DEFAULTS, PR_LANE_DEFAULTS } from '../trackers/github/config'
 import { applyDiscovery } from '../trackers/github/discovered'
 import { buildQuery, GhTool } from '../trackers/github/gh-tool'
@@ -122,7 +123,7 @@ test('discoverPrs polls lane.maxBranches branches', async () => {
   expect(queries.length).toBe(1)
   expect(queries[0]).toContain('h1:')
   expect(queries[0]).not.toContain('h2:')
-  await discoverPrs(gh, REPO, ['a', 'b', 'c', 'd', 'e'], NOW) // the default is 12: all five
+  await discoverPrs(gh, REPO, ['a', 'b', 'c', 'd', 'e'], NOW) // no cap of its own: all five
   expect(queries[1]).toContain('h4:')
 })
 
@@ -146,11 +147,11 @@ test('discoverPrs cuts the closing refs of a PR to lane.closingRefsPerPr', async
 
 test('prBodyRefs keeps max refs', () => {
   const pr = discovered({ body: 'see #3 and #4 and #5' })
-  expect(prBodyRefs(pr, []).length).toBe(3)
-  expect(prBodyRefs(pr, [], 1).length).toBe(1)
+  expect(prBodyRefs(pr, scanBody).length).toBe(3)
+  expect(prBodyRefs(pr, scanBody, 1).length).toBe(1)
 })
 
-const records = (list: ItemRecord[]) => list.map(r => r.key)
+const records = (list: readonly { key: string }[]) => list.map(r => r.key)
 
 test('applyDiscovery caps.maxAutoItems 1 adds one auto item', () => {
   const input = {
@@ -159,6 +160,7 @@ test('applyDiscovery caps.maxAutoItems 1 adds one auto item', () => {
     complete: true,
     dismissed: new Set<string>(),
     at: NOW,
+    build: buildRecord,
   }
   const caps = { staleMs: 300000, maxAutoItems: 1, maxItems: 500 }
   expect(records(applyDiscovery([], { ...input, caps }).list)).toEqual(['gh:github.com/acme/web#7'])
@@ -167,7 +169,7 @@ test('applyDiscovery caps.maxAutoItems 1 adds one auto item', () => {
 
 test('applyDiscovery caps.staleMs sets how long a discovered record stays current', () => {
   const pr = discovered({ number: 7 })
-  const input = { prs: [pr], refsByPr: new Map(), complete: true, dismissed: new Set<string>() }
+  const input = { prs: [pr], refsByPr: new Map(), complete: true, dismissed: new Set<string>(), build: buildRecord }
   const first = applyDiscovery([], { ...input, at: 1000 }).list
   // A record is current for half of staleMs. At 1000 + 100000 the default (150000) still says current.
   expect(applyDiscovery(first, { ...input, at: 101_000 }).list).toBe(first)
@@ -188,7 +190,14 @@ test('applyDiscovery caps.maxItems caps the items that are not auto-only', () =>
       seenCount: 1,
     }) as ItemRecord
   const list = [mention(1), mention(2), mention(3)]
-  const input = { prs: [], refsByPr: new Map(), complete: true, dismissed: new Set<string>(), at: NOW }
+  const input = {
+    prs: [],
+    refsByPr: new Map(),
+    complete: true,
+    dismissed: new Set<string>(),
+    at: NOW,
+    build: buildRecord,
+  }
   const out = applyDiscovery(list, { ...input, caps: { staleMs: 300000, maxAutoItems: 100, maxItems: 2 } })
   expect(records(out.list)).toEqual(['web:https://h2.example/', 'web:https://h3.example/'])
 })

@@ -1,55 +1,20 @@
-// AutoRound (spec 8): worktrees, agents, then pull requests in their own lane. Each step catches its own failure.
+// AutoRound (spec 8): worktrees, then agents, then one save of the snapshot. Each step catches its own failure.
 // A refused `auto` write is not recorded anywhere: the round goes on, and the next round writes again.
 // No `$`: it gets plain closures. A round reads `auto` for inputs only and writes through `save(change)`,
 // where `change` re-runs the pure units on the current value (A20).
+// The pull requests are not here since plan L5, Task 12: the github tracker finds them after the round, from the fact
+// `auto.branches` that the tracker publishes (spec 5.9, the PR lane). Auto never calls `gh`.
 
 import { parsePorcelain } from '../../core/lib/porcelain'
-import type {
-  AutoReason,
-  AutoSnapshot,
-  AutoState,
-  DiscoveryApplied,
-  GitHubDiscoveryApi,
-  GitWorktree,
-  Health,
-  ItemRecord,
-  LiveAgent,
-  Now,
-  Ref,
-  RepoRef,
-  RunResult,
-} from '../../hooks/contracts'
-import { prKey } from '../../hooks/model/keys'
-import { applyDiscovery } from '../github/discovered'
-import { prBodyRefs } from '../github/pr-body'
-import { discoverPrs } from '../github/pr-discovery'
+import type { Now, RunResult } from '../../hooks/contracts'
 import { trackAgents } from './agents'
 import type { AutoConfig } from './config'
 import { setRootTop } from './ledger'
+import type { AutoSnapshot, AutoState, GitWorktree, Health, LiveAgent } from './types'
 import { trackWorktrees } from './worktrees'
 
-/**
- * The github values of the PR lane: the `first:` counts of the discovery query, the closing refs read per PR and the refs
- * read from one PR body. The github slice has them; `AutoGithub.lane()` serves them.
- */
-export type AutoLane = {
-  headPrsPerBranch: number
-  basePrsPerBranch: number
-  closingRefsPerPr: number
-  maxBodyRefs: number
-}
-
-/**
- * The numbers a round reads, once per step: the auto slice, the two global ones and the github lane. A round that gets
- * none uses today's numbers.
- */
-export type RoundCaps = Pick<AutoConfig, 'maxBranches' | 'maxAutoItems' | 'maxProofs' | 'workflowIdleMs'> & {
-  /** `global.refresh.staleMs`: how long a discovered record stays current (half of it). */
-  staleMs: number
-  /** `global.store.maxItems`: the cap on the items that are not auto-only. */
-  maxItems: number
-  lane: AutoLane
-}
+/** The numbers a round reads, once per step: the auto slice. A round that gets none uses today's numbers. */
+export type RoundCaps = Pick<AutoConfig, 'maxBranches' | 'maxProofs' | 'workflowIdleMs'>
 
 export type RoundDeps = {
   now: Now
@@ -60,28 +25,9 @@ export type RoundDeps = {
   git: (argv: readonly string[], cwd: string) => Promise<RunResult> // rejects like Runner
   listAgents: () => Promise<LiveAgent[]>
   sessionCwd: () => Promise<string>
-  /** Session repo after ensureRepo. null: none. */
-  repo: () => Promise<RepoRef | null>
-  gh: GitHubDiscoveryApi
-  /** Waits for the cached `gh --version` probe. */
-  ghReady: () => Promise<boolean>
-  githubHosts: () => readonly string[]
-  /**
-   * Change the item list. `change` gets the current list and the current dismiss list, read inside
-   * the change (register: from `autoMirror`), and may run more than once. Returns the committed result.
-   * Register reads first and skips `update` when the change returns the input list itself (A22).
-   */
-  applyItems: (
-    change: (list: ItemRecord[], dismissed: ReadonlySet<string>) => DiscoveryApplied,
-  ) => Promise<DiscoveryApplied>
-  /** New keys to refresh: register passes coordinator.kick('capture', keys). */
-  onAdded: (keys: string[]) => void
   /** Read at each step, so a changed config file shows at the next round. Absent: today's numbers. */
   caps?: () => RoundCaps
 }
-
-/** The reasons that start a PR step. Another reason starts one only when the tracked branches changed. */
-const PR_REASONS: ReadonlySet<AutoReason> = new Set(['start', 'tick', 'manual', 'pr-event'])
 
 const firstLine = (s: string): string => s.trim().split('\n')[0]?.trim() ?? ''
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err))
@@ -97,46 +43,25 @@ function sig(x: AutoSnapshot): string {
     x.overflow,
     [x.git.ok, x.git.error ?? null],
     [x.agentList.ok, x.agentList.error ?? null],
-    prsSig(x.prs),
-    x.defaultBranch ?? null,
   ])
-}
-const prsSig = (p: AutoSnapshot['prs']) => [p.ok, p.skipped ?? null, p.error ?? null, p.untracked ?? 0]
-
-function withPrs(cur: AutoState, prs: AutoSnapshot['prs'], defaultBranch?: string): AutoState {
-  const snap = cur.snapshot
-  if (!snap) return cur
-  const db = defaultBranch ?? snap.defaultBranch
-  if (JSON.stringify(prsSig(snap.prs)) === JSON.stringify(prsSig(prs)) && db === snap.defaultBranch) return cur
-  return { ...cur, snapshot: { ...snap, prs, ...(db !== undefined ? { defaultBranch: db } : {}) } }
 }
 
 export class AutoRound {
   /** The last porcelain list that git answered. Used when git fails. */
   private lastList: GitWorktree[] = []
-  private prRunning = false
-  private prQueued = false
-  private prWaiters: Array<() => void> = []
 
   constructor(private readonly d: RoundDeps) {}
 
   /**
-   * One round. Never rejects. Settles after the snapshot save; the PR step starts in its lane and is not awaited (A16).
+   * One round. Never rejects. Settles after the snapshot save. True when the round reached the save, so the branches it
+   * left are worth publishing; false when there was no run yet (no pinned root) or the round threw.
    */
-  async run(reasons: ReadonlySet<AutoReason>): Promise<void> {
+  async run(): Promise<boolean> {
     try {
-      await this.step(reasons)
+      return await this.step()
     } catch {
-      // The scheduler's next tick runs again.
+      return false // the scheduler's next tick runs again
     }
-  }
-
-  /** Settles when no PR step is in flight or queued. */
-  idle(): Promise<void> {
-    if (!this.prRunning) return Promise.resolve()
-    return new Promise<void>(resolve => {
-      this.prWaiters.push(resolve)
-    })
   }
 
   private async git(argv: readonly string[], cwd: string): Promise<GitOut> {
@@ -156,10 +81,10 @@ export class AutoRound {
     }
   }
 
-  private async step(reasons: ReadonlySet<AutoReason>): Promise<void> {
+  private async step(): Promise<boolean> {
     const at = this.d.now()
     let s = await this.d.load()
-    if (!s.root) return // no run yet
+    if (!s.root) return false // no run yet
 
     // Step 1: worktrees (spec 8.1).
     let top = s.root.top
@@ -205,14 +130,8 @@ export class AutoRound {
       masterCwd = null
     }
     const caps = this.d.caps?.()
-    const committed =
-      (await this.save(cur => this.snapshotOf(cur, list, live, masterCwd, at, git, agentList, caps))) ?? s
-
-    // Step 3: pull requests, in their own lane (spec 8.3, A16).
-    const branches = committed.snapshot?.branches ?? []
-    const before = s.snapshot?.branches ?? []
-    const changed = branches.length !== before.length || branches.some((b, i) => b !== before[i])
-    if ([...reasons].some(r => PR_REASONS.has(r)) || changed) this.requestPr()
+    await this.save(cur => this.snapshotOf(cur, list, live, masterCwd, at, git, agentList, caps))
+    return true
   }
 
   /** Runs `trackWorktrees` and `trackAgents` again on the current value, then builds the snapshot (A20, A22). */
@@ -237,93 +156,8 @@ export class AutoRound {
       overflow: wv.overflow,
       git,
       agentList,
-      prs: prev?.prs ?? { ok: true },
-      ...(prev?.defaultBranch !== undefined ? { defaultBranch: prev.defaultBranch } : {}),
     }
     if (av.state === cur && prev && sig(prev) === sig(next)) return cur
     return { ...av.state, snapshot: next }
-  }
-
-  // ---------------------------------------------------------------- the PR lane
-
-  private requestPr(): void {
-    if (this.prRunning) {
-      this.prQueued = true
-      return
-    }
-    void this.runLane()
-  }
-
-  /** One PR step at a time. A request during a step queues as one and runs after it. */
-  private async runLane(): Promise<void> {
-    this.prRunning = true
-    try {
-      do {
-        this.prQueued = false
-        try {
-          await this.prStep()
-        } catch {
-          // The next tick asks again.
-        }
-      } while (this.prQueued)
-    } finally {
-      this.prRunning = false
-      const done = this.prWaiters
-      this.prWaiters = []
-      for (const w of done) w()
-    }
-  }
-
-  /** One PR step. A throw in any part of it lands in the Pull requests note, as an `ok: false` outcome does. */
-  private async prStep(): Promise<void> {
-    try {
-      await this.discover()
-    } catch (err) {
-      const at = this.d.now()
-      const error = message(err)
-      await this.d.save(cur => withPrs(cur, { at, ok: false, error }))
-    }
-  }
-
-  private async discover(): Promise<void> {
-    const start = await this.d.load()
-    const branches = start.snapshot?.branches ?? []
-    const defaultBranch = start.snapshot?.defaultBranch
-    await this.d.ghReady()
-    const repo = await this.d.repo()
-    const at = this.d.now()
-    const caps = this.d.caps?.()
-    const lane = caps ? { ...caps.lane, maxBranches: caps.maxBranches, maxAutoItems: caps.maxAutoItems } : undefined
-    const out = await discoverPrs(this.d.gh, repo, branches, at, defaultBranch, lane)
-    if (!out.ok) {
-      await this.d.save(cur =>
-        withPrs(cur, {
-          at,
-          ok: false,
-          ...(out.skipped ? { skipped: out.skipped } : {}),
-          ...(out.error ? { error: out.error } : {}),
-        }),
-      )
-      return
-    }
-    const refsByPr = new Map<string, Ref[]>()
-    for (const pr of out.prs) refsByPr.set(prKey(pr), prBodyRefs(pr, this.d.githubHosts(), caps?.lane.maxBodyRefs))
-    const applied = caps
-      ? { staleMs: caps.staleMs, maxAutoItems: caps.maxAutoItems, maxItems: caps.maxItems }
-      : undefined
-    const r = await this.d.applyItems((list, dismissed) =>
-      applyDiscovery(list, {
-        prs: out.prs,
-        refsByPr,
-        complete: out.complete,
-        dismissed,
-        at,
-        ...(applied ? { caps: applied } : {}),
-      }),
-    )
-    this.d.onAdded(r.added)
-    await this.d.save(cur =>
-      withPrs(cur, { at, ok: true, ...(r.untracked > 0 ? { untracked: r.untracked } : {}) }, out.defaultBranch),
-    )
   }
 }

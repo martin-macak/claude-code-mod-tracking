@@ -8,6 +8,7 @@ import type { TurnCompleteReason } from 'claude-code'
 import type { Refreshable, ScanMode } from '../core/interfaces/items'
 import type { RepoRef, RunOpts } from '../core/interfaces/ports'
 import type { ArtifactRecord, ArtifactRef } from '../trackers/artifact/types'
+import type { AutoSnapshot as Snapshot, AutoState as State } from '../trackers/auto/types'
 import type { FileRecord } from '../trackers/file/types'
 import type {
   DiscoveryApplied as Applied,
@@ -15,6 +16,7 @@ import type {
   GitHubRef,
   GitHubTarget,
   GitHubToolApi,
+  LaneState,
 } from '../trackers/github/types'
 import type { JiraRecord, JiraRef, JiraTarget, JiraToolApi } from '../trackers/jira/types'
 import type { WebRecord, WebRef } from '../trackers/web/types'
@@ -35,8 +37,6 @@ export type {
   AgentRow,
   AgentRowState,
   AutoReason,
-  AutoSnapshot,
-  AutoState,
   BashFacts,
   EnterFacts,
   GitWorktree,
@@ -71,6 +71,16 @@ export type { ProcessKind, ProcessRecord, ProcessState, ProcessUiState } from '.
 export type { RepoRecord } from '../trackers/repos/types'
 export type { WebRecord, WebRef } from '../trackers/web/types'
 export type * from '../types'
+
+// ---------------------------------------------------------------- the auto state, as the legacy views read it
+
+/**
+ * The snapshot with the two fields that lived in it before plan L5, Task 12: the note of the Pull requests section and the
+ * default branch. They are the state of the PR lane in the github slot now. The legacy composers (`hooks/ui/*`) and their
+ * tests still read them from the snapshot, and `hooks/view-inputs.ts` puts them there. Task 15 moves this to the fixtures.
+ */
+export type AutoSnapshot = Snapshot & { prs?: LaneState['prs']; defaultBranch?: string }
+export type AutoState = Omit<State, 'snapshot'> & { snapshot: AutoSnapshot | null }
 
 // ---------------------------------------------------------------- process runner
 

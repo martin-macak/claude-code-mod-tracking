@@ -6,6 +6,7 @@
 import type { AgentSpawnEvent, DismissedEvent, ToolCallEvent } from '../../core/interfaces/events'
 import type { Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
+import { LoadState } from '../../core/lib/load-state'
 import type { AgentProof, AutoState, RepoRecord, RepoRef } from '../../hooks/contracts'
 import { repoRowId } from '../../hooks/contracts'
 import { type ReposConfig, reposConfig } from './config'
@@ -68,10 +69,14 @@ function rootPath(ctx: Pick<Ctx, 'facts'>): string | undefined {
   return root?.top ?? (typeof root?.cwd === 'string' ? root.cwd : undefined)
 }
 
-/** The tracker is built once per load, so the lookup caches and the queue live as long as the load (plan decision D16). */
-export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> {
-  let svc: { tracker: RepoTracker; queue: RepoQueue } | undefined
+/**
+ * The lookup caches and the queue live as long as the load (plan decision D16), so they are kept per load: the tracker is
+ * a module constant (`TRACKERS`).
+ */
+type Services = { tracker: RepoTracker; queue: RepoQueue }
+const loads = new LoadState<Services>()
 
+export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> {
   /**
    * Queues a repo lookup and returns at once: a lookup costs several git calls and must not hold a tool result back.
    * Who, when and the generation are taken now, so the row says who touched the repo even when the job runs late. The
@@ -85,7 +90,7 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> {
     agentId: string | undefined,
     resolve: (tracker: RepoTracker, item: T, who: string) => Promise<RepoVisit | null>,
   ): void {
-    const live = svc
+    const live = loads.get(ctx)
     if (!live || items.length === 0) return
     const who = touchedBy(ctx, agentId)
     const at = ctx.clock.wall()
@@ -177,7 +182,7 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> {
       // The queue size and the breaker are read once per load: they size an object at construction (C5). The git
       // timeout and the cache age are read at each use.
       const b = ctx.config.global().tools.breaker
-      svc ??= {
+      loads.of(ctx, () => ({
         tracker: new RepoTracker({
           run: (argv, o) => ctx.tools.run('git', argv, o ?? {}),
           now: () => ctx.clock.wall(),
@@ -191,7 +196,7 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> {
           },
         }),
         queue: new RepoQueue(ctx.config.slice().maxRepoQueue),
-      }
+      }))
     },
     store: ctx => ctx.config.slice(),
     data: {

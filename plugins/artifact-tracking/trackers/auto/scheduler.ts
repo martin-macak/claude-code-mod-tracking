@@ -2,8 +2,9 @@
 // Built on the coordinator's timer pattern (timerAt, the overdue-timer replacement, idle). No `$`.
 
 import type { Timer } from '../../core/interfaces/ports'
-import type { AutoReason, Now } from '../../hooks/contracts'
+import type { Now } from '../../hooks/contracts'
 import { AUTO_DEFAULTS } from './config'
+import type { AutoReason } from './types'
 
 export type SchedulerDeps = {
   now: Now

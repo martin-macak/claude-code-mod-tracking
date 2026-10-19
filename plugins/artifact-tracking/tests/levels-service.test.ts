@@ -8,8 +8,7 @@ import type { RunResult } from '../core/interfaces/ports'
 import { scanContext } from '../core/lib/kind-context'
 import type { KindTable } from '../core/lib/records'
 import { artifactKind } from '../trackers/artifact/kind'
-import type { AutoGithub } from '../trackers/auto'
-import { autoTracker } from '../trackers/auto'
+import { auto as autoTracker } from '../trackers/auto'
 import { autoDismiss } from '../trackers/auto/dismiss-store'
 import { emptyAuto } from '../trackers/auto/ledger'
 import type { AutoState, BranchesFact } from '../trackers/auto/types'
@@ -294,13 +293,6 @@ const WINDOW = LIMITS.autoDebounceMs + 10
 
 function autoWorld() {
   const w = fakePorts({ now: START_AT, session: { cwd: ROOT } })
-  const gh: AutoGithub = {
-    discovery: {} as AutoGithub['discovery'],
-    ready: async () => false,
-    repo: async () => null,
-    hosts: () => [],
-    lane: () => ({ headPrsPerBranch: 5, basePrsPerBranch: 10, closingRefsPerPr: 10, maxBodyRefs: 50 }),
-  }
   const host = {
     ...IDLE_ITEMS,
     slot: {
@@ -322,7 +314,7 @@ function autoWorld() {
     track: async () => {},
     refresh: () => {},
   } as unknown as ItemsHost
-  const trackers = [autoTracker(gh)]
+  const trackers = [autoTracker]
   const m = new LifecycleManager(
     {
       trackers,

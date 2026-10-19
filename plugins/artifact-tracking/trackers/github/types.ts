@@ -110,3 +110,38 @@ export interface GitHubDiscoveryApi extends GitHubToolApi {
   /** One `gh api graphql --hostname <host> -f query=<q>` through the breaker, with `trackers.github.discoveryTimeoutMs` (A21). */
   graphql(host: string, query: string): Promise<GraphqlOutcome>
 }
+
+/** What the PR lane asks of `gh`: whether it can be called, who is logged in, and the one discovery query. */
+export type DiscoveryTool = Pick<GitHubDiscoveryApi, 'isAvailable' | 'canCall' | 'status' | 'isHostAuthed' | 'graphql'>
+
+/**
+ * The state of the PR lane, in the github slot of the `trackers` family. It is run-scoped (`persist: false`) and goes
+ * to `v2:run` beside the auto slot. Before L5b it was `prs` and `defaultBranch` of the auto snapshot.
+ */
+export type LaneState = {
+  prs: {
+    at?: number
+    ok: boolean
+    skipped?: PrSkip
+    error?: string
+    /** Auto-only items not added over `maxAutoItems` (A11). */
+    untracked?: number
+  }
+  /** The default branch the last discovery reply named. It gets no alias in the next query. */
+  defaultBranch?: string
+}
+
+/**
+ * What the PR lane reads of the fact `auto.branches`. The auto tracker owns the fact and its own type for it. A tracker
+ * imports no other, so the reader spells what it needs (spec 5.8, Facts).
+ */
+export type BranchesFact = {
+  /** The round that gave the fact. A new round always moves it. */
+  seq: number
+  /** What started the round. Empty for a fact published at init or after a restore. */
+  reasons: readonly string[]
+  /** The branches the PR step polls, root first. */
+  branches: readonly string[]
+  /** Tracked branches over the cap, not polled. */
+  overflow: number
+}

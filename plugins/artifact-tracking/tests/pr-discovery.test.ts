@@ -1,6 +1,7 @@
 // PR discovery: query shape, reply parsing, skip reasons and outcome mapping. Pure, fake gh.
 import { expect, test } from 'claude-code/testing'
 import type { GitHubDiscoveryApi, GraphqlOutcome, GraphqlReply, ToolStatus } from '../hooks/contracts'
+import { PR_LANE_DEFAULTS } from '../trackers/github/config'
 import { buildDiscoveryQuery, discoverPrs, parseDiscovery } from '../trackers/github/pr-discovery'
 import { discoveryData, prNode, REPO } from './fixtures/gh-discovery'
 import { LIMITS } from './fixtures/limits'
@@ -178,7 +179,10 @@ test('discoverPrs maps each failed outcome to a skip or an error', async () => {
 test('discoverPrs returns the parsed PRs, and polls at most maxBranches', async () => {
   const { gh, queries } = fakeGh({})
   const branches = Array.from({ length: 15 }, (_, i) => `b${i}`)
-  const r = await discoverPrs(gh, REPO, branches, NOW)
+  const r = await discoverPrs(gh, REPO, branches, NOW, undefined, {
+    ...PR_LANE_DEFAULTS,
+    maxBranches: LIMITS.maxBranches,
+  })
   expect(r).toMatchObject({ ok: true, defaultBranch: 'main' })
   expect(queries[0]).toContain(`h${LIMITS.maxBranches - 1}:`)
   expect(queries[0]).not.toContain(`h${LIMITS.maxBranches}:`)

@@ -58,6 +58,11 @@ export function recordFromFile(
   return fileRecord(hit, s)
 }
 
+/** The record a claim makes, or null when its kind makes none (`ItemStorePort.build` over the shipped kinds). */
+export function buildRecord(claim: Claim): StoredItem | null {
+  return table(claim.category)?.merge(null, claim) ?? null
+}
+
 // ---------------------------------------------------------------- merge
 
 export function mergeRefs(

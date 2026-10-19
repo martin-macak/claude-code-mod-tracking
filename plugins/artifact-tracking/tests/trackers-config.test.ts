@@ -7,23 +7,11 @@ import { LifecycleManager } from '../core/infra/lifecycle'
 import type { ItemsHost, Json, JsonObject } from '../core/interfaces/items'
 import type { RunOpts, RunResult } from '../core/interfaces/ports'
 import type { Tracker } from '../core/interfaces/tracker'
-import type {
-  AgentProof,
-  AutoState,
-  DiscoveryApplied,
-  GitHubDiscoveryApi,
-  GraphqlOutcome,
-  ItemRecord,
-  ProcessUiState,
-  RepoRecord,
-  RepoRef,
-  ToolStatus,
-} from '../hooks/contracts'
-import { type AutoGithub, autoTracker } from '../trackers/auto'
+import type { AgentProof, AutoState, ProcessUiState, RepoRecord } from '../hooks/contracts'
+import { auto as autoTracker } from '../trackers/auto'
 import { trackAgents } from '../trackers/auto/agents'
 import { autoDismiss } from '../trackers/auto/dismiss-store'
 import { emptyAuto, pinRoot, recordAgentResult, recordEnter, recordSpawn } from '../trackers/auto/ledger'
-import { AutoRound, type RoundCaps, type RoundDeps } from '../trackers/auto/round'
 import { AutoScheduler } from '../trackers/auto/scheduler'
 import { trackWorktrees } from '../trackers/auto/worktrees'
 import { processesTracker } from '../trackers/processes'
@@ -32,7 +20,6 @@ import { RepoQueue } from '../trackers/repos/queue'
 import { capRepoRows, upsertRepoRows } from '../trackers/repos/rows'
 import { fakeConfig } from './fixtures/config-fs'
 import * as ev from './fixtures/events'
-import { discoveryData, prNode } from './fixtures/gh-discovery'
 import { porcelain } from './fixtures/git'
 import { IDLE_ITEMS } from './fixtures/items-host'
 import { type FakeWorld, fakePorts } from './fixtures/ports'
@@ -344,18 +331,8 @@ test('processes: with no file three failures open the breaker for 300000, as bef
 const ROOT = '/work'
 const START_AT = 1_000_000
 
-const lane = () => ({ headPrsPerBranch: 5, basePrsPerBranch: 10, closingRefsPerPr: 10, maxBodyRefs: 50 })
-const quietGh = (over: Partial<AutoGithub> = {}): AutoGithub => ({
-  discovery: {} as AutoGithub['discovery'],
-  ready: async () => false,
-  repo: async () => null,
-  hosts: () => [],
-  lane,
-  ...over,
-})
-
-function auto(file: JsonObject = {}, gh: AutoGithub = quietGh()) {
-  const t = world([autoTracker(gh)], file, { now: START_AT, cwd: ROOT })
+function auto(file: JsonObject = {}) {
+  const t = world([autoTracker], file, { now: START_AT, cwd: ROOT })
   t.w.run = async argv => {
     if (argv[0] !== 'git') return undefined
     if (argv[1] === 'rev-parse') return res(`${ROOT}\n`)
@@ -449,140 +426,9 @@ test('auto: the git timeout is read at each call', async () => {
   expect(git.every(c => c.opts?.timeoutMs === 800)).toBe(true)
 })
 
-// The round itself, with its caps given: the lane numbers, maxBranches, maxAutoItems, staleMs and maxItems.
+// ---------------------------------------------------------------- the auto helpers, with their trailing numbers
 
 const MAIN = '/x/repo'
-const REPO: RepoRef = { host: 'github.com', owner: 'acme', repo: 'web' }
-
-function roundRig(caps?: RoundCaps, seed: ItemRecord[] = []) {
-  const clock = { now: 1_000_000 }
-  let state = pinRoot(emptyAuto(), MAIN, 1)
-  for (const name of ['w1', 'w2', 'w3', 'w4'])
-    state = recordEnter(state, { path: `${MAIN}/.claude/worktrees/${name}`, branch: `b-${name}` }, 2)
-  let items: ItemRecord[] = seed
-  const queries: string[] = []
-  const nodes: Record<string, unknown[]> = {
-    'head:b-w4': [prNode({ number: 7, headRefName: 'b-w4' })],
-    'head:b-w3': [prNode({ number: 8, headRefName: 'b-w3' })],
-  }
-  const gh = {
-    isAvailable: true,
-    canCall: () => true,
-    status: (): ToolStatus => ({ name: 'gh', available: true, loggedIn: true, breaker: 'closed' }),
-    isHostAuthed: () => true,
-    graphql: async (_host: string, q: string): Promise<GraphqlOutcome> => {
-      queries.push(q)
-      const data: Record<string, unknown[]> = {}
-      for (const m of q.matchAll(/(([hb])\d+): pullRequests\((head|base)RefName: ("(?:[^"\\]|\\.)*")/g))
-        data[m[1]!] = nodes[`${m[3]}:${JSON.parse(m[4]!) as string}`] ?? []
-      return { ok: true, reply: { data: discoveryData(data, 'main'), errors: [] } }
-    },
-  } as unknown as GitHubDiscoveryApi
-  const deps: RoundDeps = {
-    now: () => clock.now,
-    load: async () => state,
-    save: async change => {
-      state = change(state)
-      return state
-    },
-    git: async argv =>
-      argv[0] === 'rev-parse'
-        ? res(`${MAIN}\n`)
-        : res(porcelain(MAIN, ['w1', 'b-w1'], ['w2', 'b-w2'], ['w3', 'b-w3'], ['w4', 'b-w4'])),
-    listAgents: async () => [],
-    sessionCwd: async () => MAIN,
-    repo: async () => REPO,
-    gh,
-    ghReady: async () => true,
-    githubHosts: () => [],
-    applyItems: async (change): Promise<DiscoveryApplied> => {
-      const r = change(items, new Set(state.dismissed))
-      items = r.list
-      return r
-    },
-    onAdded: () => {},
-    ...(caps ? { caps: () => caps } : {}),
-  }
-  const round = new AutoRound(deps)
-  const run = async () => {
-    await round.run(new Set(['start'] as const))
-    await round.idle()
-    await sleep(5)
-    await round.idle()
-  }
-  return { run, clock, queries, state: () => state, items: () => items }
-}
-
-const CAPS: RoundCaps = {
-  maxBranches: 2,
-  maxAutoItems: 1,
-  maxProofs: 100,
-  workflowIdleMs: 3_600_000,
-  staleMs: 300_000,
-  maxItems: 500,
-  lane: { headPrsPerBranch: 2, basePrsPerBranch: 3, closingRefsPerPr: 4, maxBodyRefs: 1 },
-}
-
-test('auto: the round passes maxBranches and the github lane to discovery', async () => {
-  const t = roundRig(CAPS)
-  await t.run()
-  expect(t.state().snapshot?.branches).toEqual(['main', 'b-w4']) // maxBranches 2: the root and the newest child
-  const query = t.queries[0] ?? ''
-  expect(query).toContain('h1:')
-  expect(query).not.toContain('h2:')
-  expect(query).toMatch(/headRefName: "main", first: 2/)
-  expect(query).toMatch(/baseRefName: "main", first: 3/)
-  expect(query).toContain('closingIssuesReferences(first: 4)')
-})
-
-test('auto: the round passes maxAutoItems to the apply step', async () => {
-  const t = roundRig({ ...CAPS, maxBranches: 5 })
-  await t.run()
-  expect(t.items()).toHaveLength(1) // two PRs found, one auto item allowed
-  const free = roundRig()
-  await free.run()
-  expect(free.items()).toHaveLength(2) // no caps: today's 100
-  expect(free.state().snapshot?.branches).toHaveLength(5)
-})
-
-test('auto: the round passes staleMs to the apply step', async () => {
-  const t = roundRig({ ...CAPS, maxBranches: 5, maxAutoItems: 100, staleMs: 1000 })
-  await t.run()
-  const first = t.items()
-  expect(first).toHaveLength(2)
-  t.clock.now += 600 // over half of staleMs 1000: the records are no longer current
-  await t.run()
-  expect(t.items()).not.toBe(first)
-  const free = roundRig()
-  await free.run()
-  const settled = free.items()
-  free.clock.now += 600 // the default staleMs is 300000: still current, a quiet round
-  await free.run()
-  expect(free.items()).toBe(settled)
-})
-
-test('auto: the round passes maxItems to the apply step', async () => {
-  const mention = (n: number): ItemRecord =>
-    ({
-      key: `web:https://h${n}.example/`,
-      category: 'web',
-      url: `https://h${n}.example/`,
-      label: `h${n}`,
-      sources: ['prompt'],
-      firstSeen: 1,
-      lastSeen: n,
-      seenCount: 1,
-    }) as ItemRecord
-  const seed = [mention(1), mention(2), mention(3)]
-  const t = roundRig({ ...CAPS, maxBranches: 5, maxAutoItems: 100, maxItems: 2 }, seed)
-  await t.run()
-  expect(t.items().filter(r => r.category === 'web')).toHaveLength(2) // the oldest mention goes
-  const free = roundRig(undefined, seed)
-  await free.run()
-  expect(free.items().filter(r => r.category === 'web')).toHaveLength(3)
-})
-
-// ---------------------------------------------------------------- the auto helpers, with their trailing numbers
 
 test('recordEnter and recordAgentResult keep maxProofs proofs; the default is 100', () => {
   let s = pinRoot(emptyAuto(), MAIN, 1)

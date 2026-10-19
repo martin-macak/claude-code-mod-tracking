@@ -5,7 +5,7 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.7. Plan: L4 Task 1 (copy table N1 to N10).
 
 import type { ConfigSpec } from '../interfaces/config'
-import type { JsonObject } from '../interfaces/items'
+import type { Json, JsonObject } from '../interfaces/items'
 
 export type Rule =
   | { readonly kind: 'int'; readonly def: number; readonly min: number; readonly max: number }
@@ -174,6 +174,29 @@ export function normaliseWith<S extends Schema>(
   for (const key of Object.keys(src))
     if (!Object.hasOwn(s, key)) warn(`${at(key)}: unknown key. The mod keeps it and ignores it.`)
   return { ...src, ...known } as unknown as ConfigOf<S>
+}
+
+/**
+ * A `ConfigSpec` that names the keys which moved to another slice. `moved` maps an old key to its new path. A file that
+ * still sets one gets a problem that says where it went, in place of the unknown-key line. The mod keeps the key and
+ * ignores it, as it keeps any unknown key (spec 10.4, K32).
+ */
+export function movedKeys<C extends JsonObject>(
+  spec: ConfigSpec<C>,
+  moved: Readonly<Record<string, string>>,
+): ConfigSpec<C> {
+  const gone = (key: string): boolean => Object.hasOwn(moved, key)
+  return {
+    defaults: spec.defaults,
+    normalise: (raw, defaults, warn) => {
+      const rest: Record<string, Json | undefined> = {}
+      const left: Record<string, Json | undefined> = {}
+      for (const [key, value] of Object.entries(raw)) (gone(key) ? left : rest)[key] = value
+      const out = spec.normalise(rest as JsonObject, defaults, warn)
+      for (const key of Object.keys(left)) warn(`${key}: moved to ${moved[key]}. The mod keeps it and ignores it here.`)
+      return { ...out, ...left } as unknown as Readonly<C>
+    },
+  }
 }
 
 /** A `ConfigSpec` over a schema: frozen defaults and `normaliseWith` as the rule. */
