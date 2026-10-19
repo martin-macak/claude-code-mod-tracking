@@ -113,6 +113,7 @@ test-scripts: ## Test the repo scripts (no claude needed)
 	scripts/dev/install-local-watch.test.sh
 	scripts/dev/gh-check.test.sh
 	bash scripts/release/release.test.sh
+	bash scripts/release/ci-guards.test.sh
 	bash scripts/release/smoke.test.sh
 	cd .agents/skills/pr-review && $(NODE_RUN) node --test 'tests/*.test.mjs'
 	cd .agents/skills/project-sync && $(NODE_RUN) node --test 'tests/*.test.mjs'

@@ -134,11 +134,20 @@ cmp dist/artifact-tracking.zip dist/artifact-tracking-0.2.0-rc.1.zip
 
 # Publishing an RC explicitly leaves latest alone; stable explicitly becomes latest.
 export RUNNER_TEMP="$tmp" REPO='owner/repo' CLAUDE_CODE_VERSION=2.1.296
+# Each publication case gets a valid tag state. An RC cannot follow its stable
+# version, and build metadata does not make an existing version newer.
+git tag -d artifact-tracking--v0.2.0 >/dev/null
+git --git-dir="$tmp/origin.git" update-ref -d refs/tags/artifact-tracking--v0.2.0
+git tag artifact-tracking--v0.2.0-rc.1
 bash "$here/ci.sh" publish artifact-tracking--v0.2.0-rc.1
 grep -q -- '--prerelease --latest=false' "$GH_CALLS"
+git tag -d artifact-tracking--v0.2.0-rc.1 >/dev/null
+git tag artifact-tracking--v0.2.0
 bash "$here/ci.sh" publish artifact-tracking--v0.2.0
 grep -Eq -- '--latest($| )' "$GH_CALLS"
 : > "$GH_CALLS"
+git tag -d artifact-tracking--v0.2.0 >/dev/null
+git tag artifact-tracking--v0.2.0+build-1
 bash "$here/ci.sh" publish artifact-tracking--v0.2.0+build-1
 grep -Eq -- '--latest($| )' "$GH_CALLS"
 if grep -q -- '--prerelease' "$GH_CALLS"; then echo 'Stable build metadata was treated as prerelease'; exit 1; fi

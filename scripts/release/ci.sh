@@ -11,22 +11,48 @@ milestone() {
   jq -cs --arg title "artifact-tracking $1" 'add | .[] | select(.title == $title)' <<< "$pages"
 }
 
+check_tag() {
+  local tag=$1 version previous existing
+  version=$(tag_version "$tag") || return 1
+  git merge-base --is-ancestor HEAD origin/main || { echo 'Release commit is not on main.' >&2; return 1; }
+  while IFS= read -r existing; do
+    [ "$existing" = "$tag" ] && continue
+    previous=$(tag_version "$existing") || return 1
+    [ "$(compare_versions "$version" "$previous")" = 1 ] || {
+      echo "Refusing: $version is not newer than $previous." >&2; return 1;
+    }
+  done < <(git tag -l 'artifact-tracking--v*')
+  echo "$version"
+}
+
+clear_milestone() {
+  local item
+  item=$(milestone "$1") || return 1
+  if [ -n "$item" ] && ! jq -e '.open_issues == 0' <<< "$item" >/dev/null; then
+    echo "Refusing: milestone artifact-tracking $1 has open issues." >&2
+    return 1
+  fi
+  printf '%s' "$item"
+}
+
 case "${1:-}" in
   check-tag)
-    version=$(tag_version "${2:-}")
-    git merge-base --is-ancestor HEAD origin/main || { echo 'Release commit is not on main.' >&2; exit 1; }
-    echo "$version" ;;
+    check_tag "${2:-}" ;;
   stamp)
     version=$(tag_version "${2:-}")
     manifest=plugins/artifact-tracking/.claude-plugin/plugin.json
     jq --arg version "$version" '.version = $version' "$manifest" > "$manifest.tmp"
     mv "$manifest.tmp" "$manifest" ;;
   milestone) milestone "$2" ;;
+  record-latest)
+    latest=$(gh api 'repos/{owner}/{repo}/releases/latest' --jq .tag_name)
+    [ -n "$latest" ] || { echo 'Refusing: latest release response is empty.' >&2; exit 1; }
+    echo "tag=$latest" >> "$GITHUB_OUTPUT" ;;
   close-milestone)
     valid_version "$2" || exit 1
     release_version=${2%%+*}
     if [[ "$release_version" != *-* ]]; then
-      item=$(milestone "$2")
+      item=$(clear_milestone "$2")
       if [ -n "$item" ]; then
         number=$(jq -r .number <<< "$item")
         gh api "repos/{owner}/{repo}/milestones/$number" --method PATCH -f state=closed
@@ -47,7 +73,9 @@ case "${1:-}" in
     echo 'Marketplace entry changed. Validate it and submit the cutover in a PR.' ;;
   publish)
     tag=$2
-    version=$(tag_version "$tag")
+    git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' --tags
+    version=$(check_tag "$tag")
+    if [[ "${version%%+*}" != *-* ]]; then clear_milestone "$version" >/dev/null; fi
     extra=()
     if [[ "${version%%+*}" == *-* ]]; then extra+=(--prerelease --latest=false)
     else extra+=(--latest); fi

@@ -84,7 +84,7 @@ jobs:
         id: previous
         env:
           GH_TOKEN: ${{ github.token }}
-        run: echo "tag=$(gh api 'repos/{owner}/{repo}/releases/latest' --jq .tag_name)" >> "$GITHUB_OUTPUT"
+        run: bash scripts/release/ci.sh record-latest
 
       - name: Publish the release
         env:
