@@ -60,7 +60,7 @@ export interface LifecycleDeps {
 const EXITS: ReadonlySet<string> = new Set(['prompt_input_exit', 'logout', 'other'])
 
 export class LifecycleManager {
-  readonly facts: FactsPort = new Facts()
+  readonly facts: FactsPort = new Facts({ onChange: ev => void this.bus.emit('fact', ev, this.ports) })
   readonly watch: SessionWatch
   /** The session store. Public for the lifecycle tests; the hooks reach it through the manager only. */
   readonly persistence: Persistence

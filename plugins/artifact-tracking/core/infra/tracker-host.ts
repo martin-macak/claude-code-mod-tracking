@@ -6,22 +6,14 @@
 // Plan: L3 Task 8, D1, D15, D16. L4 Task 5, C4, C5.
 
 import type { ConfigSource } from '../interfaces/config'
-import type { TickEvent } from '../interfaces/events'
 import type { HostContext, ItemStorePort, Json, JsonObject } from '../interfaces/items'
 import type { EnvName, Ports, RunOpts, Timer } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
-import type {
-  CommandSpec,
-  DismissPort,
-  FactsPort,
-  Handler,
-  ToolPort,
-  Tracker,
-  TrackerContext,
-} from '../interfaces/tracker'
+import type { CommandSpec, DismissPort, FactsPort, ToolPort, Tracker, TrackerContext } from '../interfaces/tracker'
 import { isRecord } from '../lib/json'
 import type { BusKind, EventBus } from './bus'
 import type { SessionWatch } from './session'
+import { type Due, declaredHandlers } from './tracker-events'
 
 export interface TrackerHostDeps {
   trackers: readonly Tracker[]
@@ -136,38 +128,19 @@ export class TrackerHost {
     if (this.filled) return
     this.filled = true
     for (const t of this.ordered) {
-      const ev = t.events
-      if (!ev || !this.live(t.id)) continue
-      const add = <E>(
-        kind: BusKind,
-        run: Handler<JsonObject, Json, E>,
-        filter?: { tools?: string[]; doors?: string[] },
-      ) =>
+      if (!t.events || !this.live(t.id)) continue
+      const due: Due = (everyMs, now) => this.d.due(t.id, everyMs, now)
+      for (const { kind, run, filter } of declaredHandlers(t.events, due))
         bus.add(
           kind,
           t.id,
           t.order,
           async (e, via) => {
             if (this.failedIds.has(t.id)) return
-            await run(this.contextOf(t, via as Ports, !UNGUARDED.has(kind)), e as E)
+            await run(this.contextOf(t, via as Ports, !UNGUARDED.has(kind)), e)
           },
           filter,
         )
-      if (ev.start) add('start', ev.start)
-      if (ev.row) add('row', ev.row.run, { doors: [...ev.row.doors] })
-      for (const [tool, run] of Object.entries(ev.toolCall ?? {})) add('toolCall', run, { tools: [tool] })
-      if (ev.agentSpawn) add('agentSpawn', ev.agentSpawn)
-      if (ev.turnComplete) add('turnComplete', ev.turnComplete)
-      if (ev.sessionChanged) add('sessionChanged', ev.sessionChanged)
-      if (ev.command) add('command', ev.command)
-      if (ev.dismissed) add('dismissed', ev.dismissed)
-      if (ev.replay) add('replay', ev.replay)
-      const tick = ev.tick
-      if (tick)
-        add<TickEvent>('tick', async (ctx, e) => {
-          const everyMs = tick.everyMs?.(ctx.config.slice()) ?? this.d.config.global().refresh.tickMs
-          if (this.d.due(t.id, everyMs, e.now)) await tick.run(ctx, e)
-        })
     }
   }
 

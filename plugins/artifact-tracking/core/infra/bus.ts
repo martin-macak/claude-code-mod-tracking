@@ -5,8 +5,11 @@
 import type { Json, JsonObject } from '../interfaces/items'
 import type { TrackerEvents } from '../interfaces/tracker'
 
-/** Every event kind a tracker can declare. */
-export type BusKind = keyof TrackerEvents<JsonObject, Json>
+/**
+ * Every event kind a tracker can declare. A tracker declares `fact` handlers under `facts`, one per fact name, and the
+ * bus carries them as the one kind `fact`, filtered by name (K14).
+ */
+export type BusKind = Exclude<keyof TrackerEvents<JsonObject, Json>, 'facts'> | 'fact'
 
 /**
  * `sequential`: one handler after the other, in tracker `order`. `parallel`: every handler starts at once.
@@ -23,16 +26,18 @@ export const MODE: Readonly<Record<BusKind, 'sequential' | 'parallel'>> = Object
   turnComplete: 'parallel',
   tick: 'parallel',
   replay: 'parallel',
+  fact: 'parallel',
 })
 
 type Run = (ev: unknown, via: unknown) => void | Promise<void>
-type Filter = { tools?: readonly string[]; doors?: readonly string[] }
+type Filter = { tools?: readonly string[]; doors?: readonly string[]; names?: readonly string[] }
 type Entry = { owner: string; order: number; run: Run; filter?: Filter }
 
 /** Whether a handler with this filter takes the event. A missing filter takes every event of the kind. */
 function accepts(kind: BusKind, filter: Filter | undefined, ev: unknown): boolean {
   if (kind === 'toolCall' && filter?.tools) return filter.tools.includes((ev as { tool?: string }).tool ?? '')
   if (kind === 'row' && filter?.doors) return filter.doors.includes((ev as { door?: string }).door ?? '')
+  if (kind === 'fact' && filter?.names) return filter.names.includes((ev as { name?: string }).name ?? '')
   return true
 }
 
