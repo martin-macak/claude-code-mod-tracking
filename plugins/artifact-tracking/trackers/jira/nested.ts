@@ -1,6 +1,5 @@
 // Which Jira records the pane draws as roots. A record that another shown root already draws in its child tree (#48)
-// gets no root row of its own. Pure. Moved from `hooks/ui/view.ts` in plan L5, Task 13: the jira section and the legacy
-// composer read it from here.
+// gets no root row of its own. Pure. A row always holds its whole tree, so nothing is folded here.
 
 import { childId } from './nodes'
 import type { JiraNode, JiraRecord } from './types'
@@ -10,29 +9,28 @@ const lower = (s: string | undefined): string => (s ?? '').toLowerCase()
 /** The identity of a Jira issue across records and nodes: lower-case site, upper-case key. */
 export const jiraSiteKey = (site: string, key: string): string => `${lower(site)}/${key.toUpperCase()}`
 
-/** The `site/KEY` of every node that the root's rows draw, with the same folds as the rows. */
-function drawnKeys(root: JiraRecord, folded: ReadonlySet<string>): Set<string> {
+/** The `site/KEY` of every node that the root's rows draw. */
+function drawnKeys(root: JiraRecord): Set<string> {
   const out = new Set<string>()
   const walk = (parentId: string, nodes: readonly JiraNode[]): void => {
     for (const n of nodes) {
-      const id = childId(parentId, n.key)
       out.add(jiraSiteKey(root.site, n.key))
-      if (!(n.children.length > 0 && folded.has(id))) walk(id, n.children)
+      walk(childId(parentId, n.key), n.children)
     }
   }
-  if (!(root.children.length > 0 && folded.has(root.key))) walk(root.key, root.children)
+  walk(root.key, root.children)
   return out
 }
 
 /**
  * The `site/KEY` of each Jira record that renders nested under another shown root, so it gets no root row (#48).
  * Roots are chosen top down: a record that no other open record draws above it becomes a root, and its drawn
- * keys close the records they show. A fold or a short snapshot draws less, so the record stays a root.
+ * keys close the records they show. A short snapshot draws less, so the record stays a root.
  * Records in a cycle (stale data) reach each other, so they all stay roots.
  */
-export function nestedJira(records: readonly JiraRecord[], folded: ReadonlySet<string>): Set<string> {
+export function nestedJira(records: readonly JiraRecord[]): Set<string> {
   const idOf = (r: JiraRecord): string => jiraSiteKey(r.site, r.issueKey)
-  const drawn = new Map(records.map(r => [idOf(r), drawnKeys(r, folded)]))
+  const drawn = new Map(records.map(r => [idOf(r), drawnKeys(r)]))
   const reaches = (from: string, to: string): boolean => {
     const seen = new Set([from])
     const stack = [from]

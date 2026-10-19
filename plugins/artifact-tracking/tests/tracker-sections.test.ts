@@ -1,6 +1,6 @@
 // The sections of the auto, repos and processes trackers, drawn through a real LifecycleManager over fakePorts: columns,
 // rows, notes, tones, bands and the cases in which a section is left out. The item trackers' half is in
-// item-sections.test.ts; parity.test.ts pins both halves to the legacy composers. Plan: L5 Task 14, L6 A1.
+// item-sections.test.ts. Each row and cell is what the pane drew before L6. Plan: L5 Task 14, L6 A1.
 import { expect, test } from 'claude-code/testing'
 import { NO_VIEW } from '../core/infra/views'
 import type { Json } from '../core/interfaces/items'

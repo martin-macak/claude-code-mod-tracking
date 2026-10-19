@@ -1,5 +1,5 @@
 // Small text helpers any tracker may use: short ages, the note of a tool, compact agent ids, first line, error message.
-// Moved from `hooks/ui/view.ts` and `core/infra/tool.ts` in plan L5, Task 2. Pure.
+// Moved from the pane code and `core/infra/tool.ts` in plan L5, Task 2. Pure.
 
 import type { ToolStatus } from '../../types'
 

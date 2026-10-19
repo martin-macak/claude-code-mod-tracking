@@ -45,7 +45,7 @@ export type FakeWorld = {
   store: Map<string, Json>
   /** Calls of `store.set`. */
   storeSets: number
-  /** The `$.state` data by member: `items`, `tools`, `ui`, the pane state, one entry per slot id and `shown:<section id>`. */
+  /** The `$.state` data by member: `items`, `tools`, the pane state, one entry per slot id and `shown:<section id>`. */
   state: Map<string, Json>
   /** Writes by member, like the kit world counts them. */
   stateSets: Record<string, number>
@@ -168,7 +168,6 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
     state: {
       items: atom<StoredItem[]>('items', () => []),
       tools: atom<Record<string, ToolStatus>>('tools', () => ({})),
-      ui: atom<{ folded: string[] }>('ui', () => ({ folded: [] })),
       expanded: atom<string[]>('expanded', () => []),
       selected: atom<string | null>('selected', () => null),
       help: atom<boolean>('help', () => false),

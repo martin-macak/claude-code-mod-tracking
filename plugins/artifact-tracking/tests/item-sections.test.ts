@@ -1,11 +1,12 @@
 // The sections of the five item trackers, drawn through a real LifecycleManager over fakePorts: viewOf, paneData and
 // bandData read the state and write nothing, the sections come in the order of the pane and of the band, and each row
-// and cell is what the legacy composers draw. Plan: L5 Task 13, K1, K2; L6 A1 to A5.
+// and cell is what the pane drew before L6. Plan: L5 Task 13, K1, K2; L6 A1 to A5.
 import { expect, test } from 'claude-code/testing'
 import { NO_VIEW, sortSections } from '../core/infra/views'
 import type { Json } from '../core/interfaces/items'
 import type { Tracker } from '../core/interfaces/tracker'
 import type { Cell, SectionSpec, TreeRow } from '../core/interfaces/view'
+import { listText } from '../hooks/pane-text'
 import { fakeConfig } from './fixtures/config-fs'
 import { managerWorld } from './fixtures/manager'
 import { KEYS, NOW, paneItems, paneWorld, seedPaneWorld, setBranches } from './fixtures/pane-world'
@@ -101,6 +102,54 @@ test('paneData orders sections by rank: Worktrees, Agents, Pull requests, Jira w
     'Processes',
   ])
   expect(ids(itemOnly(sections))).toEqual(ITEM_SECTIONS) // the item part of the ids
+})
+
+// A change of L6: the legacy composers put Repos after the last item section when there were no Web links. The sections
+// place it by its rank (50), before Files.
+test('Repos sits by its rank, before Files, when there are no web links', async () => {
+  const t = await paneWorld()
+  t.w.state.set('items', paneItems().filter(i => i.category !== 'web') as unknown as Json)
+  expect(ids(await t.m.paneData(t.w.ports, NO_VIEW))).toEqual([
+    'worktrees',
+    'agents',
+    'prs',
+    'jira',
+    'github',
+    'artifact',
+    'repos',
+    'file',
+    'processes',
+  ])
+})
+
+// The same change in the /track text: the parent printed Files, then Repos, with no Web links (K12).
+test('the /track text prints Repos before Files when there are no web links', async () => {
+  const titles = (text: string) => text.split('\n\n').map(block => (block.split('\n')[0] ?? '').split('  ')[0])
+  const t = await paneWorld()
+  expect(titles(await listText(t.w.ports, t.m))).toEqual([
+    'Worktrees',
+    'Agents',
+    'Pull requests',
+    'Jira work items',
+    'GitHub',
+    'Artifacts',
+    'Repos',
+    'Web links',
+    'Files',
+    'Processes',
+  ])
+  t.w.state.set('items', paneItems().filter(i => i.category !== 'web') as unknown as Json)
+  expect(titles(await listText(t.w.ports, t.m))).toEqual([
+    'Worktrees',
+    'Agents',
+    'Pull requests',
+    'Jira work items',
+    'GitHub',
+    'Artifacts',
+    'Repos',
+    'Files',
+    'Processes',
+  ])
 })
 
 test('bandData orders by band rank: Jira, GitHub, Artifacts, Links, Files, …, PRs', async () => {
@@ -352,6 +401,42 @@ test('the Pull requests note: the tool, a failed discovery, a skip, and the bran
     setBranches(t.m, { branches: ['main'] })
     expect(await note()).toBe(text)
   }
+})
+
+test('the Pull requests note names the host of the session repo: a GHE host, github.com, and none known', async () => {
+  const t = await paneWorld()
+  setBranches(t.m, { branches: ['main'] })
+  const note = async () => section(await t.m.paneData(t.w.ports, NO_VIEW), 'prs').note?.text
+  for (const skipped of ['not-logged-in', 'host-not-authed'] as const) {
+    t.w.state.set('github', { prs: { ok: false, skipped } })
+    t.m.facts.publish('session.repo', { host: 'ghe.corp.example', owner: 'acme', repo: 'web' })
+    expect(await note(), skipped).toBe('gh not logged in to ghe.corp.example')
+    t.m.facts.publish('session.repo', { host: 'github.com', owner: 'acme', repo: 'web' })
+    expect(await note(), skipped).toBe('gh not logged in to github.com')
+    t.m.facts.publish('session.repo', undefined) // no session repo is known: the default host
+    expect(await note(), skipped).toBe('gh not logged in to github.com')
+  }
+})
+
+test('Pull requests the lane found on the same first sighting sort by number', async () => {
+  const t = await paneWorld()
+  const base = paneItems().find(i => i.key === KEYS.stacked) as unknown as Record<string, Json>
+  const found = (n: number) =>
+    ({
+      ...base,
+      key: `gh:github.com/acme/web#${n}`,
+      label: `acme/web#${n}`,
+      url: `https://github.com/acme/web/pull/${n}`,
+      number: n,
+      headRefName: `feat/n${n}`,
+      firstSeen: 50,
+    }) as unknown as Json
+  // Listed 9 before 7, no mark and not the session branch: only the number can put #7 first.
+  t.w.state.set('items', [found(9), found(7)])
+  expect(section(await t.m.paneData(t.w.ports, NO_VIEW), 'prs').rows.map(r => r.id)).toEqual([
+    'gh:github.com/acme/web#7',
+    'gh:github.com/acme/web#9',
+  ])
 })
 
 test('the Pull requests section: with no PR it shows only for a skip that needs a word, and only with branches', async () => {

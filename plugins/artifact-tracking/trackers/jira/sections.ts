@@ -1,5 +1,5 @@
 // The Jira section: the issues the conversation named, each with its child tree. Pure: it reads the view context and
-// writes nothing. Title, note, columns and band are today's (hooks/ui/view.ts), which the parity test pins.
+// writes nothing. Title, note, columns and band keep the text the pane drew before L6; tests/item-sections.test.ts pins them.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 13, L6 A1.
 
 import type { Json } from '../../core/interfaces/items'
@@ -27,7 +27,7 @@ export function sections(ctx: ViewContext<JiraConfig, Json>): readonly SectionSp
   if (own.length === 0) return []
   const acli = ctx.tools.acli ?? IDLE
   // Nothing is folded here: the renderer folds. A record drawn under another root gets no root row of its own (#48).
-  const nested = nestedJira(own, new Set())
+  const nested = nestedJira(own)
   const tracked = trackedOf(own, ctx.levelOf)
   const note = ['acli', ...(acli.site ? [acli.site] : []), toolNote(acli, ctx.now, lastRefreshOf(own))].join(' · ')
   return [

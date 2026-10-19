@@ -1,6 +1,6 @@
 // Parts of a pane section that the trackers share: the width words of a column, the prio column, a toned cell, the cells of
 // an item row, the sort of the items of a section and the small texts a row shows. Pure: no `$`, no I/O, no tracker named.
-// The tones and the cell order are today's (`PaneRow`), so the sections draw the same text as the legacy composers.
+// The tones and the cell order keep the text the pane drew before L6, so the /track text stays byte-identical (decision G2).
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 13, L6 A1.
 
 import type { Effective } from '../interfaces/items'

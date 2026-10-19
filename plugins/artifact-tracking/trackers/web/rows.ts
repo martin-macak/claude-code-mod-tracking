@@ -1,5 +1,5 @@
-// The row of a web link: the label, and the host and path of its URL. Pure. The cells are today's `webRow`
-// (hooks/ui/view.ts), which the parity test pins.
+// The row of a web link: the label, and the host and path of its URL. Pure. The cells keep the text the pane drew
+// before L6; tests/item-sections.test.ts pins them.
 // Plan: L5 Task 13, L6 A1.
 
 import type { TreeRow, ViewContext } from '../../core/interfaces/view'

@@ -100,13 +100,13 @@ test('state atoms and slots read their empty value, update, and count writes by 
   const w = fakePorts()
   expect(await w.ports.state.items.get()).toEqual([])
   expect(await w.ports.state.tools.get()).toEqual({})
-  expect(await w.ports.state.ui.get()).toEqual({ folded: [] })
+  expect(await w.ports.state.expanded.get()).toEqual([])
   expect(await w.ports.state.slot.get('repos')).toBeUndefined()
-  await w.ports.state.ui.update(cur => ({ folded: [...cur.folded, 'github'] }))
+  await w.ports.state.expanded.update(cur => [...cur, 'github'])
   await w.ports.state.slot.update('repos', cur => [...((cur as string[] | undefined) ?? []), 'r1'])
-  expect(await w.ports.state.ui.get()).toEqual({ folded: ['github'] })
+  expect(await w.ports.state.expanded.get()).toEqual(['github'])
   expect(await w.ports.state.slot.get('repos')).toEqual(['r1'])
-  expect(w.stateSets).toEqual({ ui: 1, repos: 1 })
+  expect(w.stateSets).toEqual({ expanded: 1, repos: 1 })
 })
 
 test('run records the argv, asks the hook, and otherwise exits 1', async () => {

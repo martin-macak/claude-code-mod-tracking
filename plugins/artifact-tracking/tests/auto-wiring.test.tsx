@@ -8,7 +8,8 @@ import * as ev from './fixtures/events'
 import { prNode } from './fixtures/gh-discovery'
 import { porcelain as gitPorcelain } from './fixtures/git'
 import { LIMITS } from './fixtures/limits'
-import { BAND, clearSession, PANE, prompt, quiet, response, START, sleep, track, world } from './fixtures/world'
+import { headersOf, mountPane as mount, select } from './fixtures/pane'
+import { BAND, clearSession, prompt, quiet, response, START, sleep, track, world } from './fixtures/world'
 
 const MAIN = '/work'
 const PR7 = 'gh:github.com/acme/web#7'
@@ -54,12 +55,7 @@ type Mounted = {
   press(q: unknown): Promise<void>
   unmount(): Promise<void>
 }
-const mountPane = ($: Engine, bodyColumns = 62) =>
-  $.ui.mount({
-    ...PANE,
-    props: { ...PANE.props, bodyColumns },
-    surface: 'terminal',
-  } as never) as unknown as Promise<Mounted>
+const mountPane = ($: Engine, bodyColumns = 62) => mount($, { bodyColumns })
 const mountBand = ($: Engine) => $.ui.mount({ ...BAND, surface: 'terminal' } as never) as unknown as Promise<Mounted>
 /** Stands for the engine's own band, which the hook returns inside its Box as next(e). */
 const engineBand = (on: On) => on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine band'] }))
@@ -247,7 +243,8 @@ test('an x press dismisses a PR for the run: it stays hidden after the next tick
   const w = world(on)
   await withVisiblePr($, w)
   const pane = await mountPane($)
-  await pane.press({ key: `dismiss-${PR7}` })
+  await select($, pane, '#7')
+  await pane.press({ key: 'dismiss' })
   await pane.unmount()
   await settle(w, TICK)
   expect(await textOf($)).not.toContain('Opened here')
@@ -277,7 +274,8 @@ test('/clear keeps the root, the children and the dismiss list', async ($, on) =
   await enter($, w, 'other')
   await settle(w, WINDOW)
   const pane = await mountPane($)
-  await pane.press({ key: `dismiss-wt:${MAIN}/.claude/worktrees/other` })
+  await select($, pane, 'other')
+  await pane.press({ key: 'dismiss' })
   await pane.unmount()
   await clearSession($, w, 'sess-2', 'clear') // /clear: a new id and an empty state
   await settle(w, TICK)
@@ -389,31 +387,29 @@ test('R7 live: when the session works in the PR branch, the PR is top with a dim
   w.fake.cwd = `${MAIN}/.claude/worktrees/probe-wt` // the master loop now works on worktree-probe-wt
   await settle(w, TICK)
   expect(await textOf($)).toContain('★ #7  Opened here')
-  const pane = (await mountPane($, 100)) as Mounted & {
-    findAll(q: unknown): Promise<{ key?: string; text?: string; props: { dimColor?: boolean } }[]>
-  }
-  const mark = (await pane.findAll({ type: 'Button' })).find(b => b.key?.startsWith('mark:0:top:'))
-  expect(mark?.key).toBe(`mark:0:top:${PR7}`)
-  expect(mark?.text).toBe('★')
-  expect(mark?.props.dimColor).toBe(true)
+  const pane = await mountPane($, 100)
+  expect((await pane.findAll({ type: 'Text' })).find(t => t.text === '★')?.props.dimColor).toBe(true)
   await pane.unmount()
   w.fake.cwd = MAIN
   await settle(w, TICK)
   expect(await textOf($)).not.toContain('★')
 })
 
-test('at 62 columns the pane has exactly the cell boxes that cellsFor lists, and the x button presses', async ($, on) => {
+test('at 62 columns the PR row keeps its columns, and x dismisses it', async ($, on) => {
   const w = world(on)
   await withVisiblePr($, w)
+  const prHeaders = async (cols: number) => {
+    const pane = await mountPane($, cols)
+    const headers = headersOf(await pane.drawn()).find(h => h.includes('PR'))
+    await pane.unmount()
+    return headers
+  }
+  // The checks always sit in their own column now. The legacy pane hid it below 70 columns and put a glyph in State.
+  expect(await prHeaders(62)).toEqual(['PR', 'Title', 'Branch', 'State', 'Checks'])
+  expect(await prHeaders(34)).toEqual(['PR', 'Title', 'State']) // Branch (priority 2) and Checks (1) drop on a narrow pane
   const pane = await mountPane($, 62)
-  const child = `wt:${MAIN}/.claude/worktrees/probe-wt`
-  for (const name of ['key', 'title', 'status', 'x'])
-    expect(await pane.find({ key: `cell-${name}-${child}` })).toBeDefined()
-  expect(await pane.find({ key: `cell-type-${child}` })).toBeUndefined()
-  for (const name of ['key', 'title', 'type', 'status', 'x'])
-    expect(await pane.find({ key: `cell-${name}-${PR7}` })).toBeDefined()
-  expect(await pane.find({ key: `cell-extra-${PR7}` })).toBeUndefined() // hidden below 70 columns
-  await pane.press({ key: `dismiss-${PR7}` })
+  await select($, pane, '#7')
+  await pane.press({ key: 'dismiss' })
   await pane.unmount()
   expect(await textOf($)).not.toContain('Opened here')
 })

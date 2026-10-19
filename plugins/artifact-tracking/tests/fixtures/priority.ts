@@ -1,7 +1,7 @@
 // Priority of a tracked item (issue #30): the order of the levels, their markers and the merge of manual marks.
 // Pure: no `$`. A record's `priority` is the person's manual mark only. Absent means no mark.
 // A test binding over `core/infra/priority.ts` and the rules of the shipped kinds (plan L5, Tasks 6 and 15): each function
-// keeps its old signature. The legacy draw path has the small `hooks/ui/levels.ts` of its own, so L6 can delete that alone.
+// keeps its old signature.
 
 import { effectiveLevels as levelsOf, rowIdOf as rowOf, setLevel } from '../../core/infra/priority'
 import type { Effective, Json, PriorityRule } from '../../core/interfaces/items'

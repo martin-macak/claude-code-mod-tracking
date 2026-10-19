@@ -133,13 +133,12 @@ export interface ShownPort {
 }
 
 /**
- * The state contract: `items`, `tools`, `ui` and the `trackers` family (L3, decision D14), then the pane state of L6
+ * The state contract: `items`, `tools` and the `trackers` family (L3, decision D14), then the pane state of L6
  * (spec 5.13): the ids the person opened, the selected row id, the rows shown past each cap and the help view.
  */
 export interface StatePorts {
   readonly items: AtomPort<StoredItem[]>
   readonly tools: AtomPort<Record<string, ToolStatus>>
-  readonly ui: AtomPort<{ folded: string[] }>
   readonly slot: SlotPort
   readonly expanded: AtomPort<string[]>
   readonly selected: AtomPort<string | null>

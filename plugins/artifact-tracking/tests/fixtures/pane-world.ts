@@ -269,7 +269,7 @@ export const WORLD_BRANCHES = ['main', 'feat/x', 'feat/y'] as const
 
 /**
  * What the last round computed. The master agent is on `feat/x`, the branch of the fact `auto.branches`, so the PR on it
- * gets the level `top` (R7) from the legacy composers too. `at` is older than the fact `auto.checkedAt`, so a note that
+ * gets the level `top` (R7). `at` is older than the fact `auto.checkedAt`, so a note that
  * reads `snapshot.at` instead of the fact says another age.
  */
 export const WORLD_SNAPSHOT: AutoSnapshot = {

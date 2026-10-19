@@ -1,18 +1,15 @@
-// The tracker toggles in the item service and in the view inputs: an item kind that the config turned off runs no CLI,
+// The tracker toggles in the item service and in the pane sections: an item kind that the config turned off runs no CLI,
 // claims its spans and drops them (so a GitHub URL never becomes a web link), and leaves no record behind at start,
 // replay, load or carry. Plan: L4 Task 6 (decisions C4, C12).
 import { expect, test } from 'claude-code/testing'
-import { Facts } from '../core/infra/facts'
 import { transcriptItems } from '../core/infra/replay'
+import { NO_VIEW } from '../core/infra/views'
 import type { Json } from '../core/interfaces/items'
-import { viewInputs } from '../hooks/view-inputs'
-import { emptyAuto } from '../trackers/auto/ledger'
 import { DOC_URL } from './fixtures/artifacts'
 import { fakeConfig } from './fixtures/config-fs'
 import type { GitHubRef, ItemRecord, ProcessRecord, Ref, RepoRecord, WebRef } from './fixtures/contracts'
 import { fakeItems, promptRow } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
-import { fakePorts } from './fixtures/ports'
 import { recordFromRef } from './fixtures/registry'
 
 const gh = (n: number): GitHubRef => ({
@@ -163,8 +160,7 @@ test('with jira off, a replay and a load ask acli for nothing', async () => {
   expect(t.keys()).toEqual(['web:https://docs.example/a'])
 })
 
-test('view inputs leave out a tracker that is not live', async () => {
-  const w = fakePorts()
+test('the pane sections leave out a tracker that is not live', async () => {
   const repo: RepoRecord = {
     key: 'remote:github.com/acme/sdk',
     name: 'acme/sdk',
@@ -181,23 +177,22 @@ test('view inputs leave out a tracker that is not live', async () => {
     firstSeen: 1,
     lastSeen: 1,
   }
-  const auto = { root: { cwd: '/work', at: 1 }, worktrees: [], agents: [], dismissed: [], snapshot: null }
-  w.state.set('items', [rec(web('https://docs.example/a')), rec(gh(5))] as unknown as Json)
-  w.state.set('repos', [repo] as unknown as Json)
-  w.state.set('processes', [proc] as unknown as Json)
-  w.state.set('auto', auto as unknown as Json)
-  const all = await viewInputs(w.ports, new Facts(), {})
-  expect(all.items).toHaveLength(2)
-  expect(all.repos).toEqual([repo])
-  expect(all.processes).toEqual([proc])
-  expect(all.ctx.auto?.root).toEqual({ cwd: '/work', at: 1 })
-
-  const v = await viewInputs(w.ports, new Facts(), { live: id => !['repos', 'web', 'processes', 'auto'].includes(id) })
-  expect(v.repos).toEqual([])
-  expect(v.processes).toEqual([])
-  expect(v.items.map(r => r.category)).toEqual(['github'])
-  expect(v.ctx.auto).toEqual(emptyAuto())
-  expect(w.stateSets).toEqual({}) // reads only
+  const sectionsWith = async (off: readonly string[]) => {
+    const t = managerWorld({
+      config: specs =>
+        fakeConfig({ specs, file: { trackers: Object.fromEntries(off.map(id => [id, { enabled: false }])) } }),
+    })
+    await t.m.ensureStarted(t.w.ports)
+    t.w.state.set('items', [rec(web('https://docs.example/a')), rec(gh(5))] as unknown as Json)
+    t.w.state.set('repos', [repo] as unknown as Json)
+    t.w.state.set('processes', [proc] as unknown as Json)
+    t.w.stateSets = {}
+    const sections = await t.m.paneData(t.w.ports, NO_VIEW)
+    expect(t.w.stateSets).toEqual({}) // reads only
+    return sections.map(section => section.id)
+  }
+  expect(await sectionsWith([])).toEqual(['github', 'repos', 'web', 'processes'])
+  expect(await sectionsWith(['repos', 'web', 'processes', 'auto'])).toEqual(['github'])
 })
 
 test('the /track text leaves out a tracker that is off', async () => {
