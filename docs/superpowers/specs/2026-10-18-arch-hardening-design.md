@@ -1104,7 +1104,7 @@ Building and reviewing L7 settled these points. Code comments cite `S1` to `S18`
 | S5 | Items go in the order of the pane: the person's mark, then `firstSeen`, then `key`. Dismissed items are left out. Kind rules are not applied. | `firstSeen` never changes, so an item seen again does not move. |
 | S6 | ANSI sequences and control characters become one space. Zero-width, bidi and tag characters are removed. Space runs collapse. A clip counts code points. | Tag characters hide text from a reader. A newline would start a new instruction line. |
 | S7 | No source with a line gives no section. The frame is never sent alone. | |
-| S8 | `compose` replaces a section that has our id and appends otherwise. With no text it returns the list as it is. | `make install-local` runs a `-dev` copy beside the release, and both hooks use the id. |
+| S8 | `compose` replaces a section that has our id and appends otherwise. With no text it returns the list as it is. | A development copy (`claude --plugin-dir`) can run beside the release, and both hooks use the id. |
 | S9 | Identifiers are not quoted. Text of an outside system is quoted. A web link shows host and path only. A GitHub ref is `owner/repo#N`, and `#N` while the repo is not known. | Quotes mark data. A URL query can hold a token. |
 | S10 | The cost of a changing section was measured live with the snapshot on and off. The guard `cc-plugin-sec-default` skipped the hook, so the model never read the section and the cost of a change is `unresolved` (KB Q33). | §12 asked for a live measure. The README promise follows the numbers: no promise beyond what the hook returns. |
 | S11 | `/context` cannot show the section. The kit checks the compose result. | The `analysis` exclusion is the spec's call. |
