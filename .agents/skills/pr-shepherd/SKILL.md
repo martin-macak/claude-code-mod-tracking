@@ -124,7 +124,7 @@ Resolve only threads you answered. Never resolve a thread to hide it. When you l
 Rewrite the body with `.github/pull_request_template.md`. The `pr-body` check (`scripts/ci/check-pr-body.sh`) enforces it.
 
 - **Summary**: what the PR does now, after your fixes.
-- **Linked issue**: `Closes #N`, or `None` when no issue exists.
+- **Linked issue**: `Closes #N`, or `None` when no issue exists. Keep every link line that is there. A stack layer keeps the `Closes` line of its sub-issue and the `Refs` line of the parent, and the top layer keeps the `Closes` line of the parent too (`AGENTS.md`, "Planning and delivery", "Stack layers").
 - **Requirements**: one ticked line per requirement from step 5, with its test.
 - **Test plan**: tick only what ran and passed. Not applicable: tick it and write `N/A: <reason>`.
 - Remove claims that the code does not back.
@@ -133,7 +133,7 @@ Rewrite the body with `.github/pull_request_template.md`. The `pr-body` check (`
 
 - Ready means: all checks green, no **fix** row left, the PR body passes `pr-body`, the branch is up to date with `main`.
 - When the PR is ready and still a draft, mark it ready for review. When rows are **needs human** or **won't fix**, leave the draft state alone and say so.
-- When the PR is ready and it closes its issue (`Closes` or `Fixes`), run `node .agents/skills/project-sync/scripts/sync.mjs status <issue number> "In review"`. For `Refs` (partial work, a stack layer), leave the issue alone. The layer has its own item (`AGENTS.md`, "Planning and delivery", "Stack layers"). When the command exits 3 (no `project` scope) or 1 (the issue is not in the project), do not retry and do not run `add`, which needs an `Order`. Name the Status move in the report instead.
+- When the PR is ready and it closes its issue (`Closes` or `Fixes`), run `node .agents/skills/project-sync/scripts/sync.mjs status <issue number> "In review"`. For `Refs` (partial work), leave the issue alone. For a stack layer, the issue it closes is the sub-issue of that layer: move it, never the parent (`AGENTS.md`, "Planning and delivery", "Stack layers"). When the command exits 3 (no `project` scope) or 1 (the issue is not in the project), do not retry and do not run `add`, which needs an `Order`. Name the Status move in the report instead.
 - End with a short report: the triage table with the final verdicts, the commits you pushed, the check results, and what the human must still do.
 
 ## Hard rules

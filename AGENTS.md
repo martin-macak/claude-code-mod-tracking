@@ -60,17 +60,22 @@ The delivery order lives in three places: the public [GitHub Project 3](https://
 - **Duties.**
   - Pick: run `make project-sync ARGS=next`. It prints the Ready item with the lowest Wave, then the lowest Order.
   - Start: run `make project-sync ARGS='status <n> "In progress"'` and assign yourself.
+  - Stack: when an issue ships as a stack of PRs, create the sub-issues of its layers before the first `gh stack submit`. See "Stack layers".
   - File: set the milestone and the native blockers, then place the issue with `project-sync add`. The `issue-bug` and `issue-enhancement` skills do both.
-  - PR ready: when the PR closes its issue, set the issue to `In review`. A PR with `Refs #N` (partial work, a stack layer) leaves the issue alone. When you cannot write, or the issue has no item yet, name the move in your report. Do not add the item: that needs an `Order`. The `pr-shepherd` skill does it.
+  - PR ready: when the PR closes its issue, set the issue to `In review`. A PR with `Refs #N` (partial work) leaves the issue alone. A stack layer PR closes its own sub-issue, so the sub-issue moves and the parent stays. When you cannot write, or the issue has no item yet, name the move in your report. Do not add the item: that needs an `Order`. The `pr-shepherd` skill does it.
   - Merge: GitHub sets `Done`. Never set `Done` yourself.
   - Release: the milestone closes. The guard for it is [#64](https://github.com/martin-macak/claude-code-mod-tracking/issues/64).
 - **Tool.** The `project-sync` skill (`.agents/skills/project-sync/`) holds the commands and the rules of the script. Do not set the Wave of an issue by hand: the skill computes it from the native links.
 - **Order and positions.** `Order` also sets the manual position of each item, so a view with no sort shows the same sequence. Change `Order` to move an item. A drag in the web UI does not last.
 - **Who writes.** Only a session whose `gh` token has the `project` scope (`gh auth refresh -s project`, or put a classic token with the project scope in `GH_TOKEN`; `make init` warns when it is missing). Copilot, Codex and Actions read the project when their token can (see No access), and report each change they want in the PR.
 - **No access.** Pick by milestone, then by native links (no open blocker), then by the lowest issue number. It is unverified whether a token without the `project` scope can read this public project with `gh api graphql`.
-- **Workflows.** The owner turns these on once, in the web UI. Keep on: the built-in workflows "Item closed" and "Pull request merged" (both set `Done`), and "Auto-add to project" for `is:issue is:open` from this repo. No API turns a workflow on.
+- **Workflows.** The owner turns these on once, in the web UI. Keep on: the built-in workflows "Item closed" and "Pull request merged" (both set `Done`), "Auto-add to project" for `is:issue is:open` from this repo, and "Auto-add sub-issues to project" (a new sub-issue of an item joins the project). No API turns a workflow on.
 - **Views.** Plan: grouped by `Wave`, sorted by `Order`. 0.2.0: sorted by `Order`. Waves: a board with `Wave` columns, sorted by `Order`. No API edits the group or the sort of a view in place. To change them, an agent with the `project` scope creates a new view by API and deletes the old one.
-- **Stack layers.** A PR for one layer of a stacked change replaces the draft item of that layer. Add the PR with the same Order, Area and Release, then delete the draft.
+- **Stack layers.** An issue that ships as a stack of PRs (`gh stack`) gets one sub-issue per layer. The sub-issue is the item of its layer in the project. The layer PR is not an item.
+  - Create: one issue per layer with the headings of the Task form and the label of its type, titled `#<parent> L<n>: <outcome>`, with the milestone of the parent. Add them in stack order with `gh issue edit <parent> --add-sub-issue <n>`. The workflow "Auto-add sub-issues to project" adds each one to the project. Set its Order (the Order of the layer's draft item, or a number the owner gives), Area and Release. Then delete the draft.
+  - Link: each layer PR says `Closes #<sub-issue>` and `Refs #<parent>`. The top layer also says `Closes #<parent>`, because GitHub does not close a parent when its last sub-issue closes. Never link a layer PR to the parent in the Development sidebar: a lower layer can merge alone, and the link would close the parent.
+  - Proof: the keywords work on every layer, also on a PR whose base is another layer. A merge of the bottom layer alone closes its sub-issue. A merge of the rest of the stack in one step closes all the other sub-issues and, through the top layer, the parent. A throwaway repo showed this on 2026-10-19.
+  - Order: add no native "blocked by" links between the layers of one stack. The chain gives each layer its own Wave. The order of the sub-issues and `Order` hold the stack order. Start a layer when the layer below it has its PR.
 
 ## GitHub conventions
 
@@ -122,7 +127,7 @@ One list for branches, commits and PR titles:
   - Copilot: pick it in the Agents tab, or comment `@copilot Shepherd this PR. Use the pr-shepherd skill.` on any PR.
 - Review a PR against its linked issue and design study with the `pr-review` skill (`.agents/skills/pr-review/`). It traces each requirement item, checks open items again for feasibility, and ranks findings by severity, each with a fix.
 - Link the issue with `Closes #N` (or `Fixes #N`) so the merge closes it. Use `Refs #N` for partial work.
-- Move the linked issue to `In review` when the PR is ready and closes it (`Closes`, `Fixes`). A `Refs` PR leaves the issue alone. A PR for a stack layer replaces its draft item in the project. See [Planning and delivery](#planning-and-delivery).
+- Move the linked issue to `In review` when the PR is ready and closes it (`Closes`, `Fixes`). A `Refs` PR leaves the issue alone. A stack layer PR closes its own sub-issue and refs the parent. See [Planning and delivery](#planning-and-delivery), "Stack layers".
 - Keep history linear. Rebase onto `main`; never merge `main` into the branch. Squash to the fewest commits that keep logical steps. Use `git push --force-with-lease`, never `--force`.
 - Open a draft PR for work in progress. Mark it ready when CI passes.
 - Delete temporary files before you push: plans, scratch notes, logs. Keep design specs.

@@ -5,7 +5,7 @@ Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
 The title becomes the squash commit on main. Rules: AGENTS.md.
 The pr-body check fails on a missing issue link, an empty Requirements section
 or any unticked box.
-A PR for a stack layer replaces the draft item of that layer in the GitHub Project.
+A stack layer PR says "Closes #<sub-issue>" and "Refs #<parent>". The top layer also closes the parent.
 Rules: AGENTS.md, "Planning and delivery".
 -->
 
