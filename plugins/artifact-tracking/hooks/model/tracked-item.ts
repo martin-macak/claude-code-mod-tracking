@@ -1,8 +1,8 @@
 // Base class of a tracked item (spec section 5). Plain TypeScript: no `$`.
 // An item is rebuilt from an ItemRecord for each operation and turned back into a record afterwards.
 
+import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import type { Category, ItemError, ItemRecord, ItemRecordBase, Priority, Refreshable, Source } from '../contracts'
-import { LIMITS } from '../contracts'
 
 /** A copy of `obj` without the keys whose value is undefined. */
 export function omitUndefined<T extends object>(obj: T): T {
@@ -25,7 +25,14 @@ export abstract class TrackedItem implements Refreshable {
   refreshedAt?: number
   error?: ItemError
 
-  protected constructor(rec: ItemRecordBase) {
+  /**
+   * `staleMs` is how long a refreshed item stays current. It is read at each check, so a changed config file shows at
+   * the next one. A kind with its own rule for freshness takes its own getter in its constructor.
+   */
+  protected constructor(
+    rec: ItemRecordBase,
+    protected readonly staleMs: () => number = () => GLOBAL_DEFAULTS.refresh.staleMs,
+  ) {
     this.key = rec.key
     this.url = rec.url
     this.label = rec.label
@@ -50,7 +57,7 @@ export abstract class TrackedItem implements Refreshable {
   }
 
   protected staleAfter(): number {
-    return LIMITS.staleMs
+    return this.staleMs()
   }
 
   /** The shared record fields. Optional fields appear only when set. */

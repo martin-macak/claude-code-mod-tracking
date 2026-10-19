@@ -4,29 +4,15 @@
 // artifact URL in text are claimed by the capture funnel of the item runtime until layer L5.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 12.
 
-import type { ConfigSpec } from '../../core/interfaces/config'
 import type { ToolCallEvent } from '../../core/interfaces/events'
 import type { Claim, Json, StoredItem } from '../../core/interfaces/items'
 import type { Handler, Tracker } from '../../core/interfaces/tracker'
 import type { ItemRecord } from '../../hooks/contracts'
 import { markArtifactDeleted } from '../../hooks/model/registry'
 import { artifactEvent } from './artifact-tool'
+import { type ArtifactConfig, artifactConfig } from './config'
 
-export type ArtifactConfig = { enabled: boolean }
-
-const DEFAULTS: Readonly<ArtifactConfig> = Object.freeze({ enabled: true })
-
-export const artifactConfig: ConfigSpec<ArtifactConfig> = {
-  defaults: DEFAULTS,
-  normalise(raw, defaults, warn) {
-    let enabled = defaults.enabled
-    if (raw.enabled !== undefined) {
-      if (typeof raw.enabled === 'boolean') enabled = raw.enabled
-      else warn('artifact.enabled must be true or false; using the default')
-    }
-    return Object.freeze({ ...raw, enabled })
-  },
-}
+export { type ArtifactConfig, artifactConfig }
 
 /** One Artifact call: `ev.input` as the model gave it, `ev.result` as the tool answered. */
 const onArtifact: Handler<ArtifactConfig, Json, ToolCallEvent> = async (ctx, ev) => {

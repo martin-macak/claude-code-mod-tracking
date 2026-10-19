@@ -4,7 +4,7 @@
 
 import type { EngineInterface, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
-import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
+import { ConfigManager } from '../core/infra/config-manager'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
@@ -156,12 +156,16 @@ function runtimeOf($: EngineInterface): ItemRuntime {
  */
 function managerOf($: EngineInterface): LifecycleManager {
   const host = runtimeOf($)
-  manager ??= new LifecycleManager(
+  if (manager) return manager
+  const trackers = buildTrackers({ autoGithub: host.autoGithub })
+  manager = new LifecycleManager(
     {
-      trackers: buildTrackers({ autoGithub: host.autoGithub }),
+      trackers,
       items: host,
-      dismiss: p => autoDismiss(p.state.slot),
-      global: GLOBAL_DEFAULTS,
+      dismiss: (p, c) => autoDismiss(p.state.slot, () => c.global().store.maxDismissed),
+      // The config file: read at the start and on the tick, written once per load (L4). The manager knows the trackers
+      // only as `{ id, config }`.
+      config: p => new ConfigManager({ fs: p.fs, env: p.env, specs: trackers, log: p.log }),
       paneId: PANE,
     },
     portsOf($),
@@ -251,10 +255,11 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const el = $.ui.resolve(e)
     const p = portsOf($)
-    const v = await viewInputs(p, managerOf($).facts, { bodyColumns: e.props.bodyColumns })
+    const m = managerOf($)
+    const v = await viewInputs(p, m.facts, { bodyColumns: e.props.bodyColumns, live: id => m.live(id) })
     const sections = composePane(v.items, v.processes, v.processUi, v.ctx, v.repos)
     focus.rows = focusTargets(sections)
-    return renderSections(el, sections, e.props.bodyColumns, paneActions(p, managerOf($), runtimeOf($), focus))
+    return renderSections(el, sections, e.props.bodyColumns, paneActions(p, m, runtimeOf($), focus))
   }).catch(($, e) => {
     // A failed read must not close the pane. Draw one line instead.
     const { Text } = $.ui.resolve(e)
@@ -263,7 +268,8 @@ export const register: Register = on => {
 
   // One line above the prompt. The engine's own band stays inside our Box.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const v = await viewInputs(portsOf($), managerOf($).facts, {})
+    const m = managerOf($)
+    const v = await viewInputs(portsOf($), m.facts, { live: id => m.live(id) })
     const text = composeBand(v.items, v.processes, v.ctx.auto ?? null, v.repos)
     if (text === null || e.props.hasSurvey) return next(e)
     const el = $.ui.resolve(e)

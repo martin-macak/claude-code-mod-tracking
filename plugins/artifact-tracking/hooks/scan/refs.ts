@@ -3,6 +3,7 @@
 
 import { MAX_TEXT, normalizeUrl, scanMarkdown, schemeOf } from '../../core/lib/links'
 import { parseArtifactUrl } from '../../trackers/artifact/artifact-url'
+import { GITHUB_DEFAULTS } from '../../trackers/github/config'
 import type { ExtractOptions, GitHubRef, JiraRef, Ref, RepoRef, WebRef } from '../contracts'
 import { JIRA_KEY } from '../contracts'
 import { keyOf } from '../model/keys'
@@ -14,8 +15,23 @@ const GH_PATH = /^\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/(issues|pull)\/(\d+)(?:[
 const BARE_REF = /(?<![\w/&#])#(\d{1,7})\b/g
 const URL_RUN = /https?:\/\/[^\s<>"'`\][(){}]+/g
 const TRAILING = '.,;:!?*_~'
-// Conversation short refs are narrow by design (issue #8): only these lead words opt in `#N` capture.
-const SHORT_REF_PREFIX = /\b(?:github|bug|issue|issues|enhancement|chore)\s*[-:() ]*$/i
+const REGEX_CHARS = /[.*+?^${}()|[\]\\]/g
+
+// Conversation short refs are narrow by design (issue #8): only the lead words of `shortRefKeywords` opt in `#N`
+// capture (default: github, bug, issue, issues, enhancement, chore). The pattern is built from the list and kept for
+// the next call with the same list; an empty list matches nothing.
+let prefixCache: { key: string; pattern: RegExp | null } | undefined
+
+function shortRefPrefix(words: readonly string[]): RegExp | null {
+  const list = words.filter(w => w !== '')
+  const key = list.join('\n')
+  if (prefixCache?.key !== key) {
+    const alternatives = list.map(w => w.replace(REGEX_CHARS, '\\$&')).join('|')
+    prefixCache = { key, pattern: list.length === 0 ? null : new RegExp(`\\b(?:${alternatives})\\s*[-:() ]*$`, 'i') }
+  }
+  return prefixCache.pattern
+}
+
 /** A web URL longer than this is not tracked. It would bloat the plugin state and store. */
 const MAX_WEB_URL = 2048
 
@@ -206,6 +222,7 @@ function fromMarkdown(
   hosts: readonly string[],
   repo: RepoRef | null | undefined,
   strictShortRefs: boolean,
+  prefix: RegExp | null,
 ): At[] {
   const refs: At[] = []
   let cursor = 0
@@ -217,7 +234,8 @@ function fromMarkdown(
     cursor = hit.next
     if (f.via === 'issue-ref') {
       const gh = parseGitHubUrl(f.url)
-      const keep = gh && !FILE_EXT.test(gh.repo!) && (!strictShortRefs || shortRefAllowed(text, hit.pos, gh, repo))
+      const keep =
+        gh && !FILE_EXT.test(gh.repo!) && (!strictShortRefs || shortRefAllowed(text, hit.pos, gh, repo, prefix))
       if (keep) {
         refs.push({
           pos: hit.pos,
@@ -242,18 +260,29 @@ function sameRepo(a: RepoRef | null | undefined, b: { host: string; owner: strin
   )
 }
 
-function hasShortRefPrefix(text: string, at: number): boolean {
+function hasShortRefPrefix(text: string, at: number, prefix: RegExp | null): boolean {
   const from = Math.max(0, at - 64)
-  return SHORT_REF_PREFIX.test(text.slice(from, at))
+  return prefix?.test(text.slice(from, at)) === true
 }
 
-function shortRefAllowed(text: string, at: number, ref: GitHubRef, repo: RepoRef | null | undefined): boolean {
-  if (!hasShortRefPrefix(text, at)) return false
+function shortRefAllowed(
+  text: string,
+  at: number,
+  ref: GitHubRef,
+  repo: RepoRef | null | undefined,
+  prefix: RegExp | null,
+): boolean {
+  if (!hasShortRefPrefix(text, at, prefix)) return false
   if (!ref.owner || !ref.repo) return false
   return sameRepo(repo, { host: ref.host, owner: ref.owner, repo: ref.repo })
 }
 
-function bareRefs(text: string, repo: RepoRef | null | undefined, strictShortRefs: boolean): At[] {
+function bareRefs(
+  text: string,
+  repo: RepoRef | null | undefined,
+  strictShortRefs: boolean,
+  prefix: RegExp | null,
+): At[] {
   const masked = maskForBare(text)
   const refs: At[] = []
   for (const m of masked.matchAll(BARE_REF)) {
@@ -261,7 +290,7 @@ function bareRefs(text: string, repo: RepoRef | null | undefined, strictShortRef
     const ref: GitHubRef = repo
       ? { category: 'github', host: repo.host, owner: repo.owner, repo: repo.repo, number, type: 'unknown' }
       : { category: 'github', host: 'github.com', number, type: 'unknown' }
-    if (strictShortRefs && !shortRefAllowed(text, m.index!, ref, repo)) continue
+    if (strictShortRefs && !shortRefAllowed(text, m.index!, ref, repo, prefix)) continue
     if (strictShortRefs) ref.short = true
     refs.push({ pos: m.index!, ref })
   }
@@ -290,12 +319,13 @@ export function extractRefs(text: string, opts: ExtractOptions): Ref[] {
   const t = cap(text)
   const hosts = opts.githubHosts ?? []
   const strictShortRefs = opts.strictShortRefs ?? false
+  const prefix = strictShortRefs ? shortRefPrefix(opts.shortRefWords ?? GITHUB_DEFAULTS.shortRefKeywords) : null
   const all =
     opts.mode === 'urls-only'
       ? urlsOnly(t, hosts)
       : [
-          ...fromMarkdown(t, hosts, opts.defaultRepo, strictShortRefs),
-          ...bareRefs(t, opts.defaultRepo, strictShortRefs),
+          ...fromMarkdown(t, hosts, opts.defaultRepo, strictShortRefs, prefix),
+          ...bareRefs(t, opts.defaultRepo, strictShortRefs, prefix),
         ]
           .sort((a, b) => a.pos - b.pos)
           .map(x => x.ref)

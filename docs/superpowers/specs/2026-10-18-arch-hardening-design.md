@@ -121,7 +121,10 @@ plugins/artifact-tracking/
       view.ts                  # SectionSpec, TreeRow, ColumnDef, Cell, ColorToken
       events.ts                # domain events the bus carries
     infra/
-      lifecycle.ts             # LifecycleManager: sequences the others
+      lifecycle.ts             # LifecycleManager: sequences the others (single flight, entry, end, clear, tick)
+      start-sequence.ts        # StartSequence: the steps of the start of a load (split from the manager in L4)
+      switch-runner.ts         # SwitchRunner: the steps of a session switch, loadSession, replay (split in L4)
+      steps.ts                 # guard and soft: run a step that may fail, log one line, go on
       bus.ts                   # EventBus
       tracker-host.ts          # TrackerHost: init, store, dispose, isolation
       session.ts               # SessionWatch: id compare, pendingEnd, generation
@@ -129,7 +132,9 @@ plugins/artifact-tracking/
       persistence.ts           # $.store layout, write-through, end flush, size bound
       replay.ts                # transcript replay on a cold resume
       capture.ts               # one scan per text: offers spans to kinds by rank
-      config-manager.ts        # ConfigManager
+      config-manager.ts        # ConfigManager: read, cache by signature, reconcile (the only writer)
+      config-file.ts           # pure file format: parseConfig, mergeMissing, renderConfig, normaliseDoc
+      config-path.ts           # resolveConfigPath: the path rule of §5.7
       item-store.ts            # ItemStore, kind registry, eviction
       priority.ts              # PriorityService, rules from kinds
       dismiss.ts               # DismissList (run-scoped)
@@ -141,6 +146,8 @@ plugins/artifact-tracking/
       prompt.ts                # PromptComposer
     lib/                       # generic pure helpers any tracker may use
       json.ts  links.ts  paths.ts  shell.ts  git.ts
+      normalise.ts             # L4: schema rules (int, bool, words, obj), normaliseWith, specOf, deepFreeze
+      global-config.ts         # L4: GLOBAL_SCHEMA, GLOBAL_DEFAULTS, normaliseGlobal
   ux/
     tree-data-table/
       table.tsx                # TreeDataTable.render(sections, view, el, actions)
@@ -155,9 +162,9 @@ plugins/artifact-tracking/
   trackers/
     index.ts                   # TRACKERS: one line per tracker
     github/  jira/  web/  artifact/  file/
-    repos/   processes/  auto/
+    repos/   processes/  auto/   # each holds a config.ts (L4): schema, defaults and ConfigSpec of its slice
   types/index.d.ts             # PluginState contract: no tracker types
-  tests/                       # mirrors the tree
+  tests/                       # mirrors the tree; tests/fixtures/limits.ts rebuilds the old LIMITS names from the defaults (test-only)
 ```
 
 Dependency rules:
@@ -177,7 +184,7 @@ L3 breaks the rules above in four places. L5 closes them.
 
 - `hooks/` holds more than `register.tsx`: `events.ts`, `command.ts`, `pane-actions.ts`, `view-inputs.ts` and `items/`. These files are not `core/infra/`, so they may import trackers. `hooks/items/` uses the `gh`, `acli`, file and artifact tools of the trackers (D13, §10.1).
 - `trackers/` imports `core/infra/`: `CircuitBreaker` (repos, processes, and the `gh` and `acli` tools), `Tool` (the `gh` and `acli` tools), and `autoIds` and `dismiss` (auto). L5's ToolRunner takes the breaker and the tool wrapper. The dismiss code moves with the DismissList.
-- `core/infra/circuit-breaker.ts`, `coordinator.ts`, `dismiss.ts` and `tool.ts`, and `core/lib/porcelain.ts`, import types and `LIMITS` from `hooks/contracts.ts` (a move of L2). L4 moves `LIMITS` into the config. L5 moves the types.
+- `core/infra/circuit-breaker.ts`, `coordinator.ts`, `dismiss.ts` and `tool.ts`, and `core/lib/porcelain.ts`, import types from `hooks/contracts.ts` (a move of L2). L4 deleted `LIMITS`: the defaults live in `core/lib/global-config.ts` and in each `trackers/<id>/config.ts`. L5 moves the types.
 - `AutoScheduler` is auto-only (it uses `AutoReason`), so it lives in `trackers/auto/scheduler.ts` (D17).
 
 ### 5.2 Components
@@ -237,7 +244,7 @@ flowchart TB
   wiring --> band
 ```
 
-`register.tsx` builds the ports, the ConfigManager and the LifecycleManager, and passes `TRACKERS` to the manager. Each hook turns the engine event into a domain event for the manager. To draw, `register.tsx` asks the manager for the section data and the keys, then calls the `ux/` renderers. Infra never imports `ux/`.
+`register.tsx` builds the ports and the LifecycleManager, and passes `TRACKERS` and a factory `config(ports)` to the manager. The factory builds the ConfigManager over the fs and env ports of the first hook of the load. Each hook turns the engine event into a domain event for the manager. To draw, `register.tsx` asks the manager for the section data and the keys, then calls the `ux/` renderers. Infra never imports `ux/`.
 
 ### 5.3 The composition root
 
@@ -352,12 +359,13 @@ stateDiagram-v2
 
 **Start sequence** (`session.start`, on load and on each hot reload):
 
-1. ConfigManager reads the file (§5.7). L3 has none: each tracker's `config` and `store` serve today's `LIMITS` from memory, and no file is read or written.
+1. ConfigManager checks the file and reads it again when its signature moved (§5.7). A failing read is logged, and the defaults stand. TrackerHost then reads the toggles, once per load (`enabled: false` turns a tracker off).
 2. Persistence loads `v2:run` (the `pendingEnd` and the run-scoped slots, §5.13). Once per load it deletes the keys of the old layout (`s:*`, `index`).
-3. The item host starts. TrackerHost runs `init` and then `store` (§5.8) for each tracker in `order`, and fills the bus with the declared handlers (§5.5). The bus emits `start`.
-4. The session load. It runs only on a cold `session.start`, that is, when the items slot is empty:
-   - A `pendingEnd` in `v2:run` counts only on the first start of a load, with reason `clear` or `resume`, from another id than the current one, and when `now - at <= 2 * tickMs`. SessionWatch then resumes from it, and the switch (below) carries or loads.
-   - Else SessionWatch learns the id. Persistence loads `v2:s:<id>` into each persisted slot. Replay then runs (§5.6.1).
+3. The item host starts. TrackerHost runs `init` and then `store` (§5.8) for each tracker in `order`. A tracker that is off gets `store` only. ConfigManager then reconciles the file with the store results (§5.7): the first-run write or the missing-key merge, at most once per load. A lazy start inside `session.end` skips this write (E6). TrackerHost fills the bus with the declared handlers (§5.5). The bus emits `start`.
+4. The session load. It runs only on a cold `session.start`, that is, when the items slot is empty. The first start of a load also judges the `pendingEnd` that `v2:run` holds (D20, C19):
+   - Carried: reason `clear` or `resume`, from another id than the current one, and `now - at <= 2 * tickMs`. SessionWatch resumes from it, and the switch (below) carries or loads.
+   - Awaited: the same reason and age, but `fromId` is the current id. The reload came before the id flipped. `v2:run` stays, because the flip may still come in this load. It has no snapshot, so it carries `v2:run.run` (the reload gap).
+   - Else the record is stale. SessionWatch learns the id, Persistence loads `v2:s:<id>` into each persisted slot, and Replay runs (§5.6.1). The start deletes `v2:run`, because what it holds is an older process's. It reads the key again first and deletes it only if it still holds the record the start read, so a second process that ended its session meanwhile keeps its own record. Without this, a later switch with no snapshot would carry that process's dismiss list and root. A failed delete is logged. A start whose session load failed (for example an unreadable id) deletes nothing.
 5. Scheduler arms the tick.
 6. The pane reattaches through `ports.ui.panes()` and is invalidated.
 
@@ -377,7 +385,7 @@ The lazy start (`ensureStarted`) runs the same steps without the session load an
 **Switch.** SessionWatch compares `ports.session.id()` with the last seen id on the tick, at a flush, in `session.end` and at the entry of `session.append`, `tool.call`, `agent.spawn`, `turn.complete`, `command.run`, `ui.focus` and `ui.close`. It never runs in `ui.render` or `prompt.compose`, because a switch writes `$.state` and a render-like dispatch may refuse that (E9). Concurrent checks share one switch, so two tool calls right after `/clear` both land on the carried list. On a new id, the manager runs these steps in order. A failing step is logged, and the next one still runs:
 
 1. The item host hears of the switch first and forgets the session repo, so a later lookup is for the new session.
-2. Run-scoped slots (`persist: false`) carry: from the snapshot, or from `v2:run.run` when this load saw no end (the reload gap). After an end the snapshot is the whole truth. The dismiss list and the pinned root are run-scoped, so they stay either way. They load before the persisted slots, because an item load needs the dismiss list (D9).
+2. Run-scoped slots (`persist: false`) carry: from the snapshot, or from `v2:run.run` when this load saw no end (the reload gap). After an end the snapshot is the whole truth. The first start of a load keeps `v2:run` only when it carried or awaited a recent end (§5.6, start step 4), so an older process's run values never reach this fallback (C19). The dismiss list and the pinned root are run-scoped, so they stay either way. They load before the persisted slots, because an item load needs the dismiss list (D9).
 3. After `pendingEnd.reason === 'clear'`: the persisted slots carry the snapshot (or `v2:s:<fromId>`) into the new session's state (today's behavior).
 4. Else (`resume`, or no `pendingEnd`): load `v2:s:<newId>`, then run Replay (§5.6.1), only when the items slot is empty. A warm slot, kept by a reload, loads nothing. An id with no stored copy (`/branch`) starts empty.
 5. The bus emits `sessionChanged`. Then Persistence drops `pendingEnd` from `v2:run` and keeps the run values (`clearRun`).
@@ -388,7 +396,7 @@ Every data write runs the session check first. The steps of a switch, the start 
 
 The four mirrors (`mirror`, `repoMirror`, `processMirror`, `autoMirror`) and the seven `ensureSession` call sites go away. State is intact at `session.end`, so the snapshot replaces them (E6).
 
-**Tick.** One `$.clock.every` at `global.refresh.tickMs`. A refused period ends the interval (E18), so the Scheduler keeps today's watchdog. Every non-render hook entry and `turnComplete` re-arm the tick when the last beat is older than two periods. A change of `tickMs` in the config re-arms the timer. Each beat finds a new session id, gives the item host its share, then emits `tick { now }`. A tracker declares `events.tick = { everyMs?(config), run }`. The Scheduler runs it when `now - last >= everyMs - 1,000` ms, because a timer may fire a little early. The default period is `tickMs`.
+**Tick.** One `$.clock.every` at `global.refresh.tickMs`. A refused period ends the interval (E18), so the Scheduler keeps today's watchdog. Every non-render hook entry and `turnComplete` re-arm the tick when the last beat is older than two periods. Each beat first checks the config file. A change redraws the pane, and a new `tickMs` re-arms the timer. Each beat then finds a new session id, gives the item host its share, then emits `tick { now }`. A tracker declares `events.tick = { everyMs?(config), run }`. The Scheduler runs it when `now - last >= everyMs - 1,000` ms, because a timer may fire a little early. The default period is `tickMs`.
 
 **Data writes.** Persistence writes through with a debounce of `global.refresh.flushMs` (default 1,500 ms) to coalesce. The first change arms the timer, and later ones do not move it. A flush is an entry: the session check runs first, so a `/clear` since the last change saves the old session. A reload loses at most one window (E7).
 
@@ -416,30 +424,50 @@ The restore filters move to the kinds: `ItemKind.restore?(item): StoredItem | nu
     "ui": { "maxRows": 300, "sectionRows": 50 }
   },
   "trackers": {
-    "github": { "enabled": true, "prompt": { "enabled": false, "maxItems": 20 }, "chunkSize": 50 },
-    "jira": { "enabled": true, "prompt": { "enabled": false, "maxItems": 20 }, "concurrency": 3 }
+    "github": {
+      "enabled": true, "chunkSize": 50, "pendingStaleMs": 60000, "discoveryTimeoutMs": 10000, "closingRefsPerPr": 10,
+      "headPrsPerBranch": 5, "basePrsPerBranch": 10, "maxBodyRefs": 50,
+      "shortRefKeywords": ["github", "bug", "issue", "issues", "enhancement", "chore"]
+    },
+    "jira": { "enabled": true, "concurrency": 3, "epicChildLimit": 50 }
   }
 }
 ```
 
-Each tracker owns the shape of `trackers.<id>`. `enabled` and `prompt` are common to all. The candidate keys per tracker are in [config-manager §6](../../knowledge-base/claude-code-mod-architecture/config-manager.md#6-candidate-config-keys). Argv and command lines stay out of the file.
+Each tracker owns the shape of `trackers.<id>`. `enabled` is common to all. `prompt` is not written yet: PromptComposer is L7, and a key with no reader would mislead the user. L7 adds it to the schemas, and the missing-key merge writes it at the first start after the upgrade (C1). The candidate keys per tracker are in [config-manager §6](../../knowledge-base/claude-code-mod-architecture/config-manager.md#6-candidate-config-keys). Argv and command lines stay out of the file.
 
-L3 builds each slice's `ConfigSpec` but reads no file. The slices carry no `prompt` block yet (PromptComposer is L7). Jira's slice has `concurrency` and `epicChildLimit`, github's has `chunkSize`, and processes has `probeTimeoutMs` (1,000 to 120,000 ms).
+**Keys and bounds.** Every number is a whole number with a min and a max. Every default is the value the code used before the file (`LIMITS` of `d391552`), so with no file nothing changes.
 
-**Read.** `JSON.parse` after a BOM strip. Each slice goes through its tracker's `ConfigSpec.normalise(raw, defaults)`: per-field fallback to the default, a min and a max on every number, warnings collected, unknown keys kept, the result frozen. A parse error is transient first: keep the last good value (or defaults) and retry on the next check. A persistent error shows as a problem in `/track` and the help view. The mod never clears or overwrites an invalid file.
+| Block | Key (default; min to max) |
+| --- | --- |
+| `global.refresh` | `tickMs` (30000; 5000 to 600000), `staleMs` (300000; 30000 to 86400000), `captureDebounceMs` (1000; 100 to 60000), `flushMs` (1500; 100 to 60000) |
+| `global.tools` | `timeoutMs` (30000; 1000 to 300000), `probeTimeoutMs` (10000; 1000 to 120000), `breaker.threshold` (3; 1 to 100), `breaker.openMs` (300000; 1000 to 86400000) |
+| `global.store` | `keepSessions` (20; 1 to 200), `maxItems` (500; 200 to 5000), `maxDismissed` (500; 50 to 5000), `maxBytes` (3000000; 100000 to 4000000) |
+| `global.ui` | `maxRows` (300; 50 to 1000), `sectionRows` (50; 5 to 300) |
+| `github` | `chunkSize` (50; 1 to 100), `pendingStaleMs` (60000; 10000 to 3600000), `discoveryTimeoutMs` (10000; 1000 to 120000), `closingRefsPerPr` (10; 1 to 50), `headPrsPerBranch` (5; 1 to 50), `basePrsPerBranch` (10; 1 to 50), `maxBodyRefs` (50; 1 to 200), `shortRefKeywords` (a list of at most 32 words; the six words above) |
+| `jira` | `concurrency` (3; 1 to 10), `epicChildLimit` (50; 1 to 500) |
+| `file` | `maxMentionsPerRow` (20; 0 to 200; 0 turns mentions off) |
+| `repos` | `maxRepos` (50; 1 to 500), `maxRepoAgents` (8; 1 to 50), `maxRepoQueue` (32; 1 to 256), `gitTimeoutMs` (5000; 500 to 60000) |
+| `processes` | `probeTimeoutMs` (10000; 1000 to 120000) |
+| `auto` | `debounceMs` (750; 50 to 60000), `gitTimeoutMs` (5000; 500 to 60000), `workflowIdleMs` (3600000; 60000 to 86400000), `maxBranches` (12; 1 to 50), `maxAutoItems` (100; 1 to 200), `maxProofs` (100; 10 to 1000), `maxAgents` (200; 10 to 2000) |
+| `web`, `artifact` | `enabled` only |
 
-**Cache.** The parsed snapshot plus a signature `mtimeMs:size` from `ports.fs.stat`. The manager checks it at `session.start`, when the pane opens and on the tick. It re-reads only when the signature changes. A changed value reaches trackers through their `ctx.config` views on the next call. A change of a toggle takes effect at the next start sequence.
+A word of a list matches `/^[a-z][a-z0-9-]{0,31}$/` after lowercasing. A value is read at its next use, except `global.tools.breaker.*`, `jira.concurrency` and `repos.maxRepoQueue`, which size an object at construction and are read once per load (C5). `maxPinned` stays a code constant (100), below the minimum of `store.maxItems`.
+
+**Read.** `JSON.parse` after a BOM strip. Each slice goes through its tracker's `ConfigSpec.normalise(raw, defaults, warn)`: a value of the wrong type falls back to its default, a number out of range clamps to the bound, each bad value is one warning, and unknown keys are kept and named. `normaliseDoc` collects the warnings in the order of the problem list and freezes the result, deeply (the spec itself does not freeze). A tracker id that no spec has is kept and named too. `"web": false` keeps web on and the problem says how to turn it off: `{ "enabled": false }`. A parse error is transient first: the manager stats the file again. A moved signature is a write in flight, so it keeps the last good value (or the defaults) with no problem and reads again at the next check. The same signature is read and parsed once more, and a second failure is persistent. A persistent error is not read again until the signature moves. It shows as a problem in `/track` (appended to every reply that prints the list, after one blank line, at most 10 lines and then a count) and the help view. The mod never clears or overwrites an invalid file. The text of a refusal that the engine words as `<plugin>: <call>: <reason>` is quoted as the reason only.
+
+**Cache.** The parsed snapshot plus a signature `mtimeMs:size` from `ports.fs.stat`. The manager checks it at `session.start`, when the pane opens and on the tick. It re-reads only when the signature changes. A changed value reaches trackers through their `ctx.config` views on the next call. A change of a toggle takes effect at the next load: TrackerHost reads the toggles once per load.
 
 **Write.** The file is the user's. The mod writes in two cases only:
 
 1. First run, the file is missing: the manager writes the global defaults and every tracker's store result (§5.8), once.
-2. A later start finds a tracker slice or keys missing (a new tracker after an upgrade): the manager adds only what is missing, never changes a user value, and writes once per load.
+2. A later start finds a tracker slice or keys missing (a new tracker after an upgrade): the manager adds only what is missing, never changes a user value, and writes once per load. A file with no key missing is not written, whatever its indent, its final newline or its key order. A migration (below) is the one other reason to write.
 
-Each write re-stats first and re-reads if the file moved. It writes the whole file, with a stable key order and a two-space indent, and skips the write if the text is unchanged. No write happens in `session.end`. No secrets go in the file.
+Only `ConfigManager.reconcile` writes, after the store phase (§5.6, start step 3). Before it writes, it re-stats the file and reads it again if it moved. If a save is in flight (the signature moved again after that read), it waits for the next load. It never writes a file it could not parse or stat, or whose version it cannot reach. It writes the whole file with a two-space indent and a final newline. `version`, `global` and `trackers` come first, then the other top-level keys in file order. Inside an object the user's keys keep their order and the added keys come last. No write happens in `session.end`. A refused write gives one problem that stays for the load, and the mod does not try again before the next start. No secrets go in the file.
 
-**Version.** An integer `version`. A file with a higher version is read-only. Migrations are ordered pure functions `{ from, to, up(raw) }`. Before a migration write, the manager writes `config.json.v<from>.bak`. Version 1 has no migration.
+**Version.** An integer `version`. A missing `version` is read as the known one, and the merge adds it as the first key. A value that is not a whole number of 1 or more is read as the known version, with one problem, and the value is kept. A file whose version the mod cannot reach is read-only: it reads the file, never changes it, and `/track` shows one problem (`The file has version <n>, and this mod knows version <k> only. …`). That covers a higher version, and a lower one for which the manager holds no chain of migrations. Migrations are ordered pure functions `{ from, to, up(raw) }`, applied to a copy. Before a migration write, the manager writes `config.json.v<from>.bak`, and a refused backup stops the upgrade with one problem. Version 1 has no migration.
 
-**Toggles.** `enabled: false`: TrackerHost skips the tracker's `init`, handlers, sections, keys, commands and prompt. A disabled item kind still claims its spans and drops them, so a GitHub URL does not fall through to `web` (my call).
+**Toggles.** `enabled: false`: TrackerHost skips the tracker's `init`, handlers, sections, keys, commands and prompt. It still runs `store`, keeps the slot in `slots()` and skips `dispose` (C4). It reads the toggles once per load (C5). A disabled item kind still claims its spans and drops them, so a GitHub URL does not fall through to `web` (my call).
 
 ### 5.8 Tracker contract
 
@@ -681,7 +709,7 @@ On the first load after the upgrade, Persistence deletes the old keys (`s:*`, `i
 | A CLI fails | ToolRunner counts it in the tool's breaker. The status shows in the section `note`. `/track refresh` resets every breaker. |
 | Config file missing | Defaults, written once (§5.7). |
 | Config file invalid | Last good value or defaults. A problem in `/track` and the help view. The file is not touched. |
-| `$.fs` denied | Defaults and a problem. No retry loop. |
+| `$.fs` denied | Defaults and a problem. No retry loop: the write is tried once per load. |
 | The tree is over budget | The guard degrades (§5.10). The pane is never blank, and the footer stays. |
 | `$.store` near its limit | Persistence evicts the oldest sessions (§5.13). |
 | An async result of an old generation | Dropped (§5.6). |
@@ -699,7 +727,7 @@ The baseline before the work: 825 tests pass in 36 files.
 | Kit wiring | `tests/fixtures/world.ts` gets a Map-backed `fs.read`, `fs.write`, `fs.exists`, `fs.stat` block with deny switches, and a `clearSession($, world, nextId, reason)` helper that fires `session.end`, then flips the stub id. The id-flip `/clear` tests move to the helper. Store-key seeds change to `v2:`. The asserted behavior stays: carry-over on `/clear` (about 18 tests), replay on `--resume`, late results dropped after `/clear`. New: first-run config write, a disabled tracker, a prompt section on and off. |
 | Pane (rewritten in L6) | The header row, one Button per row, `r<n>` keys, `selected` by row id from a driven `ui.focus`, the refocus after a re-sort, Enter toggles detail and the default detail, footer keys, `h` help, "N more", the budget guard at 600 and 1,400 rows, the `/track` text and the band. |
 | Contract checks | Added in the layer that makes each true. L3: only `H/register.tsx` has a `$` call, an `on(` call, a value import from `claude-code`, the type `EngineInterface` or the literal `plugin: 'artifact-tracking'`. The test is `scripts/contracts/source-contracts.test.mjs`, run by `make test-scripts`, because the kit has no fs (D18). L5: no `\b(github\|jira\|gh\|acli)\b` in `core/` and `ux/`; the import rules of §5.1. L6: no section renderer outside `ux/`. A test lists every key and asserts no duplicate. |
-| e2e (local, `make e2e`) | The harness sets `CLAUDE_TRACKER_CONFIG_DIR` to a temp folder for every scenario and deletes it afterwards, so no run touches the developer's real config. Update `priority.feature` and `tracking.feature` for the new keys. Add a scenario: Tab moves the highlight, `x` dismisses the selected row, `h` shows help, a config file turns a tracker off. The L6 live checks also cover the ring after a data-driven re-sort and `autoFocus`. |
+| e2e (local, `make e2e`) | The harness sets `CLAUDE_TRACKER_CONFIG_DIR` to a temp folder for every scenario and deletes it afterwards, so no run touches the developer's real config. `DEMO_KEEP=1` keeps the folder with the clone and the tmux session, for a look at the written file. Update `priority.feature` and `tracking.feature` for the new keys. Add a scenario: Tab moves the highlight, `x` dismisses the selected row, `h` shows help, a config file turns a tracker off. The L6 live checks also cover the ring after a data-driven re-sort and `autoFocus`. |
 
 `make verify` passes on every layer (§8).
 
@@ -737,7 +765,7 @@ Rules:
 | L1 | `docs/arch-kb-and-spec` | The KB research (2.1.302 snapshot, spike sources, new pages) and this spec | none |
 | L2 | `refactor/layout-and-interfaces` | Pin CI and types to 2.1.302, `target: es2024`, `tsconfig` `include` for `core/**`, `ux/**`, `trackers/**`, the new folders, `core/interfaces/*`, file moves, test import paths. README states the minimum Claude Code version. No logic change. | none |
 | L3 | `refactor/lifecycle-bus-ports` | `register.tsx` becomes wiring. Ports, LifecycleManager, SessionWatch (`session.end`, snapshot, generation), Scheduler with watchdog, Persistence (`v2:` keys, size bound), Replay, EventBus, TrackerHost. The 8 trackers become `Tracker` objects whose handlers call today's modules through ports. The item runtime stays in `hooks/items/` until L5. Their `config` and `store` serve today's `LIMITS` from memory; no file is read or written before L4. Mirrors and polling go. `clearSession` helper. The `$` and `on` contract test. | storage layout; old data dropped; `/branch` (and a `/resume` to an id with no stored copy) now starts empty (today it carries the items over); a write in the last 1.5 s before exit is no longer lost |
-| L4 | `feat/config-manager` | ConfigManager, `config.json`, `LIMITS` moved into each tracker's `ConfigSpec`, toggles, the store phase | new config file |
+| L4 | `feat/config-manager` | ConfigManager, `config.json`, the schema normaliser, `LIMITS` deleted (its values moved into `global` and each tracker's `ConfigSpec`), toggles, the store phase, problems in `/track`. The lifecycle split into StartSequence and SwitchRunner. e2e: one config folder per scenario. | new config file, written once at the first start; the first start of a load deletes a stale `v2:run` |
 | L5 | `refactor/tracker-contracts` | Each tracker moves into `trackers/<id>/`. ItemStore, ItemKind, Capture, Facts, ToolSpec and the Commands router replace the closed unions. The PR lane moves to github. The name and import contract tests. May split into one layer per tracker. | the PR lane moves from auto to github; the "Pull requests" section looks the same |
 | L6 | `feat/tree-data-table` | `ux/tree-data-table`, `cellWidth`, KeyRegistry, help view, budget guard, the new pane, text and band from sections. Pane tests rewritten. e2e updated. README demo GIF refreshed (`demo-scenario` skill). | new pane UX |
 | L7 | `feat/prompt-sections` | PromptComposer and `prompt()` on the item trackers, off by default. No `plugin.json` edit: the release tag `artifact-tracking--v0.2.0` sets the version. | opt-in prompt text |
@@ -816,6 +844,34 @@ Building L3 settled these points where the text above left them open or the test
 | D19 | `prompt.compose` is a pass-through hook. | The §5.3 table is binding. PromptComposer is L7. |
 | D20 | A `pendingEnd` counts at start only on the first start of a load, with reason `clear` or `resume`, and when `now - at <= 2 * tickMs`. | The reload gap needs it. A new `claude --resume` process must not act on the last process's `pendingEnd`. |
 
+### 10.2 Decisions made in L4
+
+Building L4 settled these points where the text above left them open. Code comments cite them as `C1` to `C21`. The sections above already show the result.
+
+| # | L4 does | Why |
+| --- | --- | --- |
+| C1 | The slices carry no `prompt` block. L7 adds it, and the missing-key merge writes it. | A key with no reader would mislead the user. |
+| C2 | Seven `LIMITS` keys and two constants get a home in `trackers.github`, and `toolTimeoutMs` and the `Tool.probe` literal go to `global.tools`. `maxPinned` stays a code constant. | The spec shape had no place for them. `maxPinned` is an invariant below `store.maxItems`. |
+| C3 | Every number has a min and a max. A value out of range clamps. A value of the wrong type falls back to its default. | The spec asked for a min and a max on every number. |
+| C4 | `store` runs for a disabled tracker, so `{ "enabled": false }` still gains its other keys. The slot of a disabled tracker stays in `slots()`, hidden in the views. Records of a disabled item kind are dropped. | `store` is pure. A slot must not lose data when the user turns a tracker off for a while. |
+| C5 | Toggles are read at the first start of a load. Other values are read at their next use. `global.tools.breaker.*`, `jira.concurrency` and `repos.maxRepoQueue` are read once per load. | The last three size an object at construction. |
+| C6 | Problems are appended to every `/track` reply that prints the list, after one blank line: at most 10 lines, then a count. | The help view is L6. |
+| C7 | A parse error is re-checked: same signature, read once more; a moved signature, wait for the next check. | A writer may be in the middle of its save. |
+| C8 | Unknown keys in `global.*` and `trackers.<id>.*`, and unknown tracker ids, are kept and named. Unknown top-level keys are silent. | A typo must show. A user may keep notes at the top. |
+| C9 | A relative `CLAUDE_TRACKER_CONFIG_DIR` is ignored with one problem. A relative or empty `XDG_CONFIG_HOME` is ignored with no problem. | The XDG rule says so. |
+| C10 | `stat` gives null while the file exists, or `exists` rejects: the defaults, one problem, never a write. | The mod cannot tell whether it would overwrite. |
+| C11 | Key order: `version`, `global`, `trackers`, then other keys in file order. Inside an object, the file's keys, then the missing keys. | A stable diff for the user. |
+| C12 | `HostContext.trackers` and `AutoGithub.lane()` are transitional. They tell the item runtime which kinds are on and give it the slices. L5 removes both. | Item kinds have no handlers until L5 (D13). |
+| C13 | `GLOBAL_DEFAULTS` moved to `core/lib/global-config.ts`. | Trackers read defaults for default parameters but must not import `core/infra`. |
+| C14 | `LIMITS` is deleted. `tests/fixtures/limits.ts` rebuilds the old names from the defaults. | 17 test files import `LIMITS`. Each changes its import line only. |
+| C15 | `PR_LANE_DEFAULTS` repeats two auto defaults for direct callers of the PR lane. | A tracker folder imports no other. L5 gives them one owner. |
+| C16 | A lazy start inside `session.end` reads the file and never reconciles. | The end writes no config (E6). |
+| C17 | A missing `version` is read as 1. A bad one is read as 1 with one problem. A migration's `up` returns the object with `version: to`. | The merge adds the key. The file stays the user's. |
+| C18 | `claudeCommand` puts `env CLAUDE_TRACKER_CONFIG_DIR=<dir>` before `claude` when `LaunchSpec.env` is set. Each scenario gets a temp folder. | No run may touch the real file (§7). |
+| C19 | The first start of a load deletes `v2:run` unless it carried a recent end or awaits one (§5.6, start step 4). The delete re-reads the key and goes only if the record is the one the start read. | A switch with no snapshot falls back to `v2:run.run`. That is right for the reload gap and wrong for an older process's values. The reload gap includes an end of the current id: the id flips after the new module starts. |
+| C20 | `reconcile` writes only when it adds a key or upgrades the file. | The file is the user's. A rewrite for layout alone changes their indent, newline and order, with no gain. |
+| C21 | The problem text quotes the reason of an engine refusal, without the `<plugin>: <call>:` prefix. | The copy table names the reason only. |
+
 ## 11. Architecture rules
 
 | Principle | How the design meets it | Accepted exception |
@@ -839,3 +895,8 @@ Building L3 settled these points where the text above left them open or the test
 | Whether a later `gh stack push` overwrites an edited PR body | Checked at the first push (§8). |
 | A `$.state` write from a `prompt.compose` dispatch | Not needed: SessionWatch never runs there (§5.6). Proven by the L3 validate run. |
 | Delete the trial repo `martin-macak/gh-stack-trial-20261017` | Manual. The token lacks the `delete_repo` scope. |
+| `ToolSpec.timeoutMs` and `ToolSpec.breaker` are declared and not read | L5 wires them in ToolRunner. Until then the tools take `global.tools.*`. |
+| `HostContext.trackers` and `AutoGithub.lane()` (C12) | L5 removes both when the item kinds get handlers. |
+| `PR_LANE_DEFAULTS` repeats two auto defaults (C15) | L5 gives them one owner. |
+| `GITHUB_DEFAULTS.pendingStaleMs` is read by `GitHubItem` through `hydrate` | L5 moves freshness into `ItemKind`. |
+| `tests/global-defaults.test.ts` compares most defaults with a `LIMITS` that `tests/fixtures/limits.ts` rebuilds from the same defaults | L5 deletes it or pins its values as literals. `config-specs` already pins the defaults and the keys. |

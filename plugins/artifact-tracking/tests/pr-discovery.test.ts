@@ -1,9 +1,9 @@
 // PR discovery: query shape, reply parsing, skip reasons and outcome mapping. Pure, fake gh.
 import { expect, test } from 'claude-code/testing'
 import type { GitHubDiscoveryApi, GraphqlOutcome, GraphqlReply, ToolStatus } from '../hooks/contracts'
-import { LIMITS } from '../hooks/contracts'
 import { buildDiscoveryQuery, discoverPrs, parseDiscovery } from '../trackers/github/pr-discovery'
 import { discoveryData, prNode, REPO } from './fixtures/gh-discovery'
+import { LIMITS } from './fixtures/limits'
 
 const NOW = 1_000_000
 const reply = (data: Record<string, unknown>, errors: unknown[] = []): GraphqlReply => ({ data, errors })

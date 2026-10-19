@@ -14,6 +14,16 @@ import type { ItemStore } from './store'
 /** D3: the person's own text. Never a machine, a notification or a coordinator. */
 export const PERSON: ReadonlySet<string> = new Set(['composer', 'bridge', 'sdk', 'unclassified'])
 
+/**
+ * The config values the funnel reads, per row: the lead words of a short `#N` (`trackers.github.shortRefKeywords`), the
+ * `.md` paths looked at per row (`trackers.file.maxMentionsPerRow`) and the item cap (`global.store.maxItems`).
+ */
+export type CaptureLimits = {
+  shortRefKeywords: readonly string[]
+  maxMentionsPerRow: number
+  maxItems: number
+}
+
 /** What the funnel reads of the runtime. */
 export type CaptureDeps = {
   /** undefined: not resolved yet. null: this session has no known repo. */
@@ -25,6 +35,8 @@ export type CaptureDeps = {
   gh(): GhTool | undefined
   items: Pick<ItemStore, 'update' | 'trackRefs'>
   files(): FileSight | undefined
+  /** Read at each row, so a changed file shows at the next one. Absent: today's numbers. */
+  limits?(): CaptureLimits
 }
 
 export function filterToolRefsForSite(refs: Ref[], site: string | null | undefined): Ref[] {
@@ -106,12 +118,15 @@ export class Capture {
     const { d } = this
     await d.ensureRepo()
     const sight = d.files()
-    if (mode === 'full' && sight) await captureMentions(sight, d.items, text, source).catch(() => {})
+    const lim = d.limits?.()
+    if (mode === 'full' && sight)
+      await captureMentions(sight, d.items, text, source, lim?.maxMentionsPerRow, lim?.maxItems).catch(() => {})
     let refs = extractRefs(text, {
       mode,
       defaultRepo: d.repo() ?? null,
       githubHosts: d.hosts(),
       strictShortRefs: mode === 'full',
+      ...(lim ? { shortRefWords: lim.shortRefKeywords } : {}),
     })
     if (mode === 'full') refs = await keepOpenSessionShortRefs(d, refs)
     if (source === 'tool' && mode === 'urls-only') refs = filterToolRefsForSite(refs, await d.site())

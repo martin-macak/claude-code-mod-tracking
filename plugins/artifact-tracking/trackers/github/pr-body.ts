@@ -2,9 +2,9 @@
 // One level only: the caller never scans the body of a PR found this way.
 
 import type { DiscoveredPr, GitHubRef, Ref } from '../../hooks/contracts'
-import { LIMITS } from '../../hooks/contracts'
 import { keyOf, prKey } from '../../hooks/model/keys'
 import { extractRefs } from '../../hooks/scan/refs'
+import { GITHUB_DEFAULTS } from './config'
 
 /**
  * Replaces each `<!--` ... `-->` with one space. The first `-->` ends a comment, as GitHub renders it.
@@ -24,7 +24,12 @@ export function stripHtmlComments(text: string): string {
   }
 }
 
-export function prBodyRefs(pr: DiscoveredPr, githubHosts: readonly string[]): Ref[] {
+/** The refs of one PR: its closing issues first, then the refs in the body text, at most `max` (`maxBodyRefs`). */
+export function prBodyRefs(
+  pr: DiscoveredPr,
+  githubHosts: readonly string[],
+  max: number = GITHUB_DEFAULTS.maxBodyRefs,
+): Ref[] {
   const clean = stripHtmlComments(pr.body)
   const fromText = extractRefs(clean, {
     mode: 'full',
@@ -48,7 +53,7 @@ export function prBodyRefs(pr: DiscoveredPr, githubHosts: readonly string[]): Re
     if (seen.has(key)) continue
     seen.add(key)
     out.push(ref)
-    if (out.length >= LIMITS.maxBodyRefs) break
+    if (out.length >= max) break
   }
   return out
 }

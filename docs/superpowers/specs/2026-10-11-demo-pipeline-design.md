@@ -135,7 +135,7 @@ docs/assets/demo.gif
 | `DEMO_TYPE_DELAY_MS` | `35` | Delay between typed characters. |
 | `DEMO_TURN_TIMEOUT_S` | `120` | Upper bound for one model turn. |
 | `DEMO_SCREEN_TIMEOUT_S` | `20` | Upper bound for one screen assertion. |
-| `DEMO_KEEP` | `0` | `1` keeps the clone and the tmux server after the run. |
+| `DEMO_KEEP` | `0` | `1` keeps the clone, the tmux server and the tracker config folder after the run. |
 
 ## 4. Session lifecycle
 
@@ -166,30 +166,32 @@ sequenceDiagram
   W->>T: phase normal, poll capture-pane until match or timeout
   Cu->>W: After
   W->>A: stop (detach the client)
-  W->>T: kill-server, remove clone unless DEMO_KEEP=1
+  W->>T: kill-server, remove clone and config folder unless DEMO_KEEP=1
 ```
 
 ### 4.1 Before
 
 1. Take the run lock in `<os tmpdir>/cc-demo-lock` (one lock for the fixed tmux socket). Only then wipe and make the scenario folder: `e2e/out/<scenario-slug>/` for `make e2e`, `e2e/out/demo/` when recording. It holds `signal`, `timeline.ndjson`, `session.cast` and failure dumps. A second run fails on the lock and touches no file of the first run.
 2. `git clone --quiet <repo root> $DEMO_DIR/claude-code-mod-tracking`, after a wipe of the old folder. Set `origin` to the URL of the checkout under test. Check out the current `HEAD` as branch `main`.
-3. Start the tmux server and session with these options: `status on`, `status-position top`, `status-left ''`, `status-right ''`, `status-format[0] '#[align=centre]#{@caption}'`, `set-titles off`, `allow-rename off`, `allow-set-title off`, `focus-events on` (else Claude Code shows a notice), `default-shell /bin/sh`. The tmux socket is fixed (`cc-demo`). `setUp` kills a server that a crashed run left. Every tmux call uses `-u` for UTF-8. The pane runs `exec env 'PS1=$ ' /bin/sh` in the clone: the non-interactive default shell drops `PS1`, so the command sets it again. No personal shell prompt or rc file shows. Set `TERM=xterm-256color` and `COLORTERM=truecolor`.
-4. When recording, start `asciinema rec --headless --window-size <cols>x<rows+1> -f asciicast-v2 -c 'tmux -L <name> attach -t demo' <cast>`. `--headless` works in asciinema 3.2.1.
-5. Set the caption to `SYNC-<nonce>`. Write a `sync` event to the timeline. Open a `cut` phase.
+3. Make an empty tracker config folder with `mkdtemp` (`<os tmpdir>/cc-tracker-config-…`). Section 4.2 passes it to `claude`, so no run reads or writes the developer's real `config.json`.
+4. Start the tmux server and session with these options: `status on`, `status-position top`, `status-left ''`, `status-right ''`, `status-format[0] '#[align=centre]#{@caption}'`, `set-titles off`, `allow-rename off`, `allow-set-title off`, `focus-events on` (else Claude Code shows a notice), `default-shell /bin/sh`. The tmux socket is fixed (`cc-demo`). `setUp` kills a server that a crashed run left. Every tmux call uses `-u` for UTF-8. The pane runs `exec env 'PS1=$ ' /bin/sh` in the clone: the non-interactive default shell drops `PS1`, so the command sets it again. No personal shell prompt or rc file shows. Set `TERM=xterm-256color` and `COLORTERM=truecolor`.
+5. When recording, start `asciinema rec --headless --window-size <cols>x<rows+1> -f asciicast-v2 -c 'tmux -L <name> attach -t demo' <cast>`. `--headless` works in asciinema 3.2.1.
+6. Set the caption to `SYNC-<nonce>`. Write a `sync` event to the timeline. Open a `cut` phase.
 
 ### 4.2 Launch
 
 The step `Given a Claude Code session with the artifact-tracking mod` replaces the pane shell with this command (`tmux respawn-pane -k`). Nothing echoes the command line, so its home paths never reach the recording:
 
 ```sh
-claude --setting-sources project \
+env CLAUDE_TRACKER_CONFIG_DIR=<config folder> \
+  claude --setting-sources project \
   --plugin-dir <repo>/plugins/artifact-tracking \
   --model "$DEMO_MODEL" \
   --append-system-prompt '<one short sentence, no tools>' \
   --settings '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo stop >> <signal>"}]}]}}'
 ```
 
-A variant step adds a first prompt as the positional argument. The appended system prompt keeps each turn short and tool-free, so no permission dialog opens. The step waits until the prompt box shows (a line that starts with `❯` and white space). If the workspace trust dialog shows, the step presses Down until "Yes, I trust this folder" is selected, then Enter. The whole launch stays in the `cut` phase.
+The `env` prefix is there only when the launch has variables, and the step always has one. A variant step adds a first prompt as the positional argument. The appended system prompt keeps each turn short and tool-free, so no permission dialog opens. The step waits until the prompt box shows (a line that starts with `❯` and white space). If the workspace trust dialog shows, the step presses Down until "Yes, I trust this folder" is selected, then Enter. The whole launch stays in the `cut` phase.
 
 ### 4.3 Turn end and slash commands
 
@@ -200,7 +202,7 @@ A variant step adds a first prompt as the positional argument. The appended syst
 
 1. Write an `end` mark to the timeline. Stop the recorder: detach the tmux client, then wait for asciinema to exit. The retime drops the output after the mark, so the tmux detach screen is not in the GIF.
 2. On failure: write `screen.txt` (`capture-pane -p`, ANSI stripped) and keep the cast and timeline.
-3. Kill the tmux server. Remove the clone unless `DEMO_KEEP=1`.
+3. Kill the tmux server. Remove the clone and the tracker config folder unless `DEMO_KEEP=1`.
 
 ## 5. Step vocabulary
 
@@ -219,6 +221,8 @@ The skill reuses these steps first. It adds a step only when no step fits.
 | `Then the screen does not show {string}` | normal | One check, no wait. |
 | `Then no permission dialog is open` | normal | Fails when a tool approval dialog shows. |
 | `Given the caption {string}` | none | Set `@caption`. |
+| `Given the tracker config file:` | cut | Write the doc string to `config.json` in the scenario's config folder, before the session starts. |
+| `Then the tracker config file sets {string} to {string}` | fast, then normal | Poll until the value at the dotted path equals the JSON text. |
 | `When I pause for {float} seconds` | normal | Hold the frame so a viewer can read it. At most 5 s, the agg idle limit. |
 
 Every wait has a timeout from section 3.3. A timeout fails the step with the last screen in the message.

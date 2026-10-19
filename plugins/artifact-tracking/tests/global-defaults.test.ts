@@ -1,8 +1,8 @@
 // GLOBAL_DEFAULTS: the `global` block of the config file, as the infra reads it before any file exists. Pure.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.7 and 5.13.
 import { expect, test } from 'claude-code/testing'
-import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
-import { LIMITS } from '../hooks/contracts'
+import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
+import { LIMITS } from './fixtures/limits'
 
 test('GLOBAL_DEFAULTS agrees with LIMITS where both hold a value', () => {
   expect(GLOBAL_DEFAULTS.refresh.tickMs).toBe(LIMITS.tickMs)

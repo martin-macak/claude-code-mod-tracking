@@ -68,13 +68,14 @@ test('a dismissed artifact stays out after a new publish', async () => {
   expect(w.keys()).toEqual([])
 })
 
-test('config: enabled is a flag; a bad value falls back to the default and warns; unknown keys stay', () => {
+test('config: enabled is a flag; a bad value falls back to the default and warns; unknown keys stay, named', () => {
   const list: string[] = []
   const warn = (p: string) => void list.push(p)
   expect(artifactConfig.defaults).toEqual({ enabled: true })
+  expect(Object.isFrozen(artifactConfig.defaults)).toBe(true)
   const good = artifactConfig.normalise({ enabled: false, extra: 1 }, artifactConfig.defaults, warn)
   expect(good).toEqual({ enabled: false, extra: 1 })
-  expect(Object.isFrozen(good)).toBe(true)
+  expect(list).toEqual(['extra: unknown key. The mod keeps it and ignores it.'])
   expect(artifactConfig.normalise({ enabled: 'no' }, artifactConfig.defaults, warn)).toEqual({ enabled: true })
-  expect(list).toEqual(['artifact.enabled must be true or false; using the default'])
+  expect(list.slice(1)).toEqual(['enabled: "no" is not true or false. Using true.'])
 })

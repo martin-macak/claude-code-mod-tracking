@@ -10,25 +10,30 @@ import type {
   GraphqlReply,
   RepoRef,
 } from '../../hooks/contracts'
-import { LIMITS } from '../../hooks/contracts'
+import { GITHUB_DEFAULTS, PR_LANE_DEFAULTS, type PrLane } from './config'
 import { rollupToChecks } from './gh-tool'
 
 export type Alias = { branch: string; by: 'head' | 'base' }
 
 const ORDER = 'orderBy: {field: UPDATED_AT, direction: DESC}'
-const FRAGMENT = `fragment pr on PullRequest {
+/** The PR fields of the query. Built per call, because the closing refs count comes from the config. */
+const fragmentOf = (closingRefs: number): string => `fragment pr on PullRequest {
   number title state isDraft url headRefName baseRefName isCrossRepository reviewDecision body
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
-  closingIssuesReferences(first: ${LIMITS.closingRefsPerPr}) { nodes { number url repository { nameWithOwner } } }
+  closingIssuesReferences(first: ${closingRefs}) { nodes { number url repository { nameWithOwner } } }
 }`
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 
-/** A head alias (open, merged, closed) and a base alias (open) per branch. The known default branch gets none. */
+/**
+ * A head alias (open, merged, closed) and a base alias (open) per branch. The known default branch gets none.
+ * `lane` holds the `first:` counts. The auto round passes the github slice; a direct caller gets today's numbers.
+ */
 export function buildDiscoveryQuery(
   repo: RepoRef,
   branches: readonly string[],
   defaultBranch?: string,
+  lane: PrLane = PR_LANE_DEFAULTS,
 ): { query: string; aliases: Map<string, Alias> } {
   const aliases = new Map<string, Alias>()
   const fields: string[] = []
@@ -37,8 +42,8 @@ export function buildDiscoveryQuery(
     if (defaultBranch !== undefined && branch === defaultBranch) continue
     const q = JSON.stringify(branch)
     fields.push(
-      `    h${i}: pullRequests(headRefName: ${q}, first: ${LIMITS.headPrsPerBranch}, states: [OPEN, MERGED, CLOSED], ${ORDER}) { nodes { ...pr } }`,
-      `    b${i}: pullRequests(baseRefName: ${q}, first: ${LIMITS.basePrsPerBranch}, states: [OPEN], ${ORDER}) { nodes { ...pr } }`,
+      `    h${i}: pullRequests(headRefName: ${q}, first: ${lane.headPrsPerBranch}, states: [OPEN, MERGED, CLOSED], ${ORDER}) { nodes { ...pr } }`,
+      `    b${i}: pullRequests(baseRefName: ${q}, first: ${lane.basePrsPerBranch}, states: [OPEN], ${ORDER}) { nodes { ...pr } }`,
     )
     aliases.set(`h${i}`, { branch, by: 'head' })
     aliases.set(`b${i}`, { branch, by: 'base' })
@@ -51,11 +56,11 @@ export function buildDiscoveryQuery(
 ${fields.join('\n')}
   }
 }
-${FRAGMENT}`
+${fragmentOf(lane.closingRefsPerPr)}`
   return { query, aliases }
 }
 
-function toPr(node: unknown, repo: RepoRef, by: 'head' | 'base'): DiscoveredPr | null {
+function toPr(node: unknown, repo: RepoRef, by: 'head' | 'base', closingRefs: number): DiscoveredPr | null {
   if (!isRecord(node)) return null
   const number = node.number
   const title = str(node.title)
@@ -100,7 +105,7 @@ function toPr(node: unknown, repo: RepoRef, by: 'head' | 'base'): DiscoveredPr |
     headRefName: head,
     baseRefName: base,
     body: str(node.body) ?? '',
-    closing: closing.slice(0, LIMITS.closingRefsPerPr),
+    closing: closing.slice(0, closingRefs),
     by,
   }
 }
@@ -114,6 +119,7 @@ export function parseDiscovery(
   reply: GraphqlReply,
   repo: RepoRef,
   aliases: ReadonlyMap<string, Alias>,
+  closingRefs: number = GITHUB_DEFAULTS.closingRefsPerPr,
 ): { prs: DiscoveredPr[]; complete: boolean; defaultBranch?: string } {
   const node = reply.data.repository
   const repoNode = isRecord(node) ? node : undefined
@@ -137,7 +143,7 @@ export function parseDiscovery(
       if (defaultName !== undefined && a.branch === defaultName) continue
       for (const n of entry.nodes) {
         if (by === 'head' && isRecord(n) && n.isCrossRepository === true) continue
-        const pr = toPr(n, repo, by)
+        const pr = toPr(n, repo, by, closingRefs)
         if (!pr || seen.has(pr.number)) continue
         seen.add(pr.number)
         prs.push(pr)
@@ -154,6 +160,7 @@ export async function discoverPrs(
   branches: readonly string[],
   now: number,
   defaultBranch?: string,
+  lane: PrLane = PR_LANE_DEFAULTS,
 ): Promise<DiscoveryOutcome> {
   if (branches.length === 0) return { ok: false, skipped: 'no-branches' }
   if (!gh.isAvailable) return { ok: false, skipped: 'no-gh' }
@@ -162,8 +169,8 @@ export async function discoverPrs(
   if (repo.host.toLowerCase() !== 'github.com' && gh.isHostAuthed(repo.host) !== true)
     return { ok: false, skipped: 'host-not-authed' }
 
-  const polled = [...new Set(branches)].slice(0, LIMITS.maxBranches)
-  const { query, aliases } = buildDiscoveryQuery(repo, polled, defaultBranch)
+  const polled = [...new Set(branches)].slice(0, lane.maxBranches)
+  const { query, aliases } = buildDiscoveryQuery(repo, polled, defaultBranch, lane)
   if (aliases.size === 0) return { ok: true, prs: [], complete: true, ...(defaultBranch ? { defaultBranch } : {}) }
 
   const out = await gh.graphql(repo.host, query)
@@ -183,5 +190,5 @@ export async function discoverPrs(
         return { ok: false, error: out.error ?? 'query error' }
     }
   }
-  return { ok: true, ...parseDiscovery(out.reply, repo, aliases) }
+  return { ok: true, ...parseDiscovery(out.reply, repo, aliases, lane.closingRefsPerPr) }
 }

@@ -1,7 +1,6 @@
 // Markdown file facts (issue #28). Pure code, so no `$` is used. The result shapes are the ones the design study
 // observed on Claude Code 2.1.296 (issue #28, study part 1, section 3).
 import { expect, test } from 'claude-code/testing'
-import { LIMITS } from '../hooks/contracts'
 import {
   isIgnored,
   mdCandidates,
@@ -10,6 +9,7 @@ import {
   resolvePath,
   touchFromToolResult,
 } from '../trackers/file/files'
+import { LIMITS } from './fixtures/limits'
 
 const write = (filePath: string, type: 'create' | 'update' = 'create') => ({
   result: { type, filePath, content: '# x', structuredPatch: [], originalFile: null, userModified: false },

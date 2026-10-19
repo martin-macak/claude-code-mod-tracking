@@ -12,6 +12,7 @@ const autoGithub: AutoGithub = {
   ready: async () => false,
   repo: async () => null,
   hosts: () => [],
+  lane: () => ({ headPrsPerBranch: 5, basePrsPerBranch: 10, closingRefsPerPr: 10, maxBodyRefs: 50 }),
 }
 const build = () => buildTrackers({ autoGithub })
 const list = build()

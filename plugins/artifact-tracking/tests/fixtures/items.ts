@@ -3,10 +3,16 @@
 // TrackerHost gives the item host (`hostCtx`), so the session check, the dismiss list and the persist signal are the
 // fakes of `hostWorld`.
 import type { ReplayItem, RowEvent } from '../../core/interfaces/events'
-import type { Json } from '../../core/interfaces/items'
+import type { Json, JsonObject } from '../../core/interfaces/items'
 import type { RepoRemote, RunResult } from '../../core/interfaces/ports'
+import type { Tracker } from '../../core/interfaces/tracker'
 import type { ItemRecord } from '../../hooks/contracts'
 import { ItemRuntime } from '../../hooks/items/runtime'
+import { artifactConfig } from '../../trackers/artifact/config'
+import { fileConfig } from '../../trackers/file/config'
+import { githubConfig } from '../../trackers/github/config'
+import { jiraConfig } from '../../trackers/jira/config'
+import { webConfig } from '../../trackers/web/config'
 import * as acliFx from './acli'
 import * as ghFx from './gh'
 import { hostWorld } from './tracker-host'
@@ -42,6 +48,26 @@ function withKey(json: string, key: string): string {
   return JSON.stringify(o)
 }
 
+/**
+ * The five item kinds as bare trackers with their real config specs, so the host's config turns one off
+ * (`{ trackers: { web: { enabled: false } } }`) and serves the slice with every default filled.
+ */
+const KINDS = [
+  ['github', githubConfig],
+  ['jira', jiraConfig],
+  ['artifact', artifactConfig],
+  ['file', fileConfig],
+  ['web', webConfig],
+] as const
+const kindTrackers = (): Tracker[] =>
+  KINDS.map(([id, config], i) => ({
+    id,
+    order: 10 * (i + 1),
+    config: config as unknown as Tracker['config'],
+    init: () => {},
+    store: ctx => ctx.config.slice(),
+  }))
+
 export type ItemsOpts = {
   /** The session repo `ports.session.repo()` answers. Default `acme/web` on github.com. */
   remote?: RepoRemote | null
@@ -68,8 +94,17 @@ export function ghAcliRun(o: ItemsOpts = {}): (argv: string[]) => Promise<RunRes
   }
 }
 
-export function itemsWorld(o: ItemsOpts = {}) {
-  const t = hostWorld([])
+/**
+ * `off` turns item kinds off in the host's config (`github`, `jira`, `artifact`, `file`, `web`). `file` is the config file
+ * the host reads, e.g. `{ trackers: { github: { chunkSize: 2 } } }`; `off` adds to its `trackers`.
+ */
+export function itemsWorld(o: ItemsOpts & { off?: readonly string[]; file?: JsonObject } = {}) {
+  const trackers = {
+    ...Object.fromEntries((o.off ?? []).map(id => [id, { enabled: false }])),
+    ...((o.file?.trackers as JsonObject | undefined) ?? {}),
+  }
+  const t = hostWorld(kindTrackers(), { file: { ...(o.file ?? {}), trackers } })
+  t.host.readToggles() // the start sequence does this before the item runtime starts
   t.w.session.repo = o.remote === undefined ? { host: 'github.com', owner: 'acme', repo: 'web' } : o.remote
   t.w.run = ghAcliRun(o)
   const rt = new ItemRuntime(t.w.ports.state)

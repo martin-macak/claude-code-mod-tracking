@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CLONE_NAME, loadConfig, OUT_DIR, PLUGIN_DIR, REPO_ROOT } from './config.ts'
 import { countLines, launchClaude, prepareClone, waitForTurnEnd } from './session.ts'
@@ -32,7 +33,7 @@ export function parseDriveArgs(argv: string[]): DriveCommand {
   }
 }
 
-type State = { signalFile: string; turnMark: number; dir: string }
+type State = { signalFile: string; turnMark: number; dir: string; configDir: string }
 
 const DRIVE_DIR = join(OUT_DIR, 'drive')
 const STATE_FILE = join(DRIVE_DIR, 'state.json')
@@ -52,7 +53,8 @@ export async function drive(command: DriveCommand): Promise<string> {
     case 'start': {
       if (existsSync(STATE_FILE)) throw new Error('drive: a session is running, run "stop" first')
       mkdirSync(DRIVE_DIR, { recursive: true })
-      const state: State = { signalFile: join(DRIVE_DIR, 'signal'), turnMark: 0, dir: config.dir }
+      const configDir = mkdtempSync(join(tmpdir(), 'cc-tracker-config-')) // as in the world: no run touches the real file
+      const state: State = { signalFile: join(DRIVE_DIR, 'signal'), turnMark: 0, dir: config.dir, configDir }
       rmSync(state.signalFile, { force: true })
       const clone = prepareClone(REPO_ROOT, config.dir)
       tmux.start({ cols: config.cols, rows: config.rows, cwd: clone, confDir: DRIVE_DIR })
@@ -64,6 +66,7 @@ export async function drive(command: DriveCommand): Promise<string> {
           pluginDir: PLUGIN_DIR,
           model: config.model,
           timeoutMs: config.turnTimeoutMs,
+          env: { CLAUDE_TRACKER_CONFIG_DIR: configDir },
         },
         command.prompt,
       )
@@ -90,9 +93,10 @@ export async function drive(command: DriveCommand): Promise<string> {
     case 'screen':
       return tmux.capture()
     case 'stop': {
-      const dir = existsSync(STATE_FILE) ? readState().dir : config.dir
+      const state = existsSync(STATE_FILE) ? readState() : undefined
       tmux.kill()
-      rmSync(join(dir, CLONE_NAME), { recursive: true, force: true })
+      rmSync(join(state?.dir ?? config.dir, CLONE_NAME), { recursive: true, force: true })
+      if (state?.configDir) rmSync(state.configDir, { recursive: true, force: true }) // absent in a state file of an older run
       rmSync(STATE_FILE, { force: true })
       return ''
     }

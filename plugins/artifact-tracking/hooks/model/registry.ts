@@ -1,6 +1,7 @@
 // Pure functions over lists of ItemRecord: keys, conversion, merge, dedupe, caps, re-key (spec 6.2, 10).
 // No input list or record is mutated.
 
+import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import { ArtifactItem } from '../../trackers/artifact/artifact-item'
 import { artifactIdOf, parseArtifactUrl } from '../../trackers/artifact/artifact-url'
 import { FileItem } from '../../trackers/file/file-item'
@@ -26,7 +27,7 @@ import type {
   WebRecord,
   WebRef,
 } from '../contracts'
-import { AUTO_SOURCES, carryPriorities, LIMITS } from '../contracts'
+import { AUTO_SOURCES, carryPriorities } from '../contracts'
 import { hostPath } from '../scan/refs'
 import { fileKey, keyOf } from './keys'
 import { mergeNodePriorities, mergePriority, withPriority } from './priority'
@@ -162,13 +163,19 @@ function joinNames(out: ArtifactRecord, a: Named, b: Named): void {
   out.label = best.rank === 0 ? artifactIdOf(out.url) : best.label
 }
 
-/** R12: the keys of the newest manual-high records, at most `LIMITS.maxPinned`. The cap never drops them. */
+/**
+ * R12: the newest manual-high records the cap never drops. A code constant, not a config key: it must stay below
+ * `store.maxItems` (min 200), so the cap can always be met (plan decision C2).
+ */
+export const MAX_PINNED = 100
+
+/** R12: the keys of the newest manual-high records, at most `MAX_PINNED`. The cap never drops them. */
 function pinnedKeys(list: readonly ItemRecord[]): Set<string> {
   return new Set(
     list
       .filter(rec => rec.priority === 'high' && !hasAutoSource(rec))
       .sort((a, b) => b.lastSeen - a.lastSeen)
-      .slice(0, LIMITS.maxPinned)
+      .slice(0, MAX_PINNED)
       .map(rec => rec.key),
   )
 }
@@ -227,7 +234,7 @@ export function mergeRefs(
   list: readonly ItemRecord[],
   refs: readonly Ref[],
   s: Sighting,
-  cap: number = LIMITS.maxItems,
+  cap: number = GLOBAL_DEFAULTS.store.maxItems,
 ): { list: ItemRecord[]; added: string[] } {
   const out: ItemRecord[] = list.map(cloneRecord)
   const index = new Map<string, number>(out.map((r, i) => [r.key, i]))
@@ -294,7 +301,7 @@ function foldFile(a: FileRecord, b: FileRecord): FileRecord {
 export function mergeFiles(
   list: readonly ItemRecord[],
   recs: readonly FileRecord[],
-  cap: number = LIMITS.maxItems,
+  cap: number = GLOBAL_DEFAULTS.store.maxItems,
 ): ItemRecord[] {
   if (recs.length === 0) return list as ItemRecord[]
   const out: ItemRecord[] = list.map(cloneRecord)
@@ -427,7 +434,7 @@ export function rekeyArtifacts(list: ItemRecord[]): ItemRecord[] {
 export function unionRecords(
   a: readonly ItemRecord[],
   b: readonly ItemRecord[],
-  cap: number = LIMITS.maxItems,
+  cap: number = GLOBAL_DEFAULTS.store.maxItems,
 ): ItemRecord[] {
   const out: ItemRecord[] = []
   const index = new Map<string, number>()
@@ -451,7 +458,7 @@ export function unionRecords(
 export function carryOver(
   held: readonly ItemRecord[],
   stored: readonly ItemRecord[],
-  cap: number = LIMITS.maxItems,
+  cap: number = GLOBAL_DEFAULTS.store.maxItems,
 ): ItemRecord[] {
   const live = new Map(held.map(r => [r.key, r]))
   return unionRecords(held, stored, cap).map(rec => {
@@ -465,12 +472,17 @@ export function carryOver(
 
 // ---------------------------------------------------------------- classes
 
-export function hydrate(rec: ItemRecord, tools: Tools): HydratedItem {
+/** How long a refreshed item stays current: all items, and a GitHub PR whose checks are still pending. */
+export type Ttl = { staleMs: number; pendingStaleMs: number }
+
+/** `ttl` is how long an item stays current. It is read at each check; the default is today's. */
+export function hydrate(rec: ItemRecord, tools: Tools, ttl?: () => Ttl): HydratedItem {
+  const staleMs = ttl && (() => ttl().staleMs)
   switch (rec.category) {
     case 'github':
-      return new GitHubItem(rec, tools.gh)
+      return new GitHubItem(rec, tools.gh, staleMs, ttl && (() => ttl().pendingStaleMs))
     case 'jira':
-      return new JiraItem(rec, tools.acli)
+      return new JiraItem(rec, tools.acli, staleMs)
     case 'artifact':
       return new ArtifactItem(rec)
     case 'web':

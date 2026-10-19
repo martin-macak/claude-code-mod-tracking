@@ -15,6 +15,9 @@ import type { ViewContext } from './ui/view'
 export const IDLE_GH: ToolStatus = { name: 'gh', available: null, loggedIn: null, breaker: 'closed' }
 export const IDLE_ACLI: ToolStatus = { name: 'acli', available: null, loggedIn: null, breaker: 'closed' }
 
+/** Which trackers are on. Default: all. */
+type Live = (id: string) => boolean
+
 export type ViewInputs = {
   items: ItemRecord[]
   processes: ProcessRecord[]
@@ -33,20 +36,23 @@ const none = (): never[] => []
 /**
  * Everything a drawing needs. It does not wait for the repo: a render must not wait on `gh`. The session repo is the
  * fact `session.repo`; every reader of the view context treats "not looked up" and "no repo" alike.
+ * A tracker that is not `live` shows nothing: its slot reads empty and the items of its kind are left out (C4).
  */
 export async function viewInputs(
   p: Ports,
   facts: FactsPort,
-  o: { bodyColumns?: number | undefined },
+  o: { bodyColumns?: number | undefined; live?: Live },
 ): Promise<ViewInputs> {
-  const [items, processes, repos, auto, ui, tools] = await Promise.all([
+  const live = o.live ?? (() => true)
+  const [all, processes, repos, auto, ui, tools] = await Promise.all([
     p.state.items.get() as unknown as Promise<ItemRecord[]>,
-    member<ProcessRecord[]>(p, 'processes', none),
-    member<RepoRecord[]>(p, 'repos', none),
-    member(p, 'auto', emptyAuto),
+    live('processes') ? member<ProcessRecord[]>(p, 'processes', none) : none(),
+    live('repos') ? member<RepoRecord[]>(p, 'repos', none) : none(),
+    live('auto') ? member(p, 'auto', emptyAuto) : emptyAuto(),
     p.state.ui.get(),
     p.state.tools.get(),
   ])
+  const items = all.filter(item => live(item.category))
   // When the last auto round ended. The Worktrees note reads it before `snapshot.at` (A22).
   const checkedAt = facts.read<number>(FACT_CHECKED_AT)
   const sessionRepo = facts.read<Json>('session.repo') as unknown as RepoRef | undefined

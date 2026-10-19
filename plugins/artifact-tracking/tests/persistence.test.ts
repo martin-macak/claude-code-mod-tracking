@@ -1,11 +1,11 @@
 // Persistence on fakePorts: the v2 layout, the debounce, the size bound, the end write and the legacy sweep.
 // The slots are small fakes. Spec 5.6 and 5.13. Plan: L3 Task 4.
 import { expect, test } from 'claude-code/testing'
-import { GLOBAL_DEFAULTS } from '../core/infra/global-defaults'
 import { KEYS, MIN_END_BUDGET_MS, Persistence } from '../core/infra/persistence'
 import type { Json } from '../core/interfaces/items'
 import type { StorePort } from '../core/interfaces/ports'
 import type { DataSlot, PendingEnd } from '../core/interfaces/slots'
+import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { type FakeOpts, fakePorts } from './fixtures/ports'
 
 type TestSlot = DataSlot & { live: Json | undefined }
@@ -505,6 +505,25 @@ test('clearRun deletes v2:run when only pendingEnd was in it', async () => {
   const { w, p } = setup({ slots: [slot('items', ['i1'])] })
   await p.end('sess-1', 1000, PENDING)
   await p.clearRun()
+  expect(w.store.has('v2:run')).toBe(false)
+})
+
+test('dropRun deletes the record the start read, and a record with nothing in it is left alone', async () => {
+  const { w, p } = setup({ fake: { store: { 'v2:run': { run: { auto: { root: '/old' } } } } } })
+  await p.dropRun(await p.loadRun())
+  expect(w.store.has('v2:run')).toBe(false)
+  const sets = w.storeSets
+  await p.dropRun({})
+  expect(w.storeSets).toBe(sets)
+})
+
+test('dropRun leaves a v2:run that another process wrote after the start read it', async () => {
+  const { w, p } = setup({ fake: { store: { 'v2:run': { run: { auto: { root: '/old' } } } } } })
+  const stale = await p.loadRun()
+  w.store.set('v2:run', { pendingEnd: PENDING }) // a second process ended its session while this start ran
+  await p.dropRun(stale)
+  expect(w.store.get('v2:run')).toEqual({ pendingEnd: PENDING })
+  await p.clearRun() // the size it counts is the fresh record's
   expect(w.store.has('v2:run')).toBe(false)
 })
 

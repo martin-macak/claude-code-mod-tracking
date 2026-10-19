@@ -6,7 +6,6 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 10.
 
 import { autoIds } from '../../core/infra/dismiss'
-import type { ConfigSpec } from '../../core/interfaces/config'
 import type {
   AgentSpawnEvent,
   CommandEvent,
@@ -26,7 +25,7 @@ import type {
   ItemRecord,
   RepoRef,
 } from '../../hooks/contracts'
-import { LIMITS } from '../../hooks/contracts'
+import { type AutoConfig, autoConfig } from './config'
 import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from './events'
 import {
   carryAuto,
@@ -39,7 +38,7 @@ import {
   recordSpawn,
   recordTurnEnd,
 } from './ledger'
-import { AutoRound } from './round'
+import { type AutoLane, AutoRound } from './round'
 import { AutoScheduler } from './scheduler'
 
 /**
@@ -53,61 +52,14 @@ export type AutoGithub = {
   /** The session repo, after it was looked up. null: none. */
   repo(): Promise<RepoRef | null>
   hosts(): readonly string[]
+  /**
+   * The github values of the PR lane, read at each call: a changed config file shows at the next round. The auto
+   * tracker does not import the github folder, so the lane is spelled here (plan decision C15, layer L5 gives it one owner).
+   */
+  lane(): AutoLane
 }
 
-export type AutoConfig = {
-  enabled: boolean
-  debounceMs: number
-  gitTimeoutMs: number
-  workflowIdleMs: number
-  maxBranches: number
-  maxAutoItems: number
-  maxProofs: number
-  maxAgents: number
-}
-
-const DEFAULTS: Readonly<AutoConfig> = Object.freeze({
-  enabled: true,
-  debounceMs: LIMITS.autoDebounceMs,
-  gitTimeoutMs: LIMITS.gitTimeoutMs,
-  workflowIdleMs: LIMITS.workflowIdleMs,
-  maxBranches: LIMITS.maxBranches,
-  maxAutoItems: LIMITS.maxAutoItems,
-  maxProofs: LIMITS.maxProofs,
-  maxAgents: LIMITS.maxAgents,
-})
-
-/** The numbers of the slice, with the range each may take. */
-const RANGES = {
-  debounceMs: [50, 10_000],
-  gitTimeoutMs: [1_000, 120_000],
-  workflowIdleMs: [60_000, 86_400_000],
-  maxBranches: [1, 100],
-  maxAutoItems: [1, 500],
-  maxProofs: [1, 1_000],
-  maxAgents: [1, 2_000],
-} as const
-
-export const autoConfig: ConfigSpec<AutoConfig> = {
-  defaults: DEFAULTS,
-  normalise(raw, defaults, warn) {
-    let enabled = defaults.enabled
-    if (raw.enabled !== undefined) {
-      if (typeof raw.enabled === 'boolean') enabled = raw.enabled
-      else warn('auto.enabled must be true or false; using the default')
-    }
-    const out: AutoConfig = { ...defaults, enabled }
-    for (const key of Object.keys(RANGES) as (keyof typeof RANGES)[]) {
-      const value = raw[key]
-      if (value === undefined) continue
-      const [min, max] = RANGES[key]
-      if (typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max)
-        out[key] = Math.round(value)
-      else warn(`auto.${key} must be a number from ${min} to ${max}; using the default`)
-    }
-    return Object.freeze({ ...raw, ...out })
-  },
-}
+export { type AutoConfig, autoConfig }
 
 type Ctx = TrackerContext<AutoConfig, AutoState>
 type H<E> = Handler<AutoConfig, AutoState, E>
@@ -178,6 +130,11 @@ function build(ctx: Ctx, gh: AutoGithub): Services {
     },
     save: change => setAuto(ctx, change),
     git: (argv, cwd) => ctx.tools.run('git', ['git', ...argv], { cwd, timeoutMs: ctx.config.slice().gitTimeoutMs }),
+    // The caps are read at each step, so a changed file shows at the next round. The staleMs and maxItems are global.
+    caps: () => {
+      const g = ctx.config.global()
+      return { ...ctx.config.slice(), staleMs: g.refresh.staleMs, maxItems: g.store.maxItems, lane: gh.lane() }
+    },
     listAgents: async () =>
       (await ctx.env.agents()).map(a => ({
         id: a.id,
@@ -207,6 +164,7 @@ function build(ctx: Ctx, gh: AutoGithub): Services {
   const scheduler = new AutoScheduler({
     now: () => ctx.clock.wall(),
     after: (ms, fn) => ctx.clock.after(ms, fn),
+    debounceMs: () => ctx.config.slice().debounceMs,
     run: async reasons => {
       await round.run(reasons)
       ctx.facts.publish(FACT_CHECKED_AT, ctx.clock.wall()) // the Worktrees note reads it before `snapshot.at` (A22)
@@ -233,7 +191,7 @@ export function autoTracker(gh: AutoGithub): Tracker<AutoConfig, AutoState> {
 
   const onEnter: H<ToolCallEvent> = soft('EnterWorktree', async (ctx, ev) => {
     const f = fromEnterResult(ev.result, ev.agentId)
-    if (f) await setAuto(ctx, s => recordEnter(s, f, ctx.clock.wall()))
+    if (f) await setAuto(ctx, s => recordEnter(s, f, ctx.clock.wall(), ctx.config.slice().maxProofs))
     await touch(ctx, ev.agentId)
     kick('worktree')
   })
@@ -246,7 +204,8 @@ export function autoTracker(gh: AutoGithub): Tracker<AutoConfig, AutoState> {
 
   const onAgent: H<ToolCallEvent> = soft('Agent', async (ctx, ev) => {
     const f = fromAgentResult(ev.result)
-    if (f?.worktreePath !== undefined) await setAuto(ctx, s => recordAgentResult(s, f, ctx.clock.wall()))
+    if (f?.worktreePath !== undefined)
+      await setAuto(ctx, s => recordAgentResult(s, f, ctx.clock.wall(), ctx.config.slice().maxProofs))
     await touch(ctx, ev.agentId)
     kick('agent')
   })
@@ -265,7 +224,7 @@ export function autoTracker(gh: AutoGithub): Tracker<AutoConfig, AutoState> {
 
   const onSpawn: H<AgentSpawnEvent> = soft('agent.spawn', async (ctx, ev) => {
     const f = fromSpawn(ev.input, ev.answer)
-    if (f) await setAuto(ctx, s => recordSpawn(s, f, ctx.clock.wall(), ev.sessionCwd))
+    if (f) await setAuto(ctx, s => recordSpawn(s, f, ctx.clock.wall(), ev.sessionCwd, ctx.config.slice().maxAgents))
     kick('agent')
   })
 

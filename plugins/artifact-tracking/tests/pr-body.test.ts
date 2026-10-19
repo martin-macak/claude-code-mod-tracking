@@ -1,9 +1,9 @@
 // PR body scan: strip comments, run the matchers, add closing refs, drop the self ref, cap. Pure.
 import { expect, test } from 'claude-code/testing'
-import { LIMITS } from '../hooks/contracts'
 import { keyOf } from '../hooks/model/keys'
 import { prBodyRefs, stripHtmlComments } from '../trackers/github/pr-body'
 import { BODY_WITH_COMMENT, discovered } from './fixtures/gh-discovery'
+import { LIMITS } from './fixtures/limits'
 
 const keys = (body: string, over = {}) => prBodyRefs(discovered({ body, ...over }), []).map(keyOf)
 

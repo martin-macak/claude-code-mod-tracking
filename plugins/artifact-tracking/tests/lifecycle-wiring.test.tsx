@@ -3,7 +3,7 @@
 
 import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
-import { LIMITS } from '../hooks/contracts'
+import { LIMITS } from './fixtures/limits'
 import {
   clearSession,
   fileTool,

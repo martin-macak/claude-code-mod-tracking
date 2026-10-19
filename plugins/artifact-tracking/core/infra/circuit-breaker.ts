@@ -3,7 +3,7 @@
 //                                                                     \--fail--> open
 
 import type { BreakerState } from '../../hooks/contracts'
-import { LIMITS } from '../../hooks/contracts'
+import { GLOBAL_DEFAULTS } from '../lib/global-config'
 
 export class CircuitBreaker {
   private st: BreakerState = 'closed'
@@ -12,8 +12,8 @@ export class CircuitBreaker {
   private probing = false
 
   constructor(
-    private readonly threshold: number = LIMITS.breakerThreshold,
-    private readonly openMs: number = LIMITS.breakerOpenMs,
+    private readonly threshold: number = GLOBAL_DEFAULTS.tools.breaker.threshold,
+    private readonly openMs: number = GLOBAL_DEFAULTS.tools.breaker.openMs,
   ) {}
 
   get state(): BreakerState {

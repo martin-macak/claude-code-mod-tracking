@@ -23,8 +23,9 @@ export class JiraItem extends TrackedItem implements JiraTarget {
   constructor(
     rec: JiraRecord,
     private readonly tool: JiraToolApi,
+    staleMs?: () => number,
   ) {
-    super(rec)
+    super(rec, staleMs)
     this.site = rec.site
     this.issueKey = rec.issueKey
     this.trackOnly = rec.trackOnly

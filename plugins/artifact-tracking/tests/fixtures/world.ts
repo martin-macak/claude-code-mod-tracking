@@ -97,6 +97,10 @@ export type Opts = {
   refuseEvery?: number
   /** Writes of the `auto` atom are refused. Needs `isolateState`. */
   denyAutoWrites?: boolean
+  /** Files on the stub disk the config file lives on: path to text. */
+  disk?: Record<string, string>
+  /** Refuse one fs op of the stub disk with this message (`$.fs.read`, `$.fs.write`, `$.fs.exists`, `$.fs.stat`). */
+  denyFs?: Partial<Record<'read' | 'write' | 'exists' | 'stat', string>>
 }
 
 /** Stubs for the engine nouns the mod calls. Register before the first call on `$`. */
@@ -124,6 +128,14 @@ export function world(on: On, opts: Opts = {}) {
   }) as unknown as On
   const clock = mock.clock(clockOn)
   const store = new Map<string, unknown>(Object.entries(opts.seed ?? {}))
+  // The stub disk (L4): the config file lives here. A write sets the text and moves the mtime, as a real save does.
+  const disk = new Map<string, string>(Object.entries(opts.disk ?? {}))
+  const mtimes = new Map<string, number>()
+  let mtimeClock = 1_000
+  const touch = (path: string) => void mtimes.set(path, ++mtimeClock)
+  for (const path of disk.keys()) touch(path)
+  const fsCalls: string[] = []
+  const fsWrites: { path: string; text: string }[] = []
   const fake = {
     /** `git rev-parse --show-toplevel` answers this when `isRepo`, else exit 128 (the default: no repo). */
     isRepo: false,
@@ -146,6 +158,17 @@ export function world(on: On, opts: Opts = {}) {
     toolThrows: {} as Record<string, string>,
     /** Files `$.fs.stat` finds: path → where it lands. Any other path rejects ENOENT. */
     files: {} as Record<string, string>,
+    /** The stub disk of the config file: path to text. `fs.stat` answers `files` first, then this. */
+    disk,
+    /** The successful `$.fs.write` calls, in order. */
+    fsWrites,
+    /** Every `$.fs` call, denied ones too: `'<op> <path>'`. */
+    fsCalls,
+    /** Sets the text of a disk file and moves its mtime, as an editor save does. */
+    editDisk(path: string, text: string): void {
+      disk.set(path, text)
+      touch(path)
+    },
     /** The whole `tool.call` answer by tool name, returned as it stands (`{ deny }`, `{ isError: true, ... }`). */
     toolAnswers: {} as Record<string, unknown>,
     toolRuns: {} as Record<string, number>,
@@ -254,12 +277,43 @@ export function world(on: On, opts: Opts = {}) {
     if (Object.hasOwn(fake.toolAnswers, tool)) return fake.toolAnswers[tool] as never
     return { result: fake.tools[tool] as never }
   })
+  // One stub per fs op, always registered. A deny switch answers first. Each returns `{ value }` or `{ deny }`.
+  const denied = (op: 'read' | 'write' | 'exists' | 'stat', path: string) => {
+    fsCalls.push(`${op} ${path}`)
+    const message = opts.denyFs?.[op]
+    return message === undefined ? undefined : { deny: message }
+  }
+  const missing = (op: string, path: string) => ({ deny: `ENOENT: no such file or directory, ${op} '${path}'` })
   on('fs.stat', (_$, e) => {
+    const no = denied('stat', e.path)
+    if (no) return no
     const real = fake.files[e.path]
-    if (real === undefined) return { deny: `ENOENT: no such file or directory, stat '${e.path}'` }
-    return {
-      value: { kind: 'file', size: 1, mtimeMs: 0, isLink: real !== e.path, ...(e.resolve ? { realPath: real } : {}) },
-    }
+    if (real !== undefined)
+      return {
+        value: { kind: 'file', size: 1, mtimeMs: 0, isLink: real !== e.path, ...(e.resolve ? { realPath: real } : {}) },
+      }
+    const text = disk.get(e.path)
+    if (text === undefined) return missing('stat', e.path)
+    return { value: { kind: 'file', size: text.length, mtimeMs: mtimes.get(e.path) ?? 0, isLink: false } }
+  })
+  on('fs.read', (_$, e) => {
+    const no = denied('read', e.path)
+    if (no) return no
+    const text = disk.get(e.path)
+    return text === undefined ? missing('open', e.path) : { value: text }
+  })
+  on('fs.write', (_$, e) => {
+    const no = denied('write', e.path)
+    if (no) return no
+    disk.set(e.path, e.text)
+    touch(e.path)
+    fsWrites.push({ path: e.path, text: e.text })
+    return { value: undefined }
+  })
+  on('fs.exists', (_$, e) => {
+    const no = denied('exists', e.path)
+    if (no) return no
+    return { value: disk.has(e.path) || e.path in fake.files }
   })
 
   const discoveryReply = (query: string): Res => {

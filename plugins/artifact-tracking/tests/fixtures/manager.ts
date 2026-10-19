@@ -1,8 +1,9 @@
 // A LifecycleManager over a real ItemRuntime and the real tracker list, on fakePorts. The tests of `/track`, the pane
 // actions and the artifact and file trackers use it: they need the whole chain (the start sequence, the bus, the item
 // host and the slots), with no engine and no `$`. `extra` adds trackers after the real ones, e.g. a recorder.
-import { GLOBAL_DEFAULTS } from '../../core/infra/global-defaults'
+
 import { LifecycleManager } from '../../core/infra/lifecycle'
+import type { ConfigService } from '../../core/interfaces/config'
 import type { ToolCallEvent } from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
@@ -10,6 +11,7 @@ import type { ItemRecord } from '../../hooks/contracts'
 import { ItemRuntime } from '../../hooks/items/runtime'
 import { buildTrackers } from '../../trackers'
 import { autoDismiss } from '../../trackers/auto/dismiss-store'
+import { fakeConfig } from './config-fs'
 import { ghAcliRun, type ItemsOpts } from './items'
 import { type FakeOpts, fakePorts } from './ports'
 
@@ -17,6 +19,8 @@ export type ManagerOpts = ItemsOpts & {
   trackers?: (rt: ItemRuntime) => readonly Tracker[]
   extra?: readonly Tracker[]
   fake?: FakeOpts
+  /** The config over the trackers of this world. Default: `fakeConfig({ specs })`, no problem, every tracker on. */
+  config?: (specs: readonly Tracker[]) => ConfigService
 }
 
 export function managerWorld(o: ManagerOpts = {}) {
@@ -30,13 +34,14 @@ export function managerWorld(o: ManagerOpts = {}) {
   })
   w.run = ghAcliRun(o)
   const rt = new ItemRuntime(w.ports.state)
-  const trackers = o.trackers ? o.trackers(rt) : buildTrackers({ autoGithub: rt.autoGithub })
+  const trackers = [...(o.trackers ? o.trackers(rt) : buildTrackers({ autoGithub: rt.autoGithub })), ...(o.extra ?? [])]
+  const cfg = (o.config ?? (specs => fakeConfig({ specs })))(trackers)
   const m = new LifecycleManager(
     {
-      trackers: [...trackers, ...(o.extra ?? [])],
+      trackers,
       items: rt,
       dismiss: p => autoDismiss(p.state.slot),
-      global: GLOBAL_DEFAULTS,
+      config: () => cfg,
       paneId: 'track',
     },
     w.ports,
@@ -46,5 +51,5 @@ export function managerWorld(o: ManagerOpts = {}) {
   /** One finished tool call, as the manager hears it. */
   const call = (tool: string, input: Record<string, unknown>, result: unknown, extra: Partial<ToolCallEvent> = {}) =>
     m.toolCall(w.ports, { tool, input: { tool, ...input } as Json, result: (result ?? null) as Json, ...extra })
-  return { w, rt, m, items, keys, call }
+  return { w, rt, m, cfg, items, keys, call }
 }

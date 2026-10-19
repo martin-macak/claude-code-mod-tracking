@@ -2,10 +2,11 @@
 // No `$`: it gets a Runner and a clock. It never runs `acli jira auth switch`, `login` or `logout`.
 
 import type { CircuitBreaker } from '../../core/infra/circuit-breaker'
-import type { Outcome } from '../../core/infra/tool'
+import type { Outcome, ToolTimeouts } from '../../core/infra/tool'
 import { firstLine, Tool } from '../../core/infra/tool'
 import type { JiraNode, JiraTarget, JiraToolApi, Now, Runner, ToolStatus } from '../../hooks/contracts'
-import { carryPriorities, JIRA_KEY, LIMITS } from '../../hooks/contracts'
+import { carryPriorities, JIRA_KEY } from '../../hooks/contracts'
+import { JIRA_DEFAULTS, type JiraConfig } from './config'
 
 const VIEW_FIELDS = 'issuetype,status,summary,parent,subtasks'
 const SEARCH_FIELDS = 'issuetype,status,summary'
@@ -98,13 +99,24 @@ function parseJson(stdout: string): unknown {
 
 // ---------------------------------------------------------------- tool
 
+/** The jira values the tool reads. `concurrency` once, when the tool is built; `epicChildLimit` at each search. */
+export type AcliLimits = () => Pick<JiraConfig, 'concurrency' | 'epicChildLimit'>
+
 export class AcliTool extends Tool<JiraTarget> implements JiraToolApi {
   private site: string | null | undefined
   private loading?: Promise<string | null>
-  private readonly gate = limit(LIMITS.acliConcurrency)
+  private readonly gate: ReturnType<typeof limit>
+  private readonly limits: AcliLimits
 
-  constructor(run: Runner, now: Now, breaker?: CircuitBreaker) {
-    super('acli', run, now, breaker)
+  constructor(
+    run: Runner,
+    now: Now,
+    breaker?: CircuitBreaker,
+    opts: { limits?: AcliLimits; timeouts?: ToolTimeouts } = {},
+  ) {
+    super('acli', run, now, breaker, opts.timeouts)
+    this.limits = opts.limits ?? (() => JIRA_DEFAULTS)
+    this.gate = limit(this.limits().concurrency) // it sizes a queue, so a changed file waits for the next load
   }
 
   /** Host of acli's active site. undefined: not loaded. null: none (not logged in). */
@@ -237,7 +249,7 @@ export class AcliTool extends Tool<JiraTarget> implements JiraToolApi {
       '--fields',
       SEARCH_FIELDS,
       '--limit',
-      String(LIMITS.epicChildLimit),
+      String(this.limits().epicChildLimit),
       '--json',
     ])
     if (!r) return undefined

@@ -19,6 +19,8 @@ export type StoreDeps = {
   host(): HostContext | undefined
   /** Keys to refresh after the capture debounce. No keys: every item. */
   kick(keys?: readonly string[]): void
+  /** True when the tracker of an item kind is on. A claim of a kind that is off is dropped. Default: all on. */
+  live?(category: string): boolean
 }
 
 const asRecords = (list: StoredItem[]): ItemRecord[] => list as unknown as ItemRecord[]
@@ -77,11 +79,13 @@ export class ItemStore implements ItemStorePort {
     const host = this.need()
     await host.current()
     const dismissed = await host.dismiss.list()
-    const keep = refs.filter(ref => !dismissed.has(keyOf(ref)))
+    // A kind that is off still claims its spans, so the scan has classified the ref already: it is dropped here and
+    // never falls through to `web` (spec 5.7, toggles).
+    const keep = refs.filter(ref => !dismissed.has(keyOf(ref)) && (this.d.live?.(ref.category) ?? true))
     if (keep.length === 0) return
     let added: string[] = []
     await this.set(list => {
-      const merged = mergeRefs(list, keep, { source, at: host.clock.wall() })
+      const merged = mergeRefs(list, keep, { source, at: host.clock.wall() }, host.config.global().store.maxItems)
       added = merged.added
       return merged.list
     })
