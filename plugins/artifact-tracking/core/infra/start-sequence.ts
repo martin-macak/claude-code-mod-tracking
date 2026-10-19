@@ -39,6 +39,8 @@ export interface StartDeps {
   scheduler: Scheduler
   /** The session load and the cold test are shared with the switch. */
   switcher: SwitchRunner
+  /** The last step of every start, after the session load and the pane: the prompt text is built over the loaded items. */
+  after(ports: Ports): Promise<unknown>
   /** The config file: read first, written once per load after the trackers stored their slices. */
   config: ConfigService
   /** The pane the sequence reattaches when the engine kept it across a hot reload. */
@@ -91,6 +93,7 @@ export class StartSequence {
     if (first && fate === 'stale') await this.soft('stale run', () => persistence.dropRun(run), undefined)
     await scheduler.ensure()
     await this.reattach(ports)
+    await this.soft('prompt text', () => this.d.after(ports), undefined)
   }
 
   /**

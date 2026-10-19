@@ -74,6 +74,10 @@ function rootOf(facts: Pick<FactsPort, 'read'>): string | undefined {
   return isRecord(root) && typeof root.cwd === 'string' ? root.cwd : undefined
 }
 
+const noTracker = (id: string): never => {
+  throw new Error(`views: no tracker ${id}`)
+}
+
 export class Views {
   private readonly ordered: readonly Tracker[]
 
@@ -104,12 +108,17 @@ export class Views {
     }
   }
 
-  /** The context of one tracker. A tracker no list holds is an error. */
+  /** The contexts of some trackers, in the order asked, over one read. A tracker no list holds is an error. */
+  async viewsOf(ports: Ports, owners: readonly string[], view: PaneView = NO_VIEW): Promise<ViewContext[]> {
+    const found = owners.map(id => this.ordered.find(t => t.id === id) ?? noTracker(id))
+    const slots = Promise.all(found.map(t => ports.state.slot.get(t.id)))
+    const [read, data] = await Promise.all([readView(ports, this.d), slots])
+    return found.map((t, i) => this.contextOf(t, read, view, data[i]))
+  }
+
+  /** The context of one tracker. */
   async viewOf(ports: Ports, owner: string, view: PaneView = NO_VIEW): Promise<ViewContext> {
-    const t = this.ordered.find(x => x.id === owner)
-    if (!t) throw new Error(`views: no tracker ${owner}`)
-    const [read, data] = await Promise.all([readView(ports, this.d), ports.state.slot.get(owner)])
-    return this.contextOf(t, read, view, data)
+    return (await this.viewsOf(ports, [owner], view))[0] as ViewContext
   }
 
   /** The sections of the live trackers that draw any, in the order of the pane. */

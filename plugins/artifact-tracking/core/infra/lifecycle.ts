@@ -9,7 +9,7 @@
 // and its keys are served by PaneKeys (the manager extends PaneApi, which hands both their calls). The parts the
 // constructor wires are in lifecycle-parts.ts.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.6. Plan: L3 Tasks 5 to 8, D4 to D9, D20.
-// L5 Tasks 9 and 13, K15, K19.
+// L5 Tasks 9 and 13, K15, K19. L7 Task 6: PromptRebuild keeps the prompt text (S1, S2, S14).
 
 import type { ConfigService, ConfigSource } from '../interfaces/config'
 import type { AgentSpawnEvent, CommandEvent, RowEvent, ToolCallEvent, TurnCompleteEvent } from '../interfaces/events'
@@ -24,6 +24,7 @@ import { commandsOf, configRefresher, itemHostOf, persistenceOf, schedulerOf } f
 import { PaneApi } from './pane-api'
 import { PaneKeys } from './pane-keys'
 import type { Persistence } from './persistence'
+import { PromptRebuild } from './prompt-rebuild'
 import { Replay } from './replay'
 import type { Scheduler } from './scheduler'
 import { SessionWatch } from './session'
@@ -38,15 +39,9 @@ export type { Launch } from './start-sequence'
 
 export interface LifecycleDeps {
   trackers: readonly Tracker[]
-  /**
-   * The item host: its list is the `items` slot, and it owns capture, replay and its share of every beat. Absent, the
-   * manager builds the ItemService from `trackers`.
-   */
+  /** The item host: its list is the `items` slot; it owns capture, replay and its beat. Absent: an ItemService. */
   items?: ItemsHost
-  /**
-   * Slots that no tracker owns. register.tsx passes none since the last tracker took its slot (L3 Task 10). The
-   * lifecycle unit tests use it to run the switch over fake slots.
-   */
+  /** Slots that no tracker owns. register.tsx passes none (L3 Task 10); the lifecycle tests run a switch over fakes. */
   extraSlots?: readonly DataSlot[]
   /** The run-scoped dismiss list over the ports of a dispatch. It reads its limit from the config. */
   dismiss(ports: Ports, config: ConfigSource): DismissPort
@@ -54,10 +49,7 @@ export interface LifecycleDeps {
   config(ports: Ports): ConfigService
   /** The pane the start sequence reattaches when the engine kept it across a hot reload. */
   paneId: string
-  /**
-   * The text of the tracking list for `/track` (the draw path is not core). Absent: the reply holds no list text. The
-   * router appends the problems of the config file itself.
-   */
+  /** The tracking list for `/track` (the draw path is not core). Absent: no list text. The router adds the problems. */
   listText?(ports: Ports): Promise<string>
   /** The help view as text, for `/track help`. Absent: the reply holds no text. */
   helpText?(ports: Ports): Promise<string>
@@ -75,12 +67,15 @@ export class LifecycleManager extends PaneApi {
   private readonly cfg: ConfigService
   private readonly scheduler: Scheduler
   private readonly bus: EventBus
+  private readonly prompt: PromptRebuild
   private readonly host: TrackerHost
   private readonly switcher: SwitchRunner
   private readonly sequence: StartSequence
   private readonly ending: SessionEnd
-  /** Checks the config file; when it changed, re-arms the tick and redraws the pane. Never rejects. */
+  /** Checks the config file; when it changed, re-arms the tick, redraws the pane, rebuilds the prompt. Never rejects. */
   readonly refreshConfig: (ports: Ports) => Promise<boolean>
+  /** The `prompt.compose` call: sync, no ports, never throws. The text is rebuilt at the boundaries (PromptRebuild). */
+  readonly compose: PromptRebuild['compose'] = (...a) => this.prompt.compose(...a)
   protected readonly views: Views
   protected readonly paneKeys: PaneKeys
   /** The start sequence of this load. Set by the first start, lazy or from `session.start`. */
@@ -92,15 +87,16 @@ export class LifecycleManager extends PaneApi {
   ) {
     super()
     this.cfg = d.config(ports)
+    this.prompt = new PromptRebuild(this, { trackers: d.trackers, log: ports.log })
     // Read per call, never held: a changed file shows on the next read.
     const g = () => this.cfg.global()
     this.watch = new SessionWatch({
       id: () => ports.session.id(),
-      onSwitch: sw => this.switcher.run(sw),
+      onSwitch: sw => this.switcher.run(sw).then(() => this.prompt.rebuild(ports)),
       log: ports.log,
     })
     this.scheduler = schedulerOf(ports, this.cfg, () => this.tick())
-    this.refreshConfig = configRefresher(this.cfg, this.scheduler)
+    this.refreshConfig = this.prompt.afterRefresh(configRefresher(this.cfg, this.scheduler))
     this.bus = new EventBus({ log: ports.log })
     this.persistence = persistenceOf(ports, this.cfg, this.watch, () => this.slots())
     const dismiss = d.dismiss(ports, this.cfg)
@@ -155,6 +151,7 @@ export class LifecycleManager extends PaneApi {
       watch: this.watch,
       scheduler: this.scheduler,
       switcher: this.switcher,
+      after: p => this.prompt.rebuild(p),
       config: this.cfg,
       paneId: d.paneId,
       tickMs: () => g().refresh.tickMs,
@@ -264,6 +261,7 @@ export class LifecycleManager extends PaneApi {
   async turnComplete(ports: Ports, ev: TurnCompleteEvent): Promise<void> {
     await this.entry(ports)
     await this.bus.emit('turnComplete', ev, ports)
+    await this.prompt.afterTurn(ports, ev)
   }
 
   /** `/track <args>`: the Commands router answers it. A failure rejects. */
@@ -277,7 +275,7 @@ export class LifecycleManager extends PaneApi {
     await this.bus.emit('command', ev, ports)
   }
 
-  /** The x button: the dismiss list first, the item keys second, then the trackers hear of it (spec 8, 10.5). */
+  /** The x button: the dismiss list first, the item keys second, the trackers hear of it, the prompt text drops it. */
   async dismiss(ports: Ports, ids: readonly string[]): Promise<void> {
     await this.entry(ports)
     await this.d.dismiss(ports, this.cfg).add(ids)
@@ -287,6 +285,7 @@ export class LifecycleManager extends PaneApi {
       return kept.length === list.length ? list : kept
     })
     await this.bus.emit('dismissed', { ids }, ports)
+    await this.prompt.rebuild(ports)
   }
 
   // ---------------------------------------------------------------- the pane (its reads and keys come from PaneApi)
@@ -316,16 +315,17 @@ export class LifecycleManager extends PaneApi {
 
   // ---------------------------------------------------------------- end, clear
 
-  /** `session.end`: stores the leaving session and keeps its snapshot for the switch (SessionEnd). Run it before `next(e)`. */
+  /** `session.end`: stores the leaving session, keeps its snapshot, drops the prompt text. Run it before `next(e)`. */
   end(ports: Ports, endReason: string, budgetMs: number): Promise<void> {
-    return this.ending.run(ports, endReason, budgetMs)
+    return this.ending.run(ports, endReason, budgetMs).finally(() => this.prompt.reset())
   }
 
-  /** `/track clear`: older jobs stop writing, the persisted slots empty, the stored copy goes. Run-scoped slots stay (D10). */
+  /** `/track clear`: older jobs stop writing, the slots empty, the stored copy goes, the prompt text follows (D10). */
   async clear(ports: Ports): Promise<void> {
     this.watch.bump()
     for (const slot of this.slots()) if (slot.persist) await slot.clear?.()
     await this.persistence.forget(await ports.session.id())
+    await this.prompt.rebuild(ports)
   }
 
   // ---------------------------------------------------------------- slots
