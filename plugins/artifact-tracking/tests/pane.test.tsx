@@ -1,0 +1,306 @@
+// Kit pane tests (plan L6, Task 14; spec 7): the pane the person sees. One focus Button per row, a header row per
+// section, Enter on a row, the selected row by id, the footer keys, the help view, the "N more" row, the theme colors and
+// the largest list the store allows. The text of `/track` is in register.test.tsx. Every test awaits `ui.drawn()` before it
+// reads the tree.
+import type { Engine } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
+import { BUDGET, fits, measure } from '../ux/tree-data-table/budget'
+import { LIMITS } from './fixtures/limits'
+import { focusOn, handleFor, headersOf, mountPane, type PaneUi, rowsOf, select } from './fixtures/pane'
+import { prompt, quiet, response, SESSION, START, track, world } from './fixtures/world'
+
+type World = ReturnType<typeof world>
+type On = Parameters<typeof world>[0]
+
+const CONFIG = '/home/u/.config/claude-code/mods/tracker/config.json'
+const withUi = (ui: object) => ({ [CONFIG]: JSON.stringify({ version: 1, global: { ui } }) })
+
+/** Captured and listed: the rows of `text` are in the list and the pane can draw them. */
+async function listed($: Engine, w: World, text: string, via = response): Promise<void> {
+  await $.session.append(via(text))
+  await w.clock.advance(LIMITS.captureDebounceMs + 10)
+  await quiet(w.calls)
+  await track($)
+  await quiet(w.calls)
+}
+
+const LINKS = 'See https://one.example/ and https://two.example/'
+const THREE = 'See https://one.example/ and https://two.example/ and https://three.example/'
+
+/** A pane over `text`, mounted. The caller unmounts it. */
+async function paneOver($: Engine, on: On, text: string): Promise<{ w: World; ui: PaneUi }> {
+  const w = world(on)
+  await listed($, w, text)
+  return { w, ui: await mountPane($) }
+}
+
+const footerOf = async (ui: PaneUi) => (await ui.findAll({ type: 'Button' })).filter(b => b.props.hotkey !== undefined)
+const footerKeys = async (ui: PaneUi) => (await footerOf(ui)).map(b => b.key)
+const hotkeysOf = async (ui: PaneUi) => (await footerOf(ui)).map(b => b.props.hotkey)
+const HOTKEYS = ['r', 'h', 'x', '1', '2', '3', '0']
+const lineOf = (text: string, s: string) => text.split('\n').findIndex(l => l.includes(s))
+
+// ---------------------------------------------------------------- rows
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`pane: each section has a bold header row with its column headers (${surface})`, async ($, on) => {
+    const w = world(on)
+    await listed($, w, 'Look at issue #5 and https://acme.atlassian.net/browse/ISS-1', prompt)
+    const ui = await mountPane($, { surface })
+    const headers = headersOf(await ui.drawn())
+    expect(headers).toContainEqual(['Key', 'Summary', 'Type', 'Status'])
+    expect(headers.some(h => h[0] === 'Ref' && h[1] === 'Title')).toBe(true)
+    await ui.unmount()
+  })
+
+  test(`pane: every drawn row has exactly one Button, keyed r0, r1, … in order (${surface})`, async ($, on) => {
+    const w = world(on)
+    await listed($, w, 'Look at issue #5 and https://acme.atlassian.net/browse/ISS-1', prompt)
+    const ui = await mountPane($, { surface })
+    const rows = rowsOf(await ui.drawn())
+    expect(rows.length).toBeGreaterThan(2)
+    expect(rows.map(r => r.handle)).toEqual(rows.map((_, i) => `r${i}`))
+    const buttons = await ui.findAll({ type: 'Button' })
+    expect(buttons.length - (await footerOf(ui)).length).toBe(rows.length)
+    await ui.unmount()
+  })
+}
+
+test('pane: Enter on a Jira root hides its children and shows them again', async ($, on) => {
+  const w = world(on)
+  await listed($, w, 'Look at issue #5 and https://acme.atlassian.net/browse/ISS-1', prompt)
+  const ui = await mountPane($)
+  expect(await ui.find({ text: 'PROJ-201' })).toBeDefined()
+  await ui.press({ key: await handleFor(ui, 'ISS-1') })
+  expect(await ui.find({ text: 'PROJ-201' })).toBeUndefined()
+  expect(await ui.find({ text: 'ISS-1' })).toBeDefined()
+  await ui.press({ key: await handleFor(ui, 'ISS-1') })
+  expect(await ui.find({ text: 'PROJ-201' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('pane: Enter on a leaf shows its default detail and the link; Enter again hides it', async ($, on) => {
+  const w = world(on)
+  await listed($, w, 'See https://one.example/')
+  const ui = await mountPane($)
+  expect(await ui.find({ text: 'link:' })).toBeUndefined()
+  await ui.press({ key: await handleFor(ui, 'one.example') })
+  expect(await ui.find({ text: 'link:' })).toBeDefined()
+  expect((await ui.findAll({ type: 'Text' })).some(t => t.text === 'https://one.example/')).toBe(true)
+  await ui.press({ key: await handleFor(ui, 'one.example') })
+  expect(await ui.find({ text: 'link:' })).toBeUndefined()
+  expect((await ui.findAll({ type: 'Text' })).some(t => t.text === 'https://one.example/')).toBe(false)
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------- selection
+
+test('pane: a focus on a row handle selects that row; a footer Button or the close mark keeps it', async ($, on) => {
+  const { ui } = await paneOver($, on, LINKS)
+  await focusOn($, 'r1')
+  let rows = rowsOf(await ui.drawn())
+  expect(rows.map(r => r.selected)).toEqual([false, true])
+  expect(rows[1]).toMatchObject({ background: 'blue', text: expect.stringContaining('two.example') })
+  expect(rows[0]?.background).toBeUndefined()
+  await focusOn($, 'refresh')
+  rows = rowsOf(await ui.drawn())
+  expect(rows.map(r => r.selected)).toEqual([false, true])
+  await focusOn($) // the close mark
+  rows = rowsOf(await ui.drawn())
+  expect(rows.map(r => r.selected)).toEqual([false, true])
+  await ui.unmount()
+})
+
+test('pane: autoFocus sits on the first handle until a row is selected', async ($, on) => {
+  const { ui } = await paneOver($, on, LINKS)
+  expect(rowsOf(await ui.drawn()).map(r => r.autoFocus)).toEqual([true, false])
+  await focusOn($, 'r1')
+  expect(rowsOf(await ui.drawn()).map(r => r.autoFocus)).toEqual([false, false])
+  await ui.unmount()
+})
+
+test('pane: 1 raises the selected row, draws ▲ and keeps the selection on it', async ($, on) => {
+  const { ui } = await paneOver($, on, LINKS)
+  await select($, ui, 'two.example')
+  await ui.press({ key: 'prio-1' })
+  const text = (await track($)).text ?? ''
+  expect(lineOf(text, 'two.example')).toBeLessThan(lineOf(text, 'one.example'))
+  const [first] = rowsOf(await ui.drawn())
+  expect(first?.text).toContain('▲')
+  expect(first?.text).toContain('two.example')
+  expect(first?.selected).toBe(true)
+  await ui.unmount()
+})
+
+// A Button drawn dim does nothing, whatever the route says. So these two tests check that the Button is dim, and the
+// route behind a live Button with no row is proved in pane-session.test.ts ('a row key with no row selected or a stale one
+// does nothing').
+test('pane: a row key with no selected row is dim and changes nothing', async ($, on) => {
+  const { ui } = await paneOver($, on, LINKS)
+  const before = (await track($)).text
+  for (const key of ['dismiss', 'prio-1']) {
+    expect((await ui.findAll({ type: 'Button' })).find(b => b.key === key)?.props.dimColor, key).toBe(true)
+    await ui.press({ key })
+  }
+  expect((await track($)).text).toBe(before)
+  await ui.unmount()
+})
+
+test('pane: a focus on a row wakes the row keys of the footer by itself', async ($, on) => {
+  const { ui } = await paneOver($, on, LINKS)
+  const dim = async () =>
+    (await ui.findAll({ type: 'Button' }))
+      .filter(b => ['dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'].includes(b.key ?? ''))
+      .map(b => b.props.dimColor)
+  expect(await dim()).toEqual([true, true, true, true, true])
+  await focusOn($, await handleFor(ui, 'two.example')) // no redraw call: the write of `selected` draws the pane again
+  expect(await dim()).toEqual([undefined, undefined, undefined, undefined, undefined])
+  await ui.unmount()
+})
+
+test('pane: x dismisses the selected row and selects the next one', async ($, on) => {
+  const { ui } = await paneOver($, on, THREE)
+  await select($, ui, 'two.example')
+  await ui.press({ key: 'dismiss' })
+  expect((await track($)).text).not.toContain('two.example')
+  const rows = rowsOf(await ui.drawn())
+  expect(rows.map(r => r.selected)).toEqual([false, true])
+  expect(rows[1]?.text).toContain('three.example')
+  await ui.unmount()
+})
+
+// The route of `x` and the digits on a row that cannot take them is proved in pane-session.test.ts ('a key on a row that
+// cannot take it does nothing'); here the Buttons must draw dim.
+test('pane: x and the digits are dim and inert on a process row', async ($, on) => {
+  const { calls, fake } = world(on)
+  fake.tools.Bash = { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'task-bg-1' }
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev', tool_use_id: 'toolu_bg_1' } as never)
+  await quiet(calls)
+  await track($)
+  const ui = await mountPane($)
+  await select($, ui, 'npm run dev')
+  const before = (await track($)).text
+  for (const key of ['dismiss', 'prio-1']) {
+    expect((await ui.findAll({ type: 'Button' })).find(b => b.key === key)?.props.dimColor).toBe(true)
+    await ui.press({ key })
+  }
+  expect((await track($)).text).toBe(before)
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------- footer and help
+
+test('pane: every core key has one footer Button; their hotkeys are r h x 1 2 3 0', async ($, on) => {
+  const { ui } = await paneOver($, on, LINKS)
+  expect(await hotkeysOf(ui)).toEqual(HOTKEYS)
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  const handles = (await ui.findAll({ type: 'Button' })).filter(b => /^r\d+$/.test(b.key ?? ''))
+  expect(handles.length).toBe(2)
+  for (const b of handles) expect(b.props.hotkey).toBeUndefined()
+  await ui.unmount()
+})
+
+test('pane: with nothing tracked the seven footer Buttons are still drawn', async ($, on) => {
+  world(on)
+  const ui = await mountPane($)
+  expect(rowsOf(await ui.drawn())).toEqual([])
+  expect(await hotkeysOf(ui)).toEqual(HOTKEYS)
+  await ui.unmount()
+})
+
+test('pane: h shows the help view with every key and the config path; h again returns', async ($, on) => {
+  const { ui } = await paneOver($, on, LINKS)
+  expect(rowsOf(await ui.drawn()).length).toBe(2)
+  await ui.press({ key: 'help' })
+  expect(await ui.find({ text: 'Row keys (act on the selected row)' })).toBeDefined()
+  expect((await ui.findAll({ type: 'Text' })).some(t => t.text?.startsWith('Config file:'))).toBe(true)
+  expect(rowsOf(await ui.drawn())).toEqual([])
+  await ui.press({ key: 'help' })
+  expect(await ui.find({ text: 'Row keys (act on the selected row)' })).toBeUndefined()
+  expect(rowsOf(await ui.drawn()).length).toBe(2)
+  await ui.unmount()
+})
+
+// The kit has no `$.ui.close` at run time (`$.ui` holds render, scroll, focus, press, input, select and mount), so the
+// close hook cannot be raised here. pane-session.test.ts holds the cases of `PaneSession.closed`: no selection, no help
+// view, no refocus left over, and a failed write that does not stop the other.
+
+// ---------------------------------------------------------------- caps
+
+test('pane: a section over its cap ends in an N more row; Enter shows the next chunk', async ($, on) => {
+  const w = world(on, { disk: withUi({ sectionRows: 5 }) })
+  mock.env(on, { HOME: '/home/u' })
+  await $.session.start(START)
+  await listed(
+    $,
+    w,
+    'See https://a.example/1 https://b.example/2 https://c.example/3 https://d.example/4 https://e.example/5 https://f.example/6 https://g.example/7',
+  )
+  const ui = await mountPane($)
+  const more = async () => (await ui.findAll({ type: 'Button' })).filter(b => /^m\d+$/.test(b.key ?? ''))
+  expect(rowsOf(await ui.drawn()).length).toBe(5)
+  expect((await more()).map(b => b.text)).toEqual(['2 more'])
+  await ui.press({ key: (await more())[0]?.key ?? 'none' })
+  expect(rowsOf(await ui.drawn()).length).toBe(7)
+  expect(await more()).toEqual([])
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------- colors
+
+test('pane: a status tone draws its theme color', async ($, on) => {
+  const w = world(on)
+  await listed($, w, 'https://github.com/cli/cli/pull/14640')
+  const ui = await mountPane($)
+  const texts = await ui.findAll({ type: 'Text' })
+  expect(texts.find(t => t.text === 'open')?.props.color).toBe('success')
+  expect(texts.find(t => t.text === '✗ checks')?.props.color).toBe('error')
+  for (const t of texts) expect(String(t.props.color ?? '')).not.toContain(':')
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------- the budget
+
+const webRec = (n: number) => ({
+  key: `web:https://page${n}.example/`,
+  category: 'web',
+  url: `https://page${n}.example/`,
+  label: `Page number ${n}`,
+  sources: ['response'],
+  firstSeen: n,
+  lastSeen: n,
+  seenCount: 1,
+})
+
+test('pane: the largest list the store allows draws whole', { timeoutMs: 20_000 }, async ($, on) => {
+  const items = Array.from({ length: 500 }, (_, i) => webRec(i + 1))
+  world(on, {
+    disk: withUi({ sectionRows: 300, maxRows: 1000 }),
+    seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items } },
+  })
+  mock.env(on, { HOME: '/home/u' })
+  await $.session.start(START)
+  const ui = await mountPane($)
+  const buttons = async () => (await ui.findAll({ type: 'Button' })).map(b => b.key ?? '')
+  expect(rowsOf(await ui.drawn()).length).toBe(300)
+  const more = (await buttons()).find(k => /^m\d+$/.test(k))
+  expect((await ui.findAll({ type: 'Button' })).find(b => b.key === more)?.text).toBe('200 more')
+  await ui.press({ key: more ?? 'none' })
+  const tree = await ui.drawn()
+  expect(rowsOf(tree).length).toBe(500)
+  const keys = await buttons()
+  expect(keys.filter(k => /^r\d+$/.test(k)).length).toBe(500)
+  expect((await footerOf(ui)).length).toBe(7)
+  expect(keys.some(k => /^m\d+$/.test(k))).toBe(false)
+  expect(fits(measure(tree), BUDGET)).toBe(true)
+  await ui.unmount()
+})
+
+// ---------------------------------------------------------------- /track help
+
+test('/track help prints the help view as text', async ($, on) => {
+  world(on)
+  const text = (await track($, 'help')).text ?? ''
+  expect(text.startsWith('Pane keys\n  r  refresh\n  h  help')).toBe(true)
+  expect(text).toContain('Config file:')
+})
