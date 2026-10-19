@@ -1,8 +1,16 @@
 // Safe text for prompt lines. A title, a label or a file name comes from an outside system and may hold a newline, ANSI
 // codes, invisible characters or an instruction. These helpers make it plain, short and quoted. Pure.
-// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.11. Plan: L7 Task 1, S5, S6, S9.
+// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.11. Plan: L7 Task 1, S5, S6, S9, S17, S18.
+
+import type { StoredItem } from '../interfaces/items'
+import type { ViewContext } from '../interfaces/view'
+import { urlParts } from './links'
 
 export const ELLIPSIS = '…'
+/** The longest line of the prompt text. The composer clips to it, and `promptLine` keeps its quoted text inside it. */
+export const PROMPT_LINE_MAX = 200
+/** The longest fact of a line. */
+const FACT_MAX = 30
 
 /** CSI: `ESC [`, parameter bytes, intermediate bytes, one final byte. */
 const CSI = /\u001b\[[0-?]*[ -/]*[@-~]/g
@@ -51,13 +59,8 @@ export function quoted(s: string, max: number): string {
 
 /** The host (with the port) and the path of a URL. No userinfo, query, fragment or trailing slash: a query can hold a token. */
 export function hostAndPath(url: string): string {
-  try {
-    const u = new URL(url)
-    if (u.host !== '') return u.host + u.pathname.replace(/\/+$/, '')
-  } catch {
-    // Not a URL: shown as plain text below.
-  }
-  return plain(url, 80)
+  const parts = urlParts(url)
+  return parts && parts.host !== '' ? parts.host + parts.path : plain(url, 80)
 }
 
 const RANK: ReadonlyMap<string, number> = new Map([
@@ -78,5 +81,44 @@ export function orderForPrompt<T extends { key: string; firstSeen: number; prior
   const rank = (i: T): number => RANK.get(i.priority ?? '') ?? NORMAL
   return [...items].sort(
     (a, b) => rank(a) - rank(b) || a.firstSeen - b.firstSeen || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
+  )
+}
+
+/** The facts as ` (a, b)`, or an empty string when none is left. */
+function factsText(facts: readonly string[]): string {
+  // A fact may be outside text: it cannot close its parentheses or open a quote.
+  const shown = facts.map(f => plain(f.replace(/["()]/g, ' '), FACT_MAX)).filter(f => f !== '')
+  return shown.length > 0 ? ` (${shown.join(', ')})` : ''
+}
+
+const points = (s: string): number => [...s].length
+
+/**
+ * One line of a tracker: the head (`<id>: <ref>`), the facts in parentheses and the text of the outside system, quoted.
+ * A fact is plain, has no parenthesis or quote and is at most 30 characters. `text` is raw and `textMax` its cap: the
+ * quoted text gets at most the room that the head and the facts leave in `PROMPT_LINE_MAX`, so the closing quote
+ * survives the composer's clip. With no room, or no text, the line ends after the facts. A part that is empty leaves its
+ * separator out.
+ */
+export function promptLine(head: string, facts: readonly string[], text = '', textMax = 0): string {
+  const shown = factsText(facts)
+  const room = Math.min(textMax, PROMPT_LINE_MAX - points(head) - points(shown) - 3)
+  const quote = room < 1 || text === '' ? '' : quoted(text, room)
+  return head + shown + (quote === '' ? '' : ` ${quote}`)
+}
+
+/**
+ * The records of a kind that the person has not dismissed, in prompt order. `decode` is the `decode` of the item kind:
+ * it drops what the kind does not own and what is not shaped like the kind. The prompt of a tracker maps the result.
+ */
+export function promptRecords<T extends { key: string; firstSeen: number; priority?: string }>(
+  ctx: Pick<ViewContext, 'items' | 'isDismissed'>,
+  decode: (item: StoredItem) => T | null,
+): T[] {
+  return orderForPrompt(
+    ctx.items.flatMap(item => {
+      const rec = decode(item)
+      return rec && !ctx.isDismissed(rec.key) ? [rec] : []
+    }),
   )
 }

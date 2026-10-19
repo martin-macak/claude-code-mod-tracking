@@ -14,6 +14,7 @@ import { GH_TOOL, ghOf } from './client'
 import { GITHUB_DEFAULTS, type GithubConfig, githubConfig } from './config'
 import { githubKind } from './kind'
 import { branchesOf, EMPTY_LANE, PrLane, wantsStep } from './lane'
+import { githubPrompt } from './prompt'
 import { parseRemote } from './remote'
 import { foundRepo } from './repo'
 import { sections } from './sections'
@@ -146,5 +147,6 @@ export function githubTracker(): Tracker<GithubConfig, LaneState> {
       command: onCommand,
     },
     sections,
+    prompt: githubPrompt,
   }
 }

@@ -2,14 +2,9 @@
 // and a pure compose that adds the text as the last session section. Pure.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.11. Plan: L7 Task 3 (S1, S2, S4, S7, S8).
 import { expect, test } from 'claude-code/testing'
-import {
-  PROMPT_FRAME,
-  PROMPT_LINE_MAX,
-  PROMPT_SECTION_ID,
-  PROMPT_SKIP_TRAITS,
-  PromptComposer,
-} from '../core/infra/prompt'
+import { PROMPT_FRAME, PROMPT_SECTION_ID, PROMPT_SKIP_TRAITS, PromptComposer } from '../core/infra/prompt'
 import type { PromptSection, PromptSettings, PromptSource } from '../core/interfaces/prompt'
+import { PROMPT_LINE_MAX } from '../core/lib/prompt-text'
 
 const intro: PromptSection = { id: 'intro', text: 'engine intro', scope: 'shared' }
 const memory: PromptSection = { id: 'memory', text: 'engine memory', scope: 'session' }
