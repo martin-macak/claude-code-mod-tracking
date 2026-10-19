@@ -6,13 +6,13 @@ import { expect, test } from 'claude-code/testing'
 import { ItemStore } from '../core/infra/item-store'
 import type { Kinds } from '../core/infra/kinds'
 import type { Json, StoredItem } from '../core/interfaces/items'
-import type { GitHubRef, ItemRecord, Ref, WebRef } from '../hooks/contracts'
-import { recordFromRef } from '../hooks/model/registry'
 import { ghOf } from '../trackers/github/client'
 import { fakeConfig } from './fixtures/config-fs'
+import type { GitHubRef, ItemRecord, Ref, WebRef } from './fixtures/contracts'
 import { GHE_AUTH_STATUS_STDERR } from './fixtures/gh'
 import { claimOf, fakeItems, graphqlCalls, promptRow, res, sleep, until } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
+import { recordFromRef } from './fixtures/registry'
 
 const gh = (n: number, over: Partial<GitHubRef> = {}): GitHubRef => ({
   category: 'github',

@@ -1,8 +1,7 @@
 // AutoScheduler (spec A16): a fixed window for events, an immediate path for tick and manual, one round at a time.
 // Built on the coordinator's timer pattern (timerAt, the overdue-timer replacement, idle). No `$`.
 
-import type { Timer } from '../../core/interfaces/ports'
-import type { Now } from '../../hooks/contracts'
+import type { Now, Timer } from '../../core/interfaces/ports'
 import { AUTO_DEFAULTS } from './config'
 import type { AutoReason } from './types'
 

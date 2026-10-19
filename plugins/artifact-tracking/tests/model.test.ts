@@ -1,8 +1,8 @@
 // Tracked item classes: refresh path, canRefresh rules, isDue, record round-trip. Pure, fake tools.
 import { expect, test } from 'claude-code/testing'
-import type { GitHubRecord, GitHubToolApi, JiraRecord, JiraToolApi, ToolStatus } from '../hooks/contracts'
 import { GitHubItem } from '../trackers/github/github-item'
 import { JiraItem } from '../trackers/jira/jira-item'
+import type { GitHubRecord, GitHubToolApi, JiraRecord, JiraToolApi, ToolStatus } from './fixtures/contracts'
 import { LIMITS } from './fixtures/limits'
 
 const status = (name: 'gh' | 'acli'): ToolStatus => ({ name, available: true, loggedIn: null, breaker: 'closed' })

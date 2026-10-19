@@ -1,5 +1,5 @@
+import type { RepoRef } from '../../core/interfaces/ports'
 import { basename, normPath } from '../../core/lib/porcelain'
-import type { RepoRef } from '../../hooks/contracts'
 import { lower, within } from './paths'
 
 /**

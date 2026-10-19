@@ -8,7 +8,6 @@
 // per load, by the facts of the context.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 10.
 
-import { autoIds } from '../../core/infra/dismiss'
 import type {
   AgentSpawnEvent,
   CommandEvent,
@@ -21,11 +20,11 @@ import type { Json } from '../../core/interfaces/items'
 import type { FactsPort, Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import { LoadState } from '../../core/lib/load-state'
-import type { ItemRecord } from '../../hooks/contracts'
-import { MASTER_ID } from '../../hooks/contracts'
 import { type AutoConfig, autoConfig } from './config'
+import { autoIds } from './dismiss'
 import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from './events'
 import { FACT_AGENTS, FACT_BRANCHES, FACT_CHECKED_AT, FACT_ROOT } from './facts'
+import { MASTER_ID } from './ids'
 import {
   carryAuto,
   emptyAuto,
@@ -233,7 +232,7 @@ const onTick: H<TickEvent> = ctx => kick(ctx, 'tick')
 // waits for its PR step after this (order 30), because the fact this round publishes started that step.
 const onCommand: H<CommandEvent> = async (ctx, ev) => {
   if (ev.sub === 'clear') {
-    const ids = autoIds(await readAuto(ctx), (await ctx.items.list()) as unknown as ItemRecord[])
+    const ids = autoIds(await readAuto(ctx), await ctx.items.list())
     await ctx.dismiss.add(ids)
   } else if (ev.sub === 'refresh') {
     kick(ctx, 'manual')

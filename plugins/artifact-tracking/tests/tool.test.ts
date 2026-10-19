@@ -2,7 +2,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Outcome } from '../core/lib/tool'
 import { Tool } from '../core/lib/tool'
-import type { Runner, RunResult } from '../hooks/contracts'
+import type { Runner, RunResult } from './fixtures/contracts'
 
 const ok = (stdout = '', exitCode = 0, stderr = ''): RunResult => ({ exitCode, stdout, stderr })
 

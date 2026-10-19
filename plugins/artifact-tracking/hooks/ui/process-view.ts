@@ -1,6 +1,6 @@
 // The Processes section of the pane and its band part, as the legacy draw path reads them. The tracker draws its own
 // section now (`trackers/processes/sections.ts`); L6 deletes this file with the rest of `hooks/ui/`.
-import type { ProcessRecord, ProcessUiState } from '../contracts'
+import type { ProcessRecord, ProcessUiState } from '../../trackers/processes/types'
 import type { PaneSection } from './view'
 
 const bad = new Set(['failed', 'killed', 'exited', 'unhealthy'])

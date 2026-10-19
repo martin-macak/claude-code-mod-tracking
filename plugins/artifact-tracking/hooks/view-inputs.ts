@@ -4,15 +4,17 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.3. Plan: L3 Task 12.
 
 import type { Json } from '../core/interfaces/items'
-import type { Ports } from '../core/interfaces/ports'
+import type { Ports, RepoRef } from '../core/interfaces/ports'
 import type { FactsPort } from '../core/interfaces/tracker'
 import { FACT_CHECKED_AT } from '../trackers/auto'
 import { emptyAuto } from '../trackers/auto/ledger'
 import { EMPTY_LANE } from '../trackers/github/lane'
 import type { LaneState } from '../trackers/github/types'
+import type { ProcessRecord, ProcessUiState } from '../trackers/processes/types'
 import { UI_FACT } from '../trackers/processes/watch'
-import type { AutoState, ItemRecord, ProcessRecord, ProcessUiState, RepoRecord, RepoRef, ToolStatus } from './contracts'
-import type { ViewContext } from './ui/view'
+import type { RepoRecord } from '../trackers/repos/types'
+import type { ToolStatus } from '../types'
+import type { AutoState, ItemRecord, ViewContext } from './ui/view'
 
 export const IDLE_GH: ToolStatus = { name: 'gh', available: null, loggedIn: null, breaker: 'closed' }
 export const IDLE_ACLI: ToolStatus = { name: 'acli', available: null, loggedIn: null, breaker: 'closed' }

@@ -1,6 +1,12 @@
 // The slot record type of the repos tracker. Moved from the shared contract in plan L5, Task 1.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.13.
 
+/** What repos reads of one agent proof in the fact `auto.agents`: its id, its label and its spawn cwd. It imports nothing of auto. */
+export type AgentFact = { id: string; label?: string; cwd?: string }
+
+/** What repos reads of the run root in the fact `auto.root`. */
+export type RootFact = { cwd?: string; top?: string | null }
+
 export type RepoRecord = {
   /** Group key: `remote:<host>/<owner>/<repo>`, `remote:<url>` or `local:<root>`. */
   key: string

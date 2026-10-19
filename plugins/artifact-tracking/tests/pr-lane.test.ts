@@ -3,20 +3,10 @@
 // the cases of the old AutoRound lane, over a real round and a real PrLane with fake deps; the lane alone; and the
 // shipped `auto` and `github` trackers through a LifecycleManager. The cases that moved from tests/round.test.ts keep their names.
 import { expect, test } from 'claude-code/testing'
-import { autoIds, dismiss } from '../core/infra/dismiss'
 import type { Json, JsonObject, StoredItem } from '../core/interfaces/items'
 import type { RepoRef } from '../core/interfaces/ports'
 import type { PendingEnd } from '../core/interfaces/slots'
-import type {
-  AutoReason,
-  AutoState,
-  GitHubDiscoveryApi,
-  GraphqlOutcome,
-  ItemRecord,
-  LiveAgent,
-} from '../hooks/contracts'
-import { buildRecord } from '../hooks/model/registry'
-import { scanBody } from '../hooks/scan/refs'
+import { autoIds, dismiss } from '../trackers/auto/dismiss'
 import { emptyAuto, pinRoot, recordEnter } from '../trackers/auto/ledger'
 import { AutoRound, type RoundDeps } from '../trackers/auto/round'
 import { githubTracker } from '../trackers/github'
@@ -25,11 +15,21 @@ import { dropAuto } from '../trackers/github/discovered'
 import { branchesOf, EMPTY_LANE, type LaneDeps, PrLane, wantsStep } from '../trackers/github/lane'
 import type { BranchesFact, LaneState } from '../trackers/github/types'
 import { type FakeConfig, fakeConfig } from './fixtures/config-fs'
+import type {
+  AutoReason,
+  AutoState,
+  GitHubDiscoveryApi,
+  GraphqlOutcome,
+  ItemRecord,
+  LiveAgent,
+} from './fixtures/contracts'
 import { discoveryData, prNode } from './fixtures/gh-discovery'
 import { porcelain as gitPorcelain } from './fixtures/git'
 import { res, until } from './fixtures/items'
 import { LIMITS } from './fixtures/limits'
 import { managerWorld } from './fixtures/manager'
+import { scanBody } from './fixtures/refs'
+import { buildRecord } from './fixtures/registry'
 import { hostWorld } from './fixtures/tracker-host'
 
 declare function setTimeout(fn: () => void, ms: number): unknown

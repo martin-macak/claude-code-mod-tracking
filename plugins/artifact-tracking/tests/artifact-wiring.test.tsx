@@ -3,7 +3,6 @@
 // subagent's publish is covered by artifact-tool.test.ts: the hook does not read it.
 import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
-import type { ArtifactRecord, ItemRecord } from '../hooks/contracts'
 import {
   ASSET,
   DELETE,
@@ -20,6 +19,7 @@ import {
   REFUSED,
   REPUBLISH,
 } from './fixtures/artifacts'
+import type { ArtifactRecord, ItemRecord } from './fixtures/contracts'
 import { LIMITS } from './fixtures/limits'
 import { clearSession, PANE, prompt, quiet, response, SESSION, START, toolResult, track, world } from './fixtures/world'
 

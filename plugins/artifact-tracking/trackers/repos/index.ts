@@ -4,17 +4,18 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 9.
 
 import type { AgentSpawnEvent, DismissedEvent, ToolCallEvent } from '../../core/interfaces/events'
+import type { RepoRef } from '../../core/interfaces/ports'
 import type { Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import { LoadState } from '../../core/lib/load-state'
-import type { AgentProof, AutoState, RepoRecord, RepoRef } from '../../hooks/contracts'
-import { repoRowId } from '../../hooks/contracts'
 import { type ReposConfig, reposConfig } from './config'
 import { extractRepoPathsFromTool, PATH_TOOLS, parseRepoHintsFromBash, type RepoHit, repoBaseDir } from './hints'
+import { repoRowId } from './ids'
 import { RepoQueue } from './queue'
 import { asRepoRows, capRepoRows, mergeRepoRows, upsertRepoRows } from './rows'
 import { sections } from './sections'
 import { RepoTracker, type RepoVisit } from './tracker'
+import type { AgentFact, RepoRecord, RootFact } from './types'
 
 export { asRepoRows, type ReposConfig, reposConfig }
 
@@ -50,8 +51,8 @@ const failed = (ran: unknown): boolean => refused(ran) || (isRecord(ran) && ran.
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined)
 
-const agentsOf = (ctx: Pick<Ctx, 'facts'>): readonly AgentProof[] =>
-  (ctx.facts.read('auto.agents') as unknown as AgentProof[] | undefined) ?? []
+const agentsOf = (ctx: Pick<Ctx, 'facts'>): readonly AgentFact[] =>
+  (ctx.facts.read('auto.agents') as unknown as AgentFact[] | undefined) ?? []
 
 /** The label of the loop that touched a repo: the main loop, the agent's label, or `agent:` and the start of its id. */
 function touchedBy(ctx: Pick<Ctx, 'facts'>, agentId: string | undefined): string {
@@ -62,7 +63,7 @@ function touchedBy(ctx: Pick<Ctx, 'facts'>, agentId: string | undefined): string
 
 /** The root folder of the run: the pinned cwd, or the git top once it is known. */
 function rootPath(ctx: Pick<Ctx, 'facts'>): string | undefined {
-  const root = ctx.facts.read('auto.root') as unknown as AutoState['root'] | undefined
+  const root = ctx.facts.read('auto.root') as unknown as RootFact | null | undefined
   return root?.top ?? (typeof root?.cwd === 'string' ? root.cwd : undefined)
 }
 

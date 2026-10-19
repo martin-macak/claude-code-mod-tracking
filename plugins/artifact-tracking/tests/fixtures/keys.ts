@@ -1,6 +1,5 @@
-// Item keys and the auto-only test (spec 6.2, A9). No state, no I/O. A binding over the item kinds (plan L5, Task 4):
-// each kind builds its own key, and these functions dispatch to them by the category of a ref. Scan, model and ui import
-// them from here, so none of them has to pull in `registry.ts` or `discovered.ts` for a key.
+// Item keys and the auto-only test (spec 6.2, A9). No state, no I/O. A test binding over the item kinds (plan L5, Tasks 4
+// and 15): each kind builds its own key, and these functions dispatch to them by the category of a ref.
 
 import type { Claim, JsonObject } from '../../core/interfaces/items'
 import { isAutoOnly } from '../../core/lib/records'
@@ -11,7 +10,7 @@ import { githubKeyOf, prKey } from '../../trackers/github/urls'
 import { jiraKeyOf } from '../../trackers/jira/kind'
 import { childId } from '../../trackers/jira/nodes'
 import { webKeyOf } from '../../trackers/web/kind'
-import type { Ref } from '../contracts'
+import type { Ref } from './contracts'
 
 /** The key of a ref, or of a claim, which carries it. */
 export function keyOf(ref: Ref | Claim): string {
@@ -36,5 +35,5 @@ export function claimsOf(refs: readonly Ref[], source: string, at: number): Clai
   })
 }
 
-// The keys that are not a function of a ref, and the two tests, live with their kinds. The old callers read them here.
+// The keys that are not a function of a ref, and the two tests, live with their kinds. The tests read them here.
 export { artifactOrigin, childId, fileKey, isAutoOnly, prKey }

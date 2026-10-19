@@ -1,16 +1,6 @@
 // View model: pure functions over ItemRecord[]. No engine, no files.
 import { expect, test } from 'claude-code/testing'
-import type {
-  ArtifactRecord,
-  FileRecord,
-  GitHubRecord,
-  ItemRecord,
-  JiraNode,
-  JiraRecord,
-  ToolStatus,
-  WebRecord,
-} from '../hooks/contracts'
-import { markerOf } from '../hooks/model/priority'
+import { markerOf } from '../core/lib/levels'
 import { composeBand, composeCommandText } from '../hooks/ui/auto-view'
 import {
   ago,
@@ -29,6 +19,16 @@ import {
 } from '../hooks/ui/view'
 import { emptyAuto } from '../trackers/auto/ledger'
 import { PAGE_CODE_URL, PAGE_ID, PAGE_KEY, PAGE_URL, PAGE_UUID } from './fixtures/artifacts'
+import type {
+  ArtifactRecord,
+  FileRecord,
+  GitHubRecord,
+  ItemRecord,
+  JiraNode,
+  JiraRecord,
+  ToolStatus,
+  WebRecord,
+} from './fixtures/contracts'
 
 const NOW = 1_000_000
 const PROCESS_UI = { breaker: 'closed' as const }

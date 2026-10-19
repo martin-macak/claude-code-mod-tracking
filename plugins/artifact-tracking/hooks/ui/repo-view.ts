@@ -1,8 +1,8 @@
 // The Repos section of the pane and its band part, as the legacy draw path reads them. Pure: no `$`, no JSX, no clock.
 // The tracker draws its own section now (`trackers/repos/sections.ts`); L6 deletes this file with the rest of `hooks/ui/`.
 
-import type { RepoRecord } from '../contracts'
-import { repoRowId } from '../contracts'
+import { repoRowId } from '../../trackers/repos/ids'
+import type { RepoRecord } from '../../trackers/repos/types'
 import type { PaneRow, PaneSection } from './view'
 import { compactIds } from './view'
 

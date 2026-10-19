@@ -31,3 +31,6 @@ export const KINDS: readonly ItemKind[] = TRACKERS.flatMap(t => t.kinds ?? [])
 
 /** The run-scoped dismiss list: the auto tracker keeps it in its slot (plan K16), and the wiring reaches it from here. */
 export const DISMISS = autoDismiss
+
+/** `owner/repo` of the session's git remote, with the host aliases of GitHub (`ssh.github.com`). The wiring reads the session with it. */
+export { parseRemote } from './github'

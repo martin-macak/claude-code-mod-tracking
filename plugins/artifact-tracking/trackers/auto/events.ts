@@ -2,7 +2,7 @@
 // An unknown shape gives null or an empty object, so the hooks in register.tsx hold no parsing of their own.
 
 import { isRecord, type Json } from '../../core/lib/json'
-import type { AgentResultFacts, BashFacts, EnterFacts, SpawnFacts, TurnCompleteReason } from '../../hooks/contracts'
+import type { AgentResultFacts, BashFacts, EnterFacts, SpawnFacts, TurnCompleteReason } from './types'
 
 /** A shell command that can change worktrees or branches. `echo git` does not match. */
 export const GIT_CMD = /\bgit\s+(?:-C\s+\S+\s+)?(?:worktree|checkout|switch|branch)\b/

@@ -1,10 +1,10 @@
 // AutoRound: the worktree and agent steps, writes in flight (A20) and quiet rounds (A22). Fake deps. The PR lane is the
 // github tracker's since plan L5, Task 12: its cases moved to tests/pr-lane.test.ts, each split case keeps its name there.
 import { expect, test } from 'claude-code/testing'
-import type { AutoReason, AutoState, LiveAgent } from '../hooks/contracts'
-import { isRowId } from '../hooks/contracts'
 import { emptyAuto, pinRoot, recordEnter, recordSpawn } from '../trackers/auto/ledger'
 import { AutoRound, type RoundDeps } from '../trackers/auto/round'
+import type { AutoReason, AutoState, LiveAgent } from './fixtures/contracts'
+import { isRowId } from './fixtures/contracts'
 import { porcelain as gitPorcelain, NOT_A_REPO_STDERR } from './fixtures/git'
 
 const MAIN = '/x/repo'

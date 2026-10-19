@@ -10,7 +10,7 @@ import type {
   JiraTarget,
   JiraToolApi,
   Tools,
-} from '../hooks/contracts'
+} from './fixtures/contracts'
 import { LIMITS } from './fixtures/limits'
 
 const NOW = 10_000_000

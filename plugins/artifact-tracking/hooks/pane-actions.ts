@@ -5,8 +5,8 @@
 
 import type { LifecycleManager } from '../core/infra/lifecycle'
 import type { Ports } from '../core/interfaces/ports'
+import type { Priority } from '../core/lib/levels'
 import type { PaneActions } from '../ux/pane'
-import type { Priority } from './contracts'
 import { composePane } from './ui/auto-view'
 import { markKeys } from './ui/view'
 import { viewInputs } from './view-inputs'

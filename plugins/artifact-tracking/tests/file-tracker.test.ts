@@ -3,8 +3,8 @@
 // `auto.agents` stand in for the auto tracker. Plan: L3 Task 12.
 import { expect, test } from 'claude-code/testing'
 import type { Json } from '../core/interfaces/items'
-import type { FileRecord } from '../hooks/contracts'
 import { fileConfig, fileKind, fileTracker } from '../trackers/file'
+import type { FileRecord } from './fixtures/contracts'
 import { LIMITS } from './fixtures/limits'
 import { managerWorld } from './fixtures/manager'
 

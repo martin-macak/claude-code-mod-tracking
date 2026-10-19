@@ -1,7 +1,7 @@
 // trackAgents: rows, location (A6), end state (A7). Pure.
 import { expect, test } from 'claude-code/testing'
-import type { AgentProof, AutoState, GitWorktree, LiveAgent, WorktreeProof } from '../hooks/contracts'
 import { classifyStatus, trackAgents } from '../trackers/auto/agents'
+import type { AgentProof, AutoState, GitWorktree, LiveAgent, WorktreeProof } from './fixtures/contracts'
 import { LIMITS } from './fixtures/limits'
 
 const AT = 5_000_000

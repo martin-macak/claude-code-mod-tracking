@@ -2,7 +2,7 @@
 // docs/knowledge-base/claude-code-auto-tracking/sources/gh-2.102.0/gh-graphql-base-filter-and-closing-issues.json
 // and gh-pr-4-body-sample.md.
 
-import type { DiscoveredPr } from '../../hooks/contracts'
+import type { DiscoveredPr } from './contracts'
 
 export const REPO = { host: 'github.com', owner: 'acme', repo: 'web' }
 

@@ -2,8 +2,8 @@
 // Git has no parent link, so a child needs a proof from this run. Nothing is guessed from ancestry.
 
 import { agentWorktreePath, basename, findByPath, locate, normPath } from '../../core/lib/porcelain'
-import { worktreeId } from '../../hooks/contracts'
 import { AUTO_DEFAULTS, type AutoConfig } from './config'
+import { worktreeId } from './ids'
 import type { AutoState, GitWorktree, WorktreeProof, WorktreeRow } from './types'
 
 export type WorktreeView = { state: AutoState; rows: WorktreeRow[]; branches: string[]; overflow: number }

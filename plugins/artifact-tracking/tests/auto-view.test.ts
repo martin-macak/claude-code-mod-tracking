@@ -1,5 +1,14 @@
 // Auto sections, cells, text rules, band parts and composers. Pure.
 import { expect, test } from 'claude-code/testing'
+import {
+  autoBandParts,
+  buildAutoSections,
+  compactIds,
+  composeBand,
+  composeCommandText,
+  composePane,
+} from '../hooks/ui/auto-view'
+import { cellsFor, type Layout, textOf, type ViewContext } from '../hooks/ui/view'
 import type {
   AgentRow,
   AutoSnapshot,
@@ -10,16 +19,7 @@ import type {
   ToolStatus,
   WebRecord,
   WorktreeRow,
-} from '../hooks/contracts'
-import {
-  autoBandParts,
-  buildAutoSections,
-  compactIds,
-  composeBand,
-  composeCommandText,
-  composePane,
-} from '../hooks/ui/auto-view'
-import { cellsFor, type Layout, textOf, type ViewContext } from '../hooks/ui/view'
+} from './fixtures/contracts'
 
 const NOW = 1_000_000
 const PROCESS_UI = { breaker: 'closed' as const }

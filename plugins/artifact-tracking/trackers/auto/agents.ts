@@ -2,8 +2,8 @@
 // Pure and synchronous. Rows come only from `agent.spawn` records; a list entry with no record is ignored.
 
 import { agentWorktreePath, basename, findByPath, locate, normPath } from '../../core/lib/porcelain'
-import { agentRowId, MASTER_ID } from '../../hooks/contracts'
 import { AUTO_DEFAULTS } from './config'
+import { agentRowId, MASTER_ID } from './ids'
 import { type AgentPatch, patchRecord } from './ledger'
 import type { AgentProof, AgentRow, AgentRowState, AutoState, GitWorktree, LiveAgent } from './types'
 

@@ -5,15 +5,15 @@ import { expect, test } from 'claude-code/testing'
 import { Facts } from '../core/infra/facts'
 import { transcriptItems } from '../core/infra/replay'
 import type { Json } from '../core/interfaces/items'
-import type { GitHubRef, ItemRecord, ProcessRecord, Ref, RepoRecord, WebRef } from '../hooks/contracts'
-import { recordFromRef } from '../hooks/model/registry'
 import { viewInputs } from '../hooks/view-inputs'
 import { emptyAuto } from '../trackers/auto/ledger'
 import { DOC_URL } from './fixtures/artifacts'
 import { fakeConfig } from './fixtures/config-fs'
+import type { GitHubRef, ItemRecord, ProcessRecord, Ref, RepoRecord, WebRef } from './fixtures/contracts'
 import { fakeItems, promptRow } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
 import { fakePorts } from './fixtures/ports'
+import { recordFromRef } from './fixtures/registry'
 
 const gh = (n: number): GitHubRef => ({
   category: 'github',

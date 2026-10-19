@@ -1,28 +1,32 @@
 // View model for the pane, the band and the `/track` text. Pure: no `$`, no JSX, no clock.
 // Spec: docs/superpowers/specs/2026-10-10-artifact-tracking-design.md section 9.
 
+import type { RepoRef } from '../../core/interfaces/ports'
+import { byLevel, markerOf, type Priority } from '../../core/lib/levels'
 import { toolNote } from '../../core/lib/text'
 import { artifactIdOf } from '../../trackers/artifact/artifact-url'
+import { artifactOrigin } from '../../trackers/artifact/records'
+import type { ArtifactRecord } from '../../trackers/artifact/types'
+import { MASTER_ID } from '../../trackers/auto/ids'
+import type { AutoSnapshot as Snapshot, AutoState as State } from '../../trackers/auto/types'
 import { relativeToRoot } from '../../trackers/file/files'
+import type { FileRecord } from '../../trackers/file/types'
+import type { GitHubRecord, LaneState } from '../../trackers/github/types'
 import { jiraSiteKey, nestedJira } from '../../trackers/jira/nested'
-import type {
-  ArtifactRecord,
-  AutoState,
-  Category,
-  FileRecord,
-  GitHubRecord,
-  ItemRecord,
-  JiraNode,
-  JiraRecord,
-  Priority,
-  RepoRef,
-  ToolStatus,
-  WebRecord,
-} from '../contracts'
-import { MASTER_ID } from '../contracts'
-import { artifactOrigin, childId } from '../model/keys'
-import type { Effective, LevelContext } from '../model/priority'
-import { byLevel, effectiveLevels, markerOf } from '../model/priority'
+import { childId } from '../../trackers/jira/nodes'
+import type { JiraNode, JiraRecord } from '../../trackers/jira/types'
+import type { WebRecord } from '../../trackers/web/types'
+import type { ToolStatus } from '../../types'
+import { type Effective, effectiveLevels, type LevelContext } from './levels'
+
+// ---------------------------------------------------------------- the records and the auto state, as this path reads them
+// The draw path reads records by their kind and the auto snapshot with the two fields that the PR lane keeps in the github
+// slot since plan L5, Task 12 (`hooks/view-inputs.ts` puts them back). L6 deletes this path with these aliases.
+
+export type Category = 'jira' | 'github' | 'artifact' | 'web' | 'file'
+export type ItemRecord = GitHubRecord | JiraRecord | ArtifactRecord | WebRecord | FileRecord
+export type AutoSnapshot = Snapshot & { prs?: LaneState['prs']; defaultBranch?: string }
+export type AutoState = Omit<State, 'snapshot'> & { snapshot: AutoSnapshot | null }
 
 // `ago`, `compactIds` and `toolNote` moved to core/lib/text.ts in plan L5, Task 2. The old callers import them from here.
 export { ago, compactIds, toolNote } from '../../core/lib/text'

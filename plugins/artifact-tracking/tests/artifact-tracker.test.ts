@@ -1,9 +1,9 @@
 // The artifact tracker on fakePorts, through the LifecycleManager: an Artifact tool call tracks the page or marks it
 // deleted (issue #29). Each case mirrors the kit test of the same subject in artifact-wiring.test.tsx. Plan: L3 Task 12.
 import { expect, test } from 'claude-code/testing'
-import type { ArtifactRecord } from '../hooks/contracts'
 import { artifactConfig, artifactKind, artifactTracker } from '../trackers/artifact'
 import { DELETE, DELETE_REJECTED, PAGE_KEY, PUBLISH, READ, REFUSED } from './fixtures/artifacts'
+import type { ArtifactRecord } from './fixtures/contracts'
 import { managerWorld } from './fixtures/manager'
 
 type Shape = { input: Record<string, unknown>; result: unknown }

@@ -7,8 +7,6 @@ import type { ToolHandle } from '../core/interfaces/tracker'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { scanContext } from '../core/lib/kind-context'
 import { CliTool } from '../core/lib/tool'
-import type { Tools } from '../hooks/contracts'
-import { hydrate, recordFromFile } from '../hooks/model/registry'
 import { artifactKeyOf, artifactKind } from '../trackers/artifact/kind'
 import { artifactFromWeb, artifactOrigin, markArtifactDeleted } from '../trackers/artifact/records'
 import type { ArtifactRecord } from '../trackers/artifact/types'
@@ -24,6 +22,8 @@ import type { JiraNode, JiraRecord } from '../trackers/jira/types'
 import { webKeyOf, webKind } from '../trackers/web/kind'
 import type { WebRecord } from '../trackers/web/types'
 import { PAGE_CODE_URL, PAGE_ID, PAGE_KEY, PAGE_URL, PAGE_UUID } from './fixtures/artifacts'
+import type { Tools } from './fixtures/contracts'
+import { hydrate, recordFromFile } from './fixtures/registry'
 
 const NOW = 5_000_000
 const SHIPPED: readonly ItemKind[] = [githubKind, jiraKind, artifactKind, fileKind, webKind]

@@ -1,10 +1,10 @@
 // The jira slice reaches the acli tool: the epic child limit is read at each search, the concurrency once, when the
 // tool is built (decision C5). Each test uses a value that is not the default. Plan: L4 Task 7.
 import { expect, test } from 'claude-code/testing'
-import type { JiraTarget, Runner, RunResult } from '../hooks/contracts'
 import { AcliTool } from '../trackers/jira/acli-tool'
 import { JIRA_DEFAULTS } from '../trackers/jira/config'
 import * as fx from './fixtures/acli'
+import type { JiraTarget, Runner, RunResult } from './fixtures/contracts'
 
 const SITE = '<site>.atlassian.net'
 const res = (stdout: string, exitCode = 0, stderr = ''): RunResult => ({ exitCode, stdout, stderr })

@@ -145,17 +145,11 @@ export type SpawnFacts = {
   cwd?: string
 }
 
-export type GitWorktree = {
-  path: string
-  head?: string
-  /** Without `refs/heads/`. Absent when detached or bare. */
-  branch?: string
-  detached: boolean
-  bare: boolean
-  /** Lock reason ('' when locked with none). */
-  locked?: string
-  prunable?: string
-}
+// The parser of `git worktree list --porcelain` is generic (repos reads it too), so the type lives with it in core/lib.
+export type { GitWorktree } from '../../core/lib/porcelain'
+
+/** Why a turn ended. The same words as the engine's `TurnCompleteReason`; the tracker does not import the engine module. */
+export type TurnCompleteReason = 'answer' | 'aborted' | 'refusal' | 'error'
 
 /** The part of AgentInfo the round reads. */
 export type LiveAgent = { id: string; status: string; teammateId?: string }

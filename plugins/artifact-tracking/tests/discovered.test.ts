@@ -1,12 +1,12 @@
 // applyDiscovery and dropAuto: upsert, quiet steps, prune, caps. Pure.
 import { expect, test } from 'claude-code/testing'
 import type { Claim } from '../core/interfaces/items'
-import type { GitHubRecord, GitHubRef, ItemRecord, WebRef } from '../hooks/contracts'
-import { claimsOf, isAutoOnly, keyOf, prKey } from '../hooks/model/keys'
-import { buildRecord } from '../hooks/model/registry'
 import { applyDiscovery, dropAuto } from '../trackers/github/discovered'
+import type { GitHubRecord, GitHubRef, ItemRecord, WebRef } from './fixtures/contracts'
 import { discovered } from './fixtures/gh-discovery'
+import { claimsOf, isAutoOnly, keyOf, prKey } from './fixtures/keys'
 import { LIMITS } from './fixtures/limits'
+import { buildRecord } from './fixtures/registry'
 
 const AT = 10_000_000
 const K7 = 'gh:github.com/acme/web#7'

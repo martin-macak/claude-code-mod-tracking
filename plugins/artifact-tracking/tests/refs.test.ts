@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { commandArgs, extractRefs, hostPath, parseGitHubUrl, parseJiraUrl, parseRemote } from '../hooks/scan/refs'
 import { PAGE_CODE_URL, PAGE_ID, PAGE_URL, PAGE_UUID } from './fixtures/artifacts'
+import { commandArgs, extractRefs, hostPath, parseGitHubUrl, parseJiraUrl, parseRemote } from './fixtures/refs'
 
 const repo = { host: 'github.com', owner: 'acme', repo: 'web' }
 // Wall-clock budget for the two big-input tests. They take 20 to 80 ms on a laptop. Under node

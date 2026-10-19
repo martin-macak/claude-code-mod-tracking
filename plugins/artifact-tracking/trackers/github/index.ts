@@ -14,11 +14,12 @@ import { GH_TOOL, ghOf } from './client'
 import { GITHUB_DEFAULTS, type GithubConfig, githubConfig } from './config'
 import { githubKind } from './kind'
 import { branchesOf, EMPTY_LANE, PrLane, wantsStep } from './lane'
+import { parseRemote } from './remote'
 import { foundRepo } from './repo'
 import { sections } from './sections'
 import type { DiscoveryApplied, DiscoveryTool, LaneState } from './types'
 
-export { GH_TOOL, type GithubConfig, githubConfig, githubKind }
+export { GH_TOOL, type GithubConfig, githubConfig, githubKind, parseRemote }
 
 type Ctx = TrackerContext<GithubConfig, LaneState>
 type H<E> = Handler<GithubConfig, LaneState, E>

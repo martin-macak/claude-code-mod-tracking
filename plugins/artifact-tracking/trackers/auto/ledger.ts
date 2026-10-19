@@ -2,9 +2,16 @@
 // Pure functions over AutoState. A call that changes nothing returns its input object (A22).
 
 import { normPath } from '../../core/lib/porcelain'
-import type { TurnCompleteReason } from '../../hooks/contracts'
 import { AUTO_DEFAULTS } from './config'
-import type { AgentProof, AgentResultFacts, AutoState, EnterFacts, SpawnFacts, WorktreeProof } from './types'
+import type {
+  AgentProof,
+  AgentResultFacts,
+  AutoState,
+  EnterFacts,
+  SpawnFacts,
+  TurnCompleteReason,
+  WorktreeProof,
+} from './types'
 
 /** A bump of `lastActiveAt` younger than this is skipped, so a busy agent does not write `auto` per command. */
 const ACTIVITY_MIN_MS = 60_000

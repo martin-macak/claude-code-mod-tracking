@@ -1,5 +1,6 @@
 // Registry: keys, record conversion, merge, dedupe, caps, re-key, carry-over, hydrate. Pure.
 import { expect, test } from 'claude-code/testing'
+import { PAGE_CODE_URL, PAGE_ID, PAGE_KEY, PAGE_URL, PAGE_UUID, PAIRS } from './fixtures/artifacts'
 import type {
   ArtifactRecord,
   ArtifactRef,
@@ -16,8 +17,9 @@ import type {
   ToolStatus,
   WebRecord,
   WebRef,
-} from '../hooks/contracts'
-import { artifactOrigin, fileKey, keyOf } from '../hooks/model/keys'
+} from './fixtures/contracts'
+import { artifactOrigin, fileKey, keyOf } from './fixtures/keys'
+import { LIMITS } from './fixtures/limits'
 import {
   carryOver,
   hydrate,
@@ -30,9 +32,7 @@ import {
   rekeyArtifacts,
   resolveBareRefs,
   unionRecords,
-} from '../hooks/model/registry'
-import { PAGE_CODE_URL, PAGE_ID, PAGE_KEY, PAGE_URL, PAGE_UUID, PAIRS } from './fixtures/artifacts'
-import { LIMITS } from './fixtures/limits'
+} from './fixtures/registry'
 
 const ghRef = (over: Partial<GitHubRef> = {}): GitHubRef => ({
   category: 'github',

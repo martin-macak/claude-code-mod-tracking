@@ -1,10 +1,10 @@
 import { expect, test } from 'claude-code/testing'
 import { resolvePath } from '../core/lib/shell'
-import type { RepoRecord, RepoRef, RunInit, RunResult } from '../hooks/contracts'
 import { extractRepoPathsFromTool, PATH_TOOLS, parseRepoHintsFromBash, repoBaseDir } from '../trackers/repos/hints'
 import { isNoisePath, normalizeRemoteUrl } from '../trackers/repos/identity'
 import { capRepoRows, mergeRepoRows, upsertRepoRows } from '../trackers/repos/rows'
 import { RepoTracker } from '../trackers/repos/tracker'
+import type { RepoRecord, RepoRef, RunInit, RunResult } from './fixtures/contracts'
 import { LIMITS } from './fixtures/limits'
 
 const ROOT: RepoRef = { host: 'github.com', owner: 'acme', repo: 'web' }

@@ -1,8 +1,8 @@
 // PR discovery: query shape, reply parsing, skip reasons and outcome mapping. Pure, fake gh.
 import { expect, test } from 'claude-code/testing'
-import type { GitHubDiscoveryApi, GraphqlOutcome, GraphqlReply, ToolStatus } from '../hooks/contracts'
 import { PR_LANE_DEFAULTS } from '../trackers/github/config'
 import { buildDiscoveryQuery, discoverPrs, parseDiscovery } from '../trackers/github/pr-discovery'
+import type { GitHubDiscoveryApi, GraphqlOutcome, GraphqlReply, ToolStatus } from './fixtures/contracts'
 import { discoveryData, prNode, REPO } from './fixtures/gh-discovery'
 import { LIMITS } from './fixtures/limits'
 

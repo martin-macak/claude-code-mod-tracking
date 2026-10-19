@@ -1,15 +1,15 @@
 // The github slice reaches the gh tool, the PR discovery, the PR body scan, the discovery apply step and the short-ref
 // keywords. Each test uses a value that is not the default, so it fails on the old constant. Plan: L4 Task 7 (C2, C15).
 import { expect, test } from 'claude-code/testing'
-import type { GitHubDiscoveryApi, GitHubTarget, GraphqlReply, ItemRecord, RunInit, Runner } from '../hooks/contracts'
-import { buildRecord } from '../hooks/model/registry'
-import { extractRefs, scanBody } from '../hooks/scan/refs'
 import { GITHUB_DEFAULTS, PR_LANE_DEFAULTS } from '../trackers/github/config'
 import { applyDiscovery } from '../trackers/github/discovered'
 import { buildQuery, GhTool } from '../trackers/github/gh-tool'
 import { prBodyRefs } from '../trackers/github/pr-body'
 import { buildDiscoveryQuery, discoverPrs, parseDiscovery } from '../trackers/github/pr-discovery'
+import type { GitHubDiscoveryApi, GitHubTarget, GraphqlReply, ItemRecord, RunInit, Runner } from './fixtures/contracts'
 import { discovered, discoveryData, prNode, REPO } from './fixtures/gh-discovery'
+import { extractRefs, scanBody } from './fixtures/refs'
+import { buildRecord } from './fixtures/registry'
 
 const NOW = 1_000_000
 

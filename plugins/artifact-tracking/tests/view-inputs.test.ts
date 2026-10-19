@@ -2,8 +2,8 @@
 import { expect, test } from 'claude-code/testing'
 import { Facts } from '../core/infra/facts'
 import type { Json } from '../core/interfaces/items'
-import type { ItemRecord, ProcessRecord, RepoRecord } from '../hooks/contracts'
 import { IDLE_ACLI, IDLE_GH, viewInputs } from '../hooks/view-inputs'
+import type { ItemRecord, ProcessRecord, RepoRecord } from './fixtures/contracts'
 import { fakePorts } from './fixtures/ports'
 
 const WEB: ItemRecord = {

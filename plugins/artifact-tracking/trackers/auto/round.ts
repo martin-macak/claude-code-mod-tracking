@@ -5,8 +5,8 @@
 // The pull requests are not here since plan L5, Task 12: the github tracker finds them after the round, from the fact
 // `auto.branches` that the tracker publishes (spec 5.9, the PR lane). Auto never calls `gh`.
 
+import type { Now, RunResult } from '../../core/interfaces/ports'
 import { parsePorcelain } from '../../core/lib/porcelain'
-import type { Now, RunResult } from '../../hooks/contracts'
 import { trackAgents } from './agents'
 import type { AutoConfig } from './config'
 import { setRootTop } from './ledger'
