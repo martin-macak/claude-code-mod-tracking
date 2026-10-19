@@ -1,4 +1,5 @@
 import { defineParameterType, Then } from '@cucumber/cucumber'
+import { selectedLine } from '../support/pane.ts'
 import { PERMISSION_MARKERS } from '../support/session.ts'
 import type { DemoWorld } from '../support/world.ts'
 
@@ -19,6 +20,11 @@ Then('the screen stops showing {string}', async function (this: DemoWorld, text:
 Then('the screen does not show {string}', function (this: DemoWorld, text: string) {
   const screen = this.tmux.capture()
   if (screen.includes(text)) throw new Error(`the screen shows "${text}"\n--- screen ---\n${screen}`)
+})
+
+// The pane starts a row with a gutter: ">" marks the selected row (support/pane.ts).
+Then('the selected row shows {string}', async function (this: DemoWorld, text: string) {
+  await this.waitScreen(screen => selectedLine(screen)?.includes(text) === true, `the selected row to show "${text}"`)
 })
 
 Then('no permission dialog is open', function (this: DemoWorld) {
