@@ -207,3 +207,18 @@ test('movedKeys: a key that moved gets one problem naming its new path, and the 
   expect(quiet).toEqual([]) // a file that does not set the old key hears nothing
   expect(spec.defaults).toEqual(specOf(S).defaults)
 })
+
+test('movedKeys: an own __proto__ key is data, so it is an unknown key and the mod keeps it', () => {
+  const spec = movedKeys(specOf(S), { old: 'trackers.other.old' })
+  const raw = JSON.parse('{"__proto__":{"polluted":true},"n":60,"old":5}') as Record<string, never>
+  const out: string[] = []
+  const value = spec.normalise(raw, spec.defaults, w => void out.push(w))
+  expect(out).toEqual([
+    '__proto__: unknown key. The mod keeps it and ignores it.',
+    'old: moved to trackers.other.old. The mod keeps it and ignores it here.',
+  ])
+  expect(Object.hasOwn(value, '__proto__')).toBe(true)
+  expect(Object.getPrototypeOf(value)).toBe(Object.prototype)
+  expect((value as { n: number }).n).toBe(60)
+  expect(({} as { polluted?: boolean }).polluted).toBeUndefined()
+})

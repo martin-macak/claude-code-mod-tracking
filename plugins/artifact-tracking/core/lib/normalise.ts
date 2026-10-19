@@ -5,7 +5,7 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.7. Plan: L4 Task 1 (copy table N1 to N10).
 
 import type { ConfigSpec } from '../interfaces/config'
-import type { Json, JsonObject } from '../interfaces/items'
+import type { JsonObject } from '../interfaces/items'
 
 export type Rule =
   | { readonly kind: 'int'; readonly def: number; readonly min: number; readonly max: number }
@@ -189,9 +189,10 @@ export function movedKeys<C extends JsonObject>(
   return {
     defaults: spec.defaults,
     normalise: (raw, defaults, warn) => {
-      const rest: Record<string, Json | undefined> = {}
-      const left: Record<string, Json | undefined> = {}
-      for (const [key, value] of Object.entries(raw)) (gone(key) ? left : rest)[key] = value
+      // `fromEntries` defines own properties, so a `__proto__` key stays data. An assignment would call the setter.
+      const entries = Object.entries(raw)
+      const rest = Object.fromEntries(entries.filter(([key]) => !gone(key)))
+      const left = Object.fromEntries(entries.filter(([key]) => gone(key)))
       const out = spec.normalise(rest as JsonObject, defaults, warn)
       for (const key of Object.keys(left)) warn(`${key}: moved to ${moved[key]}. The mod keeps it and ignores it here.`)
       return { ...out, ...left } as unknown as Readonly<C>
