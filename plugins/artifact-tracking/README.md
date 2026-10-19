@@ -75,7 +75,7 @@ An artifact row shows its name: the page title from the Artifact tool, else the 
 | --- | --- |
 | `/track` | Opens the pane and starts a refresh of the due items. Prints a short list. |
 | `/track refresh` | Forgets "not logged in" and "not found", closes open circuit breakers, refreshes every item, waits, and prints the list. Use it in `claude -p`. |
-| `/track clear` | Removes all items of this session and its stored copy. |
+| `/track clear` | Removes all items of this session and its stored copy. The pane forgets its selected and open rows. |
 | `/track help` | Prints the help view as text: every pane key, the config file path and the problems. Use it in `claude -p`. |
 | `/track prio <ref> <level>` | Sets the priority of one item: `high`, `normal`, `low`, or `auto` to remove your mark. See [Priority](#priority). |
 
@@ -321,6 +321,7 @@ Every key. Time values are in milliseconds.
 - **Artifact tool.** `claude -p` does not offer it, so nothing is published there. A mentioned artifact URL is still tracked.
 - **Artifacts after `--resume`.** The stored copy keeps the origin, the title and the delete mark. Without a stored copy, the transcript gives them back, except for a subagent's publish: the main transcript does not hold it, so its URL comes back `mentioned` at most. Only deletes in this session mark a row.
 - **Older versions** stored artifact URLs as web links. A session moves them to Artifacts when it loads its list.
+- **Help view in a short inline pane.** When the pane sits inline under the transcript and has few lines, the help view opens scrolled to its footer, so its first keys are above the view. Scroll up to see them, or make the terminal taller.
 - **Upgrade in a running session.** An upgrade inside a running session keeps the tracked items. It drops the Repos and Processes rows until the mod sees them again, and it forgets the dismiss list, so a dismissed row can come back.
 - **A narrow terminal.** The pane may wait until you widen the terminal. The mod shows a toast.
 - **Out of scope:** page titles of web links, switching Jira sites, Jira levels above Epic, click capture, write actions on GitHub or Jira, and surfaces other than the terminal.

@@ -695,7 +695,7 @@ export interface ColumnDef {
   priority?: number                   // dropped first when the pane is narrow
   clip?: 'end' | 'middle'             // where a too long cell is cut; default 'end', 'middle' keeps both ends of a branch or a path
 }
-export interface Cell { text: string; fg?: ColorToken; bg?: ColorToken; weight?: 'regular' | 'bold'; dim?: boolean; href?: string }
+export interface Cell { text: string; fg?: ColorToken; bg?: ColorToken; weight?: 'regular' | 'bold'; dim?: boolean; href?: string; clip?: 'end' | 'middle' }
 
 // The pane keys (L6), in the same file. KeySpec.scope in core/interfaces/tracker.ts stays 'row' | 'section': 'pane' is for core keys only.
 export type KeyScope = 'pane' | 'row' | 'section'
@@ -724,7 +724,7 @@ The L6 live check settled E10 (`verified-live`, Claude Code 2.1.303; evidence in
 2. Then the content columns shrink toward their `min`, the widest first. The tree column is one of them: its floor is its `min` plus the glyph box.
 3. The flex columns share what is left evenly, and the leftmost gets the remainder.
 
-A non-tree content column whose visible cells are all empty is left out (its header alone does not count). Every width stays at 1 or more, and the tree column at 2 or more. Only a pane of about 20 cells or less ends with the columns wider than the pane. Every cell is `<Box width={n} justifyContent={...}><Text wrap="truncate-end">`, also an empty one (a `Text` with an empty string child). An empty fixed-width cell keeps its width in the live renderer: the `prio` column lines up with and without a marker ([tree-table §3.3](../../knowledge-base/claude-code-mod-architecture/tree-table.md#33-selection-state), the L6 live row). Every cell is clipped to its width first (`clipTo`), so the engine never cuts, and a path shows in full in the detail. A column with `clip: 'middle'` (the branch and path columns) is cut in the middle instead (`clipMiddle`: the head, `…`, the tail), as the pane on main did. The tree column, the headers and the detail lines stay cut at the end. A grow-only width memo stops jumps on expand and collapse. It is a module variable in `ux/tree-data-table/columns.ts`, keyed `<section>/<column>`. It holds the unclamped width of each content column and the unclamped indent plus text of the tree column, and `resetWidths()` clears it (`r` calls it). Cell text is normalised first: tabs, newlines, control characters and ANSI become spaces.
+A non-tree content column whose visible cells are all empty is left out (its header alone does not count). Every width stays at 1 or more, and the tree column at 2 or more. Only a pane of about 20 cells or less ends with the columns wider than the pane. Every cell is `<Box width={n} justifyContent={...}><Text wrap="truncate-end">`, also an empty one (a `Text` with an empty string child). An empty fixed-width cell keeps its width in the live renderer: the `prio` column lines up with and without a marker ([tree-table §3.3](../../knowledge-base/claude-code-mod-architecture/tree-table.md#33-selection-state), the L6 live row). Every cell is clipped to its width first (`clipTo`), so the engine never cuts, and a path shows in full in the detail. A column with `clip: 'middle'` (the branch and path columns) is cut in the middle instead (`clipMiddle`: the head, `…`, the tail), as the pane on main did. A cell's own `clip` overrides its column: a stacked PR's `→base` cell is cut at the end, so the arrow stays. The tree column, the headers and the detail lines stay cut at the end. A grow-only width memo stops jumps on expand and collapse. It is a module variable in `ux/tree-data-table/columns.ts`, keyed `<section>/<column>`. It holds the unclamped width of each content column and the unclamped indent plus text of the tree column, and `resetWidths()` clears it (`r` calls it). Cell text is normalised first: tabs, newlines, control characters and ANSI become spaces.
 
 **Header.** A normal first row per section, with the same widths, in `weight="bold"`. It is not sticky.
 
@@ -779,7 +779,7 @@ The `PluginState` contract in `types/index.d.ts` imports nothing (E4). It declar
 | `trackers` | `StateFamily<Json>` | One slot per tracker id. |
 | `tools` | `Record<string, ToolStatus>` | One status per tool id. |
 | `expanded` | `string[]` | L6. The ids of the rows whose open state differs from the row's default (G3). |
-| `selected` | `string \| null` | L6. The selected row id, `null` when none. The `ui.focus` hook and the row keys write it. |
+| `selected` | `string \| null` | L6. The selected row id, `null` when none. The `ui.focus` hook and the row keys write it. `/track clear` sets it to `null` and empties `expanded`, so a row tracked again starts plain. |
 | `shown` | `StateFamily<number>` | L6. Top-level rows shown per section beyond the cap, one member per section id. A member never written reads 0. |
 | `help` | `boolean` | L6. The help view is on. |
 

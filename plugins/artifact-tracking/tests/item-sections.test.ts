@@ -411,6 +411,9 @@ test('the Pull requests rows: the branch, a stacked PR, the title without the vi
   expect(section(sections, 'prs').rows.map(r => r.id)).toEqual([KEYS.head, KEYS.stacked, KEYS.merged, KEYS.named])
   expect(cell(find(sections, 'prs', KEYS.head), 'type').text).toBe('feat/x')
   expect(cell(find(sections, 'prs', KEYS.stacked), 'type').text).toBe('→feat/x') // stacked on a branch other than main
+  // A head branch takes the middle cut of its column; `→base` is cut at the end, as on main, so the arrow stays.
+  expect(cell(find(sections, 'prs', KEYS.head), 'type').clip).toBeUndefined()
+  expect(cell(find(sections, 'prs', KEYS.stacked), 'type').clip).toBe('end')
   expect(find(sections, 'prs', KEYS.merged)?.dim).toBe(true)
   expect(find(sections, 'prs', KEYS.head)?.dim).toBeUndefined()
   // The PR the conversation named too is in this section only.

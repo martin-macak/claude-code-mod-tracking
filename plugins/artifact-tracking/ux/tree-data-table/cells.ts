@@ -1,5 +1,6 @@
 // The cells of the pane: a cell's text (a Link when it has a usable href), a section's title row and its header row.
-// Every cell is `Box width` + `Text`, with the data clipped to its column first (`clipTo`), so the engine never cuts.
+// Every cell is `Box width` + `Text`, with the data clipped to its column first (`clipTo`, or `clipMiddle` for a column
+// or a cell with `clip: 'middle'`), so the engine never cuts.
 // Spec 5.10 "Columns", "Header". Decision G19 of plan L6.
 import type { RenderChildren, RenderElement } from 'claude-code'
 import type { Cell, ColumnDef, SectionSpec } from '../../core/interfaces/view'

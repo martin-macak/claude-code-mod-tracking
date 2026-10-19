@@ -119,6 +119,21 @@ test('pane: autoFocus sits on the first handle until a row is selected', async (
   await ui.unmount()
 })
 
+test('pane: /track clear forgets the selection and the open rows; a row tracked again starts plain', async ($, on) => {
+  const { w, ui } = await paneOver($, on, LINKS)
+  await select($, ui, 'two.example')
+  await ui.press({ key: await handleFor(ui, 'two.example') })
+  expect(await ui.find({ text: 'link:' })).toBeDefined()
+  await track($, 'clear')
+  await listed($, w, LINKS)
+  await ui.redraw()
+  const rows = rowsOf(await ui.drawn())
+  expect(rows.map(r => r.selected)).toEqual([false, false])
+  expect(rows.map(r => r.autoFocus)).toEqual([true, false])
+  expect(await ui.find({ text: 'link:' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('pane: 1 raises the selected row, draws ▲ and keeps the selection on it', async ($, on) => {
   const { ui } = await paneOver($, on, LINKS)
   await select($, ui, 'two.example')

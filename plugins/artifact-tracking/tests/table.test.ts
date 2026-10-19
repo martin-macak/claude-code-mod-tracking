@@ -152,6 +152,20 @@ test('a column with clip middle cuts a long cell as head…tail; an end column s
   expect(leaves(cellsOf(only(rowBoxes(short.drawn.tree)))[1])).toEqual(['feat/x'])
 })
 
+test("a cell's clip overrides the clip of its column", () => {
+  const cols: ColumnDef[] = [
+    { id: 'key', header: 'K', width: { kind: 'content' }, role: 'tree' },
+    { id: 'title', header: 'Branch', width: { kind: 'content', max: 12 }, clip: 'middle' },
+    { id: 'type', header: 'Name', width: { kind: 'content', max: 12 } },
+  ]
+  const long = 'feat/band-auto-tracking'
+  const cells = { key: 'a', title: { text: long, clip: 'end' as const }, type: { text: long, clip: 'middle' as const } }
+  const { drawn } = draw([section('s', cols, [row('a', cells)])])
+  const [, title, type] = cellsOf(only(rowBoxes(drawn.tree)))
+  expect(leaves(title)).toEqual(['feat/band-a…'])
+  expect(leaves(type)).toEqual(['feat/b…cking'])
+})
+
 test('fg and bg map through the theme; bg sits on the cell Box (U4)', () => {
   const cell: Cell = { text: 'ok', fg: 'success', bg: 'accent' }
   const { drawn } = draw([section('web', COLS, [row('a', { key: 'k', title: cell })])])

@@ -17,6 +17,8 @@ export interface Cell {
   readonly weight?: 'regular' | 'bold'
   readonly dim?: boolean
   readonly href?: string
+  /** Overrides the `clip` of the column for this one cell. */
+  readonly clip?: 'end' | 'middle'
 }
 
 export interface ColumnDef {

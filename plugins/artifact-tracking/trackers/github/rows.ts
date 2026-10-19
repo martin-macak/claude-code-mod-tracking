@@ -75,7 +75,10 @@ export function prRow(item: GitHubRecord, env: GithubEnv, defaultBranch: string 
     cells: {
       ...base.cells,
       title: { text: item.title ?? '' },
-      type: { text: compactIds(stacked ? `→${item.baseRefName}` : (item.headRefName ?? '')) },
+      // A head branch keeps both ends; `→base` is cut at the end, so the arrow and the start of the base stay.
+      type: stacked
+        ? { text: compactIds(`→${item.baseRefName}`), clip: 'end' }
+        : { text: compactIds(item.headRefName ?? '') },
     },
     ...(done ? { dim: true } : {}),
   }

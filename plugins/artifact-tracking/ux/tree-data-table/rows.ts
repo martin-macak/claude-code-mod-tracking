@@ -54,7 +54,12 @@ function rowLine(d: Draw, solved: Solved, r: LaidRow): RenderElement {
     return box(
       d.el,
       { width: col.width, flexShrink: 0, justifyContent: col.justify, ...cellBox(cell) },
-      cellNode(d.el, cell, (col.clip === 'middle' ? clipMiddle : clipTo)(normaliseCell(cell.text), col.width), dim),
+      cellNode(
+        d.el,
+        cell,
+        ((cell.clip ?? col.clip) === 'middle' ? clipMiddle : clipTo)(normaliseCell(cell.text), col.width),
+        dim,
+      ),
     )
   })
   return box(

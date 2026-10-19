@@ -100,6 +100,9 @@ export class Commands {
     // The auto tracker hides its current items first, so the next tick does not bring them back (A14).
     await this.host.broadcast(p, { sub: 'clear', args: '', wait: true })
     await this.host.clear(p)
+    // A row tracked again starts plain: not selected and not open.
+    await p.state.selected.update(() => null)
+    await p.state.expanded.update(() => [])
     return { text: 'Tracking list cleared.' }
   }
 
