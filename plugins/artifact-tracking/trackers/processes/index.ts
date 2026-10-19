@@ -18,6 +18,7 @@ import {
   processUpdateFromTaskStop,
 } from './parse'
 import { addProcessRows, applyTaskUpdate, asRows, mergeProcessRows, setProcesses } from './rows'
+import { sections } from './sections'
 import { type ProbeState, probeProcesses } from './watch'
 
 export { type ProcessesConfig, processesConfig }
@@ -91,6 +92,7 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> {
       },
       clear: ctx => setProcesses(ctx, () => []),
     },
+    sections,
     events: {
       row: { doors: ['prompt'], run: onRow },
       toolCall: { Bash: onBash, Monitor: onMonitor, TaskStop: onTaskStop },

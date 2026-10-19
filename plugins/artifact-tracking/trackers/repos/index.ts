@@ -12,19 +12,16 @@ import { repoRowId } from '../../hooks/contracts'
 import { type ReposConfig, reposConfig } from './config'
 import { extractRepoPathsFromTool, PATH_TOOLS, parseRepoHintsFromBash, type RepoHit, repoBaseDir } from './hints'
 import { RepoQueue } from './queue'
-import { capRepoRows, mergeRepoRows, upsertRepoRows } from './rows'
+import { asRepoRows, capRepoRows, mergeRepoRows, upsertRepoRows } from './rows'
+import { sections } from './sections'
 import { RepoTracker, type RepoVisit } from './tracker'
 
-export { type ReposConfig, reposConfig }
+export { asRepoRows, type ReposConfig, reposConfig }
 
 type Ctx = TrackerContext<ReposConfig, RepoRecord[]>
 type H<E> = Handler<ReposConfig, RepoRecord[], E>
 /** What the row writes need of a context. */
 type RowsCtx = Pick<Ctx, 'data' | 'dismiss' | 'config'>
-
-/** The slot value as rows. The family stores Json, so a value that is not a list reads as none. */
-export const asRepoRows = (v: readonly RepoRecord[] | undefined): RepoRecord[] =>
-  Array.isArray(v) ? (v as RepoRecord[]) : []
 
 /**
  * Changes the rows in the slot. Every write goes through here, so this is the one place that drops the repos the
@@ -209,6 +206,7 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> {
       },
       clear: ctx => setRepos(ctx, () => []),
     },
+    sections,
     events: {
       toolCall: { Bash: onBash, ...Object.fromEntries(PATH_TOOLS.map(tool => [tool, onPathTool])) },
       agentSpawn: onSpawn,

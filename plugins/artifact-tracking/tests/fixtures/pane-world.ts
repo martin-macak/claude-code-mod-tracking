@@ -3,9 +3,14 @@
 // PR lane found (one with failed checks on the session branch, a stacked one, a merged one), a Jira item with a child
 // tree that is also tracked, a track-only and a not-found Jira item, a published, a deleted and a mentioned artifact, web
 // links, and a created, an edited and a viewed file. `gh` is ready and `acli` has the site `acme.atlassian.net`.
-// Task 14 adds the auto, repos and processes half to the same world.
+// The other half (plan L5, Task 14): an auto snapshot with the root, a live and a removed child, the master agent on the
+// session branch, a running agent with an ended child, and a workflow agent; two repos; three processes (one failed) and a
+// docker issue.
 import type { LifecycleManager } from '../../core/infra/lifecycle'
 import type { Json, JsonObject, StoredItem } from '../../core/interfaces/items'
+import type { AgentRow, AutoSnapshot, AutoState, WorktreeRow } from '../../trackers/auto/types'
+import type { ProcessRecord, ProcessUiState } from '../../trackers/processes/types'
+import type { RepoRecord } from '../../trackers/repos/types'
 import type { ToolStatus } from '../../types'
 import { fakeConfig } from './config-fs'
 import { managerWorld } from './manager'
@@ -238,7 +243,114 @@ export async function paneWorld(o: PaneWorldOpts = {}) {
   return t
 }
 
-/** The seed of the item half: the list, the tool statuses, the lane state, and the facts the sections read. */
+const wt = (name: string, depth: 0 | 1, f: Partial<WorktreeRow> = {}): WorktreeRow => ({
+  id: `wt:/work/${name}`,
+  path: `/work/${name}`,
+  name,
+  branch: `b-${name}`,
+  detached: false,
+  state: 'live',
+  depth,
+  ...f,
+})
+
+const ag = (id: string, f: Partial<AgentRow> = {}): AgentRow => ({
+  id: `ag:${id}`,
+  kind: 'subagent',
+  label: id,
+  depth: 1,
+  worktreeLive: true,
+  state: 'running',
+  ...f,
+})
+
+/** The branches the world's round polled, root first. The fact `auto.branches` lists the same ones. */
+export const WORLD_BRANCHES = ['main', 'feat/x', 'feat/y'] as const
+
+/**
+ * What the last round computed. The master agent is on `feat/x`, the branch of the fact `auto.branches`, so the PR on it
+ * gets the level `top` (R7) from the legacy composers too. `at` is older than the fact `auto.checkedAt`, so a note that
+ * reads `snapshot.at` instead of the fact says another age.
+ */
+export const WORLD_SNAPSHOT: AutoSnapshot = {
+  at: NOW - 300_000,
+  worktrees: [
+    wt('work', 0, { id: 'wt:/work', path: '/work', branch: 'main' }),
+    wt('feat-x', 1, { branch: 'feat/x' }),
+    wt('old-wt', 1, { branch: 'feat/old', state: 'removed' }),
+    {
+      id: 'wt:/work/detached-wt',
+      path: '/work/detached-wt',
+      name: 'detached-wt',
+      detached: true,
+      state: 'live',
+      depth: 1,
+    },
+  ],
+  agents: [
+    ag('master', {
+      kind: 'master',
+      label: 'this session',
+      depth: 0,
+      branch: 'feat/x',
+      worktree: 'feat-x',
+    }),
+    ag('explore', { branch: 'feat/y', worktree: 'agent-a94bdd45b56e2c631' }),
+    ag('review', { depth: 2, state: 'ended', branch: 'feat/y', worktree: 'agent-a94bdd45b56e2c631' }),
+    ag('build', { kind: 'workflow', state: 'waiting', workflow: { runId: 'run-1', agentIndex: 2 } }),
+    ag('lint', { state: 'failed', worktreeLive: false }),
+  ],
+  branches: [...WORLD_BRANCHES],
+  overflow: 0,
+  git: { ok: true, at: NOW },
+  agentList: { ok: true, at: NOW },
+}
+
+export const WORLD_AUTO: AutoState = {
+  root: { cwd: '/work', top: '/work', at: 1 },
+  worktrees: [],
+  agents: [],
+  dismissed: [],
+  snapshot: WORLD_SNAPSHOT,
+}
+
+const repo = (name: string, f: Partial<RepoRecord> = {}): RepoRecord => ({
+  key: `remote:github.com/acme/${name}`,
+  name: `acme/${name}`,
+  branch: 'main',
+  mode: 'read',
+  touchedBy: ['main'],
+  firstSeen: 5,
+  lastSeen: 5,
+  ...f,
+})
+
+/** Two repos, the later-seen one first in the slot: the section sorts by the first sighting. */
+export const WORLD_REPOS: RepoRecord[] = [
+  repo('sdk', { firstSeen: 9, lastSeen: 9, mode: 'edit', branch: 'dev', touchedBy: ['main', 'planner'] }),
+  repo('web', { firstSeen: 2, lastSeen: 20, branch: undefined }),
+]
+
+const proc = (id: string, f: Partial<ProcessRecord> = {}): ProcessRecord => ({
+  id,
+  kind: 'background-task',
+  name: id,
+  state: 'running',
+  firstSeen: 3,
+  lastSeen: 3,
+  ...f,
+})
+
+/** Three processes: a running task, a container that is up and a detached process that failed. */
+export const WORLD_PROCESSES: ProcessRecord[] = [
+  proc('bg:1', { name: 'npm run dev' }),
+  proc('docker:db', { kind: 'docker-container', name: 'db', state: 'up' }),
+  proc('pid:77', { kind: 'detached-process', name: 'worker', state: 'failed', pid: 77 }),
+]
+
+export const WORLD_PROCESS_UI: ProcessUiState = { breaker: 'closed', dockerIssue: 'docker: daemon not running' }
+
+/** The seed of the world: the lists, the tool statuses, the slots and the facts the sections read. */
 export function seedPaneWorld(state: Map<string, Json>, m: Pick<LifecycleManager, 'facts'>): void {
   state.set('items', paneItems() as unknown as Json)
   state.set('tools', {
@@ -246,16 +358,14 @@ export function seedPaneWorld(state: Map<string, Json>, m: Pick<LifecycleManager
     acli: tool('acli', { site: 'acme.atlassian.net', lastRunAt: NOW - 60_000 }),
   } as unknown as Json)
   state.set('github', { prs: { ok: true, at: NOW - 30_000 }, defaultBranch: 'main' })
-  state.set('auto', {
-    root: { cwd: '/work', top: '/work', at: 1 },
-    worktrees: [],
-    agents: [],
-    dismissed: [],
-    snapshot: null,
-  })
+  state.set('auto', WORLD_AUTO as unknown as Json)
+  state.set('repos', WORLD_REPOS as unknown as Json)
+  state.set('processes', WORLD_PROCESSES as unknown as Json)
   m.facts.publish('session.repo', SESSION_REPO)
   m.facts.publish('auto.root', { cwd: '/work', top: '/work', at: 1 })
-  setBranches(m, { current: 'feat/x', branches: ['main', 'feat/x', 'feat/y'] })
+  m.facts.publish('auto.checkedAt', NOW - 30_000)
+  m.facts.publish('processes.ui', WORLD_PROCESS_UI as unknown as Json)
+  setBranches(m, { current: 'feat/x', branches: WORLD_BRANCHES })
 }
 
 /**

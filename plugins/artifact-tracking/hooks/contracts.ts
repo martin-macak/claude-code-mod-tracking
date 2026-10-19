@@ -159,8 +159,8 @@ export { JIRA_KEY } from '../trackers/jira/urls'
 export const MASTER_ID = 'ag:master'
 export const worktreeId = (path: string): string => `wt:${path}`
 export const agentRowId = (agentId: string): string => `ag:${agentId}`
-/** The id of a repo row (`rp:` + the repo key). A repo key starts with `remote:` or `local:`, so it is no item key. */
-export const repoRowId = (key: string): string => `rp:${key}`
+// The id of a repo row lives with the repos tracker now (plan L5, Task 14). The old callers import it from here until Task 15.
+export { repoRowId } from '../trackers/repos/ids'
 /** True for the id of a worktree, agent or repo row, false for an item key. */
 export const isRowId = (id: string): boolean => id.startsWith('wt:') || id.startsWith('ag:') || id.startsWith('rp:')
 

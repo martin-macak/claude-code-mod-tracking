@@ -25,6 +25,9 @@ const find = (sections: readonly SectionSpec[], id: string, rowId: string): Tree
   return walk(section(sections, id).rows)
 }
 const column = (c: SectionSpec['columns'][number]) => [c.id, c.header]
+/** The sections of the item trackers: they list items, so each row takes a mark. The other four are in tracker-sections.test.ts. */
+const ITEM_SECTIONS = ['prs', 'jira', 'github', 'artifact', 'web', 'file']
+const itemOnly = (sections: readonly SectionSpec[]) => sections.filter(s => ITEM_SECTIONS.includes(s.id))
 
 test('viewOf with no view has nothing selected and nothing expanded', async () => {
   const t = await paneWorld()
@@ -72,35 +75,83 @@ test('a view leaves out the items of a tracker that is off', async () => {
 
 test('paneData orders sections by rank: Worktrees, Agents, Pull requests, Jira work items, GitHub, …', async () => {
   const t = await paneWorld()
-  expect(ids(await t.m.paneData(t.w.ports, NO_VIEW))).toEqual(['prs', 'jira', 'github', 'artifact', 'web', 'file'])
-  expect((await t.m.paneData(t.w.ports, NO_VIEW)).map(s => s.title)).toEqual([
+  const sections = await t.m.paneData(t.w.ports, NO_VIEW)
+  expect(ids(sections)).toEqual([
+    'worktrees',
+    'agents',
+    'prs',
+    'jira',
+    'github',
+    'artifact',
+    'repos',
+    'web',
+    'file',
+    'processes',
+  ])
+  expect(sections.map(s => s.title)).toEqual([
+    'Worktrees',
+    'Agents',
     'Pull requests',
     'Jira work items',
     'GitHub',
     'Artifacts',
+    'Repos',
     'Web links',
     'Files',
+    'Processes',
   ])
+  expect(ids(itemOnly(sections))).toEqual(ITEM_SECTIONS) // the item part of the ids
 })
 
 test('bandData orders by band rank: Jira, GitHub, Artifacts, Links, Files, …, PRs', async () => {
   const t = await paneWorld()
   const band = await t.m.bandData(t.w.ports)
-  expect(band.map(s => s.band?.label)).toEqual(['Jira', 'GitHub', 'Artifacts', 'Links', 'Files', 'PRs'])
+  expect(band.map(s => s.band?.label)).toEqual([
+    'Jira',
+    'GitHub',
+    'Artifacts',
+    'Links',
+    'Files',
+    'Repos',
+    'Worktrees',
+    'Agents',
+    'PRs',
+    'Processes',
+  ])
   expect(band.map(s => [s.band?.count, s.band?.failing])).toEqual([
     [4, 0], // every Jira record, also the one drawn under ISS-1
     [7, 0], // the items the conversation named: not the ones only the lane found
     [2, 0], // not the deleted one
     [2, 0],
     [3, 0],
+    [2, 0],
+    [2, 0], // the live children of the root
+    [2, 0], // the agents that run or wait
     [3, 1], // the open PRs of the lane, and the one with failed checks
+    [3, 1],
   ])
 })
 
 test('paneData leaves out the sections of a tracker that is off', async () => {
   const t = await paneWorld({ off: ['web', 'github'] })
-  expect(ids(await t.m.paneData(t.w.ports, NO_VIEW))).toEqual(['jira', 'artifact', 'file'])
-  expect((await t.m.bandData(t.w.ports)).map(s => s.band?.label)).toEqual(['Jira', 'Artifacts', 'Files'])
+  expect(ids(await t.m.paneData(t.w.ports, NO_VIEW))).toEqual([
+    'worktrees',
+    'agents',
+    'jira',
+    'artifact',
+    'repos',
+    'file',
+    'processes',
+  ])
+  expect((await t.m.bandData(t.w.ports)).map(s => s.band?.label)).toEqual([
+    'Jira',
+    'Artifacts',
+    'Files',
+    'Repos',
+    'Worktrees',
+    'Agents',
+    'Processes',
+  ])
 })
 
 test('the github columns are A1’s, in order', async () => {
@@ -153,10 +204,9 @@ test('the github columns are A1’s, in order', async () => {
     ],
   }
   for (const [id, want] of Object.entries(heads)) expect(section(sections, id).columns.map(column)).toEqual(want)
-  for (const s of sections) {
-    expect(s.columns.filter(c => c.role === 'tree').length).toBe(1)
+  for (const s of sections) expect(s.columns.filter(c => c.role === 'tree').length).toBe(1)
+  for (const s of itemOnly(sections))
     expect(s.columns[0]).toEqual({ id: 'prio', header: '', width: { kind: 'fixed', cells: 1 } })
-  }
   expect(section(sections, 'github').columns.map(c => c.width)).toEqual([
     { kind: 'fixed', cells: 1 },
     { kind: 'content', min: 4, max: 24 },
@@ -180,12 +230,16 @@ test('every section is placed by its rank and band rank (K2)', async () => {
   const t = await paneWorld()
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)
   expect(sections.map(s => [s.id, s.rank, s.band?.rank])).toEqual([
+    ['worktrees', 10, 7],
+    ['agents', 11, 8],
     ['prs', 12, 9],
     ['jira', 20, 1],
     ['github', 30, 2],
     ['artifact', 40, 3],
+    ['repos', 50, 6],
     ['web', 60, 4],
     ['file', 70, 5],
+    ['processes', 80, 10],
   ])
 })
 
@@ -383,13 +437,27 @@ test('can is always written', async () => {
       walk(row.children ?? [], depth + 1)
     }
   }
-  for (const s of sections) walk(s.rows, 0)
+  for (const s of itemOnly(sections)) walk(s.rows, 0)
   expect(all.length).toBeGreaterThan(20)
   for (const { row, depth } of all) {
     expect(typeof row.can?.dismiss).toBe('boolean')
     expect(typeof row.can?.priority).toBe('boolean')
     expect(row.can?.priority).toBe(true) // every item row and every Jira node takes a mark
     expect(row.can?.dismiss).toBe(depth === 0) // a Jira node is part of its issue: only the issue is dismissed
+  }
+  // The rows of the other four trackers write both too, and none takes a mark.
+  const others: TreeRow[] = []
+  const collect = (rows: readonly TreeRow[]) => {
+    for (const row of rows) {
+      others.push(row)
+      collect(row.children ?? [])
+    }
+  }
+  for (const s of sections.filter(x => !ITEM_SECTIONS.includes(x.id))) collect(s.rows)
+  expect(others.length).toBe(14) // 4 worktrees, 5 agents, 2 repos, 3 processes
+  for (const row of others) {
+    expect(typeof row.can?.dismiss).toBe('boolean')
+    expect(row.can?.priority).toBe(false)
   }
   expect(find(sections, 'jira', 'jira:acme.atlassian.net/ISS-1/PROJ-202')?.can).toEqual({
     dismiss: false,
@@ -465,7 +533,18 @@ test('a tracker whose sections throw loses them, the others still draw, and one 
   await t.m.ensureStarted(t.w.ports)
   seedPaneWorld(t.w.state, t.m)
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)
-  expect(ids(sections)).toEqual(['prs', 'jira', 'github', 'artifact', 'web', 'file'])
+  expect(ids(sections)).toEqual([
+    'worktrees',
+    'agents',
+    'prs',
+    'jira',
+    'github',
+    'artifact',
+    'repos',
+    'web',
+    'file',
+    'processes',
+  ])
   expect(t.w.logs).toContain('views: sections of broken failed: boom')
 })
 

@@ -25,6 +25,7 @@ import type { ItemRecord } from '../../hooks/contracts'
 import { MASTER_ID } from '../../hooks/contracts'
 import { type AutoConfig, autoConfig } from './config'
 import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from './events'
+import { FACT_AGENTS, FACT_BRANCHES, FACT_CHECKED_AT, FACT_ROOT } from './facts'
 import {
   carryAuto,
   emptyAuto,
@@ -38,6 +39,7 @@ import {
 } from './ledger'
 import { AutoRound } from './round'
 import { AutoScheduler } from './scheduler'
+import { sections } from './sections'
 import type { AutoReason, AutoState, BranchesFact } from './types'
 
 export { autoDismiss } from './dismiss-store'
@@ -48,11 +50,7 @@ type H<E> = Handler<AutoConfig, AutoState, E>
 /** What the slot writes need of a context. */
 type SlotCtx = Pick<Ctx, 'data' | 'facts'>
 
-/** The facts of this tracker. */
-export const FACT_ROOT = 'auto.root'
-export const FACT_AGENTS = 'auto.agents'
-export const FACT_CHECKED_AT = 'auto.checkedAt'
-export const FACT_BRANCHES = 'auto.branches'
+export { FACT_AGENTS, FACT_BRANCHES, FACT_CHECKED_AT, FACT_ROOT }
 
 /** The run: root, proofs, agents, dismiss list and the last snapshot. A slot never written reads as a fresh empty one. */
 const readAuto = async (ctx: Pick<Ctx, 'data'>): Promise<AutoState> => (await ctx.data.get()) ?? emptyAuto()
@@ -269,6 +267,7 @@ export const auto: Tracker<AutoConfig, AutoState> = {
       publishBranches(ctx.facts, s, ++loadOf(ctx).tally.seq, [])
     },
   },
+  sections,
   events: {
     start: onStart,
     toolCall: {

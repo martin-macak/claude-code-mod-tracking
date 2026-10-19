@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import type { ProcessRecord, ProcessUiState } from '../hooks/contracts'
-import { processBandPart, processSection } from '../trackers/processes/view'
+import { processBandPart, processSection } from '../hooks/ui/process-view'
 
 const rec = (id: string, over: Partial<ProcessRecord>): ProcessRecord => ({
   id,

@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { RepoRecord } from '../hooks/contracts'
 import { isRowId, repoRowId } from '../hooks/contracts'
-import { repoBandPart, repoSection } from '../trackers/repos/view'
+import { repoBandPart, repoSection } from '../hooks/ui/repo-view'
 
 const repo = (key: string, over: Partial<RepoRecord> = {}): RepoRecord => ({
   key,

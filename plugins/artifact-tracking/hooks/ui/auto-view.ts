@@ -3,8 +3,6 @@
 
 import { byLevel } from '../../core/lib/levels'
 import { ago, compactIds, toolNote } from '../../core/lib/text'
-import { processBandPart, processSection } from '../../trackers/processes/view'
-import { repoBandPart, repoSection } from '../../trackers/repos/view'
 import type {
   AgentRow,
   AutoState,
@@ -15,6 +13,8 @@ import type {
   RepoRecord,
 } from '../contracts'
 import { MASTER_ID } from '../contracts'
+import { processBandPart, processSection } from './process-view'
+import { repoBandPart, repoSection } from './repo-view'
 import type { PaneRow, PaneSection, RowPrio, ViewContext } from './view'
 import { bandParts, buildPane, EMPTY_TEXT, githubRow, isWide, lastRefreshOf, levelsOf, textOf } from './view'
 
