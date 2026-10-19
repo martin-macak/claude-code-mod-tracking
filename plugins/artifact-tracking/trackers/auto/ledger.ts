@@ -180,7 +180,7 @@ export function recordTurnEnd(s: AutoState, agentId: string, reason: TurnComplet
 }
 
 /**
- * /clear and reload (A18). `cur` is the $.state copy, `held` the module copy.
+ * /clear and reload (A18). `cur` is the state copy, `held` the module copy.
  * Returns `cur` whenever `cur.root` is set. Returns `held` only when `cur` has no root (after /clear).
  * Else an empty state.
  */

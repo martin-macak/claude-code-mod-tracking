@@ -7,7 +7,7 @@ import { markerOf } from '../hooks/model/priority'
 import type { Cell, PaneRow, PaneSection, Tone } from '../hooks/ui/view'
 import { cellsFor, dismissKey, EMPTY_TEXT, foldKey, markKeys } from '../hooks/ui/view'
 
-/** The four tags the pane uses. Every surface table holds them, so `$.ui.resolve(e)` fits. */
+/** The four tags the pane uses. Every surface table holds them, so the engine's element resolver fits. */
 export type PaneElements = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button' | 'Link'>
 
 /** `focus`: a press on a row's mark picks that row. `prioritize`: a priority key, on the picked row; undefined: `0`. */

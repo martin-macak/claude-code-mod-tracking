@@ -118,6 +118,7 @@ check: test ## Alias of test (validate, type-check, test)
 test-scripts: ## Test the repo scripts (no claude needed)
 	scripts/hooks/verify-gate.test.sh
 	$(NODE_RUN) node --experimental-transform-types --test scripts/coverage/kit-shim.test.ts scripts/coverage/check.test.mjs
+	$(NODE_RUN) node --test scripts/contracts/*.test.mjs
 	scripts/dev/gh-check.test.sh
 	bash scripts/release/release.test.sh
 	bash scripts/release/ci-guards.test.sh

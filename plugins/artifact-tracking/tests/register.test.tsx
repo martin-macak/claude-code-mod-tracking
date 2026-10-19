@@ -9,6 +9,7 @@ import { LIMITS } from '../hooks/contracts'
 import * as ev from './fixtures/events'
 import {
   BAND,
+  clearSession,
   commandRow,
   current,
   editDone,
@@ -25,6 +26,7 @@ import {
   sleep,
   toolResult,
   track,
+  until,
   viewCalls,
   world,
   writeCreated,
@@ -328,7 +330,7 @@ test('files: a file row is saved to the stored copy', async ($, on) => {
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
   await sleep(20)
-  const saved = (store.get('s:' + SESSION) as { items: ItemRecord[] }).items
+  const saved = (store.get('v2:s:' + SESSION) as { items: ItemRecord[] }).items
   expect(saved).toHaveLength(1)
   expect(saved[0]).toMatchObject({
     key: 'file:/work/docs/plan.md',
@@ -356,7 +358,7 @@ const storedFile: ItemRecord = {
 }
 
 test('files: session.start restores a file row from the stored copy', async ($, on) => {
-  world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { items: [storedFile] } } })
+  world(on, { seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items: [storedFile] } } })
   await $.session.start(START)
   expect(await files($)).toBe('Files  1 files\n  docs/plan.md  created  edited 2  viewed 1')
 })
@@ -365,7 +367,7 @@ test('files: a resume skips a file row dismissed in this run', async ($, on) => 
   const copy = { items: [storedFile] }
   const { calls } = world(on, {
     isolateState: true,
-    seed: { index: [SESSION, 'sess-2'], ['s:' + SESSION]: copy, 's:sess-2': copy },
+    seed: { 'v2:index': [SESSION, 'sess-2'], ['v2:s:' + SESSION]: copy, 'v2:s:sess-2': copy },
   })
   await $.session.start(START) // pins the root, so the dismiss list is carried over to the next id
   expect(await files($)).toContain('docs/plan.md')
@@ -373,15 +375,15 @@ test('files: a resume skips a file row dismissed in this run', async ($, on) => 
   await ui.press({ key: 'dismiss-file:/work/docs/plan.md' })
   await quiet(calls)
   await ui.unmount()
-  current.id = 'sess-2' // a /resume of a session whose stored copy holds the row
+  await clearSession($, { calls }, 'sess-2', 'resume') // a /resume of a session whose stored copy holds the row
   expect(await files($)).toBe('No tracked items yet.')
 })
 
 test('files: /clear carries a file row over to the new session', async ($, on) => {
-  const { fake } = world(on)
+  const { fake, calls } = world(on)
   await $.session.start(START)
   await fileTool($, fake, 'Write', writeCreated('/work/docs/plan.md'))
-  current.id = 'sess-2' // what /clear does
+  await clearSession($, { calls }, 'sess-2', 'clear') // what /clear does
   expect(await files($)).toBe('Files  1 files\n  docs/plan.md  created')
 })
 
@@ -648,7 +650,7 @@ test('response row: a non-existent GitHub URL is discarded before it can be list
   expect((await track($)).text).toBe('No tracked items yet.')
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
-  expect(store.has('s:' + SESSION)).toBe(false)
+  expect(store.has('v2:s:' + SESSION)).toBe(false)
 })
 
 test('a URL and a bare #N for the same item make one item', async ($, on) => {
@@ -705,9 +707,9 @@ test('/clear carry-over, store path: the items of the session just left come bac
       refreshedAt: Date.now(),
     },
   ]
-  const { clock, calls } = world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { items: old } } })
+  const { clock, calls } = world(on, { seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items: old } } })
   await $.session.append(prompt('first https://example.org/a')) // learns the id; no session.start, so nothing is restored
-  current.id = 'sess-2' // what /clear does
+  await clearSession($, { calls }, 'sess-2', 'clear') // what /clear does
   await $.session.append(prompt('then issue #5'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
@@ -731,9 +733,9 @@ test('/clear carry-over also happens on /track alone', async ($, on) => {
       seenCount: 1,
     },
   ]
-  world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { items: old } } })
+  const { calls } = world(on, { seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items: old } } })
   await $.session.append(prompt('first https://example.org/a'))
-  current.id = 'sess-2'
+  await clearSession($, { calls }, 'sess-2', 'clear', { row: false }) // no /clear row: /track is the first hook
   expect((await track($)).text).toContain('Old page')
 })
 
@@ -749,9 +751,9 @@ test('/clear carry-over also keeps tracked processes from the session just left'
       taskId: 'task-bg-1',
     },
   ]
-  world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { processes: oldProc } } })
+  const { calls } = world(on, { seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { processes: oldProc } } })
   await $.session.append(prompt('first https://example.org/a'))
-  current.id = 'sess-2'
+  await clearSession($, { calls }, 'sess-2', 'clear')
   const text = (await track($)).text ?? ''
   expect(text).toContain('Processes')
   expect(text).toContain('npm run dev')
@@ -855,7 +857,7 @@ test('session.start restores the stored copy of a session it knows', async ($, o
     lastSeen: 1,
     seenCount: 1,
   }
-  world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { items: [stored] } } })
+  world(on, { seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items: [stored] } } })
   await $.session.start(START)
   expect((await track($)).text).toContain('Kept page')
 })
@@ -889,7 +891,7 @@ test('session.start prunes stored tool-only Jira items from a foreign site', asy
     trackOnly: false,
     children: [],
   }
-  world(on, { seed: { index: [SESSION], ['s:' + SESSION]: { items: [kept, pruned] } } })
+  world(on, { seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items: [kept, pruned] } } })
   await $.session.start(START)
   const text = (await track($)).text ?? ''
   expect(text).toContain('ISS-1')
@@ -903,12 +905,12 @@ test('a burst of rows makes one store write after the delay; an empty list never
   expect(store.size).toBe(0)
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
-  expect((store.get('s:' + SESSION) as { items: unknown[] }).items.length).toBe(3)
-  expect(store.get('index')).toEqual([SESSION])
+  expect((store.get('v2:s:' + SESSION) as { items: unknown[] }).items.length).toBe(3)
+  expect(store.get('v2:index')).toEqual([SESSION])
   await track($, 'clear')
-  expect(store.has('s:' + SESSION)).toBe(false)
+  expect(store.has('v2:s:' + SESSION)).toBe(false)
   await clock.advance(LIMITS.flushMs + 10)
-  expect(store.has('s:' + SESSION)).toBe(false)
+  expect(store.has('v2:s:' + SESSION)).toBe(false)
 })
 
 test('a flush that finds an empty list writes nothing', async ($, on) => {
@@ -918,20 +920,22 @@ test('a flush that finds an empty list writes nothing', async ($, on) => {
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
   await sleep(20)
-  expect(store.has('s:' + SESSION)).toBe(false)
+  expect(store.has('v2:s:' + SESSION)).toBe(false)
 })
 
 test('the store keeps the newest sessions only', async ($, on) => {
-  const seed: Record<string, unknown> = { index: Array.from({ length: LIMITS.keepSessions + 5 }, (_, k) => 'old' + k) }
-  for (const id of seed.index as string[]) seed['s:' + id] = { items: [] }
+  const seed: Record<string, unknown> = {
+    'v2:index': Array.from({ length: LIMITS.keepSessions + 5 }, (_, k) => 'old' + k),
+  }
+  for (const id of seed['v2:index'] as string[]) seed['v2:s:' + id] = { items: [] }
   const { clock, store } = world(on, { seed })
   await $.session.append(response('https://one.example/'))
   await clock.advance(LIMITS.flushMs + 10)
   await sleep(20)
-  const index = store.get('index') as string[]
+  const index = store.get('v2:index') as string[]
   expect(index.length).toBe(LIMITS.keepSessions)
   expect(index[0]).toBe(SESSION)
-  expect(store.has('s:old' + (LIMITS.keepSessions + 4))).toBe(false)
+  expect(store.has('v2:s:old' + (LIMITS.keepSessions + 4))).toBe(false)
 })
 
 test('/track right after the first row waits for the probes, so the sections never say "checking"', async ($, on) => {
@@ -1010,42 +1014,43 @@ const mountPane = ($: Engine) => $.ui.mount({ ...PANE, surface: 'terminal' } as 
 test('/clear while a flush is still pending: the items are saved under the old id and carried over', async ($, on) => {
   const { clock, store, calls } = world(on, { isolateState: true })
   await $.session.append(response('https://one.example/')) // the flush is due in flushMs
-  current.id = 'sess-2' // /clear: a new id and an empty state, before the flush ran
+  await clearSession($, { calls }, 'sess-2', 'clear') // /clear: a new id and an empty state, before the flush ran
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
   await sleep(20)
-  expect((store.get('s:' + SESSION) as { items: unknown[] } | undefined)?.items.length).toBe(1)
-  expect((store.get('s:sess-2') as { items: unknown[] } | undefined)?.items.length).toBe(1) // the same flush copies the carried list
+  expect((store.get('v2:s:' + SESSION) as { items: unknown[] } | undefined)?.items.length).toBe(1)
+  expect((store.get('v2:s:sess-2') as { items: unknown[] } | undefined)?.items.length).toBe(1) // the same flush copies the carried list
   expect((await track($)).text).toContain('one.example')
 })
 
 test('the tick notices /clear and brings the items back while the pane is open', async ($, on) => {
-  const { clock, calls } = world(on, { isolateState: true })
+  const { clock, calls, states } = world(on, { isolateState: true })
   await $.session.append(response('https://one.example/'))
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
   await track($) // opens the pane and starts the tick
-  current.id = 'sess-2' // /clear: the command row has no args, so no capture runs
+  await clearSession($, { calls }, 'sess-2', 'clear', { row: false }) // /clear: the command row has no args, so no capture runs
   await clock.advance(LIMITS.tickMs + 10)
-  await quiet(calls)
+  const carried = () => (states.get('sess-2|artifact-tracking|items|')?.value as unknown[] | undefined)?.length === 1
+  await until(carried, 'the tick to carry the items into sess-2') // the beat runs on its own, not inside advance()
   const ui = await mountPane($)
   expect(await ui.find({ text: 'one.example' })).toBeDefined()
   await ui.unmount()
 })
 
 test('/resume of a known session restores that session, not the one just left', async ($, on) => {
-  const { store } = world(on, {
+  const { store, calls } = world(on, {
     isolateState: true,
-    seed: { index: ['sess-b'], 's:sess-b': { items: [webRec('https://beta.example/', 'beta.example')] } },
+    seed: { 'v2:index': ['sess-b'], 'v2:s:sess-b': { items: [webRec('https://beta.example/', 'beta.example')] } },
     messages: [{ role: 'assistant', text: 'see https://transcript.example/t', toolUses: [] }],
   })
   await $.session.append(response('https://alpha.example/'))
-  current.id = 'sess-b' // /resume
+  await clearSession($, { calls }, 'sess-b', 'resume') // /resume
   const text = (await track($)).text ?? ''
   expect(text).toContain('beta.example')
   expect(text).toContain('transcript.example') // the backfill runs, as at startup
   expect(text).not.toContain('alpha.example')
-  expect((store.get('s:' + SESSION) as { items: unknown[] }).items.length).toBe(1) // the left session is kept as it was
+  expect((store.get('v2:s:' + SESSION) as { items: unknown[] }).items.length).toBe(1) // the left session is kept as it was
 })
 
 test('after /clear the tool statuses are published again', async ($, on) => {
@@ -1053,7 +1058,7 @@ test('after /clear the tool statuses are published again', async ($, on) => {
   await $.session.append(response('https://github.com/cli/cli/pull/14640'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)
-  current.id = 'sess-2'
+  await clearSession($, { calls }, 'sess-2', 'clear')
   await $.session.append(prompt('hello'))
   const tools = states.get('sess-2|artifact-tracking|tools|')?.value as
     | { gh: { available: boolean | null } }
@@ -1073,7 +1078,7 @@ test('an ssh host alias is not kept as the session repo: gh resolves it and #N m
   await quiet(calls)
   await clock.advance(LIMITS.flushMs + 10)
   await sleep(20)
-  expect((store.get('s:' + SESSION) as { items: unknown[] }).items.length).toBe(1)
+  expect((store.get('v2:s:' + SESSION) as { items: unknown[] }).items.length).toBe(1)
   expect((await track($)).text).toContain('Web five')
 })
 
@@ -1081,7 +1086,7 @@ test('session.start does not wait for the check of a non-github host', async ($,
   world(on, {
     remote: 'git@ghe.corp:acme/web.git',
     authMs: 400,
-    seed: { index: [SESSION], ['s:' + SESSION]: { items: [KEPT] } },
+    seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items: [KEPT] } },
   })
   const t0 = Date.now()
   await $.session.start(START)
@@ -1098,13 +1103,13 @@ test('session.start: keyworded #N from the transcript is resolved once the repo 
 })
 
 test('session.start restores even when command.register is refused', async ($, on) => {
-  world(on, { denyRegister: true, seed: { index: [SESSION], ['s:' + SESSION]: { items: [KEPT] } } })
+  world(on, { denyRegister: true, seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items: [KEPT] } } })
   await $.session.start(START)
   expect((await track($)).text).toContain('Kept page')
 })
 
 test('session.start restores a stored copy although the index lost its id', async ($, on) => {
-  world(on, { seed: { index: ['other'], ['s:' + SESSION]: { items: [KEPT] } } })
+  world(on, { seed: { 'v2:index': ['other'], ['v2:s:' + SESSION]: { items: [KEPT] } } })
   await $.session.start(START)
   expect((await track($)).text).toContain('Kept page')
 })
@@ -1141,7 +1146,7 @@ test('a refused flush timer does not stop the store mirror for good', async ($, 
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
   await sleep(20)
-  expect((store.get('s:' + SESSION) as { items: unknown[] } | undefined)?.items.length).toBe(2)
+  expect((store.get('v2:s:' + SESSION) as { items: unknown[] } | undefined)?.items.length).toBe(2)
 })
 
 test('/track refresh during a run in flight waits for it and prints the refreshed list', async ($, on) => {
@@ -1246,7 +1251,7 @@ const pick = async ($: Engine, ui: MarkUi, id: string) => focusOn($, await markK
 /** The line of the `/track` text that holds `s`. */
 const lineOf = (text: string, s: string) => text.split('\n').findIndex(l => l.includes(s))
 const storedItem = (store: Map<string, unknown>, key: string) =>
-  (store.get('s:' + SESSION) as { items: ItemRecord[] } | undefined)?.items.find(i => i.key === key)
+  (store.get('v2:s:' + SESSION) as { items: ItemRecord[] } | undefined)?.items.find(i => i.key === key)
 
 /**
  * one.example, then two.example, captured, listed and flushed. `/track` kicks a run that arms a flush too, so wait
@@ -1432,24 +1437,24 @@ test('/track prio: an untracked ref says so; a bad level or a missing part print
 // ---------------------------------------------------------------- priority across /clear, restart and re-track
 
 test('/clear carries a mark into the new session, and the new copy holds it', async ($, on) => {
-  const { ui, clock, store } = await twoLinks($, on, { isolateState: true })
+  const { ui, clock, store, calls } = await twoLinks($, on, { isolateState: true })
   await pick($, ui, TWO)
   await ui.press({ key: 'prio-1' })
   await ui.unmount()
   await clock.advance(LIMITS.flushMs + 10)
   await sleep(20)
-  current.id = 'sess-2' // /clear: a new id and an empty state
+  await clearSession($, { calls }, 'sess-2', 'clear') // /clear: a new id and an empty state
   const text = (await track($)).text ?? ''
   expect(text).toContain('▲ two.example')
   expect(lineOf(text, 'two.example')).toBeLessThan(lineOf(text, 'one.example'))
   await clock.advance(LIMITS.flushMs + 10)
   await sleep(20)
-  const copy = store.get('s:sess-2') as { items: ItemRecord[] }
+  const copy = store.get('v2:s:sess-2') as { items: ItemRecord[] }
   expect(copy.items.find(i => i.key === TWO)?.priority).toBe('high')
 })
 
 test('/clear right after a reset keeps no mark: the live list wins over the older stored copy', async ($, on) => {
-  const { ui, clock, store } = await twoLinks($, on, { isolateState: true })
+  const { ui, clock, store, calls } = await twoLinks($, on, { isolateState: true })
   await pick($, ui, TWO)
   await ui.press({ key: 'prio-1' })
   await clock.advance(LIMITS.flushMs + 10)
@@ -1458,7 +1463,7 @@ test('/clear right after a reset keeps no mark: the live list wins over the olde
   await pick($, ui, TWO)
   await ui.press({ key: 'prio-0' }) // the flush of this change has not run yet
   await ui.unmount()
-  current.id = 'sess-2'
+  await clearSession($, { calls }, 'sess-2', 'clear')
   expect((await track($)).text).not.toContain('▲')
 })
 
@@ -1473,7 +1478,7 @@ test('x then /clear: the dismissed item stays gone, also before its flush ran', 
   const ui = (await mountPane($)) as MarkUi
   await ui.press({ key: `dismiss-${TWO}` })
   await ui.unmount()
-  current.id = 'sess-2'
+  await clearSession($, w, 'sess-2', 'clear')
   const text = (await track($)).text ?? ''
   expect(text).toContain('one.example')
   expect(text).not.toContain('two.example')
@@ -1491,7 +1496,7 @@ test('the x button saves the shorter list soon, with no other change', async ($,
 
 test('session.start restores the marks of a stored copy and sorts by them', async ($, on) => {
   const seed = { items: [webRec('https://other.example/', 'other'), { ...KEPT, priority: 'high' }] }
-  world(on, { seed: { index: [SESSION], ['s:' + SESSION]: seed } })
+  world(on, { seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: seed } })
   await $.session.start(START)
   const text = (await track($)).text ?? ''
   expect(text).toContain('▲ Kept page')
@@ -1617,7 +1622,7 @@ test('after /clear the tick brings items back with short #N keys for the session
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
   await track($) // opens the pane and starts the tick
-  current.id = 'sess-2' // /clear: new id, empty state, session repo forgotten
+  await clearSession($, { calls }, 'sess-2', 'clear', { row: false }) // /clear: new id, empty state, session repo forgotten
   await clock.advance(LIMITS.tickMs + 10)
   await quiet(calls)
   const ui = await mountPane($)
@@ -1640,7 +1645,7 @@ test('repos: a repo found by a Bash cd is stored after the flush delay, without 
   await quiet(calls)
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
-  const saved = store.get('s:' + SESSION) as { repos?: { key: string }[] } | undefined
+  const saved = store.get('v2:s:' + SESSION) as { repos?: { key: string }[] } | undefined
   expect(saved?.repos?.map(r => r.key)).toEqual(['remote:github.com/acme/sdk'])
 })
 
@@ -1658,7 +1663,7 @@ test('repos: a Bash cd inside the session root adds no Repos row', async ($, on)
   await quiet(calls)
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
-  const saved = store.get('s:' + SESSION) as { repos?: { key: string }[] } | undefined
+  const saved = store.get('v2:s:' + SESSION) as { repos?: { key: string }[] } | undefined
   expect(saved?.repos ?? []).toEqual([])
 })
 
@@ -1691,7 +1696,7 @@ function sdkGit(
 
 test('repos: a restored stored row keeps its firstSeen and every agent', async ($, on) => {
   const { clock, store, calls } = world(on, {
-    seed: { index: [SESSION], ['s:' + SESSION]: { items: [], repos: [STORED_SDK] } },
+    seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items: [], repos: [STORED_SDK] } },
   })
   await $.session.start(START)
   const text = (await track($)).text ?? ''
@@ -1700,21 +1705,21 @@ test('repos: a restored stored row keeps its firstSeen and every agent', async (
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
   await sleep(20)
-  const saved = store.get('s:' + SESSION) as SavedRepos
+  const saved = store.get('v2:s:' + SESSION) as SavedRepos
   expect(saved.repos?.[0]).toMatchObject({ key: SDK_KEY, firstSeen: 10, touchedBy: ['main', 'planner'] })
 })
 
 test('repos: /resume does not let the older stored branch overwrite a live row', async ($, on) => {
   // No isolateState: the kit keeps the live rows across the id change, so the restore merges into them.
   const { calls, fake } = world(on, {
-    seed: { index: ['sess-b'], 's:sess-b': { items: [], repos: [STORED_SDK] } },
+    seed: { 'v2:index': ['sess-b'], 'v2:s:sess-b': { items: [], repos: [STORED_SDK] } },
   })
   await $.session.start(START)
   sdkGit(fake, 'new')
   fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
   await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_r1' } as never)
   await quiet(calls)
-  current.id = 'sess-b' // /resume: the store knows sess-b, so its copy is restored over the live rows
+  await clearSession($, { calls }, 'sess-b', 'resume') // /resume: the store knows sess-b, so its copy is restored over the live rows
   const text = (await track($)).text ?? ''
   expect(text).toContain('new')
   expect(text).not.toContain('old')
@@ -1728,13 +1733,13 @@ test('repos: /clear carries the repo rows over to the new session', async ($, on
   fake.tools.Bash = { stdout: '', stderr: '', interrupted: false }
   await $.tool.call({ tool: 'Bash', command: 'cd /x/sdk && ls', tool_use_id: 'toolu_cd_c1' } as never)
   await quiet(calls)
-  current.id = 'sess-2' // /clear: new id, empty state
+  await clearSession($, { calls }, 'sess-2', 'clear') // /clear: new id, empty state
   await track($)
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
   await sleep(20)
   expect((await track($)).text ?? '').toContain('acme/sdk')
-  const saved = store.get('s:sess-2') as SavedRepos | undefined
+  const saved = store.get('v2:s:sess-2') as SavedRepos | undefined
   expect(saved?.repos?.map(r => r.key)).toEqual([SDK_KEY])
 })
 
@@ -1747,14 +1752,14 @@ test('repos: /track clear empties the rows, deletes the stored copy and a later 
   await quiet(calls)
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
-  expect(store.has('s:' + SESSION)).toBe(true)
+  expect(store.has('v2:s:' + SESSION)).toBe(true)
   await track($, 'clear')
-  expect(store.has('s:' + SESSION)).toBe(false)
+  expect(store.has('v2:s:' + SESSION)).toBe(false)
   expect((await track($)).text).toBe('No tracked items yet.')
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
   await sleep(20)
-  expect(store.has('s:' + SESSION)).toBe(false)
+  expect(store.has('v2:s:' + SESSION)).toBe(false)
 })
 
 test('repos: a second visit of the same repo a moment later makes no new repos write', async ($, on) => {
@@ -1825,7 +1830,7 @@ async function drain(w: ReturnType<typeof world>): Promise<void> {
 }
 
 const savedKeys = (w: ReturnType<typeof world>): string[] =>
-  ((w.store.get('s:' + SESSION) as SavedRepos | undefined)?.repos ?? []).map(r => r.key)
+  ((w.store.get('v2:s:' + SESSION) as SavedRepos | undefined)?.repos ?? []).map(r => r.key)
 
 test('repos: a file tool returns before the repo lookup ends', async ($, on) => {
   const w = world(on)
@@ -1861,12 +1866,12 @@ for (const [tool, field] of [
     await $.tool.call({ tool, [field]: '/x/sdk/src/a.ts', tool_use_id: 't1' } as never)
     await drain(w)
     expect(savedKeys(w)).toEqual([SDK_KEY])
-    expect((w.store.get('s:' + SESSION) as SavedRepos).repos?.[0]?.touchedBy).toEqual(['main'])
+    expect((w.store.get('v2:s:' + SESSION) as SavedRepos).repos?.[0]?.touchedBy).toEqual(['main'])
   })
 }
 
 const savedMode = (w: ReturnType<typeof world>): string | undefined =>
-  (w.store.get('s:' + SESSION) as { repos?: { mode?: string }[] } | undefined)?.repos?.[0]?.mode
+  (w.store.get('v2:s:' + SESSION) as { repos?: { mode?: string }[] } | undefined)?.repos?.[0]?.mode
 
 test('repos: a Read then an Edit in one repo store mode edit', async ($, on) => {
   const w = world(on)
@@ -1913,7 +1918,7 @@ test('repos: a Bash git -C checkout re-reads the branch at once, a git status ke
   await $.session.start(START)
   const seen = gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
   w.fake.tools.Bash = RAN
-  const branchOf = () => (w.store.get('s:' + SESSION) as SavedRepos | undefined)?.repos?.[0]?.branch
+  const branchOf = () => (w.store.get('v2:s:' + SESSION) as SavedRepos | undefined)?.repos?.[0]?.branch
   await $.tool.call({ tool: 'Bash', command: 'git -C /x/sdk status', tool_use_id: 't1' } as never)
   await drain(w)
   expect(branchOf()).toBe('main')
@@ -2057,7 +2062,7 @@ test('repos: a workflow agent.spawn cwd in another repo adds a row labelled with
   gitAt(w.fake, { '/x/sdk': SDK_REMOTE })
   await $.agent.spawn({ ...ev.WORKFLOW_SPAWN_INPUT, cwd: '/x/sdk' } as never)
   await drain(w)
-  const rows = (w.store.get('s:' + SESSION) as SavedRepos).repos ?? []
+  const rows = (w.store.get('v2:s:' + SESSION) as SavedRepos).repos ?? []
   expect(rows.map(r => [r.key, r.touchedBy])).toEqual([[SDK_KEY, ['architect']]])
 })
 
@@ -2074,7 +2079,7 @@ test('repos: a spawn with no name, description or type is labelled agent:<first 
     cwd: '/x/sdk',
   } as never)
   await drain(w)
-  const rows = (w.store.get('s:' + SESSION) as SavedRepos).repos ?? []
+  const rows = (w.store.get('v2:s:' + SESSION) as SavedRepos).repos ?? []
   expect(rows.map(r => r.touchedBy)).toEqual([['agent:abcdefgh']])
 })
 
@@ -2088,7 +2093,7 @@ test('repos: the main loop and a spawned agent share one row', async ($, on) => 
   await drain(w)
   await $.agent.spawn({ ...ev.WORKFLOW_SPAWN_INPUT, cwd: '/x/sdk' } as never)
   await drain(w)
-  const rows = (w.store.get('s:' + SESSION) as SavedRepos).repos ?? []
+  const rows = (w.store.get('v2:s:' + SESSION) as SavedRepos).repos ?? []
   expect(rows.map(r => [r.key, r.touchedBy])).toEqual([[SDK_KEY, ['main', 'architect']]])
 })
 
@@ -2107,7 +2112,7 @@ test('repos: a nested child with no cwd gets the cwd of its parent and adds a ro
     cwd: undefined,
   } as never)
   await drain(w)
-  const rows = (w.store.get('s:' + SESSION) as SavedRepos).repos ?? []
+  const rows = (w.store.get('v2:s:' + SESSION) as SavedRepos).repos ?? []
   expect(rows.map(r => [r.key, r.touchedBy])).toEqual([[SDK_KEY, ['architect', 'child']]])
 })
 
@@ -2138,7 +2143,7 @@ test('repos: a lookup that ends after /track clear leaves no row', async ($, on)
   release()
   await drain(w)
   expect(savedKeys(w)).toEqual([])
-  expect(w.store.has('s:' + SESSION)).toBe(false)
+  expect(w.store.has('v2:s:' + SESSION)).toBe(false)
   expect((await track($)).text).toBe('No tracked items yet.')
 })
 
@@ -2167,13 +2172,13 @@ test('repos: restoring more than maxRepos stored rows keeps maxRepos', async ($,
     lastSeen: 100 + i,
   }))
   const { clock, store, calls } = world(on, {
-    seed: { index: [SESSION], ['s:' + SESSION]: { items: [], repos: rows } },
+    seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items: [], repos: rows } },
   })
   await $.session.start(START)
   await clock.advance(LIMITS.flushMs + 10)
   await quiet(calls)
   await sleep(20)
-  const saved = store.get('s:' + SESSION) as SavedRepos
+  const saved = store.get('v2:s:' + SESSION) as SavedRepos
   expect(saved.repos).toHaveLength(LIMITS.maxRepos)
   expect(saved.repos?.map(r => r.key)).not.toContain('local:/r0')
 })
@@ -2232,11 +2237,11 @@ test('repos dismiss: a later visit of the dismissed repo adds no row, a flush st
 })
 
 test('repos dismiss: a restore of a stored copy that holds the dismissed repo keeps it hidden', async ($, on) => {
-  const w = world(on, { seed: { index: ['sess-b'], 's:sess-b': { items: [], repos: [STORED_SDK] } } })
+  const w = world(on, { seed: { 'v2:index': ['sess-b'], 'v2:s:sess-b': { items: [], repos: [STORED_SDK] } } })
   await $.session.start(START)
   await visitSdk($, w, 'toolu_dm_4')
   await dismissSdk($)
-  current.id = 'sess-b' // /resume: the stored copy still holds the repo
+  await clearSession($, w, 'sess-b', 'resume') // /resume: the stored copy still holds the repo
   expect((await track($)).text ?? '').not.toContain('acme/sdk')
 })
 
@@ -2245,7 +2250,7 @@ test('repos dismiss: /clear carry-over keeps the dismissed repo hidden', async (
   await $.session.start(START)
   await visitSdk($, w, 'toolu_dm_5')
   await dismissSdk($)
-  current.id = 'sess-2' // /clear
+  await clearSession($, w, 'sess-2', 'clear') // /clear
   expect((await track($)).text ?? '').not.toContain('acme/sdk')
 })
 

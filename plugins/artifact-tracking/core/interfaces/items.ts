@@ -1,28 +1,22 @@
 // Item contracts: the stored record, the item kind and the store port. Types only.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.9 and 5.13.
 //
-// `Json`, `JsonObject`, `Level` and `StoredItem` are declared here for now. Spec 5.13 gives them to the
-// PluginState contract (`types/index.d.ts`); layer L3 moves them there and this file re-exports them.
+// `Json` and `JsonObject` live in the PluginState contract (`types/index.d.ts`, spec 5.13) and are re-exported here.
+// `Level` and `StoredItem` are declared here for now. Plan decision D14: layer L5 moves `StoredItem` to the contract.
 //
 // Two names clash with older code, and tsc accepts a wrong import without a word:
 // - `Json` here is a real JSON union. `core/lib/json.ts` exports another `Json` (`Record<string, unknown>`).
-//   Contract code imports it from this folder, never from `core/lib/json`. When L3 moves these types, rename the lib one.
-// - `Level` is also declared in `hooks/model/priority.ts`. The two have the same members. When L3 moves the types, drop that copy.
+//   Contract code imports it from this folder, never from `core/lib/json`. Rename the lib one when it is next touched.
+// - `Level` is also declared in `hooks/model/priority.ts`. The two have the same members. Drop that copy in L5.
 
+import type { Json, JsonObject } from '../../types'
 import type { ConfigView } from './config'
-import type { FactsPort, ToolPort } from './tracker'
+import type { ReplayItem, RowEvent, SessionChangedEvent } from './events'
+import type { DataSlot } from './slots'
+import type { FactsPort, ToolPort, TrackerContext } from './tracker'
 import type { TreeRow, ViewContext } from './view'
 
-/** A JSON value. Arrays and objects are read-only, so a frozen config or a stored record fits. */
-export type Json = null | boolean | number | string | readonly Json[] | JsonObject
-
-/**
- * A JSON object. A tracker config type must be a `type` alias, not an `interface`:
- * only an alias has the implicit index signature that `C extends JsonObject` needs.
- */
-export interface JsonObject {
-  readonly [key: string]: Json | undefined
-}
+export type { Json, JsonObject } from '../../types'
 
 /** A priority level, highest first. `top` comes from a kind rule only. A person sets `high`, `normal` or `low`. */
 export type Level = 'top' | 'high' | 'normal' | 'low'
@@ -102,12 +96,45 @@ export interface ItemKind<T extends StoredItem = StoredItem> {
   row(item: T, ctx: ViewContext): TreeRow
 }
 
-/** The part of the ItemStore a tracker sees. The store owns the list, the eviction, dismissal and priority. */
-export interface ItemStorePort {
-  /** All items, or those of one category. */
-  list(category?: string): readonly StoredItem[]
-  get(key: string): StoredItem | undefined
-  /** Merges claims through the owning kinds. A dismissed or disabled kind's claim is dropped. */
-  merge(claims: readonly Claim[]): Promise<void>
-  remove(key: string): Promise<void>
+/**
+ * The part of the ItemStore a tracker sees. The store owns the list, the eviction, dismissal and priority.
+ * Every call is async: the list lives in the plugin state.
+ */
+export interface ItemStorePort<T extends StoredItem = StoredItem> {
+  list(): Promise<readonly T[]>
+  /**
+   * Runs the session check, reads the list, calls `change` at least once and writes the result.
+   * `change` gets the run's dismissed set. When it returns its input, nothing is written.
+   * `since` is a generation from `TrackerContext.current()`: an older one drops the write.
+   * Resolves to whether it wrote.
+   */
+  update(change: (list: T[], dismissed: ReadonlySet<string>) => T[], opts?: { since?: number }): Promise<boolean>
+  /** Offers claims to the kinds and merges the result. In L3 a `Claim` is today's `Ref` (`hooks/contracts`). */
+  track(refs: readonly Claim[], source: string): Promise<void>
+  /** Marks the keys due, or all items when none are named, and kicks the refresh. Fire and forget. */
+  refresh(keys?: readonly string[]): void
+}
+
+/** What an item host gets at start: a tracker context without `items` and `data`, plus a persist signal. */
+export type HostContext = Omit<TrackerContext<JsonObject, never>, 'items' | 'data'> & {
+  /** The host changed its list. Persistence writes the session copy soon. */
+  persisted(): void
+}
+
+/**
+ * The part of core that owns the item list and the five item trackers' shared work (capture, refresh, replay).
+ * L3 builds it as the transitional `ItemRuntime`. L5 splits it into ItemStore, Capture, ItemKind and ToolSpec.
+ */
+export interface ItemsHost extends ItemStorePort {
+  /** The `items` slot: Persistence stores it, a switch carries it. */
+  readonly slot: DataSlot
+  start(ctx: HostContext): Promise<void>
+  /** Reads one row for items: the capture funnel. */
+  capture(ev: RowEvent): Promise<void>
+  /** Merges a transcript read back: rows and tool calls, in order. */
+  replay(batch: readonly ReplayItem[]): Promise<void>
+  tick(): Promise<void>
+  /** The session id moved. The manager calls it first in a switch, before any slot carries or loads and before replay. */
+  sessionChanged(ev: SessionChangedEvent): Promise<void>
+  dispose(): void
 }

@@ -10,10 +10,10 @@ export interface Timer {
   cancel(): void
 }
 
-/** The only env names the mod reads. Each is a literal `$.env.get` call in register.tsx. */
+/** The only env names the mod reads. Each is a literal engine call in register.tsx. */
 export type EnvName = 'HOME' | 'XDG_CONFIG_HOME' | 'CLAUDE_TRACKER_CONFIG_DIR' | 'CLAUDE_CONFIG_DIR'
 
-/** Options of one `$.process.run`. */
+/** Options of one run of the engine's process runner. */
 export interface RunOpts {
   /** Absolute, or relative to the session cwd. Absent: the session cwd. */
   readonly cwd?: string
@@ -25,7 +25,7 @@ export interface RunOpts {
   readonly timeoutMs?: number
 }
 
-/** What `$.process.run` gives once the child exits. A non-zero exit resolves. */
+/** What the engine's process runner gives once the child exits. A non-zero exit resolves. */
 export interface RunResult {
   readonly exitCode: number
   readonly stdout: string
@@ -34,7 +34,7 @@ export interface RunResult {
   readonly isStderrTruncated?: boolean
 }
 
-/** What `$.fs.stat` gives. */
+/** What the engine's file stat gives. */
 export interface FsStat {
   /** Of what the path leads to. A link is followed. */
   readonly kind: 'file' | 'dir' | 'other'
@@ -48,7 +48,7 @@ export interface FsStat {
   readonly realPath?: string
 }
 
-/** One transcript message as `$.session.messages()` gives it. */
+/** One transcript message as the engine's session gives it. */
 export interface SessionRow {
   readonly role: 'user' | 'assistant'
   readonly text: string
@@ -66,7 +66,7 @@ export interface SessionRow {
   }[]
 }
 
-/** One agent loop of this session as `$.agent.list()` gives it. */
+/** One agent loop of this session as the engine's agent list gives it. */
 export interface AgentInfo {
   readonly id: string
   /** The `<name>@<team>` address of a teammate. */
@@ -77,7 +77,7 @@ export interface AgentInfo {
   readonly status: string
 }
 
-/** One open pane as `$.ui.panes()` lists it. */
+/** One open pane as the engine's pane list gives it. */
 export interface PaneInfo {
   readonly id: string
   readonly title: string
@@ -97,20 +97,37 @@ export interface RepoRemote {
 }
 
 /**
- * One closure pair per atom of the state contract (spec 5.13). A family takes the id as a parameter.
- * The ref stays literal inside each closure. A read of an atom never written gives its empty value.
+ * One atom of the state contract (spec 5.13). `update` reads, applies `fn` and writes, with a version check
+ * and a retry. A read of an atom never written gives its empty value.
  */
+export interface AtomPort<T> {
+  get(): Promise<T>
+  update(fn: (cur: T) => T): Promise<T>
+}
+
+/**
+ * The `trackers` StateFamily: one member per slot id. The id is a parameter, the ref stays literal inside the closure.
+ * A member never written reads `undefined`.
+ */
+export interface SlotPort {
+  get(id: string): Promise<Json | undefined>
+  update(id: string, fn: (cur: Json | undefined) => Json): Promise<Json>
+}
+
+/** The state contract in L3: `items`, `tools`, `ui` and the `trackers` family (plan decision D14). */
 export interface StatePorts {
-  readonly items: { get(): Promise<readonly StoredItem[]>; set(next: readonly StoredItem[]): Promise<void> }
-  readonly trackers: { get(id: string): Promise<Json | undefined>; set(id: string, next: Json): Promise<void> }
-  readonly tools: {
-    get(): Promise<Readonly<Record<string, ToolStatus>>>
-    set(next: Readonly<Record<string, ToolStatus>>): Promise<void>
-  }
-  readonly expanded: { get(): Promise<readonly string[]>; set(next: readonly string[]): Promise<void> }
-  readonly selected: { get(): Promise<string | null>; set(next: string | null): Promise<void> }
-  readonly shown: { get(id: string): Promise<number | undefined>; set(id: string, next: number): Promise<void> }
-  readonly help: { get(): Promise<boolean>; set(next: boolean): Promise<void> }
+  readonly items: AtomPort<StoredItem[]>
+  readonly tools: AtomPort<Record<string, ToolStatus>>
+  readonly ui: AtomPort<{ folded: string[] }>
+  readonly slot: SlotPort
+}
+
+/** The plugin store: the plugin's key-value store. Persistence is its only writer. */
+export interface StorePort {
+  get(key: string): Promise<Json | undefined>
+  set(key: string, value: Json): Promise<void>
+  delete(key: string): Promise<void>
+  keys(): Promise<string[]>
 }
 
 export interface Ports {
@@ -119,27 +136,25 @@ export interface Ports {
     now(): Promise<number>
     /** `Date.now`, for record stamps. */
     wall(): number
-    after(ms: number, fn: () => void): Promise<Timer>
-    every(ms: number, fn: () => void): Promise<Timer>
+    /** The engine call returns the handle at once. A refused timer never fires. */
+    after(ms: number, fn: () => void): Timer
+    /** A refused period ends the interval (E18). */
+    every(ms: number, fn: () => void): Timer
   }
-  /** `$.process.run`. */
+  /** The engine's process runner. */
   readonly run: (argv: readonly string[], opts: RunOpts) => Promise<RunResult>
   readonly fs: {
     read(path: string): Promise<string>
     write(path: string, text: string): Promise<void>
     exists(path: string): Promise<boolean>
-    stat(path: string): Promise<FsStat | null>
+    /** null on any refusal. `resolve` asks for `realPath`. */
+    stat(path: string, opts?: { resolve?: boolean }): Promise<FsStat | null>
   }
   /** Literal names only. */
   readonly env: { get(name: EnvName): Promise<string | undefined> }
   /** For the file tracker. */
   readonly settings: { read(): Promise<Json> }
-  readonly store: {
-    get(key: string): Promise<Json | undefined>
-    set(key: string, value: Json): Promise<void>
-    delete(key: string): Promise<void>
-    keys(): Promise<readonly string[]>
-  }
+  readonly store: StorePort
   readonly session: {
     id(): Promise<string>
     cwd(): Promise<string>
@@ -154,7 +169,7 @@ export interface Ports {
     focus(key: string): Promise<void>
     panes(): Promise<readonly PaneInfo[]>
     /** Call from event handlers and the tick only, never from a render. */
-    invalidate(): Promise<void>
+    invalidate(): void
     toast(text: string): void
   }
   readonly log: (line: string) => void

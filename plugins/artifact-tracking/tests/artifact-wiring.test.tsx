@@ -21,7 +21,7 @@ import {
   REFUSED,
   REPUBLISH,
 } from './fixtures/artifacts'
-import { current, PANE, prompt, quiet, response, SESSION, START, toolResult, track, world } from './fixtures/world'
+import { clearSession, PANE, prompt, quiet, response, SESSION, START, toolResult, track, world } from './fixtures/world'
 
 type World = ReturnType<typeof world>
 type Shape = { input: Record<string, unknown>; result: unknown }
@@ -53,7 +53,7 @@ const stored = (over: Partial<ArtifactRecord> = {}): ArtifactRecord => ({
   seenCount: 1,
   ...over,
 })
-const seed = (items: ItemRecord[]) => ({ index: [SESSION], ['s:' + SESSION]: { items } })
+const seed = (items: ItemRecord[]) => ({ 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items } })
 /** A transcript tool use of the Artifact tool. */
 const use = (shape: Shape, isError = false) => ({
   tool_use_id: `toolu_t_${++n}`,
@@ -210,10 +210,10 @@ test('/track clear removes the artifact and its stored copy', async ($, on) => {
   await call($, w, PUBLISH)
   await w.clock.advance(LIMITS.flushMs + 10)
   await quiet(w.calls)
-  expect(w.store.has('s:' + SESSION)).toBe(true)
+  expect(w.store.has('v2:s:' + SESSION)).toBe(true)
   expect((await track($, 'clear')).text).toBe('Tracking list cleared.')
   expect(await text($)).toBe('No tracked items yet.')
-  expect(w.store.has('s:' + SESSION)).toBe(false)
+  expect(w.store.has('v2:s:' + SESSION)).toBe(false)
 })
 
 test('the stored copy holds the artifact with source publish, its title and the delete mark', async ($, on) => {
@@ -222,7 +222,7 @@ test('the stored copy holds the artifact with source publish, its title and the 
   await call($, w, DELETE)
   await w.clock.advance(LIMITS.flushMs + 10)
   await quiet(w.calls)
-  const copy = w.store.get('s:' + SESSION) as { items: ItemRecord[] }
+  const copy = w.store.get('v2:s:' + SESSION) as { items: ItemRecord[] }
   expect(copy.items).toEqual([
     { ...stored(), firstSeen: expect.anything(), lastSeen: expect.anything(), deleted: true },
   ])
@@ -261,7 +261,7 @@ test('session.start: a stored copy that already knows the publish is not counted
   expect(await text($)).toBe(`Artifacts  1 artifacts\n  ${ROW}`)
   await w.clock.advance(LIMITS.flushMs + 10)
   await quiet(w.calls)
-  const copy = w.store.get('s:' + SESSION) as { items: ItemRecord[] } | undefined
+  const copy = w.store.get('v2:s:' + SESSION) as { items: ItemRecord[] } | undefined
   expect(copy?.items[0]?.seenCount ?? 1).toBe(1)
 })
 
@@ -269,7 +269,7 @@ test('/clear carry-over keeps an artifact with its origin and title', async ($, 
   const w = world(on, { isolateState: true })
   await call($, w, PUBLISH)
   await $.session.append(response(`See ${PAGE_CODE_URL}`))
-  current.id = 'sess-2' // what /clear does
+  await clearSession($, w, 'sess-2', 'clear') // what /clear does
   await settle(w)
   expect(await text($)).toBe(`Artifacts  1 artifacts\n  ${ROW}`)
 })
@@ -299,7 +299,7 @@ test('session.start moves a stored web row of an artifact URL to Artifacts, one 
 test('/clear carry-over moves an old web row of an artifact URL to Artifacts', async ($, on) => {
   const w = world(on, { seed: seed([oldWeb(PAGE_URL, 'Design notes')]) })
   await $.session.append(prompt('first https://example.org/a')) // learns the id; no session.start, so nothing is restored
-  current.id = 'sess-2'
+  await clearSession($, w, 'sess-2', 'clear')
   await $.session.append(response(`and ${PAGE_URL}`))
   await settle(w)
   const out = await text($)

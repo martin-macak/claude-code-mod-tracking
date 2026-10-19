@@ -1,6 +1,20 @@
 // State contract and record types for the artifact-tracking mod.
 // `claude plugin validate` reads the literal shape of PluginState, so record types live here.
 // Spec: docs/superpowers/specs/2026-10-10-artifact-tracking-design.md
+// State layout: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.13.
+
+// ---------------------------------------------------------------- JSON
+
+/** A JSON value. Arrays and objects are read-only, so a frozen config or a stored record fits. */
+export type Json = null | boolean | number | string | readonly Json[] | JsonObject
+
+/**
+ * A JSON object. A tracker config type must be a `type` alias, not an `interface`:
+ * only an alias has the implicit index signature that `C extends JsonObject` needs.
+ */
+export interface JsonObject {
+  readonly [key: string]: Json | undefined
+}
 
 // ---------------------------------------------------------------- link scanner (copied from link-capture)
 
@@ -215,7 +229,6 @@ export type ToolStatus = {
 export type UiState = {
   /** Keys of folded tree rows (item keys or Jira node ids). */
   folded: string[]
-  paneOpen: boolean
 }
 
 // ---------------------------------------------------------------- auto tracking (spec 6.2)
@@ -256,10 +269,10 @@ export type AgentProof = {
   worktreePath?: string
   /** From the agent's own Bash `gitOperation.commit.branch` or `push.branch`, or the Agent result. */
   branch?: string
-  /** Last `$.agent.list()` status (AgentStatus). Absent for workflow agents. */
+  /** Last status of the engine's agent list (AgentStatus). Absent for workflow agents. */
   status?: string
   teammate?: boolean
-  /** True once `$.agent.list()` listed it. */
+  /** True once the engine's agent list listed it. */
   listed?: boolean
   spawnedAt: number
   /** Last sign of life (A7): a hooked tool call or a turn.complete. Absent: `spawnedAt`. */
@@ -303,7 +316,7 @@ export type AgentRow = {
 
 export type PrSkip = 'no-repo' | 'no-gh' | 'not-logged-in' | 'paused' | 'host-not-authed' | 'no-branches'
 
-/** What the last round computed. Derived: never written to $.store. Written only when it changed (A22). */
+/** What the last round computed. Derived: never written to the plugin store. Written only when it changed (A22). */
 export type AutoSnapshot = {
   /** The round that last changed it. */
   at: number
@@ -336,12 +349,11 @@ declare module 'claude-code' {
   interface PluginState {
     'artifact-tracking': {
       items: ItemRecord[]
-      repos: RepoRecord[]
-      processes: ProcessRecord[]
-      processUi: ProcessUiState
-      tools: { gh: ToolStatus; acli: ToolStatus }
+      /** One member per tracker id (`repos`, `processes`, `auto`): a new tracker edits no line here. */
+      trackers: StateFamily<Json>
+      /** One status per tool id (`gh`, `acli`). */
+      tools: Record<string, ToolStatus>
       ui: UiState
-      auto: AutoState
     }
   }
 }

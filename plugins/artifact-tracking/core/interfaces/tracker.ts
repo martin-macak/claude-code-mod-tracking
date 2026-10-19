@@ -7,13 +7,17 @@ import type { ConfigSpec, ConfigView, GlobalConfig } from './config'
 import type {
   AgentSpawnEvent,
   CommandEvent,
+  DismissedEvent,
+  ReplayItem,
   RowEvent,
   SessionChangedEvent,
+  StartEvent,
+  TickEvent,
   ToolCallEvent,
   TurnCompleteEvent,
 } from './events'
 import type { ItemKind, ItemStorePort, Json, JsonObject } from './items'
-import type { Ports, RepoRemote, RunOpts, RunResult } from './ports'
+import type { AgentInfo, EnvName, Ports, RepoRemote, RunOpts, RunResult, Timer } from './ports'
 import type { ActionImpls, SectionSpec, ViewContext } from './view'
 
 /** A CLI a tracker owns. ToolRunner keeps one circuit breaker per tool id. */
@@ -49,58 +53,65 @@ export interface CommandSpec {
  * A handler has the form `(ctx, event) => void | Promise<void>`.
  * Bivariant in `ctx`, so a `Tracker<MyConfig, MyData>` fits a `Tracker` list.
  */
-export type EventHandler<E, C extends JsonObject = JsonObject, D extends Json = Json> = {
-  bivarianceHack(ctx: TrackerContext<C, D>, event: E): void | Promise<void>
+export type Handler<C extends JsonObject = JsonObject, D extends Json = Json, E = unknown> = {
+  bivarianceHack(ctx: TrackerContext<C, D>, ev: E): void | Promise<void>
 }['bivarianceHack']
 
-/** Handlers as data. TrackerHost fills the bus from them at init. Each call is isolated. */
+/**
+ * Handlers as data. TrackerHost fills the bus from them at init. Each call is isolated.
+ * `start`, `agentSpawn`, `sessionChanged`, `command` and `dismissed` run one tracker after the other, in `order`.
+ * `row`, `toolCall`, `turnComplete`, `tick` and `replay` run in parallel (plan decision D11).
+ */
 export interface TrackerEvents<C extends JsonObject = JsonObject, D extends Json = Json> {
+  readonly start?: Handler<C, D, StartEvent>
   /** Rows of the listed doors. The bus filters by door. */
-  readonly row?: { readonly doors: readonly string[]; readonly handle: EventHandler<RowEvent, C, D> }
+  readonly row?: { readonly doors: readonly string[]; readonly run: Handler<C, D, RowEvent> }
   /** Keyed by tool name. */
-  readonly toolCall?: Readonly<Record<string, EventHandler<ToolCallEvent, C, D>>>
-  readonly agentSpawn?: EventHandler<AgentSpawnEvent, C, D>
-  readonly turnComplete?: EventHandler<TurnCompleteEvent, C, D>
-  readonly sessionChanged?: EventHandler<SessionChangedEvent, C, D>
+  readonly toolCall?: Readonly<Record<string, Handler<C, D, ToolCallEvent>>>
+  readonly agentSpawn?: Handler<C, D, AgentSpawnEvent>
+  readonly turnComplete?: Handler<C, D, TurnCompleteEvent>
   /** Periodic work. Runs when `now - last >= everyMs`. The default period is `global.refresh.tickMs`. */
-  readonly tick?: {
-    everyMs?(config: Readonly<C>): number
-    run(ctx: TrackerContext<C, D>): void | Promise<void>
-  }
+  readonly tick?: { everyMs?(config: Readonly<C>): number; readonly run: Handler<C, D, TickEvent> }
+  readonly sessionChanged?: Handler<C, D, SessionChangedEvent>
   /** Runs the sub-commands the tracker declared in `commands`. */
-  readonly command?: EventHandler<CommandEvent, C, D>
+  readonly command?: Handler<C, D, CommandEvent>
+  readonly dismissed?: Handler<C, D, DismissedEvent>
+  /** One batch: the transcript read back on a cold start or a cold resume (plan decision D7). */
+  readonly replay?: Handler<C, D, readonly ReplayItem[]>
 }
 
 /** Named values one tracker publishes and others read. A missing fact reads as `undefined`. */
 export interface FactsPort {
-  publish(name: string, value: Json): void
-  read(name: string): Json | undefined
+  /** `undefined` withdraws the fact. */
+  publish(name: string, value: Json | undefined): void
+  read<T extends Json>(name: string): T | undefined
 }
 
 /** The run-scoped dismiss list: row ids and item keys. */
 export interface DismissPort {
-  has(id: string): boolean
+  list(): Promise<ReadonlySet<string>>
   add(ids: readonly string[]): Promise<void>
 }
 
-/** Runs a CLI by tool id, with the probe, the timeout and the breaker of its `ToolSpec`. */
+/** Runs a CLI. In L3 it is a raw runner. L5 adds the probe, the timeout and the breaker of the `ToolSpec`. */
 export interface ToolPort {
-  /** True when the probe succeeded. Cached. */
-  probe(tool: string): Promise<boolean>
-  /** True when the tool probed fine and its breaker lets a call through. */
-  canCall(tool: string): boolean
-  /** Rejects when the breaker is open or the tool cannot start. A non-zero exit resolves. */
-  run(tool: string, argv: readonly string[], opts?: RunOpts): Promise<RunResult>
+  /** A non-zero exit resolves. */
+  run(tool: string, argv: readonly string[], opts: RunOpts): Promise<RunResult>
 }
 
 /** What TrackerHost gives one tracker. Only its own slices and scoped services. */
 export interface TrackerContext<C extends JsonObject = JsonObject, D extends Json = Json> {
   readonly id: string
-  /** Bumps on a session switch. A write of an older generation is dropped. */
+  /** Bumps on a session switch and on `/track clear`. A getter: it reads the live value. */
   readonly generation: number
+  /** Runs the session check, then answers the generation. A caller keeps it and passes it as `since` to `data.update`. */
+  current(): Promise<number>
   readonly config: ConfigView<C>
-  /** The tracker's StateFamily slot. */
-  readonly data: { get(): D | undefined; update(fn: (cur: D | undefined) => D): Promise<void> }
+  /** The tracker's StateFamily slot. `update` answers `undefined` when the write was dropped (an older `since`). */
+  readonly data: {
+    get(): Promise<D | undefined>
+    update(fn: (cur: D | undefined) => D, opts?: { since?: number }): Promise<D | undefined>
+  }
   readonly items: ItemStorePort
   readonly facts: FactsPort
   readonly dismiss: DismissPort
@@ -110,17 +121,35 @@ export interface TrackerContext<C extends JsonObject = JsonObject, D extends Jso
     repo(): Promise<RepoRemote | null>
     root(): string | undefined
   }
-  /** Run by tool id: probe, timeout, breaker. */
   readonly tools: ToolPort
   readonly fs: Pick<Ports['fs'], 'stat' | 'exists'>
-  readonly env: Pick<Ports, 'settings' | 'agents'>
+  readonly env: {
+    get(name: EnvName): Promise<string | undefined>
+    settings(): Promise<Json | undefined>
+    agents(): Promise<readonly AgentInfo[]>
+  }
   readonly clock: {
     now(): Promise<number>
     wall(): number
-    /** TrackerHost tracks the timer and cancels it at the next `init` and at dispose. */
-    after(ms: number, fn: () => void): Promise<void>
+    /** TrackerHost tracks the timer and cancels it at dispose. The caller may cancel it earlier. */
+    after(ms: number, fn: () => void): Timer
   }
   readonly log: (line: string) => void
+}
+
+/**
+ * How core stores one tracker's slot. `settle` merges the stored copy under the live value, `restore` puts a value
+ * back, `clear` empties the slot. A tracker with no `data` keeps nothing across sessions.
+ * Methods, not properties, so a `DataSpec<MyConfig, MyData>` fits a `DataSpec` list.
+ */
+export interface DataSpec<C extends JsonObject = JsonObject, D extends Json = Json> {
+  /** True when the value holds nothing worth a write. Default: `undefined`. */
+  empty?(v: D | undefined): boolean
+  /** Default: the live value wins. */
+  settle?(ctx: TrackerContext<C, D>, live: D | undefined, stored: D | undefined): Promise<D | undefined>
+  /** `carry`: from the leaving session. `load`: from the stored copy of the new one. */
+  restore(ctx: TrackerContext<C, D>, value: D, how: 'carry' | 'load'): Promise<void>
+  clear?(ctx: TrackerContext<C, D>): Promise<void>
 }
 
 export interface Tracker<C extends JsonObject = JsonObject, D extends Json = Json> {
@@ -142,7 +171,9 @@ export interface Tracker<C extends JsonObject = JsonObject, D extends Json = Jso
   readonly commands?: readonly CommandSpec[]
   /** Handlers as data: `(ctx, event) => ...`. */
   readonly events?: TrackerEvents<C, D>
-  /** Idempotent. Reads its data from `ctx.data` and `ctx.items`. Timers only through `ctx.clock.after`. */
+  /** How core stores, carries and clears this tracker's slot. */
+  readonly data?: DataSpec<C, D>
+  /** Idempotent. Reads its data from `ctx.data` and `ctx.items`. Timers only through `ctx.clock.after`. A tracker builds its services once per load (plan decision D16). */
   init(ctx: TrackerContext<C, D>): void | Promise<void>
   /** The slice this tracker wants in the config file. Config only: data persistence stays in core. */
   store(ctx: TrackerContext<C, D>): C

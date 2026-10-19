@@ -444,7 +444,7 @@ export function unionRecords(
 }
 
 /**
- * Merge for `/clear` carry-over. `held` is the live list; `stored`, the copy in $.store, can be up to `flushMs` older.
+ * Merge for `/clear` carry-over. `held` is the live list; `stored`, the copy in the plugin store, can be up to `flushMs` older.
  * Records fold as in `unionRecords`, but a key that `held` has keeps its live marks, on the root and on each Jira
  * child: a reset or a lowered level must not lose to the higher mark of the older copy.
  */

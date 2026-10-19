@@ -8,7 +8,7 @@ import { LIMITS } from '../hooks/contracts'
 import * as ev from './fixtures/events'
 import { prNode } from './fixtures/gh-discovery'
 import { porcelain as gitPorcelain } from './fixtures/git'
-import { BAND, current, PANE, prompt, quiet, response, START, sleep, track, world } from './fixtures/world'
+import { BAND, clearSession, PANE, prompt, quiet, response, START, sleep, track, world } from './fixtures/world'
 
 const MAIN = '/work'
 const PR7 = 'gh:github.com/acme/web#7'
@@ -279,7 +279,7 @@ test('/clear keeps the root, the children and the dismiss list', async ($, on) =
   const pane = await mountPane($)
   await pane.press({ key: `dismiss-wt:${MAIN}/.claude/worktrees/other` })
   await pane.unmount()
-  current.id = 'sess-2' // /clear: a new id and an empty state
+  await clearSession($, w, 'sess-2', 'clear') // /clear: a new id and an empty state
   await settle(w, TICK)
   const text = await textOf($)
   expect(text).toContain('probe-wt')
@@ -443,7 +443,10 @@ test('a stored copy restores without auto sources, and with gh missing a tick do
     via: ['gh:github.com/acme/web#9'],
     seenCount: 1,
   }
-  const w = world(on, { missing: ['gh'], seed: { index: ['sess-1'], 's:sess-1': { items: [autoOnly, mentioned] } } })
+  const w = world(on, {
+    missing: ['gh'],
+    seed: { 'v2:index': ['sess-1'], 'v2:s:sess-1': { items: [autoOnly, mentioned] } },
+  })
   await $.session.start(START)
   await settle(w, TICK)
   const text = await textOf($)
@@ -471,7 +474,7 @@ test('/resume while a PR step is in flight: the stored copy of the new session l
     sources: ['prompt'],
     seenCount: 1,
   }
-  const w = world(on, { isolateState: true, seed: { index: ['sess-2'], 's:sess-2': { items: [mentioned] } } })
+  const w = world(on, { isolateState: true, seed: { 'v2:index': ['sess-2'], 'v2:s:sess-2': { items: [mentioned] } } })
   repo(w, ['probe-wt', 'worktree-probe-wt'])
   await $.session.start(START)
   await enter($, w)
@@ -485,7 +488,7 @@ test('/resume while a PR step is in flight: the stored copy of the new session l
   })
   await w.clock.advance(TICK) // the tick starts a PR step; its gh call waits
   await quiet(w.calls)
-  current.id = 'sess-2' // /resume: a new id and an empty state
+  await clearSession($, w, 'sess-2', 'resume') // /resume: a new id and an empty state
   release()
   w.fake.discoveryHold = undefined
   await settle(w, WINDOW)
