@@ -2,52 +2,19 @@
 // the mod ignores. Pure: no `$`, no I/O. register.tsx resolves and stats the paths.
 
 import { isRecord } from '../../core/lib/json'
+import { isAbsolutePath, normalizePath, relativeToRoot } from '../../core/lib/paths'
 import { FILE_DEFAULTS } from './config'
 import type { FileActivity } from './types'
 
 const MD = /[^/\\]\.md$/i
-const DRIVE = /^[A-Za-z]:/
 
 /** A path that a tool touched, as the tool spelled it, and how it touched it. */
 export type FileTouch = { spelled: string; kind: Exclude<FileActivity, 'mentioned'> }
-
-export function isAbsolutePath(path: string): boolean {
-  return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
-}
-
-/** Folds `.`, `..`, `//` and backslashes. Lexical only: no symbolic link is followed. */
-export function normalizePath(path: string): string {
-  const raw = path.replace(/\\/g, '/')
-  const drive = DRIVE.exec(raw)?.[0] ?? ''
-  const body = raw.slice(drive.length)
-  const absolute = body.startsWith('/')
-  const out: string[] = []
-  for (const part of body.split('/')) {
-    if (part === '' || part === '.') continue
-    if (part === '..') {
-      if (out.length > 0 && out[out.length - 1] !== '..') out.pop()
-      else if (!absolute) out.push('..')
-      continue
-    }
-    out.push(part)
-  }
-  const base = `${absolute ? '/' : ''}${out.join('/')}`
-  if (drive) return `${drive}${base || '/'}`
-  return base || (absolute ? '/' : '.')
-}
 
 /** An absolute, normalized path: `~/` joins `home`, a relative path joins `cwd`. null: `~/` with no home. */
 export function resolvePath(path: string, cwd: string, home?: string): string | null {
   if (path.startsWith('~/')) return home ? normalizePath(`${home}/${path.slice(2)}`) : null
   return normalizePath(isAbsolutePath(path) ? path : `${cwd}/${path}`)
-}
-
-/** The path below `root`, or the path itself when it is not below `root`. */
-export function relativeToRoot(path: string, root: string): string {
-  const abs = normalizePath(path)
-  const top = normalizePath(root)
-  const prefix = top.endsWith('/') ? top : `${top}/`
-  return abs.startsWith(prefix) && abs.length > prefix.length ? abs.slice(prefix.length) : abs
 }
 
 /**

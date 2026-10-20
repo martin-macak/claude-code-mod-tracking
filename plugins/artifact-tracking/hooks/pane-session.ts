@@ -15,8 +15,10 @@ import { hintRows, withKeysHint } from '../ux/tree-data-table/hint'
 import {
   DEFAULT_BODY_COLUMNS,
   type Drawn,
+  type DrawnRow,
   findRow,
   neighbourOf,
+  shownSelection,
   type TableActions,
   type TableView,
   TreeDataTable,
@@ -53,7 +55,11 @@ export class PaneSession {
   private top = 0
   /** The "N more" Button the ring sits on, until the ring lands on a row: its row must show. */
   private onMore: string | undefined
+  /** The rows of the last drawing that held any. The help view and an empty pane draw none (issue #49). */
+  private rows: readonly DrawnRow[] = []
   private sections: readonly SectionSpec[] = []
+  /** The `selected` atom as the last drawing read it, and the row that drawing treated as selected (issue #49). */
+  private chosen: { readonly atom: string | null; readonly id: string | null } | undefined
   private readonly refocus = new Refocus()
   private readonly work = new WorkQueue()
 
@@ -70,6 +76,18 @@ export class PaneSession {
     ])
     const sections = await m.paneData(p, { selected, expanded: new Set(expanded) })
     const shown = await shownOf(p, sections)
+    const limits = m.config.global().ui
+    // A row can hide with no key from the person. The drawing, the ring and the keys then follow the row the selection
+    // falls to. The atom is not written here (E9): `pressed` reads the same row from `chosen` (issue #49). The window
+    // follows that row too (`view.selected`), so a row that hid moves it onto the row the selection fell to (issue #109).
+    const chosen = shownSelection(
+      sections,
+      { expanded: new Set(expanded), shown: id => shown.get(id) ?? 0, limits },
+      selected,
+      this.rows,
+      this.chosen?.atom === selected ? this.chosen.id : null,
+    )
+    this.chosen = { atom: selected, id: chosen }
     // A pane with no keys draws a hint line above the tree (issue #108). The table gets the rows below it, else the tree is
     // taller than the body and the footer drops out of view (issue #109).
     const hinted = focused === false && !help
@@ -81,7 +99,7 @@ export class PaneSession {
       bodyColumns,
       bodyRows: room,
       placement,
-      selected,
+      selected: chosen,
       focused,
       // With nothing selected the place is stale: a pane that just opened starts on its first rows, even when a late
       // draw after the last close left a place behind.
@@ -89,14 +107,15 @@ export class PaneSession {
       ...(this.onMore === undefined ? {} : { onMore: this.onMore }),
       expanded: new Set(expanded),
       shown: id => shown.get(id) ?? 0,
-      limits: m.config.global().ui,
-      footer: await m.footer(p, findRow(sections, selected), help),
+      limits,
+      footer: await m.footer(p, findRow(sections, chosen), help),
       help: help ? helpOf(m, sections) : null,
     }
     const drawn = TreeDataTable.render(sections, view, el, this.actionsOf(p, m, focused === false))
     this.refocus.seen(drawn)
     this.drawn = drawn
     if (!help) this.top = drawn.top // the help view draws no window: its place of 0 would reset the one the rows left
+    if (drawn.rows.length > 0) this.rows = drawn.rows
     this.sections = sections
     // The help view fills the body of a short pane to the row (issue #92): no line is added to it.
     return hinted ? withKeysHint(el, drawn.tree) : drawn.tree
@@ -112,7 +131,8 @@ export class PaneSession {
    * ring. A move of the plugin that no refocus asked for is the engine's own take of the ring (`autoFocus`, as the pane
    * gets the keys). It lands on the handle of a frame that can be older than the selection: after a press it names the
    * old row, in any turn (issue #115). So it only starts a selection: it selects when no row is selected, or the selected
-   * row is not drawn, and it never replaces a drawn selected row.
+   * row is not drawn, and it never replaces a drawn selected row. The selected row is the row the pane treats as
+   * selected (`selectedRow`): after a row hid, that is the row the drawing fell to, and the atom stays (issue #49).
    */
   async focused(p: Ports, element: string | undefined, origin: FocusOrigin = 'person'): Promise<void> {
     try {
@@ -135,7 +155,8 @@ export class PaneSession {
   private async landedOn(p: Ports, element: string, origin: FocusOrigin): Promise<string | undefined> {
     const id = this.drawn?.handles.get(element)
     if (id === undefined || origin === 'person') return id
-    const selected = await p.state.selected.get()
+    // The row the pane treats as selected, not the atom: the atom names a row that hid, and the drawing fell to another one.
+    const selected = await this.selectedRow(p)
     return this.drawn?.rows.some(r => r.id === selected) === true ? undefined : id
   }
 
@@ -152,7 +173,7 @@ export class PaneSession {
     if (!Number.isFinite(by) || by === 0) return true // a window cuts the rows and nothing asks for a move: nothing to scroll
     try {
       const step = Math.sign(by) * Math.min(Math.abs(by), Math.max(1, page - 1))
-      const selected = await p.state.selected.get()
+      const selected = await this.selectedRow(p) // the row the pane treats as selected: the atom names a row that hid
       const at = rows.findIndex(r => r.id === selected) // -1: nothing selected, the move starts at the first row
       const to = Math.min(rows.length - 1, Math.max(0, Math.max(0, at) + step))
       const id = rows[to]?.id
@@ -176,6 +197,15 @@ export class PaneSession {
         p.log(`pane: close failed: ${reason(e)}`)
       }
     }
+  }
+
+  /**
+   * The row a key acts on. A person's write after the last drawing (a click, a refocus) wins: the atom is newer than the
+   * drawing. Else it is the row that drawing treated as selected, which differs from the atom when the row hid.
+   */
+  private async selectedRow(p: Ports): Promise<string | null> {
+    const atom = await p.state.selected.get()
+    return this.chosen !== undefined && this.chosen.atom === atom ? this.chosen.id : atom
   }
 
   /** Resolves when every Button press so far has finished. For tests and for a caller that must not race the work. */
@@ -214,7 +244,7 @@ export class PaneSession {
         this.work.detach(p, 'more', async () => {
           await p.state.shown.update(sectionId, n => n + m.config.global().ui.sectionRows)
           this.onMore = undefined
-          const selected = await p.state.selected.get()
+          const selected = await this.selectedRow(p) // the atom names a row that hid: it has no handle for the ring
           if (selected !== null) await this.refocus.to(p, m, selected)
         }),
       press: key => {
@@ -228,7 +258,7 @@ export class PaneSession {
   private async pressed(p: Ports, m: PaneHost, buttonKey: string): Promise<void> {
     const key = m.keys.get(buttonKey)
     if (key === undefined) return
-    const row = findRow(this.sections, await p.state.selected.get())
+    const row = findRow(this.sections, await this.selectedRow(p))
     const to = route(key, row, owner => m.isItemOwner(owner))
     switch (to.to) {
       case 'refresh':

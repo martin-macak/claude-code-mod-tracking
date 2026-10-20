@@ -81,18 +81,23 @@ export function trackWorktrees(
     }
   }
 
-  // 3. Update the proofs: the branch of a matched record, and `seenAt` on a first or renewed match.
+  // 3. Update the proofs: the branch of a matched record, `seenAt` on a first or renewed match, and `removedAt` the
+  //    first time the child is removed (issue #49). A proof with no record is removed too. A live child drops it.
   const prevState = new Map((s.snapshot?.worktrees ?? []).map(r => [r.id, r.state]))
   let changed = added.length > 0
   const updated = all.map(p => {
     const r = matched.get(p.path)
-    if (!r) return p
     const next: WorktreeProof = { ...p }
-    if (r.branch !== undefined && r.branch !== p.branch) next.branch = r.branch
-    // A prunable record is a removed row. It never renews `seenAt`, or each round would write `auto` (A22).
-    if (r.prunable === undefined && (p.seenAt === undefined || prevState.get(worktreeId(p.path)) === 'removed'))
-      next.seenAt = at
-    if (next.branch === p.branch && next.seenAt === p.seenAt) return p
+    if (r) {
+      if (r.branch !== undefined && r.branch !== p.branch) next.branch = r.branch
+      // A prunable record is a removed row. It never renews `seenAt`, or each round would write `auto` (A22).
+      if (r.prunable === undefined && (p.seenAt === undefined || prevState.get(worktreeId(p.path)) === 'removed'))
+        next.seenAt = at
+    }
+    // `removedAt` is set once and stays while the child stays removed, so a quiet round writes nothing (A22).
+    if (r && r.prunable === undefined) delete next.removedAt
+    else next.removedAt = p.removedAt ?? at
+    if (next.branch === p.branch && next.seenAt === p.seenAt && next.removedAt === p.removedAt) return p
     changed = true
     return next
   })

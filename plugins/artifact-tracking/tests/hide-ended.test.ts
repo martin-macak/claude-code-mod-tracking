@@ -3,63 +3,19 @@
 // /clear. All of it is a view: no slot, no store and no config write. The clock is the world's: NOW.
 import { expect, test } from 'claude-code/testing'
 import { ConfigManager } from '../core/infra/config-manager'
-import { NO_VIEW } from '../core/infra/views'
-import type { Json } from '../core/interfaces/items'
-import type { SectionSpec, TreeRow } from '../core/interfaces/view'
 import { type PaneHost, PaneSession } from '../hooks/pane-session'
 import { TRACKERS } from '../trackers'
 import { AUTO_DEFAULTS } from '../trackers/auto/config'
-import type { AgentProof, AgentRow } from '../trackers/auto/types'
+import type { AgentRow } from '../trackers/auto/types'
 import { PROCESSES_DEFAULTS } from '../trackers/processes/config'
 import { ENDED_STATES, FAILED_STATES } from '../trackers/processes/states'
-import type { ProcessRecord } from '../trackers/processes/types'
+import { handleOf } from '../ux/tree-data-table/table'
 import { fakeConfig, fakeConfigFs } from './fixtures/config-fs'
 import { buttonOf, handlesOf, nodes } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
+import { draw, find, flat, ids, MIN, noDockerIssue, proc, proof, setAgents, setProcesses } from './fixtures/hide-world'
 import { managerWorld } from './fixtures/manager'
-import { NOW, paneWorld, WORLD_AUTO, WORLD_PROCESSES, WORLD_SNAPSHOT } from './fixtures/pane-world'
-
-const MIN = 60_000
-type World = Awaited<ReturnType<typeof paneWorld>>
-
-const flat = (rows: readonly TreeRow[]): string[] => rows.flatMap(r => [r.id, ...flat(r.children ?? [])])
-const find = (rows: readonly TreeRow[], id: string): TreeRow | undefined => {
-  for (const r of rows) {
-    const found = r.id === id ? r : find(r.children ?? [], id)
-    if (found) return found
-  }
-  return undefined
-}
-const draw = async (t: World, id: string): Promise<SectionSpec> => {
-  const s = (await t.m.paneData(t.w.ports, NO_VIEW)).find(x => x.id === id)
-  if (!s) throw new Error(`no section ${id}`)
-  return s
-}
-const proof = (id: string, f: Partial<AgentProof> = {}): AgentProof => ({
-  id,
-  kind: 'subagent',
-  label: id,
-  spawnedAt: 1,
-  ...f,
-})
-const setAgents = (t: World, proofs: AgentProof[], agents?: AgentRow[]) =>
-  t.w.state.set('auto', {
-    ...WORLD_AUTO,
-    agents: proofs,
-    ...(agents ? { snapshot: { ...WORLD_SNAPSHOT, agents } } : {}),
-  } as unknown as Json)
-const proc = (id: string, state: ProcessRecord['state'], f: Partial<ProcessRecord> = {}): ProcessRecord => ({
-  id,
-  kind: 'background-task',
-  name: id,
-  state,
-  firstSeen: 3,
-  lastSeen: 3,
-  ...f,
-})
-const setProcesses = (t: World, rows: ProcessRecord[]) => t.w.state.set('processes', rows as unknown as Json)
-/** The processes note is the docker issue in the world; a test that wants the count removes the issue. */
-const noDockerIssue = (t: World) => t.m.facts.publish('processes.ui', { breaker: 'closed' })
+import { NOW, paneWorld, WORLD_PROCESSES, WORLD_SNAPSHOT } from './fixtures/pane-world'
 
 // ---------------------------------------------------------------- agents
 
@@ -156,8 +112,6 @@ test('the agents band counts running agents only, hidden or not', async () => {
 })
 
 // ---------------------------------------------------------------- processes
-
-const ids = (s: SectionSpec) => s.rows.map(r => r.id)
 
 test('the ended states are completed, failed, killed, exited and unknown, and failed and killed are the failures', () => {
   expect([...ENDED_STATES].sort()).toEqual(['completed', 'exited', 'failed', 'killed', 'unknown'])
@@ -375,16 +329,21 @@ test('a clock that passes a TTL adds no store write: the same beats write as oft
   expect(hiding.writes).toBe(control.writes)
 })
 
-// A row can now leave with no input from the person, so the row they selected may be the one that goes. The selection
-// is an id in an atom, and nothing moves it: the table draws its ring on the first row, and the footer keys of the
-// row are off, because no drawn row holds the id. README "Known limits" says so.
-test('the selected row hides: the ring falls on the first row, and the keys of the vanished row are off', async () => {
+// A row can leave with no input from the person, so the row they selected may be the one that goes. The `selected` atom
+// keeps the id, and a render must not write it. The pane draws, rings and acts on the row the selection falls to: the next
+// row of the last drawing (issue #49, PR 2; PR 1 left the ring on the first row and the keys of the row off).
+test('the selected row hides: the ring and the keys fall to the next row, and the atom is not written', async () => {
   const t = await paneWorld()
   setAgents(t, [proof('review', { endedAt: NOW - 9 * MIN })])
+  t.w.state.set('expanded', ['ag:explore']) // `ag:review` is a child of `ag:explore`: open it so the row is drawn
   t.w.state.set('selected', 'ag:review')
   const session = new PaneSession()
   const host: PaneHost = t.m
   const drawPane = () => session.draw(t.w.ports, host, EL, { bodyColumns: 120 })
+  const ring = (tree: unknown) =>
+    nodes(tree, 'Button')
+      .filter(b => b.props.autoFocus === true)
+      .map(b => b.props.key)
 
   const before = await drawPane() // 9 min after the end: the row shows, dimmed, and holds the ring and the keys
   expect(find((await draw(t, 'agents')).rows, 'ag:review')?.dim).toBe(true)
@@ -392,11 +351,17 @@ test('the selected row hides: the ring falls on the first row, and the keys of t
 
   t.w.clock.now = NOW + 2 * MIN // 11 min after the end: past the TTL, with no key pressed
   expect(flat((await draw(t, 'agents')).rows)).not.toContain('ag:review')
+  t.w.stateSets = {}
   const after = await drawPane()
-  const focused = nodes(after, 'Button').filter(b => b.props.autoFocus === true)
-  expect(focused.map(b => b.props.key)).toEqual([handlesOf(after)[0]]) // the first row, and only it
-  expect(buttonOf(after, 'dismiss').props.dimColor).toBe(true) // the keys of the row that went are off
-  expect(t.w.state.get('selected')).toBe('ag:review') // nothing clears the atom
+  const open = new Set(['ag:explore'])
+  const sections = await t.m.paneData(t.w.ports, { selected: null, expanded: open })
+  const build = handleOf(sections, { expanded: open, shown: () => 0, limits: t.m.config.global().ui }, 'ag:build')
+  expect(build).toBeDefined()
+  expect(ring(after)).toEqual([build]) // `ag:build` followed `ag:review` in the last drawing
+  expect(handlesOf(after)[0]).not.toBe(build) // not the first row, as in PR 1
+  expect(buttonOf(after, 'dismiss').props.dimColor).toBeUndefined() // x works: it acts on `ag:build`
+  expect(t.w.state.get('selected')).toBe('ag:review') // a render writes nothing
+  expect(t.w.stateSets).toEqual({})
 })
 
 // ---------------------------------------------------------------- the keys

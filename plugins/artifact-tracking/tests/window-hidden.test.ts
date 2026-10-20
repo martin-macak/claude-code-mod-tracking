@@ -65,10 +65,11 @@ test('rows that a TTL hides have no focus stop and do not count in the "N more" 
   expect(showing.full).toBe(hiding.full)
 })
 
-test('the selected row hides in a windowed pane: the ring lands on the first row in view, and that row becomes the selection', async () => {
-  // bg:done7 is the last row of the list, so with it selected the window sits at the end. Its TTL passes with no input. The
-  // table then puts `autoFocus` on the first row in view, and the engine's own take of the ring lands there (origin plugin).
-  // The pane selects that row, because no drawn row holds the selection (issue #115), and the window stays where it is.
+test('the selected row hides in a windowed pane: the selection falls to a row in view and the window follows it', async () => {
+  // bg:done7 is the last row of the list, so with it selected the window sits at the end. Its TTL passes with no input, and
+  // so does the TTL of every ended row. The pane treats the row before the last ended one as selected (issue #49): the `>`,
+  // the ring and the window go to bg:live7, which shows in full. The atom keeps the id of the vanished row, and the engine's
+  // own take of the ring (origin plugin) lands on the row the selection fell to and replaces nothing.
   const t = await world(true)
   t.w.clock.now = NOW - 20 * MIN // the ended rows are 20 min old: they still show
   t.w.state.set('selected', 'bg:done7')
@@ -79,18 +80,31 @@ test('the selected row hides in a windowed pane: the ring lands on the first row
 
   t.w.clock.now = NOW + 10 * MIN // 50 min after they ended: every ended row is past its TTL
   const after = await draw()
-  expect(rowsOf(after).some(r => r.includes('bg:done'))).toBe(false)
-  expect(rowsOf(after).length).toBeGreaterThan(0) // the window still holds rows
-  expect(rowsOf(after).some(r => r.startsWith('>'))).toBe(false) // no drawn row holds the selection
-  expect(t.w.state.get('selected')).toBe('bg:done7') // nothing clears the atom
+  expect(rowsOf(after).some(r => r.includes('bg:done'))).toBe(false) // the hidden rows are no unit of the window
+  const stops = handlesOf(after).length
+  expect(handlesOf(before).length - stops).toBe(8) // the eight hidden rows lost their stops
+  // The window follows the row the selection fell to: the last live row is in view and marked, nothing is below it, and the
+  // hint above counts the rows out of view and no hidden row.
+  expect(rowsOf(after).filter(r => r.startsWith('>'))).toEqual(['>|bg|bg:live7|background task|running'])
+  const hint = (word: 'above' | 'below'): number =>
+    Number(
+      texts(after)
+        .find(([, s]) => new RegExp(`^[▲▼] \\d+ more ${word}$`).test(s))?.[1]
+        .match(/\d+/)?.[0] ?? 0,
+    )
+  expect(hint('below')).toBe(0)
+  expect(rowsOf(after).length + hint('above')).toBe(stops)
+  expect(t.w.state.get('selected')).toBe('bg:done7') // nothing writes the atom
 
+  // The table puts `autoFocus` on the row that the `>` marks, not on the first row in view.
   const ring = nodes(after, 'Button').filter(b => b.props.autoFocus === true)
   expect(ring).toHaveLength(1)
-  const firstInView = rowBoxes(after)[0] as Node
-  expect(nodes(firstInView, 'Button').map(b => b.props.key)).toContain(ring[0]?.props.key)
+  const marked = rowBoxes(after).find(b => leaves(b)[0] === '>') as Node
+  expect(nodes(marked, 'Button').map(b => b.props.key)).toContain(ring[0]?.props.key)
+  expect(rowBoxes(after)[0]).not.toBe(marked) // the first row in view is another row: the ring did not default to it
+
+  // The engine takes the ring on that row. The selection is not replaced, and the next drawing is the same drawing.
   await session.focused(t.w.ports, String(ring[0]?.props.key), 'plugin')
-  expect(t.w.state.get('selected')).not.toBe('bg:done7')
-  const next = await draw()
-  expect(rowsOf(next).filter(r => r.startsWith('>'))).toHaveLength(1) // the window follows the new selection
-  expect(rowsOf(next)).toEqual(rowsOf(after).map((r, i) => (i === 0 ? r.replace(/^ /, '>') : r))) // and has not moved
+  expect(t.w.state.get('selected')).toBe('bg:done7')
+  expect(rowsOf(await draw())).toEqual(rowsOf(after))
 })

@@ -247,7 +247,7 @@ test('agent rows: the state marker, the workflow index, the worktree, ended and 
   const review = find(s.rows, 'ag:review')
   expect(cell(review, 'key')).toEqual({ text: '✓ review' })
   expect(review?.dim).toBe(true)
-  expect(cell(find(s.rows, 'ag:build'), 'key')).toEqual({ text: '● wf·2 build' }) // waiting counts as running
+  expect(cell(find(s.rows, 'ag:build'), 'key')).toEqual({ text: '● wf_a35565·2 build' }) // waiting counts as running; the label says the run (issue #49)
   expect(find(s.rows, 'ag:build')?.dim).toBeUndefined()
   expect(cell(find(s.rows, 'ag:lint'), 'key')).toEqual({ text: '✗ lint' })
   expect(find(s.rows, 'ag:lint')?.dim).toBe(true)

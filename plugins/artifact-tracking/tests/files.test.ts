@@ -1,14 +1,7 @@
 // Markdown file facts (issue #28). Pure code, so no `$` is used. The result shapes are the ones the design study
 // observed on Claude Code 2.1.296 (issue #28, study part 1, section 3).
 import { expect, test } from 'claude-code/testing'
-import {
-  isIgnored,
-  mdCandidates,
-  normalizePath,
-  relativeToRoot,
-  resolvePath,
-  touchFromToolResult,
-} from '../trackers/file/files'
+import { isIgnored, mdCandidates, resolvePath, touchFromToolResult } from '../trackers/file/files'
 import { LIMITS } from './fixtures/limits'
 
 const write = (filePath: string, type: 'create' | 'update' = 'create') => ({
@@ -23,28 +16,12 @@ const read = (filePath: string) => ({
 
 // ---------------------------------------------------------------- paths
 
-test('normalizePath: folds ., .., // and backslashes; keeps a drive letter', () => {
-  expect(normalizePath('/work/docs/../docs/./plan.md')).toBe('/work/docs/plan.md')
-  expect(normalizePath('/work//docs/plan.md')).toBe('/work/docs/plan.md')
-  expect(normalizePath('C:\\work\\docs\\..\\a.md')).toBe('C:/work/a.md')
-  expect(normalizePath('/../a.md')).toBe('/a.md')
-  expect(normalizePath('a/../../b.md')).toBe('../b.md')
-})
-
 test('resolvePath: absolute stays, relative joins the cwd, ~/ joins HOME, ~ with no HOME gives null', () => {
   expect(resolvePath('/work/a.md', '/elsewhere')).toBe('/work/a.md')
   expect(resolvePath('notes.md', '/work')).toBe('/work/notes.md')
   expect(resolvePath('./docs/../plan.md', '/work/')).toBe('/work/plan.md')
   expect(resolvePath('~/x.md', '/work', '/home/u')).toBe('/home/u/x.md')
   expect(resolvePath('~/x.md', '/work')).toBeNull()
-})
-
-test('relativeToRoot: under the root gives the rest; the root itself, outside and a look-alike stay absolute', () => {
-  expect(relativeToRoot('/work/docs/plan.md', '/work')).toBe('docs/plan.md')
-  expect(relativeToRoot('/work/docs/plan.md', '/work/')).toBe('docs/plan.md')
-  expect(relativeToRoot('/elsewhere/a.md', '/work')).toBe('/elsewhere/a.md')
-  expect(relativeToRoot('/workshop/a.md', '/work')).toBe('/workshop/a.md')
-  expect(relativeToRoot('/work/../etc/a.md', '/work')).toBe('/etc/a.md')
 })
 
 // ---------------------------------------------------------------- tool results

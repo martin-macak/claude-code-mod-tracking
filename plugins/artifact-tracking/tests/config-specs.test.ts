@@ -138,6 +138,7 @@ test('the slices hold exactly the keys of the Defaults table', () => {
     'hideEnded',
     'endedTtlMs',
     'failedTtlMs',
+    'maxRows',
   ])
   expect(Object.keys(AUTO_DEFAULTS)).toEqual([
     'enabled',
@@ -150,6 +151,8 @@ test('the slices hold exactly the keys of the Defaults table', () => {
     'hideEnded',
     'endedTtlMs',
     'failedTtlMs',
+    'removedTtlMs',
+    'foldWorkflows',
   ])
 })
 
@@ -215,6 +218,7 @@ const TABLE: readonly (readonly [string, number, number])[] = [
   ['trackers.processes.probeTimeoutMs', 1000, 120000],
   ['trackers.processes.endedTtlMs', 0, 86400000],
   ['trackers.processes.failedTtlMs', 0, 86400000],
+  ['trackers.processes.maxRows', 20, 2000],
   ['trackers.auto.debounceMs', 50, 60000],
   ['trackers.auto.gitTimeoutMs', 500, 60000],
   ['trackers.auto.workflowIdleMs', 60000, 86400000],
@@ -223,6 +227,7 @@ const TABLE: readonly (readonly [string, number, number])[] = [
   ['trackers.auto.maxAgents', 10, 2000],
   ['trackers.auto.endedTtlMs', 0, 86400000],
   ['trackers.auto.failedTtlMs', 0, 86400000],
+  ['trackers.auto.removedTtlMs', 0, 86400000],
 ]
 
 /** The whole-number rules of a schema, with the path of each. */

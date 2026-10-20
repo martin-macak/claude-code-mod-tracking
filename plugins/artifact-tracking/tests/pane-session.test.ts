@@ -8,7 +8,7 @@ import { helpTextOf, listText, type PaneHost, PaneSession, TEXT_VIEW } from '../
 import { resetWidths } from '../ux/tree-data-table/columns'
 import { neighbourOf } from '../ux/tree-data-table/table'
 import { fakeConfig } from './fixtures/config-fs'
-import { buttonOf, footerOf, handlesOf, leaves, nodes, press, rowBoxes } from './fixtures/drawn'
+import { buttonOf, footerOf, handlesOf, leaves, nodes, press, rowBoxes, texts } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
 import { fakePorts } from './fixtures/ports'
 import { COLS, row, section } from './fixtures/sections'
@@ -357,6 +357,71 @@ test('scrolled with a failing write logs one line and keeps the engine out of th
   }
   expect(await t.session.scrolled(t.w.ports, t.m, 11)).toBe(true)
   expect(t.w.logs).toEqual(['pane: scroll failed: boom'])
+})
+
+/** The ids of the rows drawn in full: the host of the row title, as `web()` makes it. */
+const viewIds = (tree: unknown): string[] =>
+  rowBoxes(tree).map(
+    b =>
+      leaves(b)
+        .join(' ')
+        .match(/https:\/\/(\w+)\.example/)?.[1] ?? '?',
+  )
+
+test('a run folds while its last agent is selected: its agents are no unit of the window and the window follows the fold row', async () => {
+  // Twenty agents are rows below four others, and the last of them is selected, so the window sits at the end. The run folds
+  // (issue #49): its agents are the children of one closed row. The pane falls to that row, which sits far above the old
+  // window. The agents have no stop and no part in the hints, and the window moves up to the fold row.
+  const agents = Array.from({ length: 20 }, (_, i) => web(`a${i}`))
+  const head = webs('h0', 'h1', 'h2', 'h3')
+  const tail = webs('t0', 't1')
+  const t = setup([...head, ...agents, ...tail])
+  t.w.state.set('selected', 'a19')
+  const before = await t.draw(96, SHORT)
+  expect(viewIds(before)).toContain('a19')
+  expect(handlesOf(before)).toHaveLength(26)
+
+  t.host.setRows([...head, web('fold', { children: agents, can: { dismiss: false, priority: false } }), ...tail])
+  const after = await t.draw(96, SHORT)
+  expect(handlesOf(after)).toHaveLength(7) // four rows, the fold row and two rows: no stop for an agent below the fold
+  expect(viewIds(after)).toContain('fold') // in view, though it was far above the window that held a19
+  expect(viewIds(after).some(id => id.startsWith('a'))).toBe(false)
+  const marked = rowBoxes(after).find(b => leaves(b)[0] === '>')
+  expect(marked === undefined ? undefined : leaves(marked).join(' ')).toContain('https://fold.example/')
+  const counted = texts(after)
+    .map(([, line]) => line.match(/^[▲▼] (\d+) more (above|below)$/)?.[1])
+    .reduce((sum, n) => sum + Number(n ?? 0), 0)
+  expect(viewIds(after).length + counted).toBe(7) // the hints count the rows out of view and no agent
+  expect(t.selected()).toBe('a19') // nothing writes the atom
+})
+
+test('scrolled: after the selected row hid, a page key moves from the row the selection fell to, not from the first row', async () => {
+  // w11 is the last row and selected. It leaves with no key from the person (issue #49): the pane treats w10 as selected and
+  // the atom still names w11. The wheel moves one row up from w10, so it must not read the atom and start at the first row.
+  const t = setup(TWELVE)
+  t.w.state.set('selected', 'w11')
+  await t.draw(96, SHORT)
+  t.host.setRows(TWELVE.filter(r => r.id !== 'w11'))
+  expect(shownIds(await t.draw(96, SHORT))).toContain('w10')
+  expect(await t.session.scrolled(t.w.ports, t.m, -1)).toBe(true)
+  expect(t.selected()).toBe('w9')
+  expect(t.w.ui.focused).toEqual(['r9'])
+})
+
+test('Enter on an "N more" Button after the selected row hid puts the ring on the row the selection fell to', async () => {
+  // w4 is the last row of the cap and selected. It hides with no key (issue #49) and the pane falls to w3. The Button asks
+  // for the ring on the selected row: the atom names w4, which has no handle, so the ring would stay on the stop of the
+  // first new row, a row the window may hide.
+  const t = setup(TWELVE, { file: { global: { ui: { sectionRows: 5 } } } })
+  t.w.state.set('selected', 'w4')
+  await t.draw(96, SHORT)
+  t.host.setRows(TWELVE.filter(r => r.id !== 'w4'))
+  const second = await t.draw(96, SHORT)
+  press(buttonOf(second, 'm0'))
+  await t.session.idle()
+  expect(await t.w.ports.state.shown.get('web')).toBe(5)
+  expect(t.w.ui.focused).toEqual(['r3'])
+  expect(t.selected()).toBe('w3')
 })
 
 test('toggle flips the id in expanded; more adds sectionRows to shown(section)', async () => {

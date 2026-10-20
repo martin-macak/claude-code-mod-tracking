@@ -25,7 +25,7 @@ import {
 import { EMPTY_TEXT } from './text'
 import { drawWindowed, pageOf, shownRows, type Windowed, windowOf } from './windowed'
 
-export { findRow, handleOf, type LaidRow, type LaidSection, layout, neighbourOf } from './layout'
+export { findRow, handleOf, type LaidRow, type LaidSection, layout, neighbourOf, shownSelection } from './layout'
 export {
   DEFAULT_BODY_COLUMNS,
   DETAIL_CELLS,

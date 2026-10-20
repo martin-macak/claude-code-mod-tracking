@@ -4,8 +4,8 @@
 // Plan: L5 Task 13, L6 A1.
 
 import type { TreeRow, ViewContext } from '../../core/interfaces/view'
+import { relativeToRoot } from '../../core/lib/paths'
 import { itemRow } from '../../core/lib/rows'
-import { relativeToRoot } from './files'
 import type { FileRecord } from './types'
 
 export function fileRow(item: FileRecord, env: Pick<ViewContext, 'levelOf' | 'root'>): TreeRow {
