@@ -88,7 +88,7 @@ The pane keeps one selected row. A `>` in the first column and a highlight mark 
 | Tab, Shift+Tab | Select the next or the previous row. |
 | Enter | Opens or closes the selected row. Every row opens. A Jira row shows its children. A leaf shows its full cells and its link. On an `N more` row, Enter shows the next rows of that section. |
 | `r` | Refreshes. Does what `/track refresh` does. |
-| `h` | Swaps the pane to the help view: every key, the config file path and the problems. `h` again goes back. |
+| `h` | Swaps the pane to the help view: every key, the config file path and the problems. In a short pane the view puts two keys on a line. `h` again goes back. |
 | `x` | Dismisses the selected row. It stays out for the run, also after `/clear`. |
 | `1` `2` `3` `0` | Set the priority of the selected row. See [Priority](#priority). |
 | Esc | Closes the pane. |
@@ -366,7 +366,7 @@ Cost. A block is short: 134 characters for one link, 164 for two (about 34 and 4
 - **Artifact tool.** `claude -p` does not offer it, so nothing is published there. A mentioned artifact URL is still tracked.
 - **Artifacts after `--resume`.** The stored copy keeps the origin, the title and the delete mark. Without a stored copy, the transcript gives them back, except for a subagent's publish: the main transcript does not hold it, so its URL comes back `mentioned` at most. Only deletes in this session mark a row.
 - **Older versions** stored artifact URLs as web links. A session moves them to Artifacts when it loads its list.
-- **Help view in a short inline pane.** When the pane sits inline under the transcript and has few lines, the help view opens scrolled to its footer, so its first keys are above the view. Scroll up to see them, or make the terminal taller.
+- **Help view in a very short pane.** The help view draws two keys to a line when its full form and the footer do not fit the pane body, so its first keys and the footer show together. Each config or tracker problem adds a row. A body shorter than the compact view, the problems and the footer still opens scrolled to the footer. Scroll up to see the first keys, or make the terminal taller.
 - **Upgrade in a running session.** An upgrade inside a running session keeps the tracked items. It drops the Repos and Processes rows until the mod sees them again, and it forgets the dismiss list, so a dismissed row can come back.
 - **A narrow terminal.** The pane may wait until you widen the terminal. The mod shows a toast.
 - **Out of scope:** page titles of web links, switching Jira sites, Jira levels above Epic, click capture, write actions on GitHub or Jira, and surfaces other than the terminal.

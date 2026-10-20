@@ -9,6 +9,8 @@ import { GLYPH_BOX, INDENT } from './columns'
 export const GUTTER = 2
 /** The width of a surface that gives none (the inline pane has no `bodyColumns`). */
 export const DEFAULT_BODY_COLUMNS = 80
+/** The blank rows between the body of the pane and its footer. */
+export const ROW_GAP = 1
 /** A detail line is cut at this many cells. */
 export const DETAIL_CELLS = 500
 export const TOO_LARGE = 'The pane is too large to draw. /track prints the list.'
@@ -21,6 +23,8 @@ export const indentOf = (columnWidth: number, depth: number): number =>
 
 export interface TableView {
   readonly bodyColumns: number | undefined
+  /** The most rows the pane may take (`scroll.bodyRows`). Only the help view reads it. Absent: no limit is known. */
+  readonly bodyRows: number | undefined
   readonly selected: string | null
   readonly expanded: ReadonlySet<string>
   /** Rows shown beyond the cap, by section id. */
