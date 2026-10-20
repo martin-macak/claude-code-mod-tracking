@@ -85,6 +85,9 @@ The mod cannot bind Tab or the arrows. No pane-level key event exists and there 
 | Other printable keys leave the pane. The character goes to the composer and the pane loses focus. `!` opens shell mode. `?` opens the shortcut overlay and keeps the pane focused (the body shrinks from 30 to 24 rows). `/` drops focus. | `verified-live` | Header flipped to `foc=0`. |
 | The engine binds Tab, Shift+Tab, Up, Down, Enter, Esc, PageUp, PageDown, Home, End and the `ctrl+x` chords on a focused pane. `ctrl+x Tab` toggles pane focus. | `verified-live`, `public-docs` | Home gave `S:by-48 off0`; End gave `S:by48`. Public docs: [interface.md:532-545](../claude-code-mods/sources/code-claude-com-2026-10-09/mods/interface.md#L532-L545). |
 | A resize that switches dock to inline (120 to 100 columns) dropped pane focus. | `verified-live` | Render log `foc1` then `foc0`. |
+| **A render hook that reads `e.props.isFocused` runs again when the pane gains or loses the keys.** The next frame already has the new value. | `verified-live` | [Issue #108](https://github.com/martin-macak/claude-code-mod-tracking/issues/108). Claude Code 2.1.304, tmux 120x37 docked, three web links, the mod loaded from the branch. The row the hook draws as selected had a `48;5;68` background and the ring (SGR 7) on its `▸`. The key `j` went to the prompt: the next frame had no `48;5;68`, a dim `>` and the hint line `Keys go to the prompt.` above the tree. ctrl+x Tab: `48;5;68` and the ring were back and the hint was gone. A resize from 120 to 100 columns also dropped the keys and drew the hint. Confirms the `foc=1` then `foc0` rows above. |
+| **A click on a blank part of the pane gives it the keys. A click on a `Button` only presses it.** | `verified-live` | Same run, keys in the prompt, synthetic SGR clicks (`tmux send-keys -l` of `ESC[<0;30;7M` then `ESC[<0;30;7m`). Click on the `▸` of a row: the row opened and was selected, the hint stayed and the highlight stayed dim. Click at column 60 on a blank row of the body: the hint was gone, the `48;5;68` highlight was back and the ring sat on the selected row. |
+| **`autoFocus` on the handle of the selected row puts the ring there when the keys come back.** A redraw does not take the ring from a footer `Button`. | `verified-live` | Same run. Three rows, the third selected, `j`, then ctrl+x Tab: the ring was on the `▸` of `three.example/c` and Up went to `two.example/b`. The same after a second `/track` on the open pane with the second row selected: Down went to the third row, not to the first. With the ring on the footer `x: dismiss` (three Tabs), `r` redrew the pane and the ring stayed on `x: dismiss`. [Issue #108](https://github.com/martin-macak/claude-code-mod-tracking/issues/108) asked for this fix in `ux/tree-data-table/table.ts`. |
 
 ### 3.3 Selection state
 
@@ -211,6 +214,41 @@ What the engine prunes: a hotkey is one character, no arrow keys reach a pane, a
 **Recommendation (inference), before the decision:** N1 as the base, with N2b as an optional addition. The ring is the cursor. A `ui.focus` hook copies the ring position to `selected` after `next(e)`. Do not promise Up and Down row navigation. Reject N3 for keyboard use. Offer it, if ever, as a mouse-driven extra.
 
 Also: set `autoFocus` on the first or the selected row handle, so the first Tab does not land on a dead stop. Live, `autoFocus` on the first row `Button` gives the ring and the selection at open, so the footer hotkeys have a target at once. The first Tab then goes to the second row ([§3.2](#32-keyboard)). The selection write comes from the `origin: plugin` focus event, so the same `ui.focus` hook handles it.
+
+### 5.1a Click, focus and arrows (issue #108)
+
+[Issue #108](https://github.com/martin-macak/claude-code-mod-tracking/issues/108) reports that Up, Down and a click do not select a row in some states. The owner decision of 2026-10-20 fixed four things and asked for two spikes. Spec decision D2 stays as it is.
+
+**Shipped.**
+
+- A press on a row (a click on its `▸`, or Enter) selects the row and asks for the ring on it, as `x` and the digits do. Live, a click on the `▸` of a row moved the highlight and the ring to that row and opened it (`verified-live`, [§3.2](#32-keyboard)).
+- The highlight follows `Pane.isFocused`. With no keys the row has no background and a dim `>`, and one dim line above the tree says that the keys go to the prompt and that ctrl+x Tab gives them back (`verified-live`, [§3.2](#32-keyboard)). The help view gets no such line: it fills the body of a short inline pane to the row.
+- The footer ends with `Tab ↑↓ move` before `Esc close`, where the hint adds no row. The core footer is 79 cells and 92 with the hint, so with the core keys alone the hint shows in a body of 92 cells or more and stays one line in a body of 95 or 96 cells. In a body of 79 to 91 cells it would cost a row, so it is left out, and the compact help view is not forced. The keys of a tracker (for example `o: open`) widen the footer and raise these widths, so the rule reads the keys that are drawn, not a fixed number. The first title of the help view names Tab, Shift+Tab, Up and Down at every width. It adds no row, so the compact help view still fits the 11-row body at 100x40 (`verified-live`: `Pane keys (...)` first, the footer last, one frame).
+- `autoFocus` goes on the handle of the selected row when a drawn row is selected, else on the first row ([§3.2](#32-keyboard)).
+
+**Spike, option 3: one `Button` per row.** Not shipped.
+
+| Question | Answer | Grade | Evidence |
+| --- | --- | --- | --- |
+| Does the engine take a `Button` whose children are `Text`? | Yes, on the terminal and the desktop surface. | `verified-kit` | A scratch copy of the mod drew each row as `Button key=r<n>` with one padded `Text` per cell. `ui.mount` on both surfaces gave one such `Button` per row, with the row text as its shown text. |
+| Can a cell keep its `Link`? | No. The hook throws and the pane falls back to its one-line notice. | `verified-kit` | `JSX element <Button key="r0"> holds strings and Text, not <Link>`, also with the `Link` inside a `Text`. A URL cell would turn into plain text. |
+| Does a click anywhere on the row press it? | Yes. A click on the URL cell, on the gutter and on the blank cells at the end of the row pressed the row. | `verified-live` | Claude Code 2.1.304, tmux 120x37, three links. Click on the URL cell of the second row: `▾`, the `link:` detail line and the highlight. Click on the gutter of the first row: the same. |
+| How does the row look? | The ring inverts the whole row, so it is the highlight while the pane has the keys. A first draft padded one cell too many: the row wrapped and every row took two lines. Pad the last cell to its width and no more. | `verified-live` | In `tmux capture-pane -e` the text with SGR 7 on was the whole line `>   ▾ two.example/b   two.example/b`. |
+| What does it cost? | Cell `Link`s go. Per-cell `Box` colors become `Text` colors. Spec rule G19 (every cell is `Box width` plus `Text`) changes. Select and toggle stay tied: a click on a row always toggles it too. | `inference` | The rows above. |
+
+**Recommendation (inference):** do not ship option 3 now. Option 2 already makes a click on the arrow select. Option 3 is the only way a click on the text selects, and it costs the cell links and the G19 cell rule. Ship it only if the owner wants a click on the text to select.
+
+**Spike, option 5: a `ui.scroll` hook that turns an arrow into a row move.** Not shipped. It would reverse D2 and the spec non-goal "arrow-key row navigation".
+
+| Question | Answer | Grade | Evidence |
+| --- | --- | --- | --- |
+| Does the hook see an arrow, and can it tell it from a wheel tick and a page key? | Yes. An arrow has `origin.kind 'person'` and no `pointer`. A wheel tick has a `pointer`. A page key has `by` equal to `±bodyRows`. Keys that arrive together are summed in `by`. | `verified-live` | Debug log of a 44-row tree in a 31-row body: `by=1`, then `by=2` for three quick Downs, `by=-31 body=31` for PageUp. A test for `by` of 1 or -1 missed the summed press. A test for a `by` smaller than `bodyRows` in size caught every arrow. |
+| Can the hook move the ring? | Yes. It answers `{}` with no `next` and calls `$.ui.focus({ requestId, key })` with the handle of the next row. The `ui.focus` hook then writes `selected`. | `verified-live` | Same run, 40 links. 34 Down presses from the top put the highlight and the ring on `w35.example/p35`. |
+| Does the window follow a ring that `$.ui.focus` moved? | Yes, as it does for Tab. | `verified-live` | After those 34 presses the view held `w5` to `w35` and the ring was on its last row, with no scroll call from the hook. |
+| What happens at the ends? | The hook clamps. At the last row Down leaves the ring where it is. The footer `Button`s are out of reach of the arrows: Tab reaches them. PageUp and PageDown still scroll the window and leave the ring. | `verified-live` | Eight more Downs left `w40.example/p40` selected. PageUp showed the top of the list with `w40` selected and out of view. |
+| What does it cost? | One engine call, a state write and a redraw per press. A heuristic for the arrow (a `by` smaller than `bodyRows` in size) that fails when `bodyRows` is tiny. It reverses D2. | `inference` | The rows above. |
+
+**Recommendation (inference):** the owner decides. The windowing of [issue #109](https://github.com/martin-macak/claude-code-mod-tracking/issues/109) makes the tree fit the body, so the engine's own arrows walk the ring, and then option 5 has nothing to do. Ship option 5 only if that windowing does not land. The spike also answers the part of [Q21](open-questions.md#1-unknowns) about `$.ui.focus` on a taller-than-pane tree: it moved the ring and the window followed. The `j` and `k` hotkeys were not run.
 
 ### 5.2 Where the selection lives
 
