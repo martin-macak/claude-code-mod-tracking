@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { PlanError } from '../scripts/core.mjs'
 import {
@@ -104,6 +107,54 @@ test('a missing gh binary is a GhError of kind missing', () => {
     () => gh.exec(['auth', 'status']),
     err => err.kind === 'missing' && /gh is not installed/.test(err.message),
   )
+})
+
+// gh can exit before it reads its stdin. spawnSync then reports EPIPE and still gives the status and
+// the streams, so the run is finished and its status and stderr classify it.
+test('graphql: EPIPE with a status is a finished run, and its stderr says it is an auth failure', () => {
+  const gh = makeGh(() => ({ error: { code: 'EPIPE' }, status: 1, stderr: 'gh: Bad credentials (HTTP 401)' }))
+  assert.throws(
+    () => gh.graphql('query { x }', {}),
+    err => err instanceof GhError && err.kind === 'auth' && err.message === 'gh: Bad credentials (HTTP 401)',
+  )
+})
+
+test('exec: EPIPE without a status, and other spawn errors, still fail to start', () => {
+  const killed = makeGh(() => ({ error: { code: 'EPIPE', message: 'write EPIPE' }, status: null, stderr: '' }))
+  assert.throws(
+    () => killed.exec(['auth', 'status']),
+    err => err instanceof GhError && err.kind === 'other' && err.message === 'gh failed to start: write EPIPE',
+  )
+  // Only a failed run counts as finished. EPIPE with status 0 means gh did not read the whole query,
+  // so its reply does not answer that query.
+  const partial = makeGh(() => ({ error: { code: 'EPIPE', message: 'write EPIPE' }, status: 0, stdout: '{}', stderr: '' }))
+  assert.throws(
+    () => partial.exec(['auth', 'status']),
+    err => err instanceof GhError && err.kind === 'other' && err.message === 'gh failed to start: write EPIPE',
+  )
+  const denied = makeGh(() => ({ error: { code: 'EACCES', message: 'spawn gh EACCES' }, status: null, stderr: '' }))
+  assert.throws(
+    () => denied.exec(['auth', 'status']),
+    err => err instanceof GhError && err.kind === 'other' && err.message === 'gh failed to start: spawn gh EACCES',
+  )
+})
+
+// A real spawnSync, not a fake runner. A query larger than the pipe buffer makes the write fail with
+// EPIPE every time when gh exits first, so the test does not depend on a race.
+test('real runner: a gh that exits before it reads a large query is an auth failure, not a failed start', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'project-sync-'))
+  writeFileSync(join(dir, 'gh'), '#!/bin/sh\necho "gh: Bad credentials (HTTP 401)" >&2\nexit 1\n')
+  chmodSync(join(dir, 'gh'), 0o755)
+  const saved = process.env.PATH
+  process.env.PATH = dir
+  try {
+    assert.throws(
+      () => makeGh().graphql(`query { ${'x'.repeat(1 << 20)} }`, {}),
+      err => err instanceof GhError && err.kind === 'auth' && err.message === 'gh: Bad credentials (HTTP 401)',
+    )
+  } finally {
+    process.env.PATH = saved
+  }
 })
 
 test('rest reads JSON from gh api', () => {

@@ -45,7 +45,11 @@ export function makeGh(runner = spawnRunner) {
     const r = runner(args, input)
     if (r.error?.code === 'ENOENT')
       throw new GhError('missing', 'gh is not installed. Install it from https://cli.github.com/.')
-    if (r.error) throw new GhError('other', `gh failed to start: ${r.error.message}`)
+    // gh can exit before it reads its stdin. Then spawnSync reports EPIPE and still gives the status
+    // and the streams. A failed run like that is finished, so its status and stderr classify it.
+    // Status 0 is not: gh did not read the whole query, so its reply does not answer that query.
+    const finished = r.error?.code === 'EPIPE' && typeof r.status === 'number' && r.status !== 0
+    if (r.error && !finished) throw new GhError('other', `gh failed to start: ${r.error.message}`)
     if (r.status !== 0) {
       const message = firstLine(r.stderr) ?? firstLine(r.stdout) ?? `gh exited with status ${r.status}`
       throw new GhError(classifyFailure(r), message, { status: r.status, stderr: r.stderr, stdout: r.stdout })
