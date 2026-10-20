@@ -17,6 +17,7 @@ import {
   editDone,
   fileTool,
   graphqlCalls,
+  HANG_GUARD,
   PANE,
   prompt,
   quiet,
@@ -37,7 +38,9 @@ import {
 
 // ---------------------------------------------------------------- capture and refresh
 
-test('prompt row: issue #5 and a Jira URL are listed by /track with refreshed status', async ($, on) => {
+// This test asserts no time. The kit stops it after 5 s, which a busy machine exceeds (issue #104). HANG_GUARD only has
+// to catch a hang.
+test('prompt row: issue #5 and a Jira URL are listed by /track with refreshed status', HANG_GUARD, async ($, on) => {
   const { clock, calls } = world(on)
   await $.session.append(prompt('Look at issue #5 and https://acme.atlassian.net/browse/ISS-1'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
@@ -1116,22 +1119,35 @@ test('an ssh host alias is not kept as the session repo: gh resolves it and #N m
   expect((await track($)).text).toContain('Web five')
 })
 
-// The check of a non-github host takes AUTH_CHECK_MS. The start must not wait for it. The call also loads the module,
-// which takes about 100 to 130 ms on a laptop, 250 ms on a busy one and 270 ms on a CI runner. So the budget sits
-// between that and the check, not near it.
-const AUTH_CHECK_MS = 1000
-const START_BUDGET_MS = 600
-
-test('session.start does not wait for the check of a non-github host', async ($, on) => {
-  world(on, {
+// The check of a non-github host stays open until the test lets it go, so the test needs no clock: it checks the order,
+// not the time. `session.start` must return while the check is open, and the late answer of the check must still count.
+// A start that waits for the check only returns when the call times out (about 10 s). The check then has failed, the
+// session has no repo, and the #N below stays unresolved. That is why the test ends on the late answer. The test is no
+// speed guard: a start that waits a short while and then goes on passes it, because the kit has no clock that tells it
+// from a fast start. HANG_GUARD (30 s) keeps the 10 s timeout of a real regression inside the limit of the test.
+test('session.start does not wait for the check of a non-github host', HANG_GUARD, async ($, on) => {
+  let release = () => {}
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { clock, calls, fake } = world(on, {
     remote: 'git@ghe.corp:acme/web.git',
-    authMs: AUTH_CHECK_MS,
     seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items: [KEPT] } },
   })
-  const t0 = Date.now()
-  await $.session.start(START)
-  expect(Date.now() - t0).toBeLessThan(START_BUDGET_MS)
-  expect((await track($)).text).toContain('Kept page')
+  fake.authHold = held
+  try {
+    await $.session.start(START) // returns while the check is open: only the release() below can end it
+  } finally {
+    release()
+  }
+  await quiet(calls)
+  expect(calls).toContainEqual(['gh', 'auth', 'status', '--hostname', 'ghe.corp']) // the check ran, after the start
+  await $.session.append(prompt('check issue #5')) // the late answer made ghe.corp the host: #5 now has a repo
+  await clock.advance(LIMITS.captureDebounceMs + 10)
+  await quiet(calls)
+  const text = (await track($)).text ?? ''
+  expect(text).toContain('Kept page')
+  expect(text).toContain('Web five')
 })
 
 test('session.start: keyworded #N from the transcript is resolved once the repo is known', async ($, on) => {

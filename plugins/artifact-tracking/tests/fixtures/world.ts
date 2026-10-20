@@ -19,6 +19,12 @@ export const current = { id: SESSION, failItemsRead: false }
 declare function setTimeout(fn: () => void, ms: number): unknown
 export const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
+/**
+ * The options of a kit test that asserts no time: `test(name, HANG_GUARD, body)`. The kit stops a test after 5 s by
+ * default. That is a speed limit, and a busy machine breaks it (issue #104). With 30 s the limit only catches a hang.
+ */
+export const HANG_GUARD = { timeoutMs: 30_000 } as const
+
 /** Polls until the condition holds, for work a hook starts and does not return (a tick, a lookup). Throws after `ms`. */
 export async function until(cond: () => boolean, what: string, ms = 3000): Promise<void> {
   const end = Date.now() + ms
@@ -77,8 +83,6 @@ export type Opts = {
   acliProbeMs?: number
   /** `gh auth status --hostname <h>` exits 1 for these hosts. */
   badHosts?: string[]
-  /** `gh auth status` answers after this many ms. */
-  authMs?: number
   /** `gh repo view` stdout. The default fixture names no usable repo. */
   repoView?: string
   /** Every `gh api graphql` call answers after this many ms. */
@@ -188,6 +192,10 @@ export function world(on: On, opts: Opts = {}) {
     discoveryMode: 'ok' as 'ok' | 'transport' | 'query-error' | 'auth',
     /** When set, a discovery call waits for it. */
     discoveryHold: undefined as Promise<void> | undefined,
+    /** When set, `gh auth status` answers once it settles. A test holds it to check an order, not a time. */
+    authHold: undefined as Promise<void> | undefined,
+    /** When set, every `gh api graphql` call waits for it. Same use as `authHold`. */
+    ghHold: undefined as Promise<void> | undefined,
     storeSets: 0,
     /** `$.state` writes by member: an atom's key, a family member's id. Counted when `isolateState` is on. */
     stateSets: {} as Record<string, number>,
@@ -353,6 +361,7 @@ export function world(on: On, opts: Opts = {}) {
       return { value: res(tool === 'gh' ? 'gh version 2.102.0 (2026-09-30)' : 'acli version 1.3.19-stable') }
     if (tool === 'gh' && a1 === 'api' && a2 === 'graphql') {
       if (opts.ghDelayMs) await sleep(opts.ghDelayMs)
+      if (fake.ghHold) await fake.ghHold
       const query = argv.find(x => x.startsWith('query='))?.slice('query='.length) ?? ''
       if (query.includes('pullRequests(')) {
         if (fake.discoveryHold) await fake.discoveryHold
@@ -364,7 +373,7 @@ export function world(on: On, opts: Opts = {}) {
       return { value: fake.isRepo ? res(fake.toplevel + '\n') : res('', 128, NOT_A_REPO_STDERR) }
     if (tool === 'git' && a1 === 'worktree') return { value: res(fake.porcelain) }
     if (tool === 'gh' && a1 === 'auth') {
-      if (opts.authMs) await sleep(opts.authMs)
+      if (fake.authHold) await fake.authHold
       return { value: opts.badHosts?.includes(a4!) ? res('', 1, ghFx.GHE_AUTH_STATUS_STDERR) : res('Logged in') }
     }
     if (tool === 'gh' && a1 === 'repo') return { value: res(opts.repoView ?? ghFx.REPO_RESOLUTION_STDOUT) }

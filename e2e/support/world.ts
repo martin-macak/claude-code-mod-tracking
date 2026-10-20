@@ -15,6 +15,7 @@ import { CLONE_NAME, type Config, LOCK_DIR, loadConfig, OUT_DIR, PLUGIN_DIR, REP
 import type { FakeGhSpec } from './fake-gh.ts'
 import { fakeGhEnv } from './fake-gh-env.ts'
 import { claimRun } from './lock.ts'
+import { withFocus } from './pane.ts'
 import { Recorder } from './recorder.ts'
 import { countLines, FAKE_ORIGIN_NAME, launchClaude, prepareClone, waitForTurnEnd } from './session.ts'
 import { slug } from './slug.ts'
@@ -118,12 +119,14 @@ export class DemoWorld extends World {
     this.tl.phase('normal')
   }
 
-  async waitScreen(test: (screen: string) => boolean, what: string): Promise<void> {
+  // `ansi`: the test reads the screen with its escape sequences (`Tmux.captureAnsi`).
+  async waitScreen(test: (screen: string) => boolean, what: string, opts: { ansi?: boolean } = {}): Promise<void> {
     this.tl.phase('fast')
-    await waitUntil(() => (test(this.tmux.capture()) ? true : undefined), {
+    const read = () => (opts.ansi ? this.tmux.captureAnsi() : this.tmux.capture())
+    await waitUntil(() => (test(read()) ? true : undefined), {
       timeoutMs: this.config.screenTimeoutMs,
       what,
-      last: () => this.tmux.capture(),
+      last: () => (opts.ansi ? withFocus(this.tmux.capture(), this.tmux.captureAnsi()) : this.tmux.capture()),
     })
     this.tl.phase('normal')
   }
