@@ -70,8 +70,11 @@ Feature: Drive the /track pane with the keys
     Then the selected row shows "one.example"
     And the screen does not show "Keys go to the prompt."
     And the screen shows "Tab ↑↓ move"
+    # Every key waits for the focus that the key before it moved (issue #104). Up waits for the ring too: the ring comes
+    # back with the keys, and a key sent before it is drawn can be lost.
     When I press "Tab"
-    And I press "Tab"
+    Then the selected row shows "two.example"
+    When I press "Tab"
     Then the selected row shows "three.example"
     When I press "j"
     Then the screen shows "Keys go to the prompt."
@@ -79,6 +82,7 @@ Feature: Drive the /track pane with the keys
     When I press "C-x"
     And I press "Tab"
     Then the screen stops showing "Keys go to the prompt."
+    And the focus ring is on "▸"
     When I press "Up"
     Then the selected row shows "two.example"
 
@@ -92,5 +96,6 @@ Feature: Drive the /track pane with the keys
     When I click the arrow of the row showing "three.example"
     Then the selected row shows "three.example"
     And the screen matches /│.*link: https:\/\/three\.example\/c/
+    And the focus ring is on "▾"
     When I press "Up"
     Then the selected row shows "two.example"
