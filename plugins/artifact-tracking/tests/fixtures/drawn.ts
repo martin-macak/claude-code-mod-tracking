@@ -60,10 +60,11 @@ export const press = (b: Node): void => (b.props.onPress as () => void)()
 /** The footer of a pane with no row selected. */
 export const NO_ROW_FOOTER = footerKeys(new KeyRegistry(), undefined, () => false, false)
 
-/** A view with the defaults of a normal pane: 80 columns, nothing selected, nothing opened, 50 rows per section. */
+/** A view with the defaults of a normal pane: 80 columns, no body height, nothing selected, nothing opened, 50 rows per section. */
 export function view(over: Partial<TableView> = {}): TableView {
   return {
     bodyColumns: 80,
+    bodyRows: undefined,
     selected: null,
     expanded: new Set(),
     shown: () => 0,

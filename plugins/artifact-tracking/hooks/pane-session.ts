@@ -31,7 +31,13 @@ export class PaneSession {
   private readonly work = new WorkQueue()
 
   /** Reads the state and the sections, and draws. It writes nothing and calls no entry (E9). */
-  async draw(p: Ports, m: PaneHost, el: TableElements, bodyColumns: number | undefined): Promise<RenderElement> {
+  async draw(
+    p: Ports,
+    m: PaneHost,
+    el: TableElements,
+    bodyColumns: number | undefined,
+    bodyRows?: number,
+  ): Promise<RenderElement> {
     const [expanded, selected, help] = await Promise.all([
       p.state.expanded.get(),
       p.state.selected.get(),
@@ -41,6 +47,7 @@ export class PaneSession {
     const shown = await shownOf(p, sections)
     const view: TableView = {
       bodyColumns,
+      bodyRows,
       selected,
       expanded: new Set(expanded),
       shown: id => shown.get(id) ?? 0,

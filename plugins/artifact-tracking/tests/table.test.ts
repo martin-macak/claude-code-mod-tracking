@@ -470,6 +470,65 @@ test('with help the pane draws the help view and the footer, and no row', () => 
   expect(footerOf(drawn.tree)).toHaveLength(7)
 })
 
+// The help view in a short body (issue #92). The engine gives the body height as `scroll.bodyRows`. The full help view
+// takes 10 lines, the gap and the footer: 12 rows. A body of fewer rows draws the compact form. #65 adds a version
+// line to the help view. It merges after this PR and bumps FULL_ROWS, COMPACT_LINES and FULL_LINES when it rebases.
+const FULL_ROWS = 12
+const COMPACT_LINES = 7
+const FULL_LINES = 10
+
+/** The help view of the core keys over `bodyRows` rows: its Box, the footer Box and the gap between them. */
+function helpIn(bodyRows: number | undefined, bodyColumns = 96) {
+  const reg = new KeyRegistry()
+  const footer = footerKeys(reg, undefined, () => false, true)
+  const { drawn } = draw([], { footer, help: helpModel(reg.all(), [], '/c/config.json', []), bodyColumns, bodyRows })
+  const tree = drawn.tree as unknown as Node
+  const [help, foot] = tree.children as Node[]
+  return { tree, help: help as Node, foot: foot as Node, lines: (help as Node).children.length }
+}
+
+test('with help and room for it the pane draws the full help view, a gap and the footer', () => {
+  for (const rows of [undefined, FULL_ROWS, 28]) {
+    const { tree, lines } = helpIn(rows)
+    expect(lines).toBe(FULL_LINES)
+    expect(tree.props.rowGap).toBe(1)
+  }
+})
+
+test('with help and a body one row short the pane draws the compact help view and no gap', () => {
+  const { tree, help, foot, lines } = helpIn(FULL_ROWS - 1)
+  expect(lines).toBe(COMPACT_LINES)
+  expect(leaves(help)[0]).toBe('Pane keys')
+  expect(tree.props.rowGap).toBe(0)
+  expect(tree.children).toHaveLength(2)
+  expect(footerOf(foot)).toHaveLength(7)
+  expect(lines + 1).toBeLessThanOrEqual(FULL_ROWS - 1) // the help lines and the footer fit the short body
+})
+
+test('a footer that wraps at a narrow body takes a row, so help that fits at 80 columns turns compact at 78', () => {
+  expect(helpIn(FULL_ROWS, 80).lines).toBe(FULL_LINES) // the footer is 79 cells: one row
+  expect(helpIn(FULL_ROWS, 78).lines).toBe(COMPACT_LINES) // two rows
+  expect(helpIn(FULL_ROWS, undefined).lines).toBe(FULL_LINES) // no width: 80 columns
+})
+
+test('a body shorter than the footer plus one line still draws the compact help view and the footer', () => {
+  for (const rows of [2, 1, 0]) {
+    const { tree, help, foot, lines } = helpIn(rows)
+    expect(lines).toBe(COMPACT_LINES)
+    expect(leaves(help)[0]).toBe('Pane keys')
+    expect(footerOf(foot)).toHaveLength(7)
+    expect(tree.children).toHaveLength(2)
+  }
+})
+
+test('the table view never turns compact: only the help view reads the body height', () => {
+  const sections = [section('web', COLS, webRows(2))]
+  const tall = draw(sections, { bodyRows: 28 }).drawn
+  const short = draw(sections, { bodyRows: 3 }).drawn
+  expect(JSON.stringify(short.tree)).toBe(JSON.stringify(tall.tree)) // closures differ, the shape does not
+  expect((short.tree as unknown as Node).props.rowGap).toBe(1)
+})
+
 test('unavailable draws one dim line', () => {
   expect(TreeDataTable.unavailable(EL)).toEqual({ type: 'Text', props: { dimColor: true }, children: [UNAVAILABLE] })
   expect(UNAVAILABLE).toBe('Tracking is unavailable. Run /track to try again.')

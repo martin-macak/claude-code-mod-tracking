@@ -40,12 +40,20 @@ function leaves(node: unknown): string[] {
   return kids(node).flatMap(leaves)
 }
 
-/** The pane as the kit draws it: the terminal surface at 96 columns unless `o` says otherwise. */
+/**
+ * The pane as the kit draws it: the terminal surface at 96 columns, docked, with 28 body rows, unless `o` says
+ * otherwise. `bodyRows` and `placement` are what the engine gives a short inline pane.
+ */
 export function mountPane(
   $: Engine,
-  o: { surface?: 'terminal' | 'desktop'; bodyColumns?: number } = {},
+  o: { surface?: 'terminal' | 'desktop'; bodyColumns?: number; bodyRows?: number; placement?: 'dock' | 'inline' } = {},
 ): Promise<PaneUi> {
-  const props = o.bodyColumns === undefined ? PANE.props : { ...PANE.props, bodyColumns: o.bodyColumns }
+  const props = {
+    ...PANE.props,
+    ...(o.bodyColumns === undefined ? {} : { bodyColumns: o.bodyColumns }),
+    ...(o.bodyRows === undefined ? {} : { scroll: { ...PANE.props.scroll, bodyRows: o.bodyRows } }),
+    ...(o.placement === undefined ? {} : { placement: o.placement }),
+  }
   return $.ui.mount({ ...PANE, props, surface: o.surface ?? 'terminal' } as never) as unknown as Promise<PaneUi>
 }
 

@@ -236,6 +236,52 @@ test('pane: h shows the help view with every key and the config path; h again re
   await ui.unmount()
 })
 
+// The inline pane of a short terminal (issue #92): 100 columns and 40 rows give a body of 11 rows. The help view with its
+// footer needs 12 in full form. The compact form keeps its first lines and the footer in view together. #65 adds a
+// version line to the help view. It merges after this PR and bumps SHORT_ROWS when it rebases.
+const SHORT_ROWS = 8 // 7 help elements and the footer, one row each, with no gap
+
+/** The tree of the pane as `[help Box, footer Box]` and the gap between them. */
+async function helpTree(ui: PaneUi) {
+  const tree = (await ui.drawn()) as { props?: { rowGap?: number }; children: { children: unknown[] }[] }
+  return { gap: tree.props?.rowGap ?? 0, help: tree.children[0]?.children ?? [], footer: tree.children[1] }
+}
+
+test('pane: h in a short inline pane draws the compact help view, so Pane keys and the footer fit the body', async ($, on) => {
+  world(on)
+  const ui = await mountPane($, { bodyColumns: 96, bodyRows: 11, placement: 'inline' })
+  await ui.press({ key: 'help' })
+  const { gap, help, footer } = await helpTree(ui)
+  expect(gap + help.length + 1).toBe(SHORT_ROWS)
+  expect(gap + help.length + 1).toBeLessThanOrEqual(11 - 1) // the drawn view fits the body with one row of slack for the line #65 adds
+  expect(JSON.stringify(help[0])).toContain('Pane keys')
+  expect(footer).toBeDefined()
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  expect(await ui.find({ text: 'Row keys (act on the selected row)' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('pane: h in a docked pane keeps the full help view, one key to a line', async ($, on) => {
+  world(on)
+  const ui = await mountPane($, { bodyColumns: 96, bodyRows: 28, placement: 'dock' })
+  await ui.press({ key: 'help' })
+  const { gap, help } = await helpTree(ui)
+  expect(gap).toBe(1)
+  expect(help).toHaveLength(10)
+  expect(JSON.stringify(help[0])).toContain('Pane keys')
+  expect(JSON.stringify(help[1])).toContain('refresh')
+  await ui.unmount()
+})
+
+test('pane: a body shorter than the footer plus one line still draws the help view and every footer key', async ($, on) => {
+  world(on)
+  const ui = await mountPane($, { bodyColumns: 96, bodyRows: 1, placement: 'inline' })
+  await ui.press({ key: 'help' })
+  expect((await helpTree(ui)).help).toHaveLength(7)
+  expect(await hotkeysOf(ui)).toEqual(HOTKEYS)
+  await ui.unmount()
+})
+
 // The kit has no `$.ui.close` at run time (`$.ui` holds render, scroll, focus, press, input, select and mount), so the
 // close hook cannot be raised here. pane-session.test.ts holds the cases of `PaneSession.closed`: no selection, no help
 // view, no refocus left over, and a failed write that does not stop the other.

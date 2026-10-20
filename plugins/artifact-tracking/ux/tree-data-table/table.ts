@@ -3,13 +3,23 @@
 // guard that keeps the footer. Pure: it calls the global `h` through the typed wrappers and touches no state.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L6 Task 8, G9, G10, G16, G18, G20.
 import type { RenderElement } from 'claude-code'
-import type { FooterKey, SectionSpec } from '../../core/interfaces/view'
+import type { SectionSpec } from '../../core/interfaces/view'
 import { guard } from './budget'
-import { box, button, type TableElements, text } from './el'
-import { renderHelp } from './help'
+import { box, type TableElements, text } from './el'
+import { footerBox, footerRows } from './footer'
+import { compactHelp, renderHelp } from './help'
 import { type LaidSection, layout } from './layout'
 import { type Draw, drawSection } from './rows'
-import { type Drawn, type DrawnRow, type TableActions, type TableView, TOO_LARGE, UNAVAILABLE } from './shape'
+import {
+  DEFAULT_BODY_COLUMNS,
+  type Drawn,
+  type DrawnRow,
+  ROW_GAP,
+  type TableActions,
+  type TableView,
+  TOO_LARGE,
+  UNAVAILABLE,
+} from './shape'
 import { EMPTY_TEXT } from './text'
 
 export { findRow, handleOf, type LaidRow, type LaidSection, layout, neighbourOf } from './layout'
@@ -26,25 +36,6 @@ export {
   UNAVAILABLE,
 } from './shape'
 
-/** One Button per key, then the hint. A disabled key stays, dim and inert: a letter with no Button leaves the pane. */
-function footerBox(el: TableElements, keys: readonly FooterKey[], actions: TableActions): RenderElement {
-  return box(
-    el,
-    { columnGap: 2, flexWrap: 'wrap' },
-    ...keys.map(k =>
-      button(el, {
-        key: k.buttonKey,
-        plain: true,
-        hotkey: k.key,
-        label: k.label,
-        ...(k.enabled ? {} : { dimColor: true }),
-        onPress: k.enabled ? () => actions.press(k.buttonKey) : () => undefined,
-      }),
-    ),
-    text(el, { dimColor: true }, 'Esc close'),
-  )
-}
-
 /** The halving steps: from 1 up to the first `k` where every section's halved cap is 1. */
 function halvings(sections: readonly SectionSpec[], view: TableView): number {
   const wants = sections.map(s => view.limits.sectionRows + view.shown(s.id))
@@ -60,11 +51,15 @@ export const TreeDataTable = {
    */
   render(sections: readonly SectionSpec[], view: TableView, el: TableElements, actions: TableActions): Drawn {
     const footer = footerBox(el, view.footer, actions)
+    // The help view is one tree, so a short body turns it compact, with no gap, once for every attempt.
+    const columns = view.bodyColumns ?? DEFAULT_BODY_COLUMNS
+    const compact =
+      view.help !== null && compactHelp(view.help, footerRows(view.footer, columns), columns, view.bodyRows)
     const laids: (readonly LaidSection[])[] = []
     const attempt = (halve: number, detail: boolean) => (): RenderElement[] => {
       if (view.help !== null) {
         laids.push([])
-        return [box(el, { flexDirection: 'column' }, ...renderHelp(el, view.help))]
+        return [box(el, { flexDirection: 'column' }, ...renderHelp(el, view.help, compact))]
       }
       if (sections.length === 0) {
         laids.push([])
@@ -97,7 +92,7 @@ export const TreeDataTable = {
       })),
     )
     return {
-      tree: box(el, { flexDirection: 'column', rowGap: 1 }, ...body, footer),
+      tree: box(el, { flexDirection: 'column', rowGap: compact ? 0 : ROW_GAP }, ...body, footer),
       handles: new Map(rows.map(r => [r.handle, r.id])),
       rows,
     }

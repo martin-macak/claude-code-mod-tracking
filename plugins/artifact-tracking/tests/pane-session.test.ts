@@ -68,7 +68,7 @@ function setup(
   }
   const session = new PaneSession()
   const m = host as unknown as PaneHost
-  const draw = (cols = 80) => session.draw(w.ports, m, EL, cols)
+  const draw = (cols = 80, rows?: number) => session.draw(w.ports, m, EL, cols, rows)
   /** Presses the Button of a drawing and waits for the work it started. */
   const pressKey = async (key: string) => {
     press(buttonOf(await draw(), key))
@@ -128,6 +128,16 @@ test('draw with the help on draws the help view in place of the rows', async () 
   expect(lines).toContain('Config file: /p/config.json')
   expect(lines).toContain('X.')
   expect(buttonOf(tree, 'help').props.label).toBe('back')
+})
+
+test('draw hands the body height to the help view: a short body draws it compact, a body that fits draws it whole', async () => {
+  const t = setup(webs('a'), { path: '/p/config.json' })
+  t.w.state.set('help', true)
+  const help = async (rows?: number) => (await t.draw(96, rows)) as unknown as { children: { children: unknown[] }[] }
+  // #65 adds a version line to the help view. It merges after this PR and adds one to each count below when it rebases.
+  expect((await help(undefined)).children[0]?.children).toHaveLength(10)
+  expect((await help(28)).children[0]?.children).toHaveLength(10)
+  expect((await help(11)).children[0]?.children).toHaveLength(7)
 })
 
 test('focused writes selected for a row handle only', async () => {
