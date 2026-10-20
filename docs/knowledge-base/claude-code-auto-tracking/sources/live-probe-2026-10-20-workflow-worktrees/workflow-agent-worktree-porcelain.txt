@@ -1,0 +1,29 @@
+# Name, branch, lock and start point of the worktree of a workflow agent. Command outputs, nothing else.
+# Captured for issue #120. Read-only. Changes to the output: the home folder is written as ~, and <pid> replaces a process id.
+
+# 1. A running agent (Claude Code 2.1.305). Captured 2026-10-20. Run wf_1d7edcbf-abd had started three isolated agents.
+# This is the record of the third one. The agent had already switched its own branch: the engine made worktree-wf_1d7edcbf-abd-3.
+$ git worktree list --porcelain
+worktree ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_1d7edcbf-abd-3
+HEAD b3723bf09fced00d4f88676d1809562428671004
+branch refs/heads/fix/workflow-agent-worktree
+locked claude agent wf_1d7edcbf-abd-3 (pid <pid> start Tue Oct 20 11:15:08 2026)
+$ git reflog show worktree-wf_1d7edcbf-abd-3
+b3723bf worktree-wf_1d7edcbf-abd-3@{0}: branch: Created from origin/main
+
+# 2. Finished agents of run wf_0b8d2b37-0c6. Captured 2026-10-21.
+# -2 (an impl agent that pushed a branch) is still on disk. Its record has no lock line.
+$ git worktree list --porcelain | grep -A3 'wf_0b8d2b37-0c6-2$'
+worktree ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_0b8d2b37-0c6-2
+HEAD b39cae9671819d3efe83e718089d0d4153e090e3
+branch refs/heads/test/finish-load-tolerant-tests
+# -1 (a clean rebase agent) is gone from the list. Its branch is still there.
+$ git worktree list --porcelain | grep -c 'wf_0b8d2b37-0c6-1$'
+0
+$ git branch --list 'worktree-wf_0b8d2b37-0c6-1'
+  worktree-wf_0b8d2b37-0c6-1
+
+# 3. The keys of the meta.json of each agent of run wf_36709d9e-da6. It has worktreePath and spawnedWithWorktree, and no
+# branch key. Run in the folder of the run (see workflow-agent-worktree-paths.txt):
+$ jq -r 'keys|join(",")' agent-*.meta.json | sort | uniq -c
+  13 agentType,description,model,requestNonInteractive,requestShape,spawnDepth,spawnedWithWorktree,workflowPhase,worktreePath

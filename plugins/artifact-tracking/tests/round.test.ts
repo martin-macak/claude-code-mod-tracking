@@ -1,7 +1,7 @@
 // AutoRound: the worktree and agent steps, writes in flight (A20) and quiet rounds (A22). Fake deps. The PR lane is the
 // github tracker's since plan L5, Task 12: its cases moved to tests/pr-lane.test.ts, each split case keeps its name there.
 import { expect, test } from 'claude-code/testing'
-import { emptyAuto, pinRoot, recordEnter, recordSpawn } from '../trackers/auto/ledger'
+import { emptyAuto, pinRoot, recordAgentBranch, recordEnter, recordSpawn } from '../trackers/auto/ledger'
 import { AutoRound, type RoundDeps } from '../trackers/auto/round'
 import type { AutoReason, AutoState, LiveAgent } from './fixtures/contracts'
 import { isRowId } from './fixtures/contracts'
@@ -209,6 +209,24 @@ test('a prunable record of a proven child: rounds after the first make no auto w
     await t.run('tick')
   }
   expect(t.log.saves).toBe(saves)
+})
+
+test('a workflow agent keeps the worktree it ran in after a new worktree checks out its branch (#120)', async () => {
+  const t = rig({ withChild: false })
+  const run = 'wf_a35565d1-fd4'
+  const spawnWf = { agentId: 'w7', description: 'impl', subagentType: '', workflow: { runId: run, agentIndex: 7 } }
+  t.setAuto(s => recordSpawn(s, spawnWf, 5, MAIN)) // the engine gives a workflow agent no cwd: the session cwd stands in
+  t.state.porcelain = porcelain([`${run}-7`, 'fix/x'])
+  await t.run('start') // no commit or push yet: the agent has no branch
+  const agentRow = () => t.auto().snapshot!.agents.find(r => r.id === 'ag:w7')
+  expect(agentRow()).toMatchObject({ worktree: `${run}-7`, branch: 'fix/x', worktreeLive: true })
+  t.setAuto(s => recordAgentBranch(s, 'w7', 'fix/x'))
+  // The worktree is removed. Another run checks out the same branch in a worktree of its own.
+  t.state.porcelain = porcelain(['wf_0b519c0a-08c-1', 'fix/x'])
+  t.state.now += 30_000
+  await t.run('tick')
+  expect(agentRow()).toMatchObject({ worktree: `${run}-7`, branch: 'fix/x', worktreeLive: false })
+  expect(t.auto().agents[0]?.worktreePath).toBe(`${MAIN}/.claude/worktrees/${run}-7`)
 })
 
 test('run never rejects, also when a dependency throws', async () => {

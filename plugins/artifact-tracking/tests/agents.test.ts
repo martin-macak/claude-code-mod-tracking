@@ -97,6 +97,80 @@ test('a branch from gitOperation locates a workflow agent', () => {
   expect(rowOf(v, 'w1').workflow).toEqual({ runId: 'wf_x', agentIndex: 2 })
 })
 
+// Workflow agents (issue #120). A workflow agent runs in `<main>/.claude/worktrees/<runId>-<agentIndex>`, and the engine
+// gives `agent.spawn` no cwd for it. These cases build the list the way git prints it for a run.
+const RUN = 'wf_a35565d1-fd4'
+const wfAgent = (id: string, agentIndex: number, over: Partial<AgentProof> = {}): AgentProof =>
+  agent(id, { kind: 'workflow', workflow: { runId: RUN, agentIndex }, spawnedAt: AT - 1000, ...over })
+const wfRec = (n: number, branch: string): GitWorktree => rec(`${DIR}/${RUN}-${n}`, branch)
+
+test('a running isolated workflow agent shows its worktree before any commit or push', () => {
+  const list = [rec(MAIN, 'main'), wfRec(3, `worktree-${RUN}-3`)]
+  const v = trackAgents(state([wfAgent('w3', 3)]), null, list, MAIN, AT)
+  expect(rowOf(v, 'w3')).toMatchObject({ worktree: `${RUN}-3`, branch: `worktree-${RUN}-3`, worktreeLive: true })
+})
+
+test('a workflow agent that was not isolated still shows the main checkout', () => {
+  const v = trackAgents(state([wfAgent('w1', 1)]), null, [rec(MAIN, 'main')], MAIN, AT)
+  expect(rowOf(v, 'w1')).toMatchObject({ worktree: 'repo', branch: 'main', worktreeLive: true })
+  expect(v.state.agents[0]?.worktreePath).toBeUndefined()
+})
+
+test('a workflow agent takes the worktree of its own index, not of a sibling', () => {
+  const list = [rec(MAIN, 'main'), wfRec(1, 'b1'), wfRec(2, 'b2')]
+  const v = trackAgents(state([wfAgent('w1', 1), wfAgent('w2', 2)]), null, list, MAIN, AT)
+  expect(rowOf(v, 'w1')).toMatchObject({ worktree: `${RUN}-1`, branch: 'b1' })
+  expect(rowOf(v, 'w2')).toMatchObject({ worktree: `${RUN}-2`, branch: 'b2' })
+})
+
+test('a worktree of the run for another index never goes to an agent that was not isolated', () => {
+  const list = [rec(MAIN, 'main'), wfRec(1, 'b1')]
+  const v = trackAgents(state([wfAgent('w1', 1), wfAgent('w2', 2)]), null, list, MAIN, AT)
+  expect(rowOf(v, 'w1').worktree).toBe(`${RUN}-1`)
+  expect(rowOf(v, 'w2')).toMatchObject({ worktree: 'repo', branch: 'main', worktreeLive: true })
+})
+
+test('an ended workflow agent keeps its worktree when a new worktree checks out the same branch', () => {
+  const w = wfAgent('w7', 7, { branch: 'fix/x', endedAt: AT - 5 })
+  const first = trackAgents(state([w]), null, [rec(MAIN, 'main'), wfRec(7, 'fix/x')], MAIN, AT)
+  expect(rowOf(first, 'w7')).toMatchObject({ worktree: `${RUN}-7`, worktreeLive: true })
+  // The old worktree is removed. A later run checks out the same branch in a worktree of its own.
+  const later = [rec(MAIN, 'main'), rec(`${DIR}/wf_0b519c0a-08c-1`, 'fix/x')]
+  const v = trackAgents(first.state, null, later, MAIN, AT + 60_000)
+  expect(rowOf(v, 'w7')).toMatchObject({ worktree: `${RUN}-7`, worktreeLive: false, branch: 'fix/x' })
+})
+
+test('a removed workflow worktree stays on its agent, dimmed, with the last branch of its proof', () => {
+  const w = wfAgent('w4', 4, { endedAt: AT - 5 })
+  const first = trackAgents(state([w]), null, [rec(MAIN, 'main'), wfRec(4, 'fix/y')], MAIN, AT)
+  const proof: WorktreeProof = { path: `${DIR}/${RUN}-4`, origin: 'workflow', runId: RUN, provenAt: 1, branch: 'fix/y' }
+  const v = trackAgents({ ...first.state, worktrees: [proof] }, null, [rec(MAIN, 'main')], MAIN, AT + 60_000)
+  expect(rowOf(v, 'w4')).toMatchObject({ state: 'ended', worktree: `${RUN}-4`, worktreeLive: false, branch: 'fix/y' })
+})
+
+test('a proven workflow worktree is written to the agent once, and a quiet round changes nothing', () => {
+  const list = [rec(MAIN, 'main'), wfRec(2, 'b2')]
+  const first = trackAgents(state([wfAgent('w2', 2)]), null, list, MAIN, AT)
+  expect(first.state.agents[0]?.worktreePath).toBe(`${DIR}/${RUN}-2`)
+  expect(trackAgents(first.state, null, list, MAIN, AT + 30_000).state).toBe(first.state)
+})
+
+test('a later agent with the same run and index does not take the worktree that an earlier agent proved', () => {
+  // A resume of the run starts `agentIndex` over: the second agent is index 1 again.
+  const list = [rec(MAIN, 'main'), wfRec(1, 'b1')]
+  const first = trackAgents(state([wfAgent('old', 1)]), null, list, MAIN, AT)
+  const both = { ...first.state, agents: [...first.state.agents, wfAgent('new', 1, { spawnedAt: AT + 10 })] }
+  const v = trackAgents(both, null, list, MAIN, AT + 20)
+  expect(rowOf(v, 'old')).toMatchObject({ worktree: `${RUN}-1`, branch: 'b1' })
+  expect(rowOf(v, 'new')).toMatchObject({ worktree: 'repo', branch: 'main' })
+})
+
+test('an agent that has an exact path keeps it over the convention path of its index', () => {
+  const w = wfAgent('w1', 1, { worktreePath: `${DIR}/probe-wt` })
+  const list = [rec(MAIN, 'main'), rec(`${DIR}/probe-wt`, 'worktree-probe-wt'), wfRec(1, 'b1')]
+  expect(rowOf(trackAgents(state([w]), null, list, MAIN, AT), 'w1').worktree).toBe('probe-wt')
+})
+
 test('with no other clue an agent takes its parent location, a child takes the parent agent', () => {
   const s = state([agent('p', { cwd: `${DIR}/probe-wt` }), agent('c', { parentId: 'p', cwd: undefined })])
   const v = trackAgents(s, [live('p', 'running'), live('c', 'running')], LIST, MAIN, AT)

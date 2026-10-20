@@ -1,0 +1,96 @@
+# Workflow agent worktree names against the agents of four saved runs. Command outputs, nothing else.
+# Captured 2026-10-20 for issue #120. Read-only. Changes to the output: the home folder is written as ~, and for run 2 only
+# the last path part is kept. Prompts and agent results are not read.
+# Each run lives in <session folder>/subagents/workflows/<runId>/. journal.jsonl has one "started" line for each agent, in
+# the order the agents began. agent-<agentId>.meta.json has the worktreePath of the agent.
+# Columns: position in the journal, label, worktreePath ("-" when the meta.json has none).
+# Run in the folder of each run:
+$ n=0; jq -r 'select(.type=="started")|[.agentId,.label]|@tsv' journal.jsonl | while IFS="$(printf '\t')" read -r id label; do n=$((n+1)); wt=$(jq -r '.worktreePath // "-"' "agent-$id.meta.json"); echo "$n $label $wt"; done | sed "s#$HOME#~#"
+# The Claude Code version of each run is the "version" key of its agent transcripts:
+$ for f in agent-*.jsonl; do jq -r '.version // empty' "$f" | head -1; done | sort | uniq -c
+
+# 1. Run wf_0b519c0a-08c, this repo.
+1 impl:#115 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_0b519c0a-08c-3
+2 rebase:PR#100 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_0b519c0a-08c-1
+3 rebase+scope:PR#112 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_0b519c0a-08c-2
+4 review:PR#121 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_0b519c0a-08c-4
+5 review:PR#112 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_0b519c0a-08c-5
+6 harden:PR#121 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_0b519c0a-08c-6
+7 harden:PR#112 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_0b519c0a-08c-7
+   7 2.1.304
+
+# 2. Run wf_c4f8c2df-413, another repo of the owner's (31 agents). Its path is not saved: this command keeps the last path part.
+$ n=0; jq -r 'select(.type=="started")|[.agentId,.label]|@tsv' journal.jsonl | while IFS="$(printf '\t')" read -r id label; do n=$((n+1)); wt=$(jq -r '.worktreePath // "-"' "agent-$id.meta.json" | sed 's#.*/##'); echo "$n $label $wt"; done
+1 design -
+2 plan -
+3 plan-review#1 -
+4 plan-revise#1 -
+5 plan-review#2 -
+6 jira-subtasks -
+7 impl:A wf_c4f8c2df-413-7
+8 review:A#1 -
+9 merge:A -
+10 impl:B1 wf_c4f8c2df-413-10
+11 impl:B2 wf_c4f8c2df-413-11
+12 impl:C1 wf_c4f8c2df-413-12
+13 review:B2#1 -
+14 review:B1#1 -
+15 review:C1#1 -
+16 merge:B1 -
+17 merge:B2 -
+18 merge:C1 -
+19 impl:C2 wf_c4f8c2df-413-19
+20 review:C2#1 -
+21 merge:C2 -
+22 impl:D wf_c4f8c2df-413-22
+23 review:D#1 -
+24 merge:D -
+25 test:run#1 -
+26 final:architecture -
+27 final:conventions-docs -
+28 final:verify -
+29 final:fix -
+30 final:test -
+31 jira-closeout -
+  31 2.1.289
+
+# 3. Run wf_a35565d1-fd4, this repo (21 agents).
+1 review:correctness -
+2 review:robustness -
+3 verify:correctness-1 -
+4 verify:correctness-2 -
+5 verify:correctness-3 -
+6 verify:correctness-4 -
+7 verify:correctness-5 -
+8 verify:correctness-6 -
+9 verify:correctness-7 -
+10 verify:correctness-8 -
+11 verify:correctness-9 -
+12 verify:correctness-10 -
+13 verify:correctness-11 -
+14 verify:correctness-12 -
+15 verify:robustness-1 -
+16 verify:robustness-2 -
+17 verify:robustness-6 -
+18 verify:robustness-8 -
+19 verify:robustness-10 -
+20 verify:robustness-11 -
+21 fix ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_a35565d1-fd4-21
+  21 2.1.296
+
+# 4. Run wf_36709d9e-da6, this repo (13 agents). The owner's /track pane showed two of its pairs (issue #120):
+#    wf·7 impl:#62 in wf_36709d-7 (compacted run id), and wf·2 with cwd wf_36709d9e-da6-2.
+1 impl:#94 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_36709d9e-da6-1
+2 impl:#93 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_36709d9e-da6-2
+3 impl:#56 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_36709d9e-da6-3
+4 impl:#65 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_36709d9e-da6-4
+5 impl:#92 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_36709d9e-da6-5
+6 impl:#50 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_36709d9e-da6-6
+7 impl:#62 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_36709d9e-da6-7
+8 review:PR#95 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_36709d9e-da6-8
+9 review:PR#96 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_36709d9e-da6-9
+10 review:PR#97 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_36709d9e-da6-10
+11 review:PR#98 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_36709d9e-da6-11
+12 review:PR#100 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_36709d9e-da6-12
+13 review:PR#99 ~/projects/claude-code-mod-tracking/.claude/worktrees/wf_36709d9e-da6-13
+  13 2.1.304
