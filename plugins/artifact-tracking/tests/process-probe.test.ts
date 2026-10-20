@@ -4,6 +4,7 @@ import {
   dockerEntryMatchesRow,
   dockerStateFromStatus,
   findDetachedPid,
+  hasUnexpandedVariable,
   parseDockerPs,
   parseScreenLs,
   parseTmuxLs,
@@ -115,4 +116,89 @@ test('findDetachedPid does not take an old process with the same command (anothe
   expect(findDetachedPid(ps, 'npm run dev', at(13, 20, 26, 40))).toBeUndefined()
   // Within the longest Bash call (10 minutes) it is still ours.
   expect(findDetachedPid('  901 Tue Oct 13 20:17:00 2026 npm run dev\n', 'npm run dev', at(13, 20, 26, 40))).toBe(901)
+})
+
+// ---------------------------------------------------------------- a fingerprint that names a variable (#56)
+
+/** `${name}`, built so that no string of this file holds a template placeholder. */
+const braced = (name: string) => ['$', '{', name, '}'].join('')
+
+test('hasUnexpandedVariable: $NAME, braced names and $(...) count, a lone dollar or a price does not', () => {
+  expect(hasUnexpandedVariable('node $F')).toBe(true)
+  expect(hasUnexpandedVariable(`python3 ${braced('L')}/bin/reader.py`)).toBe(true)
+  expect(hasUnexpandedVariable('srv --out $(mktemp)')).toBe(true)
+  expect(hasUnexpandedVariable('node /work/srv.mjs')).toBe(false)
+  expect(hasUnexpandedVariable('echo cost$')).toBe(false)
+  expect(hasUnexpandedVariable('echo $5')).toBe(false)
+})
+
+test('psStillMatches: a word with a variable matches what the shell put in its place', () => {
+  const at1 = at(13, 20, 26, 40)
+  const line = (command: string) => `Tue Oct 13 20:26:39 2026 ${command}\n`
+  expect(psStillMatches(line('node /work/srv.mjs'), 'node $F', at1)).toBe(true)
+  expect(
+    psStillMatches(line('python3 /p/lab/bin/reader.py /p/data/big.txt'), 'python3 $L/bin/reader.py $D/big.txt', at1),
+  ).toBe(true)
+  expect(
+    psStillMatches(
+      line('python3 /p/lab/bin/reader.py /p/data/big.txt'),
+      `python3 ${braced('L')}/bin/reader.py $D/big.txt`,
+      at1,
+    ),
+  ).toBe(true)
+  // Words that are literal still have to match, and so does the program.
+  expect(
+    psStillMatches(line('python3 /p/lab/bin/other.py /p/data/big.txt'), 'python3 $L/bin/reader.py $D/big.txt', at1),
+  ).toBe(false)
+  expect(psStillMatches(line('ruby /work/srv.mjs'), 'node $F', at1)).toBe(false)
+  expect(psStillMatches(line('/usr/bin/run --x'), '$B --x', at1)).toBe(true) // a variable program: any program
+  expect(psStillMatches(line('/usr/bin/run --y'), '$B --x', at1)).toBe(false)
+  // The command may have more words than the fingerprint kept, never fewer.
+  expect(psStillMatches(line('node /work/srv.mjs --port 80'), 'node $F', at1)).toBe(true)
+  expect(psStillMatches(line('node'), 'node $F', at1)).toBe(false)
+  // The guard against pid reuse stays: a process that started after the row was seen is another process.
+  expect(psStillMatches(line('node /work/srv.mjs'), 'node $F', at(13, 20, 20, 0))).toBe(false)
+  // `daemon '$F' &` passes the text `$F`: the parser keeps it (process-parse.test.ts), and the live process still fits.
+  expect(psStillMatches(line('daemon $F'), 'daemon $F', at1)).toBe(true)
+})
+
+test('findDetachedPid: a fingerprint with a variable takes the newest process of the window that fits', () => {
+  const ps = [
+    '  100 Tue Oct 13 20:26:39 2026 node /work/a.mjs',
+    '  200 Tue Oct 13 20:26:39 2026 ruby /work/b.rb',
+    '  300 Tue Oct 13 20:26:38 2026 node /work/c.mjs',
+    '  400 Tue Oct 13 20:26:30 2026 node /elsewhere/a.mjs',
+  ].join('\n')
+  // `$D/a.mjs` keeps a literal part, so it is a constraint: 100 and 400 fit, 100 is the newest.
+  expect(findDetachedPid(ps, 'node $D/a.mjs', at(13, 20, 26, 40))).toBe(100)
+  expect(findDetachedPid(ps, 'node $D/c.mjs', at(13, 20, 26, 40))).toBe(300)
+  expect(findDetachedPid(ps, 'python3 $D/a.mjs', at(13, 20, 26, 40))).toBeUndefined()
+  // A literal fingerprint beats a loose one of the same process: the exact word wins over the variable.
+  expect(findDetachedPid(ps, 'node /work/c.mjs', at(13, 20, 26, 40))).toBe(300)
+})
+
+test('findDetachedPid: a fingerprint of the program and variables only binds to no process', () => {
+  // `node $F` says nothing but the program: the newest node process of the window would be taken for it, and a dead row
+  // would show `running` with the pid of an unrelated process (#56 review, m1).
+  const ps = '   22 Tue Oct 13 20:26:39 2026 node /other/project/dev-server.js\n'
+  const first = at(13, 20, 26, 40)
+  expect(findDetachedPid(ps, 'node $F', first)).toBeUndefined()
+  expect(findDetachedPid(ps, `node ${braced('F')}`, first)).toBeUndefined()
+  expect(findDetachedPid(ps, 'node $A $B', first)).toBeUndefined()
+  expect(findDetachedPid(ps, 'node $(mktemp)', first)).toBeUndefined()
+  expect(findDetachedPid(ps, '$BIN', first)).toBeUndefined()
+  // A word with a literal part is a constraint, and the probe still looks.
+  expect(findDetachedPid(ps, 'node $D/dev-server.js', first)).toBe(22)
+  expect(findDetachedPid(ps, 'node --port=$P', first)).toBeUndefined() // `--port=` is literal, the process has no such word
+  expect(findDetachedPid(ps, 'node $D/other.js', first)).toBeUndefined()
+  // With the pid known the loose fingerprint is enough: the process is checked, not searched.
+  expect(psStillMatches('Tue Oct 13 20:26:39 2026 node /other/project/dev-server.js\n', 'node $F', first)).toBe(true)
+})
+
+test('a variable stands for one word: a value of several words fits nothing', () => {
+  const first = at(13, 20, 26, 40)
+  const one = '   11 Tue Oct 13 20:26:39 2026 node a server.js\n'
+  const several = '   11 Tue Oct 13 20:26:39 2026 node a b server.js\n'
+  expect(findDetachedPid(one, 'node $ARGS server.js', first)).toBe(11)
+  expect(findDetachedPid(several, 'node $ARGS server.js', first)).toBeUndefined()
 })

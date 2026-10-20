@@ -7,6 +7,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { ItemRecord, ProcessRecord } from './fixtures/contracts'
 import * as ev from './fixtures/events'
 import { LIMITS } from './fixtures/limits'
+import { BG_START_MAIN, BG_START_SYNC_AGENT, MID_TURN_NOTICE } from './fixtures/notices'
 import { mountPane, select } from './fixtures/pane'
 import {
   BAND,
@@ -467,6 +468,41 @@ test('processes: a real task-notification row (text only, no task field) complet
     },
   } as never)
   expect((await track($)).text ?? '').toMatch(/sleep 90[^\n]*completed/)
+})
+
+test('processes: a notice folded into a running turn (door delivery) completes the background task', async ($, on) => {
+  const { calls, fake } = world(on)
+  fake.tools.Bash = { ...BG_START_MAIN.result }
+  await $.tool.call({
+    tool: 'Bash',
+    command: 'sleep 20; echo done',
+    tool_use_id: 'toolu_0167pQhp2xvXTrduu7Tmndwj',
+  } as never)
+  await quiet(calls)
+  expect((await track($)).text ?? '').toMatch(/sleep 20; echo done[^\n]*running/)
+  // The row as the headless spike saw it: an attachment named `queued_command`, the notice in a system-reminder.
+  await $.session.append({
+    door: 'delivery',
+    origin: { kind: 'task-notification' },
+    uuid: 'u-task-folded',
+    message: {
+      type: 'attachment',
+      name: 'queued_command',
+      role: 'user',
+      content: [{ type: 'text', text: MID_TURN_NOTICE.text }],
+    },
+  } as never)
+  expect((await track($)).text ?? '').toMatch(/sleep 20; echo done[^\n]*completed/)
+})
+
+test('processes: a task that ends with the final response of a headless loop is killed at turn.complete', async ($, on) => {
+  const { calls, fake } = world(on)
+  fake.tools.Bash = { ...BG_START_SYNC_AGENT.result }
+  await $.tool.call({ tool: 'Bash', command: 'sleep 15', tool_use_id: 'toolu_h' } as never)
+  await quiet(calls)
+  expect((await track($)).text ?? '').toMatch(/sleep 15[^\n]*running/)
+  await $.turn.complete({ turnId: 't1', reason: 'answer', isAborted: false, answer: '' } as never)
+  expect((await track($)).text ?? '').toMatch(/sleep 15[^\n]*killed/)
 })
 
 test('processes: notification text typed by the person does not change a task state', async ($, on) => {

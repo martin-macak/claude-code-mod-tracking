@@ -12,7 +12,8 @@ export type ProcessKind =
   | 'screen'
   | 'detached-process'
 
-export type ProcessState = 'running' | 'up' | 'completed' | 'failed' | 'killed' | 'exited' | 'unhealthy'
+/** `unknown`: a detached process whose command names a variable that the mod could not expand, and none was found. */
+export type ProcessState = 'running' | 'up' | 'completed' | 'failed' | 'killed' | 'exited' | 'unhealthy' | 'unknown'
 
 export type ProcessRecord = {
   /** Dedupe key. */
@@ -26,6 +27,13 @@ export type ProcessRecord = {
   /** For task-backed rows. */
   taskId?: string
   toolUseId?: string
+  /** The subagent or workflow agent whose Bash call started a task-backed row. Absent for the main loop. */
+  agentId?: string
+  /**
+   * The engine ends this task at the final response of its caller and sends no notice
+   * (`backgroundEndsWithFinalResponse` in the Bash result). The row ends as `killed` when that agent ends.
+   */
+  endsWithAgent?: true
   /** Docker container id for docker rows. */
   containerId?: string
   /** Docker compose project for compose rows. */

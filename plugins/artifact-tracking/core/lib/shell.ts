@@ -3,9 +3,27 @@
 // Quoted text stays one word, so `bash -c '...'`, `ssh host '...'` and `echo "...; ..."` hide their insides.
 // Heredoc bodies and comments are skipped.
 
+/**
+ * Stands for a `$` that the shell passes as typed: one inside single quotes, after a backslash or after a backslash in
+ * double quotes. `Segment.marked` holds it, so a reader that expands `$NAME` can tell `'$F'` from `$F`. A shell command
+ * line has no NUL (an argument cannot hold one), so no typed character is taken for it.
+ */
+export const LITERAL_DOLLAR = '\u0000'
+
+/** The word as the shell passes it: each `LITERAL_DOLLAR` is a plain `$` again. */
+export const unmarkDollars = (word: string): string => word.replaceAll(LITERAL_DOLLAR, '$')
+
+const literalDollars = (text: string): string => text.replaceAll('$', LITERAL_DOLLAR)
+
 export type Segment = {
   /** Words with quotes and escapes removed. Redirections are dropped. */
   words: string[]
+  /**
+   * The same words, with each `$` that quotes or an escape made literal replaced by `LITERAL_DOLLAR`. Quotes and escapes
+   * are gone from `words`, so only this array says which `$NAME` the shell expands (bare, or in double quotes) and which
+   * it passes on as typed (`'$NAME'`, `\$NAME`). Same length and order as `words`.
+   */
+  marked: string[]
   /** The segment ended with a single `&`: the shell runs it in the background. */
   bg: boolean
   /**
@@ -39,7 +57,7 @@ export function splitShell(command: string): Segment[] {
   const endSegment = (bg: boolean) => {
     endWord()
     const clean = dropRedirections(words)
-    if (clean.length > 0) out.push({ words: clean, bg, scope: scope() })
+    if (clean.length > 0) out.push({ words: clean.map(unmarkDollars), marked: clean, bg, scope: scope() })
     words = []
   }
   const skipHeredocs = () => {
@@ -62,14 +80,14 @@ export function splitShell(command: string): Segment[] {
         i += 2
         continue
       }
-      word += s[i + 1] ?? ''
+      word += literalDollars(s[i + 1] ?? '')
       inWord = true
       i += 2
       continue
     }
     if (c === "'") {
       const end = s.indexOf("'", i + 1)
-      word += s.slice(i + 1, end === -1 ? s.length : end)
+      word += literalDollars(s.slice(i + 1, end === -1 ? s.length : end))
       inWord = true
       i = end === -1 ? s.length : end + 1
       continue
@@ -78,7 +96,7 @@ export function splitShell(command: string): Segment[] {
       let j = i + 1
       while (j < s.length && s[j] !== '"') {
         if (s[j] === '\\' && j + 1 < s.length) {
-          word += s[j + 1]
+          word += literalDollars(s[j + 1]!)
           j += 2
           continue
         }
@@ -169,6 +187,28 @@ export function scopedDir(start: string | undefined): {
       }
     },
     set: (scope, dir) => void dirs.set(scope, dir),
+  }
+}
+
+/**
+ * Shell variables per subshell scope, the same walk as `scopedDir`. `get` finds the value in the nearest scope that set
+ * the name: a variable set in a subshell does not reach its parent, and a child reads its parent's. `set(scope, name,
+ * undefined)` records an unknown value, which hides the parent's.
+ */
+export function scopedVars(): {
+  get: (scope: string, name: string) => string | undefined
+  set: (scope: string, name: string, value: string | undefined) => void
+} {
+  const vars = new Map<string, string | undefined>()
+  const key = (scope: string, name: string): string => `${scope}\0${name}`
+  return {
+    get(scope, name) {
+      for (let s = scope; ; s = s.slice(0, s.lastIndexOf('.'))) {
+        if (vars.has(key(s, name))) return vars.get(key(s, name))
+        if (s === '') return undefined
+      }
+    },
+    set: (scope, name, value) => void vars.set(key(scope, name), value),
   }
 }
 
