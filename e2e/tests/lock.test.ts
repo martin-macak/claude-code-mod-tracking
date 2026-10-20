@@ -10,6 +10,7 @@ import { acquireLock, claimRun } from '../support/lock.ts'
 
 const tempDir = () => mkdtempSync(join(tmpdir(), 'lock-'))
 const child = fileURLToPath(new URL('./fixtures/lock-child.ts', import.meta.url))
+const pollerPath = fileURLToPath(new URL('./fixtures/lock-poller.ts', import.meta.url))
 
 // One lock child process. Its stdio follows the protocol in fixtures/lock-child.ts.
 // A test that times out aborts its signal, and the child is killed then, not left running.
@@ -123,6 +124,38 @@ test('a child that attempts after the lock holder won still loses', { timeout: 6
   } finally {
     holder.kill()
     late.kill()
+  }
+})
+
+test('a lock file never exists without a pid in it', { timeout: 60_000 }, async t => {
+  const dir = tempDir()
+  const poller = spawn(process.execPath, [pollerPath, dir], { stdio: ['pipe', 'pipe', 'pipe'] })
+  t.signal.addEventListener('abort', () => poller.kill(), { once: true })
+  let stderr = ''
+  poller.stderr.on('data', chunk => {
+    stderr += chunk
+  })
+  const lines = createInterface({ input: poller.stdout })[Symbol.asyncIterator]()
+  const nextLine = async () => {
+    const next = await lines.next()
+    if (next.done) throw new Error(`lock poller ended early: ${stderr}`)
+    return next.value
+  }
+  try {
+    assert.equal(await nextLine(), 'ready')
+    // Take and release the lock in a loop. The poller reads the file the whole time.
+    const until = Date.now() + 400
+    poller.stdin.write(`${until}\n`)
+    let cycles = 0
+    while (Date.now() < until) {
+      acquireLock(dir)()
+      cycles++
+    }
+    const { reads, empty } = JSON.parse(await nextLine()) as { reads: number; empty: number }
+    assert.ok(reads > 0, `the poller never read the lock in ${cycles} cycles`)
+    assert.equal(empty, 0, `the poller read an empty lock file ${empty} times in ${reads} reads`)
+  } finally {
+    poller.kill()
   }
 })
 
