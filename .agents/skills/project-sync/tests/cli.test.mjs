@@ -1038,6 +1038,19 @@ test('process: a gh that rejects the token gives exit 3 and the fallback order o
   assert.match(r.stderr, /Fallback order/)
 })
 
+// The stub reads its stdin first, so the run takes the normal path with no EPIPE. The test before
+// this one uses a stub that does not read it: that is the path where gh can exit first.
+test('process: a gh that reads its stdin and rejects the token also gives exit 3 and the fallback order', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'project-sync-'))
+  writeFileSync(join(dir, 'gh'), '#!/bin/sh\ncat >/dev/null\necho "gh: Bad credentials (HTTP 401)" >&2\nexit 1\n')
+  chmodSync(join(dir, 'gh'), 0o755)
+  const r = runProcess(['sync'], { path: `${dir}:/usr/bin:/bin` })
+  assert.equal(r.status, 3)
+  assert.equal(r.stdout, '')
+  assert.match(r.stderr, /Bad credentials/)
+  assert.match(r.stderr, /Fallback order/)
+})
+
 test('process: the query reaches gh on stdin, as gh api graphql --input - needs', () => {
   const dir = mkdtempSync(join(tmpdir(), 'project-sync-'))
   writeFileSync(
