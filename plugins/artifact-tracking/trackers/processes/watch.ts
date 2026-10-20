@@ -8,6 +8,7 @@ import {
   composeState,
   dockerEntryMatchesRow,
   findDetachedPid,
+  hasUnexpandedVariable,
   parseDockerPs,
   psStillMatches,
   screenLive,
@@ -121,8 +122,11 @@ export async function probeProcesses(ctx: ProbeCtx, state: ProbeState): Promise<
       const all = await run('ps', '-A', '-o', 'pid=,lstart=,command=')
       if (all.exitCode !== 0) throw new Error(all.stderr.trim() || `ps failed (${all.exitCode})`)
       for (const r of lostRows) {
-        const pid = findDetachedPid(all.stdout, r.fingerprint as string, r.firstSeen)
-        mark(r, pid !== undefined ? 'running' : 'exited', pid)
+        const fingerprint = r.fingerprint as string
+        const pid = findDetachedPid(all.stdout, fingerprint, r.firstSeen)
+        // A command with a variable the mod could not expand may fit no process because of its words alone: the state
+        // is unknown then, not `exited`. A later probe may still find it.
+        mark(r, pid !== undefined ? 'running' : hasUnexpandedVariable(fingerprint) ? 'unknown' : 'exited', pid)
       }
     })
 

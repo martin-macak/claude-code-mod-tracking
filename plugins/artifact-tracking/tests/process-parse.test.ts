@@ -5,12 +5,13 @@ import {
   processUpdateFromNotificationText,
   processUpdateFromTaskStop,
 } from '../trackers/processes/parse'
+import { AGENT_RESUMED_NOTICE, MID_TURN_NOTICE } from './fixtures/notices'
 
 test('parseBashProcesses tracks background Bash and Monitor-style task ids', () => {
   const rows = parseBashProcesses(
     'npm run dev',
     { result: { backgroundTaskId: 'task-1', backgroundedByUser: true, timedOutAfterMs: 30_000 } },
-    'toolu_bg_1',
+    { toolUseId: 'toolu_bg_1' },
   )
   expect(rows).toHaveLength(1)
   expect(rows[0]).toMatchObject({
@@ -49,13 +50,7 @@ test('parseBashProcesses tracks docker, tmux, screen and detached pid launches',
 })
 
 test('parseBashProcesses derives compose project from cwd when -p is missing', () => {
-  const compose = parseBashProcesses(
-    'docker compose up -d',
-    { result: { stdout: '' } },
-    undefined,
-    Date.now(),
-    '/tmp/my-app',
-  )
+  const compose = parseBashProcesses('docker compose up -d', { result: { stdout: '' } }, { cwd: '/tmp/my-app' })
   expect(compose[0]).toMatchObject({
     kind: 'docker-compose',
     name: 'my-app',
@@ -68,9 +63,7 @@ test('parseBashProcesses keeps a cd inside a subshell out of later commands', ()
   const compose = parseBashProcesses(
     '(cd /srv/other && true); docker compose up -d',
     { result: { stdout: '' } },
-    undefined,
-    Date.now(),
-    '/work/app',
+    { cwd: '/work/app' },
   )
   expect(compose[0]).toMatchObject({ kind: 'docker-compose', name: 'app', project: 'app' })
 })
@@ -137,8 +130,10 @@ test('compound: flags of another command do not leak into the docker or compose 
   expect(parseBashProcesses('ls -d . && docker run --rm alpine true', out(''))).toEqual([])
   expect(parseBashProcesses('mkdir -p x && docker compose up', out(''))).toEqual([])
   expect(
-    parseBashProcesses('mkdir -p wrong && docker compose up -d', out(''), undefined, 1, '/w/app')[0],
-  ).toMatchObject({ project: 'app' })
+    parseBashProcesses('mkdir -p wrong && docker compose up -d', out(''), { at: 1, cwd: '/w/app' })[0],
+  ).toMatchObject({
+    project: 'app',
+  })
 })
 
 test('compound: two detached runs get their own ids in order', () => {
@@ -207,7 +202,7 @@ test('compose variants: detach forms and the standalone binary', () => {
 })
 
 test('compose project name: env, export, -f dir, --project-directory, cd and normalization', () => {
-  const name = (c: string, cwd?: string) => parseBashProcesses(c, out(''), undefined, 1, cwd)[0]?.project
+  const name = (c: string, cwd?: string) => parseBashProcesses(c, out(''), { at: 1, cwd })[0]?.project
   expect(name('COMPOSE_PROJECT_NAME=envp docker compose up -d')).toBe('envp')
   expect(name('export COMPOSE_PROJECT_NAME=expp; docker compose up -d')).toBe('expp')
   expect(name('docker compose -f /srv/stack/compose.yml up -d', '/w')).toBe('stack')
@@ -279,7 +274,7 @@ test('detached: the fingerprint is the spawned program, without cd, env, nohup a
 })
 
 test('detached: setsid -f forks on its own; $! is not its pid, so the row has no pid', () => {
-  const rows = parseBashProcesses('setsid -f node worker.js; echo $!', out('4242\n'), 'toolu_s')
+  const rows = parseBashProcesses('setsid -f node worker.js; echo $!', out('4242\n'), { toolUseId: 'toolu_s' })
   expect(rows.map(r => [r.fingerprint, r.pid])).toEqual([['node worker.js', undefined]])
   // Without -f, setsid stays in the foreground of a shell without job control.
   expect(parseBashProcesses('setsid node worker.js', out(''))).toEqual([])
@@ -304,7 +299,7 @@ test('detached: two background jobs get their pids in order', () => {
 })
 
 test('detached: without echo $! the row is kept without a pid, to be found by the probe', () => {
-  const rows = parseBashProcesses('nohup sleep 100 > /dev/null 2>&1 &', out(''), 'toolu_x', 5)
+  const rows = parseBashProcesses('nohup sleep 100 > /dev/null 2>&1 &', out(''), { toolUseId: 'toolu_x', at: 5 })
   expect(rows).toHaveLength(1)
   expect(rows[0]).toMatchObject({ kind: 'detached-process', id: 'bg:toolu_x:0', fingerprint: 'sleep 100' })
   expect(rows[0]?.pid).toBeUndefined()
@@ -352,4 +347,144 @@ test('processUpdateFromNotificationText ignores rows that are no terminal task n
   expect(processUpdateFromNotificationText(NOTE('running'))).toBeNull()
   expect(processUpdateFromNotificationText('done, see <status>completed</status>')).toBeNull()
   expect(processUpdateFromNotificationText('')).toBeNull()
+})
+
+test('processUpdateFromNotificationText reads the notice inside the wrapper of a notice folded into a turn', () => {
+  expect(processUpdateFromNotificationText(MID_TURN_NOTICE.text)).toEqual({
+    taskId: 'butoa45ib',
+    toolUseId: 'toolu_0167pQhp2xvXTrduu7Tmndwj',
+    state: 'completed',
+  })
+  expect(processUpdateFromNotificationText(AGENT_RESUMED_NOTICE.text)?.taskId).toBe('brgzj6uhc')
+})
+
+// ---------------------------------------------------------------- shell variables in a detached command (#56)
+
+const detachedOf = (command: string, cwd?: string) =>
+  parseBashProcesses(command, out(''), { toolUseId: 'toolu_v', at: 1, cwd }).filter(r => r.kind === 'detached-process')
+
+test('detached: a variable the command set is expanded in the name and the fingerprint', () => {
+  // Case C of the issue. `$PWD` is the session cwd read before the call.
+  const [c] = detachedOf('F=$PWD/srv.mjs; (nohup node $F > srv.log 2>&1 &); sleep 1', '/work')
+  expect(c?.name).toBe('node /work/srv.mjs')
+  expect(c?.fingerprint).toBe('node /work/srv.mjs')
+  // The rows of the recorded session: `L` and `D` hold paths, the command reads them back.
+  const [r] = detachedOf('L=/tmp/p/lab; D=/tmp/p/data\npython3 $L/bin/reader.py $D/big.txt &')
+  expect(r?.fingerprint).toBe('python3 /tmp/p/lab/bin/reader.py /tmp/p/data/big.txt')
+})
+
+/** `${name}`, built so that no string of this file holds a template placeholder. */
+const braced = (name: string) => ['$', '{', name, '}'].join('')
+
+test('detached: export, braced names, a value that names an earlier variable and a cd before $PWD', () => {
+  expect(detachedOf(`export L=/x; ${braced('L')}/run --port 80 &`)[0]?.fingerprint).toBe('/x/run --port 80')
+  expect(detachedOf('A=/a; B=$A/b; srv $B &')[0]?.fingerprint).toBe('srv /a/b')
+  expect(detachedOf('cd sub && (srv $PWD/app.js &)', '/w')[0]?.fingerprint).toBe('srv /w/sub/app.js')
+  expect(detachedOf('A=/a; srv "x-$A-y" &')[0]?.fingerprint).toBe('srv x-/a-y')
+})
+
+test('detached: a variable with no known value stays as typed', () => {
+  expect(detachedOf('node $UNSET &')[0]?.fingerprint).toBe('node $UNSET')
+  // `$PWD` with no cwd is unknown. A value from a command substitution is not read: the reader sees `D=` and a subshell.
+  expect(detachedOf('node $PWD/a.js &')[0]?.fingerprint).toBe('node $PWD/a.js')
+  expect(detachedOf('D=$(mktemp -d); node $D/a.js &')[0]?.fingerprint).toBe('node $D/a.js')
+  // A prefix assignment is not seen by the arguments of its own command.
+  expect(detachedOf('F=/x node $F &')[0]?.fingerprint).toBe('node $F')
+})
+
+test('detached: a value with a command substitution is not read, whatever else the value holds', () => {
+  // The shell splitter drops `$(...)` and backtick parts from a word, so `/tmp/run-$(date +%s)` would read as the
+  // literal `/tmp/run-` and the probe would find no process (#56, AC5). The name stays a variable instead.
+  const stays = 'node $D/s.js'
+  expect(detachedOf('D=/tmp/run-$(date +%s); node $D/s.js &')[0]?.fingerprint).toBe(stays)
+  expect(detachedOf('D=x$(echo 1)y; node $D/s.js &')[0]?.fingerprint).toBe(stays)
+  expect(detachedOf('export D=/tmp/run-`date +%s`; node $D/s.js &')[0]?.fingerprint).toBe(stays)
+  // `D=${X:-$(foo)}`, split so that no string of this file holds a template placeholder.
+  expect(detachedOf(['D=$', '{X:-$(foo)}', '; node $D/s.js &'].join(''))[0]?.fingerprint).toBe(stays)
+  // A later plain assignment does not undo it: the name is opaque in the whole command.
+  expect(detachedOf('D=$(mktemp -d); D=/fixed; node $D/s.js &')[0]?.fingerprint).toBe(stays)
+  // A substitution inside the quotes stays in the word, and a name other than the assigned one is no variable of ours.
+  expect(detachedOf('echo "x=$(date)"; node $x/s.js &')[0]?.fingerprint).toBe('node $x/s.js')
+  expect(detachedOf('E=/e; echo "d=$(date)"; node $E/s.js &')[0]?.fingerprint).toBe('node /e/s.js')
+})
+
+test('detached: a variable lives in the subshell that set it and in the ones below', () => {
+  // The shell runs `node 1.js` and `node $L/s.js` with L unset (#56 review, m6).
+  expect(detachedOf('X=1; (X=2; echo $X); node $X.js &')[0]?.fingerprint).toBe('node 1.js')
+  expect(detachedOf('cd /a && (cd b; L=/y); node $L/s.js &')[0]?.fingerprint).toBe('node $L/s.js')
+  // A child sees its parent's value, and its own value hides it.
+  expect(detachedOf('A=/a; (srv $A/x &)')[0]?.fingerprint).toBe('srv /a/x')
+  expect(detachedOf('A=/a; (A=/b; srv $A/x &)')[0]?.fingerprint).toBe('srv /b/x')
+  // An unknown value in the child hides the parent's value too.
+  expect(detachedOf('A=/a; (A=$(foo); srv $A/x &)')[0]?.fingerprint).toBe('srv $A/x')
+  // A nested subshell reads the value of the one around it.
+  expect(detachedOf('(A=/a; (srv $A/x &))')[0]?.fingerprint).toBe('srv /a/x')
+})
+
+test('detached: a reference in single quotes or after a backslash is literal, a bare or double-quoted one expands', () => {
+  // The shell passes `'$F'` and `\$F` as typed, so `ps` shows `$F`. Expanding them would store a command no process has,
+  // and the probe would mark the live process `exited` (#56 review).
+  const set = 'F=/tmp/name; '
+  expect(detachedOf(`${set}daemon '$F' &`)[0]?.fingerprint).toBe('daemon $F')
+  expect(detachedOf(`${set}daemon \\$F &`)[0]?.fingerprint).toBe('daemon $F')
+  expect(detachedOf(`${set}daemon "\\$F" &`)[0]?.fingerprint).toBe('daemon $F')
+  expect(detachedOf(`${set}daemon "$F" &`)[0]?.fingerprint).toBe('daemon /tmp/name')
+  expect(detachedOf(`${set}daemon $F &`)[0]?.fingerprint).toBe('daemon /tmp/name')
+  // The quotes of the double quotes do not reach inside: `'` there is a plain character.
+  expect(detachedOf(`${set}daemon "'$F'" &`)[0]?.fingerprint).toBe("daemon '/tmp/name'")
+  // One word, several parts: only the quoted part stays literal.
+  expect(detachedOf(`${set}daemon '$F'"$F"$F\\$F &`)[0]?.fingerprint).toBe('daemon $F/tmp/name/tmp/name$F')
+  expect(detachedOf(`${set}daemon '${braced('F')}' &`)[0]?.fingerprint).toBe(`daemon ${braced('F')}`)
+  expect(detachedOf(`${set}daemon ${braced('F')}/a &`)[0]?.fingerprint).toBe('daemon /tmp/name/a')
+  // `$PWD` follows the same rule.
+  expect(detachedOf("daemon '$PWD' $PWD &", '/w')[0]?.fingerprint).toBe('daemon $PWD /w')
+})
+
+test('detached: a literal reference in an assignment stays literal when the variable is read', () => {
+  // `A='$B'` holds the text `$B`. The shell expands `$A` once and does not read the result again.
+  expect(detachedOf("B=/b; A='$B'; srv $A &")[0]?.fingerprint).toBe('srv $B')
+  expect(detachedOf("B=/b; export A='$B'; srv $A &")[0]?.fingerprint).toBe('srv $B')
+  expect(detachedOf('B=/b; A=\\$B; srv $A &')[0]?.fingerprint).toBe('srv $B')
+  // A reference in the value of a quoted assignment still expands.
+  expect(detachedOf('B=/b; A="$B/x"; srv $A &')[0]?.fingerprint).toBe('srv /b/x')
+})
+
+test('detached: a literal dollar does not change the other words of a command', () => {
+  // The words that `docker`, `tmux` and the rest read hold the plain `$`, never a mark of the reader.
+  const rows = parseBashProcesses("docker run -d --name 'a$b' nginx", out(`${'ab'.repeat(32)}\n`), { at: 1 })
+  expect(rows[0]).toMatchObject({ kind: 'docker-container', name: 'a$b' })
+  expect(parseBashProcesses("tmux new -d -s 'x$y'", out(''), { at: 1 })[0]).toMatchObject({ kind: 'tmux', name: 'x$y' })
+})
+
+test('detached: a pid from echo $! is not a variable', () => {
+  const [d] = parseBashProcesses('nohup sleep 5 > /dev/null 2>&1 & echo $!', out('4242\n'), {
+    toolUseId: 'toolu_p',
+    at: 1,
+  })
+  expect(d).toMatchObject({ pid: 4242, fingerprint: 'sleep 5' })
+})
+
+// ---------------------------------------------------------------- tasks that end with their agent (#56)
+
+test('a background task of a subagent keeps the agent id and the end-with-agent flag', () => {
+  const task = (extra: Record<string, unknown>, agentId?: string) =>
+    parseBashProcesses(
+      'sleep 15',
+      { result: { backgroundTaskId: 't1', ...extra } },
+      { toolUseId: 'toolu_1', at: 1, agentId },
+    )[0]
+  expect(task({ backgroundEndsWithFinalResponse: true }, 'a1')).toMatchObject({
+    taskId: 't1',
+    agentId: 'a1',
+    endsWithAgent: true,
+  })
+  const survives = task({}, 'a1')
+  expect(survives?.agentId).toBe('a1')
+  expect(survives).not.toHaveProperty('endsWithAgent')
+  // The engine sets the flag also for a headless main loop: the row has the flag and no agent.
+  const headless = task({ backgroundEndsWithFinalResponse: true })
+  expect(headless).toMatchObject({ endsWithAgent: true })
+  expect(headless).not.toHaveProperty('agentId')
+  // Only the real flag counts.
+  expect(task({ backgroundEndsWithFinalResponse: 'yes' })).not.toHaveProperty('endsWithAgent')
 })

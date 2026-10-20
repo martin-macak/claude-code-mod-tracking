@@ -10,6 +10,18 @@ import { processesConfig, processesTracker } from '../trackers/processes'
 import { fakeConfig } from './fixtures/config-fs'
 import type { ProcessRecord, ProcessUiState } from './fixtures/contracts'
 import { IDLE_ITEMS } from './fixtures/items-host'
+import {
+  AGENT_RESUMED_NOTICE,
+  BG_START_ASYNC_AGENT,
+  BG_START_MAIN,
+  BG_START_SYNC_AGENT,
+  BG_START_WORKFLOW_AGENT,
+  IDLE_NOTICE,
+  MID_TURN_NOTICE,
+  noticeBlock,
+  QUEUED_NOTICE,
+  WORKFLOW_AGENT_ID,
+} from './fixtures/notices'
 import { fakePorts } from './fixtures/ports'
 
 const res = (stdout = '', exitCode = 0, stderr = ''): RunResult => ({ exitCode, stdout, stderr })
@@ -416,4 +428,234 @@ test('config: normalise keeps the defaults for a missing or bad value and warns 
   })
   expect(warns).toHaveLength(6)
   expect(d.enabled).toBe(true)
+})
+
+// ---------------------------------------------------------------- the end state of a task (#56)
+// The rows in tests/fixtures/notices.ts are the ones Claude Code 2.1.304 gave in a headless spike.
+
+const asRow = (r: RowEvent | Readonly<RowEvent>): RowEvent => r as RowEvent
+const turnEnd = (t: ReturnType<typeof setup>, agentId?: string, reason = 'answer') =>
+  t.m.turnComplete(t.w.ports, { input: { reason, ...(agentId !== undefined ? { agentId } : {}) } as unknown as Json })
+const startedBy = (taskId: string, toolUseId: string, agentId?: string) => ({ taskId, toolUseId, agentId })
+
+test('case A: a notice folded into a running turn ends the task of the main loop', async () => {
+  const t = setup()
+  await t.bash('sleep 20; echo done', '', { toolUseId: 'toolu_0167pQhp2xvXTrduu7Tmndwj' }, BG_START_MAIN)
+  expect(t.rows().map(r => [r.taskId, r.state])).toEqual([['butoa45ib', 'running']])
+  await t.m.row(t.w.ports, asRow(MID_TURN_NOTICE))
+  expect(t.rows().map(r => r.state)).toEqual(['completed'])
+})
+
+test('a folded notice sets failed and killed too', async () => {
+  for (const status of ['failed', 'killed']) {
+    const t = setup()
+    await t.bash('make test', '', { toolUseId: 'toolu_0167pQhp2xvXTrduu7Tmndwj' }, BG_START_MAIN)
+    const text = MID_TURN_NOTICE.text.replace('<status>completed</status>', `<status>${status}</status>`)
+    await t.m.row(t.w.ports, { ...asRow(MID_TURN_NOTICE), text })
+    expect(t.rows().map(r => r.state)).toEqual([status])
+  }
+})
+
+test('the idle notice (door prompt) still ends the task', async () => {
+  const t = setup()
+  await t.bash(
+    'sleep 20; echo done',
+    '',
+    { toolUseId: 'toolu_01HuNkdPzUZzPDgWgG1j5mcq' },
+    { result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bk3esczyt' } },
+  )
+  await t.m.row(t.w.ports, asRow(IDLE_NOTICE))
+  expect(t.rows().map(r => r.state)).toEqual(['completed'])
+})
+
+test('a notice in the loop of a subagent ends the task of that agent', async () => {
+  const s = startedBy('brgzj6uhc', 'toolu_01TtGGwz9hCGHFBUan4gnesV', 'ad428bf287aed5d65')
+  // Resumed with the notice as its prompt (door prompt, agent id).
+  const resumed = setup()
+  await resumed.bash('sleep 15; echo late', '', { toolUseId: s.toolUseId, agentId: s.agentId }, BG_START_ASYNC_AGENT)
+  expect(resumed.rows()[0]).toMatchObject({ taskId: s.taskId, agentId: s.agentId, state: 'running' })
+  await resumed.m.row(resumed.w.ports, asRow(AGENT_RESUMED_NOTICE))
+  expect(resumed.rows().map(r => r.state)).toEqual(['completed'])
+  // Folded into the turn of a running agent (door delivery, agent id).
+  const folded = setup()
+  await folded.bash('sleep 15; echo late', '', { toolUseId: s.toolUseId, agentId: s.agentId }, BG_START_ASYNC_AGENT)
+  await folded.m.row(folded.w.ports, { ...asRow(MID_TURN_NOTICE), agentId: s.agentId, text: AGENT_RESUMED_NOTICE.text })
+  expect(folded.rows().map(r => r.state)).toEqual(['completed'])
+})
+
+test('a notice on another door, or one that a person, a peer or the queue wrote, changes nothing', async () => {
+  const t = setup()
+  await t.bash('sleep 20; echo done', '', { toolUseId: 'toolu_0167pQhp2xvXTrduu7Tmndwj' }, BG_START_MAIN)
+  const same = asRow(MID_TURN_NOTICE)
+  // The queue repeats the text with the origin `engine`: it is not a conversation row, so the tracker does not read it.
+  await t.m.row(t.w.ports, asRow(QUEUED_NOTICE))
+  // A person types the text while a turn runs: the engine folds it in as a delivery of the person.
+  await t.m.row(t.w.ports, { ...same, origin: 'composer' })
+  // A subagent's report quotes the text: a delivery of a peer.
+  await t.m.row(t.w.ports, { ...same, origin: 'peer' })
+  // The model prints it: a response.
+  await t.m.row(t.w.ports, { ...same, door: 'response', origin: 'model' })
+  expect(t.rows().map(r => r.state)).toEqual(['running'])
+})
+
+test('a task of a foreground subagent ends as killed when its agent ends', async () => {
+  const t = setup()
+  const agentId = 'afe82f2c44b349772'
+  await t.bash('sleep 15; echo late', '', { toolUseId: 'toolu_s', agentId }, BG_START_SYNC_AGENT)
+  expect(t.rows()[0]).toMatchObject({ taskId: 'be2c4m7c3', agentId, endsWithAgent: true, state: 'running' })
+  await turnEnd(t, 'another-agent')
+  await turnEnd(t) // the main loop's turn
+  expect(t.rows()[0]?.state).toBe('running')
+  await turnEnd(t, agentId)
+  expect(t.rows()[0]?.state).toBe('killed')
+})
+
+test('a task of a workflow agent ends as killed when its agent ends', async () => {
+  // AC3b of #56. The Bash result is the one a workflow agent got on Claude Code 2.1.304: the engine set the flag, as for
+  // a foreground subagent, and no notice followed the agent's answer.
+  const t = setup()
+  await t.bash(
+    'sleep 300',
+    '',
+    { toolUseId: 'toolu_01YQ9iu5Uow38DqGp6qnCSZ1', agentId: WORKFLOW_AGENT_ID },
+    BG_START_WORKFLOW_AGENT,
+  )
+  expect(t.rows()[0]).toMatchObject({
+    taskId: 'byxhckpak',
+    agentId: WORKFLOW_AGENT_ID,
+    endsWithAgent: true,
+    state: 'running',
+  })
+  await turnEnd(t) // the main loop's turn: the workflow runs on, so the task goes on
+  await turnEnd(t, 'another-agent')
+  expect(t.rows()[0]?.state).toBe('running')
+  await turnEnd(t, WORKFLOW_AGENT_ID)
+  expect(t.rows()[0]?.state).toBe('killed')
+})
+
+test('every end reason of an agent ends its tasks', async () => {
+  for (const reason of ['answer', 'aborted', 'error', 'refusal']) {
+    const t = setup()
+    await t.bash('sleep 15', '', { toolUseId: 'toolu_s', agentId: 'a1' }, BG_START_SYNC_AGENT)
+    await turnEnd(t, 'a1', reason)
+    expect(t.rows()[0]?.state).toBe('killed')
+  }
+})
+
+test('a task of a background subagent survives the end of the agent: its notice comes later', async () => {
+  const t = setup()
+  await t.bash(
+    'sleep 15; echo late',
+    '',
+    { toolUseId: 'toolu_01TtGGwz9hCGHFBUan4gnesV', agentId: 'ad428bf287aed5d65' },
+    BG_START_ASYNC_AGENT,
+  )
+  await turnEnd(t, 'ad428bf287aed5d65')
+  expect(t.rows()[0]?.state).toBe('running')
+  await t.m.row(t.w.ports, asRow(AGENT_RESUMED_NOTICE))
+  expect(t.rows()[0]?.state).toBe('completed')
+})
+
+test('the end of an agent leaves a task that already ended as it is', async () => {
+  const t = setup()
+  await t.bash('make', '', { toolUseId: 'toolu_s', agentId: 'a1' }, BG_START_SYNC_AGENT)
+  await t.m.toolCall(t.w.ports, { tool: 'TaskStop', input: {}, result: { result: { task_id: 'be2c4m7c3' } } })
+  expect(t.rows()[0]?.state).toBe('killed')
+  await t.m.row(t.w.ports, {
+    ...asRow(MID_TURN_NOTICE),
+    text: noticeBlock('be2c4m7c3', 'toolu_s', 'completed'),
+  })
+  expect(t.rows()[0]?.state).toBe('completed')
+  await turnEnd(t, 'a1')
+  expect(t.rows()[0]?.state).toBe('completed')
+})
+
+test('a task of a headless main loop ends with the main loop', async () => {
+  const t = setup()
+  await t.bash('sleep 15', '', { toolUseId: 'toolu_h' }, BG_START_SYNC_AGENT) // the flag, no agent
+  await turnEnd(t, 'a1')
+  expect(t.rows()[0]?.state).toBe('running')
+  await turnEnd(t)
+  expect(t.rows()[0]?.state).toBe('killed')
+  // The flag is absent in a session that waits for its tasks: its rows go on.
+  const live = setup()
+  await live.bash('sleep 15', '', { toolUseId: 'toolu_l' }, BG_START_MAIN)
+  await turnEnd(live)
+  expect(live.rows()[0]?.state).toBe('running')
+})
+
+test('a turn.complete without a usable input changes nothing', async () => {
+  const t = setup()
+  await t.bash('sleep 15', '', { toolUseId: 'toolu_s', agentId: 'a1' }, BG_START_SYNC_AGENT)
+  await t.m.turnComplete(t.w.ports, { input: null })
+  await t.m.turnComplete(t.w.ports, { input: { agentId: 7, reason: 'answer' } })
+  await t.m.turnComplete(t.w.ports, { input: { agentId: '', reason: 'answer' } })
+  expect(t.rows()[0]?.state).toBe('running')
+})
+
+test('case C: a detached process whose command names a variable is found and stays running', async () => {
+  const t = setup()
+  let alive = true
+  t.w.run = argv => {
+    if (argvIs(argv, 'ps', '-A')) return res(`  4321 ${lstart(Date.now() - 1000)} node /work/srv.mjs\n`)
+    if (argvIs(argv, 'ps', '-p', '4321'))
+      return alive ? res(`${lstart(Date.now() - 1000)} node /work/srv.mjs\n`) : res('', 1)
+    return undefined
+  }
+  await t.bash('F=$PWD/srv.mjs; (nohup node $F > srv.log 2>&1 &); sleep 1', '', { cwdBefore: '/work' })
+  expect(t.rows().map(r => r.name)).toEqual(['node /work/srv.mjs']) // not `node $F`
+  await t.probe()
+  expect(t.rows().map(r => [r.state, r.pid])).toEqual([['running', 4321]])
+  await t.probe()
+  expect(t.rows()[0]?.state).toBe('running')
+  alive = false
+  await t.probe()
+  expect(t.rows()[0]?.state).toBe('exited')
+})
+
+test('a variable the command does not set: the process is found by the rest of its command, else unknown', async () => {
+  const t = setup()
+  let ps = '    1 Tue Oct 13 08:00:00 2026 /sbin/launchd\n'
+  t.w.run = argv => {
+    if (argvIs(argv, 'ps', '-A')) return res(ps)
+    if (argvIs(argv, 'ps', '-p', '4400')) return res(`${lstart(Date.now() - 1000)} node /srv/real/app.mjs --port 80\n`)
+    return undefined
+  }
+  await t.bash('node $APP_DIR/app.mjs --port 80 > /dev/null 2>&1 &')
+  expect(t.rows().map(r => r.name)).toEqual(['node $APP_DIR/app.mjs --port 80'])
+  await t.probe()
+  expect(t.rows().map(r => [r.state, r.pid])).toEqual([['unknown', undefined]]) // never `exited`: the command is opaque
+  ps = `    1 Tue Oct 13 08:00:00 2026 /sbin/launchd\n 4400 ${lstart(Date.now() - 1000)} node /srv/real/app.mjs --port 80\n`
+  await t.probe()
+  expect(t.rows().map(r => [r.state, r.pid])).toEqual([['running', 4400]])
+  await t.probe() // followed by pid: the stored fingerprint still names the variable
+  expect(t.rows()[0]?.state).toBe('running')
+})
+
+test('a variable the mod cannot read: another process of the same program is not taken for it', async () => {
+  // The row keeps `node $F`: the command sets no `F`. That fingerprint alone would fit this unrelated dev server, so the
+  // row must show `unknown`, not `running` with its pid (#56 review, m1).
+  const t = setup()
+  t.w.run = argv =>
+    argvIs(argv, 'ps', '-A') ? res(`  77 ${lstart(Date.now() - 1000)} node /other/project/dev-server.js\n`) : undefined
+  await t.bash('node $F > /dev/null 2>&1 &')
+  await t.probe()
+  expect(t.rows().map(r => [r.state, r.pid])).toEqual([['unknown', undefined]])
+  // A fingerprint with a literal part still finds its process.
+  const found = setup()
+  found.w.run = argv =>
+    argvIs(argv, 'ps', '-A') ? res(`  77 ${lstart(Date.now() - 1000)} node /tmp/run-1/s.js\n`) : undefined
+  await found.bash('D=/tmp/run-$(date +%s); node $D/s.js > /dev/null 2>&1 &')
+  expect(found.rows().map(r => r.name)).toEqual(['node $D/s.js']) // not `node /tmp/run-/s.js`
+  await found.probe()
+  expect(found.rows().map(r => [r.state, r.pid])).toEqual([['running', 77]])
+})
+
+test('a detached process with echo $! and a variable it does not know is not marked exited', async () => {
+  const t = setup()
+  t.w.run = argv =>
+    argvIs(argv, 'ps', '-p', '4500') ? res(`${lstart(Date.now() - 1000)} node /srv/real/app.mjs\n`) : undefined
+  await t.bash('nohup node $APP > /dev/null 2>&1 & echo $!', '4500\n')
+  await t.probe()
+  expect(t.rows().map(r => [r.id, r.state])).toEqual([['pid:4500', 'running']])
 })

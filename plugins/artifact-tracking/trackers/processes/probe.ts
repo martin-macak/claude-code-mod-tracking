@@ -100,21 +100,76 @@ const progKey = (w: string): string =>
     .toLowerCase()
     .replace(/[\d.]+$/, '')
 
+// A variable the parser could not expand: `$NAME`, `${NAME}` or `$(...)`. `$5` and a lone `$` are not one.
+const VARIABLE = '\\$(?:\\{[^}]*\\}|\\([^)]*\\)|[A-Za-z_][A-Za-z0-9_]*)'
+
+const ANY_VARIABLE = new RegExp(VARIABLE)
+const EACH_VARIABLE = new RegExp(VARIABLE, 'g')
+
+/** Does the fingerprint still name a variable? Then `ps` shows text in its place that the mod never saw. */
+export const hasUnexpandedVariable = (fingerprint: string): boolean => ANY_VARIABLE.test(fingerprint)
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** A word of a fingerprint with a variable: a pattern when it names one (a variable is any text), else the literal word. */
+const toPattern = (word: string): RegExp | string =>
+  hasUnexpandedVariable(word) ? new RegExp(`^${word.split(EACH_VARIABLE).map(escapeRe).join('.*')}$`) : word
+
+/**
+ * A fingerprint with a variable, against a `ps` command line. Each word is compared on its own, and a variable stands
+ * for any text inside its word. A variable stands for one word: a value of several words shifts the words after it,
+ * so nothing fits and the row shows `unknown`. The command may carry more words than the fingerprint, never fewer.
+ * Because a variable may hide anything, this is a loose match (1), never an exact one.
+ */
+function looseStrength(cmd: readonly string[], fp: readonly (RegExp | string)[]): 0 | 1 {
+  if (cmd.length < fp.length) return 0
+  const ok = fp.every((word, i) => {
+    if (typeof word !== 'string') return word.test(cmd[i]!)
+    return i === 0 ? progKey(cmd[0]!) === progKey(word) : cmd[i] === word
+  })
+  return ok ? 1 : 0
+}
+
 /**
  * How well a `ps` command line matches the spawned command. 2: same program and arguments (an interpreter
  * may re-exec under another path, as python3 does on macOS). 1: the whole fingerprint appears as words
- * (a shebang script runs as `node ./script`). 0: no match.
+ * (a shebang script runs as `node ./script`), or a fingerprint with a variable fits word by word. 0: no match.
  */
-function matchStrength(command: string, fingerprint: string): 0 | 1 | 2 {
-  const cmd = command.trim().split(/\s+/)
+type Strength = (command: string) => 0 | 1 | 2
+
+/**
+ * The comparison of one fingerprint with many command lines. It is built once per fingerprint: the patterns of a
+ * fingerprint with a variable are compiled here, not for each `ps` line.
+ */
+function strengthOf(fingerprint: string): Strength {
   const fp = fingerprint.trim().split(/\s+/)
-  if (cmd.length === 0 || fp.length === 0 || fp[0] === '') return 0
-  const cmdArgs = cmd.slice(1).join(' ')
+  if (fp[0] === '') return () => 0
+  if (hasUnexpandedVariable(fingerprint)) {
+    const patterns = fp.map(toPattern)
+    return command => looseStrength(command.trim().split(/\s+/), patterns)
+  }
   const fpArgs = fp.slice(1).join(' ')
-  const argsOk = cmdArgs === fpArgs || (fpArgs !== '' && cmdArgs.startsWith(fpArgs + ' '))
-  if (argsOk && progKey(cmd[0]!) === progKey(fp[0]!)) return 2
-  return ` ${cmd.join(' ')} `.includes(` ${fp.join(' ')} `) ? 1 : 0
+  const fpLine = ` ${fp.join(' ')} `
+  const program = progKey(fp[0]!)
+  return command => {
+    const cmd = command.trim().split(/\s+/)
+    const cmdArgs = cmd.slice(1).join(' ')
+    const argsOk = cmdArgs === fpArgs || (fpArgs !== '' && cmdArgs.startsWith(fpArgs + ' '))
+    if (argsOk && progKey(cmd[0]!) === program) return 2
+    return ` ${cmd.join(' ')} `.includes(fpLine) ? 1 : 0
+  }
 }
+
+/**
+ * Does the fingerprint say nothing but its program? `node $F` has only variables after `node`, so any process of that
+ * program would fit. `node $D/s.js` keeps `/s.js` and is a constraint.
+ */
+const namesOnlyProgram = (fingerprint: string): boolean =>
+  fingerprint
+    .trim()
+    .split(/\s+/)
+    .slice(1)
+    .every(word => word.replace(EACH_VARIABLE, '') === '')
 
 /** Slack for `firstSeen`: ps prints whole seconds. */
 const START_SLACK_MS = 2000
@@ -130,22 +185,26 @@ export function psStillMatches(stdout: string, fingerprint: string, firstSeen?: 
   if (!line) return false
   const { start, command } = splitLstart(line)
   if (start !== undefined && firstSeen !== undefined && start > firstSeen + START_SLACK_MS) return false
-  return matchStrength(command, fingerprint) > 0
+  return strengthOf(fingerprint)(command) > 0
 }
 
 /**
  * Finds the pid of a detached process the Bash output did not name, in `ps -A -o pid=,lstart=,command=`.
  * Takes the best match that started in the Bash call's window; among equals, the newest. An older process with
- * the same command (a dev server of another project) is not ours.
+ * the same command (a dev server of another project) is not ours. A fingerprint that names only its program and
+ * variables (`node $F`) finds nothing: any process of that program would fit, so the pid would be a guess. With a pid
+ * known (`psStillMatches`) the same fingerprint is enough.
  */
 export function findDetachedPid(stdout: string, fingerprint: string, firstSeen: number): number | undefined {
+  if (hasUnexpandedVariable(fingerprint) && namesOnlyProgram(fingerprint)) return undefined
+  const strengthOfLine = strengthOf(fingerprint)
   let best: { pid: number; strength: number; start: number } | undefined
   for (const raw of stdout.split('\n')) {
     const m = /^\s*(\d+)\s+(.*)$/.exec(raw)
     if (!m) continue
     const { start, command } = splitLstart(m[2]!)
     if (start === undefined || start > firstSeen + START_SLACK_MS || start < firstSeen - SPAWN_WINDOW_MS) continue
-    const strength = matchStrength(command, fingerprint)
+    const strength = strengthOfLine(command)
     if (strength === 0) continue
     if (!best || strength > best.strength || (strength === best.strength && start > best.start))
       best = { pid: Number(m[1]), strength, start }

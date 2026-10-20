@@ -1,5 +1,5 @@
 import { isRecord } from '../../core/lib/json'
-import { resolvePath, scopedDir, splitShell, stripWrappers } from '../../core/lib/shell'
+import { resolvePath, scopedDir, scopedVars, splitShell, stripWrappers, unmarkDollars } from '../../core/lib/shell'
 import type { ProcessRecord, ProcessState } from './types'
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined)
@@ -240,7 +240,15 @@ const echoesPid = (words: readonly string[]): boolean =>
 
 type TaskBackedUpdate = { taskId?: string; toolUseId?: string; state: ProcessState }
 
-function backgroundRow(command: string, taskId: string, at: number, toolUseId?: string): ProcessRecord {
+/** What names the row of a background task beyond its command: the Bash call, its agent and the end-with-agent flag. */
+type BackgroundOf = { toolUseId?: string | undefined; agentId?: string | undefined; endsWithAgent?: boolean }
+
+function backgroundRow(
+  command: string,
+  taskId: string,
+  at: number,
+  { toolUseId, agentId, endsWithAgent = false }: BackgroundOf = {},
+): ProcessRecord {
   return {
     id: `task:${taskId}`,
     kind: 'background-task',
@@ -250,8 +258,44 @@ function backgroundRow(command: string, taskId: string, at: number, toolUseId?: 
     lastSeen: at,
     taskId,
     ...(toolUseId !== undefined ? { toolUseId } : {}),
+    ...(agentId !== undefined ? { agentId } : {}),
+    ...(endsWithAgent ? { endsWithAgent: true as const } : {}),
   }
 }
+
+// ---------------------------------------------------------------- shell variables
+
+/** `$NAME` and `${NAME}`. Group 1 is the braced name, group 2 the bare one. */
+const VAR_REF = /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g
+
+/**
+ * Expands the variables the command set itself (`lookup`, for the shell that runs the word) and `$PWD` (`pwd`, the
+ * directory of that shell). A name with no known value stays as typed: the probe then reads the word as a pattern
+ * (`probe.ts`). The word is a marked one (`Segment.marked`): a `$` that the shell passes as typed (`'$F'`, `\$F`) is
+ * no reference and stays. The result is marked too: `unmarkDollars` gives the text.
+ */
+function expandVars(word: string, lookup: (name: string) => string | undefined, pwd: string | undefined): string {
+  return word.replace(VAR_REF, (whole, braced?: string, bare?: string) => {
+    const name = (braced ?? bare) as string
+    return name === 'PWD' ? (pwd ?? whole) : (lookup(name) ?? whole)
+  })
+}
+
+/**
+ * Names the command assigns with a command substitution: `D=$(mktemp -d)`, `D=/tmp/run-$(date +%s)`, ``D=`date` ``.
+ * The shell splitter opens a scope of its own for the substitution and drops its text from the word, so the value reads
+ * as `/tmp/run-`: a wrong literal. Such a name must stay a variable. A substitution inside quotes stays in the word, so
+ * `D="x-$(date)"` does not count. The scan is by name, not by scope or position: a name that is opaque once stays opaque.
+ */
+function substitutedNames(command: string): ReadonlySet<string> {
+  const assigned =
+    /(?:^|[\s;&|(])(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(?:[^\s;&|"'`$]|\$(?!\()|"[^"]*"|'[^']*')*(?:\$\(|`)/g
+  return new Set([...command.matchAll(assigned)].map(m => m[1] as string))
+}
+
+/** The values of an env record as the shell passes them. */
+const plainEnv = (env: Record<string, string>): Record<string, string> =>
+  Object.fromEntries(Object.entries(env).map(([k, v]) => [k, unmarkDollars(v)]))
 
 /** `setsid [-f] [-w] cmd`: forks on its own only with -f. */
 function stripSetsid(words: string[]): { words: string[]; fork: boolean } {
@@ -284,23 +328,39 @@ const BUILTINS = new Set([
 type Detached = { fingerprint: string; pid?: number; viaShell: boolean }
 
 /**
+ * The Bash call around a command. `at` is the time the call was seen. `cwd` is the session's working directory, read
+ * before the call. `agentId` is absent for the main loop.
+ */
+export type BashCall = {
+  toolUseId?: string | undefined
+  at?: number
+  cwd?: string | undefined
+  agentId?: string | undefined
+}
+
+/**
  * Rows for the long-lived things one Bash command starts. The command is split into simple commands first,
  * so `docker info; docker run -d ...` and `mkdir -p x && docker compose up -d` are both found.
- * `cwd` is the session's working directory; `cd` in the command moves it for the parts after it.
+ * `cd` in the command moves the working directory (`call.cwd`) for the parts after it.
  */
 export function parseBashProcesses(
   command: string,
   ran: unknown,
-  toolUseId?: string,
-  at = Date.now(),
-  cwd?: string,
+  { toolUseId, at = Date.now(), cwd, agentId }: BashCall = {},
 ): ProcessRecord[] {
   const rows: ProcessRecord[] = []
   const result = isRecord(ran) && isRecord(ran.result) ? ran.result : null
   const stdout = str(result?.stdout) ?? ''
 
   const taskId = str(result?.backgroundTaskId)
-  if (taskId) rows.push(backgroundRow(command, taskId, at, toolUseId))
+  if (taskId)
+    rows.push(
+      backgroundRow(command, taskId, at, {
+        toolUseId,
+        agentId,
+        endsWithAgent: result?.backgroundEndsWithFinalResponse === true, // the engine ends the task with its caller's final response
+      }),
+    )
 
   const runs: { name?: string; text: string }[] = []
   const detached: Detached[] = []
@@ -308,15 +368,31 @@ export function parseBashProcesses(
   const pids = pidLines(stdout)
   // `export` stays global on purpose: a subshell scope is not tracked for env, only for the directory.
   const exported: Record<string, string> = {}
+  // The shell variables the command sets, bare or with `export`, per subshell scope like the directory. They expand in a
+  // detached command.
+  const vars = scopedVars()
   const dirs = scopedDir(cwd)
+  const opaque = substitutedNames(command)
+  const setVar = (name: string, value: string, scope: string): void => {
+    const v = opaque.has(name) ? '' : unmarkDollars(expandVars(value, n => vars.get(scope, n), dirs.get(scope)))
+    // An empty value is no value: `D=$(mktemp -d)` reaches here as `D=` (the substitution is a subshell of its own).
+    // `undefined` hides the value of an outer scope too.
+    vars.set(scope, name, v === '' ? undefined : v)
+  }
 
   for (const seg of splitShell(command)) {
-    const pre = stripWrappers(seg.words)
+    // The marked words tell `'$F'` and `\$F` (as typed) from `$F` and `"$F"` (expanded). Only the variables read them.
+    const pre = stripWrappers(seg.marked)
     const ss = stripSetsid(pre.words)
     const inner = stripWrappers(ss.words)
-    const words = inner.words
-    const env = { ...exported, ...pre.env, ...inner.env }
-    if (words.length === 0) continue
+    const marked = inner.words
+    const words = marked.map(unmarkDollars)
+    const env = { ...exported, ...plainEnv(pre.env), ...plainEnv(inner.env) }
+    if (words.length === 0) {
+      // A line of assignments only (`L=/x`) sets shell variables. `L=/x cmd` sets them for `cmd` alone.
+      if (pre.words.length === 0) for (const [k, v] of Object.entries(pre.env)) setVar(k, v, seg.scope)
+      continue
+    }
     const head = words[0]!
 
     if (head === 'cd' || head === 'pushd') {
@@ -325,9 +401,11 @@ export function parseBashProcesses(
       continue
     }
     if (head === 'export') {
-      for (const w of words.slice(1)) {
+      for (const w of marked.slice(1)) {
         const eq = w.indexOf('=')
-        if (eq > 0) exported[w.slice(0, eq)] = w.slice(eq + 1)
+        if (eq <= 0) continue
+        exported[w.slice(0, eq)] = unmarkDollars(w.slice(eq + 1))
+        setVar(w.slice(0, eq), w.slice(eq + 1), seg.scope)
       }
       continue
     }
@@ -375,7 +453,10 @@ export function parseBashProcesses(
     }
 
     if ((seg.bg || ss.fork) && !BUILTINS.has(head)) {
-      const d: Detached = { fingerprint: words.join(' ').slice(0, FINGERPRINT_MAX), viaShell: ss.fork && !seg.bg }
+      // The shell expands the variables before it runs the command, and `ps` shows the result.
+      const pwd = dirs.get(seg.scope)
+      const typed = marked.map(w => unmarkDollars(expandVars(w, n => vars.get(seg.scope, n), pwd))).join(' ')
+      const d: Detached = { fingerprint: typed.slice(0, FINGERPRINT_MAX), viaShell: ss.fork && !seg.bg }
       detached.push(d)
       lastBg = d
     }

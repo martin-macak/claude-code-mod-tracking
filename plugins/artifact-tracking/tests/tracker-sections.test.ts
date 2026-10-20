@@ -361,7 +361,8 @@ test('the processes section needs a row or a docker issue; with only the issue i
 
 test('every process state has its tone: the bad ones red, running and up green, the rest plain', async () => {
   const t = await paneWorld()
-  const states = ['running', 'up', 'completed', 'failed', 'killed', 'exited', 'unhealthy'] as const
+  // `unknown` (#56): a detached process with a variable the mod cannot read, and no process found. It is no failure.
+  const states = ['running', 'up', 'completed', 'failed', 'killed', 'exited', 'unhealthy', 'unknown'] as const
   const rows = states.map((state, i) => ({ ...WORLD_PROCESSES[0]!, id: `bg:${i}`, state }))
   t.w.state.set('processes', rows as unknown as Json)
   const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'processes')
@@ -373,8 +374,9 @@ test('every process state has its tone: the bad ones red, running and up green, 
     { text: 'killed', fg: 'error' },
     { text: 'exited', fg: 'error' },
     { text: 'unhealthy', fg: 'error' },
+    { text: 'unknown' },
   ])
-  expect(s.band?.failing).toBe(4)
+  expect(s.band?.failing).toBe(4) // failed, killed, exited and unhealthy; `unknown` is not counted
 })
 
 test('a process row cannot be dismissed or prioritised', async () => {

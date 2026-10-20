@@ -3,7 +3,7 @@
 // them on the tick and on `/track`. It publishes the probe state as the fact `processes.ui`.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 8.
 
-import type { CommandEvent, RowEvent, ToolCallEvent } from '../../core/interfaces/events'
+import type { CommandEvent, RowEvent, ToolCallEvent, TurnCompleteEvent } from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
 import type { Handler, Tracker } from '../../core/interfaces/tracker'
 import { CircuitBreaker } from '../../core/lib/circuit-breaker'
@@ -17,7 +17,7 @@ import {
   processUpdateFromNotificationText,
   processUpdateFromTaskStop,
 } from './parse'
-import { addProcessRows, applyTaskUpdate, asRows, mergeProcessRows, setProcesses } from './rows'
+import { addProcessRows, applyAgentEnd, applyTaskUpdate, asRows, mergeProcessRows, setProcesses } from './rows'
 import { sections } from './sections'
 import { type ProbeState, probeProcesses } from './watch'
 
@@ -36,6 +36,9 @@ const probeOf = (ctx: LoadKey, b?: { threshold: number; openMs: number }): Probe
 
 export function processesTracker(): Tracker<ProcessesConfig, Json> {
   // A task notice completes the task-backed row. The person can type the same text, so only the origin counts.
+  // The engine gives the notice by one of two doors. `prompt`: the session was idle. `delivery`: a turn was running, so
+  // the engine folded the notice into it, as an attachment row (Claude Code 2.1.304, issue #56). The queue repeats the text
+  // with the origin `engine`; it is not read. A subagent's notice comes the same way, with its agent id.
   const onRow: H<RowEvent> = (ctx, ev) => {
     if (ev.origin !== 'task-notification') return
     return applyTaskUpdate(
@@ -48,7 +51,15 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> {
   // The Bash input has no cwd. A compose project without -p is named after a folder, and a relative `cd` needs a base.
   const onBash: H<ToolCallEvent> = (ctx, ev) => {
     const command = String(isRecord(ev.input) ? (ev.input.command ?? '') : '')
-    return addProcessRows(ctx, parseBashProcesses(command, ev.result, ev.toolUseId, ctx.clock.wall(), ev.cwdBefore))
+    return addProcessRows(
+      ctx,
+      parseBashProcesses(command, ev.result, {
+        toolUseId: ev.toolUseId,
+        at: ctx.clock.wall(),
+        cwd: ev.cwdBefore,
+        agentId: ev.agentId,
+      }),
+    )
   }
 
   const onMonitor: H<ToolCallEvent> = (ctx, ev) => {
@@ -64,6 +75,15 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> {
       processUpdateFromTaskStop(isRecord(ev.result) ? ev.result.result : undefined),
       ctx.clock.wall(),
     )
+
+  // A loop ended: its tasks that end with it get no notice. `agentId` is absent for the main loop. An id that is not a
+  // string is a shape this build does not give: the handler leaves the rows alone then.
+  const onTurnComplete: H<TurnCompleteEvent> = (ctx, ev) => {
+    if (!isRecord(ev.input)) return
+    const id = ev.input.agentId
+    if (id !== undefined && (typeof id !== 'string' || id === '')) return
+    return applyAgentEnd(ctx, id, ctx.clock.wall())
+  }
 
   const onTick: H<unknown> = ctx => probeProcesses(ctx, probeOf(ctx))
 
@@ -94,8 +114,9 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> {
     },
     sections,
     events: {
-      row: { doors: ['prompt'], run: onRow },
+      row: { doors: ['prompt', 'delivery'], run: onRow },
       toolCall: { Bash: onBash, Monitor: onMonitor, TaskStop: onTaskStop },
+      turnComplete: onTurnComplete,
       tick: { run: onTick },
       command: onCommand,
     },

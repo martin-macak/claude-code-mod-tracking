@@ -52,6 +52,17 @@ export async function addProcessRows(ctx: RowsCtx, rows: ProcessRecord[]): Promi
   await setProcesses(ctx, cur => mergeProcessRows(cur, rows))
 }
 
+/**
+ * A loop ended. Its running tasks that the engine ends with the loop's final response (`endsWithAgent`) end as `killed`:
+ * no notice follows them. `agentId` is undefined for the main loop (a headless session). A task of a background
+ * subagent has no flag: it survives, and its notice comes later. Writes nothing when no row matches.
+ */
+export async function applyAgentEnd(ctx: RowsCtx, agentId: string | undefined, at: number): Promise<void> {
+  const ends = (r: ProcessRecord) => r.state === 'running' && r.endsWithAgent === true && r.agentId === agentId
+  if (!(await readRows(ctx)).some(ends)) return // a main turn ends often: no write for nothing
+  await setProcesses(ctx, rows => rows.map(r => (ends(r) ? { ...r, state: 'killed', lastSeen: at } : r)))
+}
+
 /** Sets the state of the rows a task id or a tool use id names. Writes nothing when no row matches. */
 export async function applyTaskUpdate(ctx: RowsCtx, u: TaskUpdate | null, at: number): Promise<void> {
   if (!u) return
