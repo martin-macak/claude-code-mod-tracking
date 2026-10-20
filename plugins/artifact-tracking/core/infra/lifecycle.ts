@@ -80,6 +80,7 @@ export class LifecycleManager extends PaneApi {
   protected readonly paneKeys: PaneKeys
   /** The start sequence of this load. Set by the first start, lazy or from `session.start`. */
   private started: Promise<void> | undefined
+  private manifestVersion: string | undefined
 
   constructor(
     private readonly d: LifecycleDeps,
@@ -155,6 +156,9 @@ export class LifecycleManager extends PaneApi {
       config: this.cfg,
       paneId: d.paneId,
       tickMs: () => g().refresh.tickMs,
+      setVersion: v => {
+        this.manifestVersion = v
+      },
       ports,
     })
     this.ending = new SessionEnd({
@@ -175,6 +179,11 @@ export class LifecycleManager extends PaneApi {
   /** The config file's views. The hooks read them here, never from the manager that owns the file. */
   get config(): ConfigSource {
     return this.cfg
+  }
+
+  /** The version of the mod from its manifest. Set once, by the first start of this load: `undefined` before that. */
+  get version(): string | undefined {
+    return this.manifestVersion
   }
 
   /** True unless the config turned the tracker off at the first start of this load, or it failed to start. */

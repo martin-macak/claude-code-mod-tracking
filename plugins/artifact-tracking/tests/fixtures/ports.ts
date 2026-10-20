@@ -19,6 +19,16 @@ import type {
 } from '../../core/interfaces/ports'
 import type { ToolStatus } from '../../types'
 
+/**
+ * The start logs one line that names the version: `version: <v>`, then ` (<why>)` when it is `unknown`. The fake keeps
+ * exactly that shape apart, so a test of the failure lines of a start need not list it, and no other line can fall in.
+ */
+export const VERSION_LOG = /^version: \S+( \(.*\))?$/
+
+/** Where the fake plugin lives, and its manifest: seed `files[MANIFEST_FILE]` to give the mod a version. */
+export const PLUGIN_ROOT = '/plugins/artifact-tracking'
+export const MANIFEST_FILE = `${PLUGIN_ROOT}/.claude-plugin/plugin.json`
+
 export type FakeOpts = {
   /** Engine time at the start. Default 0. */
   now?: number
@@ -64,6 +74,8 @@ export type FakeWorld = {
   /** Answers a `run` call. undefined falls through to the default: exit 1, "unexpected call". */
   run?: (argv: string[]) => RunResult | undefined | Promise<RunResult | undefined>
   files: Record<string, string>
+  /** The path of every `fs.read`, in order. */
+  reads: string[]
   env: Record<string, string>
   settings?: Json
   session: { id: string; cwd: string; repo: RepoRemote | null; messages: SessionRow[] }
@@ -71,6 +83,8 @@ export type FakeWorld = {
   /** `placed` is what `ui.open` answers: false when the terminal is too narrow for the pane. */
   ui: { opened: number; placed: boolean; focused: string[]; invalidated: number; toasts: string[]; panes: PaneInfo[] }
   logs: string[]
+  /** The `version:` line of the start (one per load), kept out of `logs`. */
+  versionLogs: string[]
 }
 
 type Pending = {
@@ -134,6 +148,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
     },
     fs: {
       async read(path) {
+        world.reads.push(path)
         const text = world.files[path]
         if (text === undefined) throw new Error(`ENOENT: no such file or directory, open '${path}'`)
         return text
@@ -152,6 +167,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
         return opts?.resolve ? { ...stat, realPath: path } : stat
       },
     },
+    plugin: { root: PLUGIN_ROOT },
     env: { get: async (name: EnvName) => world.env[name] },
     settings: { read: async () => clone(world.settings ?? {}) },
     store: {
@@ -228,7 +244,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
         world.ui.toasts.push(text)
       },
     },
-    log: line => void world.logs.push(line),
+    log: line => void (VERSION_LOG.test(line) ? world.versionLogs : world.logs).push(line),
   }
 
   const world: FakeWorld = {
@@ -267,6 +283,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
     callOpts: [],
     prompts: [],
     files: { ...(o.files ?? {}) },
+    reads: [],
     env: { ...(o.env ?? {}) },
     settings: o.settings,
     session: {
@@ -278,6 +295,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
     agents: o.agents ?? [],
     ui: { opened: 0, placed: true, focused: [], invalidated: 0, toasts: [], panes: o.panes ?? [] },
     logs: [],
+    versionLogs: [],
   }
   return world
 }

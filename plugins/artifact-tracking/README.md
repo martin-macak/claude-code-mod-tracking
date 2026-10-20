@@ -76,7 +76,8 @@ An artifact row shows its name: the page title from the Artifact tool, else the 
 | `/track` | Opens the pane and starts a refresh of the due items. Prints a short list. |
 | `/track refresh` | Forgets "not logged in" and "not found", closes open circuit breakers, refreshes every item, waits, and prints the list. Use it in `claude -p`. |
 | `/track clear` | Removes all items of this session and its stored copy. The pane forgets its selected and open rows. |
-| `/track help` | Prints the help view as text: every pane key, the config file path and the problems. Use it in `claude -p`. |
+| `/track help` | Prints the help view as text: every pane key, the config file path, the version and the problems. Use it in `claude -p`. |
+| `/track version` | Prints the version of the mod (`artifact-tracking 0.2.0`), read from its `.claude-plugin/plugin.json`. It prints `unknown` when the manifest cannot be read. The help view (key `h`) shows it too, and one debug log line names it at the start of a session. |
 | `/track prio <ref> <level>` | Sets the priority of one item: `high`, `normal`, `low`, or `auto` to remove your mark. See [Priority](#priority). |
 
 The pane has one section for each source: Worktrees, Agents, Pull requests, Jira, GitHub, Artifacts, Repos, Web links, Files and Processes. A section with nothing to show is left out. Each section starts with a title line and a bold header row of column names. A narrow terminal drops the less important columns first. The title, the key and the flexible column stay.
@@ -88,7 +89,7 @@ The pane keeps one selected row. A `>` in the first column and a highlight mark 
 | Tab, Shift+Tab | Select the next or the previous row. |
 | Enter | Opens or closes the selected row. Every row opens. A Jira row shows its children. A leaf shows its full cells and its link. On an `N more` row, Enter shows the next rows of that section. |
 | `r` | Refreshes. Does what `/track refresh` does. |
-| `h` | Swaps the pane to the help view: every key, the config file path and the problems. In a short pane the view puts two keys on a line. `h` again goes back. |
+| `h` | Swaps the pane to the help view: every key, the config file path, the version and the problems. In a short pane the view puts three keys on a line. `h` again goes back. |
 | `x` | Dismisses the selected row. It stays out for the run, also after `/clear`. |
 | `1` `2` `3` `0` | Set the priority of the selected row. See [Priority](#priority). |
 | `c` | Resolve: asks Claude to resolve the merge conflicts of the selected PR. See [Merge conflicts](#merge-conflicts). |
@@ -401,7 +402,7 @@ Cost. A block is short: 134 characters for one link, 164 for two (about 34 and 4
 - **Artifact tool.** `claude -p` does not offer it, so nothing is published there. A mentioned artifact URL is still tracked.
 - **Artifacts after `--resume`.** The stored copy keeps the origin, the title and the delete mark. Without a stored copy, the transcript gives them back, except for a subagent's publish: the main transcript does not hold it, so its URL comes back `mentioned` at most. Only deletes in this session mark a row.
 - **Older versions** stored artifact URLs as web links. A session moves them to Artifacts when it loads its list.
-- **Help view in a very short pane.** The help view draws two keys to a line when its full form and the footer do not fit the pane body, so its first keys and the footer show together. Each config or tracker problem adds a row. A body shorter than the compact view, the problems and the footer still opens scrolled to the footer. Scroll up to see the first keys, or make the terminal taller.
+- **Help view in a very short pane.** The help view draws three keys to a line when its full form and the footer do not fit the pane body, so its first keys and the footer show together. At 100 columns by 40 rows (a body of 11 rows) the compact view, with the version line and the keys of the GitHub tracker, and the footer fill the body exactly when the config path takes two rows. A longer path, a new key group or a problem adds a row. A body shorter than the compact view, the problems and the footer still opens scrolled to the footer. Scroll up to see the first keys, or make the terminal taller.
 - **Upgrade in a running session.** An upgrade inside a running session keeps the tracked items. It drops the Repos and Processes rows until the mod sees them again, and it forgets the dismiss list, so a dismissed row can come back.
 - **A narrow terminal.** The pane may wait until you widen the terminal. The mod shows a toast.
 - **Out of scope:** page titles of web links, switching Jira sites, Jira levels above Epic, click capture, write actions on GitHub or Jira, and surfaces other than the terminal.

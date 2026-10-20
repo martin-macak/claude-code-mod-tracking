@@ -1,19 +1,19 @@
-// Commands: the router of `/track <args>`. Core answers the empty command, `refresh`, `clear`, `help` and `prio`; then the
-// first sub-command a live tracker declared runs; any other word prints the usage line. The host does the work and this
-// holds only the order of the calls and the text of the answer. The list text and the help text come in as functions
-// (the draw path is not core). A reply that prints the list ends with the problems of the config file, when there are
-// any. The help text lists them itself. The fixed words sit in command-text.ts.
+// Commands: the router of `/track <args>`. Core answers the empty command, `refresh`, `clear`, `help`, `version` and
+// `prio`; then the first sub-command a live tracker declared runs; any other word prints the usage line. The host does
+// the work and this holds only the order of the calls and the text of the answer. The list text and the help text come
+// in as functions (the draw path is not core). A reply that prints the list ends with the problems of the config file,
+// when there are any. The help text lists them itself. The fixed words sit in command-text.ts.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.3, 5.7 and 5.12.
-// Plan: L3 Task 12, D12. L4 Task 6, C6. L5 Task 9, K15, K19. L6 Task 12, G14.
+// Plan: L3 Task 12, D12. L4 Task 6, C6. L5 Task 9, K15, K19. L6 Task 12, G14. Issue #65: `version`.
 
 import type { ConfigSource } from '../interfaces/config'
 import type { CommandEvent } from '../interfaces/events'
 import type { ItemsHost, Priority } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { CommandSpec } from '../interfaces/tracker'
-import { CORE_HINT, CORE_SUBS, PRIO_WORDS, problemsText, USAGE } from './command-text'
+import { CORE_HINT, CORE_SUBS, PRIO_WORDS, problemsText, USAGE, versionText } from './command-text'
 
-export { CORE_HINT, PRIO_WORDS, problemsText, USAGE } from './command-text'
+export { CORE_HINT, PRIO_WORDS, problemsText, USAGE, versionText } from './command-text'
 
 /** What the router needs of the rest of core. The LifecycleManager builds it. */
 export interface CommandHost {
@@ -35,6 +35,8 @@ export interface CommandHost {
   /** The config file may have changed since the last check. True when it did. */
   refreshConfig(p: Ports): Promise<boolean>
   readonly config: Pick<ConfigSource, 'path' | 'problems'>
+  /** The version of the mod, read from its manifest by the start. `undefined` when no start has run it. */
+  version(): string | undefined
 }
 
 type Reply = { text: string }
@@ -58,8 +60,10 @@ export class Commands {
    */
   async run(p: Ports, args: string): Promise<Reply> {
     await this.host.entry(p)
-    if (!this.host.items.ready) return { text: 'artifact-tracking: not ready.' }
     const arg = args.trim().toLowerCase()
+    // Before the ready check: a report from a mod that failed to start must still name its version. The entry has run.
+    if (arg === 'version') return { text: versionText(this.host.version()) }
+    if (!this.host.items.ready) return { text: 'artifact-tracking: not ready.' }
     if (arg === '') return this.open(p)
     if (arg === 'refresh') return this.refresh(p)
     if (arg === 'help') return this.help(p)

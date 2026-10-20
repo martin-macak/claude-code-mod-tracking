@@ -72,6 +72,13 @@ function portsOf($: EngineInterface): Ports {
         }
       },
     },
+    // The folder of plugin.json, for the version (issue #65). A getter: read only when asked, so a refusal stays inside
+    // that one read and cannot break the ports of every other hook.
+    plugin: {
+      get root() {
+        return $.plugin.root
+      },
+    },
     env: {
       // One literal call per name: validate lists the names this module reads.
       get: name => {

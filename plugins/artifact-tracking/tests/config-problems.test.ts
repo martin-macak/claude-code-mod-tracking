@@ -7,7 +7,7 @@ import { promptRow } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
 
 const PATH = '/p/config.json'
-const USAGE = 'Usage: /track [refresh|clear|help|prio <ref> <high|normal|low|auto>]'
+const USAGE = 'Usage: /track [refresh|clear|help|version|prio <ref> <high|normal|low|auto>]'
 
 test('problemsText is empty with no problem', () => {
   expect(problemsText(PATH, [])).toBe('')
@@ -80,7 +80,7 @@ test('refresh and prio append the problems; clear and the usage line do not', as
 test('help lists the config problems itself, once, after the config check', async () => {
   const t = world({ path: PATH, problems: ['X.'] })
   const out = await t.run('help')
-  expect(out.text.endsWith(`Config file: ${PATH}\nProblems\n  X.`)).toBe(true)
+  expect(out.text.endsWith(`Config file: ${PATH}\nVersion: unknown\nProblems\n  X.`)).toBe(true) // no manifest here
   expect(out.text).not.toContain('Config problems in')
   expect(t.refreshes()).toBe(2) // the start's read and the command's own check
 })

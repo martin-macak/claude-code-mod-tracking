@@ -7,13 +7,15 @@ import { CORE_HINT, type CommandHost, Commands, PRIO_WORDS, USAGE } from '../cor
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { CommandEvent } from '../core/interfaces/events'
 import type { CommandSpec, Tracker } from '../core/interfaces/tracker'
+import { helpOf } from '../hooks/pane-text'
 import { autoDismiss } from '../trackers/auto/dismiss-store'
+import { helpText } from '../ux/tree-data-table/help'
 import { fakeConfig } from './fixtures/config-fs'
 import { promptRow } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
-import { fakePorts } from './fixtures/ports'
+import { fakePorts, MANIFEST_FILE } from './fixtures/ports'
 
-const USAGE_LITERAL = 'Usage: /track [refresh|clear|help|prio <ref> <high|normal|low|auto>]'
+const USAGE_LITERAL = 'Usage: /track [refresh|clear|help|version|prio <ref> <high|normal|low|auto>]'
 
 /** A tracker that writes the commands it hears to `log`, with the number of items at that moment. */
 function recorder(log: string[], count: () => number): Tracker {
@@ -118,6 +120,9 @@ function fakeHost(
     rowId?: (ref: string) => string | undefined
     problems?: readonly string[]
     flush?: () => Promise<void>
+    version?: string
+    /** The start has not read a manifest (it failed before): the host has no version. */
+    noVersion?: boolean
   } = {},
 ) {
   const calls: string[] = []
@@ -150,6 +155,7 @@ function fakeHost(
       return false
     },
     config: { path: () => '/p/config.json', problems: () => o.problems ?? [] },
+    version: () => (o.noVersion ? undefined : (o.version ?? '1.2.3')),
   }
   const commands = new Commands(
     host,
@@ -230,7 +236,10 @@ test('a declared command takes its sub in any case, with no argument, and keeps 
 })
 
 test('a sub that no tracker declared, or that core claims, prints the usage', async () => {
-  const claimed: Declared[] = ['refresh', 'clear', 'prio'].map(sub => ({ owner: 'a', spec: { sub, hint: '' } }))
+  const claimed: Declared[] = ['refresh', 'clear', 'prio', 'version'].map(sub => ({
+    owner: 'a',
+    spec: { sub, hint: '' },
+  }))
   const t = fakeHost({ declared: [...claimed, notes('a')] })
   for (const args of ['nope', 'refresh now', 'clear all', 'prio #1 urgent', 'notesx'])
     expect((await t.commands.run(t.ports, args)).text).toBe(USAGE)
@@ -238,10 +247,10 @@ test('a sub that no tracker declared, or that core claims, prints the usage', as
 })
 
 test('the hint is the core literal with no declared command and grows with one', () => {
-  expect(fakeHost().commands.hint()).toBe('[refresh|clear|help|prio <ref> <level>]')
-  expect(CORE_HINT).toBe('[refresh|clear|help|prio <ref> <level>]')
+  expect(fakeHost().commands.hint()).toBe('[refresh|clear|help|version|prio <ref> <level>]')
+  expect(CORE_HINT).toBe('[refresh|clear|help|version|prio <ref> <level>]')
   const one = fakeHost({ declared: [notes('a')] }).commands.hint()
-  expect(one).toBe('[refresh|clear|help|prio <ref> <level>|notes <id>]')
+  expect(one).toBe('[refresh|clear|help|version|prio <ref> <level>|notes <id>]')
   const more = fakeHost({
     declared: [
       notes('a'),
@@ -250,7 +259,7 @@ test('the hint is the core literal with no declared command and grows with one',
       { owner: 'b', spec: { sub: 'sweep', hint: '' } }, // no hint text: no trailing space
     ],
   }).commands.hint()
-  expect(more).toBe('[refresh|clear|help|prio <ref> <level>|notes <id>|sweep]')
+  expect(more).toBe('[refresh|clear|help|version|prio <ref> <level>|notes <id>|sweep]')
 })
 
 test('the usage line is the core literal and names help', () => {
@@ -284,6 +293,36 @@ test('an item host that never started says it is not ready, also for help', asyn
   expect((await t.commands.run(t.ports, 'help')).text).toBe('artifact-tracking: not ready.')
 })
 
+// ---------------------------------------------------------------- version (issue #65)
+
+test('version prints the name and the version after the entry, with no config check, pane, kick or list', async () => {
+  const t = fakeHost({ version: '0.2.0' })
+  expect((await t.commands.run(t.ports, ' Version ')).text).toBe('artifact-tracking 0.2.0')
+  expect(t.calls).toEqual(['entry']) // the entry has read the manifest by now
+})
+
+test('version prints unknown as any other version, and does not wait for a ready item host', async () => {
+  const t = fakeHost({ ready: false, version: 'unknown' })
+  expect((await t.commands.run(t.ports, 'version')).text).toBe('artifact-tracking unknown')
+})
+
+test('version prints unknown when the host has no version, because the start failed before it read the manifest', async () => {
+  const t = fakeHost({ noVersion: true })
+  expect((await t.commands.run(t.ports, 'version')).text).toBe('artifact-tracking unknown')
+})
+
+test('version takes no argument: a word after it prints the usage', async () => {
+  const t = fakeHost()
+  expect((await t.commands.run(t.ports, 'version now')).text).toBe(USAGE)
+})
+
+test('a tracker cannot take version: core answers it first and the hint lists it once', async () => {
+  const t = fakeHost({ declared: [{ owner: 'a', spec: { sub: 'version', hint: '' } }] })
+  expect((await t.commands.run(t.ports, 'version')).text).toBe('artifact-tracking 1.2.3')
+  expect(t.calls.some(c => c.startsWith('run:'))).toBe(false)
+  expect(t.commands.hint()).toBe(CORE_HINT)
+})
+
 // ---------------------------------------------------------------- the router on the real manager
 
 /** A tracker that declares `/track notes` and writes each command it hears to `log`. */
@@ -305,7 +344,7 @@ function noter(id: string, order: number, log: string[]): Tracker {
 test('a declared command of a live tracker runs through the manager: its first owner only, no broadcast', async () => {
   const log: string[] = []
   const t = managerWorld({ extra: [noter('second', 7, log), noter('first', 6, log)] })
-  expect(t.m.commands.hint()).toBe('[refresh|clear|help|prio <ref> <level>|notes <id>]')
+  expect(t.m.commands.hint()).toBe('[refresh|clear|help|version|prio <ref> <level>|notes <id>]')
   expect((await t.m.track(t.w.ports, 'notes 7')).text).toBe('No tracked items yet.')
   expect(log).toEqual(['first:notes:7:true'])
 })
@@ -338,10 +377,36 @@ test('help prints the help view as text and does not open the pane', async () =>
   expect(t.w.ui.opened).toBe(0)
 })
 
+test('version prints the version the manifest names, read once by the start', async () => {
+  const t = managerWorld({ fake: { files: { [MANIFEST_FILE]: '{"name":"artifact-tracking","version":"3.4.5"}' } } })
+  expect((await t.m.track(t.w.ports, 'version')).text).toBe('artifact-tracking 3.4.5')
+  expect((await t.m.track(t.w.ports, 'version')).text).toBe('artifact-tracking 3.4.5')
+  expect(t.w.reads.filter(path => path === MANIFEST_FILE)).toEqual([MANIFEST_FILE]) // one read per load
+  expect(t.w.ui.opened).toBe(0)
+})
+
+test('a manager has no version before its first start, so a help view drawn before it has no Version line', async () => {
+  const t = managerWorld({ fake: { files: { [MANIFEST_FILE]: '{"name":"artifact-tracking","version":"3.4.5"}' } } })
+  expect(t.m.version).toBeUndefined() // not `unknown`: that word means the manifest was read and gave nothing
+  expect(helpOf(t.m, []).version).toBeUndefined()
+  expect(helpText(helpOf(t.m, []))).not.toContain('Version:')
+  await t.m.track(t.w.ports, 'version')
+  expect(t.m.version).toBe('3.4.5')
+  expect(helpOf(t.m, []).version).toBe('3.4.5')
+})
+
+test('version prints unknown when the manifest cannot be read, and the rest of /track works as before', async () => {
+  const t = managerWorld() // no manifest on the fake disk
+  expect((await t.m.track(t.w.ports, 'version')).text).toBe('artifact-tracking unknown')
+  expect((await t.m.track(t.w.ports, '')).text).toBe('No tracked items yet.')
+  expect(t.w.ui.opened).toBe(1)
+  expect(t.m.items.ready).toBe(true)
+})
+
 test('a bad argument prints the usage line with help', async () => {
   const t = managerWorld()
   expect((await t.m.track(t.w.ports, 'bogus')).text).toBe(
-    'Usage: /track [refresh|clear|help|prio <ref> <high|normal|low|auto>]',
+    'Usage: /track [refresh|clear|help|version|prio <ref> <high|normal|low|auto>]',
   )
 })
 

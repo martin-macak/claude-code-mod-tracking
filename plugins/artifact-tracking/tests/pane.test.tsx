@@ -236,10 +236,17 @@ test('pane: h shows the help view with every key and the config path; h again re
   await ui.unmount()
 })
 
-// The inline pane of a short terminal (issue #92): 100 columns and 40 rows give a body of 11 rows. The help view with its
-// footer needs 12 in full form. The compact form keeps its first lines and the footer in view together. #65 adds a
-// version line to the help view. It merges after this PR and bumps SHORT_ROWS when it rebases.
-const SHORT_ROWS = 8 // 7 help elements and the footer, one row each, with no gap
+// The inline pane of a short terminal (issue #92): 100 columns and 40 rows give a body of 11 rows. The full help view with
+// its footer needs 16 rows once the start ran: the started mod registers the row keys of the github tracker (a group
+// title and two keys) and the help view has the version line of issue #65. The compact form keeps its first lines and the
+// footer in view together.
+const MANIFEST = JSON.stringify({ name: 'artifact-tracking', version: '1.2.3' })
+// 9 help elements and the footer, one row each, with no gap: Pane keys (title, one line of keys), Row keys (title, two
+// lines of keys), the github group (title, one line of keys), the config line and the version line.
+const SHORT_ROWS = 10
+// The help view of the live screen of issue #92: the config path of the e2e world, in the temp folder of macOS.
+const LIVE_DIR = '/var/folders/sn/0_q8tr7x4vv44d69rbtyckwr0000gn/T/cc-tracker-config-SAq3DF'
+const LIVE_PATH = `${LIVE_DIR}/config.json` // 86 cells: `Config file: <path>` is 99 cells and wraps at 96
 
 /** The tree of the pane as `[help Box, footer Box]` and the gap between them. */
 async function helpTree(ui: PaneUi) {
@@ -248,12 +255,14 @@ async function helpTree(ui: PaneUi) {
 }
 
 test('pane: h in a short inline pane draws the compact help view, so Pane keys and the footer fit the body', async ($, on) => {
-  world(on)
+  world(on, { manifest: MANIFEST })
+  await track($) // the pane opens from /track, after the start has read the version
   const ui = await mountPane($, { bodyColumns: 96, bodyRows: 11, placement: 'inline' })
   await ui.press({ key: 'help' })
   const { gap, help, footer } = await helpTree(ui)
   expect(gap + help.length + 1).toBe(SHORT_ROWS)
-  expect(gap + help.length + 1).toBeLessThanOrEqual(11 - 1) // the drawn view fits the body with one row of slack for the line #65 adds
+  expect(gap + help.length + 1).toBeLessThanOrEqual(11 - 1) // the drawn view fits the body with one row of slack
+  expect(JSON.stringify(help.at(-1))).toContain('Version: 1.2.3')
   expect(JSON.stringify(help[0])).toContain('Pane keys')
   expect(footer).toBeDefined()
   expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
@@ -261,13 +270,35 @@ test('pane: h in a short inline pane draws the compact help view, so Pane keys a
   await ui.unmount()
 })
 
+// The started mod, the version line and the config path of the live screen together: the compact form must still show
+// the `Pane keys` line and the footer at once in the 11-row body (the acceptance criterion of issue #92).
+test('pane: h in a short inline pane with a started mod, the version and the live config path fits the 11-row body', async ($, on) => {
+  world(on, { manifest: MANIFEST, disk: { [`${LIVE_DIR}/config.json`]: JSON.stringify({ version: 1 }) } })
+  mock.env(on, { CLAUDE_TRACKER_CONFIG_DIR: LIVE_DIR, HOME: '/home/u' })
+  await track($)
+  const ui = await mountPane($, { bodyColumns: 96, bodyRows: 11, placement: 'inline' })
+  await ui.press({ key: 'help' })
+  const { gap, help, footer } = await helpTree(ui)
+  const wrapped = 1 // `Config file: <86 cells>` does not fit 96 cells: the path takes its own row
+  expect(gap + help.length + wrapped + 1).toBeLessThanOrEqual(11) // the help lines, the wrapped row and the footer fit
+  expect(JSON.stringify(help.at(-2))).toContain(`Config file: ${LIVE_PATH}`)
+  expect(JSON.stringify(help.at(-1))).toContain('Version: 1.2.3')
+  expect(JSON.stringify(help[0])).toContain('Pane keys')
+  expect(JSON.stringify(help)).toContain('resolve') // every key is drawn: the github keys too
+  expect(JSON.stringify(help)).toContain('files')
+  expect(footer).toBeDefined()
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  await ui.unmount()
+})
+
 test('pane: h in a docked pane keeps the full help view, one key to a line', async ($, on) => {
-  world(on)
+  world(on, { manifest: MANIFEST })
+  await track($)
   const ui = await mountPane($, { bodyColumns: 96, bodyRows: 28, placement: 'dock' })
   await ui.press({ key: 'help' })
   const { gap, help } = await helpTree(ui)
   expect(gap).toBe(1)
-  expect(help).toHaveLength(10)
+  expect(help).toHaveLength(14) // 3 titles, 9 keys (the started mod adds the github keys c and f), the config line, the version line
   expect(JSON.stringify(help[0])).toContain('Pane keys')
   expect(JSON.stringify(help[1])).toContain('refresh')
   await ui.unmount()
@@ -277,7 +308,7 @@ test('pane: a body shorter than the footer plus one line still draws the help vi
   world(on)
   const ui = await mountPane($, { bodyColumns: 96, bodyRows: 1, placement: 'inline' })
   await ui.press({ key: 'help' })
-  expect((await helpTree(ui)).help).toHaveLength(7)
+  expect((await helpTree(ui)).help).toHaveLength(6) // no start: the compact form of the core keys, no version line
   expect(await hotkeysOf(ui)).toEqual(HOTKEYS)
   await ui.unmount()
 })

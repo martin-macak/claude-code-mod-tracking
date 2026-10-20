@@ -57,6 +57,8 @@ export interface CommandOwner {
   clear(p: Ports): Promise<void>
   flushNow(): Promise<void>
   refreshConfig(p: Ports): Promise<boolean>
+  /** The version of the mod. Read per call: the first start sets it, so it is `undefined` before that. */
+  readonly version: string | undefined
 }
 
 /** The host of the `/track` router: the manager's calls, the declared sub-commands of the live trackers, and the pane. */
@@ -81,6 +83,7 @@ export function commandHostOf(
     flushNow: () => m.flushNow(),
     refreshConfig: p => m.refreshConfig(p),
     config: w.config,
+    version: () => m.version,
   }
 }
 

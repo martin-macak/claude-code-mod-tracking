@@ -101,7 +101,16 @@ export type Opts = {
   disk?: Record<string, string>
   /** Refuse one fs op of the stub disk with this message (`$.fs.read`, `$.fs.write`, `$.fs.exists`, `$.fs.stat`). */
   denyFs?: Partial<Record<'read' | 'write' | 'exists' | 'stat', string>>
+  /**
+   * The text of the mod's manifest: what `$.fs.read` answers for `<plugin root>/.claude-plugin/plugin.json`. The kit
+   * cannot read the real disk, and the test body cannot see `$.plugin.root`, so the stub matches the file name. Absent:
+   * the file is missing (ENOENT), as for a mod whose manifest cannot be read.
+   */
+  manifest?: string
 }
+
+/** The tail of the manifest path: the stub of `fs.read` matches it, whatever the plugin root is. */
+export const MANIFEST_TAIL = '/.claude-plugin/plugin.json'
 
 /** Stubs for the engine nouns the mod calls. Register before the first call on `$`. */
 export function world(on: On, opts: Opts = {}) {
@@ -164,6 +173,8 @@ export function world(on: On, opts: Opts = {}) {
     fsWrites,
     /** Every `$.fs` call, denied ones too: `'<op> <path>'`. */
     fsCalls,
+    /** Every `$.ui.log` line, in order. */
+    logs: [] as { text: string; to: string }[],
     /** Sets the text of a disk file and moves its mtime, as an editor save does. */
     editDisk(path: string, text: string): void {
       disk.set(path, text)
@@ -251,7 +262,10 @@ export function world(on: On, opts: Opts = {}) {
     value: (opts.panes ?? []).map(id => ({ id, title: id, isShown: true, isFocused: false })) as never,
   }))
   on('ui.invalidate', () => ({ value: undefined }))
-  on('ui.log', () => ({ value: undefined }))
+  on('ui.log', (_$, e) => {
+    fake.logs.push({ text: e.text, to: String(e.to) })
+    return { value: undefined }
+  })
 
   const graphql = (query: string): Res => {
     if (state.ghAuthFails > 0) {
@@ -299,6 +313,7 @@ export function world(on: On, opts: Opts = {}) {
   on('fs.read', (_$, e) => {
     const no = denied('read', e.path)
     if (no) return no
+    if (opts.manifest !== undefined && e.path.endsWith(MANIFEST_TAIL)) return { value: opts.manifest }
     const text = disk.get(e.path)
     return text === undefined ? missing('open', e.path) : { value: text }
   })

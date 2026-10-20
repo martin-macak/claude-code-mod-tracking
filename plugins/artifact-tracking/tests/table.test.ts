@@ -471,17 +471,23 @@ test('with help the pane draws the help view and the footer, and no row', () => 
 })
 
 // The help view in a short body (issue #92). The engine gives the body height as `scroll.bodyRows`. The full help view
-// takes 10 lines, the gap and the footer: 12 rows. A body of fewer rows draws the compact form. #65 adds a version
-// line to the help view. It merges after this PR and bumps FULL_ROWS, COMPACT_LINES and FULL_LINES when it rebases.
-const FULL_ROWS = 12
-const COMPACT_LINES = 7
-const FULL_LINES = 10
+// takes 11 lines (2 titles, 7 keys, the config line and the version line of issue #65), the gap and the footer: 13
+// rows. A body of fewer rows draws the compact form. The model has a version, as the pane has once the start ran.
+const VERSION = '1.2.3'
+const FULL_ROWS = 13
+const COMPACT_LINES = 7 // 2 titles, 3 lines of keys (three keys to a line), the config line, the version line
+const FULL_LINES = 11
 
 /** The help view of the core keys over `bodyRows` rows: its Box, the footer Box and the gap between them. */
 function helpIn(bodyRows: number | undefined, bodyColumns = 96) {
   const reg = new KeyRegistry()
   const footer = footerKeys(reg, undefined, () => false, true)
-  const { drawn } = draw([], { footer, help: helpModel(reg.all(), [], '/c/config.json', []), bodyColumns, bodyRows })
+  const { drawn } = draw([], {
+    footer,
+    help: helpModel(reg.all(), [], '/c/config.json', [], VERSION),
+    bodyColumns,
+    bodyRows,
+  })
   const tree = drawn.tree as unknown as Node
   const [help, foot] = tree.children as Node[]
   return { tree, help: help as Node, foot: foot as Node, lines: (help as Node).children.length }
