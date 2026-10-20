@@ -43,7 +43,11 @@ function applyEdit(data, args) {
   if (args.includes('--number')) value = { number: Number(arg('--number')) }
   else if (args.includes('--text')) value = { text: arg('--text') }
   else value = { name: field.options.find(o => o.id === arg('--single-select-option-id')).name }
-  const values = nodesOf(data).find(n => n.id === arg('--id')).fieldValues.nodes
+  const node = nodesOf(data).find(n => n.id === arg('--id'))
+  // An item that the list does not show yet: the fake takes the edit, the list lags. This is an
+  // assumption about GitHub. No live run of add --apply has shown it yet (PR #114).
+  if (!node) return
+  const values = node.fieldValues.nodes
   const old = values.findIndex(v => v.field?.name === field.name)
   if (old >= 0) values.splice(old, 1)
   values.push({ ...value, field: { name: field.name } })
@@ -51,9 +55,14 @@ function applyEdit(data, args) {
 
 // An in-process gh that answers from the snapshot and records every call. A write changes the data
 // that the next read returns, as GitHub does. issues: the answer of IssuesByIds, by node id.
+// The add answers with the id of the new item (addedId, else the last item of afterAdd). Without
+// afterAdd the list never shows the item: GitHub lists a new item late. addedId null: no item id.
+// addFail: the error of the add.
 function fakeGh({
   project = fresh(),
   afterAdd = null,
+  addedId = afterAdd ? nodesOf(afterAdd).at(-1).id : 'PVTI_late',
+  addFail = null,
   content = {},
   issues = {},
   inMilestone = MILESTONE,
@@ -70,6 +79,11 @@ function fakeGh({
       const op = /(?:query|mutation) (\w+)/.exec(query)[1]
       calls.push({ type: 'graphql', op, variables })
       if (op === 'ProjectItems') return current().data
+      if (op === 'AddItem') {
+        if (addFail) throw addFail
+        added = true
+        return { addProjectV2ItemById: { item: addedId === null ? null : { id: addedId } } }
+      }
       if (op === 'MoveItem') {
         if (moveFail?.at === calls.filter(c => c.op === 'MoveItem').length) throw moveFail.error
         if (!moveNoop) {
@@ -112,7 +126,6 @@ function fakeGh({
       const n = calls.filter(c => c.type === 'exec').length + 1
       calls.push({ type: 'exec', args })
       if (execFail?.at === n) throw execFail.error
-      if (args[1] === 'item-add') added = true
       if (args[1] === 'item-edit') applyEdit(current(), args)
       return ''
     },
@@ -124,6 +137,10 @@ function fakeGh({
 }
 const writes = gh => gh.calls.filter(c => c.type === 'exec').map(c => c.args)
 const moves = gh => gh.calls.filter(c => c.op === 'MoveItem')
+const adds = gh => gh.calls.filter(c => c.op === 'AddItem')
+// Every call that changes the project: the field edits (exec), the add and the moves (GraphQL).
+// A test that says "nothing was written" uses this one: writes() alone does not see the add.
+const changes = gh => gh.calls.filter(c => c.type === 'exec' || c.op === 'AddItem' || c.op === 'MoveItem')
 
 // The snapshot with its items in Order sequence (a tie: issue, PR, draft, then number or title),
 // so that the item positions need no move.
@@ -143,7 +160,7 @@ function inOrder(data) {
 function run(args, gh = fakeGh()) {
   const out = []
   const err = []
-  const code = main(args, { gh, stdout: s => out.push(s), stderr: s => err.push(s), sleep: () => {} })
+  const code = main(args, { gh, stdout: s => out.push(s), stderr: s => err.push(s) })
   return { code, out: out.join('\n'), err: err.join('\n'), gh }
 }
 
@@ -164,6 +181,8 @@ test('--help prints the usage and exits 0; no command or an unknown command exit
   assert.equal(help.code, 0)
   assert.match(help.out, /Usage: sync\.mjs <command>/)
   assert.match(help.out, /sync .*--apply/)
+  // The add and the moves are GraphQL calls, so the text must not say that gh project writes alone.
+  assert.match(help.out, /writes with gh api graphql and gh project\./)
   for (const args of [[], ['frobnicate']]) {
     const r = run(args)
     assert.equal(r.code, 2, args.join(' '))
@@ -280,6 +299,14 @@ test('--apply writes the field changes first and the position moves after them',
     .map(c => (c.type === 'exec' ? 'edit' : 'move'))
   assert.deepEqual(kinds, ['edit', ...Array(11).fill('move')])
   assert.match(r.out, /Applied 1 change and 11 position moves\./)
+})
+
+test('sync --apply that writes no move does not read the list again, and positionsLeft stays null', () => {
+  const gh = fakeGh({ project: inOrder(fresh()) })
+  const doc = JSON.parse(run(['sync', '--apply', '--json'], gh).out)
+  assert.deepEqual([doc.applied, doc.moved], [[], []])
+  assert.equal(doc.positionsLeft, null)
+  assert.equal(gh.calls.filter(c => c.op === 'ProjectItems').length, 1)
 })
 
 test('--json with --apply lists what was written', () => {
@@ -641,8 +668,9 @@ test('add without --apply writes nothing: it shows the item, its fields and the 
   const gh = fakeGh(around66())
   const r = run(addArgs, gh)
   assert.equal(r.code, 0)
-  assert.deepEqual(writes(gh), [])
+  assert.deepEqual(changes(gh), [])
   assert.deepEqual(moves(gh), [])
+  assert.equal(gh.calls.filter(c => c.op === 'ProjectItems').length, 1) // a dry run reads once, and checks nothing
   assert.match(r.out, /^Would add #66 Make the GitHub Project part of the agent delivery workflow \(issue\)\.\n/)
   assert.match(r.out, /\n {2}Order: \(empty\) -> 3\n {2}Area: \(empty\) -> tooling\n {2}Release: \(empty\) -> Tooling\n/)
   assert.match(r.out, /Items: 23 \(issues 12, PRs 5, drafts 6\)\./)
@@ -662,7 +690,7 @@ test('add without --apply plans Wave, Status and Blocked by from the blockers of
   const gh = fakeGh(around66({ blockers: [55] }))
   const r = run(addArgs, gh)
   assert.equal(r.code, 0)
-  assert.deepEqual(writes(gh), [])
+  assert.deepEqual(changes(gh), [])
   assert.match(
     r.out,
     /Wave: \(empty\) -> Wave 1\n {4}Status: \(empty\) -> Blocked\n {4}Blocked by: \(empty\) -> "#55"/,
@@ -676,7 +704,7 @@ test('add without --apply on an item that is in the project shows its field chan
   setValue(project, 64, 'Blocked by', '#55')
   const r = run(['add', '64', '--order', '9.5', '--area', 'ux', '--release', 'Later'], fakeGh({ project }))
   assert.equal(r.code, 0)
-  assert.deepEqual(writes(r.gh), [])
+  assert.deepEqual(changes(r.gh), [])
   assert.deepEqual(moves(r.gh), [])
   assert.match(r.out, /^Already in the project #64 /)
   assert.match(r.out, /\n {2}Order: 4 -> 9\.5\n {2}Area: release -> ux\n {2}Release: 0\.2\.0 -> Later\n/)
@@ -698,8 +726,16 @@ test('add --apply puts the item in, writes its fields, then writes the whole pla
   const gh = fakeGh(around66({ base }))
   const r = run([...addArgs, '--apply'], gh)
   assert.equal(r.code, 0)
+  // The add is a GraphQL mutation. It comes first, and gives the id that every edit after it uses.
+  assert.deepEqual(
+    adds(gh).map(c => c.variables),
+    [{ projectId: PROJECT_ID, contentId: ID_66 }],
+  )
+  assert.equal(
+    gh.calls.findIndex(c => c.op === 'AddItem'),
+    gh.calls.findIndex(c => c.type === 'exec') - 1,
+  )
   assert.deepEqual(writes(gh), [
-    ['project', 'item-add', '3', '--owner', 'martin-macak', '--url', ISSUE_66.html_url],
     editArgs('PVTI_new66', 'Order', '--number', '3'),
     editArgs('PVTI_new66', 'Area', '--single-select-option-id', 'f482c3cf'),
     editArgs('PVTI_new66', 'Release', '--single-select-option-id', 'a5a9c27b'),
@@ -794,9 +830,9 @@ test('add on an item that is in the project already changes only what differs, a
   const same = run(args, fakeGh({ project }))
   assert.equal(same.code, 0)
   assert.match(same.out, /Already in the project #60 /)
-  assert.deepEqual(writes(same.gh), [])
+  assert.deepEqual(changes(same.gh), [])
   const change = ['add', '60', '--order', '9.5', '--area', 'ux', '--release', 'Later']
-  assert.deepEqual(writes(run(change, fakeGh({ project: structuredClone(project) })).gh), [])
+  assert.deepEqual(changes(run(change, fakeGh({ project: structuredClone(project) })).gh), [])
   const moved = run([...change, '--apply'], fakeGh({ project }))
   assert.deepEqual(writes(moved.gh), [
     editArgs(nodeOf(project, 60).id, 'Order', '--number', '9.5'),
@@ -819,44 +855,123 @@ test('add takes a URL, and --status overrides the default Status of a PR', () =>
   assert.deepEqual(writes(gh).slice(-1), [editArgs('PVTI_pr70', 'Status', '--single-select-option-id', '47fc9ee4')])
 })
 
-test('add reads again when the new item is slow to show up, and fails after three reads', () => {
-  const { before, after } = projectsAround70()
-  const gh = fakeGh({ project: before, afterAdd: before, content: { [`repos/${REPO}/issues/70`]: PR_70 } })
-  const sleeps = []
-  const out = []
-  const err = []
-  const code = main(['add', '70', '--order', '9', '--area', 'core', '--release', '0.2.0', '--apply'], {
-    gh,
-    stdout: s => out.push(s),
-    stderr: s => err.push(s),
-    sleep: ms => sleeps.push(ms),
-  })
-  assert.equal(code, 1)
-  assert.match(err.join('\n'), /did not show up in the project yet/)
-  assert.equal(gh.calls.filter(c => c.op === 'ProjectItems').length, 4) // 1 before the add, 3 after it
-  assert.deepEqual(sleeps, [1000, 1000])
-  assert.equal(after.data.repositoryOwner.projectV2.items.nodes.length, 24)
+test('add --apply sets the fields with the id of the add when GitHub does not list the new item yet', () => {
+  // Issue #107: the list of the project trailed the add by minutes. No afterAdd: the list never shows #66.
+  const { afterAdd, ...opts } = around66()
+  const gh = fakeGh({ ...opts, addedId: 'PVTI_late66' })
+  const r = run([...addArgs, '--apply'], gh)
+  assert.equal(r.code, 0)
+  assert.deepEqual(writes(gh), [
+    editArgs('PVTI_late66', 'Order', '--number', '3'),
+    editArgs('PVTI_late66', 'Area', '--single-select-option-id', 'f482c3cf'),
+    editArgs('PVTI_late66', 'Release', '--single-select-option-id', 'a5a9c27b'),
+    editArgs('PVTI_late66', 'Wave', '--single-select-option-id', '63cc7c86'),
+    editArgs('PVTI_late66', 'Status', '--single-select-option-id', 'f75ad846'),
+    editArgs('PVTI_late66', 'Blocked by', '--text', '—'),
+  ])
+  assert.deepEqual(
+    moves(gh).map(m => m.variables),
+    [{ projectId: PROJECT_ID, itemId: 'PVTI_late66', afterId: nodeOf(fresh(), 53).id }],
+  )
+  assert.match(r.out, /^Added #66 /)
+  // One read before the add, one after the moves. The run does not wait for the item.
+  assert.equal(gh.calls.filter(c => c.op === 'ProjectItems').length, 2)
 })
 
-test('add: a write that fails is reported with the count of every write before it, the item-add too', () => {
+test('add --apply says that it cannot check the place of a new item that the list does not show yet', () => {
+  const { afterAdd, ...opts } = around66()
+  const r = run([...addArgs, '--apply'], fakeGh({ ...opts, addedId: 'PVTI_late66' }))
+  assert.equal(r.code, 0)
+  assert.doesNotMatch(r.out, /Positions checked/)
+  assert.match(r.err, /#66 is not in the project list yet, so its place is not checked\. Run sync later\./)
+})
+
+test('add --apply --json marks a new item that the list does not show yet, and counts the other items', () => {
+  const { afterAdd, ...opts } = around66()
+  const json = JSON.parse(run([...addArgs, '--apply', '--json'], fakeGh({ ...opts, addedId: 'PVTI_late66' })).out)
+  assert.equal(json.added.itemId, 'PVTI_late66')
+  assert.equal(json.added.unlisted, true)
+  // The other 22 items are checked and in place. Only #66 is not checked.
+  assert.equal(json.positionsLeft, 0)
+})
+
+// Order 99 is above every Order of the project, and GitHub puts a new item last, so no move is planned.
+const lastArgs = ['add', '66', '--order', '99', '--area', 'tooling', '--release', 'Tooling', '--apply']
+
+test('add --apply of a new item that needs no move still says when the list does not show it yet', () => {
+  const { afterAdd, ...opts } = around66()
+  const r = run(lastArgs, fakeGh({ ...opts, addedId: 'PVTI_late66' }))
+  assert.equal(r.code, 0)
+  assert.deepEqual(moves(r.gh), [])
+  assert.match(r.err, /#66 is not in the project list yet, so its place is not checked\. Run sync later\./)
+  const json = JSON.parse(run([...lastArgs, '--json'], fakeGh({ ...opts, addedId: 'PVTI_late66' })).out)
+  assert.equal(json.added.unlisted, true)
+})
+
+test('add --apply of a new item that needs no move reads the list once after the add, and finds the item', () => {
+  const gh = fakeGh(around66())
+  const r = run(lastArgs, gh)
+  assert.equal(r.code, 0)
+  assert.deepEqual(moves(gh), [])
+  assert.doesNotMatch(r.err, /not in the project list yet/)
+  // One read before the add, one after it: the check of the places runs although no move was written.
+  assert.equal(gh.calls.filter(c => c.op === 'ProjectItems').length, 2)
+  const json = JSON.parse(run([...lastArgs, '--json'], fakeGh(around66())).out)
+  assert.equal(json.added.unlisted, false)
+  assert.equal(json.positionsLeft, 0) // the check ran, so it is a number and not null
+})
+
+test('add --apply with a list that lacks the new item still checks the other items: a move that does not land exits 1', () => {
+  // The list is reversed, so the add moves the other items too. The fake takes the moves and does
+  // not apply them. The list also lacks #66, as GitHub lists a new item late (issue #107).
+  const base = inOrder(fresh())
+  nodesOf(base).reverse()
+  const { afterAdd, ...opts } = around66({ base })
+  const r = run([...addArgs, '--apply'], fakeGh({ ...opts, addedId: 'PVTI_late66', moveNoop: true }))
+  assert.equal(r.code, 1)
+  assert.match(r.err, /\d+ items are still out of position after the moves\. Run sync again\./)
+  assert.doesNotMatch(r.err, /not in the project list yet/)
+  assert.doesNotMatch(r.out, /Positions checked/)
+})
+
+test('add --apply with an item that the list shows checks the places, as before', () => {
+  const r = run([...addArgs, '--apply'], fakeGh(around66()))
+  assert.equal(r.code, 0)
+  assert.match(r.out, /Positions checked: the manual order follows Order\./)
+  assert.doesNotMatch(r.err, /not checked/)
+})
+
+test('add stops when GitHub gives no item id for the add, and says what was written', () => {
+  const { afterAdd, ...opts } = around66()
+  const r = run([...addArgs, '--apply'], fakeGh({ ...opts, addedId: null }))
+  assert.equal(r.code, 1)
+  assert.match(r.err, /project-sync: GitHub gave no item id for #66 when it added the item to the project\./)
+  assert.match(r.err, /0 changes were written before the failure\. Run the command again/)
+  assert.deepEqual(writes(r.gh), [])
+})
+
+test('add: a write that fails is reported with the count of every write before it, the add too', () => {
   const auth = new GhError('auth', 'gh: Resource not accessible by personal access token (HTTP 403)')
   const args = [...addArgs, '--apply']
-  const noAdd = run(args, fakeGh({ ...around66(), execFail: { at: 1, error: auth } }))
+  const noAdd = run(args, fakeGh({ ...around66(), addFail: auth }))
   assert.equal(noAdd.code, 3)
   assert.match(noAdd.err, /cannot write/i)
   assert.match(noAdd.err, /0 changes were written before the failure/)
-  // item-add is write 1 and Order is write 2, so Area is write 3: the item-add and Order landed.
-  const noArea = run(args, fakeGh({ ...around66(), execFail: { at: 3, error: auth } }))
+  assert.deepEqual(writes(noAdd.gh), [])
+  // execFail.at counts the field edits only (the add and the moves are GraphQL). at: 2 is the Area
+  // edit: the add and Order landed, so 2 writes came before it.
+  const noArea = run(args, fakeGh({ ...around66(), execFail: { at: 2, error: auth } }))
   assert.equal(noArea.code, 3)
   assert.match(noArea.err, /2 changes were written before the failure/)
   assert.doesNotMatch(noArea.err, /Fallback order/)
-  // The first write of the plan is write 5, after the item-add and the three fields.
-  const noPlan = run(args, fakeGh({ ...around66(), execFail: { at: 5, error: auth } }))
+  // at: 4 is the Wave edit, the first edit of the plan: the add and the three fields landed, so 4
+  // writes came before it.
+  const noPlan = run(args, fakeGh({ ...around66(), execFail: { at: 4, error: auth } }))
   assert.equal(noPlan.code, 3)
   assert.match(noPlan.err, /4 changes were written before the failure/)
   const server = run(
     args,
-    fakeGh({ ...around66(), execFail: { at: 5, error: new GhError('other', 'gh: Server Error (HTTP 502)') } }),
+    fakeGh({ ...around66(), execFail: { at: 4, error: new GhError('other', 'gh: Server Error (HTTP 502)') } }),
   )
   assert.equal(server.code, 1)
   assert.match(server.err, /project-sync: gh: Server Error \(HTTP 502\)/)
@@ -892,7 +1007,7 @@ test('add checks every value before it writes anything', () => {
       assert.match(r.err, pattern, args.join(' '))
     }
   }
-  assert.deepEqual(writes(gh), [])
+  assert.deepEqual(changes(gh), [])
 })
 
 test('add takes the repo in another letter case: the key is the one that GitHub gives, so the blockers load', () => {
@@ -901,7 +1016,7 @@ test('add takes the repo in another letter case: the key is the one that GitHub 
   const gh = fakeGh({ ...opts, content: { [`repos/${typed}/issues/66`]: content[`repos/${REPO}/issues/66`] } })
   const r = run(['add', `https://github.com/${typed}/issues/66`, ...addArgs.slice(2)], gh)
   assert.equal(r.code, 0)
-  assert.deepEqual(writes(gh), [])
+  assert.deepEqual(changes(gh), [])
   assert.match(r.out, /^Would add #66 /)
   assert.match(r.out, /Wave: \(empty\) -> Wave 1\n {4}Status: \(empty\) -> Blocked\n {4}Blocked by: \(empty\) -> "#55"/)
   assert.equal(gh.calls.filter(c => c.op === 'IssuesByIds').length, 1)
@@ -925,7 +1040,7 @@ test('add finds an item that is in the project when the repo is given in another
   const r = run([...args, '--apply'], fakeGh({ project, content }))
   assert.equal(r.code, 0)
   assert.match(r.out, /^Already in the project #64 /)
-  assert.deepEqual(writes(r.gh), [])
+  assert.deepEqual(changes(r.gh), [])
 })
 
 test('add stops before the first write when the plan needs a Wave option that the project does not have', () => {
@@ -936,7 +1051,7 @@ test('add stops before the first write when the plan needs a Wave option that th
   const r = run([...addArgs, '--apply'], fakeGh(opts))
   assert.equal(r.code, 1)
   assert.match(r.err, /Wave field has no option "Wave 3" \(needed by #66\)/)
-  assert.deepEqual(writes(r.gh), [])
+  assert.deepEqual(changes(r.gh), [])
 })
 
 test('add prints a warning about a blocker that GitHub cannot resolve once, not once per read', () => {
@@ -967,6 +1082,7 @@ test('add with --json prints one JSON document, also for a dry run', () => {
   assert.equal(done.applied.length, 3)
   assert.equal(done.moved.length, 1)
   assert.equal(done.positionsLeft, 0)
+  assert.equal(done.added.unlisted, false)
 })
 
 test('usage errors exit 2 and write nothing', () => {
@@ -980,7 +1096,7 @@ test('usage errors exit 2 and write nothing', () => {
     const r = run(args)
     assert.equal(r.code, 2, args.join(' '))
     assert.match(r.err, pattern, args.join(' '))
-    assert.deepEqual(writes(r.gh), [], args.join(' '))
+    assert.deepEqual(changes(r.gh), [], args.join(' '))
   }
 })
 

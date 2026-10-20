@@ -103,13 +103,15 @@ export const snapshot = JSON.parse(
 export const live = normalizeProject(snapshot.data.repositoryOwner.projectV2)
 
 // What GitHub does with updateProjectV2ItemPosition: it takes the entry out and puts it after
-// afterId (null: first). `idOf` reads the id of an entry. Returns the new list.
+// afterId (null: first). `idOf` reads the id of an entry. Returns the new list. An id that the list
+// does not hold (GitHub lists a new item late) moves nothing: the move still lands, on an item that
+// the list does not show. That is an assumption about GitHub. No live run of add --apply has shown
+// it yet (PR #114).
 export function moveAfter(list, id, afterId, idOf = x => x) {
   const out = [...list]
-  const [moved] = out.splice(
-    out.findIndex(x => idOf(x) === id),
-    1,
-  )
+  const from = out.findIndex(x => idOf(x) === id)
+  if (from < 0) return out
+  const [moved] = out.splice(from, 1)
   out.splice(afterId === null ? 0 : out.findIndex(x => idOf(x) === afterId) + 1, 0, moved)
   return out
 }

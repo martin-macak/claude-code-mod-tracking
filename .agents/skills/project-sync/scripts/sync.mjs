@@ -38,7 +38,7 @@ const DEFAULTS = { owner: 'martin-macak', project: '3', repo: 'martin-macak/clau
 
 const USAGE = `Usage: sync.mjs <command> [options]
 
-Keeps the GitHub Project in step with the issues. Reads with gh api graphql, writes with gh project.
+Keeps the GitHub Project in step with the issues. Reads with gh api graphql, writes with gh api graphql and gh project.
 
 Commands:
   sync                                     Plan Wave, Status and "Blocked by" for the open issues. A dry run: --apply writes.
@@ -247,13 +247,14 @@ function printReport(ctx, state, result, done, lead = []) {
   if (written.length === 0) return
   ctx.say('')
   ctx.say(`Applied ${list(written)}.`)
-  if (done.moved.length > 0 && done.left === 0) ctx.say('Positions checked: the manual order follows Order.')
+  if (done.moved.length > 0 && done.left === 0 && done.unlisted === null)
+    ctx.say('Positions checked: the manual order follows Order.')
 }
 
 // Writes the plan: the field changes first, then the position moves. A failure carries `applied`:
 // everything that this run wrote before it, `before` too (the writes that came ahead of the plan).
 function applyIf(ctx, state, { changes, positions }, before = []) {
-  const done = { applied: [], moved: [], left: null }
+  const done = { applied: [], moved: [], left: null, unlisted: null }
   if (!ctx.apply) return done
   const projectId = state.project.id
   done.applied = writing(before, () => applyChanges(ctx.gh, { projectId, fields: state.fields, changes }))
@@ -261,21 +262,34 @@ function applyIf(ctx, state, { changes, positions }, before = []) {
   return done
 }
 
-// After the moves, read the project again. The items must be in Order sequence now.
-function checkPositions(ctx, done) {
-  if (done.moved.length === 0) return 0
+// After the moves, read the project again. The items must be in Order sequence now. `newKey` is
+// the new item of add. GitHub may list a new item late (issue #107), so the read can lack it. The
+// check still covers every item that the read shows. done.unlisted holds the key of a new item
+// that the read lacks: its place is not checked. The read runs only after a write: when a move was
+// written, or when add put in a new item, also with no move (the new item may be last already).
+function checkPositions(ctx, done, newKey = null) {
+  if (!ctx.apply || (done.moved.length === 0 && newKey === null)) return
   const read = readProject(ctx.gh, { owner: ctx.owner, number: ctx.number })
   done.left = positionPlan(read.items, ctx.repo).moves.length
-  return done.left
+  done.unlisted = newKey !== null && !read.items.some(isItem(newKey)) ? newKey : null
 }
 
-function stillOutOfPosition(ctx, left) {
-  if (left === 0) return 0
-  ctx.stderr(
-    `project-sync: ${plural(left, 'item')} ${left === 1 ? 'is' : 'are'} still out of position after the moves. ` +
-      'Run sync again. If this repeats, GitHub orders the items in a way that this script does not expect.',
-  )
-  return 1
+// The exit code after the check: 1 when an item that the read shows is still out of position.
+function stillOutOfPosition(ctx, done) {
+  if (done.left > 0) {
+    ctx.stderr(
+      `project-sync: ${plural(done.left, 'item')} ${done.left === 1 ? 'is' : 'are'} still out of position after the moves. ` +
+        'Run sync again. If this repeats, GitHub orders the items in a way that this script does not expect.',
+    )
+    return 1
+  }
+  if (done.unlisted !== null) {
+    // The fields are set, so the run is done. A later sync checks the place.
+    ctx.stderr(
+      `project-sync: ${refLabel(done.unlisted, ctx.repo)} is not in the project list yet, so its place is not checked. Run sync later.`,
+    )
+  }
+  return 0
 }
 
 // sync and next: read, plan, write the plan when --apply is set, check the positions.
@@ -283,19 +297,19 @@ function syncRun(ctx) {
   const state = load(ctx)
   const result = planFor(ctx, state)
   const done = applyIf(ctx, state, result)
-  const left = checkPositions(ctx, done)
-  return { state, result, done, left }
+  checkPositions(ctx, done)
+  return { state, result, done }
 }
 
 function cmdSync(ctx) {
-  const { state, result, done, left } = syncRun(ctx)
+  const { state, result, done } = syncRun(ctx)
   if (ctx.json) ctx.emit(document(ctx, state, result, done))
   else printReport(ctx, state, result, done)
-  return stillOutOfPosition(ctx, left)
+  return stillOutOfPosition(ctx, done)
 }
 
 function cmdNext(ctx) {
-  const { state, result, done, left } = syncRun(ctx)
+  const { state, result, done } = syncRun(ctx)
   const picked = pickNext(result.effective)
   if (ctx.json) {
     ctx.emit(document(ctx, state, result, done, { next: picked.next, ready: picked.ready }))
@@ -304,7 +318,7 @@ function cmdNext(ctx) {
     ctx.say('')
     ctx.say(formatNext(picked, ctx.repo))
   }
-  return stillOutOfPosition(ctx, left)
+  return stillOutOfPosition(ctx, done)
 }
 
 function cmdStatus(ctx, args) {
@@ -332,16 +346,6 @@ const isItem = key => i => i.key === key && (i.kind === 'issue' || i.kind === 'p
 
 // A dry run has no project item id for a new item yet. This text stands in for it.
 const NEW_ITEM_ID = '(new item)'
-
-// After the add, the item shows up in the next read. Read again a few times before giving up.
-function waitForItem(ctx, key) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    if (attempt > 0) ctx.sleep(1000)
-    const item = readProject(ctx.gh, { owner: ctx.owner, number: ctx.number }).items.find(isItem(key))
-    if (item) return item
-  }
-  throw new Fail(`${refLabel(key, ctx.repo)} was added but did not show up in the project yet. Run the command again.`)
-}
 
 // add: put the item in the project, set its Order, Area and Release, then do what sync does.
 // Everything is read and planned before the first write, so a dry run shows the whole plan and
@@ -405,8 +409,18 @@ function cmdAdd(ctx, args) {
       written.push(what)
     }
     if (!existed) {
-      write('item-add', () => addToProject(ctx.gh, { owner: ctx.owner, number: ctx.number, url: content.url }))
-      item.id = waitForItem(ctx, key).id
+      // The add gives the id of the item. GitHub may list the item minutes later (issue #107), so
+      // the fields are set with this id, and the run does not wait for the item in the list.
+      write('item-add', () => {
+        const id = addToProject(ctx.gh, { projectId: state.project.id, contentId: content.id })
+        if (id === null) {
+          throw new GhError(
+            'other',
+            `GitHub gave no item id for ${refLabel(key, ctx.repo)} when it added the item to the project.`,
+          )
+        }
+        item.id = id
+      })
     }
     for (const [name, value] of Object.entries(set)) {
       write(name, () =>
@@ -416,11 +430,13 @@ function cmdAdd(ctx, args) {
     result = planFor(ctx, state) // the same plan, now with the id of the new item
   }
   const done = applyIf(ctx, state, result, written)
-  const left = checkPositions(ctx, done)
+  checkPositions(ctx, done, existed ? null : key)
 
   const kind = item.kind === 'pr' ? 'PR' : 'issue'
   if (ctx.json) {
-    const added = { number: ref.number, itemId: item.id, kind, title: item.title, existed, set }
+    // unlisted: the list lacked the new item after the moves, so its place was not checked.
+    const unlisted = done.unlisted !== null
+    const added = { number: ref.number, itemId: item.id, kind, title: item.title, existed, set, unlisted }
     ctx.emit(document(ctx, state, result, done, { added }))
   } else {
     const verb = existed ? 'Already in the project' : ctx.apply ? 'Added' : 'Would add'
@@ -429,7 +445,7 @@ function cmdAdd(ctx, args) {
     ctx.say('')
     printReport(ctx, state, result, done, [!existed && 'new item', Object.keys(set).length > 0 && 'field values'])
   }
-  return stillOutOfPosition(ctx, left)
+  return stillOutOfPosition(ctx, done)
 }
 
 // The token cannot read the project: say how to pick work without it.
@@ -488,7 +504,6 @@ export function main(argv, io = {}) {
       opts: values,
       warned: new Set(),
       stderr,
-      sleep: io.sleep ?? (ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)),
       say: text => {
         if (!values.json) stdout(text)
       },

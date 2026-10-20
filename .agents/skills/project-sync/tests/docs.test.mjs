@@ -149,3 +149,39 @@ test('both READMEs link the project', () => {
   const missing = ['README.md', 'plugins/artifact-tracking/README.md'].filter(path => !read(path).includes(PROJECT_URL))
   assert.deepEqual(missing, [])
 })
+
+// Issue #107: GitHub lists a new item late. The skill must say so where agents look for mistakes.
+test('the Common mistakes table of project-sync names the late listing of a new item', () => {
+  const skill = read('.agents/skills/project-sync/SKILL.md')
+  const start = skill.indexOf('## Common mistakes')
+  assert.ok(start >= 0, 'the skill has a Common mistakes section')
+  const row = skill
+    .slice(start)
+    .split('\n')
+    .find(line => line.startsWith('|') && /lists? a new item late/i.test(line))
+  assert.ok(row, 'a row of the table names the late listing')
+  assert.match(row, /add --apply/)
+  assert.match(row, /item id/)
+})
+
+// Issue #107: the add row states how add --apply treats a project list that lacks the new item.
+test('the add row of project-sync says that it does not wait, and how it reports an unlisted item', () => {
+  const skill = read('.agents/skills/project-sync/SKILL.md')
+  const row = skill.split('\n').find(line => line.startsWith('| `add <number'))
+  assert.ok(row, 'the command table has an add row')
+  assert.match(row, /does not wait for the item in the project list/)
+  assert.match(row, /says so on stderr, exits 0/)
+  assert.match(row, /`added\.unlisted: true`/)
+  assert.match(row, /Run `sync` later/)
+  assert.match(row, /still out of position exits 1/)
+})
+
+// The check reads the list after a move, and after the add of a new item (also with no move). The
+// JSON paragraph must say when positionsLeft is null, with that exception.
+test('the JSON paragraph of project-sync says when positionsLeft is null, and names the add exception', () => {
+  const skill = read('.agents/skills/project-sync/SKILL.md')
+  const line = skill.split('\n').find(l => l.includes('`positionsLeft` counts'))
+  assert.ok(line, 'the paragraph describes positionsLeft')
+  assert.match(line, /`null` when no check ran: a dry run, or a `sync` or `next` that wrote no move/)
+  assert.match(line, /`add --apply` of a new item always checks, also when no move was written/)
+})

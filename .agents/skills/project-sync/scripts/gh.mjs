@@ -1,5 +1,5 @@
-// IO of project-sync: every call to `gh` is here. Reads use `gh api graphql`, writes use
-// `gh project item-edit` and `gh project item-add`. The rules are in core.mjs.
+// IO of project-sync: every call to `gh` is here. Reads use `gh api graphql`, as do the add and the
+// moves. The field edits use `gh project item-edit`. The rules are in core.mjs.
 //
 // makeGh(runner) wraps a runner: (args, stdin) => { status, stdout, stderr, error }.
 // The tests pass a fake runner. The CLI passes spawnRunner.
@@ -327,7 +327,14 @@ export function moveItem(gh, { projectId, itemId, afterId }) {
 export const applyMoves = (gh, { projectId, moves }) =>
   writeAll(moves, m => moveItem(gh, { projectId, itemId: m.itemId, afterId: m.afterId }))
 
-// Adds an issue or a PR to the project. It does nothing when the item is already there.
-export function addToProject(gh, { owner, number, url }) {
-  gh.exec(['project', 'item-add', String(number), '--owner', owner, '--url', url])
+const ADD_MUTATION = `mutation AddItem($projectId: ID!, $contentId: ID!) {
+  addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) { item { id } }
+}`
+
+// Adds an issue or a PR to the project, and returns the id of its project item (null when GitHub
+// gives none). The id is the answer of the add itself: the list of the project may show the new
+// item only minutes later, so the caller must not wait for it there. `contentId` is the node id of
+// the issue or PR. An item that is in the project already is not added again: GitHub gives its id.
+export function addToProject(gh, { projectId, contentId }) {
+  return gh.graphql(ADD_MUTATION, { projectId, contentId })?.addProjectV2ItemById?.item?.id ?? null
 }
