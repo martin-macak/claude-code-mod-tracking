@@ -43,6 +43,12 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   `echo "...; ..."` start nothing local and are not tracked.
 - Heredoc bodies and comments are skipped.
 - `VAR=x`, `sudo`, `env`, `nohup`, `time` and `exec` in front are stripped.
+- `if`, `while`, `until`, `do`, `then`, `else` and `elif` in front are stripped.
+  A part that is only `done`, `fi` or `esac` is no command and makes no row,
+  so `done &` (a backgrounded loop) has no row. `$!` after it is the pid of the
+  loop shell, so no earlier background command takes it. Every detector reads the
+  command after these words, not only the detached-process one. A variable set
+  in a branch applies in text order: the last write wins, as with `&&` and `||`.
 - `cd` and `export` move the cwd and env for the parts after them. The Bash
   `tool.call` input has no cwd, so the hook reads `$.session.cwd()`.
 - The container id is a stdout line of exactly 64 hex characters. Other hex

@@ -325,6 +325,21 @@ const BUILTINS = new Set([
   'export',
 ])
 
+/**
+ * Reserved words that open a command in a compound (`if`, `while`, `until`, `do`, `then`, `else`, `elif`) or end one
+ * (`done`, `fi`, `esac`). `for ...; do yes & done` splits into `do yes` and `done`: the words are no command. `done &`
+ * backgrounds the whole loop, so its pid is not knowable and it makes no row. `for`, `case` and `select` are not in the
+ * set: the word after them is a variable or a value, not a command.
+ */
+const RESERVED = new Set(['if', 'while', 'until', 'do', 'then', 'else', 'elif', 'done', 'fi', 'esac'])
+
+/** Drops the reserved words in front of a segment. A segment that is only `done` or `fi` is left empty. */
+function stripReserved(words: readonly string[]): string[] {
+  let i = 0
+  while (i < words.length && RESERVED.has(words[i]!)) i++
+  return words.slice(i)
+}
+
 type Detached = { fingerprint: string; pid?: number; viaShell: boolean }
 
 /**
@@ -382,7 +397,7 @@ export function parseBashProcesses(
 
   for (const seg of splitShell(command)) {
     // The marked words tell `'$F'` and `\$F` (as typed) from `$F` and `"$F"` (expanded). Only the variables read them.
-    const pre = stripWrappers(seg.marked)
+    const pre = stripWrappers(stripReserved(seg.marked))
     const ss = stripSetsid(pre.words)
     const inner = stripWrappers(ss.words)
     const marked = inner.words
@@ -391,6 +406,8 @@ export function parseBashProcesses(
     if (words.length === 0) {
       // A line of assignments only (`L=/x`) sets shell variables. `L=/x cmd` sets them for `cmd` alone.
       if (pre.words.length === 0) for (const [k, v] of Object.entries(pre.env)) setVar(k, v, seg.scope)
+      // `done &` backgrounds the whole loop: `$!` is then the pid of the loop shell, not of an earlier background command.
+      if (seg.bg) lastBg = undefined
       continue
     }
     const head = words[0]!

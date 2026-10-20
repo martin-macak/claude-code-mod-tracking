@@ -403,8 +403,10 @@ test('processUpdateFromNotificationText does not read a Monitor event as an end'
 
 // ---------------------------------------------------------------- shell variables in a detached command (#56)
 
-const detachedOf = (command: string, cwd?: string) =>
-  parseBashProcesses(command, out(''), { toolUseId: 'toolu_v', at: 1, cwd }).filter(r => r.kind === 'detached-process')
+const detachedOf = (command: string, cwd?: string, stdout = '') =>
+  parseBashProcesses(command, out(stdout), { toolUseId: 'toolu_v', at: 1, cwd }).filter(
+    r => r.kind === 'detached-process',
+  )
 
 test('detached: a variable the command set is expanded in the name and the fingerprint', () => {
   // Case C of the issue. `$PWD` is the session cwd read before the call.
@@ -530,4 +532,124 @@ test('a background task of a subagent keeps the agent id and the end-with-agent 
   expect(headless).not.toHaveProperty('agentId')
   // Only the real flag counts.
   expect(task({ backgroundEndsWithFinalResponse: 'yes' })).not.toHaveProperty('endsWithAgent')
+})
+
+// ---------------------------------------------------------------- shell loop keywords (#119)
+
+const names = (command: string) => detachedOf(command).map(r => r.name)
+
+test('loop: a for loop with a background command names the command, not do (issue #119 row 1)', () => {
+  expect(names('for i in 1 2 3; do yes > /dev/null & done')).toEqual(['yes'])
+})
+
+test('loop: a variable set before the loop expands in the command after do (issue #119 row 2)', () => {
+  expect(names('S=/tmp/s; for k in a b; do $S/loop.sh 200 $k & done')).toEqual(['/tmp/s/loop.sh 200 $k'])
+})
+
+test('loop: nohup after do is the nohup wrapper, as outside a loop (issue #119 row 3)', () => {
+  expect(names('for k in a b; do nohup ./f104-loop.sh 200 $k > /tmp/l$k.log 2>&1 & done; sleep 1')).toEqual([
+    './f104-loop.sh 200 $k',
+  ])
+})
+
+test('loop: done with a background sign backgrounds the loop and makes no row (issue #119 row 4)', () => {
+  expect(parseBashProcesses('for i in 1 2 3; do yes > /dev/null; done &', out(''))).toEqual([])
+})
+
+test('loop: a while loop in the background makes no row (issue #119 row 5)', () => {
+  expect(parseBashProcesses('while true; do sleep 1; done &', out(''))).toEqual([])
+})
+
+test('if: a background command after then names the command, not then (issue #119 row 6)', () => {
+  expect(names('if true; then sleep 100 & fi')).toEqual(['sleep 100'])
+})
+
+test('loop: fi and esac with a background sign background the whole block and make no row', () => {
+  expect(parseBashProcesses('if true; then sleep 1; fi &', out(''))).toEqual([])
+  expect(parseBashProcesses('case $x in a) sleep 1;; esac &', out(''))).toEqual([])
+})
+
+// `$!` is the pid of the last background job. After `done &` that is the loop shell, so it is not the pid of the
+// command that started before the loop (Codex review of the PR).
+test('loop: echo $! after a backgrounded loop does not give its pid to the earlier background command', () => {
+  const [row] = detachedOf('sleep 100 & for i in 1; do :; done & echo $!', undefined, '555\n')
+  expect(row).toMatchObject({ name: 'sleep 100' })
+  expect(row).not.toHaveProperty('pid')
+})
+
+test('loop: echo $! after a foreground loop still gives the pid to the background command', () => {
+  const [row] = detachedOf('for i in 1; do sleep 100 & done; echo $!', undefined, '555\n')
+  expect(row).toMatchObject({ name: 'sleep 100', pid: 555 })
+})
+
+test('if: a background command after else names the command', () => {
+  expect(names('if false; then true; else sleep 5 & fi')).toEqual(['sleep 5'])
+})
+
+test('if: a background command after elif names the command', () => {
+  expect(names('if false; elif yes & then :; fi')).toEqual(['yes'])
+})
+
+test('loop: a background command after if, while or until names the command', () => {
+  expect(names('if yes & then :; fi')).toEqual(['yes'])
+  expect(names('while yes & do :; done')).toEqual(['yes'])
+  expect(names('until yes & do :; done')).toEqual(['yes'])
+})
+
+test('loop: a subshell around a loop names the command (issue #119 row 7)', () => {
+  expect(names('(for i in 1 2 3; do yes >/dev/null & done)')).toEqual(['yes'])
+})
+
+test('loop: a brace group around a loop names the command', () => {
+  expect(names('{ for i in 1 2 3; do yes > /dev/null & done; }')).toEqual(['yes'])
+})
+
+// Every detector reads the command after `do`, `then`, `else`, `elif`, `if`, `while` and `until`, not only the
+// detached-process one. The row of a loop stands for every pass, so a name with `$i` keeps the literal text.
+test('loop: a docker container after do or if is read as outside a loop', () => {
+  expect(parseBashProcesses('for i in 1 2; do docker run -d --name x$i img; done', out(''))[0]).toMatchObject({
+    kind: 'docker-container',
+  })
+  expect(parseBashProcesses('if docker run -d --name x img; then :; fi', out(''))[0]).toMatchObject({
+    kind: 'docker-container',
+    name: 'x',
+  })
+})
+
+test('loop: docker compose after do is read as outside a loop', () => {
+  expect(parseBashProcesses('for d in a b; do docker compose -p demo up -d; done', out(''))[0]).toMatchObject({
+    kind: 'docker-compose',
+    name: 'demo',
+  })
+})
+
+test('if: tmux after then is read as outside a loop', () => {
+  expect(parseBashProcesses('if ! tmux has-session -t dev; then tmux new -d -s dev; fi', out(''))[0]).toMatchObject({
+    kind: 'tmux',
+    name: 'dev',
+  })
+})
+
+test('loop: screen after do is read as outside a loop', () => {
+  expect(parseBashProcesses('for d in a b; do screen -dmS w$d sleep 100; done', out(''))[0]).toMatchObject({
+    kind: 'screen',
+  })
+})
+
+test('loop: setsid -f after do is read as outside a loop', () => {
+  expect(names('for i in 1 2; do setsid -f sleep 100; done')).toEqual(['sleep 100'])
+})
+
+// Branches are not tracked: the last write wins, as with `&&` and `||`.
+test('if: a variable set in then and else takes the last write', () => {
+  expect(detachedOf('if true; then A=/one; else A=/two; fi; srv $A &')[0]?.fingerprint).toBe('srv /two')
+  expect(detachedOf('[ -n x ] && A=/one || A=/two; srv $A &')[0]?.fingerprint).toBe('srv /two')
+})
+
+test('loop: a builtin after do ends with the shell and makes no row', () => {
+  expect(parseBashProcesses('for i in 1 2; do echo x & done', out(''))).toEqual([])
+})
+
+test('loop: the multi-line form still names the command (guard)', () => {
+  expect(names('for i in 1 2 3; do\n  yes > /dev/null &\ndone')).toEqual(['yes'])
 })
