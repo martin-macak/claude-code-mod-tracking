@@ -9,7 +9,7 @@ import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { focusOn, handleFor, headersOf, mountPane, type PaneUi, rowsOf, select } from './fixtures/pane'
 import { reasonsOfSources } from './fixtures/reasons'
-import { prompt, quiet, response, SESSION, START, track, world } from './fixtures/world'
+import { prompt, quiet, response, SESSION, START, track, until, world } from './fixtures/world'
 
 type World = ReturnType<typeof world>
 type On = Parameters<typeof world>[0]
@@ -137,6 +137,29 @@ test('pane: a press on a row selects that row and opens it', async ($, on) => {
   await ui.redraw()
   expect(rowsOf(await ui.drawn()).map(r => r.selected)).toEqual([false, false, true])
   await ui.unmount()
+})
+
+// Issue #115. A press on a row selects it, and the pane must also get the keys, or the next Up or Down goes to the prompt.
+// `ui.open` with `focus: true` is the one call that grants the keyboard (`ui.focus` is refused without it). The kit cannot
+// hand a pane the keys, so this pins the ask and the wiring of the port. That Down then moves the selection is e2e and live.
+test('pane: a press on a row of a pane with no keys asks the engine for the keys; a pane with the keys asks for none', async ($, on) => {
+  const w = world(on)
+  await listed($, w, THREE)
+  for (const [isFocused, asked] of [
+    [false, 1],
+    [true, 0],
+  ] as const) {
+    const ui = await mountPane($, { isFocused })
+    const before = w.opened.length
+    await ui.press({ key: await handleFor(ui, 'two.example') })
+    if (asked > 0) await until(() => w.opened.length > before, 'the ask for the keys')
+    await ui.redraw()
+    await quiet(w.calls) // no more calls come: a pane with the keys asks for none
+    expect(rowsOf(await ui.drawn()).map(r => r.selected)).toEqual([false, true, false])
+    expect(w.opened.slice(before)).toHaveLength(asked)
+    if (asked > 0) expect(w.opened.at(-1)).toMatchObject({ id: 'track', focus: true })
+    await ui.unmount()
+  }
 })
 
 // Issue #108, option 4: with no keys the highlight is not live. The keys go to the prompt box, and the pane says so.

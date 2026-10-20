@@ -35,8 +35,13 @@ export type PaneDrawProps = {
   readonly focused?: boolean
 }
 
+/** Who moved the ring: the person (Tab, arrows, click) or the plugin itself (`UiFocusOrigin.kind`). */
+export type FocusOrigin = 'person' | 'plugin'
+
 export class PaneSession {
   private drawn: Drawn | undefined
+  /** How often the pane closed. A press that began before a closing must not ask for the keys after it (issue #115). */
+  private closings = 0
   private sections: readonly SectionSpec[] = []
   private readonly refocus = new Refocus()
   private readonly work = new WorkQueue()
@@ -65,7 +70,7 @@ export class PaneSession {
       footer: await m.footer(p, findRow(sections, selected), help),
       help: help ? helpOf(m, sections) : null,
     }
-    const drawn = TreeDataTable.render(sections, view, el, this.actionsOf(p, m))
+    const drawn = TreeDataTable.render(sections, view, el, this.actionsOf(p, m, focused === false))
     this.refocus.seen(drawn)
     this.drawn = drawn
     this.sections = sections
@@ -76,19 +81,34 @@ export class PaneSession {
   /**
    * The engine moved the ring to `element`. A row handle selects its row: the pending refocus answers its own key once,
    * else the last drawing does. A footer key, an "N more" row, the close mark and no element leave the selection alone.
+   *
+   * `origin` is who moved the ring (`UiFocusOrigin`). The person's Tab, arrows and click always select the row under the
+   * ring. A move of the plugin that no refocus asked for is the engine's own take of the ring (`autoFocus`, as the pane
+   * gets the keys). It lands on the handle of a frame that can be older than the selection: after a press it names the
+   * old row, in any turn (issue #115). So it only starts a selection: it selects when no row is selected, or the selected
+   * row is not drawn, and it never replaces a drawn selected row.
    */
-  async focused(p: Ports, element: string | undefined): Promise<void> {
+  async focused(p: Ports, element: string | undefined, origin: FocusOrigin = 'person'): Promise<void> {
     try {
       if (element === undefined) return
-      const id = this.refocus.take(element) ?? this.drawn?.handles.get(element)
+      const id = this.refocus.take(element) ?? (await this.landedOn(p, element, origin))
       if (id !== undefined) await p.state.selected.update(() => id)
     } catch (e) {
       p.log(`pane: focus failed: ${reason(e)}`)
     }
   }
 
+  /** The row that a ring move which no refocus asked for selects, or undefined when it leaves the selection alone. */
+  private async landedOn(p: Ports, element: string, origin: FocusOrigin): Promise<string | undefined> {
+    const id = this.drawn?.handles.get(element)
+    if (id === undefined || origin === 'person') return id
+    const selected = await p.state.selected.get()
+    return this.drawn?.rows.some(r => r.id === selected) === true ? undefined : id
+  }
+
   /** The pane closed: no selection, no help view, no refocus left over. Each write stands alone: one may fail. */
   async closed(p: Ports): Promise<void> {
+    this.closings++
     this.refocus.clear()
     for (const write of [() => p.state.selected.update(() => null), () => p.state.help.update(() => false)]) {
       try {
@@ -113,16 +133,22 @@ export class PaneSession {
    * test "Enter, N more, h and r run at once" pins that a hung `x` never holds an Enter. The cost is a race of tens of
    * milliseconds: a click on row B while an `x` on row A is in flight can end with the selection on the neighbour of A,
    * because the `x` asks for the ring last. The next click or Tab sets it right.
+   *
+   * `keysInPrompt` is `Pane.isFocused === false` of the drawing these actions belong to. One session can be drawn on
+   * several surfaces and each has its own value, so a press uses the value of its own tree, not that of the last drawing.
    */
-  private actionsOf(p: Ports, m: PaneHost): TableActions {
+  private actionsOf(p: Ports, m: PaneHost, keysInPrompt: boolean): TableActions {
     return {
       // A press is a click or Enter. It opens or closes the row and selects it (issue #108): the row stays selected
-      // whether it opens or closes, and the ring goes to the handle the drawing gives the row.
-      toggle: id =>
+      // whether it opens or closes, and the ring goes to the handle the drawing gives the row. A click on a pane that has
+      // no keys asks for them too, so the next Up or Down moves the selection and not the prompt history (issue #115).
+      toggle: id => {
+        const closings = this.closings
         this.work.detach(p, 'toggle', async () => {
           await p.state.expanded.update(cur => (cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]))
-          await this.refocus.to(p, m, id)
-        }),
+          await this.refocus.to(p, m, id, keysInPrompt ? { still: () => closings === this.closings } : undefined)
+        })
+      },
       more: sectionId =>
         this.work.detach(p, 'more', async () => {
           await p.state.shown.update(sectionId, n => n + m.config.global().ui.sectionRows)

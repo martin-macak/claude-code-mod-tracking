@@ -99,3 +99,38 @@ Feature: Drive the /track pane with the keys
     And the focus ring is on "▾"
     When I press "Up"
     Then the selected row shows "two.example"
+
+  # Issue #115. A click on a Button runs its press and leaves the keys where they were. With the keys in the prompt (the
+  # composer is empty: ctrl+x Tab hands them over), the click must also give them to the pane, so Down moves the
+  # selection and not the prompt history. The pane asks the engine for them, and the ring comes with them.
+  Scenario: A click on a row gives the pane the keys when they are in the prompt
+    Given a Claude Code session with the artifact-tracking mod
+    When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "one.example"
+    When I press "C-x"
+    And I press "Tab"
+    Then the screen shows "Keys go to the prompt."
+    When I click the arrow of the row showing "two.example"
+    Then the selected row shows "two.example"
+    And the screen stops showing "Keys go to the prompt."
+    And the focus ring is on "▾"
+    When I press "Down"
+    Then the selected row shows "three.example"
+
+  # Issue #115, the refusal. The engine gives no keys while the composer holds text (issue #108, case C). The click still
+  # selects and opens the row. The hint stays, the text stays in the prompt, and nothing else happens: no error, no loop.
+  Scenario: A click on a row keeps the hint and the text in the prompt when the engine refuses the keys
+    Given a Claude Code session with the artifact-tracking mod
+    When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "one.example"
+    When I press "j"
+    Then the screen shows "Keys go to the prompt."
+    When I click the arrow of the row showing "three.example"
+    Then the selected row shows "three.example"
+    And the screen matches /│.*link: https:\/\/three\.example\/c/
+    And the screen shows "Keys go to the prompt."
+    And the screen matches /^❯\s+j\s*$/

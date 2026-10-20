@@ -293,14 +293,15 @@ export const register: Register = on => {
     return renderBand($.ui.resolve(e), line, await next(e))
   }).catch((_$, e, next) => next(e)) // a failed read leaves the band to the engine
 
-  // The ring moved. `next` runs first: a write before a deny would stick (tree-table 3.3). A row handle selects its row.
+  // The ring moved. `next` runs first: a write before a deny would stick (tree-table 3.3). A row handle selects its row. The
+  // origin goes along: the engine's own take of the ring (`autoFocus`) only starts a selection (issue #115).
   // The entry (the lazy start, the session check) runs beside the key: after a /resume it can load the stored copy and
   // read the transcript, which may call a tracker's tool, and the key must not wait for that.
   on('ui.focus', { requestId: PANE }, async ($, e, next) => {
     const p = portsOf($)
     void soft(() => managerOf($).entry(p))
     const r = await next(e)
-    if (r.deny === undefined) await pane.focused(p, e.element)
+    if (r.deny === undefined) await pane.focused(p, e.element, e.origin.kind)
     return r
   }).catch((_$, e, next) => next(e))
 
