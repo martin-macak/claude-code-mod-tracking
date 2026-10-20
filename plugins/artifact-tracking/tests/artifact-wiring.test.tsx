@@ -2,7 +2,7 @@
 // The tool results are the shapes the design study observed (fixtures/artifacts.ts). The kit drops `agentId`, so a
 // subagent's publish is covered by artifact-tool.test.ts: the hook does not read it.
 import type { Engine } from 'claude-code/testing'
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
 import { addReason, reasonSet } from '../core/lib/reasons'
 import {
   ASSET,
@@ -21,6 +21,7 @@ import {
   REPUBLISH,
 } from './fixtures/artifacts'
 import type { ArtifactRecord, ItemRecord } from './fixtures/contracts'
+import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { mountPane, select } from './fixtures/pane'
 import { MENTIONED, reasonsOfSources } from './fixtures/reasons'

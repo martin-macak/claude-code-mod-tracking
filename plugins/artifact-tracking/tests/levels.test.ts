@@ -4,6 +4,7 @@ import { expect, test } from 'claude-code/testing'
 import { byLevel, type Level, markerOf, mergePriority, rankOf, withPriority } from '../core/lib/levels'
 import { maskSpans } from '../core/lib/mask'
 import { ago, compactIds, firstLine, message, toolNote } from '../core/lib/text'
+import { expectLinear } from './fixtures/scaling'
 
 test('maskSpans blanks each span and keeps the length', () => {
   const text = 'see https://a.b/c now'
@@ -23,7 +24,7 @@ test('maskSpans blanks several spans and ignores one outside the text', () => {
   expect(maskSpans('abc', [{ start: 5, end: 9 }])).toBe('abc')
 })
 
-test('maskSpans takes spans in any order, overlapping or touching, in one pass', () => {
+test('maskSpans takes spans in any order, overlapping or touching, in one pass', async () => {
   expect(
     maskSpans('abcdefgh', [
       { start: 5, end: 7 },
@@ -33,11 +34,15 @@ test('maskSpans takes spans in any order, overlapping or touching, in one pass',
     ]),
   ).toBe('       h')
   expect(maskSpans('abc', [{ start: 2, end: 2 }])).toBe('abc')
-  const text = 'x'.repeat(200_000)
-  const spans = Array.from({ length: 50_000 }, (_, i) => ({ start: i * 4, end: i * 4 + 2 }))
-  const t0 = Date.now()
+  // One pass: the cost grows with the length of the text plus the number of spans, not with their product. A text of
+  // 200 000 characters and 50 000 spans is the big input, a fourth of both the small one.
+  const big = (k: number) => ({
+    text: 'x'.repeat(50_000 * k),
+    spans: Array.from({ length: 12_500 * k }, (_, i) => ({ start: i * 4, end: i * 4 + 2 })),
+  })
+  await expectLinear({ make: big, run: ({ text, spans }) => maskSpans(text, spans) })
+  const { text, spans } = big(4)
   expect(maskSpans(text, spans).length).toBe(text.length)
-  expect(Date.now() - t0).toBeLessThan(500)
 })
 
 test('levels: the order is top, high, normal, low; no level reads as normal', () => {

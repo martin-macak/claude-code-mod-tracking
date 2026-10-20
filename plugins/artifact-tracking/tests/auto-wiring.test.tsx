@@ -3,11 +3,12 @@
 // tool calls are covered by events.test.ts, ledger.test.ts and agents.test.ts, and by the live smoke run.
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
 import { addReason } from '../core/lib/reasons'
 import * as ev from './fixtures/events'
 import { prNode } from './fixtures/gh-discovery'
 import { porcelain as gitPorcelain } from './fixtures/git'
+import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { headersOf, mountPane as mount, select } from './fixtures/pane'
 import { DISCOVERED, reasonsOfSources } from './fixtures/reasons'

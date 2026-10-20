@@ -3,7 +3,8 @@
 // New behavior goes in this file, so the older wiring tests keep their cases.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.7 and 7. Plan: L4 Task 10.
 
-import { expect, mock, test } from 'claude-code/testing'
+import { expect, mock } from 'claude-code/testing'
+import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { graphqlCalls, prompt, quiet, SESSION, START, track, until, world } from './fixtures/world'
 

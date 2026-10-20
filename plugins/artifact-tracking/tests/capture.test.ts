@@ -1,11 +1,11 @@
 // The capture scan: one text, the URLs offered to the kinds by rank, the claimed spans masked, each kind scanning the
 // rest. Pure: the shipped kinds over a fake context. Plan: L5 Task 5, K21, K22, K23, Review Focus 1 and 3.
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
 import { scanClaims } from '../core/infra/capture'
 import type { ItemKind } from '../core/interfaces/items'
 import { parseRemote } from '../core/lib/git'
 import { type ScanContextOptions, scanContext } from '../core/lib/kind-context'
-import { scanMarkdown } from '../core/lib/links'
+import { MAX_TEXT, scanMarkdown } from '../core/lib/links'
 import { artifactKind } from '../trackers/artifact/kind'
 import { FILE_DEFAULTS } from '../trackers/file/config'
 import { fileKind } from '../trackers/file/kind'
@@ -17,6 +17,8 @@ import { jiraKind } from '../trackers/jira/kind'
 import { JIRA_KEY, parseJiraUrl } from '../trackers/jira/urls'
 import { webKind } from '../trackers/web/kind'
 import { PAGE_KEY, PAGE_URL } from './fixtures/artifacts'
+import { test } from './fixtures/kit'
+import { expectLinear, SCALE } from './fixtures/scaling'
 
 const KINDS: readonly ItemKind[] = [webKind, fileKind, artifactKind, jiraKind, githubKind] // the order is not the rank
 const REPO = { host: 'github.com', owner: 'acme', repo: 'web' }
@@ -148,10 +150,13 @@ test('capture: urls-only keeps explicit github and jira URLs only', () => {
     text.indexOf('https://github.com/acme'),
     text.indexOf('https://acme.atl'),
   ])
-  // A long run of punctuation glued to a URL stays fast: the trailing cut is linear.
-  const t0 = Date.now()
-  expect(keys(`https://github.com/a/b/issues/1${'.'.repeat(100_000)}x`, {}, 'urls-only')).toEqual([])
-  expect(Date.now() - t0).toBeLessThan(500)
+})
+
+// A long run of punctuation glued to a URL: the trailing cut is linear. A backtracking cut takes seconds on 100 000 dots.
+test('capture: urls-only: a long run of punctuation glued to a URL stays linear', async () => {
+  const dots = (text: string) => keys(text, {}, 'urls-only')
+  await expectLinear({ make: k => `https://github.com/a/b/issues/1${'.'.repeat(25_000 * k)}x`, run: dots })
+  expect(dots(`https://github.com/a/b/issues/1${'.'.repeat(100_000)}x`)).toEqual([])
 })
 
 test('capture: one key twice is one claim at its first place', () => {
@@ -279,12 +284,40 @@ test('capture: kinds claim in rank order, the first claim wins, and a kind witho
   expect(scanClaims('', 'full', [plain], context())).toEqual([])
 })
 
-test('capture: a hostile text of 40 000 links stays fast', () => {
-  const text = 'https://x.example/a [l](https://y.example/b) '.repeat(20_000)
-  const t0 = Date.now()
-  const found = scanClaims(text, 'full', KINDS, context())
-  expect(found.map(c => c.key)).toEqual(['web:https://x.example/a', 'web:https://y.example/b'])
-  expect(Date.now() - t0).toBeLessThan(2000)
+// 40 000 links in 900 000 characters. A scan reads the first MAX_TEXT of them, so the claims are the same two. The cost
+// is checked on texts up to the cap: the big one is 4 times the small one, and at the cap. A scan of 200 000 characters
+// takes about 100 ms of CPU, so this test takes the 30 s hang guard (`./fixtures/kit`): on a busy machine it runs past the
+// 5 s of the kit.
+test('capture: a hostile text of 40 000 links stays linear, and the cap cuts it', async () => {
+  const UNIT = 'https://x.example/a [l](https://y.example/b) '
+  const hostile = (units: number) => UNIT.repeat(units)
+  const keysOf = (text: string) => scanClaims(text, 'full', KINDS, context()).map(c => c.key)
+  const same = ['web:https://x.example/a', 'web:https://y.example/b']
+  let atCap: string[] = []
+  const units = MAX_TEXT / SCALE / UNIT.length
+  await expectLinear({
+    make: k => hostile(Math.floor(units * k)),
+    run: text => {
+      atCap = keysOf(text)
+    },
+  })
+  expect(atCap).toEqual(same)
+  expect(keysOf(hostile(20_000))).toEqual(same) // the whole 900 000 characters: the cap cuts it to the same claims
+})
+
+// Both inputs are above the cap, so the scan cuts both to MAX_TEXT and its cost stays flat. A pass over the full text before
+// the cut grows with the input: 4 times the text, 16 times the time when that pass is quadratic. The test above cannot see
+// it, because its biggest input is the cap.
+test('capture: the cost above the cap stays flat', async () => {
+  const UNIT = 'https://x.example/a [l](https://y.example/b) '
+  const hostile = (chars: number) => UNIT.repeat(Math.floor(chars / UNIT.length))
+  await expectLinear({
+    label: 'above the cap',
+    make: k => hostile(2 * MAX_TEXT * k), // 400 000 and 1 600 000 characters
+    run: text => {
+      scanClaims(text, 'full', KINDS, context())
+    },
+  })
 })
 
 test('parseRemote: an alias table maps the host', () => {
