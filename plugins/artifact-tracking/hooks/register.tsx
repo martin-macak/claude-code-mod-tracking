@@ -282,6 +282,7 @@ export const register: Register = on => {
       bodyColumns: e.props.bodyColumns,
       bodyRows: e.props.scroll?.bodyRows,
       focused: e.props.isFocused,
+      placement: e.props.placement,
     }),
   ).catch(($, e) => TreeDataTable.unavailable($.ui.resolve(e)))
 
@@ -303,6 +304,15 @@ export const register: Register = on => {
     const r = await next(e)
     if (r.deny === undefined) await pane.focused(p, e.element, e.origin.kind)
     return r
+  }).catch((_$, e, next) => next(e))
+
+  // The wheel or a page key. While the pane draws a window over its rows, the tree fits the body and the engine has nothing
+  // to scroll: the mod moves the selection and the ring by a page, and the window follows (issue #109). With no window
+  // (every row shows, or the help view) the engine moves as it did.
+  on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
+    const p = portsOf($)
+    if (!(await pane.scrolled(p, managerOf($), e.by))) return next(e)
+    return {}
   }).catch((_$, e, next) => next(e))
 
   // The pane closed: no selection, no help view.

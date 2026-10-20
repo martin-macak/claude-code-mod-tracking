@@ -1,4 +1,5 @@
 import { When } from '@cucumber/cucumber'
+import { selectedLine } from '../support/pane.ts'
 import { countLines } from '../support/session.ts'
 import { sleep, waitUntil } from '../support/wait.ts'
 import type { DemoWorld } from '../support/world.ts'
@@ -10,6 +11,21 @@ When('I type {string}', async function (this: DemoWorld, text: string) {
 When('I press {string}', function (this: DemoWorld, key: string) {
   this.tl.phase('normal')
   this.tmux.key(key)
+})
+
+// A key the person repeats, one press at a time. Each press waits until the selected row moved, so a slow redraw cannot
+// swallow a key (issue #104). Use it only for presses that move between rows: a press onto the footer does not change the
+// selected row, so the wait would time out.
+When('I press {string} {int} times', async function (this: DemoWorld, key: string, times: number) {
+  this.tl.phase('normal')
+  for (let i = 0; i < times; i++) {
+    const before = selectedLine(this.tmux.capture())
+    this.tmux.key(key)
+    await this.waitScreen(
+      screen => selectedLine(screen) !== before,
+      `press ${i + 1} of ${times} of ${key} to move the selected row`,
+    )
+  }
 })
 
 When('Claude finishes', async function (this: DemoWorld) {

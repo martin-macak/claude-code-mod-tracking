@@ -8,7 +8,7 @@ import { helpTextOf, listText, type PaneHost, PaneSession, TEXT_VIEW } from '../
 import { resetWidths } from '../ux/tree-data-table/columns'
 import { neighbourOf } from '../ux/tree-data-table/table'
 import { fakeConfig } from './fixtures/config-fs'
-import { buttonOf, footerOf, handlesOf, leaves, press, rowBoxes } from './fixtures/drawn'
+import { buttonOf, footerOf, handlesOf, leaves, nodes, press, rowBoxes } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
 import { fakePorts } from './fixtures/ports'
 import { COLS, row, section } from './fixtures/sections'
@@ -175,6 +175,188 @@ test('a pending refocus wins over the last drawn map for its key, once', async (
   expect(t.selected()).toBe('c') // the pending id, though the drawn map still says r0 is a
   await t.session.focused(t.w.ports, 'r0')
   expect(t.selected()).toBe('a') // the pending entry is spent: the drawn map answers
+})
+
+// ---------------------------------------------------------------- the window (issue #109)
+
+const TWELVE = webs(...Array.from({ length: 12 }, (_, i) => `w${i}`))
+/** A body of 11 rows, 96 cells wide: the inline pane at 100x40. It shows 6 of 12 rows. */
+const SHORT = 11
+const shownIds = (tree: unknown): string[] => rowBoxes(tree).map(b => leaves(b).join(' ').match(/w\d+/)?.[0] ?? '?')
+
+test('draw hands the window its place back: a selection inside the window does not move it', async () => {
+  const t = setup(TWELVE)
+  t.w.state.set('selected', 'w10')
+  expect(shownIds(await t.draw(96, SHORT))).toEqual(['w6', 'w7', 'w8', 'w9', 'w10', 'w11'])
+  t.w.state.set('selected', 'w6') // the last draw began at w6: it stays there
+  expect(shownIds(await t.draw(96, SHORT))).toEqual(['w6', 'w7', 'w8', 'w9', 'w10', 'w11'])
+  t.w.state.set('selected', 'w5') // above it: the window moves up by the least
+  expect(shownIds(await t.draw(96, SHORT))).toEqual(['w5', 'w6', 'w7', 'w8', 'w9'])
+})
+
+test('draw with no body height draws every row and writes nothing', async () => {
+  const t = setup(TWELVE)
+  expect(shownIds(await t.draw(96, undefined))).toHaveLength(12)
+  expect(t.w.stateSets).toEqual({})
+  expect(t.w.ui.invalidated).toBe(0)
+})
+
+test('with nothing selected the window starts on the first rows, whatever place an earlier draw left', async () => {
+  const t = setup(TWELVE)
+  t.w.state.set('selected', 'w11')
+  expect(shownIds(await t.draw(96, SHORT))[0]).toBe('w6')
+  t.w.state.set('selected', null) // a pane that opens again: a late draw after the close had left top at 6
+  expect(shownIds(await t.draw(96, SHORT))).toEqual(['w0', 'w1', 'w2', 'w3', 'w4', 'w5'])
+})
+
+test('the help view keeps the place of the window: h and h again show the same rows', async () => {
+  const t = setup(TWELVE)
+  t.w.state.set('selected', 'w10')
+  await t.draw(96, SHORT) // the window began at w6
+  t.w.state.set('selected', 'w6') // the ring walked up inside the window: it stays at w6
+  const before = shownIds(await t.draw(96, SHORT))
+  expect(before).toEqual(['w6', 'w7', 'w8', 'w9', 'w10', 'w11'])
+  t.w.state.set('help', true) // the help view draws no window: its drawing has no place to give back
+  await t.draw(96, SHORT)
+  t.w.state.set('help', false)
+  expect(shownIds(await t.draw(96, SHORT))).toEqual(before)
+})
+
+test('closed forgets the window: the next pane opens on the first rows', async () => {
+  const t = setup(TWELVE)
+  t.w.state.set('selected', 'w11')
+  await t.draw(96, SHORT)
+  await t.session.closed(t.w.ports)
+  expect(shownIds(await t.draw(96, SHORT))).toEqual(['w0', 'w1', 'w2', 'w3', 'w4', 'w5'])
+})
+
+test('a focus on a row handle out of the window selects the row; the next draw shows it', async () => {
+  const t = setup(TWELVE)
+  await t.draw(96, SHORT)
+  await t.session.focused(t.w.ports, 'r8') // a stop below the window: the ring walked onto it
+  expect(t.selected()).toBe('w8')
+  expect(shownIds(await t.draw(96, SHORT))).toContain('w8')
+})
+
+test('a focus on a "N more" stop out of the window asks for a redraw and the next draw shows the row', async () => {
+  const t = setup(TWELVE, { file: { global: { ui: { sectionRows: 8 } } } })
+  const first = await t.draw(96, SHORT)
+  expect(
+    nodes(first, 'Box').filter(b => b.props.height === 0 && nodes(b, 'Button').some(x => x.props.key === 'm0')),
+  ).toHaveLength(1)
+  await t.session.focused(t.w.ports, 'm0')
+  expect(t.w.ui.invalidated).toBe(1)
+  const next = await t.draw(96, SHORT)
+  expect(
+    nodes(next, 'Box').filter(b => b.props.height === 0 && nodes(b, 'Button').some(x => x.props.key === 'm0')),
+  ).toHaveLength(0)
+  expect(buttonOf(next, 'm0').props.label).toBe('4 more')
+  await t.session.focused(t.w.ports, 'r3') // the ring walked back onto a row: the row leads again
+  expect(t.selected()).toBe('w3')
+})
+
+test('Enter on an "N more" Button puts the ring on the selected row, and the window follows that row again', async () => {
+  // The ring sits on a position among the Buttons. The new rows come in before the N more Button, so its position holds the
+  // stop of the first new row, a row out of the window: no row would show the ring, and the next Tab would skip a row.
+  const t = setup(TWELVE, { file: { global: { ui: { sectionRows: 5 } } } })
+  t.w.state.set('selected', 'w4')
+  const first = await t.draw(96, SHORT) // 5 rows and the N more row fit the body: no window yet
+  await t.session.focused(t.w.ports, 'm0') // Tab put the ring on the N more Button
+  press(buttonOf(first, 'm0'))
+  await t.session.idle()
+  expect(await t.w.ports.state.shown.get('web')).toBe(5)
+  expect(t.w.ui.focused).toEqual(['r4']) // the ring goes back onto the selected row
+  expect(t.selected()).toBe('w4')
+  // Ten rows and "2 more" now overflow the body. The ring is off the N more Button, so the window shows the selected row
+  // and not the end of the list where the N more row is.
+  expect(shownIds(await t.draw(96, SHORT))).toContain('w4')
+})
+
+test('Enter on an "N more" Button with no row selected asks for no ring', async () => {
+  const t = setup(TWELVE, { file: { global: { ui: { sectionRows: 5 } } } })
+  press(buttonOf(await t.draw(96, SHORT), 'm0'))
+  await t.session.idle()
+  expect(await t.w.ports.state.shown.get('web')).toBe(5)
+  expect(t.w.ui.focused).toEqual([])
+})
+
+test('a focus on a "N more" Button asks for no redraw when every row shows', async () => {
+  const t = setup(TWELVE, { file: { global: { ui: { sectionRows: 8 } } } })
+  await t.draw(96, 40)
+  await t.session.focused(t.w.ports, 'm0')
+  expect(t.w.ui.invalidated).toBe(0)
+})
+
+test('the engine takes the ring off a "N more" Button onto the selected row: the window follows that row, not the Button', async () => {
+  // The engine's own take of the ring (origin plugin, `autoFocus`) lands on a row that is drawn and selected. The selection
+  // stays (issue #115), but the ring has left the N more Button, so its row no longer has to show.
+  const t = setup(TWELVE, { file: { global: { ui: { sectionRows: 8 } } } })
+  t.w.state.set('selected', 'w1')
+  await t.draw(96, SHORT, true)
+  await t.session.focused(t.w.ports, 'm0') // Tab put the ring on the N more Button: the window goes to the end of the list
+  expect(shownIds(await t.draw(96, SHORT, true))).not.toContain('w1')
+  await t.session.focused(t.w.ports, 'r1', 'plugin') // w1 is drawn and selected: the selection stays
+  expect(t.selected()).toBe('w1')
+  expect(shownIds(await t.draw(96, SHORT, true))).toContain('w1')
+})
+
+test('scrolled: a page key moves the selection by a page less one row and the ring after it', async () => {
+  const t = setup(TWELVE)
+  t.w.state.set('selected', 'w0')
+  await t.draw(96, SHORT) // a page of 6 rows
+  expect(await t.session.scrolled(t.w.ports, t.m, 11)).toBe(true)
+  expect(t.selected()).toBe('w5')
+  expect(t.w.ui.focused).toEqual(['r5'])
+  expect(await t.session.scrolled(t.w.ports, t.m, 11)).toBe(true)
+  expect(t.selected()).toBe('w10')
+  expect(await t.session.scrolled(t.w.ports, t.m, 11)).toBe(true) // clamps at the last row
+  expect(t.selected()).toBe('w11')
+  expect(await t.session.scrolled(t.w.ports, t.m, -11)).toBe(true)
+  expect(t.selected()).toBe('w6')
+})
+
+test('scrolled: a wheel tick moves one row; at the first row it moves nothing but the engine stays out of it', async () => {
+  const t = setup(TWELVE)
+  t.w.state.set('selected', 'w1')
+  await t.draw(96, SHORT)
+  expect(await t.session.scrolled(t.w.ports, t.m, 1)).toBe(true)
+  expect(t.selected()).toBe('w2')
+  expect(await t.session.scrolled(t.w.ports, t.m, -1)).toBe(true)
+  expect(await t.session.scrolled(t.w.ports, t.m, -1)).toBe(true)
+  expect(t.selected()).toBe('w0')
+  t.w.ui.focused.length = 0
+  expect(await t.session.scrolled(t.w.ports, t.m, -1)).toBe(true) // already at the top
+  expect(t.w.ui.focused).toEqual([])
+})
+
+test('scrolled: with no row selected a page key starts from the first row', async () => {
+  const t = setup(TWELVE)
+  await t.draw(96, SHORT)
+  expect(await t.session.scrolled(t.w.ports, t.m, 11)).toBe(true)
+  expect(t.selected()).toBe('w5')
+})
+
+test('scrolled leaves the move to the engine when no window cuts the rows', async () => {
+  const t = setup(TWELVE)
+  expect(await t.session.scrolled(t.w.ports, t.m, 1)).toBe(false) // nothing drawn yet
+  await t.draw(96, 40)
+  expect(await t.session.scrolled(t.w.ports, t.m, 11)).toBe(false)
+  await t.draw(96, undefined)
+  expect(await t.session.scrolled(t.w.ports, t.m, 11)).toBe(false)
+  expect(t.w.ui.focused).toEqual([])
+})
+
+test('scrolled with a failing write logs one line and keeps the engine out of the move', async () => {
+  const t = setup(TWELVE)
+  await t.draw(96, SHORT)
+  ;(t.w.ports.state as { selected: unknown }).selected = {
+    get: async () => null,
+    update: async () => {
+      throw new Error('boom')
+    },
+  }
+  expect(await t.session.scrolled(t.w.ports, t.m, 11)).toBe(true)
+  expect(t.w.logs).toEqual(['pane: scroll failed: boom'])
 })
 
 test('toggle flips the id in expanded; more adds sectionRows to shown(section)', async () => {

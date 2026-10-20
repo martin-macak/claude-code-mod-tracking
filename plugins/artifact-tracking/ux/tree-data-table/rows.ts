@@ -3,7 +3,8 @@
 // Decisions G10, G19 of plan L6.
 import type { RenderElement } from 'claude-code'
 import type { Cell, DetailLine } from '../../core/interfaces/view'
-import { clipMiddle, clipTo, normaliseCell } from '../text/cell-width'
+import { cellWidth, clipMiddle, clipTo, normaliseCell } from '../text/cell-width'
+import { wrapRows } from '../text/wrap'
 import { COLOR, cellBox, cellText, GLYPH } from '../theme'
 import { cellNode, headerRow, shown, titleRow } from './cells'
 import { GAP, GLYPH_BOX, INDENT, type Solved, type SolvedColumn, solveColumns } from './columns'
@@ -104,29 +105,82 @@ function moreRow(d: Draw, s: LaidSection, pad: number): RenderElement {
   )
 }
 
-/** One laid section. With no row drawn there is nothing to solve: no header, and the "N more" row sits at the gutter. */
-export function drawSection(d: Draw, s: LaidSection): RenderElement {
-  const { el, view } = d
-  const width = view.bodyColumns ?? DEFAULT_BODY_COLUMNS
-  const parts: RenderElement[] = [titleRow(el, s.spec, width)]
-  if (s.rows.length === 0) {
-    if (s.spec.rows.length === 0 && s.spec.empty !== undefined) {
-      parts.push(text(el, { dimColor: true }, normaliseCell(s.spec.empty)))
-    }
-    if (s.more > 0) parts.push(moreRow(d, s, GUTTER))
-    return box(el, { flexDirection: 'column' }, ...parts)
-  }
+/** The solved columns of a section and where its rows start: what a row and its detail lines need. */
+export interface Solving {
+  readonly solved: Solved
+  /** The cells before the tree column, the gutter included. */
+  readonly offset: number
+  readonly width: number
+}
+
+/** The columns come from every row of the section, drawn or not, so they hold still while a window moves over them. */
+export function solving(d: Draw, s: LaidSection): Solving {
+  const width = d.view.bodyColumns ?? DEFAULT_BODY_COLUMNS
   const solved = solveColumns(s.spec.id, s.spec.columns, s.rows, width - GUTTER)
-  const offset = GUTTER + treeOffset(solved)
-  parts.push(headerRow(el, s.spec.columns, solved))
-  for (const r of s.rows) {
-    parts.push(rowLine(d, solved, r))
-    if (!d.detail || !r.open) continue
-    const pad = Math.min(offset + INDENT * r.depth + GLYPH_BOX, Math.max(0, width - MIN_DETAIL))
-    for (const line of detailOf(r.row, s.spec.columns, solved, r.depth)) {
-      parts.push(detailLine(d, line, pad, r.row.dim === true))
-    }
+  return { solved, offset: GUTTER + treeOffset(solved), width }
+}
+
+/** The detail lines of a row and their indent. None when the budget guard turned detail off or the row is closed. */
+export function detailsOf(
+  d: Draw,
+  s: LaidSection,
+  g: Solving,
+  r: LaidRow,
+): { readonly lines: readonly DetailLine[]; readonly pad: number } {
+  if (!d.detail || !r.open) return { lines: [], pad: 0 }
+  const pad = Math.min(g.offset + INDENT * r.depth + GLYPH_BOX, Math.max(0, g.width - MIN_DETAIL))
+  return { lines: detailOf(r.row, s.spec.columns, g.solved, r.depth), pad }
+}
+
+/**
+ * The rows a detail line takes: its text wraps in what the indent and the label leave of the body. The window counts
+ * them before it draws, so it must wrap as the engine does.
+ */
+export function detailRows(line: DetailLine, pad: number, width: number): number {
+  const label = line.label === undefined ? 0 : cellWidth(`${normaliseCell(line.label)}:`) + 1
+  return wrapRows(clipTo(normaliseCell(line.cell.text), DETAIL_CELLS), width - pad - label)
+}
+
+/** The rows a laid row takes: its own line and its detail lines. */
+export function rowLines(d: Draw, s: LaidSection, g: Solving, r: LaidRow): number {
+  const { lines, pad } = detailsOf(d, s, g, r)
+  return 1 + lines.reduce((sum, line) => sum + detailRows(line, pad, g.width), 0)
+}
+
+/** A row and its detail lines. */
+export function rowParts(d: Draw, s: LaidSection, g: Solving, r: LaidRow): RenderElement[] {
+  const { lines, pad } = detailsOf(d, s, g, r)
+  return [rowLine(d, g.solved, r), ...lines.map(line => detailLine(d, line, pad, r.row.dim === true))]
+}
+
+/** The title row and the header row of a section that has a row to draw. */
+export function headParts(d: Draw, s: LaidSection, g: Solving): RenderElement[] {
+  return [titleRow(d.el, s.spec, g.width), headerRow(d.el, s.spec.columns, g.solved)]
+}
+
+/** The "N more" row of a section that has rows, indented under the tree column. */
+export const moreRowOf = (d: Draw, s: LaidSection, g: Solving): RenderElement => moreRow(d, s, g.offset)
+
+/** A section with no row to draw: its title, its empty text and the "N more" row at the gutter. Nothing to solve, no header. */
+export function bareSection(d: Draw, s: LaidSection): RenderElement {
+  const { el } = d
+  const parts: RenderElement[] = [titleRow(el, s.spec, d.view.bodyColumns ?? DEFAULT_BODY_COLUMNS)]
+  if (s.spec.rows.length === 0 && s.spec.empty !== undefined) {
+    parts.push(text(el, { dimColor: true }, normaliseCell(s.spec.empty)))
   }
-  if (s.more > 0) parts.push(moreRow(d, s, offset))
+  if (s.more > 0) parts.push(moreRow(d, s, GUTTER))
   return box(el, { flexDirection: 'column' }, ...parts)
+}
+
+/** One laid section, every row in it. With no row drawn there is nothing to solve: see `bareSection`. */
+export function drawSection(d: Draw, s: LaidSection): RenderElement {
+  if (s.rows.length === 0) return bareSection(d, s)
+  const g = solving(d, s)
+  return box(
+    d.el,
+    { flexDirection: 'column' },
+    ...headParts(d, s, g),
+    ...s.rows.flatMap(r => rowParts(d, s, g, r)),
+    ...(s.more > 0 ? [moreRowOf(d, s, g)] : []),
+  )
 }
