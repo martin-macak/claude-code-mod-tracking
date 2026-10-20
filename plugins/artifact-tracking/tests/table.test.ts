@@ -5,6 +5,7 @@ import { buttonKeyOf, CORE_KEYS, footerKeys, KeyRegistry } from '../core/infra/k
 import type { Cell, ColumnDef, RowRef } from '../core/interfaces/view'
 import { cellWidth } from '../ux/text/cell-width'
 import { GAP, GLYPH_BOX, INDENT, resetWidths } from '../ux/tree-data-table/columns'
+import { footerRows } from '../ux/tree-data-table/footer'
 import { helpModel } from '../ux/tree-data-table/help'
 import { DEFAULT_BODY_COLUMNS, GUTTER, NOTHING_MORE, TreeDataTable, UNAVAILABLE } from '../ux/tree-data-table/table'
 import { EMPTY_TEXT } from '../ux/tree-data-table/text'
@@ -14,6 +15,7 @@ import {
   handlesOf,
   isNode,
   leaves,
+  NO_ROW_FOOTER,
   type Node,
   nodes,
   press,
@@ -24,6 +26,9 @@ import {
 } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
 import { COLS, row, section, webRows } from './fixtures/sections'
+
+// The first title of the help view: it names Tab, Shift+Tab and the arrows (issue #108).
+const PANE_KEYS = 'Pane keys (Tab, Shift+Tab, Up, Down move between rows)'
 
 const draw = (sections: Parameters<typeof TreeDataTable.render>[0], over: Parameters<typeof view>[0] = {}) => {
   resetWidths()
@@ -235,9 +240,41 @@ test('a selected id that no drawn row holds puts autoFocus on the first handle (
   }
 })
 
-test('no handle has autoFocus once a drawn row is selected', () => {
+// Issue #108: a pane that takes the keys again (a second /track after the keys went to the prompt) starts its ring on the
+// selected row, not on nothing. On nothing, the first Down walks from the first row and the selection jumps there.
+test('autoFocus sits on the handle of the selected row once a drawn row is selected', () => {
   const { drawn } = draw([section('web', COLS, webRows(3))], { selected: 'w1' })
-  expect(nodes(drawn.tree, 'Button').filter(b => b.props.autoFocus !== undefined)).toHaveLength(0)
+  expect(nodes(drawn.tree, 'Button').filter(b => b.props.autoFocus !== undefined)).toHaveLength(1)
+  expect(buttonOf(drawn.tree, 'r1').props.autoFocus).toBe(true)
+})
+
+test('autoFocus follows the selected row into a later section', () => {
+  const { drawn } = draw([section('a', COLS, webRows(2)), section('b', COLS, [row('late', { key: 'late' })])], {
+    selected: 'late',
+  })
+  expect(nodes(drawn.tree, 'Button').filter(b => b.props.autoFocus === true)).toHaveLength(1)
+  expect(buttonOf(drawn.tree, 'r2').props.autoFocus).toBe(true)
+})
+
+// Issue #108, option 4: a pane that has no keys draws no live-looking highlight. The marker stays, dim, so the person
+// sees where the selection will be when the keys come back.
+test('a pane without the keys draws the selected row with a dim > and no background', () => {
+  const rows = [row('a', { key: 'a' }), row('b', { key: 'b' })]
+  const { drawn } = draw([section('web', COLS, rows)], { selected: 'b', focused: false })
+  const [a, b] = rowBoxes(drawn.tree) as [Node, Node]
+  expect('backgroundColor' in b.props).toBe(false)
+  expect(b.children[0]).toEqual({ type: 'Text', props: { dimColor: true }, children: ['>'] })
+  expect(a.children[0]).toEqual({ type: 'Text', props: {}, children: [' '] })
+})
+
+test('a pane with the keys, or one that does not say, draws the selected row as before', () => {
+  const rows = [row('a', { key: 'a' }), row('b', { key: 'b' })]
+  for (const focused of [true, undefined]) {
+    const { drawn } = draw([section('web', COLS, rows)], { selected: 'b', focused })
+    const b = rowBoxes(drawn.tree)[1] as Node
+    expect(b.props.backgroundColor).toBe('blue')
+    expect(b.children[0]).toEqual({ type: 'Text', props: {}, children: ['>'] })
+  }
 })
 
 test('a closed row draws ▸ and hides its children; an open row draws ▾ and its children one level deeper', () => {
@@ -415,6 +452,40 @@ test('every core key has one footer Button in every state; disabled ones are dim
   }
 })
 
+// Issue #108, option 1: the footer says how to move, where that costs no row. The core footer is 79 cells, 92 with the hint.
+// A body of 79 to 91 cells draws it on one row without the hint and on two with it, so the hint stays out there: the help
+// view names the keys at every width. Where the footer wraps anyway and the hint fits on the second row, it stays.
+const MOVE = 'Tab ↑↓ move'
+const footerAt = (bodyColumns: number) => draw([], { bodyColumns }).drawn.tree as unknown as Node
+
+test('the footer names Tab and the arrows before Esc close in a body where that adds no row', () => {
+  for (const bodyColumns of [92, 95, 96]) {
+    const footer = (footerAt(bodyColumns).children.at(-1) ?? {}) as Node
+    expect(footer.children.slice(-2)).toEqual([
+      { type: 'Text', props: { dimColor: true }, children: [MOVE] },
+      { type: 'Text', props: { dimColor: true }, children: ['Esc close'] },
+    ])
+    expect(footerRows(NO_ROW_FOOTER, bodyColumns, true)).toBe(1)
+  }
+})
+
+test('the footer leaves the move hint out of a body where it would add a row', () => {
+  for (const bodyColumns of [91, 80, 79]) {
+    const footer = footerAt(bodyColumns).children.at(-1) as Node
+    expect(leaves(footer)).not.toContain(MOVE)
+    expect(footer.children.at(-1)).toEqual({ type: 'Text', props: { dimColor: true }, children: ['Esc close'] })
+    expect(footerRows(NO_ROW_FOOTER, bodyColumns, false)).toBe(1) // it takes the one row it took before the hint
+    expect(footerRows(NO_ROW_FOOTER, bodyColumns, true)).toBe(2) // the hint would have cost this body a row
+  }
+})
+
+test('the footer keeps the move hint where it wraps anyway and the hint fits on the second row', () => {
+  // 78 cells: the keys fill the first row, and the second holds `Tab ↑↓ move  Esc close` with or without the hint.
+  expect(footerRows(NO_ROW_FOOTER, 78, false)).toBe(2)
+  expect(footerRows(NO_ROW_FOOTER, 78, true)).toBe(2)
+  expect(leaves(footerAt(78).children.at(-1))).toContain(MOVE)
+})
+
 test('the footer Button key is the key the registry finds the key by, for a tracker key too', () => {
   const reg = new KeyRegistry()
   reg.add('a', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
@@ -461,7 +532,7 @@ test('with help the pane draws the help view and the footer, and no row', () => 
   const footer = footerKeys(reg, undefined, () => false, true)
   const { drawn } = draw(sections, { footer, help: helpModel(reg.all(), sections, '/c/config.json', ['Bad.']) })
   const all = leaves(drawn.tree)
-  expect(all).toContain('Pane keys')
+  expect(all).toContain(PANE_KEYS)
   expect(all).toContain('Config file: /c/config.json')
   expect(all).toContain('Bad.')
   expect(rowBoxes(drawn.tree)).toHaveLength(0)
@@ -504,7 +575,7 @@ test('with help and room for it the pane draws the full help view, a gap and the
 test('with help and a body one row short the pane draws the compact help view and no gap', () => {
   const { tree, help, foot, lines } = helpIn(FULL_ROWS - 1)
   expect(lines).toBe(COMPACT_LINES)
-  expect(leaves(help)[0]).toBe('Pane keys')
+  expect(leaves(help)[0]).toBe(PANE_KEYS)
   expect(tree.props.rowGap).toBe(0)
   expect(tree.children).toHaveLength(2)
   expect(footerOf(foot)).toHaveLength(7)
@@ -517,11 +588,18 @@ test('a footer that wraps at a narrow body takes a row, so help that fits at 80 
   expect(helpIn(FULL_ROWS, undefined).lines).toBe(FULL_LINES) // no width: 80 columns
 })
 
+// The move hint is counted only where it is drawn (issue #108): at 91 cells it would cost the footer a row and turn the
+// help view compact, so it is left out and the help view stays full.
+test('the move hint never turns the help view compact: full at 91 and 92 columns, with and without the hint', () => {
+  expect(helpIn(FULL_ROWS, 91).lines).toBe(FULL_LINES) // 79 cells of footer, no hint: one row
+  expect(helpIn(FULL_ROWS, 92).lines).toBe(FULL_LINES) // 92 cells with the hint: one row
+})
+
 test('a body shorter than the footer plus one line still draws the compact help view and the footer', () => {
   for (const rows of [2, 1, 0]) {
     const { tree, help, foot, lines } = helpIn(rows)
     expect(lines).toBe(COMPACT_LINES)
-    expect(leaves(help)[0]).toBe('Pane keys')
+    expect(leaves(help)[0]).toBe(PANE_KEYS)
     expect(footerOf(foot)).toHaveLength(7)
     expect(tree.children).toHaveLength(2)
   }

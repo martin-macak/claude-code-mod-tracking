@@ -12,18 +12,18 @@ test('the real LifecycleManager serves the session: sections, footer states, x a
   await t.m.row(t.w.ports, promptRow('see https://one.example/ and https://two.example/ and https://three.example/'))
   const host: PaneHost = t.m // a change of either side breaks the compile here, not in register.tsx
   const session = new PaneSession()
-  const first = await session.draw(t.w.ports, host, EL, 100)
+  const first = await session.draw(t.w.ports, host, EL, { bodyColumns: 100 })
   expect(handlesOf(first)).toEqual(['r0', 'r1', 'r2'])
   const dim = (tree: unknown) => buttonOf(tree, 'dismiss').props.dimColor
   expect(dim(first)).toBe(true) // no row selected: the key is off
   await session.focused(t.w.ports, 'r1') // the ring lands on the second link
-  const picked = await session.draw(t.w.ports, host, EL, 100)
+  const picked = await session.draw(t.w.ports, host, EL, { bodyColumns: 100 })
   expect(dim(picked)).toBeUndefined()
   press(buttonOf(picked, 'dismiss'))
   await session.idle()
   expect(t.keys()).toHaveLength(2)
   expect(t.keys().some(k => k.includes('two.example'))).toBe(false)
-  const next = await session.draw(t.w.ports, host, EL, 100)
+  const next = await session.draw(t.w.ports, host, EL, { bodyColumns: 100 })
   expect(handlesOf(next)).toEqual(['r0', 'r1'])
   expect(t.w.state.get('selected')).toBe(t.keys()[1]) // the link after the dismissed one is selected
   expect(t.w.ui.focused).toEqual(['r1'])

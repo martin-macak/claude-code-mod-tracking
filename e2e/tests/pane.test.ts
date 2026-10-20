@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { focusedTexts, selectedLine, withFocus } from '../support/pane.ts'
+import { arrowOf, focusedTexts, selectedLine, withFocus } from '../support/pane.ts'
 
 test('selectedLine finds the row with the > gutter', () => {
   const line = 'abc │> ▲ ▸ two.example/b  two.example/b'
@@ -74,4 +74,15 @@ test('withFocus appends the focused texts to the plain screen', () => {
 
 test('withFocus says so when no text is in reverse video', () => {
   assert.equal(withFocus('rows\n2 more', `${ROW_BLURRED}\n${MORE_BLURRED}`), 'rows\n2 more\n--- reverse video: []')
+})
+
+test('arrowOf gives the 1-based column and row of the arrow of the row that shows the text, and the arrow', () => {
+  const screen = 'header\nabc │>   ▸ one.example/a  one.example/a\nabc │    ▾ two.example/b  two.example/b\n'
+  assert.deepEqual(arrowOf(screen, 'two.example'), { column: 10, row: 3, glyph: '▾' })
+  assert.deepEqual(arrowOf(screen, 'one.example'), { column: 10, row: 2, glyph: '▸' })
+})
+
+test('arrowOf skips a line whose text after the arrow is another row and returns undefined without a match', () => {
+  assert.equal(arrowOf('│    ▸ one.example/a\nno arrow two.example', 'two.example'), undefined)
+  assert.equal(arrowOf('', 'one'), undefined)
 })

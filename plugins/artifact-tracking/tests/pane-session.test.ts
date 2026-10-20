@@ -70,7 +70,8 @@ function setup(
   }
   const session = new PaneSession()
   const m = host as unknown as PaneHost
-  const draw = (cols = 80, rows?: number) => session.draw(w.ports, m, EL, cols, rows)
+  const draw = (cols = 80, rows?: number, focused?: boolean) =>
+    session.draw(w.ports, m, EL, { bodyColumns: cols, bodyRows: rows, focused })
   /** Presses the Button of a drawing and waits for the work it started. */
   const pressKey = async (key: string) => {
     press(buttonOf(await draw(), key))
@@ -126,7 +127,7 @@ test('draw with the help on draws the help view in place of the rows', async () 
   const tree = await t.draw()
   expect(handlesOf(tree)).toEqual([])
   const lines = leaves(tree)
-  expect(lines).toContain('Pane keys')
+  expect(lines).toContain('Pane keys (Tab, Shift+Tab, Up, Down move between rows)')
   expect(lines).toContain('Config file: /p/config.json')
   expect(lines).toContain('X.')
   expect(buttonOf(tree, 'help').props.label).toBe('back')
@@ -191,6 +192,72 @@ test('toggle flips the id in expanded; more adds sectionRows to shown(section)',
   await over.session.idle()
   expect(await over.w.ports.state.shown.get('web')).toBe(5)
   expect(handlesOf(await over.draw())).toHaveLength(7)
+})
+
+// Issue #108, option 2. A click on the arrow of a row is a press, and the press must select the row. The ring follows, as
+// after `x` and the digits, so Tab and the arrows go on from the row the person chose.
+test('toggle also selects the row and asks the engine for the ring on its handle', async () => {
+  const t = setup(webs('a', 'b', 'c'))
+  t.w.state.set('selected', 'a')
+  const tree = await t.draw()
+  press(buttonOf(tree, 'r2')) // a click on c
+  await t.session.idle()
+  expect(t.w.state.get('expanded')).toEqual(['c'])
+  expect(t.selected()).toBe('c')
+  expect(t.w.ui.focused).toEqual(['r2'])
+  press(buttonOf(await t.draw(), 'r2')) // the second press closes the row and keeps it selected
+  await t.session.idle()
+  expect(t.w.state.get('expanded')).toEqual([])
+  expect(t.selected()).toBe('c')
+})
+
+test('a press asks for the ring on the handle of the pressed row, also after an earlier row opened', async () => {
+  // `a` has a child, so once `a` is open `b` has the handle r2 and not r1: the ring must go where `b` is in the drawing.
+  const t = setup([web('a', { children: [web('a1')] }), web('b')])
+  const tree = await t.draw()
+  expect(handlesOf(tree)).toEqual(['r0', 'r1'])
+  press(buttonOf(tree, 'r1')) // b, at r1 while a is closed
+  await t.session.idle()
+  expect(t.selected()).toBe('b')
+  expect(t.w.ui.focused).toEqual(['r1'])
+  t.w.ui.focused.length = 0
+  t.w.state.set('expanded', ['a'])
+  press(buttonOf(await t.draw(), 'r2')) // b again, now at r2: closing leaves it there
+  await t.session.idle()
+  expect(t.w.ui.focused).toEqual(['r2'])
+})
+
+test('a refused or failed ring request leaves the selection written', async () => {
+  const t = setup(webs('a', 'b'))
+  for (const focus of [async () => false, async () => Promise.reject(new Error('no engine'))]) {
+    ;(t.w.ports.ui as { focus: unknown }).focus = focus
+    press(buttonOf(await t.draw(), 'r1'))
+    await t.session.idle()
+    expect(t.selected()).toBe('b')
+    t.w.state.set('selected', null)
+  }
+})
+
+test('draw hands Pane.isFocused to the table: no keys draws no background and a hint above the tree', async () => {
+  const t = setup(webs('a', 'b'))
+  t.w.state.set('selected', 'b')
+  const lit = await t.draw(80, undefined, true)
+  expect(rowBoxes(lit)[1]?.props.backgroundColor).toBe('blue')
+  expect(leaves(lit).some(l => l.includes('ctrl+x Tab'))).toBe(false)
+  for (const given of [undefined, true])
+    expect(rowBoxes(await t.draw(80, undefined, given))[1]?.props.backgroundColor).toBe('blue')
+  const dark = await t.draw(80, undefined, false)
+  expect('backgroundColor' in (rowBoxes(dark)[1]?.props ?? {})).toBe(false)
+  expect(leaves(dark)[0]).toContain('ctrl+x Tab')
+  expect(handlesOf(dark)).toEqual(['r0', 'r1'])
+})
+
+test('draw leaves the hint off the help view, whether or not the pane has the keys', async () => {
+  const t = setup(webs('a'), { path: '/p/config.json' })
+  t.w.state.set('help', true)
+  const dark = await t.draw(96, 11, false)
+  expect(leaves(dark).some(l => l.includes('ctrl+x Tab'))).toBe(false)
+  expect(JSON.stringify(await t.draw(96, 11, true))).toBe(JSON.stringify(dark))
 })
 
 test('Enter, N more, h and r run at once: a press that never finishes holds none of them', async () => {
@@ -509,7 +576,7 @@ test('helpTextOf prints the help view with the config path and every problem', a
   const t = setup(webs('a'), { path: '/p/config.json', problems: ['X.'] })
   t.host.keyProblems = ['Y.']
   const out = await helpTextOf(t.w.ports, t.m)
-  expect(out.startsWith('Pane keys\n  r  refresh\n  h  help')).toBe(true)
+  expect(out.startsWith('Pane keys (Tab, Shift+Tab, Up, Down move between rows)\n  r  refresh\n  h  help')).toBe(true)
   expect(out.endsWith('Config file: /p/config.json\nProblems\n  X.\n  Y.')).toBe(true)
   expect(t.host.views[0]).toBe(TEXT_VIEW)
 })

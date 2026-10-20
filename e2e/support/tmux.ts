@@ -96,6 +96,13 @@ export class Tmux {
     }
   }
 
+  // A mouse click as the terminal sends it (SGR mode 1006): press, then release, at a 1-based column and row of the pane.
+  // The bytes go to the program in the pane, so the coordinates are the pane's, not the window's.
+  click(column: number, row: number): void {
+    this.run(['send-keys', '-t', this.target, '-l', `\x1b[<0;${column};${row}M`])
+    this.run(['send-keys', '-t', this.target, '-l', `\x1b[<0;${column};${row}m`])
+  }
+
   line(text: string): void {
     this.run(['send-keys', '-t', this.target, '-l', tmuxLiteral(text)])
     this.key('Enter')

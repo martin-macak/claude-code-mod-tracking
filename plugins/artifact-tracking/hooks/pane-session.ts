@@ -10,6 +10,7 @@ import type { Ports } from '../core/interfaces/ports'
 import type { SectionSpec } from '../core/interfaces/view'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import type { TableElements } from '../ux/tree-data-table/el'
+import { withKeysHint } from '../ux/tree-data-table/hint'
 import {
   type Drawn,
   findRow,
@@ -24,20 +25,28 @@ import { helpOf, type PaneHost, shownOf } from './pane-text'
 
 export { helpOf, helpTextOf, listText, type PaneHost, TEXT_VIEW } from './pane-text'
 
+/** What the engine gives the pane to draw with (`Pane` props): the body size, and whether the pane has the keys. */
+export type PaneDrawProps = {
+  /** The cells of a body row. Absent: the table takes its default. */
+  readonly bodyColumns?: number
+  /** The rows of the body (`scroll.bodyRows`). Only the help view reads it. */
+  readonly bodyRows?: number
+  /** `Pane.isFocused`. */
+  readonly focused?: boolean
+}
+
 export class PaneSession {
   private drawn: Drawn | undefined
   private sections: readonly SectionSpec[] = []
   private readonly refocus = new Refocus()
   private readonly work = new WorkQueue()
 
-  /** Reads the state and the sections, and draws. It writes nothing and calls no entry (E9). */
-  async draw(
-    p: Ports,
-    m: PaneHost,
-    el: TableElements,
-    bodyColumns: number | undefined,
-    bodyRows?: number,
-  ): Promise<RenderElement> {
+  /**
+   * Reads the state and the sections, and draws. It writes nothing and calls no entry (E9). `focused` is
+   * `Pane.isFocused`: with `false` the keys go to the prompt box, so the selected row is not drawn live and a hint says why.
+   */
+  async draw(p: Ports, m: PaneHost, el: TableElements, props: PaneDrawProps = {}): Promise<RenderElement> {
+    const { bodyColumns, bodyRows, focused } = props
     const [expanded, selected, help] = await Promise.all([
       p.state.expanded.get(),
       p.state.selected.get(),
@@ -49,6 +58,7 @@ export class PaneSession {
       bodyColumns,
       bodyRows,
       selected,
+      focused,
       expanded: new Set(expanded),
       shown: id => shown.get(id) ?? 0,
       limits: m.config.global().ui,
@@ -59,7 +69,8 @@ export class PaneSession {
     this.refocus.seen(drawn)
     this.drawn = drawn
     this.sections = sections
-    return drawn.tree
+    // The help view fills the body of a short pane to the row (issue #92): no line is added to it.
+    return focused === false && !help ? withKeysHint(el, drawn.tree) : drawn.tree
   }
 
   /**
@@ -97,12 +108,20 @@ export class PaneSession {
    * Only a press that reads `selected` waits in the chain: `x`, `0`-`3` and a tracker key. Those writes must see each
    * other's selection. An Enter, an "N more", `h` and `r` run at once, so a press that waits for the entry (after a
    * /resume the entry loads the stored copy) never holds them.
+   *
+   * An Enter or a click (`toggle`) is a fourth writer of `selected` (issue #108), and it stays outside the chain: the
+   * test "Enter, N more, h and r run at once" pins that a hung `x` never holds an Enter. The cost is a race of tens of
+   * milliseconds: a click on row B while an `x` on row A is in flight can end with the selection on the neighbour of A,
+   * because the `x` asks for the ring last. The next click or Tab sets it right.
    */
   private actionsOf(p: Ports, m: PaneHost): TableActions {
     return {
+      // A press is a click or Enter. It opens or closes the row and selects it (issue #108): the row stays selected
+      // whether it opens or closes, and the ring goes to the handle the drawing gives the row.
       toggle: id =>
         this.work.detach(p, 'toggle', async () => {
           await p.state.expanded.update(cur => (cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]))
+          await this.refocus.to(p, m, id)
         }),
       more: sectionId =>
         this.work.detach(p, 'more', async () => {

@@ -41,15 +41,23 @@ function leaves(node: unknown): string[] {
 }
 
 /**
- * The pane as the kit draws it: the terminal surface at 96 columns, docked, with 28 body rows, unless `o` says
- * otherwise. `bodyRows` and `placement` are what the engine gives a short inline pane.
+ * The pane as the kit draws it: the terminal surface at 96 columns, docked, with 28 body rows, holding the keys, unless
+ * `o` says otherwise. `bodyRows` and `placement` are what the engine gives a short inline pane.
  */
 export function mountPane(
   $: Engine,
-  o: { surface?: 'terminal' | 'desktop'; bodyColumns?: number; bodyRows?: number; placement?: 'dock' | 'inline' } = {},
+  o: {
+    surface?: 'terminal' | 'desktop'
+    bodyColumns?: number
+    bodyRows?: number
+    placement?: 'dock' | 'inline'
+    /** Whether the pane has the keys (`Pane.isFocused`). Default: it has them, as after `/track` opens it with focus. */
+    isFocused?: boolean
+  } = {},
 ): Promise<PaneUi> {
   const props = {
     ...PANE.props,
+    isFocused: o.isFocused ?? true,
     ...(o.bodyColumns === undefined ? {} : { bodyColumns: o.bodyColumns }),
     ...(o.bodyRows === undefined ? {} : { scroll: { ...PANE.props.scroll, bodyRows: o.bodyRows } }),
     ...(o.placement === undefined ? {} : { placement: o.placement }),

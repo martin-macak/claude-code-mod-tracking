@@ -59,3 +59,38 @@ Feature: Drive the /track pane with the keys
     When I press "Enter"
     Then the screen stops showing "2 more"
     And the screen matches /│ +▸ +g\.example\/7/
+
+  # Issue #108. A letter that is no key goes to the prompt box and the pane loses the keyboard. The pane says so. ctrl+x Tab
+  # gives the keyboard back, and the ring starts on the selected row, so Up goes to the row above it.
+  Scenario: The pane says when the keys go to the prompt, and ctrl+x Tab gives them back
+    Given a Claude Code session with the artifact-tracking mod
+    When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "one.example"
+    And the screen does not show "Keys go to the prompt."
+    And the screen shows "Tab ↑↓ move"
+    When I press "Tab"
+    And I press "Tab"
+    Then the selected row shows "three.example"
+    When I press "j"
+    Then the screen shows "Keys go to the prompt."
+    And the selected row shows "three.example"
+    When I press "C-x"
+    And I press "Tab"
+    Then the screen stops showing "Keys go to the prompt."
+    When I press "Up"
+    Then the selected row shows "two.example"
+
+  # Issue #108. A click is a press: a click on the arrow of a row selects the row and opens it.
+  Scenario: A click on the arrow of a row selects the row and opens it
+    Given a Claude Code session with the artifact-tracking mod
+    When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "one.example"
+    When I click the arrow of the row showing "three.example"
+    Then the selected row shows "three.example"
+    And the screen matches /│.*link: https:\/\/three\.example\/c/
+    When I press "Up"
+    Then the selected row shows "two.example"

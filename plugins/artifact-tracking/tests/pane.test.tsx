@@ -113,11 +113,84 @@ test('pane: a focus on a row handle selects that row; a footer Button or the clo
   await ui.unmount()
 })
 
-test('pane: autoFocus sits on the first handle until a row is selected', async ($, on) => {
+// Issue #108: the ring of a pane that takes the keys again starts on the selected row, so the first Down does not jump
+// to the first row.
+test('pane: autoFocus sits on the first handle until a row is selected, then on the handle of the selected row', async ($, on) => {
   const { ui } = await paneOver($, on, LINKS)
   expect(rowsOf(await ui.drawn()).map(r => r.autoFocus)).toEqual([true, false])
   await focusOn($, 'r1')
-  expect(rowsOf(await ui.drawn()).map(r => r.autoFocus)).toEqual([false, false])
+  expect(rowsOf(await ui.drawn()).map(r => r.autoFocus)).toEqual([false, true])
+  await ui.unmount()
+})
+
+// Issue #108, option 2: a click is a press. A press on a row selects it, besides opening or closing it.
+test('pane: a press on a row selects that row and opens it', async ($, on) => {
+  const { ui } = await paneOver($, on, THREE)
+  expect(rowsOf(await ui.drawn()).map(r => r.selected)).toEqual([false, false, false])
+  await ui.press({ key: await handleFor(ui, 'two.example') })
+  await ui.redraw() // an isolated world answers `state.set` itself: draw once more, as `select()` does
+  const rows = rowsOf(await ui.drawn())
+  expect(rows.map(r => r.selected)).toEqual([false, true, false])
+  expect(rows[1]?.background).toBe('blue')
+  expect(await ui.find({ text: 'link:' })).toBeDefined()
+  await ui.press({ key: await handleFor(ui, 'three.example') })
+  await ui.redraw()
+  expect(rowsOf(await ui.drawn()).map(r => r.selected)).toEqual([false, false, true])
+  await ui.unmount()
+})
+
+// Issue #108, option 4: with no keys the highlight is not live. The keys go to the prompt box, and the pane says so.
+const NO_KEYS = 'ctrl+x Tab'
+
+test('pane: a pane with no keys draws no background and says the keys go to the prompt', async ($, on) => {
+  const w = world(on)
+  await listed($, w, LINKS)
+  const ui = await mountPane($, { isFocused: false })
+  await select($, ui, 'two.example')
+  const rows = rowsOf(await ui.drawn())
+  expect(rows.map(r => r.selected)).toEqual([false, true]) // the marker stays: it is where the selection is
+  expect(rows[1]?.background).toBeUndefined()
+  const hint = (await ui.findAll({ type: 'Text' })).find(t => t.text?.includes(NO_KEYS))
+  expect(hint?.text).toContain('prompt')
+  expect(hint?.props.dimColor).toBe(true)
+  await ui.unmount()
+})
+
+// The live check of the no-keys state is one terminal run. `Pane.isFocused` is `types-only` on the desktop: the engine may
+// report `false` there while the person uses the mouse. This pins what the desktop pane draws for each value, so the
+// behavior is known whichever way the engine goes.
+test('pane: a desktop pane draws the marker dim and the hint when isFocused is false, and the background when true', async ($, on) => {
+  const w = world(on)
+  await listed($, w, LINKS)
+  for (const [isFocused, background] of [
+    [false, undefined],
+    [true, 'blue'],
+  ] as const) {
+    const ui = await mountPane($, { surface: 'desktop', isFocused })
+    await select($, ui, 'two.example')
+    const rows = rowsOf(await ui.drawn())
+    expect(rows.map(r => r.selected)).toEqual([false, true])
+    expect(rows[1]?.background).toBe(background)
+    const hint = (await ui.findAll({ type: 'Text' })).find(t => t.text?.includes(NO_KEYS))
+    expect(hint !== undefined).toBe(!isFocused)
+    await ui.unmount()
+  }
+})
+
+test('pane: a pane with the keys draws the background and no hint', async ($, on) => {
+  const { ui } = await paneOver($, on, LINKS)
+  await select($, ui, 'two.example')
+  expect(rowsOf(await ui.drawn())[1]?.background).toBe('blue')
+  expect((await ui.findAll({ type: 'Text' })).some(t => t.text?.includes(NO_KEYS))).toBe(false)
+  await ui.unmount()
+})
+
+test('pane: the help view of a pane with no keys draws no hint line, so it still fits the body', async ($, on) => {
+  world(on)
+  const ui = await mountPane($, { isFocused: false })
+  await ui.press({ key: 'help' })
+  expect((await ui.findAll({ type: 'Text' })).some(t => t.text?.includes(NO_KEYS))).toBe(false)
+  expect(await ui.find({ text: 'Row keys (act on the selected row)' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -395,6 +468,6 @@ test('pane: the largest list the store allows draws whole', { timeoutMs: 20_000 
 test('/track help prints the help view as text', async ($, on) => {
   world(on)
   const text = (await track($, 'help')).text ?? ''
-  expect(text.startsWith('Pane keys\n  r  refresh\n  h  help')).toBe(true)
+  expect(text.startsWith('Pane keys (Tab, Shift+Tab, Up, Down move between rows)\n  r  refresh\n  h  help')).toBe(true)
   expect(text).toContain('Config file:')
 })

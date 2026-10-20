@@ -10,6 +10,8 @@ import { EL } from './fixtures/elements'
 import { COLS, row, section } from './fixtures/sections'
 
 const PATH = '/h/.config/claude-code/mods/tracker/config.json'
+// The first title names the keys that move between rows. They are no footer keys (issue #108).
+const PANE_KEYS = 'Pane keys (Tab, Shift+Tab, Up, Down move between rows)'
 const open: PaneKey = { id: 'open', key: 'o', label: 'open', scope: 'row', owner: 'github' }
 
 /** A drawn node of the plain-data element table. */
@@ -27,11 +29,7 @@ test('helpModel groups core keys into pane and row keys, then tracker keys under
     section('web', COLS, [row('w1', {}, { owner: 'web' })], { title: 'Web links' }),
   ]
   const m = helpModel([...CORE_KEYS, open], sections, PATH, [])
-  expect(m.groups.map(g => g.title)).toEqual([
-    'Pane keys',
-    'Row keys (act on the selected row)',
-    'Pull requests, GitHub',
-  ])
+  expect(m.groups.map(g => g.title)).toEqual([PANE_KEYS, 'Row keys (act on the selected row)', 'Pull requests, GitHub'])
   expect(m.groups[0]?.keys.map(k => k.key)).toEqual(['r', 'h'])
   expect(m.groups[1]?.keys.map(k => k.key)).toEqual(['x', '1', '2', '3', '0'])
   expect(m.groups[2]?.keys).toEqual([open])
@@ -58,7 +56,7 @@ test('helpModel finds the owner of a nested row and groups one owner once', () =
     PATH,
     [],
   )
-  expect(m.groups.map(g => g.title)).toEqual(['Pane keys', 'Row keys (act on the selected row)', 'Jira work items'])
+  expect(m.groups.map(g => g.title)).toEqual([PANE_KEYS, 'Row keys (act on the selected row)', 'Jira work items'])
   expect(m.groups[2]?.keys.map(k => k.id)).toEqual(['open', 'copy'])
 })
 
@@ -69,14 +67,24 @@ test('helpModel leaves out a group with no keys', () => {
     PATH,
     [],
   )
-  expect(m.groups.map(g => g.title)).toEqual(['Pane keys'])
+  expect(m.groups.map(g => g.title)).toEqual([PANE_KEYS])
 })
 
 test('helpText prints the groups, the config path and the problems', () => {
   const m = helpModel(CORE_KEYS, [], PATH, ['A.'])
   expect(helpText(m)).toBe(
-    'Pane keys\n  r  refresh\n  h  help\nRow keys (act on the selected row)\n  x  dismiss\n  1  high\n  2  normal\n  3  low\n  0  auto\nConfig file: /h/.config/claude-code/mods/tracker/config.json\nProblems\n  A.',
+    `${PANE_KEYS}\n  r  refresh\n  h  help\nRow keys (act on the selected row)\n  x  dismiss\n  1  high\n  2  normal\n  3  low\n  0  auto\nConfig file: /h/.config/claude-code/mods/tracker/config.json\nProblems\n  A.`,
   )
+})
+
+// Issue #108, option 1: Tab, Shift+Tab and the arrows are no footer keys, so the title of the pane keys names them. The
+// title is a line the help view had already, and it must not wrap in the 96-cell body of an inline pane.
+test('the first title names Tab, Shift+Tab and the arrows, on one row of an inline body', () => {
+  const m = helpModel(CORE_KEYS, [], PATH, [])
+  expect(m.groups[0]?.title).toBe(PANE_KEYS)
+  for (const key of ['Tab', 'Shift+Tab', 'Up', 'Down']) expect(PANE_KEYS).toContain(key)
+  expect(helpText(m).split('\n')[0]).toBe(PANE_KEYS)
+  expect(helpRows(m, 96)).toBe(helpText(m).split('\n').length) // nothing wraps at 96 cells
 })
 
 test('helpText with no path and no problem', () => {
@@ -87,7 +95,7 @@ test('helpText with no path and no problem', () => {
 
 test('renderHelp draws bold group titles and one row per key', () => {
   const drawn = nodes(renderHelp(EL, helpModel(CORE_KEYS, [], PATH, [])))
-  expect(drawn[0]).toEqual({ type: 'Text', props: { weight: 'bold' }, children: ['Pane keys'] })
+  expect(drawn[0]).toEqual({ type: 'Text', props: { weight: 'bold' }, children: [PANE_KEYS] })
   const keyRows = drawn.filter(n => n.type === 'Box')
   expect(keyRows).toHaveLength(7)
   expect(keyRows[0]?.props).toEqual({ paddingLeft: 2, columnGap: 2 })
@@ -142,7 +150,7 @@ test('renderHelp draws the full form unless the caller asks for the compact one'
 test('renderHelp compact puts three keys on a line and keeps every title and the config line', () => {
   const lines = linesOf(renderHelp(EL, helpModel(CORE_KEYS, [], PATH, []), true))
   expect(lines).toEqual([
-    'Pane keys',
+    PANE_KEYS,
     'r  refresh  h  help',
     'Row keys (act on the selected row)',
     'x  dismiss  1  high  2  normal',
@@ -213,8 +221,9 @@ test('helpRows equals the drawn full form when nothing wraps, so a new help line
 test('helpRows counts a config line or a problem that wraps at the body width', () => {
   const m = helpModel(CORE_KEYS, [], PATH, ['x'.repeat(70)])
   // `Config file: <PATH>` is 61 cells: the path moves to its own row, then breaks. The problem breaks at 30 cells.
-  // The group title `Row keys (act on the selected row)` is 34 cells, so at 30 columns it takes two rows.
-  expect(helpRows(m, 30)).toBe(10 + 3 + 1 + 3)
+  // The group titles are 54 cells (`Pane keys (Tab, ...)`) and 34 cells (`Row keys (act ...)`), so at 30 columns each takes
+  // two rows.
+  expect(helpRows(m, 30)).toBe(10 + 3 + 1 + 3 + 1)
   expect(helpRows(m, 96)).toBe(9 + 1 + 1 + 1)
 })
 
@@ -223,7 +232,8 @@ test('helpRows wraps at spaces: a path that fills a row takes its own row, and a
   expect(helpRows(helpModel(CORE_KEYS, [], live, []), 96)).toBe(9 + 2) // the live 100x40 screen: 13 rows with the gap and the footer
   expect(helpRows(helpModel(CORE_KEYS, [], 'p'.repeat(100), []), 96)).toBe(9 + 3) // `Config file:`, 96 cells, 4 cells
   // `Config file: c` is 14 cells. At 14 columns the 34-cell group title takes three rows: `Row keys (act`, `on the`, `selected row)`.
-  expect(helpRows(helpModel(CORE_KEYS, [], 'c', ['aaa bbb ccc ddd']), 14)).toBe(11 + 1 + 1 + 2)
+  // The 54-cell title of the pane keys takes five: `Pane keys`, `(Tab,`, `Shift+Tab, Up,`, `Down move`, `between rows)`.
+  expect(helpRows(helpModel(CORE_KEYS, [], 'c', ['aaa bbb ccc ddd']), 14)).toBe(11 + 1 + 1 + 2 + 4)
 })
 
 test('compactHelp: the full form needs its lines, the gap and the footer; a body that gives no height keeps it', () => {
@@ -297,7 +307,7 @@ test('with the github keys, the version and the live config path the compact for
   expect(compactHelp(m, 1, 96, 11)).toBe(true)
   const lines = linesOf(renderHelp(EL, m, true))
   expect(lines).toEqual([
-    'Pane keys',
+    PANE_KEYS,
     'r  refresh  h  help',
     'Row keys (act on the selected row)',
     'x  dismiss  1  high  2  normal',
