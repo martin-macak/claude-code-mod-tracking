@@ -412,6 +412,7 @@ test('config: normalise keeps the defaults for a missing or bad value and warns 
   expect(processesConfig.normalise({}, d, warn)).toEqual(d)
   expect(warns).toEqual([])
   expect(processesConfig.normalise({ enabled: false, probeTimeoutMs: 2500, extra: 1 }, d, warn)).toEqual({
+    ...d,
     enabled: false,
     probeTimeoutMs: 2500,
     extra: 1,
@@ -421,8 +422,9 @@ test('config: normalise keeps the defaults for a missing or bad value and warns 
   expect(processesConfig.normalise({ probeTimeoutMs: 2500.4 }, d, warn)).toEqual(d)
   expect(processesConfig.normalise({ probeTimeoutMs: 'slow' }, d, warn)).toEqual(d)
   const bad = processesConfig.normalise({ enabled: 'yes', probeTimeoutMs: 5 }, d, warn)
-  expect(bad).toEqual({ enabled: true, probeTimeoutMs: 1000 })
+  expect(bad).toEqual({ ...d, enabled: true, probeTimeoutMs: 1000 })
   expect(processesConfig.normalise({ probeTimeoutMs: 999999 }, d, warn)).toEqual({
+    ...d,
     enabled: true,
     probeTimeoutMs: 120000,
   })
@@ -658,4 +660,153 @@ test('a detached process with echo $! and a variable it does not know is not mar
   await t.bash('nohup node $APP > /dev/null 2>&1 & echo $!', '4500\n')
   await t.probe()
   expect(t.rows().map(r => [r.id, r.state])).toEqual([['pid:4500', 'running']])
+})
+
+// ---------------------------------------------------------------- endedAt (issue #49)
+
+test('a row gets endedAt when its notice ends it, and not before', async () => {
+  const t = setup()
+  await t.bash(
+    'sleep 90',
+    '',
+    { toolUseId: 'toolu_e' },
+    { result: { stdout: '', stderr: '', backgroundTaskId: 'b-e' } },
+  )
+  expect('endedAt' in (t.rows()[0] as ProcessRecord)).toBe(false)
+  t.w.clock.now += 5000
+  const at = t.w.clock.now
+  await t.notice('x', { task: { id: 'b-e', status: 'completed', toolUseId: 'toolu_e' } })
+  expect(t.rows()[0]).toMatchObject({ state: 'completed', endedAt: at, lastSeen: at })
+})
+
+test('a TaskStop sets endedAt, and a later notice keeps the first one', async () => {
+  const t = setup()
+  await t.bash('make', '', { toolUseId: 'toolu_s', agentId: 'a1' }, BG_START_SYNC_AGENT)
+  t.w.clock.now += 1000
+  const first = t.w.clock.now
+  await t.m.toolCall(t.w.ports, { tool: 'TaskStop', input: {}, result: { result: { task_id: 'be2c4m7c3' } } })
+  expect(t.rows()[0]).toMatchObject({ state: 'killed', endedAt: first })
+  t.w.clock.now += 9000
+  await t.m.row(t.w.ports, { ...asRow(MID_TURN_NOTICE), text: noticeBlock('be2c4m7c3', 'toolu_s', 'completed') })
+  expect(t.rows()[0]).toMatchObject({ state: 'completed', endedAt: first })
+})
+
+test('the end of an agent sets endedAt on the tasks it kills', async () => {
+  const t = setup()
+  await t.bash('make', '', { toolUseId: 'toolu_s', agentId: 'a1' }, BG_START_SYNC_AGENT)
+  t.w.clock.now += 2000
+  const at = t.w.clock.now
+  await turnEnd(t, 'a1')
+  expect(t.rows()[0]).toMatchObject({ state: 'killed', endedAt: at })
+})
+
+test('the probe sets endedAt when it finds a process gone, and drops it when the process is found again', async () => {
+  const t = setup()
+  let alive = true
+  t.w.run = argv => {
+    if (argvIs(argv, 'ps', '-A')) return res(`  4321 ${lstart(Date.now() - 1000)} sleep 100\n`)
+    if (argvIs(argv, 'ps', '-p', '4321')) return alive ? res(`${lstart(Date.now() - 1000)} sleep 100\n`) : res('', 1)
+    return undefined
+  }
+  await t.bash('nohup sleep 100 > /dev/null 2>&1 &', '', { toolUseId: 'toolu_d' })
+  await t.probe()
+  expect('endedAt' in (t.rows()[0] as ProcessRecord)).toBe(false)
+  alive = false
+  t.w.clock.now += 7000
+  const gone = t.w.clock.now
+  await t.probe()
+  expect(t.rows()[0]).toMatchObject({ state: 'exited', endedAt: gone })
+  t.w.clock.now += 7000
+  await t.probe() // still gone: the first time stays
+  expect(t.rows()[0]?.endedAt).toBe(gone)
+  alive = true
+  await t.probe()
+  expect(t.rows()[0]?.state).toBe('running')
+  expect('endedAt' in (t.rows()[0] as ProcessRecord)).toBe(false)
+})
+
+test('a probe that changes nothing writes nothing, ended rows included', async () => {
+  const t = setup()
+  t.w.state.set('processes', [
+    { id: 'gone', kind: 'tmux', name: 'gone', state: 'exited', firstSeen: 1, lastSeen: 1, endedAt: 1 },
+  ] as unknown as Json)
+  t.w.run = argv => (argvIs(argv, 'tmux', 'ls') ? res('', 1) : undefined)
+  await t.probe()
+  t.w.stateSets = {}
+  await t.probe()
+  expect(t.w.stateSets.processes).toBeUndefined()
+})
+
+// ---------------------------------------------------------------- endedAt through settle and restore (issue #49)
+// Which copy wins decides the time: `settle` and `restore('carry')` put the live copy on the added side, so a live row
+// clears the stored time. `restore('load')` puts the stored copy there, so the stored state and its time stay together.
+
+const ended = (id: string, state: string, endedAt?: number) =>
+  ({
+    id,
+    kind: 'tmux',
+    name: id,
+    state,
+    firstSeen: 1,
+    lastSeen: 1,
+    ...(endedAt !== undefined ? { endedAt } : {}),
+  }) as unknown as Json
+const storedRows = (t: ReturnType<typeof setup>, session = 'sess-1') =>
+  (t.w.store.get(`v2:s:${session}`) as { processes: ProcessRecord[] }).processes
+
+test('settle: a live copy over a stored ended copy gives a row with no endedAt', async () => {
+  const t = setup()
+  t.w.store.set('v2:s:sess-1', { processes: [ended('a', 'completed', 100)] })
+  t.w.state.set('processes', [ended('a', 'running')] as unknown as Json)
+  await t.m.entry(t.w.ports)
+  await t.m.end(t.w.ports, 'clear', 1500)
+  expect(storedRows(t)[0]).toMatchObject({ id: 'a', state: 'running' })
+  expect('endedAt' in (storedRows(t)[0] as ProcessRecord)).toBe(false)
+})
+
+test("restore('carry'): a live copy over a leaving ended copy gives a row with no endedAt", async () => {
+  const t = setup()
+  t.w.state.set('processes', [ended('a', 'completed', 100)] as unknown as Json)
+  await t.m.entry(t.w.ports)
+  await t.m.end(t.w.ports, 'clear', 1500)
+  t.w.session.id = 'sess-2'
+  t.w.state.set('processes', [ended('a', 'running')] as unknown as Json)
+  await t.m.entry(t.w.ports)
+  expect(t.rows()[0]).toMatchObject({ id: 'a', state: 'running' })
+  expect('endedAt' in (t.rows()[0] as ProcessRecord)).toBe(false)
+})
+
+test("restore('load'): the stored ended copy wins over a live one, and its endedAt stays with its state", async () => {
+  const t = setup()
+  t.w.store.set('v2:s:sess-2', { processes: [ended('a', 'completed', 100)] })
+  await t.m.entry(t.w.ports)
+  await t.m.end(t.w.ports, 'resume', 1500)
+  t.w.session.id = 'sess-2'
+  t.w.state.set('processes', [ended('a', 'running')] as unknown as Json)
+  await t.m.entry(t.w.ports)
+  expect(t.rows()[0]).toMatchObject({ id: 'a', state: 'completed', endedAt: 100 })
+})
+
+test("restore('load') over an empty slot keeps the stored endedAt", async () => {
+  const t = setup()
+  t.w.store.set('v2:s:sess-2', { processes: [ended('a', 'exited', 100)] })
+  await t.m.entry(t.w.ports)
+  await t.m.end(t.w.ports, 'resume', 1500)
+  t.w.session.id = 'sess-2'
+  await t.m.entry(t.w.ports)
+  expect(t.rows()[0]).toMatchObject({ id: 'a', state: 'exited', endedAt: 100 })
+})
+
+test('settle and restore stamp an ended row that has no endedAt with the engine clock, not with Date.now()', async () => {
+  const t = setup()
+  t.w.clock.now = 5_000_000
+  t.w.state.set('processes', [ended('old', 'completed')] as unknown as Json)
+  await t.m.entry(t.w.ports)
+  await t.m.end(t.w.ports, 'clear', 1500)
+  expect(storedRows(t)[0]).toMatchObject({ id: 'old', endedAt: 5_000_000 })
+  t.w.clock.now = 6_000_000
+  t.w.session.id = 'sess-2'
+  t.w.state.set('processes', [ended('new', 'unknown')] as unknown as Json)
+  await t.m.entry(t.w.ports) // restore('carry'): the leaving row 'old' joins the live one
+  expect(Object.fromEntries(t.rows().map(r => [r.id, r.endedAt]))).toMatchObject({ old: 5_000_000, new: 6_000_000 })
 })

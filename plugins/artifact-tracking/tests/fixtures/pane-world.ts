@@ -247,6 +247,8 @@ const tool = (name: string, f: Partial<ToolStatus> = {}): ToolStatus => ({
 export type PaneWorldOpts = {
   /** Tracker ids the config turns off. */
   off?: readonly string[]
+  /** Keys of the tracker slices in config.json, by tracker id: `{ auto: { endedTtlMs: 1000 } }`. */
+  config?: Readonly<Record<string, JsonObject>>
 }
 
 /**
@@ -255,7 +257,9 @@ export type PaneWorldOpts = {
  * can count the state writes from here (`stateSets`).
  */
 export async function paneWorld(o: PaneWorldOpts = {}) {
-  const file: JsonObject = { trackers: Object.fromEntries((o.off ?? []).map(id => [id, { enabled: false }])) }
+  const trackers: Record<string, JsonObject> = Object.fromEntries((o.off ?? []).map(id => [id, { enabled: false }]))
+  for (const [id, slice] of Object.entries(o.config ?? {})) trackers[id] = { ...trackers[id], ...slice }
+  const file: JsonObject = { trackers }
   const t = managerWorld({ fake: { now: NOW }, config: specs => fakeConfig({ specs, file }) })
   await t.m.ensureStarted(t.w.ports)
   seedPaneWorld(t.w.state, t.m)

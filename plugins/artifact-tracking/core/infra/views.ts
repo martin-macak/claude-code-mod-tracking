@@ -7,7 +7,7 @@ import type { ConfigSource } from '../interfaces/config'
 import type { Effective, Json, StoredItem } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { DismissPort, FactsPort, ToolStatus, Tracker } from '../interfaces/tracker'
-import type { PaneView, SectionSpec, ViewContext } from '../interfaces/view'
+import type { HiddenState, PaneView, SectionSpec, ViewContext } from '../interfaces/view'
 import { isRecord } from '../lib/json'
 import { reason } from './steps'
 
@@ -34,6 +34,8 @@ export interface ViewRead {
   tools: Readonly<Record<string, ToolStatus>>
   dismissed: ReadonlySet<string>
   levels: ReadonlyMap<string, Effective>
+  /** `/track show-all`: read once, so every tracker of the call hides, or shows, alike. */
+  hidden: HiddenState
 }
 
 export interface ViewsDeps {
@@ -56,16 +58,17 @@ export interface ViewsDeps {
 export async function readView(ports: Ports, d: ViewsDeps): Promise<ViewRead> {
   const owners = new Map<string, string>()
   for (const t of d.trackers) for (const k of t.kinds ?? []) if (!owners.has(k.category)) owners.set(k.category, t.id)
-  const [all, tools, dismissed] = await Promise.all([
+  const [all, tools, dismissed, hidden] = await Promise.all([
     ports.state.items.get(),
     ports.state.tools.get(),
     d.dismiss(ports).list(),
+    ports.state.hidden.get(),
   ])
   const items = all.filter(i => {
     const owner = owners.get(i.category)
     return owner === undefined || d.live(owner)
   })
-  return { now: ports.clock.wall(), items, tools, dismissed, levels: await d.levels(items) }
+  return { now: ports.clock.wall(), items, tools, dismissed, hidden, levels: await d.levels(items) }
 }
 
 /** The root the session is pinned to: the `cwd` of the fact `auto.root`. */
@@ -103,6 +106,7 @@ export class Views {
       selected: view.selected,
       expanded: view.expanded,
       root: rootOf(facts),
+      hidden: read.hidden,
       isDismissed: id => read.dismissed.has(id),
       levelOf: key => read.levels.get(key) ?? {},
     }

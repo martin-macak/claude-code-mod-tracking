@@ -563,6 +563,36 @@ test('a beat whose session check fails still gives the item host its share', asy
   expect(t.ticks.n).toBe(1)
 })
 
+test('each beat ends with one redraw of the pane, after the trackers ticked: the clock alone moves a TTL (issue #49)', async () => {
+  const trace: string[] = []
+  const t = setup({ trackers: [rec('a', 10, trace)] })
+  t.w.ports.ui.invalidate = () => void trace.push('invalidate')
+  await t.m.entry(t.w.ports)
+  trace.length = 0
+  const { tickMs } = GLOBAL_DEFAULTS.refresh
+  await t.w.clock.advance(tickMs * 2)
+  expect(trace).toEqual([`tick:a:${tickMs}`, 'invalidate', `tick:a:${tickMs * 2}`, 'invalidate'])
+})
+
+test('a beat still redraws the pane when a tracker tick fails', async () => {
+  const trace: string[] = []
+  const broken = rec('a', 10, trace, {
+    events: {
+      tick: {
+        run: async () => {
+          throw new Error('tick failed')
+        },
+      },
+    },
+  })
+  const t = setup({ trackers: [broken] })
+  t.w.ports.ui.invalidate = () => void trace.push('invalidate')
+  await t.m.entry(t.w.ports)
+  trace.length = 0
+  await t.w.clock.advance(GLOBAL_DEFAULTS.refresh.tickMs)
+  expect(trace).toEqual(['invalidate'])
+})
+
 // ---------------------------------------------------------------- the start sequence, the events, dispose (Task 8)
 
 /** A tracker that records every event it hears into `log`. It keeps its rows in a data slot of its own. */

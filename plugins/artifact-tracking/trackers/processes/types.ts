@@ -24,6 +24,11 @@ export type ProcessRecord = {
   state: ProcessState
   firstSeen: number
   lastSeen: number
+  /**
+   * When the row entered an end state (`ENDED_STATES`, trackers/processes/states.ts). Absent while it is live. The first time stays while it remains ended.
+   * `lastSeen` cannot serve: every merge moves it.
+   */
+  endedAt?: number
   /** For task-backed rows. */
   taskId?: string
   toolUseId?: string

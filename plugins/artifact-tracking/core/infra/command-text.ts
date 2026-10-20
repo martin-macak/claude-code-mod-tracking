@@ -5,13 +5,13 @@
 
 import { UNKNOWN } from './manifest'
 
-export const USAGE = 'Usage: /track [refresh|clear|help|version|prio <ref> <high|normal|low|auto>]'
+export const USAGE = 'Usage: /track [refresh|clear|help|version|show-all|prio <ref> <high|normal|low|auto>]'
 /** The argument hint while no tracker declares a sub-command. */
-export const CORE_HINT = '[refresh|clear|help|version|prio <ref> <level>]'
+export const CORE_HINT = '[refresh|clear|help|version|show-all|prio <ref> <level>]'
 /** `/track prio` levels: `auto` removes the person's mark. */
 export const PRIO_WORDS: ReadonlySet<string> = new Set(['high', 'normal', 'low', 'auto'])
 /** The subs core answers. A tracker cannot take one of them. */
-export const CORE_SUBS: ReadonlySet<string> = new Set(['refresh', 'clear', 'help', 'version', 'prio'])
+export const CORE_SUBS: ReadonlySet<string> = new Set(['refresh', 'clear', 'help', 'version', 'show-all', 'prio'])
 
 /** The reply of `/track version`: the name and the version of the mod, so a bug report can quote one line. */
 export const versionText = (version: string | undefined): string => `artifact-tracking ${version ?? UNKNOWN}`

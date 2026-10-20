@@ -8,6 +8,7 @@ import { content, flex, textCells } from '../../core/lib/rows'
 import { ago, compactIds } from '../../core/lib/text'
 import type { AutoConfig } from './config'
 import { FACT_CHECKED_AT } from './facts'
+import { agentRowId } from './ids'
 import { autoReasonsOf } from './reasons'
 import type { AgentRow, AutoState, WorktreeRow } from './types'
 
@@ -134,7 +135,37 @@ function agentRow(auto: AutoState, { row: r, kids }: AgentNode): TreeRow {
   }
 }
 
-function agentsSection(auto: AutoState): SectionSpec | null {
+/**
+ * True for an agent row that is over and ended longer ago than its TTL: `failedTtlMs` for a failure, else `endedTtlMs`.
+ * The time is the `endedAt` of the agent's proof, by row id. A row with no proof or no `endedAt` is never expired, and
+ * the master never is. Rule: issue #49.
+ */
+function expiredAgent(
+  r: AgentRow,
+  endedAt: ReadonlyMap<string, number | undefined>,
+  cfg: AutoConfig,
+  now: number,
+): boolean {
+  if (r.kind === 'master' || (r.state !== 'ended' && r.state !== 'failed')) return false
+  const at = endedAt.get(r.id)
+  return at !== undefined && now - at >= (r.state === 'failed' ? cfg.failedTtlMs : cfg.endedTtlMs)
+}
+
+/**
+ * The nodes that stay. An expired row goes only when every row below it goes too, so a live child keeps its ended
+ * parent in the tree. `hidden.n` counts the rows that went.
+ */
+function prune(nodes: readonly AgentNode[], gone: (r: AgentRow) => boolean, hidden: { n: number }): AgentNode[] {
+  const kept: AgentNode[] = []
+  for (const { row, kids } of nodes) {
+    const rest = prune(kids, gone, hidden)
+    if (rest.length === 0 && gone(row)) hidden.n++
+    else kept.push({ row, kids: rest })
+  }
+  return kept
+}
+
+function agentsSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
   const snap = auto.snapshot
   if (!snap || snap.agents.length <= 1) return null
   let running = 0
@@ -144,16 +175,23 @@ function agentsSection(auto: AutoState): SectionSpec | null {
     if (r.state === 'running' || r.state === 'waiting') running++
     else ended++
   }
+  // The note counts every ended agent, hidden or not. The hidden count, last, says how many of them the view leaves out.
+  const cfg = ctx.config.slice()
+  const endedAt = new Map(auto.agents.map(p => [agentRowId(p.id), p.endedAt]))
+  const hiding = cfg.hideEnded && !ctx.hidden.showAll
+  const hidden = { n: 0 }
+  const nodes = prune(nest(snap.agents), r => hiding && expiredAgent(r, endedAt, cfg, ctx.now), hidden)
   const parts = [...(running > 0 ? [`${running} running`] : []), ...(ended > 0 ? [`${ended} ended`] : [])]
   if (!snap.agentList.ok) parts.push('agent list failed')
+  const note = parts.join(' · ')
   return {
     id: 'agents',
     title: 'Agents',
-    note: { text: parts.join(' · ') },
+    note: { text: hidden.n > 0 ? `${note} (${hidden.n} hidden)` : note },
     rank: 11,
     band: { label: 'Agents', count: running, failing: 0, rank: 8 },
     columns: AGENT_COLUMNS,
-    rows: nest(snap.agents).map(node => agentRow(auto, node)),
+    rows: nodes.map(node => agentRow(auto, node)),
   }
 }
 
@@ -161,5 +199,5 @@ function agentsSection(auto: AutoState): SectionSpec | null {
 export function sections(ctx: Ctx): readonly SectionSpec[] {
   const auto = ctx.data
   if (!auto) return []
-  return [worktreesSection(ctx, auto), agentsSection(auto)].filter((s): s is SectionSpec => s !== null)
+  return [worktreesSection(ctx, auto), agentsSection(ctx, auto)].filter((s): s is SectionSpec => s !== null)
 }

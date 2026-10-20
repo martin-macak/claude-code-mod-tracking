@@ -54,6 +54,7 @@ function view(items: GitHubRecord[], lane: Partial<LaneState> = {}, gh: ToolStat
     selected: null,
     expanded: new Set(),
     root: undefined,
+    hidden: { showAll: false },
     isDismissed: () => false,
     levelOf: () => ({}),
   }

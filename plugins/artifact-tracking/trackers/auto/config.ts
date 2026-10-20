@@ -12,6 +12,10 @@ export const AUTO_SCHEMA = {
   maxBranches: int(12, 1, 50),
   maxProofs: int(100, 10, 1000),
   maxAgents: int(200, 10, 2000),
+  // Issue #49: an ended agent row leaves the view after the TTL, counted from its `endedAt`. A failed one stays longer.
+  hideEnded: bool(true),
+  endedTtlMs: int(600000, 0, 86400000),
+  failedTtlMs: int(3600000, 0, 86400000),
 } as const satisfies Schema
 
 export type AutoConfig = ConfigOf<typeof AUTO_SCHEMA>

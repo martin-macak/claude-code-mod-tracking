@@ -1,8 +1,8 @@
-// Commands: the router of `/track <args>`. Core answers the empty command, `refresh`, `clear`, `help`, `version` and
-// `prio`; then the first sub-command a live tracker declared runs; any other word prints the usage line. The host does
-// the work and this holds only the order of the calls and the text of the answer. The list text and the help text come
-// in as functions (the draw path is not core). A reply that prints the list ends with the problems of the config file,
-// when there are any. The help text lists them itself. The fixed words sit in command-text.ts.
+// Commands: the router of `/track <args>`. Core answers the empty command, `refresh`, `clear`, `help`, `version`,
+// `show-all` and `prio`; then the first sub-command a live tracker declared runs; any other word prints the usage
+// line. The host does the work and this holds only the order of the calls and the text of the answer. The list text and
+// the help text come in as functions (the draw path is not core). A reply that prints the list ends with the problems
+// of the config file, when there are any. The help text lists them itself. The fixed words sit in command-text.ts.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.3, 5.7 and 5.12.
 // Plan: L3 Task 12, D12. L4 Task 6, C6. L5 Task 9, K15, K19. L6 Task 12, G14. Issue #65: `version`.
 
@@ -67,6 +67,7 @@ export class Commands {
     if (arg === '') return this.open(p)
     if (arg === 'refresh') return this.refresh(p)
     if (arg === 'help') return this.help(p)
+    if (arg === 'show-all') return this.showAll(p)
     if (arg === 'clear') return this.clear(p)
     // R11: the pane's keys for `claude -p`. The ref keeps its case: item keys and repo names need it.
     const prio = /^prio\s+(\S+)\s+(\S+)$/i.exec(args.trim())
@@ -100,6 +101,19 @@ export class Commands {
   private async help(p: Ports): Promise<Reply> {
     await this.host.refreshConfig(p)
     return { text: await this.helpText(p) }
+  }
+
+  /**
+   * Shows the rows the TTL hides, or hides them again: a toggle for the session (issue #49). It sets the session atom
+   * `hidden`, so `/clear` resets it, and it writes no file. The reply is the list, as the trackers now draw it. It checks
+   * the config file first, like `/track` and `/track refresh`: an edit of `hideEnded` or a TTL shows at once.
+   */
+  private async showAll(p: Ports): Promise<Reply> {
+    await this.host.refreshConfig(p)
+    const { showAll } = await p.state.hidden.update(cur => ({ ...cur, showAll: !cur.showAll }))
+    p.ui.invalidate()
+    const { text } = await this.list(p)
+    return { text: `${showAll ? 'Showing all rows.' : 'Hiding ended rows again.'}\n\n${text}` }
   }
 
   private async clear(p: Ports): Promise<Reply> {

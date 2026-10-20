@@ -7,7 +7,7 @@ import { promptRow } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
 
 const PATH = '/p/config.json'
-const USAGE = 'Usage: /track [refresh|clear|help|version|prio <ref> <high|normal|low|auto>]'
+const USAGE = 'Usage: /track [refresh|clear|help|version|show-all|prio <ref> <high|normal|low|auto>]'
 
 test('problemsText is empty with no problem', () => {
   expect(problemsText(PATH, [])).toBe('')

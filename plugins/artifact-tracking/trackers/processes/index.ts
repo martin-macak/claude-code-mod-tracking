@@ -106,11 +106,15 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> & Traceable<J
     store: ctx => ctx.config.slice(),
     data: {
       empty: v => !Array.isArray(v) || v.length === 0,
-      settle: async (_ctx, liveRows, stored) => mergeProcessRows(asRows(stored), asRows(liveRows)) as unknown as Json,
+      settle: async (ctx, liveRows, stored) =>
+        mergeProcessRows(asRows(stored), asRows(liveRows), ctx.clock.wall()) as unknown as Json,
       restore: async (ctx, value, how) => {
         const rows = asRows(value)
+        const now = ctx.clock.wall()
         if (rows.length > 0)
-          await setProcesses(ctx, cur => (how === 'carry' ? mergeProcessRows(rows, cur) : mergeProcessRows(cur, rows)))
+          await setProcesses(ctx, cur =>
+            how === 'carry' ? mergeProcessRows(rows, cur, now) : mergeProcessRows(cur, rows, now),
+          )
       },
       clear: ctx => setProcesses(ctx, () => []),
     },

@@ -17,6 +17,7 @@ import type {
   SessionRow,
   Timer,
 } from '../../core/interfaces/ports'
+import type { HiddenState } from '../../core/interfaces/view'
 import type { ToolStatus } from '../../types'
 
 /**
@@ -205,6 +206,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       expanded: atom<string[]>('expanded', () => []),
       selected: atom<string | null>('selected', () => null),
       help: atom<boolean>('help', () => false),
+      hidden: atom<HiddenState>('hidden', () => ({ showAll: false })),
       // A family member sits under `shown:<id>`: a bare section id would collide with a tracker slot of the same id.
       shown: {
         get: async id => (world.state.get(`shown:${id}`) as number | undefined) ?? 0,
