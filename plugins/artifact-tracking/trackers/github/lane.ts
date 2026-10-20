@@ -6,13 +6,15 @@
 // No `$`: it gets plain closures (`LaneDeps`).
 
 import type { Claim, Json, StoredItem } from '../../core/interfaces/items'
-import type { Now, RepoRef } from '../../core/interfaces/ports'
+import type { Now, RepoRef, Timer } from '../../core/interfaces/ports'
 import { isRecord } from '../../core/lib/json'
+import { type GitWorktree, worktreeOfBranch } from '../../core/lib/porcelain'
 import type { PrLane as LaneCaps } from './config'
 import { applyDiscovery } from './discovered'
+import { mergeNotes, retryDelay, type Seen } from './merge'
 import { type BodyScan, prBodyRefs } from './pr-body'
 import { discoverPrs } from './pr-discovery'
-import type { BranchesFact, DiscoveryApplied, DiscoveryTool, LaneState } from './types'
+import type { BranchesFact, DiscoveredPr, DiscoveryApplied, DiscoveryTool, LaneState, MergeNote } from './types'
 import { prKey } from './urls'
 
 /** The state of a lane that has not run: a good outcome, which draws nothing. */
@@ -76,6 +78,13 @@ export interface LaneDeps {
   lane(): LaneCaps
   /** `global.refresh.staleMs` (a discovered record stays current for half of it) and `global.store.maxItems`. */
   caps(): { staleMs: number; maxItems: number }
+  /**
+   * The worktrees of the session repo (`git worktree list --porcelain`). null: git could not say. Called at most once a
+   * step, and only when an open PR is CONFLICTING. Absent: no worktree is found, so no PR can be resolved.
+   */
+  worktrees?(): Promise<readonly GitWorktree[] | null>
+  /** An engine timer that the host cancels at dispose. Absent: a PR that GitHub calls UNKNOWN waits for the next tick. */
+  after?(ms: number, fn: () => void): Timer
 }
 
 type Prs = LaneState['prs']
@@ -85,16 +94,24 @@ const message = (err: unknown): string => (err instanceof Error ? err.message : 
 /** A note without its time, so a quiet step compares equal (A22). */
 const prsSig = (p: Prs): string => JSON.stringify([p.ok, p.skipped ?? null, p.error ?? null, p.untracked ?? 0])
 
-function withPrs(cur: LaneState, prs: Prs, defaultBranch?: string): LaneState {
+/**
+ * The lane state after a step: the note, the default branch the reply named, and the merge notes. `notes` holds the new
+ * merge notes, `merge: undefined` meaning none are left. A step with no `notes` (a failed one) keeps what the last good
+ * step found.
+ */
+function withPrs(cur: LaneState, prs: Prs, defaultBranch?: string, notes?: { merge: LaneState['merge'] }): LaneState {
   const db = defaultBranch ?? cur.defaultBranch
-  if (prsSig(cur.prs) === prsSig(prs) && db === cur.defaultBranch) return cur
-  return { prs, ...(db !== undefined ? { defaultBranch: db } : {}) }
+  const merge = notes === undefined ? cur.merge : notes.merge
+  if (prsSig(cur.prs) === prsSig(prs) && db === cur.defaultBranch && merge === cur.merge) return cur
+  return { prs, ...(db !== undefined ? { defaultBranch: db } : {}), ...(merge !== undefined ? { merge } : {}) }
 }
 
 export class PrLane {
   private running = false
   private queued = false
   private waiters: Array<() => void> = []
+  /** The extra step that waits for a PR GitHub still calls UNKNOWN. One at a time. */
+  private retry: Timer | undefined
 
   constructor(private readonly d: LaneDeps) {}
 
@@ -169,8 +186,10 @@ export class PrLane {
     const refsByPr = new Map<string, readonly Claim[]>()
     for (const pr of out.prs) refsByPr.set(prKey(pr), prBodyRefs(pr, d.scanBody, lane.maxBodyRefs))
     const { staleMs, maxItems } = d.caps()
-    const r = await d.applyItems((list, dismissed) =>
-      applyDiscovery(list, {
+    let hidden: ReadonlySet<string> = new Set()
+    const r = await d.applyItems((list, dismissed) => {
+      hidden = dismissed
+      return applyDiscovery(list, {
         prs: out.prs,
         refsByPr,
         complete: out.complete,
@@ -178,11 +197,53 @@ export class PrLane {
         at,
         build: claim => d.build(claim),
         caps: { staleMs, maxAutoItems: lane.maxAutoItems, maxItems },
+      })
+    })
+    d.onAdded(r.added)
+    const seen = await this.seen(out.prs, hidden)
+    const saved = await d.save(cur =>
+      withPrs(cur, { at, ok: true, ...(r.untracked > 0 ? { untracked: r.untracked } : {}) }, out.defaultBranch, {
+        merge: mergeNotes(cur.merge, seen, { keepMissing: !out.complete }),
       }),
     )
-    d.onAdded(r.added)
-    await d.save(cur =>
-      withPrs(cur, { at, ok: true, ...(r.untracked > 0 ? { untracked: r.untracked } : {}) }, out.defaultBranch),
-    )
+    this.rearm(saved.merge)
+  }
+
+  /**
+   * What this step saw of each open PR that the person did not dismiss. The worktrees are looked up once, and only when
+   * some PR of this repo is CONFLICTING: no PR to resolve, no git call. A lookup that fails leaves the PRs with no worktree.
+   */
+  private async seen(prs: readonly DiscoveredPr[], dismissed: ReadonlySet<string>): Promise<Seen[]> {
+    const open = prs.filter(p => p.state === 'open' && !dismissed.has(prKey(p)))
+    // A fork PR gets no lookup: its head name is a branch of the fork, and a local branch of that name is another one.
+    const wantsTree = (p: DiscoveredPr): boolean => p.mergeable === 'CONFLICTING' && !p.crossRepo
+    const trees = open.some(wantsTree) ? await this.worktreeList() : []
+    return open.map(p => {
+      const path = wantsTree(p) ? worktreeOfBranch(trees, p.headRefName)?.path : undefined
+      return { key: prKey(p), mergeable: p.mergeable, ...(path !== undefined ? { worktree: path } : {}) }
+    })
+  }
+
+  private async worktreeList(): Promise<readonly GitWorktree[]> {
+    try {
+      return (await this.d.worktrees?.()) ?? []
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * One extra step for the PRs that GitHub still calls UNKNOWN: after 3 s, 6 s, then 12 s, then the tick alone. It
+   * replaces a timer that still waits, so the PR that was asked least decides. No UNKNOWN PR left: no timer.
+   */
+  private rearm(merge: Record<string, MergeNote> | undefined): void {
+    this.retry?.cancel()
+    this.retry = undefined
+    const wait = retryDelay(merge)
+    if (wait === undefined || this.d.after === undefined) return
+    this.retry = this.d.after(wait, () => {
+      this.retry = undefined
+      this.request()
+    })
   }
 }

@@ -73,6 +73,7 @@ test('the defaults equal the LIMITS of d391552', () => {
 
 test("the values outside LIMITS equal today's constants", () => {
   expect(GITHUB_DEFAULTS.chunkSize).toBe(50)
+  expect(GITHUB_DEFAULTS.gitTimeoutMs).toBe(AUTO_DEFAULTS.gitTimeoutMs) // issue #50: the git calls of the PR lane
   expect(GITHUB_DEFAULTS.shortRefKeywords).toEqual(['github', 'bug', 'issue', 'issues', 'enhancement', 'chore'])
   expect(GLOBAL_DEFAULTS.tools.probeTimeoutMs).toBe(10000)
   expect(PROCESSES_DEFAULTS.probeTimeoutMs).toBe(10000)
@@ -119,6 +120,7 @@ test('the slices hold exactly the keys of the Defaults table', () => {
     'chunkSize',
     'pendingStaleMs',
     'discoveryTimeoutMs',
+    'gitTimeoutMs',
     'closingRefsPerPr',
     'headPrsPerBranch',
     'basePrsPerBranch',
@@ -183,6 +185,7 @@ const TABLE: readonly (readonly [string, number, number])[] = [
   ['trackers.github.chunkSize', 1, 100],
   ['trackers.github.pendingStaleMs', 10000, 3600000],
   ['trackers.github.discoveryTimeoutMs', 1000, 120000],
+  ['trackers.github.gitTimeoutMs', 500, 60000],
   ['trackers.github.closingRefsPerPr', 1, 50],
   ['trackers.github.headPrsPerBranch', 1, 50],
   ['trackers.github.basePrsPerBranch', 1, 50],

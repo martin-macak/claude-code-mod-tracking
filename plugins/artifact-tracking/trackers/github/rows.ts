@@ -6,12 +6,17 @@
 import type { Json } from '../../core/interfaces/items'
 import type { RepoRef } from '../../core/interfaces/ports'
 import type { TreeRow, ViewContext } from '../../core/interfaces/view'
-import { itemRow, type Tone, viaPrefix } from '../../core/lib/rows'
+import { itemRow, type Tone, toned, viaPrefix } from '../../core/lib/rows'
 import { compactIds } from '../../core/lib/text'
-import type { Checks, GitHubRecord } from './types'
+import { conflictNote, type MergeEnv, mergeChip } from './merge'
+import { blockedHint } from './resolve'
+import type { Checks, ConflictFiles, GitHubRecord } from './types'
 
-/** What a row reads of the view context. */
-export type GithubEnv = Pick<ViewContext, 'facts' | 'levelOf'>
+/**
+ * What a row reads of the view context. `merge` is what the lane knows of the merge state (issue #50). A caller with no
+ * lane state leaves it out, and the rows then draw no merge chip, hint or file rows.
+ */
+export type GithubEnv = Pick<ViewContext, 'facts' | 'levelOf'> & { merge?: MergeEnv }
 
 const CHECKS: Record<Checks, { extra: string; extraTone?: Tone }> = {
   failure: { extra: '✗ checks', extraTone: 'bad' },
@@ -44,7 +49,7 @@ export function githubRow(item: GitHubRecord, env: GithubEnv): TreeRow {
     lower(item.owner) === lower(s.owner) &&
     lower(item.repo) === lower(s.repo) &&
     lower(item.host) === lower(s.host)
-  return itemRow({
+  const row = itemRow({
     id: item.key,
     owner: 'github',
     level: env.levelOf(item.key),
@@ -58,6 +63,36 @@ export function githubRow(item: GitHubRecord, env: GithubEnv): TreeRow {
       ...CHECKS[item.checks ?? 'none'],
     },
   })
+  // The merge chip has a cell of its own, so a conflict hides no checks glyph. No chip: no cell.
+  const chip = mergeChip(item, env.merge)
+  return chip === null ? row : { ...row, cells: { ...row.cells, merge: toned(chip.text, chip.tone) } }
+}
+
+/** The id of the i-th child row under a conflicted PR. The id of a PR row is its key. */
+const fileRowId = (key: string, i: number): string => `${key}#files:${i}`
+
+/** The key of the PR a row belongs to: the id of a child row under a PR (a file, or a note) loses its suffix. */
+export const prKeyOfRow = (id: string): string => id.replace(/#files:\d+$/, '')
+
+/** One dim line under a conflicted PR: the answer of the `files` key when it is not a list of files. */
+const noteRow = (item: GitHubRecord, i: number, text: string): TreeRow => ({
+  id: fileRowId(item.key, i),
+  owner: 'github',
+  cells: { title: { text, dim: true } },
+})
+
+/** The rows under a conflicted PR that the `files` key looked into: one per file, or one line that says why not. */
+function fileRows(item: GitHubRecord, found: ConflictFiles): TreeRow[] {
+  if (found.pending) return [noteRow(item, 0, 'looking for the files…')]
+  if (found.error !== undefined) return [noteRow(item, 0, `files unknown: ${found.error}`)]
+  const files = found.files ?? []
+  if (files.length === 0) return [noteRow(item, 0, 'no conflicts found locally: the local refs may be behind GitHub')]
+  return [
+    ...files.map(
+      (file, i): TreeRow => ({ id: fileRowId(item.key, i), owner: 'github', cells: { title: { text: file } } }),
+    ),
+    ...((found.more ?? 0) > 0 ? [noteRow(item, files.length, `+${found.more} more`)] : []),
+  ]
 }
 
 /**
@@ -70,16 +105,21 @@ export function prRow(item: GitHubRecord, env: GithubEnv, defaultBranch: string 
   const base = githubRow(item, env)
   const stacked = defaultBranch !== undefined && item.baseRefName !== undefined && item.baseRefName !== defaultBranch
   const done = item.state === 'merged' || item.state === 'closed'
+  const found = conflictNote(item, env.merge)?.files
+  const files = found === undefined ? undefined : fileRows(item, found)
+  const hint = blockedHint(item, env.merge, defaultBranch)
   return {
     ...base,
     cells: {
       ...base.cells,
       title: { text: item.title ?? '' },
+      ...(hint !== undefined ? { mark: toned(hint, 'dim') } : {}),
       // A head branch keeps both ends; `→base` is cut at the end, so the arrow and the start of the base stay.
       type: stacked
         ? { text: compactIds(`→${item.baseRefName}`), clip: 'end' }
         : { text: compactIds(item.headRefName ?? '') },
     },
+    ...(files !== undefined ? { children: files, expandedByDefault: true } : {}),
     ...(done ? { dim: true } : {}),
   }
 }

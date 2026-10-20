@@ -8,6 +8,8 @@ import type { BaseRecord, ItemError } from '../../core/lib/records'
 export type GitHubType = 'issue' | 'pr' | 'unknown'
 export type GitHubState = 'open' | 'closed' | 'merged'
 export type Checks = 'success' | 'failure' | 'pending' | 'none'
+/** GraphQL `mergeable`. `UNKNOWN`: GitHub has not worked it out yet, which it does lazily after a push (issue #50). */
+export type Mergeable = 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
 
 export type GitHubFields = {
   host: string
@@ -24,9 +26,18 @@ export type GitHubFields = {
   /** GraphQL `reviewDecision`, e.g. APPROVED, REVIEW_REQUIRED. PRs only. */
   reviewDecision?: string
   checks?: Checks
+  /** GraphQL `mergeable` of a PR: whether it merges into its own base, a stack base included. Absent: not asked. */
+  mergeable?: Mergeable
+  /** GraphQL `mergeStateStatus`, e.g. CLEAN, DIRTY, BEHIND, DRAFT. Only `BEHIND` is read; a draft hides `DIRTY` behind `DRAFT`. */
+  mergeStateStatus?: string
   /** PR branches. Set by discovery only (A8). */
   headRefName?: string
   baseRefName?: string
+  /**
+   * True when the head branch lives in a fork. Set by discovery only. The branches of such a PR are not branches of this
+   * repo, so the mod looks up no worktree for it and offers no key that acts on it (issue #50). Absent: not a fork.
+   */
+  crossRepo?: true
   /** Issue keys the PR's closing references name. Set by discovery only, like the branches. Absent when none. */
   closes?: string[]
 }
@@ -78,8 +89,12 @@ export type DiscoveredPr = {
   isDraft: boolean
   reviewDecision?: string
   checks: Checks
+  mergeable?: Mergeable
+  mergeStateStatus?: string
   headRefName: string
   baseRefName: string
+  /** The head branch is in a fork. A base alias keeps such a PR, so the record must remember it. */
+  crossRepo?: true
   body: string
   closing: { host: string; owner: string; repo: string; number: number; url: string }[]
   /** Which alias found it. A PR found by both keeps `head`. */
@@ -115,6 +130,27 @@ export interface GitHubDiscoveryApi extends GitHubToolApi {
 export type DiscoveryTool = Pick<GitHubDiscoveryApi, 'isAvailable' | 'canCall' | 'status' | 'isHostAuthed' | 'graphql'>
 
 /**
+ * What the `files` key found for a conflicted PR: the files `git merge-tree` named, or why it could not. `pending` is
+ * set while the git calls run, so the row says so. `more` counts the names past the cap.
+ */
+export type ConflictFiles = { at: number; pending?: true; files?: string[]; more?: number; error?: string }
+
+/**
+ * What the lane keeps of one open PR whose merge state needs more than the record holds (issue #50). The key of the
+ * note is the key of the PR. A note exists only while the PR is CONFLICTING or UNKNOWN, so a changed value starts afresh.
+ */
+export type MergeNote = {
+  /** UNKNOWN only: the steps that saw it, up to `UNKNOWN_SPENT`. The row says `? merge` once the retries are spent. */
+  unknown?: number
+  /** CONFLICTING only: the path of a worktree that has the head branch checked out. Absent: there is none. */
+  worktree?: string
+  /** CONFLICTING only: when the person pressed resolve (epoch ms). The row reads `queued` for a while after. */
+  queuedAt?: number
+  /** CONFLICTING only: the answer of the `files` key. */
+  files?: ConflictFiles
+}
+
+/**
  * The state of the PR lane, in the github slot of the `trackers` family. It is run-scoped (`persist: false`) and goes
  * to `v2:run` beside the auto slot. Before L5b it was `prs` and `defaultBranch` of the auto snapshot.
  */
@@ -129,6 +165,8 @@ export type LaneState = {
   }
   /** The default branch the last discovery reply named. It gets no alias in the next query. */
   defaultBranch?: string
+  /** The notes on the open PRs the last discovery found CONFLICTING or UNKNOWN, by PR key. Absent: none. */
+  merge?: Record<string, MergeNote>
 }
 
 /**

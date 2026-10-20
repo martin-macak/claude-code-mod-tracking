@@ -19,6 +19,20 @@ test('bandText joins label and count with · and adds (n ✗) when failing', () 
   expect(bandText([part('Jira', 6), part('GitHub', 4, 1), part('Links', 2)])).toBe('Jira 6 · GitHub 4 (1 ✗) · Links 2')
 })
 
+const conflicted = (label: string, count: number, failing: number, conflicts: number): SectionSpec =>
+  section(label.toLowerCase(), COLS, [], { band: { label, count, failing, conflicts } })
+
+test('AC7: bandText puts the conflicts next to the ✗ count: PRs 3 (1 ✗ · 2 conflicts)', () => {
+  expect(bandText([conflicted('PRs', 3, 1, 2)])).toBe('PRs 3 (1 ✗ · 2 conflicts)')
+})
+
+test('bandText: conflicts alone read (n conflicts); a zero or absent count adds nothing', () => {
+  expect(bandText([conflicted('PRs', 2, 0, 2)])).toBe('PRs 2 (2 conflicts)')
+  expect(bandText([conflicted('PRs', 2, 1, 0)])).toBe('PRs 2 (1 ✗)')
+  expect(bandText([conflicted('PRs', 2, 0, 0)])).toBe('PRs 2')
+  expect(bandText([conflicted('PRs', 1, 0, 1), part('Jira', 6)])).toBe('PRs 1 (1 conflict) · Jira 6') // one reads singular
+})
+
 test('bandText leaves out a zero count and gives null when all are zero or none has a band', () => {
   expect(bandText([part('Jira', 0), part('Links', 2), part('Files', 0)])).toBe('Links 2')
   expect(bandText([part('Jira', 0), part('Links', 0)])).toBeNull()

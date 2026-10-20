@@ -18,6 +18,8 @@ type NodeOver = Partial<{
   body: string
   rollup: string | null
   closing: { number: number; nameWithOwner?: string }[]
+  mergeable: string | null
+  mergeStateStatus: string | null
 }>
 
 /** One `PullRequest` node as the `pr` fragment returns it. */
@@ -34,6 +36,9 @@ export function prNode(over: NodeOver = {}): Record<string, unknown> {
     isCrossRepository: over.isCrossRepository ?? false,
     reviewDecision: over.reviewDecision ?? null,
     body: over.body ?? '',
+    // Left out unless a test sets it: a reply from before the merge fields has neither.
+    ...(over.mergeable !== undefined ? { mergeable: over.mergeable } : {}),
+    ...(over.mergeStateStatus !== undefined ? { mergeStateStatus: over.mergeStateStatus } : {}),
     commits: {
       nodes: [{ commit: { statusCheckRollup: over.rollup === null ? null : { state: over.rollup ?? 'SUCCESS' } } }],
     },

@@ -24,7 +24,10 @@ function discoveryFields(pr: DiscoveredPr) {
     checks: pr.checks,
     headRefName: pr.headRefName,
     baseRefName: pr.baseRefName,
+    ...(pr.crossRepo ? { crossRepo: true as const } : {}),
     ...(pr.reviewDecision !== undefined ? { reviewDecision: pr.reviewDecision } : {}),
+    ...(pr.mergeable !== undefined ? { mergeable: pr.mergeable } : {}),
+    ...(pr.mergeStateStatus !== undefined ? { mergeStateStatus: pr.mergeStateStatus } : {}),
     ...(closes.length > 0 ? { closes } : {}),
   }
 }
@@ -41,7 +44,10 @@ function isCurrent(rec: GitHubRecord, pr: DiscoveredPr, at: number, staleMs: num
     rec.checks === pr.checks &&
     rec.headRefName === pr.headRefName &&
     rec.baseRefName === pr.baseRefName &&
+    rec.crossRepo === pr.crossRepo &&
     rec.reviewDecision === pr.reviewDecision &&
+    rec.mergeable === pr.mergeable &&
+    rec.mergeStateStatus === pr.mergeStateStatus &&
     (rec.closes ?? []).join(' ') === closesOf(pr).join(' ') &&
     at - (rec.refreshedAt ?? Number.NEGATIVE_INFINITY) < staleMs / 2
   )
@@ -55,7 +61,10 @@ function withDiscovery(rec: GitHubRecord, pr: DiscoveredPr, at: number): GitHubR
     refreshedAt: at,
   }
   delete next.error
+  if (pr.crossRepo === undefined) delete next.crossRepo
   if (pr.reviewDecision === undefined) delete next.reviewDecision
+  if (pr.mergeable === undefined) delete next.mergeable
+  if (pr.mergeStateStatus === undefined) delete next.mergeStateStatus
   if (pr.closing.length === 0) delete next.closes
   return next
 }

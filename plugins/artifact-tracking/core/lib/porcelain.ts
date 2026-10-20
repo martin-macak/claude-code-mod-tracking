@@ -76,6 +76,11 @@ export function findByPath(
   return list.find(x => !skip?.has(x) && normPath(x.path) === p)
 }
 
+/** The record whose checked-out branch is `branch`. A prunable record has no directory left, so it never counts. */
+export function worktreeOfBranch(list: readonly GitWorktree[], branch: string): GitWorktree | undefined {
+  return list.find(w => w.branch === branch && w.prunable === undefined && !w.bare)
+}
+
 /** `<main>/.claude/worktrees/agent-<id>`. The one source of the convention path for T3 and T4 (A4, A6). */
 export function agentWorktreePath(main: string, id: string): string {
   return `${normPath(main)}/.claude/worktrees/agent-${id}`

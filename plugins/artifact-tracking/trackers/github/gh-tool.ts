@@ -6,7 +6,15 @@ import type { Breaker, ToolHandle } from '../../core/interfaces/tracker'
 import { dig, isRecord, type Json } from '../../core/lib/json'
 import { firstLine, Tool, type ToolTimeouts } from '../../core/lib/tool'
 import { GITHUB_DEFAULTS, type GithubConfig } from './config'
-import type { Checks, GitHubDiscoveryApi, GitHubState, GitHubTarget, GraphqlOutcome, ReplyClass } from './types'
+import type {
+  Checks,
+  GitHubDiscoveryApi,
+  GitHubState,
+  GitHubTarget,
+  GraphqlOutcome,
+  Mergeable,
+  ReplyClass,
+} from './types'
 import { githubKey } from './urls'
 
 const NAME_OK = /^[A-Za-z0-9_.-]+$/
@@ -36,6 +44,11 @@ export function rollupToChecks(state: string | null | undefined): Checks {
       return 'none'
   }
 }
+
+const MERGEABLE: ReadonlySet<unknown> = new Set<Mergeable>(['MERGEABLE', 'CONFLICTING', 'UNKNOWN'])
+
+/** The `mergeable` of a reply when it is one of the three words GitHub documents. Else undefined: no value. */
+export const mergeableOf = (v: unknown): Mergeable | undefined => (MERGEABLE.has(v) ? (v as Mergeable) : undefined)
 
 /**
  * One classifier for `graphql` and `refreshChunk` (spec A21). The order matters:
@@ -79,7 +92,7 @@ export function buildQuery(
     issueOrPullRequest(number: ${first.number}) {
       __typename
       ... on Issue { number title state stateReason url }
-      ... on PullRequest { number title state isDraft reviewDecision url
+      ... on PullRequest { number title state isDraft reviewDecision url mergeable mergeStateStatus
         commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
         closingIssuesReferences(first: ${closingRefs}) { nodes { number repository { nameWithOwner } } } }
     }
@@ -227,6 +240,8 @@ export class GhTool extends Tool<GitHubTarget> implements GitHubDiscoveryApi {
       put(it, 'reviewDecision', isPr && typeof node.reviewDecision === 'string' ? node.reviewDecision : undefined)
       const rollup = dig(node, 'commits', 'nodes', 0, 'commit', 'statusCheckRollup', 'state')
       put(it, 'checks', isPr ? rollupToChecks(typeof rollup === 'string' ? rollup : null) : undefined)
+      put(it, 'mergeable', isPr ? mergeableOf(node.mergeable) : undefined)
+      put(it, 'mergeStateStatus', isPr && typeof node.mergeStateStatus === 'string' ? node.mergeStateStatus : undefined)
       put(it, 'closes', isPr ? closesOf(it, dig(node, 'closingIssuesReferences', 'nodes')) : undefined)
       delete it.error
       it.refreshedAt = at

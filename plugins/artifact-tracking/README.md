@@ -91,6 +91,8 @@ The pane keeps one selected row. A `>` in the first column and a highlight mark 
 | `h` | Swaps the pane to the help view: every key, the config file path and the problems. In a short pane the view puts two keys on a line. `h` again goes back. |
 | `x` | Dismisses the selected row. It stays out for the run, also after `/clear`. |
 | `1` `2` `3` `0` | Set the priority of the selected row. See [Priority](#priority). |
+| `c` | Resolve: asks Claude to resolve the merge conflicts of the selected PR. See [Merge conflicts](#merge-conflicts). |
+| `f` | Files: lists the files that conflict in the selected PR. See [Merge conflicts](#merge-conflicts). |
 | Esc | Closes the pane. |
 
 A section shows at most `global.ui.sectionRows` rows (50). When rows are left, the section ends in an `N more` row. The whole pane shows at most `global.ui.maxRows` rows (300), plus the chunks you opened. Open children do not count against these caps. If the pane is still too large to draw, it drops the detail lines first, then shows fewer rows, and last shows one line: `The pane is too large to draw. /track prints the list.`
@@ -99,7 +101,7 @@ A 30 s tick runs from the start of the session, with the pane open or closed. An
 
 A deleted artifact stays in its section, dim and without a link.
 
-The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Artifacts 3 · Links 2 · Files 3 · Repos 2  /track`. `(n ✗)` counts PRs with failing checks. `Artifacts n` counts the artifacts that are not deleted. `Repos` and the auto parts (Worktrees, Agents, PRs) come after `Files`. The band is empty when nothing is tracked.
+The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Artifacts 3 · Links 2 · Files 3 · Repos 2  /track`. `(n ✗)` counts PRs with failing checks, and `PRs 3 (1 ✗ · 2 conflicts)` adds the PRs that have merge conflicts. `Artifacts n` counts the artifacts that are not deleted. `Repos` and the auto parts (Worktrees, Agents, PRs) come after `Files`. The band is empty when nothing is tracked.
 
 ### Markdown files
 
@@ -187,6 +189,36 @@ flowchart LR
 Select an auto row and press `x` to hide it for the run. `/track clear` hides every auto row that is on screen. A gh failure trips the same circuit breaker as item refresh. It never stops worktree or agent tracking.
 
 Limits: peer sessions in other processes are not tracked. A worktree that git created without this session is not shown. Design: [`docs/superpowers/specs/2026-10-10-auto-tracking-design.md`](../../docs/superpowers/specs/2026-10-10-auto-tracking-design.md).
+
+### Merge conflicts
+
+The Pull requests and GitHub sections show the merge state of an open PR in a `Merge` column. GitHub gives it in the same query as the checks, so it costs no extra call.
+
+| Chip | Meaning |
+| --- | --- |
+| `✗ conflicts` (red) | GitHub reports the PR as `CONFLICTING` against its own base. A stacked PR is judged against its stack base, not against the default branch. A draft PR shows it too. |
+| `↓ behind` (yellow) | The PR merges clean, but its base moved on. |
+| `? merge` (dim) | GitHub still answers `UNKNOWN`. It works the value out only after a push. The mod asks again after 3 s, 6 s and 12 s, then leaves it to the 30 s tick. The chip stays off until those retries are used up. A reply that leaves the PR out counts as a look too, so a PR that GitHub never answers does not cause endless retries. |
+| `queued` | You pressed `c` for this PR. It reads `queued` for 10 minutes, or until the PR changes. |
+
+No chip shows while `gh` is logged out or its circuit breaker is open: the stored value is stale. In a narrow pane the `Merge` column is the last to drop, after the other columns. A conflict also counts in the band: `PRs 3 (1 ✗ · 2 conflicts)`.
+
+The mod never rebases, merges or pushes. Two keys act on the selected PR:
+
+- **`c` resolve.** Sends Claude a prompt with the PR, its head and base branch and the worktree path. The prompt asks Claude to work in that worktree and leave every other worktree alone, rebase the head onto its base (never merge the base in), resolve each conflict, run the tests, show you the result and ask before it pushes. A push uses `--force-with-lease`, only after you say yes. The key works for a PR that the PR lane found, that conflicts, and whose head branch is checked out in a local worktree (`git worktree list`). The prompt goes in with `$.prompt.submit`, framed as a message of this mod (not `asUser`), so you see who sent it. It starts a turn once the session is idle. A second press is ignored while the row reads `queued`. When a hook of another plugin refuses the prompt, the row stops reading `queued`, a toast reads `Resolve prompt refused: <reason>`, and you may press again. The permission rules of your session still apply to every step.
+- **`f` files.** Fetches the base and the head from `origin`, then runs `git merge-tree --write-tree` (git 2.38 or newer). It touches no worktree and no index. The files show as child rows under the PR, open at once. They stay until the conflict goes. A merge with no conflict in the local refs says so: the refs may be behind GitHub. The key runs on a press only, never on a tick.
+
+A key that does not fit the selected row stays in the footer, dim and inert. For a conflicted PR that the PR lane looked at, the last column of the row says in a word why `c` is dim:
+
+| Word | Reason |
+| --- | --- |
+| `no worktree` | No local worktree has the head branch checked out. The mod never makes one. |
+| `fork PR` | The head branch lives in a fork. A local branch of the same name is another branch, so neither key acts. |
+| `odd branch` | A branch name has a space or a shell character. It is never put in a prompt or a git command. |
+| `odd path`, `odd url` | The worktree path or the PR link has a control character or is not one plain link. |
+| `no default` | The default branch of the repo is not known yet. |
+
+That column is the first to drop in a narrow pane. `trackers.github.gitTimeoutMs` limits each git call.
 
 ## Requirements
 
@@ -287,6 +319,7 @@ Every key. Time values are in milliseconds.
 | `trackers.github.chunkSize` | 50 | 1 | 100 | Items in one GraphQL call. |
 | `trackers.github.pendingStaleMs` | 60000 | 10000 | 3600000 | Age at which a PR with pending checks is due again. |
 | `trackers.github.discoveryTimeoutMs` | 10000 | 1000 | 120000 | Timeout of the PR discovery call. |
+| `trackers.github.gitTimeoutMs` | 5000 | 500 | 60000 | Timeout of one `git` call of the PR lane: the worktree list, and the fetch and merge check behind the `files` key. |
 | `trackers.github.closingRefsPerPr` | 10 | 1 | 50 | Closing references read for one PR. |
 | `trackers.github.headPrsPerBranch` | 5 | 1 | 50 | PRs read for one branch as head. |
 | `trackers.github.basePrsPerBranch` | 10 | 1 | 50 | PRs read for one branch as base. |
@@ -354,6 +387,8 @@ Cost. A block is short: 134 characters for one link, 164 for two (about 34 and 4
 
 - **False positives.** `rank #1` counts as issue 1 of the session repo. The scanner cannot tell it from `fixed in #1`.
 - **Focus after a background change.** A row that appears above the focus ring moves the ring onto another row: the ring sits on a position, not on a row. The `>` and the highlight stay on your row, and `x` and the digits act on it, not on the ring. Tab moves the ring again. After `x` or a digit, the ring goes back to the selected row. After a `ctrl+x Tab` chord that gives the keys back to the pane, no row has the ring until the first Tab. `r` leaves the ring where it was.
+- **Merge conflicts.** The `c` and `f` keys work for PRs that the PR lane found, not for a PR you only named. `f` fetches `origin`: another remote name gives `files unknown`. There is no `resolve all` for a stack: resolve the bottom PR first, then the next.
+- **Engine notices after `c`.** After a resolve turn the engine prints two notices that say a hook of this mod was skipped: `its prompt.compose hook was skipped` and `its session.append hook was skipped`. They are harmless. The first comes from the order of the guard plugin (see [#91](https://github.com/martin-macak/claude-code-mod-tracking/issues/91)). The second is the engine's rule for a plugin's own prompt: it skips the hooks of the plugin that made the call, so the mod does not capture its own prompt.
 - **Closing references.** An issue takes a PR's level only from the first closing references that GitHub lists for the PR (10 by default).
 - **Jira sites.** `acli` works on one site at a time. A work item on any other site is `track-only`. The mod never runs `acli jira auth switch`. A host that is not `*.atlassian.net` is also `track-only`.
 - **GitHub Enterprise.** A GHE issue URL is a web link, unless the host is the host of the session repo and `gh` is logged in to it.

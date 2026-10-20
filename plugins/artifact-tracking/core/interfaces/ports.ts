@@ -186,6 +186,15 @@ export interface Ports {
     messages(): Promise<readonly SessionRow[]>
   }
   readonly agents: { list(): Promise<readonly AgentInfo[]> }
+  /**
+   * Submits a prompt as a turn of the session (the engine's prompt submit call): it runs once the session is idle, and the model reads
+   * it as sent by the mod. It returns at once and never rejects: a call that waits for it from a hook that runs inside a
+   * turn would hang. Call it from a press only, never from a timer or a render.
+   * `onRefused` hears, later, that the prompt did not enter: a hook dropped it, or the call failed. The engine answers once
+   * the prompt entered the session or queued behind the running turn, not when that turn ends. A prompt that entered
+   * calls nothing.
+   */
+  readonly prompt: { submit(text: string, onRefused?: (reason: string) => void): void }
   /** Closures per atom, refs inline. */
   readonly state: StatePorts
   readonly ui: {

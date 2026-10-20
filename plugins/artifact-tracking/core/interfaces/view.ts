@@ -72,6 +72,8 @@ export interface SectionSpec {
     readonly label: string
     readonly count: number
     readonly failing: number
+    /** Items with a merge conflict, read after the failing count: `PRs 3 (1 ✗ · 2 conflicts)`. Absent or 0: none. */
+    readonly conflicts?: number
     readonly rank?: number
   }
   readonly columns: readonly ColumnDef[]

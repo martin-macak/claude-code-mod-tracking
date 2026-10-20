@@ -10,6 +10,8 @@ import type { CommandEvent, FactEvent } from '../../core/interfaces/events'
 import type { Json, JsonObject } from '../../core/interfaces/items'
 import type { Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { LoadState } from '../../core/lib/load-state'
+import { parsePorcelain } from '../../core/lib/porcelain'
+import { actions, KEYS } from './actions'
 import { GH_TOOL, ghOf } from './client'
 import { GITHUB_DEFAULTS, type GithubConfig, githubConfig } from './config'
 import { githubKind } from './kind'
@@ -102,6 +104,17 @@ function laneOf(ctx: Ctx): PrLane {
       if (keys.length > 0) ctx.items.refresh(keys)
     },
     lane: () => ({ ...GITHUB_DEFAULTS, ...ctx.config.slice() }),
+    // The worktrees of the session repo, for the PRs that conflict (issue #50). A throw is the lane's to catch.
+    worktrees: async () => {
+      const cwd = ctx.session.root() ?? (await ctx.session.cwd())
+      const r = await ctx.tools.run('git', ['git', 'worktree', 'list', '--porcelain'], {
+        cwd,
+        timeoutMs: ctx.config.slice().gitTimeoutMs,
+      })
+      return r.exitCode === 0 ? parsePorcelain(r.stdout) : null
+    },
+    // The retry steps for a PR that GitHub calls UNKNOWN. The host cancels the timer at dispose.
+    after: (ms, fn) => ctx.clock.after(ms, fn),
     caps: () => {
       const g = ctx.config.global()
       return { staleMs: g.refresh.staleMs, maxItems: g.store.maxItems }
@@ -131,6 +144,7 @@ export function githubTracker(): Tracker<GithubConfig, LaneState> {
     config: githubConfig,
     kinds: [githubKind],
     tools: [GH_TOOL],
+    keys: KEYS,
     init: ctx => {
       loads.of(ctx, () => laneOf(ctx))
     },
@@ -147,6 +161,7 @@ export function githubTracker(): Tracker<GithubConfig, LaneState> {
       command: onCommand,
     },
     sections,
+    actions,
     prompt: githubPrompt,
   }
 }

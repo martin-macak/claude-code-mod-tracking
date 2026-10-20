@@ -1,6 +1,13 @@
 // Porcelain parser, locate and the agent convention path. Pure.
 import { expect, test } from 'claude-code/testing'
-import { agentWorktreePath, findByPath, locate, normPath, parsePorcelain } from '../core/lib/porcelain'
+import {
+  agentWorktreePath,
+  findByPath,
+  locate,
+  normPath,
+  parsePorcelain,
+  worktreeOfBranch,
+} from '../core/lib/porcelain'
 import type { GitWorktree } from './fixtures/contracts'
 import { PORCELAIN_SAMPLE, PORCELAIN_SESSION } from './fixtures/git'
 
@@ -72,4 +79,17 @@ test('locate and findByPath: a trailing slash on a stored record path finds the 
 test('agentWorktreePath is the Claude convention under the main tree', () => {
   expect(agentWorktreePath('/x/repo', 'a94bdd45b56e2c631')).toBe('/x/repo/.claude/worktrees/agent-a94bdd45b56e2c631')
   expect(agentWorktreePath('/x/repo/', 'abc')).toBe('/x/repo/.claude/worktrees/agent-abc')
+})
+
+test('worktreeOfBranch: the live record that has the branch checked out, else undefined (issue #50)', () => {
+  const list = parsePorcelain(PORCELAIN_SAMPLE)
+  expect(worktreeOfBranch(list, 'feat/parent')?.path).toBe('/x/repo')
+  expect(worktreeOfBranch(list, 'locked-fff')?.path).toBe('/x/repo-locked') // locked is still a live checkout
+  expect(worktreeOfBranch(list, 'gone-ggg')).toBeUndefined() // prunable: its directory is gone
+  expect(worktreeOfBranch(list, 'nobody')).toBeUndefined()
+  expect(worktreeOfBranch(list, 'feat')).toBeUndefined() // a whole branch name, not a prefix
+  expect(worktreeOfBranch(parsePorcelain(PORCELAIN_SESSION), 'worktree-probe-wt')?.path).toBe(
+    '/x/repo/.claude/worktrees/probe-wt',
+  )
+  expect(worktreeOfBranch([], 'main')).toBeUndefined()
 })

@@ -313,6 +313,10 @@ test('github refresh: hydrate follows the ttl of the config and refreshItems fil
   expect(item.toRecord()).toMatchObject({ type: 'issue', title: 'Hello', state: 'open', refreshedAt: NOW })
 })
 
+test('github refresh: the merge fields are status fields, so a refresh copies them onto the record (issue #50)', () => {
+  expect(githubKind.refresh!.fields).toEqual(expect.arrayContaining(['mergeable', 'mergeStateStatus']))
+})
+
 test('jira refresh: hydrate follows global staleMs and refreshItems fills the summary through the handle', async () => {
   const view = {
     key: 'ISS-1',

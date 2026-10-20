@@ -141,6 +141,59 @@ test('a changed field gives a new list with a new record and refreshedAt moved',
   expect(first.list[0]).toMatchObject({ checks: 'success', refreshedAt: AT })
 })
 
+test('a PR record keeps mergeable and mergeStateStatus; a PR with neither has no field (issue #50)', () => {
+  const r = applyDiscovery([], input({ prs: [discovered({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' })] }))
+  expect(r.list[0]).toMatchObject({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' })
+  const bare = applyDiscovery([], input()).list[0]!
+  expect('mergeable' in bare || 'mergeStateStatus' in bare).toBe(false)
+})
+
+test('AC5: a PR that changes only its mergeable value is written, and one that changes only mergeStateStatus too', () => {
+  const first = applyDiscovery([], input({ prs: [discovered({ mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' })] }))
+  const flipped = applyDiscovery(
+    first.list,
+    input({ prs: [discovered({ mergeable: 'CONFLICTING', mergeStateStatus: 'CLEAN' })], at: AT + 30_000 }),
+  )
+  expect(flipped.list).not.toBe(first.list)
+  expect(flipped.list[0]).toMatchObject({ mergeable: 'CONFLICTING', refreshedAt: AT + 30_000 })
+  const status = applyDiscovery(
+    first.list,
+    input({ prs: [discovered({ mergeable: 'MERGEABLE', mergeStateStatus: 'BEHIND' })], at: AT + 30_000 }),
+  )
+  expect(status.list).not.toBe(first.list)
+  expect(status.list[0]).toMatchObject({ mergeStateStatus: 'BEHIND' })
+  const same = applyDiscovery(
+    first.list,
+    input({ prs: [discovered({ mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN' })], at: AT + 30_000 }),
+  )
+  expect(same.list).toBe(first.list)
+})
+
+test('M3: a fork PR record keeps crossRepo; a change of it alone is written, and a PR that is not a fork has no field', () => {
+  const fork = applyDiscovery([], input({ prs: [discovered({ crossRepo: true })] }))
+  expect(fork.list[0]).toMatchObject({ crossRepo: true })
+  const own = applyDiscovery([], input()).list[0]!
+  expect('crossRepo' in own).toBe(false)
+  // Only the fork flag differs: the record is current except for it, so it must be written (isCurrent compares it).
+  const flagged = applyDiscovery([own], input({ prs: [discovered({ crossRepo: true })] }))
+  expect(flagged.list[0]).toMatchObject({ crossRepo: true })
+  const same = applyDiscovery(fork.list, input({ prs: [discovered({ crossRepo: true })], at: AT + 30_000 }))
+  expect(same.list).toBe(fork.list)
+  const cleared = applyDiscovery(fork.list, input({ prs: [discovered()], at: AT + 30_000 }))
+  expect(cleared.list).not.toBe(fork.list)
+  expect('crossRepo' in cleared.list[0]!).toBe(false)
+})
+
+test('a merge value that GitHub stops returning is removed from the record, so a stale conflict cannot stay', () => {
+  const first = applyDiscovery(
+    [],
+    input({ prs: [discovered({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' })] }),
+  )
+  const second = applyDiscovery(first.list, input({ prs: [discovered()], at: AT + 30_000 }))
+  expect(second.list).not.toBe(first.list)
+  expect('mergeable' in second.list[0]! || 'mergeStateStatus' in second.list[0]!).toBe(false)
+})
+
 test('the same reply after staleMs / 2 moves refreshedAt', () => {
   const first = applyDiscovery([], input())
   const later = AT + LIMITS.staleMs / 2 + 1

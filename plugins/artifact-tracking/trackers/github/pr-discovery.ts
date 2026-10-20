@@ -4,7 +4,7 @@
 import type { RepoRef } from '../../core/interfaces/ports'
 import { dig, isRecord } from '../../core/lib/json'
 import { GITHUB_DEFAULTS, PR_LANE_DEFAULTS, type PrLane } from './config'
-import { rollupToChecks } from './gh-tool'
+import { mergeableOf, rollupToChecks } from './gh-tool'
 import type { DiscoveredPr, DiscoveryOutcome, DiscoveryTool, GitHubState, GraphqlReply } from './types'
 
 export type Alias = { branch: string; by: 'head' | 'base' }
@@ -12,7 +12,7 @@ export type Alias = { branch: string; by: 'head' | 'base' }
 const ORDER = 'orderBy: {field: UPDATED_AT, direction: DESC}'
 /** The PR fields of the query. Built per call, because the closing refs count comes from the config. */
 const fragmentOf = (closingRefs: number): string => `fragment pr on PullRequest {
-  number title state isDraft url headRefName baseRefName isCrossRepository reviewDecision body
+  number title state isDraft url headRefName baseRefName isCrossRepository reviewDecision body mergeable mergeStateStatus
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
   closingIssuesReferences(first: ${closingRefs}) { nodes { number url repository { nameWithOwner } } }
 }`
@@ -85,6 +85,8 @@ function toPr(node: unknown, repo: RepoRef, by: 'head' | 'base', closingRefs: nu
     })
   }
   const reviewDecision = str(node.reviewDecision)
+  const mergeable = mergeableOf(node.mergeable)
+  const mergeStateStatus = str(node.mergeStateStatus)
   return {
     host: repo.host,
     owner: repo.owner,
@@ -96,8 +98,11 @@ function toPr(node: unknown, repo: RepoRef, by: 'head' | 'base', closingRefs: nu
     isDraft: node.isDraft === true,
     ...(reviewDecision !== undefined ? { reviewDecision } : {}),
     checks: rollupToChecks(rollupState),
+    ...(mergeable !== undefined ? { mergeable } : {}),
+    ...(mergeStateStatus !== undefined ? { mergeStateStatus } : {}),
     headRefName: head,
     baseRefName: base,
+    ...(node.isCrossRepository === true ? { crossRepo: true as const } : {}),
     body: str(node.body) ?? '',
     closing: closing.slice(0, closingRefs),
     by,
@@ -106,7 +111,8 @@ function toPr(node: unknown, repo: RepoRef, by: 'head' | 'base', closingRefs: nu
 
 /**
  * Head aliases first, then base aliases. One entry per PR number, `by: 'head'` when both found it.
- * Drops cross-repository head matches and every match on the default branch.
+ * Drops cross-repository head matches and every match on the default branch. A cross-repository PR found by a base alias
+ * stays, marked `crossRepo`: its head name is a branch of the fork, not of this repo.
  * `complete` is false when an error names an alias or the repository, or an alias or the repository is null.
  */
 export function parseDiscovery(
