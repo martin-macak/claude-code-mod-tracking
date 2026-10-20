@@ -1,0 +1,1 @@
+branch B: another line for the same scratch file, so that B conflicts with A. Delete the branch.
