@@ -11,6 +11,7 @@ import { bandText } from '../ux/band'
 import { fakeConfig } from './fixtures/config-fs'
 import { managerWorld } from './fixtures/manager'
 import { KEYS, NOW, paneItems, paneWorld, seedPaneWorld, setBranches } from './fixtures/pane-world'
+import { expectLinear } from './fixtures/scaling'
 
 const ids = (sections: readonly SectionSpec[]) => sections.map(s => s.id)
 const section = (sections: readonly SectionSpec[], id: string): SectionSpec => sections.find(s => s.id === id)!
@@ -577,17 +578,20 @@ test('artifact, web and file rows', async () => {
 
 // Main pinned this on `buildPane` (view.test.ts). A trailing trim that backtracks takes seconds on this input; the tracker
 // trims with a backward loop. The slash run sits at the end of one URL and before an `x` in the other.
-test('the web section stays fast on a URL with a long slash run', async () => {
+test('the web section stays linear on a URL with a long slash run', async () => {
   const t = await paneWorld()
   const web = paneItems().find(i => i.key === KEYS.web)!
-  const urls = ['https://example.com/' + '/'.repeat(60_000), 'https://example.com/' + '/'.repeat(60_000) + 'x']
-  t.w.state.set(
-    'items',
-    urls.map((url, i) => ({ ...web, key: `web:${url}`, url, label: `Big ${i}`, via: undefined })) as unknown as Json,
-  )
-  const t0 = Date.now()
-  const sections = await t.m.paneData(t.w.ports, NO_VIEW)
-  expect(Date.now() - t0).toBeLessThan(200)
+  // The slash run is 60 000 long at k = 4. `make` builds the two items, and each run stores them and reads the section.
+  const items = (k: number) =>
+    ['https://example.com/' + '/'.repeat(15_000 * k), 'https://example.com/' + '/'.repeat(15_000 * k) + 'x'].map(
+      (url, i) => ({ ...web, key: `web:${url}`, url, label: `Big ${i}`, via: undefined }) as unknown as Json,
+    )
+  const read = async (stored: Json[]) => {
+    t.w.state.set('items', stored)
+    return t.m.paneData(t.w.ports, NO_VIEW)
+  }
+  await expectLinear({ make: items, run: read })
+  const sections = await read(items(4))
   const titles = section(sections, 'web').rows.map(r => cell(r, 'title').text)
   expect(titles[0]).toBe('example.com')
   expect(titles[1]?.length).toBe('example.com'.length + 60_001 + 1)

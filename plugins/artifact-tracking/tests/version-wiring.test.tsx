@@ -4,7 +4,8 @@
 // shown by the headless spike in the PR (`claude -p "/track version"` over this folder). pure checks of the read are in
 // manifest.test.ts and version-start.test.ts.
 import type { Engine } from 'claude-code/testing'
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
+import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { mountPane } from './fixtures/pane'
 import { MANIFEST_TAIL, quiet, response, START, track, world } from './fixtures/world'

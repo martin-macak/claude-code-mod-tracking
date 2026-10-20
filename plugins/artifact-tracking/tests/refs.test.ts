@@ -1,12 +1,13 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
+import { MAX_TEXT } from '../core/lib/links'
 import { PAGE_CODE_URL, PAGE_ID, PAGE_URL, PAGE_UUID } from './fixtures/artifacts'
+import { test } from './fixtures/kit'
 import { commandArgs, extractRefs, hostPath, parseGitHubUrl, parseJiraUrl, parseRemote } from './fixtures/refs'
+import { expectLinear, SCALE } from './fixtures/scaling'
 
 const repo = { host: 'github.com', owner: 'acme', repo: 'web' }
-// Wall-clock budget for the two big-input tests. They take 20 to 80 ms on a laptop. Under node
-// coverage on a CI runner one run took 415 ms. A quadratic scan of a 200 KB input needs about
-// 4e10 steps, so 2 s still catches it.
-const BIG_INPUT_MS = 2000
+// The big-input tests check that the cost grows about linearly with the input, not that it stays under a time
+// (`expectLinear`, issue #104). The big input is at most `MAX_TEXT`: a scan reads no more, so a bigger one shows nothing.
 const full = (t: string, defaultRepo: typeof repo | null = repo) => extractRefs(t, { mode: 'full', defaultRepo })
 const fullStrict = (t: string, defaultRepo: typeof repo | null = repo) =>
   extractRefs(t, { mode: 'full', defaultRepo, strictShortRefs: true })
@@ -154,12 +155,36 @@ test('duplicates collapse, first occurrence wins the position', () => {
   expect(full('#5 https://github.com/ACME/Web/issues/5 #5').length).toBe(1)
 })
 
-test('huge input is capped and fast', () => {
-  const big = ('x https://github.com/a/b/issues/1 #2 ' + 'y'.repeat(100)).repeat(8000) // ~1 MB
-  const t0 = Date.now()
-  extractRefs(big, { mode: 'full', defaultRepo: repo })
-  extractRefs(big, { mode: 'urls-only' })
-  expect(Date.now() - t0).toBeLessThan(BIG_INPUT_MS)
+const BIG_UNIT = 'x https://github.com/a/b/issues/1 #2 ' + 'y'.repeat(100)
+const bigInput = (units: number) => BIG_UNIT.repeat(units)
+
+test('huge input is capped, and the cost grows linearly up to the cap', async () => {
+  // The cap: a scan reads the first MAX_TEXT characters of 1 MB, so the rest changes nothing.
+  const big = bigInput(8000) // ~1 MB
+  expect(big.length).toBeGreaterThan(5 * MAX_TEXT)
+  expect(extractRefs(big, { mode: 'full', defaultRepo: repo })).toEqual(
+    extractRefs(big.slice(0, MAX_TEXT), { mode: 'full', defaultRepo: repo }),
+  )
+  expect(extractRefs(big, { mode: 'urls-only' })).toEqual(extractRefs(big.slice(0, MAX_TEXT), { mode: 'urls-only' }))
+  // The cost: the big input is the cap, the small one a fourth of it.
+  const units = MAX_TEXT / SCALE / BIG_UNIT.length
+  await expectLinear({
+    make: k => bigInput(Math.floor(units * k)),
+    run: text => {
+      extractRefs(text, { mode: 'full', defaultRepo: repo })
+      extractRefs(text, { mode: 'urls-only' })
+    },
+  })
+  // Above the cap the cost is flat: both inputs are cut to MAX_TEXT. A pass over the full text before the cut grows with
+  // the input (4 times the text, 16 times the time when that pass is quadratic), which the check above cannot see.
+  await expectLinear({
+    label: 'above the cap',
+    make: k => bigInput(Math.floor((2 * MAX_TEXT * k) / BIG_UNIT.length)), // 400 000 and 1 600 000 characters
+    run: text => {
+      extractRefs(text, { mode: 'full', defaultRepo: repo })
+      extractRefs(text, { mode: 'urls-only' })
+    },
+  })
 })
 
 test('parseRemote: scp, ssh, https with token, .git, garbage', () => {
@@ -201,30 +226,32 @@ test('hostPath shortens long URLs to 60 chars with an ellipsis', () => {
   expect(hostPath('https://example.com/')).toBe('example.com')
 })
 
-test('pathological inputs stay linear: backtick runs, link openers, angle brackets, URL runs', () => {
-  const inputs = [
-    Array.from({ length: 600 }, (_, i) => '`'.repeat(i + 1) + 'a').join(' '),
-    '](a '.repeat(50_000),
-    '<a#1 '.repeat(40_000),
-    'https://a.b/'.repeat(20_000) + ' #5',
-    '```\n#1\n' + 'x#2\n'.repeat(50_000),
-  ]
-  const t0 = Date.now()
-  for (const t of inputs) extractRefs(t, { mode: 'full', defaultRepo: repo })
-  expect(Date.now() - t0).toBeLessThan(BIG_INPUT_MS)
-})
+// Each family has its input at `k` times the base size. At k = 4 it is about the size of the old fixed input, and at most
+// the cap (200 000 characters; a scan reads no more, so a bigger input shows nothing). The backtick family grows with the
+// square of its run count, so its run count grows with the square root of k.
+const PATHOLOGICAL: Record<string, (k: number) => string> = {
+  'backtick runs': k =>
+    Array.from({ length: Math.round(300 * Math.sqrt(k)) }, (_, i) => '`'.repeat(i + 1) + 'a').join(' '),
+  'link openers': k => '](a '.repeat(12_500 * k),
+  'angle brackets': k => '<a#1 '.repeat(10_000 * k),
+  'URL runs': k => 'https://a.b/'.repeat(4_100 * k) + ' #5',
+  'an open fence': k => '```\n#1\n' + 'x#2\n'.repeat(12_500 * k),
+}
+
+for (const [family, make] of Object.entries(PATHOLOGICAL)) {
+  test(`pathological inputs stay linear: ${family}`, async () => {
+    await expectLinear({ label: family, make, run: text => extractRefs(text, { mode: 'full', defaultRepo: repo }) })
+  })
+}
 
 test('parseRemote: single-letter host is not a remote', () => {
   expect(parseRemote('C:/work/repo')).toBeNull()
 })
 
-test('urls-only: a long punctuation run glued to a URL stays fast (trailing trim is linear)', () => {
-  const t0 = Date.now()
-  const refs = extractRefs('https://github.com/a/b/issues/1' + '.'.repeat(100_000) + 'x', {
-    mode: 'urls-only',
-    defaultRepo: null,
-  })
-  expect(Date.now() - t0).toBeLessThan(200)
+test('urls-only: a long punctuation run glued to a URL stays linear (trailing trim is linear)', async () => {
+  const urlsOnly = (text: string) => extractRefs(text, { mode: 'urls-only', defaultRepo: null })
+  await expectLinear({ make: k => 'https://github.com/a/b/issues/1' + '.'.repeat(25_000 * k) + 'x', run: urlsOnly })
+  const refs = urlsOnly('https://github.com/a/b/issues/1' + '.'.repeat(100_000) + 'x')
   expect(refs.length).toBe(0) // the run is one URL that does not parse as an issue URL
   const ok = extractRefs('see https://github.com/a/b/issues/1.,;!? and (https://github.com/a/b/pull/2).', {
     mode: 'urls-only',
@@ -233,11 +260,14 @@ test('urls-only: a long punctuation run glued to a URL stays fast (trailing trim
   expect(ok.map(r => (r.category === 'github' ? r.number : 0))).toEqual([1, 2])
 })
 
-test('hostPath stays fast on a long slash run that is not at the end', () => {
-  const t0 = Date.now()
-  hostPath('https://e.com/' + '/'.repeat(60_000) + 'x')
-  hostPath('e.com/' + '/'.repeat(60_000) + 'x')
-  expect(Date.now() - t0).toBeLessThan(200)
+test('hostPath stays linear on a long slash run that is not at the end', async () => {
+  await expectLinear({
+    make: k => '/'.repeat(25_000 * k) + 'x',
+    run: slashes => {
+      hostPath('https://e.com/' + slashes)
+      hostPath('e.com/' + slashes)
+    },
+  })
 })
 
 test('a web URL longer than 2048 chars is not tracked', () => {

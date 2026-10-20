@@ -2,13 +2,13 @@
 // New behavior goes in this file, so the older wiring tests keep their cases (spec 10, item 14).
 
 import type { Engine } from 'claude-code/testing'
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
+import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { reasonsOfSources } from './fixtures/reasons'
 import {
   clearSession,
   fileTool,
-  HANG_GUARD,
   PANE,
   quiet,
   readDone,
@@ -128,9 +128,9 @@ const FOCUS = {
 
 // The switch loads the transcript, and the transcript names issue #5: one gh call. The test holds that call open, so it
 // checks an order, not a time. The key must return while the call is open. A key that waits for it only returns when the
-// hook times out (about 10 s), and the #5 below stays unresolved. HANG_GUARD (30 s) keeps that inside the limit of the
-// test. Like the `session.start` test in register.test.tsx, it is no speed guard.
-test('the first pane focus after a /resume does not wait for the switch', HANG_GUARD, async ($, on) => {
+// hook times out (about 10 s), and the #5 below stays unresolved. The 30 s hang guard of `test` (fixtures/kit.ts) keeps
+// that inside the limit of the test. Like the `session.start` test in register.test.tsx, it is no speed guard.
+test('the first pane focus after a /resume does not wait for the switch', async ($, on) => {
   const w = world(on, {
     isolateState: true,
     messages: [{ role: 'user', text: 'please look at issue #5', toolUses: [] }],

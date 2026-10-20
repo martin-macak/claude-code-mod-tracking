@@ -3,13 +3,15 @@
 // the state per id, which is what a real /clear does. The live smoke run covers the rest.
 
 import type { Engine } from 'claude-code/testing'
-import { expect, mock, test } from 'claude-code/testing'
+import { expect, mock } from 'claude-code/testing'
 import type { ItemRecord, ProcessRecord } from './fixtures/contracts'
 import * as ev from './fixtures/events'
+import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { BG_START_MAIN, BG_START_SYNC_AGENT, MID_TURN_NOTICE } from './fixtures/notices'
 import { mountPane, select } from './fixtures/pane'
 import { reasonsOfSources } from './fixtures/reasons'
+import { expectLinear } from './fixtures/scaling'
 import {
   BAND,
   clearSession,
@@ -18,7 +20,6 @@ import {
   editDone,
   fileTool,
   graphqlCalls,
-  HANG_GUARD,
   PANE,
   prompt,
   quiet,
@@ -39,9 +40,7 @@ import {
 
 // ---------------------------------------------------------------- capture and refresh
 
-// This test asserts no time. The kit stops it after 5 s, which a busy machine exceeds (issue #104). HANG_GUARD only has
-// to catch a hang.
-test('prompt row: issue #5 and a Jira URL are listed by /track with refreshed status', HANG_GUARD, async ($, on) => {
+test('prompt row: issue #5 and a Jira URL are listed by /track with refreshed status', async ($, on) => {
   const { clock, calls } = world(on)
   await $.session.append(prompt('Look at issue #5 and https://acme.atlassian.net/browse/ISS-1'))
   await clock.advance(LIMITS.captureDebounceMs + 10)
@@ -834,12 +833,31 @@ test('a tool that is not installed is named in its section; the other tool still
   expect(text).toContain('ISS-1')
 })
 
-test('tool-result row of 1 MB settles fast, is stored whole, and a URL near its start is captured', async ($, on) => {
+// The row hook scans at most MAX_TEXT characters, so the cost is checked on texts up to the cap (the big one is 4 times the
+// small one). The kit has no CPU clock, so the check reads the wall clock (`wallClock`). That is exact for a run that is
+// shorter than a slice of the scheduler, and a run here takes about 1 ms. The 1 MB row after that is stored whole, and its
+// URL near the start is captured.
+test('tool-result row of 1 MB settles linearly, is stored whole, and a URL near its start is captured', async ($, on) => {
   const { clock, calls } = world(on)
-  const big = 'https://github.com/cli/cli/pull/14640 ' + 'x'.repeat(1_000_000)
-  const t0 = Date.now()
+  const result = (chars: number) => 'https://github.com/cli/cli/pull/14640 ' + 'x'.repeat(chars)
+  await expectLinear({
+    wallClock: true,
+    make: k => result(49_000 * k),
+    run: async text => {
+      await $.session.append(toolResult(text))
+    },
+  })
+  // Above the cap the scan is cut at MAX_TEXT, so only the store path of the row grows with it: the cost stays near linear.
+  await expectLinear({
+    label: 'above the cap',
+    wallClock: true,
+    make: k => result(250_000 * k), // 250 KB and 1 MB
+    run: async text => {
+      await $.session.append(toolResult(text))
+    },
+  })
+  const big = result(1_000_000)
   const stored = await $.session.append(toolResult(big))
-  expect(Date.now() - t0).toBeLessThan(3000)
   const block = (stored.message!.content as unknown as { content: string }[])[0]!
   expect(block.content.length).toBe(big.length)
   await clock.advance(LIMITS.captureDebounceMs + 10)
@@ -1133,8 +1151,9 @@ test('an ssh host alias is not kept as the session repo: gh resolves it and #N m
 // A start that waits for the check only returns when the call times out (about 10 s). The check then has failed, the
 // session has no repo, and the #N below stays unresolved. That is why the test ends on the late answer. The test is no
 // speed guard: a start that waits a short while and then goes on passes it, because the kit has no clock that tells it
-// from a fast start. HANG_GUARD (30 s) keeps the 10 s timeout of a real regression inside the limit of the test.
-test('session.start does not wait for the check of a non-github host', HANG_GUARD, async ($, on) => {
+// from a fast start. The 30 s hang guard of `test` (fixtures/kit.ts) keeps the 10 s timeout of a real regression inside
+// the limit of the test.
+test('session.start does not wait for the check of a non-github host', async ($, on) => {
   let release = () => {}
   const held = new Promise<void>(resolve => {
     release = resolve

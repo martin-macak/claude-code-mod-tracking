@@ -5,10 +5,11 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.7 and 5.11. Plan: L7 Task 7.
 
 import type { On, PromptComposeSection, PromptComposeTrait } from 'claude-code'
-import { type Engine, expect, mock, test } from 'claude-code/testing'
+import { type Engine, expect, mock } from 'claude-code/testing'
 import { PROMPT_FRAME, PROMPT_SECTION_ID } from '../core/infra/prompt'
 import type { PromptTrait } from '../core/interfaces/prompt'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
+import { test } from './fixtures/kit'
 import { clearSession, prompt, quiet, SESSION, START, toolResult, track, world } from './fixtures/world'
 
 /** The config file under `HOME = /home/u`. */

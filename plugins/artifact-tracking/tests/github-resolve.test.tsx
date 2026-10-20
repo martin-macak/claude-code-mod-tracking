@@ -3,9 +3,10 @@
 // `$.prompt.submit`, or runs git. The engine's `prompt.submit` and `process.run` are stubs beneath the mod.
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
 import { prNode } from './fixtures/gh-discovery'
 import { porcelain as gitPorcelain } from './fixtures/git'
+import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { mountPane, select } from './fixtures/pane'
 import { BAND, quiet, START, sleep, world } from './fixtures/world'

@@ -20,13 +20,11 @@ declare function setTimeout(fn: () => void, ms: number): unknown
 export const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
 /**
- * The options of a kit test that asserts no time: `test(name, HANG_GUARD, body)`. The kit stops a test after 5 s by
- * default. That is a speed limit, and a busy machine breaks it (issue #104). With 30 s the limit only catches a hang.
+ * Polls until the condition holds, for work a hook starts and does not return (a tick, a lookup). Throws after `ms`.
+ * The limit is a hang guard, not a speed limit: a busy machine takes seconds for what takes milliseconds on a quiet one
+ * (issue #104). 20 s stays inside the 30 s of `test` (fixtures/kit.ts), so the message names the wait, not the kit.
  */
-export const HANG_GUARD = { timeoutMs: 30_000 } as const
-
-/** Polls until the condition holds, for work a hook starts and does not return (a tick, a lookup). Throws after `ms`. */
-export async function until(cond: () => boolean, what: string, ms = 3000): Promise<void> {
+export async function until(cond: () => boolean, what: string, ms = 20_000): Promise<void> {
   const end = Date.now() + ms
   while (!cond()) {
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
