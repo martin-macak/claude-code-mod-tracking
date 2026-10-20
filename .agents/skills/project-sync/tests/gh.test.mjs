@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { PlanError } from '../scripts/core.mjs'
 import {
+  addToProject,
   applyChanges,
   applyMoves,
   classifyFailure,
@@ -484,6 +485,30 @@ test('applyMoves stops at the first failure and says what moved before it', () =
     err => err.kind === 'auth' && err.applied.length === 1 && err.applied[0].itemId === 'PVTI_a',
   )
   assert.equal(runner.calls.length, 2)
+})
+
+test('addToProject sends addProjectV2ItemById with the project id and the node id, and returns the id of the item', () => {
+  const runner = fakeRunner(() => ok({ data: { addProjectV2ItemById: { item: { id: 'PVTI_new' } } } }))
+  assert.equal(addToProject(makeGh(runner), { projectId: 'PVT_1', contentId: 'I_66' }), 'PVTI_new')
+  assert.equal(runner.calls.length, 1)
+  assert.deepEqual(runner.calls[0].body.variables, { projectId: 'PVT_1', contentId: 'I_66' })
+  assert.match(runner.calls[0].body.query, /addProjectV2ItemById\(input: \{ projectId: \$projectId, contentId: \$contentId \}\)/)
+  assert.match(runner.calls[0].body.query, /item \{ id \}/)
+})
+
+test('addToProject gives null when GitHub answers with no item', () => {
+  for (const data of [{ addProjectV2ItemById: { item: null } }, { addProjectV2ItemById: null }, {}]) {
+    const runner = fakeRunner(() => ok({ data }))
+    assert.equal(addToProject(makeGh(runner), { projectId: 'PVT_1', contentId: 'I_66' }), null, JSON.stringify(data))
+  }
+})
+
+test('addToProject fails with the kind of the gh failure', () => {
+  const runner = fakeRunner(() => fail(1, 'gh: Resource not accessible by personal access token (HTTP 403)'))
+  assert.throws(
+    () => addToProject(makeGh(runner), { projectId: 'PVT_1', contentId: 'I_66' }),
+    err => err instanceof GhError && err.kind === 'auth',
+  )
 })
 
 test('resolveContent tells an issue from a PR, and gives the URL, the node id, the state and the milestone', () => {
