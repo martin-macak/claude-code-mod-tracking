@@ -276,7 +276,11 @@ export const register: Register = on => {
   // The sections of every tracker, drawn by one TreeDataTable. A render only reads (E9). A failed read must not close
   // the pane: it draws one line instead.
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) =>
-    pane.draw(portsOf($), managerOf($), $.ui.resolve(e), e.props.bodyColumns, e.props.scroll?.bodyRows),
+    pane.draw(portsOf($), managerOf($), $.ui.resolve(e), {
+      bodyColumns: e.props.bodyColumns,
+      bodyRows: e.props.scroll?.bodyRows,
+      focused: e.props.isFocused,
+    }),
   ).catch(($, e) => TreeDataTable.unavailable($.ui.resolve(e)))
 
   // One line above the prompt, made from the sections that carry a band part. The engine's own band stays inside our Box.

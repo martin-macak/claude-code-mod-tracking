@@ -6,7 +6,7 @@ import type { RenderElement } from 'claude-code'
 import type { SectionSpec } from '../../core/interfaces/view'
 import { guard } from './budget'
 import { box, type TableElements, text } from './el'
-import { footerBox, footerRows } from './footer'
+import { footerBox, footerRows, moveHintFits } from './footer'
 import { compactHelp, renderHelp } from './help'
 import { type LaidSection, layout } from './layout'
 import { type Draw, drawSection } from './rows'
@@ -50,11 +50,13 @@ export const TreeDataTable = {
    * line. `handles` and `rows` describe the drawing that was kept.
    */
   render(sections: readonly SectionSpec[], view: TableView, el: TableElements, actions: TableActions): Drawn {
-    const footer = footerBox(el, view.footer, actions)
-    // The help view is one tree, so a short body turns it compact, with no gap, once for every attempt.
     const columns = view.bodyColumns ?? DEFAULT_BODY_COLUMNS
+    // The move hint only where it adds no footer row (issue #108), so it never turns the help view compact by itself.
+    const hint = moveHintFits(view.footer, columns)
+    const footer = footerBox(el, view.footer, actions, hint)
+    // The help view is one tree, so a short body turns it compact, with no gap, once for every attempt.
     const compact =
-      view.help !== null && compactHelp(view.help, footerRows(view.footer, columns), columns, view.bodyRows)
+      view.help !== null && compactHelp(view.help, footerRows(view.footer, columns, hint), columns, view.bodyRows)
     const laids: (readonly LaidSection[])[] = []
     const attempt = (halve: number, detail: boolean) => (): RenderElement[] => {
       if (view.help !== null) {
@@ -68,7 +70,7 @@ export const TreeDataTable = {
       const laid = layout(sections, view, halve)
       laids.push(laid)
       const rows = laid.flatMap(s => s.rows)
-      const focus = rows.some(r => r.row.id === view.selected) ? undefined : rows[0]?.handle
+      const focus = (rows.find(r => r.row.id === view.selected) ?? rows[0])?.handle
       const draw: Draw = { el, view, actions, detail, focus }
       return laid.map(s => drawSection(draw, s))
     }

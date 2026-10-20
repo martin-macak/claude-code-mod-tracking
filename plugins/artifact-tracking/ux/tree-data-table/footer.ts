@@ -1,18 +1,27 @@
-// The footer of the pane: one Button per key, then the hint, and the rows it takes. Pure.
-// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L6 Task 8, G16.
+// The footer of the pane: one Button per key, then the hints, and the rows it takes. Pure.
+// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L6 Task 8, G16. Issue #108: the move hint.
 import type { RenderElement } from 'claude-code'
 import type { FooterKey } from '../../core/interfaces/view'
 import { cellWidth } from '../text/cell-width'
 import { box, button, type TableElements, text } from './el'
 import type { TableActions } from './shape'
 
-/** The hint that ends the footer. */
+/**
+ * The hints that end the footer: how to move between rows (issue #108), then how to leave. The move hint is drawn only
+ * where it adds no row (`moveHintFits`): a short inline pane has no row to spare (issue #92).
+ */
+const MOVE_HINT = 'Tab ↑↓ move'
 const ESC_HINT = 'Esc close'
 /** The cells between two footer keys. */
 const KEY_GAP = 2
 
-/** One Button per key, then the hint. A disabled key stays, dim and inert: a letter with no Button leaves the pane. */
-export function footerBox(el: TableElements, keys: readonly FooterKey[], actions: TableActions): RenderElement {
+/** One Button per key, then the hints (the move hint only when `hint`). A disabled key stays, dim and inert: a letter with no Button leaves the pane. */
+export function footerBox(
+  el: TableElements,
+  keys: readonly FooterKey[],
+  actions: TableActions,
+  hint: boolean,
+): RenderElement {
   return box(
     el,
     { columnGap: KEY_GAP, flexWrap: 'wrap' },
@@ -26,16 +35,21 @@ export function footerBox(el: TableElements, keys: readonly FooterKey[], actions
         onPress: k.enabled ? () => actions.press(k.buttonKey) : () => undefined,
       }),
     ),
+    ...(hint ? [text(el, { dimColor: true }, MOVE_HINT)] : []),
     text(el, { dimColor: true }, ESC_HINT),
   )
 }
 
 /**
- * How many rows the footer takes in a body `columns` wide. A plain Button draws `key: label`. The engine wraps whole
- * Buttons onto the next row, so the count is a greedy fill.
+ * How many rows the footer takes in a body `columns` wide, with the move hint or without it. A plain Button draws
+ * `key: label`. The engine wraps whole Buttons onto the next row, so the count is a greedy fill.
  */
-export function footerRows(keys: readonly FooterKey[], columns: number): number {
-  const widths = [...keys.map(k => cellWidth(`${k.key}: ${k.label}`)), cellWidth(ESC_HINT)]
+export function footerRows(keys: readonly FooterKey[], columns: number, hint: boolean): number {
+  const widths = [
+    ...keys.map(k => cellWidth(`${k.key}: ${k.label}`)),
+    ...(hint ? [cellWidth(MOVE_HINT)] : []),
+    cellWidth(ESC_HINT),
+  ]
   let rows = 1
   let used = 0
   for (const width of widths) {
@@ -47,4 +61,9 @@ export function footerRows(keys: readonly FooterKey[], columns: number): number 
     }
   }
   return rows
+}
+
+/** Whether the move hint costs the footer no row in a body `columns` wide. The footer then draws it, else it leaves it out. */
+export function moveHintFits(keys: readonly FooterKey[], columns: number): boolean {
+  return footerRows(keys, columns, true) === footerRows(keys, columns, false)
 }

@@ -372,7 +372,7 @@ test('a declared command that throws is logged and the list still prints', async
 test('help prints the help view as text and does not open the pane', async () => {
   const t = managerWorld()
   const out = await t.m.track(t.w.ports, 'help')
-  expect(out.text.startsWith('Pane keys\n  r  refresh')).toBe(true)
+  expect(out.text.startsWith('Pane keys (Tab, Shift+Tab, Up, Down move between rows)\n  r  refresh')).toBe(true)
   expect(out.text).toContain('Config file:')
   expect(t.w.ui.opened).toBe(0)
 })

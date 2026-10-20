@@ -10,7 +10,9 @@ import { cellWidth } from '../text/cell-width'
 import { box, type TableElements, text } from './el'
 import { ROW_GAP } from './shape'
 
-const PANE_KEYS = 'Pane keys'
+// The title says how to move: Tab, Shift+Tab and the arrows are no footer keys, so the help view is where they are named
+// (issue #108). It adds no row, which a short inline pane has none to spare (issue #92).
+const PANE_KEYS = 'Pane keys (Tab, Shift+Tab, Up, Down move between rows)'
 const ROW_KEYS = 'Row keys (act on the selected row)'
 
 const owns = (rows: readonly TreeRow[], owner: string): boolean =>

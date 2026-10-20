@@ -26,6 +26,11 @@ export interface TableView {
   /** The most rows the pane may take (`scroll.bodyRows`). Only the help view reads it. Absent: no limit is known. */
   readonly bodyRows: number | undefined
   readonly selected: string | null
+  /**
+   * Whether the pane has the keys (`Pane.isFocused`). `false` draws the selected row without the live highlight: the
+   * keys go to the prompt box. Absent: the pane has them.
+   */
+  readonly focused?: boolean
   readonly expanded: ReadonlySet<string>
   /** Rows shown beyond the cap, by section id. */
   shown(sectionId: string): number

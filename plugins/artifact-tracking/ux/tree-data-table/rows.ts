@@ -47,6 +47,8 @@ function treeCell(d: Draw, col: SolvedColumn, cell: Cell, r: LaidRow, dim: boole
 
 function rowLine(d: Draw, solved: Solved, r: LaidRow): RenderElement {
   const selected = r.row.id === d.view.selected
+  // A pane that has no keys keeps the marker, dim, and drops the background: nothing here answers a key (issue #108).
+  const live = d.view.focused !== false
   const dim = r.row.dim === true
   const cells = solved.columns.map(col => {
     const cell = r.row.cells[col.id] ?? EMPTY
@@ -64,8 +66,8 @@ function rowLine(d: Draw, solved: Solved, r: LaidRow): RenderElement {
   })
   return box(
     d.el,
-    { columnGap: 1, ...(selected ? { backgroundColor: COLOR.selected } : {}) },
-    text(d.el, {}, selected ? GLYPH.selected : GLYPH.unselected),
+    { columnGap: 1, ...(selected && live ? { backgroundColor: COLOR.selected } : {}) },
+    text(d.el, selected && !live ? { dimColor: true } : {}, selected ? GLYPH.selected : GLYPH.unselected),
     ...cells,
   )
 }

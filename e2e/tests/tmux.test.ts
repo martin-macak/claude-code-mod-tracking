@@ -75,3 +75,11 @@ test('Tmux kill never throws, also twice', { skip }, async () => {
   tmux.kill()
   tmux.kill()
 })
+
+test('Tmux click sends an SGR mouse press and release at the 1-based column and row', { skip }, async t => {
+  const tmux = await shell('click')
+  t.after(() => tmux.kill())
+  tmux.line('cat -v') // cat shows the escape bytes as ^[
+  tmux.click(30, 5)
+  await screenHas(tmux, '^[[<0;30;5M^[[<0;30;5m')
+})

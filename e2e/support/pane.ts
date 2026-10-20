@@ -54,3 +54,16 @@ export function focusedTexts(ansi: string): string[] {
 export function withFocus(plain: string, ansi: string): string {
   return `${plain}\n--- reverse video: ${JSON.stringify(focusedTexts(ansi))}`
 }
+
+// The 1-based column and row of the arrow (`▸` closed, `▾` open) of the first row that shows `text`, and the arrow itself,
+// or undefined. The arrow is the one place of a row that takes a click.
+export function arrowOf(screen: string, text: string): { column: number; row: number; glyph: string } | undefined {
+  const lines = screen.split('\n')
+  for (const [at, line] of lines.entries()) {
+    const found = /[▸▾] /.exec(line)
+    if (found !== null && line.slice(found.index + 2).startsWith(text)) {
+      return { column: found.index + 1, row: at + 1, glyph: line.charAt(found.index) }
+    }
+  }
+  return undefined
+}
