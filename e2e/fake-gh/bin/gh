@@ -1,0 +1,4 @@
+#!/bin/sh
+# A fake gh for the e2e harness. It must be first on PATH of claude. See e2e/support/fake-gh.ts.
+# FAKE_GH_NODE is the node that runs the harness. Without it, the node on PATH runs the program.
+exec "${FAKE_GH_NODE:-node}" --disable-warning=ExperimentalWarning "$(dirname "$0")/../main.ts" "$@"

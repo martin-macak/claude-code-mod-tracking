@@ -38,6 +38,12 @@ Make the README demo GIF from a Gherkin scenario that also runs as an E2E test.
 | `Then no permission dialog is open` | Fails if a tool approval opened. |
 | `Given the tracker config file:` (doc string) | Hidden. Writes the scenario's `config.json` before the session starts. Every scenario has its own empty config folder. |
 | `Then the tracker config file sets "a.b" to "json"` | Polls the file for the value at the dotted path, for example `"trackers.web.enabled"` to `"false"`. |
+| `When I press "…" until the screen matches /re/, then Claude finishes` | Presses the key every second until the screen matches, then waits for the turn it started. For a key that sends a prompt but can do nothing at first, such as the resolve key `c`, which needs the PR lane to have looked at the PR. |
+| `Given a fake GitHub repo "owner/repo" with the clone on the branch "…"` | Hidden. Puts the clone on a feature branch (PR discovery drops the default branch), makes its `origin` a local copy and puts the fake `gh` on the `PATH` of the session. Not for `@demo`: the demo uses live data. |
+| `Given the fake gh reports PR #N "title" from "head" into "base" as CONFLICTING` | Hidden. Adds a PR to the fake. The last word is `CONFLICTING`, `MERGEABLE` or `UNKNOWN`. |
+| `Then the fake gh answered "call"` | Polls the fake's log, for example `"graphql discovery"` or `"--version"`. Shows that the session ran the fake and not the real `gh`. |
+| `Then the fake gh answered no unsupported call` | Fails when the fake got no call, or one it does not know. |
+| `Then the fake origin got no push` | Fails when a ref of the local copy of the origin changed. Use it after a step that makes the session act on its own. |
 
 ## Loop
 
@@ -76,6 +82,7 @@ Make the README demo GIF from a Gherkin scenario that also runs as an E2E test.
 | The band reads like `tracking GitHub 1 (1 ✗) /track`. | `(n ✗)` counts failing checks. Allow it in regexes. |
 | A bare `#N` of a closed issue is gated out. | Use full GitHub URLs. |
 | A prompt that invites a tool ("look at", "fetch") may open a dialog. | "Note X for later. Reply ok." |
+| A `gh` first on the `PATH` of claude also answers claude. Claude Code itself runs `gh auth token` at start. | The fake gives no token. `e2e/fake-gh` and spec section 14 hold the rest. |
 
 ## Red flags
 

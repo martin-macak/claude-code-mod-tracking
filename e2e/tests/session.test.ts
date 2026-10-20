@@ -8,6 +8,8 @@ import {
   claudeCommand,
   countLines,
   DEMO_SYSTEM_PROMPT,
+  fakeGithubClone,
+  listRefs,
   prepareClone,
   READY_MARKERS,
   shellQuote,
@@ -161,4 +163,47 @@ test('prepareClone works from a linked worktree on an unpushed branch', () => {
   const clone = prepareClone(worktree, tempDir('parent-'))
   assert.equal(git(['rev-parse', 'HEAD'], clone), head)
   assert.equal(readFileSync(join(clone, 'g'), 'utf8'), 'y')
+})
+
+test('fakeGithubClone puts the clone on a branch, with an origin that names a fake repo and is a local copy', () => {
+  const repo = tempDir('repo-')
+  const git = (args: string[], cwd = repo) =>
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim()
+  git(['init', '-q', '-b', 'main'])
+  writeFileSync(join(repo, 'f'), 'x')
+  git(['add', 'f'])
+  git(['commit', '-q', '-m', 'c'])
+  git(['remote', 'add', 'origin', 'git@github.com:real/repo.git'])
+  const parent = tempDir('parent-')
+  const clone = prepareClone(repo, parent)
+
+  const bare = fakeGithubClone(clone, parent, { branch: 'feat/fake-conflict', ownerRepo: 'e2e-owner/e2e-repo' })
+  assert.equal(bare, join(parent, 'fake-origin.git'))
+  assert.equal(git(['branch', '--show-current'], clone), 'feat/fake-conflict')
+  // The config keeps the fake GitHub URL. `get-url` and every fetch or push go through the local copy.
+  assert.equal(git(['config', '--get', 'remote.origin.url'], clone), 'https://github.com/e2e-owner/e2e-repo.git')
+  assert.equal(git(['remote', 'get-url', 'origin'], clone), bare)
+  const refs = git(['ls-remote', 'origin'], clone)
+  assert.match(refs, /refs\/heads\/main$/m)
+  assert.match(refs, /refs\/heads\/feat\/fake-conflict$/m)
+  assert.equal(git(['rev-parse', 'HEAD'], clone), git(['rev-parse', 'refs/heads/feat/fake-conflict'], bare))
+
+  // A push goes to the local copy. Neither the real remote nor the source repo sees it.
+  const before = listRefs(bare)
+  assert.match(before, /^refs\/heads\/feat\/fake-conflict [0-9a-f]{40}$/m)
+  assert.equal(listRefs(bare), before)
+  git(['push', '-q', 'origin', 'HEAD:refs/heads/pushed'], clone)
+  assert.notEqual(listRefs(bare), before)
+  assert.match(listRefs(bare), /^refs\/heads\/pushed /m)
+  assert.equal(git(['rev-parse', 'refs/heads/pushed'], bare), git(['rev-parse', 'HEAD'], clone))
+  assert.throws(() => git(['rev-parse', '--verify', 'refs/heads/pushed'], repo))
+
+  // A second call replaces the old copy.
+  fakeGithubClone(prepareClone(repo, parent), parent, { branch: 'feat/fake-conflict', ownerRepo: 'e2e-owner/e2e-repo' })
+  assert.throws(() => git(['rev-parse', '--verify', 'refs/heads/pushed'], bare))
+})
+
+test('fakeGithubClone refuses an owner/repo that is not two plain names', () => {
+  for (const bad of ['no-slash', 'a/b/c', '/b', 'a/', 'a b/c', 'a/b;c'])
+    assert.throws(() => fakeGithubClone('/x', '/y', { branch: 'b', ownerRepo: bad }), /owner\/repo/)
 })

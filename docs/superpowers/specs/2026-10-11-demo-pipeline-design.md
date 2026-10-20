@@ -15,7 +15,7 @@ Three parts:
 ### 1.1 Non-goals
 
 - E2E in CI. CI has no Claude login, and a real model costs money on each run.
-- Stubbed `gh` or `acli`. The demo uses this repo's live issues and PRs.
+- Stubbed `gh` or `acli` in the demo. The demo uses this repo's live issues and PRs. A feature scenario that needs a PR state real GitHub gives not on demand (a merge conflict) uses the fake `gh` of section 14.
 - A deterministic model. The scenario asserts on mod output (band, pane), not on Claude's words.
 - Prompt delivery over a socket or the local peer channel. Peer prompts render as teammate messages, not as typed input.
 - Video formats other than GIF. Several GIFs per README.
@@ -96,13 +96,20 @@ e2e/
   cucumber.mjs          profiles: default (e2e), demo (record, tags @demo)
   features/
     tracking.feature    written by the skill
+    conflicts.feature   the conflict chip and the resolve key, on the fake gh (section 14)
   steps/
     session.steps.ts
     prompt.steps.ts
     screen.steps.ts
     narrative.steps.ts
+    fake-gh.steps.ts    fake repo, fake PR, checks of the fake gh log and origin
+  fake-gh/
+    bin/gh              the shim: the one file that goes first on PATH of claude
+    main.ts             the shim's program: reads the spec, logs the call
   support/
     config.ts           env to config, defaults
+    fake-gh.ts          the answers of the fake gh (no import, so a contract test can load it)
+    fake-gh-env.ts      the shim dir and the env that puts it on PATH
     tmux.ts
     session.ts
     slug.ts             scenario name to folder name
@@ -224,6 +231,12 @@ The skill reuses these steps first. It adds a step only when no step fits.
 | `Given the tracker config file:` | cut | Write the doc string to `config.json` in the scenario's config folder, before the session starts. |
 | `Then the tracker config file sets {string} to {string}` | fast, then normal | Poll until the value at the dotted path equals the JSON text. |
 | `When I pause for {float} seconds` | normal | Hold the frame so a viewer can read it. At most 5 s, the agg idle limit. |
+| `When I press {string} until the screen matches {regex}, then Claude finishes` | normal, then fast | Read the signal count, then press the key every second until the screen matches, then wait for the turn it started. For a key that sends a prompt but can do nothing at first (the resolve key needs the PR lane to have looked at the PR). A second press is safe: a queued PR refuses it. |
+| `Given a fake GitHub repo {string} with the clone on the branch {string}` | cut | Section 14: the clone goes on the branch, its origin becomes a local copy, the fake `gh` is on for the launch. |
+| `Given the fake gh reports PR #{int} {string} from {string} into {string} as {word}` | cut | Add a PR to the fake. The word is `CONFLICTING`, `MERGEABLE` or `UNKNOWN`. |
+| `Then the fake gh answered {string}` | fast, then normal | Poll the fake's log for a call with that name and exit 0. |
+| `Then the fake gh answered no unsupported call` | normal | Fails when the log is empty (the fake is not first on PATH) or holds a call the fake does not know. |
+| `Then the fake origin got no push` | normal | Fails when a ref of the local copy of the origin differs from the start. |
 
 Every wait has a timeout from section 3.3. A timeout fails the step with the last screen in the message.
 
@@ -386,3 +399,85 @@ The skill text does not get markdownlint, because hooks skip `.agents/` and `.cl
 - Recording Jira beats. Possible later, if `acli` has a demo site.
 - Recording auto-tracking beats that need Claude to make worktrees or agents. They cost more model time and add tool dialogs. The skill may add one if a cheap path exists.
 - Hosting the GIF outside the repo.
+
+## 14. Fake gh for a scenario (issue #106)
+
+Question of the spike: can a fake `gh` drive the merge conflict chip and the resolve key of issue #50 in E2E? The owner had moved both scenarios out of #50, because the harness drove the real `gh` and could not fake a conflict.
+
+**Answer: yes, for both.** `e2e/features/conflicts.feature` holds one scenario for each, and both pass. Evidence label: *verified-live* (Claude Code 2.1.304, tmux 3.8, `haiku`, 2026-10-20), plus unit tests of the fake and of its clone and env helpers (`make e2e-unit`, also in CI) and a contract test that runs the real `GhTool` of the mod against the fake (`scripts/contracts/fake-gh-contract.test.mjs`, `make test-scripts`, also in CI).
+
+### 14.1 Evidence
+
+| Claim | Evidence |
+| --- | --- |
+| A `gh` first on the `PATH` of claude is the `gh` of the mod. `claudeCommand` already sets variables through `env(1)`, and the engine's process runner (`$.process.run`) honors the `PATH` that claude got. | The fake's log in the chip scenario holds the mod's calls `--version` and `graphql discovery`, both with exit 0 (excerpt below). |
+| The PR lane draws the chip from the fake's reply. | Step `the screen matches /│[^\n]*#7[^\n]*✗ conflicts/` passes. The row reads `★ ▸ #7  Fix the fake conflict  feat/fake-conflict  open  ✗ conflicts  ✓ checks`. |
+| The chip comes from the reply, not from the harness. | The same two scenarios fail at the chip step with `as MERGEABLE` in place of `as CONFLICTING` (run once by hand, 2026-10-20). |
+| The resolve key works on the fake PR. | After `c`, the row reads `queued`. The session ran a model turn (the Stop hook signal), so the prompt reached the engine. The model said it could not run tools. |
+| The session ran no tool. | `no permission dialog is open` and `the fake origin got no push` pass: no ref of the local copy of the origin changed. This is a tripwire for a scenario that gives tools. The session has no tools here, so the steps cannot fail today. The rewrite that keeps a push off GitHub is proved by the unit test of `fakeGithubClone`. |
+
+Log of the chip scenario (long query cut):
+
+```text
+{"call":"auth token","exit":1,"argv":["auth","token"]}
+{"call":"auth token","exit":1,"argv":["auth","token","--hostname","github.com"]}
+{"call":"--version","exit":0,"argv":["--version"]}
+{"call":"graphql discovery","exit":0,"argv":["api","graphql","--hostname","github.com","-f","query=query {..."]}
+```
+
+The two `auth token` calls are not the mod's. Claude Code itself runs `gh auth token` at start (and again after a turn) for its own PR status. A `gh` first on `PATH` answers claude too. The fake gives no token, so claude cannot call GitHub for the fake repo. The footer then reads `gh auth login for PR status`.
+
+### 14.2 How it works
+
+```mermaid
+sequenceDiagram
+  participant W as DemoWorld
+  participant Cl as claude (tmux)
+  participant M as mod (PR lane)
+  participant G as fake-gh/bin/gh
+  W->>W: clone on feat/fake-conflict, origin is a local copy
+  W->>W: write the spec (fake-gh.json)
+  W->>Cl: env PATH=fake-gh/bin:$PATH FAKE_GH_SPEC=... claude ...
+  Cl->>G: gh auth token (claude's own, no token)
+  M->>G: gh --version
+  M->>G: gh api graphql (discovery)
+  G-->>M: one CONFLICTING PR under the head alias
+  M->>M: Merge column reads "✗ conflicts"
+  W->>Cl: key c, again every second until the row reads queued
+  M->>Cl: prompt.submit(resolve prompt)
+  Cl-->>W: Stop hook line, the turn ended
+  W->>W: check the fake's log and the refs of the origin
+```
+
+`bin/gh` is a short shell script that runs `main.ts` with the node of the harness. `main.ts` reads the spec file, asks `answer()` in `support/fake-gh.ts` and appends one JSON line per call to the log. `bin/` holds `gh` alone, so putting it on `PATH` adds no other command. Without `FAKE_GH_SPEC` the shim exits 2: a stray `PATH` never fakes GitHub silently.
+
+### 14.3 What the fake answers
+
+| Call | Answer |
+| --- | --- |
+| `--version`, `auth status` | Exit 0. |
+| `auth token` | Exit 1, no token (see 14.1). |
+| `repo view --json nameWithOwner,url` | The fake repo. The mod does not ask while the remote names github.com. |
+| `api graphql`, discovery (`defaultBranchRef` in the query) | `defaultBranchRef` is `main`. A head alias gets the PRs with that head, in any state. A base alias gets the open PRs with that base. Another repo gets `NOT_FOUND`, exit 1. |
+| `api graphql`, item refresh (`issueOrPullRequest(` in the query) | The PR by number. A number the fake does not know gets `null`. |
+| Anything else | Exit 1, log name `unsupported`. The step `the fake gh answered no unsupported call` fails on it. |
+
+The formats come from `buildDiscoveryQuery` (`trackers/github/pr-discovery.ts`) and `buildQuery` (`trackers/github/gh-tool.ts`). A change of an alias name makes the fake answer `unsupported`, so a scenario fails loud. It fails sooner too: `scripts/contracts/fake-gh-contract.test.mjs` runs the real `GhTool` and `discoverPrs` against `answer()`, in `make verify` and in CI, so the break shows before a local `make e2e`. That test lives beside the other contracts and not in the plugin tests, because the kit refuses an import from outside the plugin folder. The live runs showed no `graphql refresh` call: a discovered PR stays current for half of `staleMs` (2.5 min), and a scenario lasts seconds. That path has unit tests only.
+
+### 14.4 Guards: nothing reaches GitHub
+
+1. The fake has no network code.
+2. It answers `auth token` with no token, so claude has no credential for the fake repo. `env(1)` cannot unset a variable, so `fakeGhEnv` sets `GH_TOKEN` and `GITHUB_TOKEN` to an empty value: a token in the environment of the harness does not reach claude. Whether Claude Code treats an empty value as no token is not verified. The worst case is a read of `e2e-owner/e2e-repo`, which does not exist.
+3. The fake repo is `e2e-owner/e2e-repo`. A query for any other repo gets `NOT_FOUND`, never a PR.
+4. `origin` keeps the URL `https://github.com/e2e-owner/e2e-repo.git` in its config, which is where the mod reads the repo. `url.<copy>.insteadOf` sends every fetch and push to a bare copy of the clone (`$DEMO_DIR/fake-origin.git`). The step `the fake origin got no push` compares the refs of the copy with the start. The unit test of `fakeGithubClone` proves the rewrite: a push lands in the copy, and the source repo does not see it.
+
+   The design leans on one fact about the engine. The PR lane gets the repo from the engine (`session.repo()`), which reads the URL in the config of the clone (*verified-live*, 2.1.304). `git remote get-url origin` returns the copy, and the repos tracker reads the remote that way (`trackers/repos/tracker.ts`). If a Claude Code release reads the remote with `get-url`, discovery stops and the chip scenario fails at the chip step. Check this first.
+5. The resolve key sends a real prompt (a model turn). The session has the demo system prompt (no tools) and no allow list. A tool call would open a permission dialog that nobody approves. The turn would stall, so `waitForTurnEnd` would time out first, after 120 s, with the last screen in the message. `no permission dialog is open` and `the fake origin got no push` guard a later scenario that gives tools. They cannot fail in these two scenarios. The model's words change from run to run, so no step reads them.
+6. The mod never rebases, merges or pushes. It only asks Claude to.
+
+### 14.5 Limits
+
+- A scenario states a static PR. A PR that stops conflicting, or the `UNKNOWN` retries (3 s, 6 s, 12 s), needs a step that rewrites the spec and a refresh. None exists.
+- The `f` key (conflict files) runs `git fetch` from `origin`. With the copy as origin it stays local. No scenario yet.
+- The second press of `c` being ignored (AC9) is proved by kit tests only (`github-actions.test.ts`, `github-resolve.test.tsx`). A screen cannot tell a second prompt from the first.
+- The resolve scenario costs one model turn (about 5 to 25 s).

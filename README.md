@@ -155,7 +155,7 @@ Run `make help` for every target.
 | Path | Content |
 | --- | --- |
 | [`plugins/`](plugins/) | The mods. One folder per mod. |
-| [`e2e/`](e2e/) | Gherkin scenarios that drive a real `claude` in tmux, the demo recorder and their tests. |
+| [`e2e/`](e2e/) | Gherkin scenarios that drive a real `claude` in tmux (with a fake `gh` where a PR state is needed), the demo recorder and their tests. |
 | [`docs/knowledge-base/`](docs/knowledge-base/AGENTS.md) | Research notes, one folder per problem. Start with `claude-code-mods/`. |
 | [`docs/superpowers/specs/`](docs/superpowers/specs/) | Design specs. |
 | [`AGENTS.md`](AGENTS.md) | Rules for agents and contributors: lint, branches, commits, PRs, issues, planning and delivery. |
