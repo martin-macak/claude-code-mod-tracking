@@ -4,10 +4,12 @@
 import { expect, test } from 'claude-code/testing'
 import type { Effective } from '../core/interfaces/items'
 import type { Cell, TreeRow } from '../core/interfaces/view'
+import { addReason } from '../core/lib/reasons'
 import { githubRow } from '../trackers/github/rows'
 import { jiraSiteKey, nestedJira } from '../trackers/jira/nested'
 import { type JiraEnv, jiraRow, trackedOf } from '../trackers/jira/rows'
 import type { GitHubRecord, JiraNode, JiraRecord, ToolStatus } from './fixtures/contracts'
+import { MENTIONED, reasonsOfSources } from './fixtures/reasons'
 
 const SITE = 'acme.atlassian.net'
 const acli = (site: string | null): ToolStatus => ({
@@ -28,6 +30,7 @@ const base = (key: string, url: string, label: string, firstSeen: number) => ({
   url,
   label,
   sources: ['prompt' as const],
+  reasons: MENTIONED,
   firstSeen,
   lastSeen: firstSeen,
   seenCount: 1,
@@ -182,9 +185,22 @@ test('tracked jira child: the nested row keeps the via marker and the level of t
   expect(root?.can).toEqual({ dismiss: true, priority: true })
 })
 
+test('tracked jira child: the nested row carries the reasons of its own record, not those of the root (#62)', () => {
+  const read = trackedSub('BUG-3202', 2, { sources: ['tool'], reasons: reasonsOfSources(['prompt', 'tool']) })
+  expect(read.reasons).not.toEqual(subParent.reasons)
+  const [root] = rootsOf([subParent, read, sub2])
+  expect(root?.reasons).toEqual(subParent.reasons)
+  const [first, second] = root?.children ?? []
+  expect(first?.id).toBe(`${subParent.key}/BUG-3202`)
+  expect(first?.reasons).toEqual(read.reasons)
+  expect(second?.id).toBe(`${subParent.key}/BUG-3203`)
+  expect(second?.reasons).toEqual(sub2.reasons)
+})
+
 test('tracked jira child: a record named by two PRs shows both on its nested row', () => {
   const both = trackedSub('BUG-3202', 2, {
-    sources: ['prompt', 'pr-body'],
+    sources: ['prompt'],
+    reasons: addReason(reasonsOfSources(['prompt']), 'discovered'),
     via: ['gh:github.com/o/r#1', 'gh:github.com/o/r#2'],
   })
   const rows = flat(rootsOf([subParent, both])).map(r => r.row)

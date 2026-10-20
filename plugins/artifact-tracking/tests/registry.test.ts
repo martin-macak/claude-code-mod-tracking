@@ -1,5 +1,6 @@
 // Registry: keys, record conversion, merge, dedupe, caps, re-key, carry-over, hydrate. Pure.
 import { expect, test } from 'claude-code/testing'
+import { addReason } from '../core/lib/reasons'
 import { PAGE_CODE_URL, PAGE_ID, PAGE_KEY, PAGE_URL, PAGE_UUID, PAIRS } from './fixtures/artifacts'
 import type {
   ArtifactRecord,
@@ -14,12 +15,14 @@ import type {
   JiraRecord,
   JiraRef,
   JiraToolApi,
+  Sighting,
   ToolStatus,
   WebRecord,
   WebRef,
 } from './fixtures/contracts'
 import { artifactOrigin, fileKey, keyOf } from './fixtures/keys'
 import { LIMITS } from './fixtures/limits'
+import { DISCOVERED, LANE, MENTIONED, reasonsOfSources } from './fixtures/reasons'
 import {
   carryOver,
   hydrate,
@@ -71,7 +74,9 @@ const codeRef = (over: Partial<ArtifactRef> = {}): ArtifactRef =>
 /** What a publish of the page gives: its title. */
 const publishRef = (over: Partial<ArtifactRef> = {}): ArtifactRef =>
   artifactRef({ label: 'Probe Page 29', titled: true, ...over })
-const s = (at: number, source: 'prompt' | 'response' | 'tool' | 'publish' = 'prompt') => ({ source, at })
+/** A sighting. `publish` is what an Artifact call makes: a `tool` sighting with the reason `published`. */
+const s = (at: number, source: 'prompt' | 'response' | 'tool' | 'publish' = 'prompt'): Sighting =>
+  source === 'publish' ? { source: 'tool', at, reason: 'published' } : { source, at }
 const art = (list: readonly ItemRecord[]): ArtifactRecord => list[0] as ArtifactRecord
 const unresolved = (n: number): GitHubRef => ({ category: 'github', host: 'github.com', number: n, type: 'unknown' })
 
@@ -147,6 +152,7 @@ test('recordFromRef: artifact keeps URL and label; the origin follows the source
     url: PAGE_URL,
     label: PAGE_ID,
     sources: ['response'],
+    reasons: MENTIONED,
     firstSeen: 1,
     lastSeen: 1,
     seenCount: 1,
@@ -229,6 +235,7 @@ test('recordFromFile: one activity sets one counter; the key is file:<path>', ()
     views: 0,
     mentions: 0,
     sources: ['prompt'],
+    reasons: { first: 'created', all: ['created'], strongest: 'created' },
     firstSeen: 1,
     lastSeen: 1,
     seenCount: 1,
@@ -512,6 +519,7 @@ test('rekeyArtifacts: an old web row of an artifact URL becomes an artifact row'
     url: PAGE_URL,
     label: 'Design notes',
     sources: ['response'],
+    reasons: MENTIONED,
     firstSeen: 1,
     lastSeen: 1,
     seenCount: 1,
@@ -593,7 +601,7 @@ test('unionRecords: a published artifact wins over a mention in either order: or
     expect(artifactOrigin(art(out))).toBe('published')
     expect(art(out).label).toBe('Probe Page 29')
     expect(art(out).url).toBe(PAGE_URL)
-    expect(art(out).sources.sort()).toEqual(['publish', 'response'])
+    expect(art(out).sources.sort()).toEqual(['response', 'tool'])
   }
 })
 
@@ -649,6 +657,7 @@ const webAt = (i: number, sources: ItemRecord['sources'], over: Partial<WebRecor
   url: `https://e.example/${i}`,
   label: `e${i}`,
   sources,
+  reasons: reasonsOfSources(sources),
   firstSeen: i,
   lastSeen: i,
   seenCount: 1,
@@ -656,21 +665,24 @@ const webAt = (i: number, sources: ItemRecord['sources'], over: Partial<WebRecor
 })
 const many = (from: number, n: number, sources: ItemRecord['sources']) =>
   Array.from({ length: n }, (_, i) => webAt(from + i, sources))
+/** A record that only discovery found: no channel, the reason `discovered` (issue #62). */
+const foundAt = (i: number, over: Partial<WebRecord> = {}) => webAt(i, [], { reasons: DISCOVERED, ...over })
+const manyFound = (from: number, n: number) => Array.from({ length: n }, (_, i) => foundAt(from + i))
 
 test('cap: 500 mentioned plus 100 auto-only items evict nothing', () => {
-  const r = unionRecords(many(1, LIMITS.maxItems, ['prompt']), many(1000, LIMITS.maxAutoItems, ['pr-body']))
+  const r = unionRecords(many(1, LIMITS.maxItems, ['prompt']), manyFound(1000, LIMITS.maxAutoItems))
   expect(r).toHaveLength(LIMITS.maxItems + LIMITS.maxAutoItems)
 })
 
 test('cap: 501 mentioned plus 100 auto-only items evict one mentioned item and no auto item', () => {
-  const r = unionRecords(many(1, LIMITS.maxItems + 1, ['prompt']), many(1000, LIMITS.maxAutoItems, ['auto']))
+  const r = unionRecords(many(1, LIMITS.maxItems + 1, ['prompt']), manyFound(1000, LIMITS.maxAutoItems))
   expect(r).toHaveLength(LIMITS.maxItems + LIMITS.maxAutoItems)
-  expect(r.filter(x => x.sources.includes('auto'))).toHaveLength(LIMITS.maxAutoItems)
+  expect(r.filter(x => x.reasons.all.includes('discovered'))).toHaveLength(LIMITS.maxAutoItems)
   expect(r.find(x => x.key === 'web:https://e.example/1')).toBeUndefined()
 })
 
-test('cap: a mentioned item that also has an auto source is not counted and not evicted', () => {
-  const oldest = webAt(0, ['prompt', 'auto'])
+test('cap: a mentioned item that discovery also found is not counted and not evicted', () => {
+  const oldest = webAt(0, ['prompt'], { reasons: addReason(MENTIONED, 'discovered') })
   const r = unionRecords([oldest, ...many(1, LIMITS.maxItems, ['prompt'])], [])
   expect(r).toHaveLength(LIMITS.maxItems + 1)
   expect(r.find(x => x.key === oldest.key)).toBeDefined()
@@ -708,15 +720,15 @@ test('R12: mergeRefs keeps a high item over a newer unmarked one', () => {
 })
 
 test('mergeRefs applies the same cap rule', () => {
-  const list = [webAt(1, ['prompt']), webAt(2, ['prompt']), webAt(3, ['pr-body'])]
+  const list = [webAt(1, ['prompt']), webAt(2, ['prompt']), foundAt(3)]
   const fresh = webRef({ url: 'https://new.example/', label: 'new' })
   const r = mergeRefs(list, [fresh], s(10), 2)
   expect(r.list.map(x => x.key)).toEqual(['web:https://e.example/2', 'web:https://e.example/3', keyOf(fresh)])
 })
 
 test('fold and unionRecords merge via (union, a first); a record without via stays without', () => {
-  const a = webAt(1, ['pr-body'], { via: ['k1'] })
-  const b = webAt(1, ['pr-body'], { via: ['k2', 'k1'] })
+  const a = foundAt(1, { via: ['k1'] })
+  const b = foundAt(1, { via: ['k2', 'k1'] })
   expect(unionRecords([a], [b])[0]?.via).toEqual(['k1', 'k2'])
   const plain = unionRecords([webAt(2, ['prompt'])], [webAt(2, ['prompt'])])
   expect(plain[0]?.via).toBeUndefined()
@@ -833,7 +845,7 @@ test('a record stored before priority existed reads as no mark and round-trips w
 })
 
 test('mergeRefs and unionRecords copy via, so the output never shares the input array', () => {
-  const rec = webAt(1, ['pr-body'], { via: ['k1'] })
+  const rec = foundAt(1, { via: ['k1'] })
   const out = mergeRefs([rec], [], s(5)).list[0]!
   expect(out.via).toEqual(['k1'])
   expect(out.via).not.toBe(rec.via)
@@ -864,7 +876,7 @@ test('mergeResults keeps via, headRefName and baseRefName of the stored record',
     category: 'github',
     url: 'https://github.com/acme/web/pull/7',
     label: 'acme/web#7',
-    sources: ['auto'],
+    ...LANE,
     via: ['gh:github.com/acme/web#9'],
     firstSeen: 1,
     lastSeen: 1,

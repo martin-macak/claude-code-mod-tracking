@@ -1,11 +1,16 @@
 // applyDiscovery and dropAuto: upsert, quiet steps, prune, caps. Pure.
 import { expect, test } from 'claude-code/testing'
 import type { Claim } from '../core/interfaces/items'
+import { addReason, reasonSet } from '../core/lib/reasons'
+import { foldRecords } from '../core/lib/records'
 import { applyDiscovery, dropAuto } from '../trackers/github/discovered'
-import type { GitHubRecord, GitHubRef, ItemRecord, WebRef } from './fixtures/contracts'
+import { githubKind } from '../trackers/github/kind'
+import { isLanePr } from '../trackers/github/lane-pr'
+import type { GitHubRecord, GitHubRef, ItemRecord, Ref, WebRef } from './fixtures/contracts'
 import { discovered } from './fixtures/gh-discovery'
 import { claimsOf, isAutoOnly, keyOf, prKey } from './fixtures/keys'
 import { LIMITS } from './fixtures/limits'
+import { DISCOVERED, LANE, named, reasonsOfSources } from './fixtures/reasons'
 import { buildRecord } from './fixtures/registry'
 
 const AT = 10_000_000
@@ -39,6 +44,7 @@ const mentioned = (n: number, over: Partial<GitHubRecord> = {}): GitHubRecord =>
   url: `https://github.com/acme/web/pull/${n}`,
   label: `acme/web#${n}`,
   sources: ['prompt'],
+  reasons: reasonsOfSources(['prompt']),
   firstSeen: 1,
   lastSeen: 2,
   seenCount: 2,
@@ -55,7 +61,8 @@ const autoWeb = (i: number): ItemRecord => ({
   category: 'web',
   url: `https://x.example/${i}`,
   label: `x${i}`,
-  sources: ['pr-body'],
+  sources: [],
+  reasons: DISCOVERED,
   via: [K7],
   firstSeen: 1,
   lastSeen: 1,
@@ -66,14 +73,18 @@ test('prKey is the item key of the PR', () => {
   expect(prKey(discovered({ number: 7 }))).toBe(K7)
 })
 
-test('isAutoOnly: every source is an auto source', () => {
+/** A mentioned record that discovery found too. */
+const found = (n: number, over: Partial<GitHubRecord> = {}) =>
+  mentioned(n, { reasons: addReason(reasonSet('mentioned'), 'discovered'), ...over })
+
+test('isAutoOnly: discovered is the only reason', () => {
   expect(isAutoOnly(autoWeb(1))).toBe(true)
-  expect(isAutoOnly(mentioned(1, { sources: ['auto'] }))).toBe(true)
-  expect(isAutoOnly(mentioned(1, { sources: ['prompt', 'auto'] }))).toBe(false)
+  expect(isAutoOnly(mentioned(1, LANE))).toBe(true)
+  expect(isAutoOnly(found(1, { lane: true }))).toBe(false)
   expect(isAutoOnly(mentioned(1))).toBe(false)
 })
 
-test('a new PR: seenCount 0, source auto, status and refreshedAt from the reply, not in added', () => {
+test('a new PR: seenCount 0, the lane marker, status and refreshedAt from the reply, not in added', () => {
   const r = applyDiscovery([], input())
   expect(r.added).toEqual([])
   expect(r.untracked).toBe(0)
@@ -82,7 +93,8 @@ test('a new PR: seenCount 0, source auto, status and refreshedAt from the reply,
     key: K7,
     category: 'github',
     type: 'pr',
-    sources: ['auto'],
+    sources: [],
+    lane: true,
     seenCount: 0,
     firstSeen: AT,
     lastSeen: AT,
@@ -209,33 +221,36 @@ test('a record with an error is refreshed from the reply and loses the error', (
   expect(second.list[0]?.error).toBeUndefined()
 })
 
-test('a mentioned PR gains auto with no count change and takes the type pr', () => {
+test('a mentioned PR gains the lane marker with no count change and takes the type pr', () => {
   const list = [mentioned(7)]
   const r = applyDiscovery(list, input())
   expect(r.list[0]).toMatchObject({
-    sources: ['prompt', 'auto'],
+    sources: ['prompt'],
+    lane: true,
     seenCount: 2,
     lastSeen: 2,
     type: 'pr',
     refreshedAt: AT,
   })
   expect(list[0]?.sources).toEqual(['prompt'])
+  expect('lane' in list[0]!).toBe(false)
 })
 
-test('body refs: new records get pr-body, via and seenCount 0, and are reported in added', () => {
+test('body refs: new records get via and seenCount 0 and no source, and are reported in added', () => {
   const refsByPr = new Map<string, readonly Claim[]>([[K7, claimsOf([ghRef(1), webRef], 'pr-body', AT)]])
   const r = applyDiscovery([], input({ refsByPr }))
   expect(r.list.map(x => x.key)).toEqual([K7, 'gh:github.com/acme/web#1', keyOf(webRef)])
-  expect(r.list[1]).toMatchObject({ sources: ['pr-body'], via: [K7], seenCount: 0 })
+  expect(r.list[1]).toMatchObject({ sources: [], via: [K7], seenCount: 0 })
   expect(r.added).toEqual(['gh:github.com/acme/web#1', keyOf(webRef)])
 })
 
-test('an existing item named by the body gains pr-body and via; both there already keeps the object', () => {
+test('an existing item named by the body gains discovered and via; both there already keeps the object', () => {
   const refsByPr = new Map<string, readonly Claim[]>([[K7, claimsOf([ghRef(1)], 'pr-body', AT)]])
   const list = [mentioned(1, { type: 'issue' })]
   const first = applyDiscovery(list, input({ refsByPr }))
   const rec = first.list.find(x => x.key === 'gh:github.com/acme/web#1')
-  expect(rec).toMatchObject({ sources: ['prompt', 'pr-body'], via: [K7], seenCount: 2 })
+  expect(rec).toMatchObject({ sources: ['prompt'], via: [K7], seenCount: 2 })
+  expect(rec?.reasons.all).toEqual(['discovered', 'mentioned'])
   const second = applyDiscovery(first.list, input({ refsByPr, at: AT + 1 }))
   expect(second.list).toBe(first.list)
 })
@@ -248,7 +263,7 @@ test('a dismissed PR adds nothing, and neither do its refs; a dismissed ref is s
   expect(some.list.map(x => x.key)).toEqual([K7])
 })
 
-test('prune runs only on a complete reply: a PR that left loses auto, and its auto-only refs go', () => {
+test('prune runs only on a complete reply: a PR that left loses the lane marker, and its auto-only refs go', () => {
   const refsByPr = new Map<string, readonly Claim[]>([[K7, claimsOf([ghRef(1)], 'pr-body', AT)]])
   const first = applyDiscovery([], input({ refsByPr })).list
   const gone = applyDiscovery(first, input({ prs: [], complete: true, at: AT + 1 }))
@@ -257,16 +272,26 @@ test('prune runs only on a complete reply: a PR that left loses auto, and its au
   expect(partial.list).toBe(first)
 })
 
-test('prune keeps a mentioned item and strips only its auto sources and via', () => {
-  const list: ItemRecord[] = [
-    mentioned(7, { sources: ['prompt', 'auto'] }),
-    mentioned(1, { sources: ['prompt', 'pr-body'], via: [K7], type: 'issue' }),
-  ]
+test('prune keeps a mentioned item and strips only discovery: the reason, the lane marker and via', () => {
+  const list: ItemRecord[] = [found(7, { lane: true }), found(1, { via: [K7], type: 'issue' })]
   const r = applyDiscovery(list, input({ prs: [], complete: true }))
-  expect(r.list.map(x => [x.key, x.sources, x.via])).toEqual([
-    [K7, ['prompt'], undefined],
-    ['gh:github.com/acme/web#1', ['prompt'], undefined],
+  expect(r.list.map(x => [x.key, x.sources, x.via, x.reasons.all, 'lane' in x])).toEqual([
+    [K7, ['prompt'], undefined, ['mentioned'], false],
+    ['gh:github.com/acme/web#1', ['prompt'], undefined, ['mentioned'], false],
   ])
+})
+
+test('prune: a PR the lane lost keeps discovered while a body of a live PR still names it', () => {
+  const nine = discovered({ number: 9 })
+  const refs = new Map<string, readonly Claim[]>([[prKey(nine), claimsOf([ghRef(7)], 'pr-body', AT)]])
+  const first = applyDiscovery([], input({ prs: [discovered({ number: 7 }), nine], refsByPr: refs })).list
+  expect(first.find(x => x.key === K7)).toMatchObject({ lane: true, via: [K9] })
+  // The lane stops finding #7, and the body of #9 still lists it: the marker goes, the reason and via stay.
+  const second = applyDiscovery(first, input({ prs: [nine], refsByPr: refs, at: AT + 1 }))
+  const rec = second.list.find(x => x.key === K7)!
+  expect('lane' in rec).toBe(false)
+  expect(rec).toMatchObject({ via: [K9], sources: [], reasons: DISCOVERED })
+  expect(isLanePr(rec as GitHubRecord)).toBe(false)
 })
 
 const bodyRef = (i: number): WebRef => ({ category: 'web', url: `https://x.example/${i}`, label: `x${i}` })
@@ -278,24 +303,21 @@ test('prune cuts via to the PRs still in the result', () => {
   expect(r.list.find(x => x.key === both.key)?.via).toEqual([K7])
 })
 
-test('prune follows the body: a ref that an edited body no longer lists loses pr-body and via (A12)', () => {
+test('prune follows the body: a ref that an edited body no longer lists loses discovered and via (A12)', () => {
   const body = new Map<string, readonly Claim[]>([[K7, claimsOf([bodyRef(1)], 'pr-body', AT)]])
   const first = applyDiscovery([], input({ refsByPr: body }))
-  expect(first.list.find(x => x.key === keyOf(bodyRef(1)))).toMatchObject({ sources: ['pr-body'], via: [K7] })
+  expect(first.list.find(x => x.key === keyOf(bodyRef(1)))).toMatchObject({ sources: [], via: [K7] })
   // The body is edited: the PR stays in the reply and lists no ref.
   const second = applyDiscovery(first.list, input({ refsByPr: new Map([[K7, []]]) }))
   expect(second.list.map(x => x.key)).toEqual([K7])
-  // A mentioned item loses only its auto sources.
-  const kept = applyDiscovery(
-    [mentioned(1, { sources: ['prompt', 'pr-body'], via: [K7], type: 'issue' })],
-    input({ refsByPr: new Map([[K7, []]]) }),
-  )
+  // A mentioned item loses only discovery: its reason and via.
+  const kept = applyDiscovery([found(1, { via: [K7], type: 'issue' })], input({ refsByPr: new Map([[K7, []]]) }))
   const rec = kept.list.find(x => x.key === 'gh:github.com/acme/web#1')!
   expect(rec.sources).toEqual(['prompt'])
   expect(rec.via).toBeUndefined()
   // A partial reply deletes nothing.
   const partial = applyDiscovery(first.list, input({ refsByPr: new Map([[K7, []]]), complete: false }))
-  expect(partial.list.find(x => x.key === keyOf(bodyRef(1)))).toMatchObject({ sources: ['pr-body'], via: [K7] })
+  expect(partial.list.find(x => x.key === keyOf(bodyRef(1)))).toMatchObject({ sources: [], via: [K7] })
 })
 
 test('maxAutoItems: at the cap no new auto-only item is added, untracked counts it, existing ones still update', () => {
@@ -326,20 +348,165 @@ test('nothing in, nothing out: an empty reply on an empty list returns the input
   expect(applyDiscovery(list, input({ prs: [] })).list).toBe(list)
 })
 
-test('dropAuto removes auto, pr-body and via from the given keys, and deletes a record with no source left', () => {
-  const list: ItemRecord[] = [
-    mentioned(7, { sources: ['prompt', 'auto', 'pr-body'], via: [K9] }),
-    autoWeb(1),
-    autoWeb(2),
-  ]
+test('dropAuto removes discovered and via from the given keys, and deletes a record with no reason left', () => {
+  const list: ItemRecord[] = [found(7, { lane: true, via: [K9] }), autoWeb(1), autoWeb(2)]
   const r = dropAuto(list, new Set([K7, autoWeb(1).key]))
   expect(r.map(x => x.key)).toEqual([K7, autoWeb(2).key])
-  expect(r[0]).toMatchObject({ sources: ['prompt'] })
+  expect(r[0]).toMatchObject({ sources: ['prompt'], reasons: reasonSet('mentioned') })
   expect(r[0]?.via).toBeUndefined()
+})
+
+test('dropAuto leaves the lane marker, which core does not know, and isLanePr reads it as not found by the lane', () => {
+  // The state of a load (`withoutAuto`): the marker outlives the reason until the next complete PR step.
+  const [kept] = dropAuto([found(7, { lane: true })], new Set([K7]))
+  expect((kept as GitHubRecord).lane).toBe(true)
+  expect(isLanePr(kept as GitHubRecord)).toBe(false)
+  // The lane finds the PR again: reason and marker are set together, and the record is the PR of the lane.
+  const again = applyDiscovery([kept!], input()).list[0] as GitHubRecord
+  expect(isLanePr(again)).toBe(true)
+  expect(again.sources).toEqual(['prompt'])
+  // The lane no longer finds it: the stale marker goes with the prune.
+  const gone = applyDiscovery([kept!], input({ prs: [] })).list[0] as GitHubRecord
+  expect('lane' in gone).toBe(false)
+  expect(gone.reasons).toEqual(reasonSet('mentioned'))
+})
+
+test('a fold keeps the lane marker of either record, as the union of sources kept auto', () => {
+  const table = (category: string) => (category === 'github' ? githubKind : undefined)
+  const lane = applyDiscovery([], input()).list[0]!
+  // The record the chat made is the newer one, so it wins the fold and its own fields are the base: the marker must join in.
+  const chat = { ...named(mentioned(7, { type: 'pr' })), refreshedAt: AT + 1 }
+  for (const [a, b] of [
+    [lane, chat],
+    [chat, lane],
+  ] as const) {
+    const out = foldRecords(a, b, table) as GitHubRecord
+    expect(out.lane).toBe(true)
+    expect(out.sources).toEqual(['prompt'])
+    expect(out.reasons.all).toEqual(['discovered', 'mentioned'])
+  }
+  expect('lane' in foldRecords(chat, chat, table)).toBe(false)
+})
+
+test('a lane marker that outlived a load stays off when a body ref or a fold adds discovered (#62)', () => {
+  const both = applyDiscovery([mentioned(7, { type: 'pr' })], input()).list[0]!
+  const [stale] = dropAuto([both], new Set([K7])) // the load: the marker stays, `discovered` goes
+  expect((stale as GitHubRecord).lane).toBe(true)
+  expect(isLanePr(stale as GitHubRecord)).toBe(false)
+  // Another live PR names #7 in its body, and the reply is partial, so no prune clears the marker.
+  const nine = discovered({ number: 9 })
+  const refs = new Map<string, readonly Claim[]>([[prKey(nine), claimsOf([ghRef(7)], 'pr-body', AT)]])
+  const rec = applyDiscovery([stale!], input({ prs: [nine], refsByPr: refs, complete: false, at: AT + 1 })).list.find(
+    x => x.key === K7,
+  ) as GitHubRecord
+  expect(rec.reasons.all).toEqual(['discovered', 'mentioned']) // the body ref did add discovered
+  expect(isLanePr(rec)).toBe(false) // and it is not a lane PR again
+  expect('lane' in rec).toBe(false)
+  expect(rec.via).toEqual([K9])
+  // A fold of the stale record with a copy that a body ref made: the stale marker must not join.
+  const bodyCopy = applyDiscovery([], input({ prs: [nine], refsByPr: refs })).list.find(x => x.key === K7)!
+  const table = (c: string) => (c === 'github' ? githubKind : undefined)
+  for (const [a, b] of [
+    [stale!, bodyCopy],
+    [bodyCopy, stale!],
+  ] as const) {
+    const out = foldRecords(a, b, table) as GitHubRecord
+    expect(out.reasons.all).toContain('discovered')
+    expect(isLanePr(out)).toBe(false)
+    expect('lane' in out).toBe(false)
+  }
 })
 
 test('dropAuto with no matching key returns the input list', () => {
   const list: ItemRecord[] = [autoWeb(1)]
   expect(dropAuto(list, new Set(['nope']))).toBe(list)
   expect(keyOf(ghRef(1))).toBe('gh:github.com/acme/web#1')
+})
+
+// ---------------------------------------------------------------- reasons (issue #62)
+
+const jiraRef = (n: number): Ref => ({
+  category: 'jira',
+  site: 'acme.atlassian.net',
+  issueKey: `ISS-${n}`,
+  url: `https://acme.atlassian.net/browse/ISS-${n}`,
+  trackOnly: false,
+})
+
+test('reasons: a PR the lane found is discovered; a mentioned PR gains discovered and keeps its mention', () => {
+  expect(applyDiscovery([], input()).list[0]?.reasons).toEqual({
+    first: 'discovered',
+    all: ['discovered'],
+    strongest: 'discovered',
+  })
+  const named = applyDiscovery([mentioned(7)], input()).list[0]
+  expect(named?.reasons).toEqual({ first: 'mentioned', all: ['discovered', 'mentioned'], strongest: 'discovered' })
+})
+
+test('reasons: a ref in a PR body is discovered, whatever its kind; one that was mentioned keeps its mention', () => {
+  const claims = claimsOf([ghRef(1), webRef, jiraRef(4)], 'pr-body', AT)
+  const fresh = applyDiscovery([], input({ refsByPr: new Map([[K7, claims]]) }))
+  const reasons = fresh.list.filter(x => x.key !== K7).map(x => [x.category, x.reasons])
+  const discoveredOnly = { first: 'discovered', all: ['discovered'], strongest: 'discovered' }
+  expect(reasons).toEqual([
+    ['github', discoveredOnly],
+    ['web', discoveredOnly],
+    ['jira', discoveredOnly],
+  ])
+  const named = applyDiscovery([mentioned(1, { type: 'issue' })], input({ refsByPr: new Map([[K7, claims]]) }))
+  expect(named.list.find(x => x.key === 'gh:github.com/acme/web#1')?.reasons).toEqual({
+    first: 'mentioned',
+    all: ['discovered', 'mentioned'],
+    strongest: 'discovered',
+  })
+})
+
+test('reasons: the prune takes discovered away with the last of the lane and via, and a mention stays', () => {
+  const refsByPr = new Map<string, readonly Claim[]>([[K7, claimsOf([ghRef(1)], 'pr-body', AT)]])
+  const first = applyDiscovery([mentioned(7)], input({ refsByPr })).list
+  expect(first.find(x => x.key === K7)?.reasons.all).toEqual(['discovered', 'mentioned'])
+  const gone = applyDiscovery(first, input({ prs: [], complete: true, at: AT + 1 }))
+  // The mentioned PR stays with its mention only; the ref that only the body named goes.
+  expect(gone.list.map(x => [x.key, x.reasons])).toEqual([
+    [K7, { first: 'mentioned', all: ['mentioned'], strongest: 'mentioned' }],
+  ])
+})
+
+test('reasons: dropAuto takes discovered away, and a mention stays', () => {
+  const both = applyDiscovery([mentioned(7)], input()).list
+  const [kept] = dropAuto(both, new Set([K7]))
+  expect(kept?.sources).toEqual(['prompt'])
+  expect(kept?.reasons).toEqual({ first: 'mentioned', all: ['mentioned'], strongest: 'mentioned' })
+})
+
+// ---------------------------------------------------------------- sources keep channels only (issue #62, R2)
+
+test('sources keep channels only: a PR the lane found has no auto in sources, the reason discovered and the lane marker', () => {
+  const rec = applyDiscovery([], input()).list[0] as GitHubRecord
+  expect(rec.sources).toEqual([])
+  expect(rec.reasons).toEqual({ first: 'discovered', all: ['discovered'], strongest: 'discovered' })
+  expect(rec.lane).toBe(true)
+  // A mentioned PR the lane then found keeps its channel, and gains the reason and the marker.
+  const named = applyDiscovery([mentioned(7)], input()).list[0] as GitHubRecord
+  expect(named.sources).toEqual(['prompt'])
+  expect(named.lane).toBe(true)
+  expect(named.reasons.all).toEqual(['discovered', 'mentioned'])
+})
+
+test('sources keep channels only: a body ref has no pr-body in sources, keeps discovered and via, and has no lane marker', () => {
+  const refsByPr = new Map<string, readonly Claim[]>([[K7, claimsOf([ghRef(1), webRef], 'pr-body', AT)]])
+  const [, issue, web] = applyDiscovery([], input({ refsByPr })).list
+  for (const rec of [issue!, web!]) {
+    expect(rec.sources).toEqual([])
+    expect(rec.reasons).toEqual({ first: 'discovered', all: ['discovered'], strongest: 'discovered' })
+    expect(rec.via).toEqual([K7])
+  }
+  expect('lane' in issue!).toBe(false)
+  // A mentioned item that a body names keeps its channel too.
+  const body = new Map([[K7, claimsOf([ghRef(1)], 'pr-body', AT)]])
+  const named = applyDiscovery([mentioned(1, { type: 'issue' })], input({ refsByPr: body }))
+  const rec = named.list.find(x => x.key === 'gh:github.com/acme/web#1')!
+  expect(rec.sources).toEqual(['prompt'])
+  expect(rec.via).toEqual([K7])
+  expect('lane' in rec).toBe(false)
 })

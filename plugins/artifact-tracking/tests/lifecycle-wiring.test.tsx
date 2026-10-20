@@ -4,6 +4,7 @@
 import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
 import { LIMITS } from './fixtures/limits'
+import { reasonsOfSources } from './fixtures/reasons'
 import {
   clearSession,
   fileTool,
@@ -87,6 +88,7 @@ const GH5 = {
   url: 'https://github.com/acme/web/issues/5',
   label: 'acme/web#5',
   sources: ['prompt'],
+  reasons: reasonsOfSources(['prompt']),
   firstSeen: 2,
   lastSeen: 2,
   seenCount: 1,

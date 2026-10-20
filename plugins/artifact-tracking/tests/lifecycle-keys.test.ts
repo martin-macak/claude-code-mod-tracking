@@ -38,12 +38,12 @@ function stubItems(): ItemsHost {
   }
 }
 
-function setup(trackers: readonly Tracker[], file: JsonObject = {}) {
+function setup(trackers: readonly Tracker[], file: JsonObject = {}, items: ItemsHost = stubItems()) {
   const w = fakePorts()
   const m = new LifecycleManager(
     {
       trackers,
-      items: stubItems(),
+      items,
       dismiss: () => ({ list: async () => new Set(), add: async () => {} }),
       config: () => fakeConfig({ specs: trackers, file }),
       paneId: 'track',
@@ -53,8 +53,8 @@ function setup(trackers: readonly Tracker[], file: JsonObject = {}) {
   return { w, m }
 }
 
-const started = async (trackers: readonly Tracker[], file: JsonObject = {}) => {
-  const t = setup(trackers, file)
+const started = async (trackers: readonly Tracker[], file: JsonObject = {}, items?: ItemsHost) => {
+  const t = setup(trackers, file, items)
   await t.m.start(t.w.ports, { fromSessionStart: true })
   return t
 }
@@ -130,6 +130,23 @@ test('problems lists the key problems before the failed trackers', async () => {
   })
   const { m } = await started([dup, bad])
   expect(m.problems().map(p => p.split(':')[0])).toEqual(['keys', 'trackers.b'])
+})
+
+test('problems lists the key problems, then the kind reasons that are off, then the failed trackers (#62)', async () => {
+  const dup = fake('a', 10, { keys: [{ id: 'kill', key: 'x', label: 'kill', scope: 'row' }] })
+  const bad = fake('b', 20, {
+    init: () => {
+      throw new Error('boom')
+    },
+  })
+  const offReason = 'reasons: kind review reason "reviewed" is not mapped to a core reason. The reason is off.'
+  const items = { ...stubItems(), problems: () => [offReason] }
+  const { m } = await started([dup, bad], {}, items)
+  expect(m.problems()).toEqual([
+    'keys: a key "x" (kill) is taken by core (dismiss). The key is off.',
+    offReason,
+    'trackers.b: init or store failed. Its sections, keys and commands are off.',
+  ])
 })
 
 test('isItemOwner is true only for a tracker with kinds', () => {

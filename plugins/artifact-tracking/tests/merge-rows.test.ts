@@ -14,6 +14,7 @@ import type { ToolStatus } from '../types'
 import { bandText } from '../ux/band'
 import { solveColumns } from '../ux/tree-data-table/columns'
 import { sectionsText } from '../ux/tree-data-table/text'
+import { LANE, named } from './fixtures/reasons'
 
 const NOW = 5_000_000
 const GH = 'https://github.com/acme/web'
@@ -23,7 +24,7 @@ const pr = (n: number, over: Partial<GitHubRecord> = {}): GitHubRecord => ({
   category: 'github',
   url: `${GH}/pull/${n}`,
   label: `acme/web#${n}`,
-  sources: ['auto'],
+  ...LANE,
   firstSeen: n,
   lastSeen: n,
   seenCount: 0,
@@ -129,8 +130,8 @@ test('a PR with no merge value, a merged PR and an issue draw no merge cell', ()
 })
 
 test('the GitHub section shows the chip of a PR the conversation named, from the same refresh fields', () => {
-  const named = pr(9, { sources: ['prompt'], mergeable: 'CONFLICTING' })
-  const github = sections(view([named])).find(s => s.id === 'github')!
+  const fromChat = named(pr(9, { mergeable: 'CONFLICTING' }))
+  const github = sections(view([fromChat])).find(s => s.id === 'github')!
   expect(github.rows[0]?.cells.merge).toEqual({ text: '✗ conflicts', fg: 'error' })
 })
 

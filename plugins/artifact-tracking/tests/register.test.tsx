@@ -9,6 +9,7 @@ import * as ev from './fixtures/events'
 import { LIMITS } from './fixtures/limits'
 import { BG_START_MAIN, BG_START_SYNC_AGENT, MID_TURN_NOTICE } from './fixtures/notices'
 import { mountPane, select } from './fixtures/pane'
+import { reasonsOfSources } from './fixtures/reasons'
 import {
   BAND,
   clearSession,
@@ -358,6 +359,7 @@ const storedFile: ItemRecord = {
   views: 1,
   mentions: 0,
   sources: ['tool'],
+  reasons: reasonsOfSources(['tool']),
   firstSeen: 1,
   lastSeen: 1,
   seenCount: 4,
@@ -727,6 +729,7 @@ test('/clear carry-over, store path: the items of the session just left come bac
       url: 'https://old.example/x',
       label: 'Old page',
       sources: ['response'],
+      reasons: reasonsOfSources(['response']),
       firstSeen: 1,
       lastSeen: 1,
       seenCount: 1,
@@ -737,6 +740,7 @@ test('/clear carry-over, store path: the items of the session just left come bac
       url: 'https://github.com/acme/web/issues/3',
       label: 'acme/web#3',
       sources: ['prompt'],
+      reasons: reasonsOfSources(['prompt']),
       firstSeen: 2,
       lastSeen: 2,
       seenCount: 1,
@@ -771,6 +775,7 @@ test('/clear carry-over also happens on /track alone', async ($, on) => {
       url: 'https://old.example/x',
       label: 'Old page',
       sources: ['response'],
+      reasons: reasonsOfSources(['response']),
       firstSeen: 1,
       lastSeen: 1,
       seenCount: 1,
@@ -896,6 +901,7 @@ test('session.start restores the stored copy of a session it knows', async ($, o
     url: 'https://kept.example/',
     label: 'Kept page',
     sources: ['response'],
+    reasons: reasonsOfSources(['response']),
     firstSeen: 1,
     lastSeen: 1,
     seenCount: 1,
@@ -912,6 +918,7 @@ test('session.start prunes stored tool-only Jira items from a foreign site', asy
     url: 'https://acme.atlassian.net/browse/ISS-1',
     label: 'ISS-1',
     sources: ['prompt'],
+    reasons: reasonsOfSources(['prompt']),
     firstSeen: 1,
     lastSeen: 1,
     seenCount: 1,
@@ -926,6 +933,7 @@ test('session.start prunes stored tool-only Jira items from a foreign site', asy
     url: 'https://vertice.atlassian.net/browse/ISS-2',
     label: 'ISS-2',
     sources: ['tool'],
+    reasons: reasonsOfSources(['tool']),
     firstSeen: 2,
     lastSeen: 2,
     seenCount: 1,
@@ -1042,6 +1050,7 @@ const webRec = (url: string, label: string): ItemRecord => ({
   url,
   label,
   sources: ['response'],
+  reasons: reasonsOfSources(['response']),
   firstSeen: 1,
   lastSeen: 1,
   seenCount: 1,

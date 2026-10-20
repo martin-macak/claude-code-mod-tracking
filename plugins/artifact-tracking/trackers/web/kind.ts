@@ -3,6 +3,7 @@
 
 import type { Claim, ItemKind } from '../../core/interfaces/items'
 import { hostPath, normalizeUrl } from '../../core/lib/links'
+import { reasonOfSource, reasonSet } from '../../core/lib/reasons'
 import { sighted } from '../../core/lib/records'
 import { webRow } from './rows'
 import type { WebRecord, WebRef } from './types'
@@ -25,6 +26,7 @@ function webRecord(ref: WebRef, claim: Claim): WebRecord {
     url: ref.url,
     label: ref.label,
     sources: [claim.source],
+    reasons: reasonSet(claim.reason),
     firstSeen: claim.at,
     lastSeen: claim.at,
     seenCount: 1,
@@ -41,7 +43,14 @@ export const webKind: ItemKind<WebRecord> = {
   claimUrl(url, label, ctx) {
     if (ctx.mode !== 'full' || url.length > MAX_WEB_URL) return null
     const ref: WebRef = { category: 'web', url, label: label !== undefined && label !== url ? label : hostPath(url) }
-    return { category: 'web', key: webKeyOf(ref), source: ctx.source, at: ctx.now, fields: { url, label: ref.label } }
+    return {
+      category: 'web',
+      key: webKeyOf(ref),
+      source: ctx.source,
+      reason: reasonOfSource(ctx.source),
+      at: ctx.now,
+      fields: { url, label: ref.label },
+    }
   },
   decode: item => (item.category === 'web' ? (item as WebRecord) : null),
   merge: (cur, seen) => (cur === null ? webRecord(refOf(seen), seen) : sighted(cur, seen)),

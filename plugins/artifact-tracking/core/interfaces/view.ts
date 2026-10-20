@@ -4,7 +4,7 @@
 
 import type { ToolStatus } from '../../types'
 import type { ConfigView } from './config'
-import type { Effective, Json, JsonObject, StoredItem } from './items'
+import type { Effective, Json, JsonObject, ReasonSet, StoredItem } from './items'
 import type { FactsPort, TrackerContext } from './tracker'
 
 /** A closed set by design. `ux/theme.ts` maps each token to a theme key or a named color. */
@@ -55,6 +55,11 @@ export interface TreeRow {
   readonly detail?: () => readonly DetailLine[]
   readonly can?: { readonly dismiss?: boolean; readonly priority?: boolean }
   readonly dim?: boolean
+  /**
+   * Why the row is tracked. The detail lists all of them, and the pane filters of #63 read `strongest`. A row that is
+   * context, not a find (the root worktree, the master agent), has none.
+   */
+  readonly reasons?: ReasonSet
 }
 
 export interface SectionSpec {

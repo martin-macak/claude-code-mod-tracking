@@ -23,6 +23,6 @@ function labelOf(r: WebRecord, shown: string): string {
 export function webPrompt(ctx: Pick<ViewContext, 'items' | 'isDismissed'>): readonly string[] {
   return promptRecords(ctx, webKind.decode).map(r => {
     const shown = hostAndPath(r.url)
-    return promptLine(`web: ${shown}`, [], labelOf(r, shown), LABEL_MAX)
+    return promptLine(`web: ${shown}`, [r.reasons.strongest], labelOf(r, shown), LABEL_MAX)
   })
 }

@@ -8,6 +8,7 @@ import { content, fixed, flex, textCells } from '../../core/lib/rows'
 import { compactIds } from '../../core/lib/text'
 import type { ReposConfig } from './config'
 import { repoRowId } from './ids'
+import { repoReasons } from './reasons'
 import { asRepoRows } from './rows'
 import type { RepoRecord } from './types'
 
@@ -32,6 +33,7 @@ function repoRow(r: RepoRecord): TreeRow {
       tone: edit ? 'ok' : 'dim',
     }),
     can: { dismiss: true, priority: false },
+    reasons: repoReasons(r),
   }
 }
 

@@ -40,6 +40,12 @@ export type GitHubFields = {
   crossRepo?: true
   /** Issue keys the PR's closing references name. Set by discovery only, like the branches. Absent when none. */
   closes?: string[]
+  /**
+   * True while the PR lane finds this PR (a PR on a tracked branch). Set by discovery only, and cleared by its prune. It
+   * tells a PR the lane found from an item that only a PR body names: both have the reason `discovered`, but only the
+   * body ref has `via`. Read it through `isLanePr`, never alone. Absent: the lane does not find the item.
+   */
+  lane?: true
 }
 
 export type GitHubRecord = BaseRecord & { category: 'github' } & GitHubFields

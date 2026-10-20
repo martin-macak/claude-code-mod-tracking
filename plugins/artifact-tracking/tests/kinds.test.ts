@@ -6,12 +6,13 @@ import type { RunResult } from '../core/interfaces/ports'
 import type { ToolHandle } from '../core/interfaces/tracker'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { scanContext } from '../core/lib/kind-context'
+import { reasonSet } from '../core/lib/reasons'
 import { CliTool } from '../core/lib/tool'
 import { artifactKeyOf, artifactKind } from '../trackers/artifact/kind'
 import { artifactFromWeb, artifactOrigin, markArtifactDeleted } from '../trackers/artifact/records'
 import type { ArtifactRecord } from '../trackers/artifact/types'
-import { fileKey, fileKind } from '../trackers/file/kind'
-import type { FileRecord } from '../trackers/file/types'
+import { fileKey, fileKind, fileReason } from '../trackers/file/kind'
+import type { FileActivity, FileRecord } from '../trackers/file/types'
 import { GITHUB_DEFAULTS } from '../trackers/github/config'
 import { githubKind } from '../trackers/github/kind'
 import { githubKey, githubKeyOf, githubUrl, prKey } from '../trackers/github/urls'
@@ -23,6 +24,7 @@ import { webKeyOf, webKind } from '../trackers/web/kind'
 import type { WebRecord } from '../trackers/web/types'
 import { PAGE_CODE_URL, PAGE_ID, PAGE_KEY, PAGE_URL, PAGE_UUID } from './fixtures/artifacts'
 import type { Tools } from './fixtures/contracts'
+import { reasonFor, reasonsOfSources } from './fixtures/reasons'
 import { hydrate, recordFromFile } from './fixtures/registry'
 
 const NOW = 5_000_000
@@ -32,6 +34,7 @@ const claim = (category: string, key: string, fields: Claim['fields'], source = 
   category,
   key,
   source,
+  reason: reasonFor(source),
   at,
   fields,
 })
@@ -60,14 +63,16 @@ const webClaim = (source = 'prompt', at = 1): Claim =>
   claim('web', 'web:https://x.example/a', { url: 'https://x.example/a#f', label: 'X doc' }, source, at)
 const artClaim = (over: Record<string, unknown> = {}, source = 'response', at = 1): Claim =>
   claim('artifact', PAGE_KEY, { uuid: PAGE_UUID, url: PAGE_URL, label: PAGE_ID, ...over }, source, at)
-const fileClaim = (activity: string, at = 1, over: Record<string, unknown> = {}): Claim =>
-  claim(
+const fileClaim = (activity: FileActivity, at = 1, over: Record<string, unknown> = {}): Claim => ({
+  ...claim(
     'file',
     'file:/work/a.md',
     { path: '/work/a.md', label: '/work/a.md', activity, bySubagent: false, ...over },
     'tool',
     at,
-  )
+  ),
+  reason: fileReason(activity),
+})
 
 const made = <T extends StoredItem>(kind: ItemKind<T>, c: Claim): T => {
   const rec = kind.merge(null, c)
@@ -127,6 +132,8 @@ test('file: counters add up, created and bySubagent never go back, the first lab
     lastSeen: 5,
     seenCount: 3,
     sources: ['tool'],
+    // The file was edited, then made, then edited: `first` is the earliest sighting, `strongest` the made file.
+    reasons: { first: 'updated', all: ['created', 'updated'], strongest: 'created' },
   })
   expect(fileKey('/work/a.md')).toBe('file:/work/a.md')
 })
@@ -189,6 +196,7 @@ test('jira: a known key counts the sighting; fold and keepMarks carry the marks 
   expect(jiraKind.merge(first, jiraClaim('tool', 3))).toMatchObject({
     seenCount: 2,
     sources: ['prompt', 'tool'],
+    reasons: reasonsOfSources(['prompt', 'tool']),
     lastSeen: 3,
   })
   const a: JiraRecord = { ...first, children: [node('A-1', 'high', [node('A-2')])] }
@@ -222,7 +230,8 @@ test('artifact: names rank a publish title over a label over the id; a deleted m
   expect(artifactOrigin(mention)).toBe('mentioned')
   const named = artifactKind.merge(mention, artClaim({ url: PAGE_CODE_URL, label: 'Design notes' }, 'response', 2))!
   expect(named.label).toBe('Design notes')
-  const published = artifactKind.merge(named, artClaim({ label: 'Probe Page', titled: true }, 'publish', 3))!
+  const publish: Claim = { ...artClaim({ label: 'Probe Page', titled: true }, 'tool', 3), reason: 'published' }
+  const published = artifactKind.merge(named, publish)!
   expect(published).toMatchObject({ label: 'Probe Page', url: PAGE_URL, seenCount: 3 })
   expect(artifactOrigin(published)).toBe('published')
   const mentionedAgain = artifactKind.merge(published, artClaim({ label: 'Other words' }, 'prompt', 4))!
@@ -241,6 +250,7 @@ test('artifact: a web row of an artifact URL migrates; any other record does not
     url: PAGE_URL,
     label: 'Design notes',
     sources: ['response'],
+    reasons: reasonsOfSources(['response']),
     firstSeen: 1,
     lastSeen: 1,
     seenCount: 1,
@@ -361,7 +371,14 @@ test('a record of a kind with no refresh is plain data: the registry binding hyd
 })
 
 test('artifact: a delete claim marks a known row once, and adds no row for an unknown page', () => {
-  const del: Claim = { category: 'artifact', key: PAGE_KEY, source: 'publish', at: 9, fields: { deleted: true } }
+  const del: Claim = {
+    category: 'artifact',
+    key: PAGE_KEY,
+    source: 'tool',
+    reason: 'deleted',
+    at: 9,
+    fields: { deleted: true },
+  }
   expect(artifactKind.merge(null, del)).toBeNull()
   const cur = artifactKind.merge(null, artClaim())!
   const marked = artifactKind.merge(cur, del)!
@@ -379,4 +396,60 @@ test('file: a lookup scan names no file; a conversation scan does', () => {
   const ctx = (purpose: 'capture' | 'lookup') => scanContext({ mode: 'full', purpose })
   expect(fileKind.scan?.('see a.md', 'full', ctx('capture')).map(c => c.key)).toEqual(['file:a.md'])
   expect(fileKind.scan?.('see a.md', 'full', ctx('lookup'))).toEqual([])
+})
+
+// ---------------------------------------------------------------- reasons (issue #62)
+
+test('reasons: github, jira, web and artifact build the record of a claim with the reason of the claim', () => {
+  const kinds: [string, ItemKind, (source: string) => Claim][] = [
+    ['github', githubKind, s => ghClaim({}, s)],
+    ['jira', jiraKind, s => jiraClaim(s)],
+    ['web', webKind, s => webClaim(s)],
+    ['artifact', artifactKind, s => artClaim({}, s)],
+  ]
+  for (const [name, kind, make] of kinds) {
+    for (const source of ['prompt', 'response', 'tool']) {
+      const c = make(source)
+      const rec = made(kind, c)
+      expect([name, source, rec.sources, rec.reasons]).toEqual([name, source, [source], reasonSet(c.reason)])
+    }
+    // A claim of any reason makes its record with that reason: the kind does not guess.
+    expect(made(kind, { ...make('prompt'), reason: 'discovered' }).reasons).toEqual(reasonSet('discovered'))
+  }
+})
+
+test('reasons: a second claim adds its reason, keeps the first one, and the order does not change `all`', () => {
+  const read = { ...ghClaim({}, 'tool', 2), reason: 'read' as const }
+  const mention = ghClaim({}, 'prompt', 1)
+  const ab = githubKind.merge(made(githubKind, mention), read)!
+  const ba = githubKind.merge(made(githubKind, read), mention)!
+  expect([ab.reasons.first, ab.reasons.all, ab.reasons.strongest]).toEqual(['mentioned', ['read', 'mentioned'], 'read'])
+  expect([ba.reasons.first, ba.reasons.all, ba.reasons.strongest]).toEqual(['read', ['read', 'mentioned'], 'read'])
+})
+
+test('reasons: a file claim takes its reason from how the file was touched', () => {
+  const byActivity = (['created', 'edited', 'viewed', 'mentioned'] as const).map(a => {
+    // A Read alone adds no row, so a viewed file is made from a record that exists.
+    const base = made(fileKind, fileClaim('mentioned'))
+    const rec = a === 'viewed' ? fileKind.merge(base, fileClaim(a))! : made(fileKind, fileClaim(a))
+    return [a, rec.reasons.all]
+  })
+  expect(byActivity).toEqual([
+    ['created', ['created']],
+    ['edited', ['updated']],
+    ['viewed', ['read', 'mentioned']],
+    ['mentioned', ['mentioned']],
+  ])
+})
+
+test('reasons: an artifact publish adds published, a delete adds deleted, and the page is a tool sighting', () => {
+  const mention = made(artifactKind, artClaim())
+  const publish: Claim = { ...artClaim({ titled: true }, 'tool', 2), reason: 'published' }
+  const published = artifactKind.merge(mention, publish)!
+  expect(published.reasons).toEqual({ first: 'mentioned', all: ['published', 'mentioned'], strongest: 'published' })
+  expect(published.sources).toEqual(['response', 'tool'])
+  const del: Claim = { ...artClaim({ deleted: true }, 'tool', 3), reason: 'deleted' }
+  const gone = artifactKind.merge(published, del)!
+  expect(gone.reasons.all).toEqual(['deleted', 'published', 'mentioned'])
+  expect(gone.deleted).toBe(true)
 })

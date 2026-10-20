@@ -617,3 +617,47 @@ test('unavailable draws one dim line', () => {
   expect(TreeDataTable.unavailable(EL)).toEqual({ type: 'Text', props: { dimColor: true }, children: [UNAVAILABLE] })
   expect(UNAVAILABLE).toBe('Tracking is unavailable. Run /track to try again.')
 })
+
+// ---------------------------------------------------------------- reasons in the detail (issue #62)
+
+const REASONS = { first: 'mentioned', all: ['updated', 'read', 'mentioned'], strongest: 'updated' } as const
+
+test('the detail of an open row lists all its reasons, strongest first (#62)', () => {
+  const r = row('a', { prio: '', key: 'k', title: 't' }, { reasons: REASONS })
+  const { drawn } = draw([section('web', COLS, [r])], { expanded: new Set(['a']) })
+  // The row has nothing else to say, so the reasons are the whole detail: no "nothing more" line.
+  expect(detailBoxes(drawn.tree).flatMap(leaves)).toEqual(['reasons:', 'updated, read, mentioned'])
+})
+
+test('the reasons line follows the default detail and the detail() of a tracker', () => {
+  const key: Cell = { text: 'one.example/a', href: 'https://one.example/a' }
+  const long = row('w', { prio: '', key, title: 'x'.repeat(60) }, { reasons: REASONS })
+  const dflt = draw([section('web', COLS, [long])], { bodyColumns: 40, expanded: new Set(['w']) })
+  expect(detailBoxes(dflt.drawn.tree).flatMap(leaves)).toEqual([
+    'URL:',
+    'x'.repeat(60),
+    'link:',
+    'https://one.example/a',
+    'reasons:',
+    'updated, read, mentioned',
+  ])
+  const own = row('b', { key: 'k' }, { reasons: REASONS, detail: () => [{ label: 'Body', cell: { text: 'Hello' } }] })
+  const custom = draw([section('web', COLS, [own])], { expanded: new Set(['b']) })
+  expect(detailBoxes(custom.drawn.tree).flatMap(leaves)).toEqual([
+    'Body:',
+    'Hello',
+    'reasons:',
+    'updated, read, mentioned',
+  ])
+})
+
+test('a row with children lists its reasons when open; a row with no reasons gets no such line', () => {
+  const kid = row('c', { key: 'child' })
+  const parent = row('p', { key: 'parent' }, { reasons: REASONS, children: [kid] })
+  const open = draw([section('web', COLS, [parent])], { expanded: new Set(['p']) })
+  expect(detailBoxes(open.drawn.tree).flatMap(leaves)).toEqual(['reasons:', 'updated, read, mentioned'])
+  const bare = row('q', { key: 'bare' }, { children: [kid] })
+  expect(detailBoxes(draw([section('web', COLS, [bare])], { expanded: new Set(['q']) }).drawn.tree)).toHaveLength(0)
+  const plain = draw([section('web', COLS, [row('b', { key: 'k', title: 't' })])], { expanded: new Set(['b']) })
+  expect(leaves(only(detailBoxes(plain.drawn.tree)))).toEqual([NOTHING_MORE])
+})

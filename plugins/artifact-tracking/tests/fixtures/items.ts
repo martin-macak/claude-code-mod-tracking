@@ -17,6 +17,7 @@ import * as acliFx from './acli'
 import type { ItemRecord, Ref } from './contracts'
 import * as ghFx from './gh'
 import { keyOf } from './keys'
+import { reasonFor } from './reasons'
 import { hostWorld } from './tracker-host'
 
 declare function setTimeout(fn: () => void, ms: number): unknown
@@ -138,7 +139,7 @@ export function fakeItems(
 /** A claim of a ref, as a kind makes it: the ref fields under the category, seen at `at` from `source`. */
 export function claimOf(ref: Ref, source = 'prompt', at = 10): Claim {
   const { category, ...fields } = ref
-  return { category, key: keyOf(ref), source, at, fields: fields as unknown as JsonObject }
+  return { category, key: keyOf(ref), source, reason: reasonFor(source), at, fields: fields as unknown as JsonObject }
 }
 
 /** Waits until a condition holds, for work the runtime starts and does not return (a refresh kick, a repo lookup). */

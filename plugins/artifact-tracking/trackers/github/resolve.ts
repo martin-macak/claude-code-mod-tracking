@@ -3,6 +3,7 @@
 // The mod never rebases, merges or pushes. The prompt asks Claude to do it in the session, under the permission rules of
 // the person, and to ask before any push.
 
+import { isLanePr } from './lane-pr'
 import { isQueued, type MergeEnv } from './merge'
 import type { GitHubRecord } from './types'
 
@@ -55,7 +56,7 @@ export const HINT = {
 /** The gate both keys share: an open PR that the lane found, that GitHub reports CONFLICTING, that the lane looked at. */
 function conflicted(rec: GitHubRecord | undefined, env: MergeEnv) {
   if (rec === undefined || rec.type !== 'pr') return no('no such PR')
-  if (!rec.sources.includes('auto') || rec.headRefName === undefined || rec.baseRefName === undefined)
+  if (!isLanePr(rec) || rec.headRefName === undefined || rec.baseRefName === undefined)
     return no('the PR lane did not find this PR, so its branches are not known')
   if (rec.state !== 'open') return no('the PR is not open')
   if (rec.mergeable !== 'CONFLICTING') return no('GitHub does not report a conflict')

@@ -18,7 +18,7 @@ export const GITHUB_SCHEMA = {
   headPrsPerBranch: int(5, 1, 50),
   basePrsPerBranch: int(10, 1, 50),
   maxBodyRefs: int(50, 1, 200),
-  /** The cap on the items that only the PR lane added (`auto` and `pr-body` sources only). Auto tracked it before L5b. */
+  /** The cap on the items that only the PR lane added (the reason `discovered` only). Auto tracked it before L5b. */
   maxAutoItems: int(100, 1, 200),
   /** The lead words that opt a conversation `#N` in (today the regex in `hooks/scan/refs.ts`). */
   shortRefKeywords: words(['github', 'bug', 'issue', 'issues', 'enhancement', 'chore'], 32),

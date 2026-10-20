@@ -5,6 +5,7 @@
 
 import type { AgentSpawnEvent, DismissedEvent, ToolCallEvent } from '../../core/interfaces/events'
 import type { RepoRef } from '../../core/interfaces/ports'
+import type { Traceable } from '../../core/interfaces/reasons'
 import type { Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import { LoadState } from '../../core/lib/load-state'
@@ -12,6 +13,7 @@ import { type ReposConfig, reposConfig } from './config'
 import { extractRepoPathsFromTool, PATH_TOOLS, parseRepoHintsFromBash, type RepoHit, repoBaseDir } from './hints'
 import { repoRowId } from './ids'
 import { RepoQueue } from './queue'
+import { repoReasonsOf } from './reasons'
 import { asRepoRows, capRepoRows, mergeRepoRows, upsertRepoRows } from './rows'
 import { sections } from './sections'
 import { RepoTracker, type RepoVisit } from './tracker'
@@ -74,7 +76,7 @@ function rootPath(ctx: Pick<Ctx, 'facts'>): string | undefined {
 type Services = { tracker: RepoTracker; queue: RepoQueue }
 const loads = new LoadState<Services>()
 
-export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> {
+export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> & Traceable<RepoRecord[]> {
   /**
    * Queues a repo lookup and returns at once: a lookup costs several git calls and must not hold a tool result back.
    * Who, when and the generation are taken now, so the row says who touched the repo even when the job runs late. The
@@ -208,6 +210,7 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> {
       clear: ctx => setRepos(ctx, () => []),
     },
     sections,
+    reasonsOf: repoReasonsOf,
     events: {
       toolCall: { Bash: onBash, ...Object.fromEntries(PATH_TOOLS.map(tool => [tool, onPathTool])) },
       agentSpawn: onSpawn,

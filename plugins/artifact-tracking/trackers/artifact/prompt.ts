@@ -7,15 +7,21 @@ import { hostAndPath, promptLine, promptRecords } from '../../core/lib/prompt-te
 import { artifactIdOf } from './artifact-url'
 import { artifactKind } from './kind'
 import { artifactOrigin } from './records'
+import type { ArtifactRecord } from './types'
 
 const NAME_MAX = 80
+
+/** The strongest reason: `published`, `mentioned` or `deleted`. A deleted page also says how it was found. */
+function factsOf(r: ArtifactRecord): string[] {
+  return [r.reasons.strongest, ...(r.reasons.strongest === 'deleted' ? [artifactOrigin(r)] : [])]
+}
 
 /** One line per tracked artifact that the person has not dismissed. The composer caps the list. */
 export function artifactPrompt(ctx: Pick<ViewContext, 'items' | 'isDismissed'>): readonly string[] {
   return promptRecords(ctx, artifactKind.decode).map(r =>
     promptLine(
       `artifact: ${hostAndPath(r.url)}`,
-      [artifactOrigin(r), ...(r.deleted ? ['deleted'] : [])],
+      factsOf(r),
       // A label that is the id names nothing: the id is already in the head.
       r.label === artifactIdOf(r.url) ? '' : r.label,
       NAME_MAX,

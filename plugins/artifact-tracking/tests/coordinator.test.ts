@@ -12,9 +12,10 @@ import type {
   Tools,
 } from './fixtures/contracts'
 import { LIMITS } from './fixtures/limits'
+import { MENTIONED } from './fixtures/reasons'
 
 const NOW = 10_000_000
-const base = { sources: ['prompt' as const], firstSeen: 1, lastSeen: 1, seenCount: 1 }
+const base = { sources: ['prompt' as const], reasons: MENTIONED, firstSeen: 1, lastSeen: 1, seenCount: 1 }
 
 const gh = (n: number, extra: Partial<ItemRecord> = {}): ItemRecord =>
   ({

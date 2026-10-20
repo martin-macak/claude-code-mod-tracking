@@ -32,6 +32,22 @@ export type Captured = {
   n: number
 }
 
+// ---------------------------------------------------------------- why an item is tracked
+
+/** Why an item is tracked, in one closed vocabulary: filters and prompt lines treat every kind the same (issue #62). */
+export type CoreReason = 'created' | 'updated' | 'read' | 'deleted' | 'published' | 'discovered' | 'mentioned'
+
+/**
+ * The reasons of one item. `first`: the reason of the earliest sighting. `all`: every reason seen, strongest first (a
+ * fixed order, so the same sightings give the same set whatever the order they merge in). `strongest`: the head of `all`.
+ * A type alias, not an interface: only an alias has the implicit index signature that `Json` needs.
+ */
+export type ReasonSet = {
+  readonly first: CoreReason
+  readonly all: readonly CoreReason[]
+  readonly strongest: CoreReason
+}
+
 // ---------------------------------------------------------------- tracked items
 
 /** A priority level, highest first. `top` comes from a kind rule only. A person sets `high`, `normal` or `low`. */
@@ -43,8 +59,13 @@ export interface StoredItem {
   readonly key: string
   /** The kind: the `category` of the `ItemKind` that owns the item. */
   readonly category: string
-  /** Where it was seen, e.g. `prompt`, `response`, `tool`, `auto`. */
+  /**
+   * The channels it was seen in: `prompt`, `response`, `tool`, and nothing else. An item that only the PR lane found has
+   * none: `reasons` holds `discovered` (issue #62).
+   */
   readonly sources: readonly string[]
+  /** Why it is tracked. */
+  readonly reasons: ReasonSet
   readonly firstSeen: number
   readonly lastSeen: number
   readonly priority?: Level

@@ -6,7 +6,8 @@
 import type { Json, StoredItem } from '../interfaces/items'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort } from '../interfaces/tracker'
-import { AUTO_SOURCES, carryOver, dropAuto, migrateRecords, unionRecords } from '../lib/records'
+import { withReasons } from '../lib/reasons'
+import { carryOver, dropAuto, isDiscovered, migrateRecords, unionRecords } from '../lib/records'
 import type { ItemStore } from './item-store'
 import type { Kinds } from './kinds'
 
@@ -28,11 +29,9 @@ function due(rec: StoredItem): StoredItem {
   return out
 }
 
-/** A stored copy comes back without auto sources: a new process has no proofs, so the first complete PR step adds back what is still tracked. */
+/** A stored copy comes back without what discovery found: a new process has no proofs, so the first complete PR step adds back what is still tracked. */
 function withoutAuto(list: StoredItem[]): StoredItem[] {
-  const keys = new Set(
-    list.filter(r => r.via !== undefined || r.sources.some(s => AUTO_SOURCES.has(s))).map(r => r.key),
-  )
+  const keys = new Set(list.filter(r => r.via !== undefined || isDiscovered(r)).map(r => r.key))
   return dropAuto(list, keys)
 }
 
@@ -43,25 +42,26 @@ export function itemSlot(store: ItemStore, d: SlotDeps): DataSlot {
   async function settle(live: StoredItem[] | undefined, stored: StoredItem[] | undefined): Promise<Json> {
     // The stored copy can predate the last presses: an item the person dismissed since, or a mark they changed (D6).
     const dismissed = await d.dismiss.list()
-    const kept = (stored ?? []).filter(rec => !dismissed.has(rec.key))
-    return migrateRecords(carryOver(live ?? [], kept, kinds.table, d.cap()), kinds.all) as unknown as Json
+    const kept = withReasons(stored ?? []).filter(rec => !dismissed.has(rec.key))
+    // The live list can hold records of a build before #62 too: a hot reload keeps the plugin state.
+    return migrateRecords(carryOver(withReasons(live ?? []), kept, kinds.table, d.cap()), kinds.all) as unknown as Json
   }
 
   /** `carry`: the list of the leaving session joins the live one. Records of a kind that is off stay out. */
   async function carry(value: StoredItem[]): Promise<void> {
-    const kept = kinds.onlyOn(value)
+    const kept = kinds.onlyOn(withReasons(value))
     if (kept.length > 0) await store.set(cur => unionRecords(kept, cur, kinds.table, d.cap()))
   }
 
   /**
-   * `load`: the stored copy of a `--resume` load or a /resume switch. Artifact rows are re-keyed, auto sources dropped,
+   * `load`: the stored copy of a `--resume` load or a /resume switch. Artifact rows are re-keyed, discovery dropped,
    * each live kind filters its own records (`restore`: tool-only sightings off the site its tool acts on), and not-found items and dismissed
    * keys stay out. Every record comes back due. The transcript is not read here: Replay hands it over after the load.
    */
   async function load(stored: StoredItem[]): Promise<void> {
     d.loading()
     const dismissed = await d.dismiss.list()
-    let list = kinds.onlyOn(withoutAuto(migrateRecords(stored, kinds.all)))
+    let list = kinds.onlyOn(withoutAuto(migrateRecords(withReasons(stored), kinds.all)))
     // Every live kind with a `restore` is asked, also with no record of its own: it may learn what it needs first.
     for (const kind of kinds.liveKinds()) {
       if (!kind.restore) continue

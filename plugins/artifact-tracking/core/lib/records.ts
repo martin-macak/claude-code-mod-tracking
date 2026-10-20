@@ -5,6 +5,7 @@
 
 import type { Claim, ItemKind, Json, Priority, StoredItem } from '../interfaces/items'
 import { mergePriority, withPriority } from './levels'
+import { addReason, dropReason, joinReasons } from './reasons'
 
 /** `not-found`: the tool says the item does not exist (or no permission). `failed`: the last refresh failed. */
 export type ItemError = { kind: 'not-found' | 'failed'; message: string; at: number }
@@ -30,9 +31,6 @@ export type BaseRecord = StoredItem & {
   via?: string[]
 }
 
-/** Sources that discovery adds. The transcript backfill and the capture hooks never write them. */
-export const AUTO_SOURCES: ReadonlySet<string> = new Set<string>(['auto', 'pr-body'])
-
 /**
  * R12: the newest manual-high records the cap never drops. A code constant, not a config key: it must stay below
  * `store.maxItems` (min 200), so the cap can always be met (plan decision C2).
@@ -45,11 +43,16 @@ export type KindTable = (category: string) => ItemKind | undefined
 type Writable<T> = { -readonly [K in keyof T]: T[K] }
 type Row = Writable<StoredItem>
 
-const hasAutoSource = (rec: Pick<StoredItem, 'sources'>): boolean => rec.sources.some(s => AUTO_SOURCES.has(s))
+/**
+ * Discovery found the item: the PR lane found the PR, or the body of a PR names the item. Only discovery adds the reason
+ * `discovered`, and the capture hooks never do. `sources` holds channels only (`prompt`, `response`, `tool`), so a
+ * record that only discovery found has no source at all.
+ */
+export const isDiscovered = (rec: Pick<StoredItem, 'reasons'>): boolean => rec.reasons.all.includes('discovered')
 
-/** Every source is an auto source: no conversation mention backs the item. */
-export function isAutoOnly(rec: Pick<StoredItem, 'sources'>): boolean {
-  return rec.sources.length > 0 && rec.sources.every(s => AUTO_SOURCES.has(s))
+/** The only reason is `discovered`: no conversation or tool call backs the item. */
+export function isAutoOnly(rec: Pick<StoredItem, 'reasons'>): boolean {
+  return rec.reasons.all.length > 0 && rec.reasons.all.every(r => r === 'discovered')
 }
 
 /** A deep copy of a JSON value. A key whose value is undefined is left out, so an absent key stays absent. */
@@ -71,11 +74,15 @@ const stringsOf = (v: Json | undefined): readonly string[] => (Array.isArray(v) 
 const levelOf = (v: Json | undefined): Priority | undefined => v as Priority | undefined
 const errorOf = (rec: StoredItem): ItemError | undefined => rec.error as ItemError | undefined
 
-/** One more sighting of a known record: the claim's source once, `seenCount` + 1 and the claim's time as `lastSeen`. */
+/**
+ * One more sighting of a known record: the claim's source once, the claim's reason, `seenCount` + 1 and the claim's time
+ * as `lastSeen`.
+ */
 export function sighted<R extends BaseRecord>(cur: R, seen: Claim): R {
   return {
     ...cur,
     sources: cur.sources.includes(seen.source) ? [...cur.sources] : [...cur.sources, seen.source],
+    reasons: addReason(cur.reasons, seen.reason),
     seenCount: cur.seenCount + 1,
     lastSeen: seen.at,
   }
@@ -87,7 +94,7 @@ export function sighted<R extends BaseRecord>(cur: R, seen: Claim): R {
 function pinnedKeys(list: readonly StoredItem[]): Set<string> {
   return new Set(
     list
-      .filter(rec => rec.priority === 'high' && !hasAutoSource(rec))
+      .filter(rec => rec.priority === 'high' && !isDiscovered(rec))
       .sort((a, b) => b.lastSeen - a.lastSeen)
       .slice(0, MAX_PINNED)
       .map(rec => rec.key),
@@ -96,16 +103,16 @@ function pinnedKeys(list: readonly StoredItem[]): Set<string> {
 
 /**
  * Drops the records with the smallest lastSeen until `cap` is met. Keys in `keep` never go, nor the newest manual-high
- * records (R12). Only records without an auto source count against `cap`, and only they are evicted (spec A11):
+ * records (R12). Only records that discovery did not find count against `cap`, and only they are evicted (spec A11):
  * auto-only items have their own cap, `maxAutoItems`, enforced at the source. The input list comes back when it fits.
  */
 export function enforceCap<R extends StoredItem>(list: R[], cap: number, keep: ReadonlySet<string> = new Set()): R[] {
-  const excess = list.filter(rec => !hasAutoSource(rec)).length - cap
+  const excess = list.filter(rec => !isDiscovered(rec)).length - cap
   if (excess <= 0) return list
   const pinned = pinnedKeys(list)
   const victims = list
     .map((rec, i) => ({ rec, i }))
-    .filter(({ rec }) => !hasAutoSource(rec) && !keep.has(rec.key) && !pinned.has(rec.key))
+    .filter(({ rec }) => !isDiscovered(rec) && !keep.has(rec.key) && !pinned.has(rec.key))
     .sort((x, y) => x.rec.lastSeen - y.rec.lastSeen || x.i - y.i)
     .slice(0, excess)
     .map(({ i }) => i)
@@ -117,14 +124,16 @@ export function enforceCap<R extends StoredItem>(list: R[], cap: number, keep: R
 
 /**
  * Folds sightings of `b` into `a`: status fields come from the record with the newer `refreshedAt` (a tie keeps `a`),
- * the union of sources (a first) and of `via`, the sum of seenCount, the min firstSeen, the max lastSeen, the merge of
- * the manual marks. The kind adds its own part last (`ItemKind.fold`).
+ * the union of sources (a first), of `via` and of the reasons (`first` from the record seen first, a tie keeps `a`), the
+ * sum of seenCount, the min firstSeen, the max lastSeen, the merge of the manual marks. The kind adds its own part last
+ * (`ItemKind.fold`).
  */
 export function foldRecords(a: StoredItem, b: StoredItem, kinds: KindTable): StoredItem {
   const winner = (numberOf(b.refreshedAt) ?? -Infinity) > (numberOf(a.refreshedAt) ?? -Infinity) ? b : a
   const loser = winner === a ? b : a
   const out = cloneRecord(winner) as Row
   out.sources = [...new Set([...a.sources, ...b.sources])]
+  out.reasons = joinReasons(a.reasons, b.reasons, a.firstSeen <= b.firstSeen ? 'a' : 'b')
   const via = [...new Set([...stringsOf(a.via), ...stringsOf(b.via)])]
   if (via.length > 0) out.via = via
   else delete out.via
@@ -247,7 +256,7 @@ export function applyRefresh(
   })
 }
 
-// ---------------------------------------------------------------- migration and auto sources
+// ---------------------------------------------------------------- migration and discovery
 
 /**
  * R13: offers each record to the `migrate` of every kind, in rank order. A record that a kind claims moves there and
@@ -277,19 +286,23 @@ export function migrateRecords(list: StoredItem[], kinds: readonly ItemKind[]): 
   return out
 }
 
-/** Removes `auto`, `pr-body` and `via` from the given keys. A record left with no source goes. */
+/**
+ * Takes the reason `discovered` and `via` away from the given keys. A record left with no reason goes. A mark that a kind
+ * keeps for itself (the `lane` marker of a PR the lane found) stays: core does not know it, and the kind reads it only
+ * beside the reason `discovered`, so a mark left behind does nothing until the lane finds the item again.
+ */
 export function dropAuto<R extends StoredItem>(list: readonly R[], keys: ReadonlySet<string>): R[] {
   let changed = false
   const out: R[] = []
   for (const rec of list) {
-    if (!keys.has(rec.key) || (!hasAutoSource(rec) && rec.via === undefined)) {
+    if (!keys.has(rec.key) || (!isDiscovered(rec) && rec.via === undefined)) {
       out.push(rec)
       continue
     }
     changed = true
-    const sources = rec.sources.filter(s => !AUTO_SOURCES.has(s))
-    if (sources.length === 0) continue
-    const next = { ...rec, sources } as Row
+    const reasons = dropReason(rec.reasons, 'discovered')
+    if (reasons === undefined) continue
+    const next = { ...rec, reasons } as Row
     delete next.via
     out.push(next as R)
   }

@@ -8,6 +8,7 @@ import { transcriptItems } from '../core/infra/replay'
 import type { ReplayItem } from '../core/interfaces/events'
 import type { Claim, Json } from '../core/interfaces/items'
 import { scanContext } from '../core/lib/kind-context'
+import { reasonSet } from '../core/lib/reasons'
 import { artifactKind } from '../trackers/artifact/kind'
 import { githubKind } from '../trackers/github/kind'
 import { jiraKind } from '../trackers/jira/kind'
@@ -25,6 +26,7 @@ import {
   sleep,
   toolResultRow,
 } from './fixtures/items'
+import { MENTIONED } from './fixtures/reasons'
 
 // ---------------------------------------------------------------- the doors
 
@@ -193,6 +195,7 @@ test('jira accept: the site of a claim is compared with the active site in any c
     category: 'jira',
     key: `jira:${site.toLowerCase()}/ISS-1`,
     source: 'tool',
+    reason: 'read',
     at: 1,
     fields: { site, issueKey: 'ISS-1', url: 'u', trackOnly: false },
   })
@@ -218,6 +221,7 @@ test('jira accept: with no acli every claim stays; a Jira claim of a prompt is n
     category: 'jira',
     key: `jira:${site}/A-1`,
     source: 'tool',
+    reason: 'read',
     at: 1,
     fields: { site, issueKey: 'A-1', url: 'u', trackOnly: false },
   })
@@ -232,6 +236,7 @@ test('the open check of short refs: with no probe every same-repo ref goes, othe
     category: 'github',
     key: `gh:github.com/${owner}/${repo}#5`,
     source: 'prompt',
+    reason: 'mentioned',
     at: 1,
     fields: { host: 'github.com', owner, repo, number: 5, type: 'unknown', short: true },
   })
@@ -355,6 +360,7 @@ test('a stored key wins over the transcript', async () => {
     url: 'https://docs.example/a',
     label: 'Kept label',
     sources: ['response'],
+    reasons: MENTIONED,
     firstSeen: 1,
     lastSeen: 1,
     seenCount: 1,
@@ -390,6 +396,7 @@ test('a stored mention is repaired by the publish, and a known publish is not co
     url: PAGE_URL,
     label: PAGE_KEY,
     sources: ['response'],
+    reasons: MENTIONED,
     firstSeen: 1,
     lastSeen: 1,
     seenCount: 1,
@@ -420,7 +427,7 @@ test('replay: a stored key wins, a later artifact publish wins, dismissed and fo
   t.w.files['/work/x.md'] = '# x'
   const items = await t.started()
   t.dismissed.add('web:https://d.example/')
-  const base = { category: 'web', firstSeen: 1, lastSeen: 1, seenCount: 1 }
+  const base = { category: 'web', reasons: MENTIONED, firstSeen: 1, lastSeen: 1, seenCount: 1 }
   const stored = [
     { ...base, key: 'web:https://a.example/', url: 'https://a.example/', label: 'Old', sources: ['response'] },
     { ...base, key: PAGE_KEY, category: 'artifact', url: PAGE_URL, label: PAGE_KEY, sources: ['response'] },
@@ -434,7 +441,7 @@ test('replay: a stored key wins, a later artifact publish wins, dismissed and fo
   ])
   expect(t.list().find(r => r.key === 'web:https://a.example/')?.label).toBe('Old') // the stored key wins
   const page = t.list().find(r => r.key === PAGE_KEY) as ArtifactRecord
-  expect(page.sources).toContain('publish') // the transcript knew the publish
+  expect(page.reasons.all).toContain('published') // the transcript knew the publish
   expect(t.keys().sort()).toEqual([PAGE_KEY, 'web:https://a.example/'].sort()) // no d.example, no ISS-9, no file row
 })
 
@@ -567,12 +574,20 @@ test('a replayed batch built by hand reaches the same rules', async () => {
 })
 
 test('artifact replayWins: a publish over a mention, a delete over a live row, nothing else', () => {
-  const rec = (sources: string[], deleted?: true) =>
-    ({ key: PAGE_KEY, category: 'artifact', url: PAGE_URL, label: 'x', sources, deleted }) as unknown as ArtifactRecord
+  const rec = (why: 'published' | 'mentioned', deleted?: true) =>
+    ({
+      key: PAGE_KEY,
+      category: 'artifact',
+      url: PAGE_URL,
+      label: 'x',
+      sources: [why === 'published' ? 'tool' : 'response'],
+      reasons: reasonSet(why),
+      deleted,
+    }) as unknown as ArtifactRecord
   const wins = artifactKind.replayWins!
-  expect(wins(rec(['publish']), rec(['response']))).toBe(true)
-  expect(wins(rec(['response'], true), rec(['response']))).toBe(true)
-  expect(wins(rec(['publish']), rec(['publish']))).toBe(false)
-  expect(wins(rec(['response']), rec(['publish']))).toBe(false)
-  expect(wins(rec(['publish'], true), rec(['publish'], true))).toBe(false)
+  expect(wins(rec('published'), rec('mentioned'))).toBe(true)
+  expect(wins(rec('mentioned', true), rec('mentioned'))).toBe(true)
+  expect(wins(rec('published'), rec('published'))).toBe(false)
+  expect(wins(rec('mentioned'), rec('published'))).toBe(false)
+  expect(wins(rec('published', true), rec('published', true))).toBe(false)
 })

@@ -7,6 +7,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { BUDGET, fits, measure } from '../ux/tree-data-table/budget'
 import { LIMITS } from './fixtures/limits'
 import { focusOn, handleFor, headersOf, mountPane, type PaneUi, rowsOf, select } from './fixtures/pane'
+import { reasonsOfSources } from './fixtures/reasons'
 import { HANG_GUARD, prompt, quiet, response, SESSION, START, track, world } from './fixtures/world'
 
 type World = ReturnType<typeof world>
@@ -434,6 +435,7 @@ const webRec = (n: number) => ({
   url: `https://page${n}.example/`,
   label: `Page number ${n}`,
   sources: ['response'],
+  reasons: reasonsOfSources(['response']),
   firstSeen: n,
   lastSeen: n,
   seenCount: 1,

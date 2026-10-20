@@ -3,6 +3,7 @@
 // Plan: L5 Task 4, K4, K5. Task 5 adds `claimUrl`; Task 6 `setLevel` and `findRow`; Task 8 `accept` and `restore`.
 
 import type { Claim, ItemKind, JsonObject, KindContext, Refreshable, RefreshContext } from '../../core/interfaces/items'
+import { reasonOfSource, reasonSet } from '../../core/lib/reasons'
 import { sighted } from '../../core/lib/records'
 import { acliOf } from './client'
 import { JiraItem } from './jira-item'
@@ -25,6 +26,7 @@ function jiraRecord(ref: JiraRef, claim: Claim): JiraRecord {
     url: ref.url,
     label: ref.issueKey,
     sources: [claim.source],
+    reasons: reasonSet(claim.reason),
     firstSeen: claim.at,
     lastSeen: claim.at,
     seenCount: 1,
@@ -73,6 +75,7 @@ export const jiraKind: ItemKind<JiraRecord> = {
       category,
       key: jiraKeyOf(ref),
       source: ctx.source,
+      reason: reasonOfSource(ctx.source),
       at: ctx.now,
       fields: fields as unknown as JsonObject,
     }

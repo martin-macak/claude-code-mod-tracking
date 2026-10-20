@@ -3,7 +3,7 @@
 
 import type { StoredItem } from '../../core/interfaces/items'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
-import { AUTO_SOURCES } from '../../core/lib/records'
+import { isDiscovered } from '../../core/lib/records'
 import type { AgentRow, AutoState } from './types'
 
 /** The ids of every current auto row and item. Never the root or the master. */
@@ -11,7 +11,7 @@ export function autoIds(s: AutoState, items: readonly StoredItem[]): string[] {
   const ids: string[] = []
   for (const r of s.snapshot?.worktrees ?? []) if (r.depth === 1) ids.push(r.id)
   for (const r of s.snapshot?.agents ?? []) if (r.kind !== 'master') ids.push(r.id)
-  for (const it of items) if (it.sources.some(x => AUTO_SOURCES.has(x))) ids.push(it.key)
+  for (const it of items) if (isDiscovered(it)) ids.push(it.key)
   return ids
 }
 

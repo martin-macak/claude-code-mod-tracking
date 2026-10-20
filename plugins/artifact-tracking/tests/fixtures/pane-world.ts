@@ -8,12 +8,14 @@
 // docker issue.
 import type { LifecycleManager } from '../../core/infra/lifecycle'
 import type { Json, JsonObject, StoredItem } from '../../core/interfaces/items'
+import { addReason, reasonSet } from '../../core/lib/reasons'
 import type { AgentRow, AutoSnapshot, AutoState, WorktreeRow } from '../../trackers/auto/types'
 import type { ProcessRecord, ProcessUiState } from '../../trackers/processes/types'
 import type { RepoRecord } from '../../trackers/repos/types'
 import type { ToolStatus } from '../../types'
 import { fakeConfig } from './config-fs'
 import { managerWorld } from './manager'
+import { DISCOVERED, fileReasons, reasonsOfSources } from './reasons'
 
 /** The wall clock of the world. The notes say `refreshed 2m ago` against it. */
 export const NOW = 1_000_000
@@ -56,6 +58,7 @@ const rec = (key: string, category: string, url: string, label: string, f: Field
     url,
     label,
     sources: ['prompt'],
+    reasons: reasonsOfSources((f.sources as string[] | undefined) ?? ['prompt']),
     firstSeen: 10,
     lastSeen: 10,
     seenCount: 1,
@@ -81,8 +84,11 @@ const pr = (n: number, f: Fields = {}): StoredItem =>
 const art = (uuid: string, label: string, f: Fields = {}): StoredItem =>
   rec(`art:${uuid}`, 'artifact', `https://claude.ai/artifact/${uuid}`, label, f)
 
-const file = (path: string, f: Fields): StoredItem =>
-  rec(`file:${path}`, 'file', path, path, { created: false, edits: 0, views: 0, mentions: 0, ...f })
+/** A file record: its reasons follow the counters it holds, as the file kind makes them. */
+const file = (path: string, f: Fields): StoredItem => {
+  const n = { created: false, edits: 0, views: 0, mentions: 0, ...f }
+  return rec(`file:${path}`, 'file', path, path, { ...n, reasons: fileReasons(n) as unknown as Json })
+}
 
 /** The Jira issue with a child tree of two levels. PROJ-201 is a child of ISS-1 and a tracked issue of its own. */
 const jira = (issueKey: string, f: Fields = {}): StoredItem =>
@@ -94,7 +100,10 @@ const jira = (issueKey: string, f: Fields = {}): StoredItem =>
     ...f,
   })
 
-/** Every record of the world. The PR lane's findings carry the source `auto`. */
+/** What a PR that only the PR lane found carries: no channel, the reason `discovered` and the `lane` marker. */
+const FOUND: Fields = { sources: [], reasons: DISCOVERED as unknown as Json, lane: true }
+
+/** Every record of the world. The PR lane's findings carry the `lane` marker and the reason `discovered`. */
 export function paneItems(): StoredItem[] {
   return [
     // GitHub: the conversation named these
@@ -122,7 +131,7 @@ export function paneItems(): StoredItem[] {
     // GitHub: the PR lane found these
     pr(21, {
       firstSeen: 20,
-      sources: ['auto'],
+      ...FOUND,
       title: 'Rework the capture scan',
       headRefName: 'feat/x',
       baseRefName: 'main',
@@ -131,7 +140,7 @@ export function paneItems(): StoredItem[] {
     }),
     pr(22, {
       firstSeen: 21,
-      sources: ['auto'],
+      ...FOUND,
       title: 'Stacked on the scan',
       headRefName: 'feat/y',
       baseRefName: 'feat/x',
@@ -139,7 +148,7 @@ export function paneItems(): StoredItem[] {
     }),
     pr(23, {
       firstSeen: 22,
-      sources: ['auto'],
+      ...FOUND,
       title: 'Old work',
       headRefName: 'feat/old',
       baseRefName: 'main',
@@ -148,7 +157,9 @@ export function paneItems(): StoredItem[] {
     }),
     pr(24, {
       firstSeen: 23,
-      sources: ['prompt', 'auto'],
+      sources: ['prompt'],
+      reasons: addReason(reasonSet('mentioned'), 'discovered') as unknown as Json,
+      lane: true,
       title: 'Named and found',
       headRefName: 'feat/z',
       baseRefName: 'main',
@@ -203,8 +214,17 @@ export function paneItems(): StoredItem[] {
     }),
     jira('GONE-1', { firstSeen: 33, error: { kind: 'not-found', message: 'x', at: 1 } }),
     // Artifacts
-    art('11111111-1111-4111-8111-111111111111', 'Design notes', { sources: ['publish'], firstSeen: 40 }),
-    art('22222222-2222-4222-8222-222222222222', 'Old draft', { sources: ['publish'], deleted: true, firstSeen: 41 }),
+    art('11111111-1111-4111-8111-111111111111', 'Design notes', {
+      sources: ['tool'],
+      reasons: reasonSet('published') as unknown as Json,
+      firstSeen: 40,
+    }),
+    art('22222222-2222-4222-8222-222222222222', 'Old draft', {
+      sources: ['tool'],
+      reasons: addReason(reasonSet('published'), 'deleted') as unknown as Json,
+      deleted: true,
+      firstSeen: 41,
+    }),
     art('33333333-3333-4333-8333-333333333333', '33333333-3333-4333-8333-333333333333', { firstSeen: 42 }),
     // Web
     rec(KEYS.web, 'web', 'https://docs.example/a?x=1', 'docs.example/a', { firstSeen: 50, via: [KEYS.head] }),

@@ -11,6 +11,7 @@ import {
   RULES,
   rankOf,
 } from './fixtures/priority'
+import { reasonsOfSources } from './fixtures/reasons'
 
 const node = (key: string, priority?: 'high' | 'normal' | 'low', children: JiraNode[] = []): JiraNode => ({
   key,
@@ -65,6 +66,7 @@ const gh = (n: number, type: 'pr' | 'issue' | 'unknown', over: Partial<GitHubRec
   url: `https://github.com/acme/web/pull/${n}`,
   label: `acme/web#${n}`,
   sources: ['prompt'],
+  reasons: reasonsOfSources(['prompt']),
   firstSeen: n,
   lastSeen: n,
   seenCount: 1,
@@ -82,6 +84,7 @@ const web: WebRecord = {
   url: 'https://x.example/',
   label: 'x',
   sources: ['prompt'],
+  reasons: reasonsOfSources(['prompt']),
   firstSeen: 1,
   lastSeen: 1,
   seenCount: 1,

@@ -57,6 +57,8 @@ function markdownLinks(text: string): Candidate[] {
  * 2. Each candidate goes to the kinds by `rank` (ties: the order given); the first `claimUrl` that answers wins. A kind
  *    that does not read tool output (`urls-only`) answers null there, so no fallback claims a bare URL.
  * 3. The claimed spans are blanked, then each kind scans what is left (`scan`), for kind syntax a URL cannot hold.
+ *    A kind that throws (in `claimUrl` or `scan`) gives no claim and the others still count. A URL that threw in
+ *    `claimUrl` keeps its span, so it does not fall to a later kind.
  * 4. The claims sort by where they sit (one with no span goes last); the first claim of a key stays.
  *
  * `mode` is the caller's, whatever the contexts say. A claim from a kind with no `span` keeps none.
@@ -71,7 +73,14 @@ export function scanClaims(text: string, mode: ScanMode, kinds: readonly ItemKin
   const spans: { start: number; end: number }[] = []
   for (const c of mode === 'urls-only' ? urlRuns(t) : markdownLinks(t)) {
     for (const kind of ordered) {
-      const claim = kind.claimUrl?.(c.url, c.label, contexts.get(kind)!)
+      let claim: Claim | null | undefined
+      try {
+        claim = kind.claimUrl?.(c.url, c.label, contexts.get(kind)!)
+      } catch {
+        // The kind's fault, for example a reason word that is off: no claim, and the URL does not fall to a later kind.
+        spans.push({ start: c.start, end: c.end })
+        break
+      }
       if (!claim) continue
       claims.push({ ...claim, span: { start: c.start, end: c.end } })
       spans.push({ start: c.start, end: c.end })
@@ -79,7 +88,13 @@ export function scanClaims(text: string, mode: ScanMode, kinds: readonly ItemKin
     }
   }
   const masked = maskSpans(t, spans)
-  for (const kind of ordered) claims.push(...(kind.scan?.(masked, mode, contexts.get(kind)!) ?? []))
+  for (const kind of ordered) {
+    try {
+      claims.push(...(kind.scan?.(masked, mode, contexts.get(kind)!) ?? []))
+    } catch {
+      // One kind's fault must not hide the claims of the others (as `toolCall` does).
+    }
+  }
   const startOf = (c: Claim): number => c.span?.start ?? Number.MAX_SAFE_INTEGER
   const seen = new Set<string>()
   return claims

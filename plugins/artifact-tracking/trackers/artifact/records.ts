@@ -4,13 +4,14 @@
 
 import type { StoredItem } from '../../core/interfaces/items'
 import { hostPath } from '../../core/lib/links'
+import { addReason } from '../../core/lib/reasons'
 import { type BaseRecord, cloneRecord } from '../../core/lib/records'
 import { artifactKeyOf, parseArtifactUrl } from './artifact-url'
 import type { ArtifactOrigin, ArtifactRecord } from './types'
 
-/** An artifact is `published` once the session's Artifact tool wrote it, else `mentioned`. */
-export function artifactOrigin(rec: { sources: readonly string[] }): ArtifactOrigin {
-  return rec.sources.includes('publish') ? 'published' : 'mentioned'
+/** An artifact is `published` once the session's Artifact tool wrote it (the reason `published`), else `mentioned`. */
+export function artifactOrigin(rec: Pick<ArtifactRecord, 'reasons'>): ArtifactOrigin {
+  return rec.reasons.all.includes('published') ? 'published' : 'mentioned'
 }
 
 /** Marks the artifact row `key` deleted (R12). The input list comes back when no row has the key or it is marked. */
@@ -19,7 +20,7 @@ export function markArtifactDeleted<R extends StoredItem>(list: R[], key: string
   const rec = list[at]
   if (rec?.category !== 'artifact' || rec.deleted) return list
   const out = [...list]
-  out[at] = { ...cloneRecord(rec), deleted: true }
+  out[at] = { ...cloneRecord(rec), deleted: true, reasons: addReason(rec.reasons, 'deleted') }
   return out
 }
 

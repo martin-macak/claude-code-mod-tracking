@@ -1,9 +1,9 @@
 // The generic record algebra over a kind table: merge claims, fold, cap, carry-over, refresh, migrate. Pure, one fake kind.
 // Plan: L5 Task 4, K4, K5.
 import { expect, test } from 'claude-code/testing'
-import type { Claim, ItemKind, StoredItem } from '../core/interfaces/items'
+import type { Claim, CoreReason, ItemKind, ReasonSet, StoredItem } from '../core/interfaces/items'
+import { addReason, reasonSet } from '../core/lib/reasons'
 import {
-  AUTO_SOURCES,
   applyRefresh,
   type BaseRecord,
   carryOver,
@@ -12,12 +12,15 @@ import {
   enforceCap,
   foldRecords,
   isAutoOnly,
+  isDiscovered,
   type KindTable,
   MAX_PINNED,
   mergeClaims,
   migrateRecords,
+  sighted,
   unionRecords,
 } from '../core/lib/records'
+import { DISCOVERED, reasonsOfSources } from './fixtures/reasons'
 
 type TRec = BaseRecord & { category: 't'; n?: number; deep?: { list: number[] } }
 
@@ -27,6 +30,7 @@ const rec = (key: string, at: number, over: Partial<TRec> = {}): TRec => ({
   url: key,
   label: key,
   sources: ['prompt'],
+  reasons: reasonsOfSources(['prompt']),
   firstSeen: at,
   lastSeen: at,
   seenCount: 1,
@@ -36,6 +40,7 @@ const claim = (key: string, at: number, n?: number, category = 't'): Claim => ({
   category,
   key,
   source: 'prompt',
+  reason: 'mentioned',
   at,
   fields: n === undefined ? {} : { n },
 })
@@ -161,13 +166,14 @@ test('foldRecords with no kind for the category gives the generic fold', () => {
   expect(out).toMatchObject({ seenCount: 2, sources: ['prompt'], lastSeen: 2 })
 })
 
-test('enforceCap evicts the smallest lastSeen, never an auto source, never the newest 100 manual-high records', () => {
-  const list: StoredItem[] = [rec('t:a', 5), rec('t:b', 1), rec('t:c', 3), rec('t:auto', 0, { sources: ['auto'] })]
+test('enforceCap evicts the smallest lastSeen, never a discovered record, never the newest 100 manual-high records', () => {
+  const found = { sources: [], reasons: DISCOVERED }
+  const list: StoredItem[] = [rec('t:a', 5), rec('t:b', 1), rec('t:c', 3), rec('t:auto', 0, found)]
   expect(enforceCap(list, 3)).toBe(list) // the auto-only record does not count
   expect(enforceCap(list, 2).map(x => x.key)).toEqual(['t:a', 't:c', 't:auto'])
   const manual = (i: number) => rec(`t:m${i}`, i, { priority: 'high' })
   const highs = Array.from({ length: MAX_PINNED + 3 }, (_, i) => manual(i + 10)) // lastSeen 10 to 112
-  const all: StoredItem[] = [rec('t:auto2', 0, { sources: ['pr-body'] }), rec('t:old', 1), rec('t:keep', 2), ...highs]
+  const all: StoredItem[] = [rec('t:auto2', 0, found), rec('t:old', 1), rec('t:keep', 2), ...highs]
   // 105 records count against a cap of 101: four go. Not the auto-only one, not t:keep, not the newest 100 manual-high.
   const out = enforceCap(all, MAX_PINNED + 1, new Set(['t:keep']))
   expect(out).toHaveLength(all.length - 4)
@@ -178,11 +184,17 @@ test('enforceCap evicts the smallest lastSeen, never an auto source, never the n
   for (const stays of highs.slice(3)) expect(out.map(x => x.key)).toContain(stays.key)
 })
 
-test('isAutoOnly and AUTO_SOURCES', () => {
-  expect([...AUTO_SOURCES].sort()).toEqual(['auto', 'pr-body'])
-  expect(isAutoOnly(rec('t:a', 1, { sources: ['auto', 'pr-body'] }))).toBe(true)
-  expect(isAutoOnly(rec('t:a', 1, { sources: ['auto', 'prompt'] }))).toBe(false)
-  expect(isAutoOnly(rec('t:a', 1, { sources: [] }))).toBe(false)
+test('isAutoOnly and isDiscovered read the reasons, not the sources (issue #62)', () => {
+  const both = addReason(reasonSet('mentioned'), 'discovered')
+  // Discovery found it and nothing else did: no channel, one reason.
+  expect(isAutoOnly(rec('t:a', 1, { sources: [], reasons: DISCOVERED }))).toBe(true)
+  expect(isDiscovered(rec('t:a', 1, { sources: [], reasons: DISCOVERED }))).toBe(true)
+  // A conversation named it too: found, but not auto-only. The channel is not what tells.
+  expect(isAutoOnly(rec('t:a', 1, { sources: ['prompt'], reasons: both }))).toBe(false)
+  expect(isDiscovered(rec('t:a', 1, { sources: ['prompt'], reasons: both }))).toBe(true)
+  // A record with no source and no `discovered` is neither.
+  expect(isAutoOnly(rec('t:a', 1, { sources: [], reasons: reasonSet('mentioned') }))).toBe(false)
+  expect(isDiscovered(rec('t:a', 1))).toBe(false)
 })
 
 test('cloneRecord copies nested arrays and objects and leaves out undefined keys', () => {
@@ -261,18 +273,91 @@ test('migrateRecords moves a record to the kind that claims it and folds it into
   expect(moving).toEqual(input)
 })
 
-test('dropAuto removes auto sources and via from the given keys; a record left with no source goes', () => {
+test('dropAuto takes `discovered` and via from the given keys; a record left with no reason goes', () => {
+  const both = addReason(reasonSet('mentioned'), 'discovered')
   const list: StoredItem[] = [
-    rec('t:a', 1, { sources: ['prompt', 'auto'], via: ['k'] }),
-    rec('t:b', 2, { sources: ['pr-body'], via: ['k'] }),
-    rec('t:c', 3, { sources: ['prompt', 'auto'] }),
+    rec('t:a', 1, { sources: ['prompt'], reasons: both, via: ['k'] }),
+    rec('t:b', 2, { sources: [], reasons: DISCOVERED, via: ['k'] }),
+    rec('t:c', 3, { sources: ['prompt'], reasons: both }),
     rec('t:d', 4),
   ]
   const out = dropAuto(list, new Set(['t:a', 't:b', 't:d']))
   expect(out.map(x => x.key)).toEqual(['t:a', 't:c', 't:d'])
-  expect(out[0]).toMatchObject({ sources: ['prompt'] })
+  expect(out[0]).toMatchObject({ sources: ['prompt'], reasons: reasonSet('mentioned') })
   expect('via' in out[0]!).toBe(false)
   expect(out[1]).toBe(list[2]!)
   const same = dropAuto(list, new Set(['t:d', 'none']))
   expect(same).toBe(list)
+})
+
+// ---------------------------------------------------------------- reasons (issue #62)
+
+const why = (set: ReasonSet) => [set.first, set.all, set.strongest]
+
+/** A kind whose merge is the generic one: a claim makes a record with its reason, a second claim is `sighted`. */
+const sKind: ItemKind<TRec> = {
+  ...tKind,
+  merge: (cur, seen) =>
+    cur === null
+      ? rec(seen.key, seen.at, { sources: [seen.source], reasons: reasonSet(seen.reason) })
+      : sighted(cur, seen),
+}
+const sTable: KindTable = category => (category === 't' ? sKind : undefined)
+const withReason = (key: string, reason: CoreReason, at: number): Claim => ({ ...claim(key, at), reason })
+
+test('reasons: a claim makes a record with its reason; a later claim adds its own and keeps `first`', () => {
+  const out = mergeClaims(
+    [],
+    [withReason('t:a', 'mentioned', 1), withReason('t:a', 'read', 2), withReason('t:a', 'updated', 3)],
+    sTable,
+    100,
+  )
+  expect(why(out.list[0]!.reasons)).toEqual(['mentioned', ['updated', 'read', 'mentioned'], 'updated'])
+  // The same reason again changes nothing in the set.
+  const again = mergeClaims(out.list, [withReason('t:a', 'read', 4)], sTable, 100)
+  expect(why(again.list[0]!.reasons)).toEqual(['mentioned', ['updated', 'read', 'mentioned'], 'updated'])
+})
+
+test('reasons: the order of the claims changes neither `all` nor `strongest`', () => {
+  const claims = [
+    withReason('t:a', 'discovered', 1),
+    withReason('t:a', 'created', 2),
+    withReason('t:a', 'mentioned', 3),
+    withReason('t:a', 'read', 4),
+  ]
+  const forward = mergeClaims([], claims, sTable, 100).list[0]!.reasons
+  const backward = mergeClaims([], [...claims].reverse(), sTable, 100).list[0]!.reasons
+  expect(forward.all).toEqual(['created', 'read', 'discovered', 'mentioned'])
+  expect(backward.all).toEqual(forward.all)
+  expect(backward.strongest).toBe(forward.strongest)
+  expect(forward.strongest).toBe('created')
+})
+
+test('reasons: a fold keeps the `first` of the record seen first and unions `all`, whatever the order', () => {
+  const older = rec('t:a', 1, { reasons: reasonSet('read') })
+  const newer = rec('t:a', 5, { reasons: addReason(reasonSet('mentioned'), 'updated') })
+  const ab = foldRecords(older, newer, sTable)
+  const ba = foldRecords(newer, older, sTable)
+  expect(why(ab.reasons)).toEqual(['read', ['updated', 'read', 'mentioned'], 'updated'])
+  expect(ba.reasons).toEqual(ab.reasons)
+  expect(unionRecords([newer], [older], sTable, 100)[0]?.reasons).toEqual(ab.reasons)
+})
+
+test('reasons: a fold of two records seen at once keeps the `first` of `a`', () => {
+  const a = rec('t:a', 3, { reasons: reasonSet('read') })
+  const b = rec('t:a', 3, { reasons: reasonSet('created') })
+  expect(why(foldRecords(a, b, sTable).reasons)).toEqual(['read', ['created', 'read'], 'created'])
+  expect(why(foldRecords(b, a, sTable).reasons)).toEqual(['created', ['created', 'read'], 'created'])
+})
+
+test('reasons: dropAuto takes `discovered` away, `sources` stay as they are; a mention stays; an auto-only record goes', () => {
+  const both = rec('t:a', 1, {
+    sources: ['prompt'],
+    reasons: addReason(reasonSet('mentioned'), 'discovered'),
+  })
+  const autoOnly = rec('t:b', 2, { sources: [], reasons: reasonSet('discovered') })
+  const out = dropAuto([both, autoOnly], new Set(['t:a', 't:b']))
+  expect(out.map(r => [r.key, r.sources, why(r.reasons)])).toEqual([
+    ['t:a', ['prompt'], ['mentioned', ['mentioned'], 'mentioned']],
+  ])
 })

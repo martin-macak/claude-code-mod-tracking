@@ -5,7 +5,7 @@
 // `HydratedItem`) and `isRowId`, and the legacy auto state with `prs` and `defaultBranch`.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.1
 
-import type { Refreshable, ScanMode } from '../../core/interfaces/items'
+import type { CoreReason, Refreshable, ScanMode } from '../../core/interfaces/items'
 import type { RepoRef, RunOpts } from '../../core/interfaces/ports'
 import type { ArtifactRecord, ArtifactRef } from '../../trackers/artifact/types'
 import type { AutoSnapshot as Snapshot, AutoState as State } from '../../trackers/auto/types'
@@ -91,10 +91,11 @@ export type RunInit = RunOpts
 
 export type Category = 'jira' | 'github' | 'artifact' | 'web' | 'file'
 /**
- * Where a reference was seen. `auto`: a PR on a tracked branch. `pr-body`: named in a discovered PR body.
- * `publish`: the session's Artifact tool published or updated it.
+ * Where a reference was seen: the label of a claim. `auto`: a PR on a tracked branch. `pr-body`: named in a discovered PR
+ * body. Only a channel (`prompt`, `response`, `tool`) lands in `sources` (issue #62): a record that discovery found has
+ * none and holds the reason `discovered`. The Artifact tool is a `tool` sighting; a publish carries the reason `published`.
  */
-export type Source = 'prompt' | 'response' | 'tool' | 'auto' | 'pr-body' | 'publish'
+export type Source = 'prompt' | 'response' | 'tool' | 'auto' | 'pr-body'
 export type ToolName = 'gh' | 'acli'
 
 export type ItemRecord = GitHubRecord | JiraRecord | ArtifactRecord | WebRecord | FileRecord
@@ -144,11 +145,11 @@ export type HydratedItem =
   | (Hydrated & { readonly category: 'web' })
   | (Hydrated & { readonly category: 'file' })
 
-export type Sighting = { source: Source; at: number }
+/** One sighting. `reason`: what it says Claude did; absent, the reason the source stands for. */
+export type Sighting = { source: Source; at: number; reason?: CoreReason }
 
-// The key of a resolved GitHub issue or PR, the auto sources, the child-tree carry and the row ids live with their owners
+// The key of a resolved GitHub issue or PR, the child-tree carry and the row ids live with their owners
 // (plan L5, Tasks 4, 14 and 15). The tests import them from here.
-export { AUTO_SOURCES } from '../../core/lib/records'
 export { agentRowId, MASTER_ID, worktreeId } from '../../trackers/auto/ids'
 export { githubKey } from '../../trackers/github/urls'
 export { carryPriorities } from '../../trackers/jira/nodes'

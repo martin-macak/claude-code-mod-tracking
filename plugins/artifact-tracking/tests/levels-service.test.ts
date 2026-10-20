@@ -26,6 +26,7 @@ import { porcelain } from './fixtures/git'
 import { IDLE_ITEMS } from './fixtures/items-host'
 import { LIMITS } from './fixtures/limits'
 import { fakePorts } from './fixtures/ports'
+import { reasonsOfSources } from './fixtures/reasons'
 
 const SHIPPED: readonly ItemKind[] = [githubKind, jiraKind, artifactKind, fileKind, webKind]
 const table: KindTable = category => SHIPPED.find(k => k.category === category)
@@ -43,6 +44,7 @@ const gh = (n: number, type: 'pr' | 'issue' | 'unknown', over: Partial<GitHubRec
   url: `https://github.com/acme/web/pull/${n}`,
   label: `acme/web#${n}`,
   sources: ['prompt'],
+  reasons: reasonsOfSources(['prompt']),
   firstSeen: n,
   lastSeen: n,
   seenCount: 1,
@@ -60,6 +62,7 @@ const web = (url: string, over: Partial<WebRecord> = {}): WebRecord => ({
   url,
   label: url,
   sources: ['prompt'],
+  reasons: reasonsOfSources(['prompt']),
   firstSeen: 1,
   lastSeen: 1,
   seenCount: 1,
@@ -79,6 +82,7 @@ const jira = (over: Partial<JiraRecord> = {}): JiraRecord => ({
   url: 'https://acme.atlassian.net/browse/ISS-1',
   label: 'ISS-1',
   sources: ['prompt'],
+  reasons: reasonsOfSources(['prompt']),
   firstSeen: 1,
   lastSeen: 1,
   seenCount: 1,

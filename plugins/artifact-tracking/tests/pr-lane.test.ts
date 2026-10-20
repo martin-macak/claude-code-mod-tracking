@@ -28,6 +28,7 @@ import { porcelain as gitPorcelain } from './fixtures/git'
 import { res, until } from './fixtures/items'
 import { LIMITS } from './fixtures/limits'
 import { managerWorld } from './fixtures/manager'
+import { reasonsOfSources } from './fixtures/reasons'
 import { scanBody } from './fixtures/refs'
 import { buildRecord } from './fixtures/registry'
 import { hostWorld } from './fixtures/tracker-host'
@@ -514,7 +515,7 @@ test('lane: a PR found for a branch auto drops while gh waits is pruned by the n
   Object.assign(t.deps, {
     applyItems: async (change: Parameters<LaneDeps['applyItems']>[0]) => {
       const r = await write(change)
-      landed.push(r.list.map(i => `${i.key} ${i.sources.join(',')}`))
+      landed.push(r.list.map(i => `${i.key} ${i.lane === true ? 'lane' : ''}`))
       return r
     },
   })
@@ -529,7 +530,7 @@ test('lane: a PR found for a branch auto drops while gh waits is pruned by the n
   t.lane.request()
   release()
   await t.lane.idle()
-  expect(landed).toEqual([[`${K7} auto`], []]) // tracked with source auto by the first step, pruned by the queued one
+  expect(landed).toEqual([[`${K7} lane`], []]) // tracked with the lane marker by the first step, pruned by the queued one
   expect(t.items()).toEqual([])
   expect(t.log.gh).toHaveLength(2) // the queued step asked about `main` only, and its reply was complete
   expect(t.log.gh[1]).not.toContain('feat/x')
@@ -636,6 +637,7 @@ test('lane: global.store.maxItems reaches the apply step', async () => {
       url: `https://h${n}.example/`,
       label: `h${n}`,
       sources: ['prompt'],
+      reasons: reasonsOfSources(['prompt']),
       firstSeen: 1,
       lastSeen: n,
       seenCount: 1,
@@ -895,7 +897,8 @@ test('lane: the discovery writes its items through the item store and asks for t
   expect(t.refreshed).toEqual(['1'])
   await t.refresh()
   expect(t.keys()).toEqual([K7, K1])
-  expect(t.items().every(i => i.sources.every(s => s === 'auto' || s === 'pr-body'))).toBe(true)
+  // Sources keep channels only: the lane's records have none, and `discovered` is their one reason (issue #62).
+  expect(t.items().every(i => i.sources.length === 0 && i.reasons.all.join() === 'discovered')).toBe(true)
   expect(t.m.facts.read('session.repo')).toEqual(REPO)
   expect((t.w.state.get('github') as unknown as LaneState).defaultBranch).toBe('main')
 })
@@ -992,6 +995,7 @@ test('lane: global.store.maxItems reaches the shipped lane: the oldest mention g
       url: `https://h${n}.example/`,
       label: `h${n}`,
       sources: ['prompt'],
+      reasons: reasonsOfSources(['prompt']),
       firstSeen: 1,
       lastSeen: n,
       seenCount: 1,

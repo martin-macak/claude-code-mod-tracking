@@ -26,11 +26,16 @@ test('the tracker takes order 40, its kind hears the Artifact tool and it keeps 
   expect(t.data).toBeUndefined()
 })
 
-test('a publish tracks the page with source publish and the title of the page', async () => {
+test('a publish tracks the page: a tool sighting with the reason published, and the title of the page', async () => {
   const w = world()
   await call(w, PUBLISH)
   expect(w.keys()).toEqual([PAGE_KEY])
-  expect(rows(w)[0]).toMatchObject({ category: 'artifact', label: 'Probe Page 29', sources: ['publish'] })
+  expect(rows(w)[0]).toMatchObject({
+    category: 'artifact',
+    label: 'Probe Page 29',
+    sources: ['tool'],
+    reasons: { first: 'published', all: ['published'], strongest: 'published' },
+  })
 })
 
 test('a delete marks the row', async () => {

@@ -504,7 +504,7 @@ test('Pull requests the lane found on the same first sighting sort by number', a
 
 test('the Pull requests section: with no PR it shows only for a skip that needs a word, and only with branches', async () => {
   const t = await paneWorld()
-  const items = (t.w.state.get('items') as unknown as { sources: string[] }[]).filter(i => !i.sources.includes('auto'))
+  const items = (t.w.state.get('items') as unknown as { lane?: true }[]).filter(i => i.lane !== true)
   t.w.state.set('items', items as unknown as Json)
   const has = async () => ids(await t.m.paneData(t.w.ports, NO_VIEW)).includes('prs')
   expect(await has()).toBe(false) // no PR, nothing to say

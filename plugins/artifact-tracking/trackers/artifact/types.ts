@@ -3,7 +3,7 @@
 
 import type { BaseRecord } from '../../core/lib/records'
 
-/** Not stored: `published` when the sources hold `publish`, else `mentioned`. */
+/** Not stored: `published` when the reasons hold `published`, else `mentioned`. */
 export type ArtifactOrigin = 'published' | 'mentioned'
 
 export type ArtifactFields = {

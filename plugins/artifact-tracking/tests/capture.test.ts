@@ -34,6 +34,25 @@ const claims = (text: string, o: Partial<ScanContextOptions> = {}, mode: 'full' 
 const keys = (text: string, o: Partial<ScanContextOptions> = {}, mode: 'full' | 'urls-only' = 'full') =>
   claims(text, o, mode).map(c => c.key)
 
+test('capture: a kind that throws gives no claim; the other kinds still count and its URL does not fall to web', () => {
+  const audit = {
+    category: 'audit',
+    rank: 50,
+    claimUrl: (url: string) => {
+      if (url.startsWith('https://audit.example/')) throw new Error('its word is off')
+      return null
+    },
+    scan: () => {
+      throw new Error('its word is off')
+    },
+  } as unknown as ItemKind
+  const text = 'see https://docs.example/a, https://audit.example/x and issue #5'
+  expect(scanClaims(text, 'full', [audit, ...KINDS], context()).map(c => c.key)).toEqual([
+    'web:https://docs.example/a',
+    'gh:github.com/acme/web#5',
+  ])
+})
+
 test('capture: an issue URL goes to github and never also to web', () => {
   expect(keys('see https://github.com/acme/web/issues/5')).toEqual(['gh:github.com/acme/web#5'])
   expect(keys('see [the issue](https://github.com/acme/web/issues/5#issuecomment-9)')).toEqual([
@@ -237,7 +256,9 @@ test('capture: kinds claim in rank order, the first claim wins, and a kind witho
     row: i => ({ id: i.key, owner: i.category, cells: {} }),
     claimUrl: (url, _label, ctx) => {
       calls.push(category)
-      return win ? { category, key: `${category}:${url}`, source: ctx.source, at: ctx.now, fields: {} } : null
+      return win
+        ? { category, key: `${category}:${url}`, source: ctx.source, reason: 'mentioned', at: ctx.now, fields: {} }
+        : null
     },
   })
   const plain: ItemKind = {

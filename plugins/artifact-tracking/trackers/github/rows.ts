@@ -54,6 +54,7 @@ export function githubRow(item: GitHubRecord, env: GithubEnv): TreeRow {
     owner: 'github',
     level: env.levelOf(item.key),
     dismiss: true,
+    reasons: item.reasons,
     text: {
       key: unresolved || inSession ? `#${item.number}` : `${item.owner}/${item.repo}#${item.number}`,
       href: item.url,

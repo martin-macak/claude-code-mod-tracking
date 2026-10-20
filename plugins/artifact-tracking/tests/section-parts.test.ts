@@ -16,6 +16,7 @@ import {
 } from '../core/lib/rows'
 import { webRow } from '../trackers/web/rows'
 import type { WebRecord } from '../trackers/web/types'
+import { reasonsOfSources } from './fixtures/reasons'
 
 test('the width words build the column widths, and a bound left out is not set', () => {
   expect(content()).toEqual({ kind: 'content' })
@@ -128,6 +129,7 @@ test('a web row shows the host and path of its URL as written; text that is not 
     url,
     label: 'L',
     sources: ['prompt'],
+    reasons: reasonsOfSources(['prompt']),
     firstSeen: 1,
     lastSeen: 1,
     seenCount: 1,

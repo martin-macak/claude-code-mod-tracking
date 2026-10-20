@@ -658,6 +658,8 @@ Records stay flat, so today's record shapes and most test assertions survive. Th
 
 `mode` is `urls-only` for tool-result rows, `full` otherwise, as today. A tool call is read by the kind's `fromTool[tool]` handler (a Write, Edit or Read of a `.md` file; the Artifact tool), and its claims go through `accept` as well.
 
+> **Note, 2026-10-20 (issue [#62](https://github.com/martin-macak/claude-code-mod-tracking/issues/62)).** `sources` keeps channels only (`prompt`, `response`, `tool`), so the word `auto` in the `StoredItem` sketch above and the sources `auto` and `pr-body` in step 3 below are gone. The lane writes the reason `discovered` (the `reasons` field of `StoredItem`, a `ReasonSet`), a kind-local `lane` marker on the `GitHubRecord` of a PR it found (read through `isLanePr`), and `via`. The cap, the pin, the dismiss ids, the load and the prune read the reason. "Auto-only" now means that `discovered` is the only reason. Section 8.3 of the [auto tracking design](2026-10-10-auto-tracking-design.md) says the same.
+
 **The PR lane.** PR discovery is GitHub code, so it lives in the github tracker (`trackers/github/lane.ts`, L5b). The flow:
 
 1. Auto ends a round that ran (it reached the snapshot save; a round with no pinned root polled nothing and publishes nothing, K31). The scheduler publishes `auto.branches` with a new `seq` and the reasons of the round (K20).

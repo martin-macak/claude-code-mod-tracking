@@ -1,5 +1,5 @@
 // The PR lane (spec 8.3, A16): after each round of the auto tracker, one GraphQL query finds the PRs of the tracked
-// branches, and the lane writes them, and the refs in their bodies, into the item list with source `auto`. It moved here
+// branches, and the lane writes them, and the refs in their bodies, into the item list with the reason `discovered`. It moved here
 // from the auto round in plan L5, Task 12 (spec 5.9, the PR lane): auto publishes the fact `auto.branches`, core tells
 // this tracker when it changes, and the lane starts a step. Auto never calls `gh`.
 // One step at a time. A request during a step queues as one more and runs after it. Every step catches its own failure.

@@ -16,8 +16,10 @@ import type {
   ScanMode,
   StoredItem,
 } from '../interfaces/items'
+import type { KindReason } from '../interfaces/reasons'
 import type { FactsPort, ToolPort, Tracker } from '../interfaces/tracker'
 import { scanContext } from '../lib/kind-context'
+import { checkKindReasons } from '../lib/reasons'
 import type { KindTable } from '../lib/records'
 
 export interface KindsDeps {
@@ -51,6 +53,7 @@ export class Kinds {
   /** Every kind of every tracker, by rank. A category kept once: the first tracker's. */
   readonly all: readonly ItemKind[]
   private readonly owners = new Map<string, Tracker>()
+  private readonly reasons: ReturnType<typeof checkKindReasons>
 
   constructor(private readonly d: KindsDeps) {
     const seen = new Map<string, ItemKind>()
@@ -61,6 +64,19 @@ export class Kinds {
         this.owners.set(kind.category, t)
       }
     this.all = [...seen.values()].sort((a, b) => a.rank - b.rank)
+    // An unmapped or a repeated reason of a kind is dropped here, when the kinds are collected, and reported as a problem,
+    // like a key that is taken (KeyRegistry). A faulty kind never stops the others, or the mod.
+    this.reasons = checkKindReasons(this.all)
+  }
+
+  /** One line for each kind reason that is off: unmapped, repeated, or clashing with another kind. */
+  problems(): readonly string[] {
+    return this.reasons.problems
+  }
+
+  /** The reasons a kind adds that passed the check, in the order it declared them. A word that is off is not in it. */
+  kindReasons(category: string): readonly KindReason[] {
+    return this.reasons.kept.get(category) ?? []
   }
 
   /** The kind of a category, or undefined. */
@@ -101,6 +117,8 @@ export class Kinds {
         global: () => this.d.config.global(),
       },
       tools: this.d.tools(owner) ?? plain.tools,
+      // Only the words that passed the check: a kind that lost a clash cannot claim its core reason through its own list.
+      kindReasons: this.kindReasons(kind.category),
     }
   }
 

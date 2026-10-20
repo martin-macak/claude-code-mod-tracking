@@ -17,6 +17,7 @@ import type {
   TurnCompleteEvent,
 } from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
+import type { Traceable } from '../../core/interfaces/reasons'
 import type { FactsPort, Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import { LoadState } from '../../core/lib/load-state'
@@ -36,6 +37,7 @@ import {
   recordSpawn,
   recordTurnEnd,
 } from './ledger'
+import { autoReasonsOf } from './reasons'
 import { AutoRound } from './round'
 import { AutoScheduler } from './scheduler'
 import { sections } from './sections'
@@ -240,7 +242,7 @@ const onCommand: H<CommandEvent> = async (ctx, ev) => {
   } else if (ev.sub === 'manual') kick(ctx, 'manual')
 }
 
-export const auto: Tracker<AutoConfig, AutoState> = {
+export const auto: Tracker<AutoConfig, AutoState> & Traceable<AutoState> = {
   id: 'auto',
   order: 10,
   persist: false,
@@ -267,6 +269,7 @@ export const auto: Tracker<AutoConfig, AutoState> = {
     },
   },
   sections,
+  reasonsOf: autoReasonsOf,
   events: {
     start: onStart,
     toolCall: {

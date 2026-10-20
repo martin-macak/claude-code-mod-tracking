@@ -7,6 +7,7 @@
 import type { Claim, StoredItem } from '../interfaces/items'
 import type { AtomPort } from '../interfaces/ports'
 import type { DismissPort } from '../interfaces/tracker'
+import { withReasons } from '../lib/reasons'
 import { mergeClaims, migrateRecords, unionRecords } from '../lib/records'
 import type { Kinds } from './kinds'
 
@@ -94,11 +95,15 @@ export class ItemStore {
     return this.d.kinds.table(claim.category)?.merge(null, claim) ?? null
   }
 
-  /** At the start of a load: re-key what moved (R13) and drop the records of a kind that is off, in one write. */
+  /**
+   * At the start of a load: drop the records with no valid reasons (a hot reload kept the list of a build before #62,
+   * and no merge below may read a record that has none), re-key what moved (R13) and drop the records of a kind that is
+   * off, in one write. The check comes first, so a re-key never reads the reasons of a record that has none.
+   */
   async warm(): Promise<void> {
+    const tidy = (list: StoredItem[]) => this.d.kinds.onlyOn(migrateRecords(withReasons(list), this.d.kinds.all))
     const live = await this.d.atom.get()
-    const next = this.d.kinds.onlyOn(migrateRecords(live, this.d.kinds.all))
-    if (next !== live) await this.set(list => this.d.kinds.onlyOn(migrateRecords(list, this.d.kinds.all)))
+    if (tidy(live) !== live) await this.set(tidy)
   }
 
   /** Merges a replayed transcript: a stored key wins, except where the kind says the transcript knows more. */

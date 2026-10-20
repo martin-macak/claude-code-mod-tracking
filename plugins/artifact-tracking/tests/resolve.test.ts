@@ -3,6 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import { QUEUED_MS } from '../trackers/github/merge'
 import { blockedHint, filesCheck, resolveCheck, resolvePrompt, SAFE_REF } from '../trackers/github/resolve'
 import type { GitHubRecord, MergeNote } from '../trackers/github/types'
+import { LANE, named } from './fixtures/reasons'
 
 const NOW = 5_000_000
 const K7 = 'gh:github.com/acme/web#7'
@@ -12,7 +13,7 @@ const pr = (over: Partial<GitHubRecord> = {}): GitHubRecord => ({
   category: 'github',
   url: 'https://github.com/acme/web/pull/7',
   label: 'acme/web#7',
-  sources: ['auto'],
+  ...LANE,
   firstSeen: 1,
   lastSeen: 1,
   seenCount: 0,
@@ -97,7 +98,7 @@ test('resolveCheck says why not: no PR, not found by the lane, not open, not con
   }
   expect(why(undefined)).toBe('no such PR')
   expect(why(pr({ type: 'issue' }))).toBe('no such PR')
-  expect(why(pr({ sources: ['prompt'] }))).toBe('the PR lane did not find this PR, so its branches are not known')
+  expect(why(named(pr()))).toBe('the PR lane did not find this PR, so its branches are not known')
   expect(why(pr({ state: 'merged' }))).toBe('the PR is not open')
   expect(why(pr({ mergeable: 'MERGEABLE' }))).toBe('GitHub does not report a conflict')
   expect(why(pr(), env({ worktree: '/x/wt-a' }, { fresh: false }))).toBe('gh cannot be asked, so the state is stale')
@@ -217,7 +218,7 @@ test('m2: no hint when the key works, when the PR is queued, and when the row ha
   expect(blockedHint(pr(), env({}, { fresh: false }), 'main')).toBeUndefined() // stale values
   expect(blockedHint(pr({ mergeable: 'MERGEABLE' }), env({}), 'main')).toBeUndefined() // no conflict
   expect(blockedHint(pr({ state: 'merged' }), env({}), 'main')).toBeUndefined()
-  expect(blockedHint(pr({ sources: ['prompt'] }), env({}), 'main')).toBeUndefined() // not a PR of the lane
+  expect(blockedHint(named(pr()), env({}), 'main')).toBeUndefined() // not a PR of the lane
   expect(blockedHint(undefined, env({}), 'main')).toBeUndefined()
   expect(blockedHint(pr(), undefined, 'main')).toBeUndefined() // a caller with no lane state
 })
