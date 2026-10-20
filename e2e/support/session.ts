@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { CLONE_NAME } from './config.ts'
+import { parseOwnerRepo } from './fake-gh.ts'
 import type { Tmux } from './tmux.ts'
 import { waitUntil } from './wait.ts'
 
@@ -92,6 +93,43 @@ export function prepareClone(repoRoot: string, parent: string): string {
   git(['checkout', '--quiet', '-B', 'main', head], clone)
   git(['remote', 'set-url', 'origin', origin], clone)
   return clone
+}
+
+/** The local copy that stands in for the origin of a fake GitHub repo. Beside the clone, so teardown can remove both. */
+export const FAKE_ORIGIN_NAME = 'fake-origin.git'
+
+/** The refs of a repo, one `<ref> <sha>` per line. Two lists that differ say that a ref moved, appeared or went. */
+export function listRefs(repo: string): string {
+  return execFileSync('git', ['for-each-ref', '--format=%(refname) %(objectname)'], {
+    cwd: repo,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim()
+}
+
+/**
+ * Turns a clone from prepareClone into the clone of a fake GitHub repo, on a feature branch (PR discovery drops the
+ * default branch). `origin` keeps a github.com URL that names `ownerRepo`, which is where the mod reads the repo from.
+ * Git rewrites that URL to a bare copy of the clone (`url.<copy>.insteadOf`), so a fetch or a push, by the mod or by a
+ * session that obeys a prompt, reaches the copy and never GitHub. Returns the path of the copy.
+ *
+ * The scenarios lean on one fact about the engine. The PR lane gets the repo from `session.repo()`, which reads the URL
+ * in the git config (verified live, Claude Code 2.1.304). `git remote get-url origin` returns the copy instead: the
+ * repos tracker reads it that way, so it sees a local path. If a Claude Code release reads the remote with `get-url`,
+ * discovery stops and the chip scenario fails at the chip step: check this first.
+ */
+export function fakeGithubClone(clone: string, parent: string, o: { branch: string; ownerRepo: string }): string {
+  parseOwnerRepo(o.ownerRepo)
+  const git = (args: string[], cwd: string) =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  const url = `https://github.com/${o.ownerRepo}.git`
+  const bare = join(parent, FAKE_ORIGIN_NAME)
+  git(['checkout', '--quiet', '-b', o.branch], clone)
+  rmSync(bare, { recursive: true, force: true })
+  git(['clone', '--quiet', '--bare', clone, bare], parent)
+  git(['remote', 'set-url', 'origin', url], clone)
+  git(['config', `url.${bare}.insteadOf`, url], clone)
+  return bare
 }
 
 // The key that moves the trust dialog toward "Yes, I trust this folder", or undefined when no dialog shows.

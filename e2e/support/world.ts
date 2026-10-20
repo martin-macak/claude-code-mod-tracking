@@ -12,9 +12,11 @@ import {
   World,
 } from '@cucumber/cucumber'
 import { CLONE_NAME, type Config, LOCK_DIR, loadConfig, OUT_DIR, PLUGIN_DIR, REPO_ROOT } from './config.ts'
+import type { FakeGhSpec } from './fake-gh.ts'
+import { fakeGhEnv } from './fake-gh-env.ts'
 import { claimRun } from './lock.ts'
 import { Recorder } from './recorder.ts'
-import { countLines, launchClaude, prepareClone, waitForTurnEnd } from './session.ts'
+import { countLines, FAKE_ORIGIN_NAME, launchClaude, prepareClone, waitForTurnEnd } from './session.ts'
 import { slug } from './slug.ts'
 import { Timeline } from './timeline.ts'
 import { Tmux } from './tmux.ts'
@@ -38,7 +40,30 @@ export class DemoWorld extends World {
   turnMark = 0
   /** The artifact a scenario published and did not delete yet. A failed run deletes it (artifact.steps.ts). */
   artifact: string | undefined
+  /** The fake gh of this scenario (support/fake-gh.ts). Absent: claude runs the real gh. */
+  fakeGh: FakeGhSpec | undefined
+  /** The refs of the local copy that stands for the origin, as the scenario started (steps/fake-gh.steps.ts). */
+  fakeOriginRefs: string | undefined
   private release: (() => void) | undefined
+
+  get cloneDir(): string {
+    return join(this.config.dir, CLONE_NAME)
+  }
+
+  /** The files the fake gh reads and writes: the spec it answers from, and the log of its calls. */
+  get fakeGhFiles(): { specFile: string; logFile: string } {
+    return { specFile: join(this.outDir, 'fake-gh.json'), logFile: join(this.outDir, 'fake-gh.log') }
+  }
+
+  /**
+   * Sets what the fake gh answers. Claude gets the fake from the next launch. The log starts empty: the steps that read
+   * it must never pass on the calls of an earlier run, whatever the lock does with the folder of the scenario.
+   */
+  setFakeGh(spec: FakeGhSpec): void {
+    this.fakeGh = spec
+    writeFileSync(this.fakeGhFiles.specFile, JSON.stringify(spec))
+    writeFileSync(this.fakeGhFiles.logFile, '')
+  }
 
   get tl(): Timeline {
     if (this.timeline === undefined) throw new Error('world: setUp did not run')
@@ -73,7 +98,7 @@ export class DemoWorld extends World {
         model: this.config.model,
         timeoutMs: this.config.turnTimeoutMs,
         ...(tools ? { tools } : {}),
-        env: { CLAUDE_TRACKER_CONFIG_DIR: this.configDir },
+        env: { CLAUDE_TRACKER_CONFIG_DIR: this.configDir, ...(this.fakeGh ? fakeGhEnv(this.fakeGhFiles) : {}) },
       },
       prompt,
     )
@@ -118,7 +143,8 @@ export class DemoWorld extends World {
     } finally {
       if (!this.config.keep) {
         this.tmux.kill()
-        rmSync(join(this.config.dir, CLONE_NAME), { recursive: true, force: true })
+        rmSync(this.cloneDir, { recursive: true, force: true })
+        rmSync(join(this.config.dir, FAKE_ORIGIN_NAME), { recursive: true, force: true })
         rmSync(this.configDir, { recursive: true, force: true })
       }
       this.release()
