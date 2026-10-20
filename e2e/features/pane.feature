@@ -42,12 +42,20 @@ Feature: Drive the /track pane with the keys
     And Claude finishes
     And I type "/track"
     Then the screen shows "2 more"
-    # Tab walks the four rows below the selected one, then the fifth Tab reaches the N more Button.
+    And the selected row shows "a.example"
+    # Tab walks the four rows below the selected one, then the fifth Tab reaches the N more Button. Every key waits for
+    # the focus that the key before it moved. A slow redraw must not swallow a key (issue #104). The selection follows the
+    # focus over the rows. The N more Button holds no selection, so its reverse video shows the focus.
     When I press "Tab"
-    And I press "Tab"
-    And I press "Tab"
-    And I press "Tab"
-    And I press "Tab"
-    And I press "Enter"
+    Then the selected row shows "b.example"
+    When I press "Tab"
+    Then the selected row shows "c.example"
+    When I press "Tab"
+    Then the selected row shows "d.example"
+    When I press "Tab"
+    Then the selected row shows "e.example"
+    When I press "Tab"
+    Then the focus ring is on "2 more"
+    When I press "Enter"
     Then the screen stops showing "2 more"
     And the screen matches /│ +▸ +g\.example\/7/

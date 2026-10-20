@@ -7,7 +7,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { BUDGET, fits, measure } from '../ux/tree-data-table/budget'
 import { LIMITS } from './fixtures/limits'
 import { focusOn, handleFor, headersOf, mountPane, type PaneUi, rowsOf, select } from './fixtures/pane'
-import { prompt, quiet, response, SESSION, START, track, world } from './fixtures/world'
+import { HANG_GUARD, prompt, quiet, response, SESSION, START, track, world } from './fixtures/world'
 
 type World = ReturnType<typeof world>
 type On = Parameters<typeof world>[0]
@@ -43,7 +43,9 @@ const lineOf = (text: string, s: string) => text.split('\n').findIndex(l => l.in
 // ---------------------------------------------------------------- rows
 
 for (const surface of ['terminal', 'desktop'] as const) {
-  test(`pane: each section has a bold header row with its column headers (${surface})`, async ($, on) => {
+  // This test asserts no time. The kit stops it after 5 s, which a busy machine exceeds (issue #104). HANG_GUARD only
+  // has to catch a hang.
+  test(`pane: each section has a bold header row with its column headers (${surface})`, HANG_GUARD, async ($, on) => {
     const w = world(on)
     await listed($, w, 'Look at issue #5 and https://acme.atlassian.net/browse/ISS-1', prompt)
     const ui = await mountPane($, { surface })

@@ -1,5 +1,5 @@
 import { defineParameterType, Then } from '@cucumber/cucumber'
-import { selectedLine } from '../support/pane.ts'
+import { focusedTexts, selectedLine } from '../support/pane.ts'
 import { PERMISSION_MARKERS } from '../support/session.ts'
 import type { DemoWorld } from '../support/world.ts'
 
@@ -25,6 +25,16 @@ Then('the screen does not show {string}', function (this: DemoWorld, text: strin
 // The pane starts a row with a gutter: ">" marks the selected row (support/pane.ts).
 Then('the selected row shows {string}', async function (this: DemoWorld, text: string) {
   await this.waitScreen(screen => selectedLine(screen)?.includes(text) === true, `the selected row to show "${text}"`)
+})
+
+// The focus ring draws the focused Button in reverse video. The selected row follows the focus over the rows, but the
+// "N more" Button holds no selection: only its reverse video shows that a Tab has reached it.
+Then('the focus ring is on {string}', async function (this: DemoWorld, text: string) {
+  await this.waitScreen(
+    screen => focusedTexts(screen).some(focused => focused.includes(text)),
+    `the focus ring to be on "${text}"`,
+    { ansi: true },
+  )
 })
 
 Then('no permission dialog is open', function (this: DemoWorld) {

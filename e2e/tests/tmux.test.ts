@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { focusedTexts } from '../support/pane.ts'
 import { Tmux, tmuxLiteral } from '../support/tmux.ts'
 import { waitUntil } from '../support/wait.ts'
 
@@ -51,6 +52,15 @@ test('Tmux respawn runs a command in the pane without echoing the command line',
   tmux.respawn('echo hidden-$((1+1)); sleep 5')
   await screenHas(tmux, 'hidden-2')
   assert.equal(tmux.capture().includes('echo hidden'), false)
+})
+
+test('Tmux captureAnsi keeps the reverse video that capture drops', { skip }, async t => {
+  const tmux = await shell('ansi')
+  t.after(() => tmux.kill())
+  tmux.respawn("printf '\\033[7minv\\033[0m plain\\n'; sleep 5")
+  await screenHas(tmux, 'inv plain')
+  assert.equal(tmux.capture().includes('\u001b'), false)
+  assert.deepEqual(focusedTexts(tmux.captureAnsi()), ['inv'])
 })
 
 test('Tmux stores the caption and escapes "#["', { skip }, async t => {

@@ -7,6 +7,7 @@ import { LIMITS } from './fixtures/limits'
 import {
   clearSession,
   fileTool,
+  HANG_GUARD,
   PANE,
   quiet,
   readDone,
@@ -123,19 +124,28 @@ const FOCUS = {
   origin: { kind: 'person' },
 } as never
 
-test('the first pane focus after a /resume does not wait for the switch', async ($, on) => {
-  // The switch loads the transcript, and the transcript names issue #5: one gh call that takes 600 ms.
+// The switch loads the transcript, and the transcript names issue #5: one gh call. The test holds that call open, so it
+// checks an order, not a time. The key must return while the call is open. A key that waits for it only returns when the
+// hook times out (about 10 s), and the #5 below stays unresolved. HANG_GUARD (30 s) keeps that inside the limit of the
+// test. Like the `session.start` test in register.test.tsx, it is no speed guard.
+test('the first pane focus after a /resume does not wait for the switch', HANG_GUARD, async ($, on) => {
   const w = world(on, {
     isolateState: true,
-    ghDelayMs: 600,
     messages: [{ role: 'user', text: 'please look at issue #5', toolUses: [] }],
   })
   await $.session.append(response('https://alpha.example/')) // learns the id
   await quiet(w.calls)
   await clearSession($, w, 'sess-b', 'resume') // a /resume raises no row: the focus is the first hook
-  const t0 = Date.now()
-  await $.ui.focus(FOCUS)
-  expect(Date.now() - t0).toBeLessThan(300) // the check runs, but the key does not wait for it
+  let release = () => {}
+  w.fake.ghHold = new Promise<void>(resolve => {
+    release = resolve
+  })
+  try {
+    await $.ui.focus(FOCUS) // returns while the gh call is held: only the release below can end it
+  } finally {
+    release()
+    w.fake.ghHold = undefined
+  }
   expect((await track($)).text).toContain('#5') // /track waits for the switch the focus started
   await quiet(w.calls)
 })

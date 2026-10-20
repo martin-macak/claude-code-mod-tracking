@@ -115,6 +115,11 @@ export class Tmux {
     return this.run(['capture-pane', '-p', '-t', this.target])
   }
 
+  // The same screen with its escape sequences (-e): the colors and the reverse video that `capture` drops.
+  captureAnsi(): string {
+    return this.run(['capture-pane', '-e', '-p', '-t', this.target])
+  }
+
   clients(): string[] {
     return this.run(['list-clients', '-F', '#{client_name}']).split('\n').filter(Boolean)
   }
