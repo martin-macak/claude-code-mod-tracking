@@ -32,11 +32,12 @@ export type ProcessRecord = {
   /** For task-backed rows. */
   taskId?: string
   toolUseId?: string
-  /** The subagent or workflow agent whose Bash call started a task-backed row. Absent for the main loop. */
+  /** The subagent or workflow agent whose Bash or Monitor call started a task-backed row. Absent for the main loop. */
   agentId?: string
   /**
-   * The engine ends this task at the final response of its caller and sends no notice
-   * (`backgroundEndsWithFinalResponse` in the Bash result). The row ends as `killed` when that agent ends.
+   * The engine ends this task at the final response of its caller and sends no notice. For a Bash task the result says so
+   * (`backgroundEndsWithFinalResponse`). For a Monitor, the caller is a workflow agent (issue #118): no result says so.
+   * The row ends as `killed` when that agent ends.
    */
   endsWithAgent?: true
   /** Docker container id for docker rows. */

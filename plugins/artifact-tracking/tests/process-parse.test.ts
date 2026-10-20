@@ -5,7 +5,13 @@ import {
   processUpdateFromNotificationText,
   processUpdateFromTaskStop,
 } from '../trackers/processes/parse'
-import { AGENT_RESUMED_NOTICE, MID_TURN_NOTICE } from './fixtures/notices'
+import {
+  AGENT_RESUMED_NOTICE,
+  MID_TURN_NOTICE,
+  MONITOR_EVENT_NOTICE,
+  MONITOR_EXPIRY_NOTICE,
+  MONITOR_STREAM_ENDED_NOTICE,
+} from './fixtures/notices'
 
 test('parseBashProcesses tracks background Bash and Monitor-style task ids', () => {
   const rows = parseBashProcesses(
@@ -356,6 +362,43 @@ test('processUpdateFromNotificationText reads the notice inside the wrapper of a
     state: 'completed',
   })
   expect(processUpdateFromNotificationText(AGENT_RESUMED_NOTICE.text)?.taskId).toBe('brgzj6uhc')
+})
+
+test('processUpdateFromNotificationText reads the expiry of a Monitor, which has no status, as an end', () => {
+  expect(processUpdateFromNotificationText(MONITOR_EXPIRY_NOTICE.text)).toEqual({
+    taskId: 'bj0e6042y',
+    state: 'completed',
+  })
+  // The notice of a source that ended has a status and a tool-use id, and no expiry words.
+  expect(processUpdateFromNotificationText(MONITOR_STREAM_ENDED_NOTICE.text)).toEqual({
+    taskId: 'bj0e6042y',
+    toolUseId: 'toolu_01CtnZ5oNavyRd3PdEpn78pH',
+    state: 'completed',
+  })
+})
+
+test('a status of a Monitor notice wins over the expiry text', () => {
+  // A notice with both: the expiry event and a status that is not `completed`. The status is the engine's own word.
+  const both = MONITOR_EXPIRY_NOTICE.text.replace('<event>', '<status>failed</status>\n<event>')
+  expect(processUpdateFromNotificationText(both)).toEqual({ taskId: 'bj0e6042y', state: 'failed' })
+})
+
+test('processUpdateFromNotificationText reads a Monitor that expired in other words as an end', () => {
+  // Both notices seen so far say `[Monitor expired after Ns with no events delivered. ...]`. A Monitor that delivered an
+  // event before its deadline may say it another way (open question 40). The words that open the event are the anchor.
+  const other = MONITOR_EXPIRY_NOTICE.text.replace(
+    '[Monitor expired after 1s with no events delivered.',
+    '[Monitor expired at its deadline of 1s, 3 events delivered.',
+  )
+  expect(other).not.toBe(MONITOR_EXPIRY_NOTICE.text)
+  expect(processUpdateFromNotificationText(other)).toEqual({ taskId: 'bj0e6042y', state: 'completed' })
+})
+
+test('processUpdateFromNotificationText does not read a Monitor event as an end', () => {
+  expect(processUpdateFromNotificationText(MONITOR_EVENT_NOTICE.text)).toBeNull()
+  // The words must open the event: a line of output that mentions them is an event.
+  const mention = MONITOR_EXPIRY_NOTICE.text.replace('<event>[Monitor expired', '<event>log: [Monitor expired')
+  expect(processUpdateFromNotificationText(mention)).toBeNull()
 })
 
 // ---------------------------------------------------------------- shell variables in a detached command (#56)

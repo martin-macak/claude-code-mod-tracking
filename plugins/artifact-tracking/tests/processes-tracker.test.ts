@@ -5,7 +5,7 @@ import { expect, test } from 'claude-code/testing'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { RowEvent, ToolCallEvent } from '../core/interfaces/events'
 import type { ItemsHost, Json } from '../core/interfaces/items'
-import type { RunResult } from '../core/interfaces/ports'
+import type { AgentInfo, RunResult } from '../core/interfaces/ports'
 import { processesConfig, processesTracker } from '../trackers/processes'
 import { fakeConfig } from './fixtures/config-fs'
 import type { ProcessRecord, ProcessUiState } from './fixtures/contracts'
@@ -18,9 +18,19 @@ import {
   BG_START_WORKFLOW_AGENT,
   IDLE_NOTICE,
   MID_TURN_NOTICE,
+  MONITOR_EVENT_NOTICE,
+  MONITOR_EXPIRY_NOTICE,
+  MONITOR_EXPIRY_NOTICE_IDLE,
+  MONITOR_START,
+  MONITOR_STREAM_ENDED_NOTICE,
   noticeBlock,
   QUEUED_NOTICE,
+  SUBAGENT_MONITOR_EXPIRY_NOTICE,
+  SUBAGENT_MONITOR_START,
+  SUBAGENT_SPAWN,
   WORKFLOW_AGENT_ID,
+  WORKFLOW_MONITOR_START,
+  WORKFLOW_SPAWN,
 } from './fixtures/notices'
 import { fakePorts } from './fixtures/ports'
 
@@ -37,9 +47,13 @@ function lstart(ms: number): string {
 }
 const CID = `${'c'.repeat(12)}${'0123456789abcdef'.repeat(3)}abcd`
 
-function setup(o: { cwd?: string } = {}) {
+function setup(o: { cwd?: string; agents?: AgentInfo[] } = {}) {
   // Engine time starts at the real time: `ps` start times in the cases below are real dates.
-  const w = fakePorts({ now: Date.now(), session: { cwd: o.cwd ?? '/work' } })
+  const w = fakePorts({
+    now: Date.now(),
+    session: { cwd: o.cwd ?? '/work' },
+    ...(o.agents ? { agents: o.agents } : {}),
+  })
   const host: ItemsHost = {
     ...IDLE_ITEMS,
     slot: {
@@ -593,6 +607,171 @@ test('a turn.complete without a usable input changes nothing', async () => {
   await t.m.turnComplete(t.w.ports, { input: { agentId: 7, reason: 'answer' } })
   await t.m.turnComplete(t.w.ports, { input: { agentId: '', reason: 'answer' } })
   expect(t.rows()[0]?.state).toBe('running')
+})
+
+// ---------------------------------------------------------------- Monitor rows (#118)
+// The notices are in tests/fixtures/notices.ts, from the transcript of a Claude Code 2.1.304 session.
+
+/** Arms a Monitor. The call data is the one of `MONITOR_START`, whose notices carry its tool-use id; `result` names another task. */
+const armMonitor = (t: ReturnType<typeof setup>, agentId?: string, result: { taskId: string } = MONITOR_START.result) =>
+  t.m.toolCall(t.w.ports, {
+    tool: 'Monitor',
+    input: { command: 'sleep 1; echo waiting', description: 'no-op', timeout_ms: 1000 },
+    result: { result },
+    toolUseId: result === MONITOR_START.result ? 'toolu_01CtnZ5oNavyRd3PdEpn78pH' : `toolu_${result.taskId}`,
+    ...(agentId !== undefined ? { agentId } : {}),
+  })
+
+test('a Monitor row keeps the agent that armed it', async () => {
+  const t = setup()
+  await armMonitor(t, WORKFLOW_AGENT_ID)
+  expect(t.rows()[0]).toMatchObject({ taskId: 'bj0e6042y', kind: 'monitor', agentId: WORKFLOW_AGENT_ID })
+  const main = setup()
+  await armMonitor(main)
+  expect(main.rows()[0]).not.toHaveProperty('agentId') // the main loop has none
+})
+
+test('the expiry notice of a Monitor ends its row', async () => {
+  // The engine kills a Monitor at its deadline and sends one notice. It has no <status>: before #118 the row stayed running.
+  const t = setup()
+  await armMonitor(t, WORKFLOW_AGENT_ID)
+  expect(t.rows().map(r => r.state)).toEqual(['running'])
+  await t.m.row(t.w.ports, asRow(MONITOR_EXPIRY_NOTICE))
+  expect(t.rows().map(r => [r.taskId, r.state])).toEqual([['bj0e6042y', 'completed']])
+  // The idle session gets the same text on door `prompt`, without the wrapper.
+  const idle = setup()
+  await armMonitor(idle)
+  await idle.m.row(idle.w.ports, asRow(MONITOR_EXPIRY_NOTICE_IDLE))
+  expect(idle.rows().map(r => r.state)).toEqual(['completed'])
+})
+
+test('the notice of a Monitor whose source ended still ends its row', async () => {
+  const t = setup()
+  await armMonitor(t, WORKFLOW_AGENT_ID)
+  await t.m.row(t.w.ports, asRow(MONITOR_STREAM_ENDED_NOTICE))
+  expect(t.rows().map(r => r.state)).toEqual(['completed'])
+})
+
+test('an event of a Monitor that goes on leaves its row running', async () => {
+  // An event has no <status> either. Only the text of the expiry ends the row.
+  const t = setup()
+  await armMonitor(t, WORKFLOW_AGENT_ID)
+  await t.m.row(t.w.ports, asRow(MONITOR_EVENT_NOTICE))
+  expect(t.rows().map(r => r.state)).toEqual(['running'])
+})
+
+test('an expiry notice for a task the tracker does not know changes nothing', async () => {
+  const t = setup()
+  await armMonitor(t, WORKFLOW_AGENT_ID)
+  const other = MONITOR_EXPIRY_NOTICE.text.replace('<task-id>bj0e6042y</task-id>', '<task-id>bzzzzzzzz</task-id>')
+  await t.m.row(t.w.ports, { ...asRow(MONITOR_EXPIRY_NOTICE), text: other })
+  expect(t.rows().map(r => [r.taskId, r.state])).toEqual([['bj0e6042y', 'running']])
+})
+
+test('the text of an expiry that a person, a peer or the model wrote changes nothing', async () => {
+  const t = setup()
+  await armMonitor(t)
+  const same = asRow(MONITOR_EXPIRY_NOTICE)
+  await t.m.row(t.w.ports, { ...same, origin: 'composer' })
+  await t.m.row(t.w.ports, { ...same, origin: 'peer' })
+  await t.m.row(t.w.ports, { ...same, door: 'response', origin: 'model' })
+  expect(t.rows().map(r => r.state)).toEqual(['running'])
+})
+
+const running = (id: string): AgentInfo => ({ id, status: 'running' })
+const spawned = (t: ReturnType<typeof setup>, s: { input: unknown; answer: unknown }) =>
+  t.m.agentSpawn(t.w.ports, { input: s.input as Json, answer: s.answer as Json })
+
+test('a Monitor of a workflow agent ends as killed when its agent ends: the engine stops it and sends no notice', async () => {
+  // The probe: the heartbeat of the Monitor stopped at the agent's turn.complete, and no notice followed.
+  const t = setup()
+  await spawned(t, WORKFLOW_SPAWN)
+  await armMonitor(t, WORKFLOW_SPAWN.answer.agentId, WORKFLOW_MONITOR_START.result)
+  expect(t.rows()[0]).toMatchObject({
+    kind: 'monitor',
+    taskId: 'b3rzu489p',
+    agentId: 'a0c9a4ae500c4b290',
+    endsWithAgent: true,
+    state: 'running',
+  })
+  await turnEnd(t) // the main loop's turn: the workflow runs on
+  await turnEnd(t, 'another-agent')
+  expect(t.rows()[0]?.state).toBe('running')
+  await turnEnd(t, WORKFLOW_SPAWN.answer.agentId)
+  expect(t.rows()[0]?.state).toBe('killed')
+})
+
+test('a Monitor of a subagent survives the end of its agent: the engine resumes the agent for the expiry notice', async () => {
+  // The probe: the agent answered, the Monitor ran its full 2 min, and its expiry resumed the agent.
+  const t = setup({ agents: [running(SUBAGENT_SPAWN.answer.agentId)] }) // the list names a running subagent
+  await spawned(t, SUBAGENT_SPAWN)
+  await armMonitor(t, SUBAGENT_SPAWN.answer.agentId, SUBAGENT_MONITOR_START.result)
+  expect(t.rows()[0]).toMatchObject({ taskId: 'buzl5d17x', agentId: 'a773c79c962984204', state: 'running' })
+  expect(t.rows()[0]).not.toHaveProperty('endsWithAgent')
+  await turnEnd(t, SUBAGENT_SPAWN.answer.agentId)
+  expect(t.rows()[0]?.state).toBe('running')
+  await t.m.row(t.w.ports, asRow(SUBAGENT_MONITOR_EXPIRY_NOTICE))
+  expect(t.rows()[0]?.state).toBe('completed')
+})
+
+test('a Monitor of the main loop, or of a listed agent the tracker did not see start, has no end with an agent', async () => {
+  const t = setup({ agents: [running('a-never-spawned')] })
+  await armMonitor(t, undefined, { taskId: 'bmain0001' })
+  await armMonitor(t, 'a-never-spawned', { taskId: 'bunknown1' })
+  await turnEnd(t)
+  await turnEnd(t, 'a-never-spawned')
+  expect(t.rows().map(r => [r.taskId, r.state])).toEqual([
+    ['bmain0001', 'running'],
+    ['bunknown1', 'running'],
+  ])
+  expect(t.rows().some(r => 'endsWithAgent' in r)).toBe(false)
+})
+
+test('a spawn the tracker cannot read marks no workflow agent', async () => {
+  const t = setup({ agents: [running('a1')] }) // listed, so the list does not make it one either
+  await t.m.agentSpawn(t.w.ports, { input: { workflow: { runId: 'wf_x', agentIndex: 1 } }, answer: {} }) // no agent id
+  await t.m.agentSpawn(t.w.ports, { input: null, answer: { agentId: 'a1' } })
+  await t.m.agentSpawn(t.w.ports, { input: { workflow: 'yes' }, answer: { agentId: 'a1' } }) // `workflow` is no object
+  await armMonitor(t, 'a1', { taskId: 'bx' })
+  expect(t.rows()[0]).not.toHaveProperty('endsWithAgent')
+})
+
+test('after a reload, a Monitor of an agent that the agent list does not name ends with its agent', async () => {
+  // A reload resets the module and does not replay `agent.spawn`, so this load never saw the spawn. The engine's list names
+  // the subagents and teammates, not a workflow's agents (d.ts 302:3262-3268): an agent it does not name is a workflow's.
+  const t = setup({ agents: [running('a-some-subagent')] })
+  await armMonitor(t, WORKFLOW_SPAWN.answer.agentId, WORKFLOW_MONITOR_START.result)
+  expect(t.rows()[0]).toMatchObject({ endsWithAgent: true, state: 'running' })
+  await turnEnd(t, 'a-some-subagent')
+  expect(t.rows()[0]?.state).toBe('running')
+  await turnEnd(t, WORKFLOW_SPAWN.answer.agentId)
+  expect(t.rows()[0]?.state).toBe('killed')
+})
+
+test('an agent list that cannot be read gives a Monitor no end with its agent', async () => {
+  const t = setup()
+  Object.assign(t.w.ports.agents, {
+    list: async () => {
+      throw new Error('the list is not there')
+    },
+  })
+  await armMonitor(t, WORKFLOW_SPAWN.answer.agentId, WORKFLOW_MONITOR_START.result)
+  expect(t.rows()[0]).not.toHaveProperty('endsWithAgent')
+  await turnEnd(t, WORKFLOW_SPAWN.answer.agentId)
+  expect(t.rows()[0]?.state).toBe('running')
+})
+
+test('the workflow agents are kept per load: a spawn on one load flags no Monitor of another', async () => {
+  // As the breaker is per load (see "init keeps one breaker per load"): a Set shared by every load passes the other tests.
+  const first = setup()
+  const second = setup({ agents: [running(WORKFLOW_SPAWN.answer.agentId)] }) // the list names it: only a shared Set could flag it
+  await spawned(first, WORKFLOW_SPAWN)
+  await armMonitor(second, WORKFLOW_SPAWN.answer.agentId, WORKFLOW_MONITOR_START.result) // same agent id, never spawned here
+  expect(second.rows()[0]).not.toHaveProperty('endsWithAgent')
+  await turnEnd(second, WORKFLOW_SPAWN.answer.agentId)
+  expect(second.rows()[0]?.state).toBe('running')
+  await armMonitor(first, WORKFLOW_SPAWN.answer.agentId, WORKFLOW_MONITOR_START.result) // the load that saw the spawn
+  expect(first.rows()[0]).toMatchObject({ endsWithAgent: true })
 })
 
 test('case C: a detached process whose command names a variable is found and stays running', async () => {

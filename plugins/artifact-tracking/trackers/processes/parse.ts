@@ -240,7 +240,7 @@ const echoesPid = (words: readonly string[]): boolean =>
 
 type TaskBackedUpdate = { taskId?: string; toolUseId?: string; state: ProcessState }
 
-/** What names the row of a background task beyond its command: the Bash call, its agent and the end-with-agent flag. */
+/** What names the row of a task beyond its command: the Bash or Monitor call, its agent and the end-with-agent flag. */
 type BackgroundOf = { toolUseId?: string | undefined; agentId?: string | undefined; endsWithAgent?: boolean }
 
 function backgroundRow(
@@ -493,7 +493,16 @@ export function parseBashProcesses(
   return rows
 }
 
-export function monitorRow(taskId: string, at = Date.now(), toolUseId?: string): ProcessRecord {
+/**
+ * The row of a Monitor. The third argument names it beyond its task: the Monitor call, its agent (absent for the main loop)
+ * and the end-with-agent flag, as for a background task. The engine stops the Monitors of a workflow agent when the agent gives
+ * its final response and sends no notice (issue #118). It does not stop those of a background subagent.
+ */
+export function monitorRow(
+  taskId: string,
+  at = Date.now(),
+  { toolUseId, agentId, endsWithAgent = false }: BackgroundOf = {},
+): ProcessRecord {
   return {
     id: `monitor:${taskId}`,
     kind: 'monitor',
@@ -503,7 +512,15 @@ export function monitorRow(taskId: string, at = Date.now(), toolUseId?: string):
     lastSeen: at,
     taskId,
     ...(toolUseId !== undefined ? { toolUseId } : {}),
+    ...(agentId !== undefined ? { agentId } : {}),
+    ...(endsWithAgent ? { endsWithAgent: true as const } : {}),
   }
+}
+
+/** The id of the workflow agent that an `agent.spawn` started: its input has `workflow`. Undefined for any other agent. */
+export function workflowAgentOf(input: unknown, answer: unknown): string | undefined {
+  if (!isRecord(input) || !isRecord(input.workflow) || !isRecord(answer)) return undefined
+  return str(answer.agentId)
 }
 
 export function processUpdateFromNotification(task: unknown): TaskBackedUpdate | null {
@@ -529,15 +546,27 @@ const tag = (text: string, name: string): string | undefined =>
   new RegExp(`<${name}>([^<\\n]+)</${name}>`).exec(text)?.[1]?.trim() || undefined
 
 /**
+ * How the `<event>` of a notice opens when a Monitor reaches its deadline (`timeout_ms`): `[Monitor expired after 1s
+ * with no events delivered. Re-arm it ...]`. The engine kills the Monitor then, and this notice is the only one. It has no
+ * `<status>` and no `<tool-use-id>` (issue #118). A line of the Monitor's own output has the same shape, so the opening
+ * words are what tells the two apart. Both notices seen say `expired after Ns with no events delivered`. A Monitor that
+ * delivered events first may say it another way, so the anchor is the shorter `[Monitor expired` (open question 40).
+ */
+const MONITOR_EXPIRED = '[Monitor expired'
+
+/**
  * The same update from a notification row's text. The engine stores no `task` field on the row (in the types it
  * is a render prop only), so the text is the source: `<task-id>`, `<tool-use-id>`, `<status>`.
+ * A Monitor that reached its deadline has no `<status>`: its event says so, and the row ends as `completed`. The deadline is
+ * the bound the caller set, not a failure, so the row must not draw red like `killed` or `exited` (`sections.ts`).
  * The caller checks `origin.kind === 'task-notification'`: the person can type the same text.
  */
 export function processUpdateFromNotificationText(text: string): TaskBackedUpdate | null {
   if (!text.includes('<task-notification>')) return null
+  const expired = tag(text, 'event')?.startsWith(MONITOR_EXPIRED) === true
   return processUpdateFromNotification({
     id: tag(text, 'task-id'),
     toolUseId: tag(text, 'tool-use-id'),
-    status: tag(text, 'status'),
+    status: tag(text, 'status') ?? (expired ? 'completed' : undefined),
   })
 }
