@@ -341,7 +341,7 @@ export interface Ports {
   log(line: string): void
 }
 
-// StatePorts = { items, tools, slot, expanded, selected, shown, help }. items, tools, expanded, selected and help are AtomPort<T> { get(), update(fn) }.
+// StatePorts = { items, tools, slot, expanded, selected, shown, help, hidden }. items, tools, expanded, selected, help and hidden are AtomPort<T> { get(), update(fn) }.
 // slot is a SlotPort { get(id), update(id, fn) } over the `trackers` family. shown is a ShownPort { get(id), update(id, fn) } over the `shown` family (a member never written reads 0).
 // L3 had a `ui` atom (`folded`). L6 added the four pane atoms and deleted `ui` (§5.13).
 ```
@@ -490,12 +490,21 @@ Each tracker owns the shape of `trackers.<id>`. `enabled` is common to all. `pro
 | `jira` | `concurrency` (3; 1 to 10), `epicChildLimit` (50; 1 to 500) |
 | `file` | `maxMentionsPerRow` (20; 0 to 200; 0 turns mentions off) |
 | `repos` | `maxRepos` (50; 1 to 500), `maxRepoAgents` (8; 1 to 50), `maxRepoQueue` (32; 1 to 256), `gitTimeoutMs` (5000; 500 to 60000) |
-| `processes` | `probeTimeoutMs` (10000; 1000 to 120000) |
-| `auto` | `debounceMs` (750; 50 to 60000), `gitTimeoutMs` (5000; 500 to 60000), `workflowIdleMs` (3600000; 60000 to 86400000), `maxBranches` (12; 1 to 50), `maxProofs` (100; 10 to 1000), `maxAgents` (200; 10 to 2000) |
+| `processes` | `probeTimeoutMs` (10000; 1000 to 120000), `hideEnded` (true), `endedTtlMs` (1800000; 0 to 86400000), `failedTtlMs` (3600000; 0 to 86400000) |
+| `auto` | `debounceMs` (750; 50 to 60000), `gitTimeoutMs` (5000; 500 to 60000), `workflowIdleMs` (3600000; 60000 to 86400000), `maxBranches` (12; 1 to 50), `maxProofs` (100; 10 to 1000), `maxAgents` (200; 10 to 2000), `hideEnded` (true), `endedTtlMs` (600000; 0 to 86400000), `failedTtlMs` (3600000; 0 to 86400000) |
 | `github`, `jira`, `web`, `artifact`, `file` | `prompt.enabled` (false), `prompt.maxItems` (20; 5 to 50; the most lines of this tracker in the prompt text) |
 | `web`, `artifact` | `enabled` and `prompt` only |
 
 `maxAutoItems` moved from `auto` to `github` in L5b: the github tracker adds the items that only the PR lane found, so it owns the cap. A file that still sets `trackers.auto.maxAutoItems` gets the problem `trackers.auto.maxAutoItems: moved to trackers.github.maxAutoItems. The mod keeps it and ignores it here.`, and the cap is the default until the key moves (K32).
+
+**Ended rows (issue #49).** The `auto` and `processes` slices hide an ended row in the view. `hideEnded` is the switch of the tracker: with `false`, every row shows and the notes read as before. A row is hidden when `now - endedAt >= TTL`, and `/track show-all` overrides it for the session (§5.12). The TTL is in ms. `0` hides a row at the moment it ends.
+
+- Agents: `endedAt` is the field of the agent's proof, found by the row id `ag:<id>`. An agent row in the state `failed` uses `failedTtlMs`, an `ended` one `endedTtlMs`. An expired row goes only when every row below it goes, so a shown child keeps its parent. The master never hides.
+- Process rows: `endedAt` is a new field of `ProcessRecord`. The set `ENDED_STATES` (`trackers/processes/states.ts`) names the end states: `completed`, `failed`, `killed`, `exited` and `unknown`. `failed` and `killed` use `failedTtlMs` (`FAILED_STATES`), the others `endedTtlMs`. A state that joins `ENDED_STATES` later is hidden by the same rule.
+- `endedAt` is set once, when a row enters an end state. It is dropped when the row is live again. `withState` (`trackers/processes/rows.ts`) makes every state write, and `mergeProcessRows` merges by rule: a live copy clears it, two ended copies keep the first, and an ended row with no time gets the time of the merge (`settle` and `restore` pass the engine clock). The copy on the added side wins the state: the live copy in `settle` and `restore('carry')`, so a live row clears the time, and the stored copy in `restore('load')`, so its state and its time stay together. `lastSeen` cannot serve, because every merge moves it.
+- A row with no `endedAt` is never hidden. The filter reads and never writes: the pane, the band and the `/track` text come from the same sections.
+- The Agents note keeps counting every ended agent and ends with `(k hidden)`. The Processes note counts the shown rows and ends with `(k hidden)`. The Processes band counts shown rows only.
+- The tick draws again: `LifecycleManager.tick` calls `ports.ui.invalidate()` after the trackers' tick. It writes no state (A22), so a row leaves the pane within one tick after its TTL.
 
 A word of a list matches `/^[a-z][a-z0-9-]{0,31}$/` after lowercasing. A value is read at its next use, except `global.tools.breaker.*`, `jira.concurrency` and `repos.maxRepoQueue`, which size an object at construction and are read once per load (C5). `maxPinned` stays a code constant (100), below the minimum of `store.maxItems`.
 
@@ -721,7 +730,7 @@ export type ActionImpls<C, D> = Readonly<Record<string, ActionImpl<C, D>>>
 
 `ColorToken` is a closed set by design. `ux/theme.ts` maps each token to a theme key or a named color. A tracker cannot pass a raw color string (E14). `accent` and `selected` are no theme keys: `COLOR` maps `accent` to `suggestion` and `selected` to the named color `blue`, which the engine paints from the theme palette. The other six tokens map to the theme key of the same name. `GLYPH` holds `▸` (closed), `▾` (open), `>` (selected) and a space (unselected), each one cell wide. `cellText(cell, rowDim)` gives `{ wrap: 'truncate-end' }` plus `color`, `weight` and `dimColor`, each only when set. `cellBox(cell)` gives `backgroundColor` from `bg`, else `{}`.
 
-`ViewContext` (what `sections(ctx)` reads) holds `now`, `config`, `data`, `items`, `facts` (read only), `tools`, `root`, `isDismissed(id)`, `levelOf(key)` and the view state `selected` and `expanded`. `PaneView { selected, expanded }` is the view state alone: the manager takes it from the atoms (L5b, K1). All of it is read. A render writes nothing (E8, E9).
+`ViewContext` (what `sections(ctx)` reads) holds `now`, `config`, `data`, `items`, `facts` (read only), `tools`, `root`, `isDismissed(id)`, `levelOf(key)`, `hidden` (the `/track show-all` toggle) and the view state `selected` and `expanded`. `PaneView { selected, expanded }` is the view state alone: the manager takes it from the atoms (L5b, K1). All of it is read. A render writes nothing (E8, E9).
 
 **Rows.** Each row has one focus Button, the row handle, with a short key `r<n>` (its index in the drawn tree). Its label is the expand glyph. Enter on it toggles the row id in the `expanded` atom. Detail rows hold no Button, so Tab skips them. A row with no `detail` and no `children` gets a default detail: the full text of every clipped cell and the href.
 
@@ -802,10 +811,11 @@ The Commands router claims first:
 | `clear` | core | Run after auto dismisses its ids (D10). Empty the items and every persisted tracker slot, bump the generation, delete `v2:s:<id>`. Run-scoped slots (auto's root and proofs) stay. Then rebuild the prompt text (S14). |
 | `prio <ref> <level>` | core | The ref resolves through a kind's `findRow` (a row inside an item), else through the capture scan with the purpose `lookup`, and the first claim names the row when the list holds its key (K27). |
 | `help` | core | Print the help view as text (L6). |
+| `show-all` | core | Toggle the session atom `hidden` (`{ showAll }`, §5.13). While it is on, every tracker shows the rows that their TTL hides (§5.7, issue #49). The reply is `Showing all rows.` or `Hiding ended rows again.`, then the list. It redraws the pane, writes no file and lasts until `/clear`. |
 | `version` | core | Print `artifact-tracking <version>`. The start read the version from `<plugin root>/.claude-plugin/plugin.json` (issue #65), or `unknown`. It answers before the ready check, so a failed start still names its version. |
 | a tracker's `commands` | tracker, in `order` | The first tracker that declares the sub-command runs it. |
 
-The argument hint is built from the core list (`CORE_HINT`, `[refresh|clear|help|version|prio <ref> <level>]`) plus `|<sub> <hint>` for each declared command (`Commands.hint()`). While no tracker declares one, it is `CORE_HINT` alone. `TrackerHost.commands()` lists `{ owner, spec }` of the live trackers in `order`. A tracker cannot take a core sub-command, and the usage line is `Usage: /track [refresh|clear|help|version|prio <ref> <high|normal|low|auto>]`. The fixed words (`USAGE`, `CORE_HINT`, the `prio` levels and the config problems block) sit in `core/infra/command-text.ts`. `LifecycleManager.track(ports, args)` runs the router (K15); `command(ports, ev)` stays the broadcast to the trackers. The list text and the help text are functions that `register.tsx` supplies (`LifecycleDeps.listText`, K19, and `LifecycleDeps.helpText`), because core does not draw. A reply that prints the list ends with the problems of the config file. `help` runs the config check first and prints the help view as text with no problems block, because the help view lists the config problems itself.
+The argument hint is built from the core list (`CORE_HINT`, `[refresh|clear|help|version|show-all|prio <ref> <level>]`) plus `|<sub> <hint>` for each declared command (`Commands.hint()`). While no tracker declares one, it is `CORE_HINT` alone. `TrackerHost.commands()` lists `{ owner, spec }` of the live trackers in `order`. A tracker cannot take a core sub-command, and the usage line is `Usage: /track [refresh|clear|help|version|show-all|prio <ref> <high|normal|low|auto>]`. The fixed words (`USAGE`, `CORE_HINT`, the `prio` levels and the config problems block) sit in `core/infra/command-text.ts`. `LifecycleManager.track(ports, args)` runs the router (K15); `command(ports, ev)` stays the broadcast to the trackers. The list text and the help text are functions that `register.tsx` supplies (`LifecycleDeps.listText`, K19, and `LifecycleDeps.helpText`), because core does not draw. A reply that prints the list ends with the problems of the config file. `help` runs the config check first and prints the help view as text with no problems block, because the help view lists the config problems itself.
 
 ### 5.13 State and persistence
 
@@ -820,8 +830,9 @@ The `PluginState` contract in `types/index.d.ts` imports nothing (E4). It declar
 | `selected` | `string \| null` | L6. The selected row id, `null` when none. The `ui.focus` hook and the row keys write it. `/track clear` sets it to `null` and empties `expanded`, so a row tracked again starts plain. |
 | `shown` | `StateFamily<number>` | L6. Top-level rows shown per section beyond the cap, one member per section id. A member never written reads 0. |
 | `help` | `boolean` | L6. The help view is on. |
+| `hidden` | `{ showAll: boolean }` | Issue #49. `/track show-all` is on: the rows that a TTL hides show again. Session scope: `/clear` resets it. It is never written to `config.json`. `ViewContext.hidden` carries it to every tracker. |
 
-L3 had a seventh member, `ui` (`{ folded: string[] }`, D14). L6 deleted it with the old renderers. `claude plugin validate` lists `declares state: artifact-tracking.items, trackers, tools, expanded, selected, shown, help`. In `Ports`, `StatePorts` holds `items`, `tools`, `slot`, `expanded`, `selected`, `help` (atoms) and `shown` (a `ShownPort`, §5.4).
+L3 had a seventh member, `ui` (`{ folded: string[] }`, D14). L6 deleted it with the old renderers. `claude plugin validate` lists `declares state: artifact-tracking.items, trackers, tools, expanded, selected, shown, help, hidden`. In `Ports`, `StatePorts` holds `items`, `tools`, `slot`, `expanded`, `selected`, `help`, `hidden` (atoms) and `shown` (a `ShownPort`, §5.4).
 
 `processUi` and `ui.paneOpen` are removed. The processes probe state is the fact `processes.ui` now. `types/index.d.ts` declares `Json`, `JsonObject` (a readonly form), `Level`, `StoredItem`, `ToolStatus`, `BreakerState`, `Via`, `Captured` and `PluginState` (`items: StoredItem[]`), and no tracker type. Each record and slot type lives in `trackers/<id>/types.ts`. `BaseRecord` (the fields of every record) and `ItemError` live in `core/lib/records.ts`, which trackers may import.
 

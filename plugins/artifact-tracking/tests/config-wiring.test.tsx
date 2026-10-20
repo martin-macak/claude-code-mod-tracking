@@ -4,6 +4,7 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.7 and 7. Plan: L4 Task 10.
 
 import { expect, mock } from 'claude-code/testing'
+import { PROCESSES_DEFAULTS } from '../trackers/processes/config'
 import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { graphqlCalls, prompt, quiet, SESSION, START, track, until, world } from './fixtures/world'
@@ -80,7 +81,10 @@ test('processes off: a background Bash task adds no process row', async ($, on) 
   const text = (await track($)).text ?? ''
   expect(text).not.toContain('Processes')
   expect(text).not.toContain('npm run dev')
-  expect(written(w).trackers.processes).toEqual({ enabled: false, probeTimeoutMs: 10000 })
+  expect(written(w).trackers.processes).toEqual({
+    ...PROCESSES_DEFAULTS,
+    enabled: false,
+  })
 })
 
 test('an invalid file: /track shows the problem and the file is not written', async ($, on) => {

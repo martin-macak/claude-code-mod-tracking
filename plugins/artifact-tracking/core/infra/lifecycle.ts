@@ -230,7 +230,7 @@ export class LifecycleManager extends PaneApi {
     await this.scheduler.ensure()
   }
 
-  /** One beat of the tick: the config file, a new session id, the item host's share, then the trackers'. */
+  /** One beat of the tick: the config file, a new session id, the item host's share, the trackers', then a redraw. */
   async tick(): Promise<void> {
     await this.ensureStarted(this.ports)
     await this.refreshConfig(this.ports)
@@ -241,6 +241,9 @@ export class LifecycleManager extends PaneApi {
     }
     await this.guard('item tick', () => this.items.tick(), 'a beat')
     await this.bus.emit('tick', { now: await this.ports.clock.now() }, this.ports)
+    // Draws the pane and the band again. A row leaves the view when a TTL passes, and no event says so (issue #49).
+    // It is no state write, and it never throws: the port swallows a refusal.
+    this.ports.ui.invalidate()
   }
 
   /** True when a tracker declared a `toolCall` handler for the tool, or a kind reads it. Static: it needs no start. */

@@ -92,6 +92,14 @@ export interface PaneView {
   readonly expanded: ReadonlySet<string>
 }
 
+/**
+ * What `/track show-all` toggles, for the session. `showAll`: every tracker that hides a row by time shows it again.
+ * A session atom: `/clear` resets it, and it is never written to the config file.
+ */
+export interface HiddenState {
+  readonly showAll: boolean
+}
+
 /** What a tracker reads to draw. All reads, no writes: a render must not write (E8, E9). */
 export interface ViewContext<C = JsonObject, D = Json> {
   /** Epoch ms. */
@@ -109,6 +117,8 @@ export interface ViewContext<C = JsonObject, D = Json> {
   readonly expanded: ReadonlySet<string>
   /** The pinned session root. */
   readonly root: string | undefined
+  /** The `/track show-all` toggle. A tracker that hides rows by time shows them all while `showAll` is on. */
+  readonly hidden: HiddenState
   isDismissed(id: string): boolean
   /** The level of one item, by key: the person's mark, or a rule's. An item with no level, and an unknown key, give `{}`. */
   levelOf(key: string): Effective

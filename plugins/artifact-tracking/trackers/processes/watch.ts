@@ -14,7 +14,7 @@ import {
   screenLive,
   tmuxLive,
 } from './probe'
-import { readRows, setProcesses } from './rows'
+import { readRows, setProcesses, withState } from './rows'
 import type { ProcessRecord, ProcessUiState } from './types'
 
 /** The fact that carries the probe's state. */
@@ -58,7 +58,7 @@ export async function probeProcesses(ctx: ProbeCtx, state: ProbeState): Promise<
   const lostRows = of('detached-process').filter(r => r.pid === undefined && r.fingerprint !== undefined)
   const opts = { timeoutMs: ctx.config.slice().probeTimeoutMs }
   const run = (tool: string, ...args: string[]) => ctx.tools.run(tool, [tool, ...args], opts)
-  const updates = new Map<string, Partial<ProcessRecord>>()
+  const updates = new Map<string, { state: ProcessRecord['state']; pid?: number }>()
   const mark = (r: ProcessRecord, state: ProcessRecord['state'], pid?: number) => {
     if (r.state === state && (pid === undefined || r.pid === pid)) return
     updates.set(r.id, { state, ...(pid !== undefined ? { pid } : {}) })
@@ -138,7 +138,7 @@ export async function probeProcesses(ctx: ProbeCtx, state: ProbeState): Promise<
         const u = updates.get(r.id)
         if (u === undefined || (u.state === r.state && (u.pid === undefined || u.pid === r.pid))) return r
         changed = true
-        return { ...r, ...u, lastSeen: seenNow }
+        return withState(r, u.state, seenNow, u.pid !== undefined ? { pid: u.pid } : {})
       })
       return changed ? merged : current
     })

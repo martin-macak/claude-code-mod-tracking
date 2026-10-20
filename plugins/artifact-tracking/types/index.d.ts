@@ -110,6 +110,8 @@ declare module 'claude-code' {
       shown: StateFamily<number>
       /** L6. The help view is on. */
       help: boolean
+      /** Issue #49. `/track show-all` is on: the rows the TTL hides show again. Session scope, reset by `/clear`. */
+      hidden: { showAll: boolean }
     }
   }
 }

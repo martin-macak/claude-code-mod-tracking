@@ -132,7 +132,13 @@ test('the slices hold exactly the keys of the Defaults table', () => {
   expect(Object.keys(JIRA_DEFAULTS)).toEqual(['enabled', 'concurrency', 'epicChildLimit', 'prompt'])
   expect(Object.keys(FILE_DEFAULTS)).toEqual(['enabled', 'maxMentionsPerRow', 'prompt'])
   expect(Object.keys(REPOS_DEFAULTS)).toEqual(['enabled', 'maxRepos', 'maxRepoAgents', 'maxRepoQueue', 'gitTimeoutMs'])
-  expect(Object.keys(PROCESSES_DEFAULTS)).toEqual(['enabled', 'probeTimeoutMs'])
+  expect(Object.keys(PROCESSES_DEFAULTS)).toEqual([
+    'enabled',
+    'probeTimeoutMs',
+    'hideEnded',
+    'endedTtlMs',
+    'failedTtlMs',
+  ])
   expect(Object.keys(AUTO_DEFAULTS)).toEqual([
     'enabled',
     'debounceMs',
@@ -141,6 +147,9 @@ test('the slices hold exactly the keys of the Defaults table', () => {
     'maxBranches',
     'maxProofs',
     'maxAgents',
+    'hideEnded',
+    'endedTtlMs',
+    'failedTtlMs',
   ])
 })
 
@@ -204,12 +213,16 @@ const TABLE: readonly (readonly [string, number, number])[] = [
   ['trackers.repos.maxRepoQueue', 1, 256],
   ['trackers.repos.gitTimeoutMs', 500, 60000],
   ['trackers.processes.probeTimeoutMs', 1000, 120000],
+  ['trackers.processes.endedTtlMs', 0, 86400000],
+  ['trackers.processes.failedTtlMs', 0, 86400000],
   ['trackers.auto.debounceMs', 50, 60000],
   ['trackers.auto.gitTimeoutMs', 500, 60000],
   ['trackers.auto.workflowIdleMs', 60000, 86400000],
   ['trackers.auto.maxBranches', 1, 50],
   ['trackers.auto.maxProofs', 10, 1000],
   ['trackers.auto.maxAgents', 10, 2000],
+  ['trackers.auto.endedTtlMs', 0, 86400000],
+  ['trackers.auto.failedTtlMs', 0, 86400000],
 ]
 
 /** The whole-number rules of a schema, with the path of each. */

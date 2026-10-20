@@ -870,7 +870,9 @@ test('tool-result row of 1 MB settles linearly, is stored whole, and a URL near 
 test('session.start registers /track with its hint', async ($, on) => {
   const { registered } = world(on)
   await $.session.start(START)
-  expect(registered).toEqual([{ name: 'track', argumentHint: '[refresh|clear|help|version|prio <ref> <level>]' }])
+  expect(registered).toEqual([
+    { name: 'track', argumentHint: '[refresh|clear|help|version|show-all|prio <ref> <level>]' },
+  ])
 })
 
 test('session.start backfills from the transcript with the same rules per role', async ($, on) => {
@@ -1421,7 +1423,7 @@ test('/track prio: an untracked ref says so; a bad level or a missing part print
   await quiet(calls)
   expect((await track($, 'prio #99 high')).text).toBe('Not tracked: #99')
   expect((await track($, 'prio #5 urgent')).text).toContain(
-    'Usage: /track [refresh|clear|help|version|prio <ref> <high|normal|low|auto>]',
+    'Usage: /track [refresh|clear|help|version|show-all|prio <ref> <high|normal|low|auto>]',
   )
   expect((await track($, 'prio #5')).text).toContain('Usage: /track')
   expect((await track($)).text).not.toContain('▲')

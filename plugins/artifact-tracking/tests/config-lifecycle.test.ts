@@ -232,11 +232,10 @@ test('a lazy start inside end reads the file and never writes it', async () => {
   expect(t.fs.writes).toHaveLength(1)
 })
 
-test('refreshConfig answers whether the file changed and a beat with no change does not invalidate', async () => {
+test('refreshConfig answers whether the file changed and redraws the pane only when it did', async () => {
   const t = setup({ trackers: [probe('t', 10, [])] })
   await t.m.ensureStarted(t.w.ports)
   expect(await t.m.refreshConfig(t.w.ports)).toBe(false)
-  await t.w.clock.advance(30000)
   expect(t.w.ui.invalidated).toBe(0)
   t.cfg.set({ trackers: { t: { n: 3 } } })
   expect(await t.m.refreshConfig(t.w.ports)).toBe(true)
@@ -254,7 +253,7 @@ test('a rejected refresh logs one line and counts as no change', async () => {
   expect(t.w.ui.invalidated).toBe(0)
 })
 
-test('a new tickMs seen on the tick re-arms the interval and invalidates the pane', async () => {
+test('a new tickMs seen on the tick re-arms the interval', async () => {
   const runs: number[] = []
   const log: string[] = []
   const ticking = probe('t', 10, log, {
@@ -267,7 +266,6 @@ test('a new tickMs seen on the tick re-arms the interval and invalidates the pan
   t.cfg.set({ global: { refresh: { tickMs: 60000 } } })
   await t.w.clock.advance(30000)
   expect(runs).toHaveLength(2) // this beat sees the change
-  expect(t.w.ui.invalidated).toBe(1)
   await t.w.clock.advance(30000)
   expect(runs).toHaveLength(2)
   await t.w.clock.advance(30000)
