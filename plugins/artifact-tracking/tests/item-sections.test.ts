@@ -247,6 +247,7 @@ test('the github columns are A1’s, in order', async () => {
     ['title', 'Title'],
     ['type', 'Type'],
     ['status', 'State'],
+    ['merge', 'Merge'],
     ['extra', 'Checks'],
   ])
   const heads: Record<string, string[][]> = {
@@ -256,7 +257,9 @@ test('the github columns are A1’s, in order', async () => {
       ['title', 'Title'],
       ['type', 'Branch'],
       ['status', 'State'],
+      ['merge', 'Merge'],
       ['extra', 'Checks'],
+      ['mark', ''],
     ],
     jira: [
       ['prio', ''],
@@ -297,6 +300,7 @@ test('the github columns are A1’s, in order', async () => {
     { kind: 'flex', min: 10 },
     { kind: 'content', max: 6 },
     { kind: 'content', max: 10 },
+    { kind: 'content', max: 11 },
     { kind: 'content', max: 10 },
   ])
   expect(section(sections, 'file').columns.map(c => c.priority)).toEqual([

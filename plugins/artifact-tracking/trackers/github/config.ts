@@ -12,6 +12,8 @@ export const GITHUB_SCHEMA = {
   pendingStaleMs: int(60000, 10000, 3600000),
   /** The `gh` discovery call. */
   discoveryTimeoutMs: int(10000, 1000, 120000),
+  /** One `git` call of the PR lane: the worktree list, and the fetch and the merge check of the conflicting files. */
+  gitTimeoutMs: int(5000, 500, 60000),
   closingRefsPerPr: int(10, 1, 50),
   headPrsPerBranch: int(5, 1, 50),
   basePrsPerBranch: int(10, 1, 50),

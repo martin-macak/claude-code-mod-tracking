@@ -103,6 +103,19 @@ function portsOf($: EngineInterface): Ports {
       },
       messages: () => $.session.messages(),
     },
+    // A submit never waits: a press that awaits its own prompt hangs when it runs inside a turn. The answer comes in a
+    // detached step: `{ drop }` is a hook that refused the prompt, a throw is a call the engine refused. Neither is an error.
+    prompt: {
+      submit: (text, onRefused) =>
+        void soft(async () => {
+          try {
+            const out = await $.prompt.submit({ text })
+            if (out?.drop !== undefined) onRefused?.(out.drop)
+          } catch (e) {
+            onRefused?.(e instanceof Error ? e.message : String(e))
+          }
+        }),
+    },
     agents: {
       list: async () =>
         (await $.agent.list()).map(a => ({

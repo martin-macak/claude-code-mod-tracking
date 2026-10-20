@@ -236,6 +236,8 @@ export class TrackerHost {
         handle: (id: string) => d.toolsOf?.(owner)?.handle(id),
         run: (_tool: string, argv: readonly string[], opts: RunOpts) => ports.run(argv, opts),
       },
+      prompt: { submit: (text: string, onRefused?: (reason: string) => void) => ports.prompt.submit(text, onRefused) },
+      ui: { toast: (text: string) => ports.ui.toast(text) },
       fs: {
         stat: (path: string, opts?: { resolve?: boolean }) => ports.fs.stat(path, opts),
         exists: (path: string) => ports.fs.exists(path),

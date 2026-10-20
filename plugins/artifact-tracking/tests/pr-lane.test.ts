@@ -1062,3 +1062,45 @@ test('lane: with no gh tool the step lands gh: not ready in the slot, and a bad 
   await world.bus.emit('command', { sub: 'refresh', args: '', wait: true }, via)
   expect(world.w.state.get('github')).toMatchObject({ prs: { ok: false, error: 'gh: not ready' } })
 })
+
+// ================================================================ the merge state, through the shipped trackers (issue #50)
+
+test('lane: a CONFLICTING PR notes the worktree of its head branch, from one git call with the github timeout', async () => {
+  const t = shipped()
+  t.nodes[`head:${BRANCH}`] = [
+    prNode({ number: 7, headRefName: BRANCH, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' }),
+  ]
+  const timeouts: (number | undefined)[] = []
+  const run = t.w.ports.run
+  Object.assign(t.w.ports, {
+    run: (argv: readonly string[], opts: { timeoutMs?: number }) => {
+      if (argv[1] === 'worktree' && argv[3] === '--porcelain') timeouts.push(opts.timeoutMs)
+      return run(argv, opts)
+    },
+  })
+  await t.start()
+  await t.enter()
+  await t.w.clock.advance(WINDOW)
+  await t.refresh()
+  const lane = t.w.state.get('github') as unknown as LaneState
+  expect(lane.merge).toEqual({ [K7]: { worktree: `${ROOT}/.claude/worktrees/probe-wt` } })
+  expect(timeouts.length).toBeGreaterThan(0)
+  expect(timeouts.every(ms => ms !== undefined)).toBe(true)
+})
+
+test('lane: a PR that GitHub calls UNKNOWN is asked again by the host clock after 3 s', async () => {
+  const t = shipped()
+  t.nodes[`head:${BRANCH}`] = [prNode({ number: 7, headRefName: BRANCH, mergeable: 'UNKNOWN' })]
+  await t.start()
+  await t.enter()
+  await t.w.clock.advance(WINDOW)
+  await until(
+    () => (t.w.state.get('github') as unknown as LaneState | undefined)?.merge !== undefined,
+    'the first step',
+  )
+  const before = t.queries.length
+  t.nodes[`head:${BRANCH}`] = [prNode({ number: 7, headRefName: BRANCH, mergeable: 'MERGEABLE' })]
+  await t.w.clock.advance(3000)
+  await until(() => t.queries.length > before, 'the retry')
+  await until(() => (t.w.state.get('github') as unknown as LaneState).merge === undefined, 'the note to go')
+})

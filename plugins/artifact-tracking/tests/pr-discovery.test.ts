@@ -83,6 +83,19 @@ test('parseDiscovery: a cross-repository head match is dropped', () => {
   expect(r.prs.map(p => p.number)).toEqual([7])
 })
 
+test('M3: a cross-repository PR found by a base alias is kept and marked crossRepo; a PR of this repo has no mark', () => {
+  // A fork PR that targets a tracked branch comes in by its base. Its head name is a branch of the fork.
+  const { aliases } = buildDiscoveryQuery(REPO, ['feat/a'], 'main')
+  const fork = prNode({ number: 8, headRefName: 'main', baseRefName: 'feat/a', isCrossRepository: true })
+  const own = prNode({ number: 9, headRefName: 'feat/b', baseRefName: 'feat/a' })
+  const r = parseDiscovery(reply(discoveryData({ h0: [], b0: [fork, own] })), REPO, aliases)
+  expect(r.prs.map(p => [p.number, p.by, p.crossRepo])).toEqual([
+    [8, 'base', true],
+    [9, 'base', undefined],
+  ])
+  expect('crossRepo' in r.prs[1]!).toBe(false) // no field: the record of a PR of this repo stays as it was
+})
+
 test('parseDiscovery: matches on the default branch are dropped, also when the first round did not know it', () => {
   const { aliases } = buildDiscoveryQuery(REPO, ['feat/a', 'main'])
   const data = discoveryData({
@@ -193,4 +206,37 @@ test('discoverPrs makes no call when every branch is the known default branch', 
   const r = await discoverPrs(gh, REPO, ['main'], NOW, 'main')
   expect(r).toEqual({ ok: true, prs: [], complete: true, defaultBranch: 'main' })
   expect(queries).toHaveLength(0)
+})
+
+// ---------------------------------------------------------------- merge state (issue #50, P1)
+
+test('the pr fragment asks for mergeable and mergeStateStatus', () => {
+  const { query } = buildDiscoveryQuery(REPO, ['feat/a'], 'main')
+  expect(query).toContain('mergeable mergeStateStatus')
+})
+
+test('parseDiscovery: mergeable and mergeStateStatus ride on the PR', () => {
+  const { aliases } = buildDiscoveryQuery(REPO, ['feat/a'], 'main')
+  const conflict = prNode({ number: 7, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' })
+  const behind = prNode({ number: 8, mergeable: 'MERGEABLE', mergeStateStatus: 'BEHIND' })
+  const lazy = prNode({ number: 9, mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' })
+  const r = parseDiscovery(reply(discoveryData({ h0: [conflict, behind, lazy], b0: [] })), REPO, aliases)
+  expect(r.prs.map(p => [p.number, p.mergeable, p.mergeStateStatus])).toEqual([
+    [7, 'CONFLICTING', 'DIRTY'],
+    [8, 'MERGEABLE', 'BEHIND'],
+    [9, 'UNKNOWN', 'UNKNOWN'],
+  ])
+})
+
+test('parseDiscovery: a reply with no merge fields, or a value of no known kind, leaves them off the PR', () => {
+  const { aliases } = buildDiscoveryQuery(REPO, ['feat/a'], 'main')
+  const none = prNode({ number: 7 })
+  const nulled = prNode({ number: 8, mergeable: null, mergeStateStatus: null })
+  const odd = prNode({ number: 9, mergeable: 'SOMETHING_NEW', mergeStateStatus: 'DIRTY' })
+  const r = parseDiscovery(reply(discoveryData({ h0: [none, nulled, odd], b0: [] })), REPO, aliases)
+  const [a, b, c] = r.prs
+  expect('mergeable' in a! || 'mergeStateStatus' in a!).toBe(false)
+  expect('mergeable' in b! || 'mergeStateStatus' in b!).toBe(false)
+  expect('mergeable' in c!).toBe(false) // a mergeable value that no code knows is no value
+  expect(c!.mergeStateStatus).toBe('DIRTY')
 })

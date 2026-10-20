@@ -12,6 +12,7 @@ import { toolNote } from '../../core/lib/text'
 import type { GithubConfig } from './config'
 import { githubKind } from './kind'
 import { branchesOf, EMPTY_LANE } from './lane'
+import { conflictCount, type MergeEnv, mergeEnvOf } from './merge'
 import { githubRow, prRow } from './rows'
 import type { GitHubRecord, LaneState } from './types'
 
@@ -31,7 +32,11 @@ const PR_COLUMNS: readonly ColumnDef[] = [
   { id: 'title', header: 'Title', width: flex(10) },
   { id: 'type', header: 'Branch', width: content(undefined, 26), priority: 2, clip: 'middle' },
   { id: 'status', header: 'State', width: content(undefined, 8) },
+  // The merge chip outlives the branch and the checks in a narrow pane (priority 0 drops last). Both new columns are left
+  // out while no row has a cell for them.
+  { id: 'merge', header: 'Merge', width: content(undefined, 11), priority: 0 },
   { id: 'extra', header: 'Checks', width: content(undefined, 10), priority: 1 },
+  { id: 'mark', header: '', width: content(undefined, 11), priority: 3 },
 ]
 
 const GITHUB_COLUMNS: readonly ColumnDef[] = [
@@ -40,6 +45,7 @@ const GITHUB_COLUMNS: readonly ColumnDef[] = [
   { id: 'title', header: 'Title', width: flex(10) },
   { id: 'type', header: 'Type', width: content(undefined, 6), priority: 2 },
   { id: 'status', header: 'State', width: content(undefined, 10) },
+  { id: 'merge', header: 'Merge', width: content(undefined, 11), priority: 0 },
   { id: 'extra', header: 'Checks', width: content(undefined, 10), priority: 1 },
 ]
 
@@ -54,6 +60,12 @@ const records = (ctx: Ctx): GitHubRecord[] =>
 const isDiscoveredPr = (i: GitHubRecord): boolean => i.type === 'pr' && i.sources.includes('auto')
 
 const failing = (list: readonly GitHubRecord[]): number => list.filter(i => i.checks === 'failure').length
+
+/** The band part of a list of PRs: the counts, and the conflicts only when there are some. */
+function bandOf(label: string, list: readonly GitHubRecord[], env: MergeEnv, rank: number) {
+  const conflicts = conflictCount(list, env)
+  return { label, count: list.length, failing: failing(list), ...(conflicts > 0 ? { conflicts } : {}), rank }
+}
 
 function prsNote(ctx: Ctx, lane: LaneState, prs: readonly GitHubRecord[]): string {
   const p = lane.prs
@@ -82,14 +94,16 @@ function prsSection(ctx: Ctx): SectionSpec | null {
     hasBranches && ((lane.prs.skipped !== undefined && SKIPS_WITH_HEADER.has(lane.prs.skipped)) || !!lane.prs.error)
   if (prs.length === 0 && !showHeader) return null
   const open = prs.filter(i => i.state === 'open')
+  const env = mergeEnvOf(ctx)
+  const rowEnv = { facts: ctx.facts, levelOf: ctx.levelOf, merge: env }
   return {
     id: 'prs',
     title: 'Pull requests',
     note: { text: prsNote(ctx, lane, prs) },
     rank: 12,
-    band: { label: 'PRs', count: open.length, failing: failing(open), rank: 9 },
+    band: bandOf('PRs', open, env, 9),
     columns: PR_COLUMNS,
-    rows: prs.map(rec => prRow(rec, ctx, lane.defaultBranch)),
+    rows: prs.map(rec => prRow(rec, rowEnv, lane.defaultBranch)),
   }
 }
 
@@ -100,14 +114,16 @@ function githubSection(ctx: Ctx): SectionSpec | null {
     ctx.levelOf,
   )
   if (own.length === 0) return null
+  const env = mergeEnvOf(ctx)
+  const rowEnv = { facts: ctx.facts, levelOf: ctx.levelOf, merge: env }
   return {
     id: 'github',
     title: 'GitHub',
     note: { text: `gh · ${toolNote(ctx.tools.gh ?? IDLE, ctx.now, lastRefreshOf(own))}` },
     rank: 30,
-    band: { label: 'GitHub', count: own.length, failing: failing(own), rank: 2 },
+    band: bandOf('GitHub', own, env, 2),
     columns: GITHUB_COLUMNS,
-    rows: own.map(rec => githubRow(rec, ctx)),
+    rows: own.map(rec => githubRow(rec, rowEnv)),
   }
 }
 

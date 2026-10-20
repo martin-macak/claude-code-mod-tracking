@@ -2,7 +2,7 @@
 
 import { omitUndefined, TrackedItem } from '../../core/lib/tracked-item'
 import { GITHUB_DEFAULTS } from './config'
-import type { Checks, GitHubRecord, GitHubState, GitHubTarget, GitHubToolApi, GitHubType } from './types'
+import type { Checks, GitHubRecord, GitHubState, GitHubTarget, GitHubToolApi, GitHubType, Mergeable } from './types'
 
 export class GitHubItem extends TrackedItem implements GitHubTarget {
   readonly category = 'github' as const
@@ -17,6 +17,8 @@ export class GitHubItem extends TrackedItem implements GitHubTarget {
   isDraft?: boolean
   reviewDecision?: string
   checks?: Checks
+  mergeable?: Mergeable
+  mergeStateStatus?: string
   /** Discovery and a refresh set it; see `GitHubFields.closes`. */
   closes?: string[]
 
@@ -39,6 +41,8 @@ export class GitHubItem extends TrackedItem implements GitHubTarget {
     this.isDraft = rec.isDraft
     this.reviewDecision = rec.reviewDecision
     this.checks = rec.checks
+    this.mergeable = rec.mergeable
+    this.mergeStateStatus = rec.mergeStateStatus
     if (rec.closes) this.closes = [...rec.closes]
   }
 
@@ -73,6 +77,8 @@ export class GitHubItem extends TrackedItem implements GitHubTarget {
       isDraft: this.isDraft,
       reviewDecision: this.reviewDecision,
       checks: this.checks,
+      mergeable: this.mergeable,
+      mergeStateStatus: this.mergeStateStatus,
       closes: this.closes === undefined ? undefined : [...this.closes],
     })
   }

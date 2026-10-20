@@ -310,6 +310,42 @@ test('a PR refresh reads the issues it closes as item keys; none is an empty lis
   expect('closes' in i9!).toBe(false)
 })
 
+test('buildQuery asks a PR for mergeable and mergeStateStatus, an issue for neither', () => {
+  const { query } = buildQuery([item('o', 'r', 2)])
+  const at = query.indexOf('... on PullRequest')
+  expect(query.slice(at)).toContain('mergeable mergeStateStatus')
+  expect(query.slice(0, at)).not.toContain('mergeable')
+})
+
+test('a PR refresh reads mergeable and mergeStateStatus; an issue and a reply with none get no field', async () => {
+  const node = (typename: string, number: number, extra: Record<string, unknown> = {}) => ({
+    issueOrPullRequest: { __typename: typename, number, title: 'T', state: 'OPEN', ...extra },
+  })
+  const reply = JSON.stringify({
+    data: {
+      x: node('PullRequest', 7, { isDraft: false, mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' }),
+      y: node('PullRequest', 8, { isDraft: false, mergeable: 'MERGEABLE', mergeStateStatus: 'BEHIND' }),
+      z: node('PullRequest', 9, { isDraft: false, mergeable: 'WHATEVER' }),
+      w: node('Issue', 10),
+    },
+  })
+  const { run } = rig(q => ok(remap(reply, q)))
+  const tool = new GhTool(run, () => NOW)
+  const stale = { mergeable: 'CONFLICTING' as const, mergeStateStatus: 'DIRTY' }
+  const [p7, p8, p9, i10] = [
+    item('acme', 'web', 7),
+    item('acme', 'web', 8),
+    item('acme', 'web', 9),
+    item('acme', 'web', 10),
+  ]
+  Object.assign(p9!, stale) // GitHub stopped answering with a value that is known
+  await tool.refreshItems([p7!, p8!, p9!, i10!])
+  expect(p7).toMatchObject({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' })
+  expect(p8).toMatchObject({ mergeable: 'MERGEABLE', mergeStateStatus: 'BEHIND' })
+  expect('mergeable' in p9! || 'mergeStateStatus' in p9!).toBe(false)
+  expect('mergeable' in i10! || 'mergeStateStatus' in i10!).toBe(false)
+})
+
 test('a PR reply with no closing field leaves closes out, so the stored list stays', async () => {
   const { run } = rig(q => ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)))
   const tool = new GhTool(run, () => NOW)

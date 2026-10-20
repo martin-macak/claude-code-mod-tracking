@@ -111,7 +111,17 @@ export const githubKind: ItemKind<GitHubRecord> = {
   },
   refresh: {
     tool: 'gh',
-    fields: ['title', 'state', 'stateReason', 'isDraft', 'reviewDecision', 'checks', 'closes'],
+    fields: [
+      'title',
+      'state',
+      'stateReason',
+      'isDraft',
+      'reviewDecision',
+      'checks',
+      'mergeable',
+      'mergeStateStatus',
+      'closes',
+    ],
     hydrate: (rec, c): Refreshable =>
       new GitHubItem(
         rec,

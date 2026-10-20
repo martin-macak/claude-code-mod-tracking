@@ -12,6 +12,7 @@ import type {
   PaneInfo,
   Ports,
   RepoRemote,
+  RunOpts,
   RunResult,
   SessionRow,
   Timer,
@@ -51,6 +52,15 @@ export type FakeWorld = {
   stateSets: Record<string, number>
   /** The argv of every `run` call. */
   calls: string[][]
+  /** The options of every `run` call, in the order of `calls`. */
+  callOpts: RunOpts[]
+  /** The text of every `prompt.submit` call, in order. */
+  prompts: string[]
+  /**
+   * Set a reason and every later `prompt.submit` call is refused with it, as a hook that drops the prompt does. A promise
+   * holds the answer back until a test settles it, as the engine answers after the call returned.
+   */
+  promptRefusal?: string | Promise<string>
   /** Answers a `run` call. undefined falls through to the default: exit 1, "unexpected call". */
   run?: (argv: string[]) => RunResult | undefined | Promise<RunResult | undefined>
   files: Record<string, string>
@@ -116,8 +126,9 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       after: (ms, fn) => arm('after', ms, fn),
       every: (ms, fn) => arm('every', ms, fn),
     },
-    run: async argv => {
+    run: async (argv, opts) => {
       world.calls.push([...argv])
+      world.callOpts.push(opts)
       const custom = await world.run?.([...argv])
       return custom ?? { exitCode: 1, stdout: '', stderr: `unexpected call: ${argv.join(' ')}` }
     },
@@ -165,6 +176,13 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       messages: async () => world.session.messages,
     },
     agents: { list: async () => world.agents },
+    prompt: {
+      submit(text, onRefused) {
+        world.prompts.push(text)
+        // The engine answers after the call returned: a refusal reaches `onRefused` in a later step, as it does live.
+        if (world.promptRefusal !== undefined) void Promise.resolve(world.promptRefusal).then(why => onRefused?.(why))
+      },
+    },
     state: {
       items: atom<StoredItem[]>('items', () => []),
       tools: atom<Record<string, ToolStatus>>('tools', () => ({})),
@@ -246,6 +264,8 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
     state: new Map(),
     stateSets: {},
     calls: [],
+    callOpts: [],
+    prompts: [],
     files: { ...(o.files ?? {}) },
     env: { ...(o.env ?? {}) },
     settings: o.settings,

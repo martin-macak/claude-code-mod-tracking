@@ -185,6 +185,10 @@ export interface TrackerContext<C extends JsonObject = JsonObject, D extends Jso
     root(): string | undefined
   }
   readonly tools: ToolPort
+  /** A turn the mod asks for. See `Ports['prompt']`: a press only, never awaited. */
+  readonly prompt: Ports['prompt']
+  /** A short message over the pane. */
+  readonly ui: Pick<Ports['ui'], 'toast'>
   readonly fs: Pick<Ports['fs'], 'stat' | 'exists'>
   readonly env: {
     get(name: EnvName): Promise<string | undefined>

@@ -134,6 +134,11 @@ test('GitHubItem round-trips every status field', () => {
   expect(new GitHubItem(rec, ghTool().t).toRecord()).toEqual(rec)
 })
 
+test('GitHubItem round-trips mergeable and mergeStateStatus (issue #50)', () => {
+  const rec = gh({ type: 'pr', mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' })
+  expect(new GitHubItem(rec, ghTool().t).toRecord()).toEqual(rec)
+})
+
 test('JiraItem deep-copies children and round-trips', () => {
   const rec = jira({
     summary: 'S',
