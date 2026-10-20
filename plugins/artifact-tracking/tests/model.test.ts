@@ -4,6 +4,7 @@ import { GitHubItem } from '../trackers/github/github-item'
 import { JiraItem } from '../trackers/jira/jira-item'
 import type { GitHubRecord, GitHubToolApi, JiraRecord, JiraToolApi, ToolStatus } from './fixtures/contracts'
 import { LIMITS } from './fixtures/limits'
+import { reasonsOfSources } from './fixtures/reasons'
 
 const status = (name: 'gh' | 'acli'): ToolStatus => ({ name, available: true, loggedIn: null, breaker: 'closed' })
 function ghTool(over: Partial<GitHubToolApi> = {}) {
@@ -47,6 +48,7 @@ const gh = (over: Partial<GitHubRecord> = {}): GitHubRecord => ({
   url: 'https://github.com/acme/web/pull/5',
   label: 'acme/web#5',
   sources: ['prompt'],
+  reasons: reasonsOfSources(['prompt']),
   firstSeen: 0,
   lastSeen: 0,
   seenCount: 1,
@@ -63,6 +65,7 @@ const jira = (over: Partial<JiraRecord> = {}): JiraRecord => ({
   url: 'https://acme.atlassian.net/browse/ISS-1',
   label: 'ISS-1',
   sources: ['response'],
+  reasons: reasonsOfSources(['response']),
   firstSeen: 0,
   lastSeen: 0,
   seenCount: 1,

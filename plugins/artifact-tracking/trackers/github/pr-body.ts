@@ -30,7 +30,8 @@ export type BodyScan = (text: string, repo: RepoRef) => readonly Claim[]
 
 /**
  * The claims of one PR: its closing issues first, then the claims in the body text, at most `max` (`maxBodyRefs`). The
- * PR itself and a key seen before are left out. A claim carries source `pr-body`; the step stamps the time (`at` is 0 here).
+ * PR itself and a key seen before are left out. A claim carries the label `pr-body` and the reason `discovered`; no record keeps the label in `sources`. The step stamps
+ * the time (`at` is 0 here).
  */
 export function prBodyRefs(pr: DiscoveredPr, scanBody: BodyScan, max: number = GITHUB_DEFAULTS.maxBodyRefs): Claim[] {
   const clean = stripHtmlComments(pr.body)
@@ -40,6 +41,7 @@ export function prBodyRefs(pr: DiscoveredPr, scanBody: BodyScan, max: number = G
     category: 'github',
     key: githubKey(c.host, c.owner, c.repo, c.number),
     source: 'pr-body',
+    reason: 'discovered',
     at: 0,
     fields: { host: c.host, owner: c.owner, repo: c.repo, number: c.number, type: 'issue', url: c.url },
   }))

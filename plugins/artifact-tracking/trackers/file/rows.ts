@@ -14,6 +14,7 @@ export function fileRow(item: FileRecord, env: Pick<ViewContext, 'levelOf' | 'ro
     owner: 'file',
     level: env.levelOf(item.key),
     dismiss: true,
+    reasons: item.reasons,
     text: {
       key: '',
       title: env.root ? relativeToRoot(item.label, env.root) : item.label,

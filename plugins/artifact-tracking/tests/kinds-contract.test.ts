@@ -5,6 +5,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Claim, ItemKind } from '../core/interfaces/items'
 import type { Tracker } from '../core/interfaces/tracker'
 import { bool, type Schema, specOf } from '../core/lib/normalise'
+import { reasonSet } from '../core/lib/reasons'
 import * as artifactTypes from '../trackers/artifact/types'
 import * as autoTypes from '../trackers/auto/types'
 import * as fileTypes from '../trackers/file/types'
@@ -21,7 +22,14 @@ test('a kind with only decode and merge fits ItemKind and joins a Tracker', () =
     rank: 50,
     decode: i => (i.category === 'note' ? i : null),
     merge: (cur, seen) =>
-      cur ?? { key: seen.key, category: 'note', sources: [seen.source], firstSeen: seen.at, lastSeen: seen.at },
+      cur ?? {
+        key: seen.key,
+        category: 'note',
+        sources: [seen.source],
+        reasons: reasonSet(seen.reason),
+        firstSeen: seen.at,
+        lastSeen: seen.at,
+      },
     row: i => ({ id: i.key, owner: 'notes', cells: {} }),
   } satisfies ItemKind
   const config = specOf({ enabled: bool(true) } as const satisfies Schema)
@@ -43,6 +51,7 @@ test('a Claim carries the fields of a ref', () => {
     category: 'github',
     key: 'gh:github.com/o/r#5',
     source: 'prompt',
+    reason: 'mentioned',
     at: 1,
     fields: { host: 'github.com', owner: 'o', repo: 'r', number: 5, type: 'issue' },
   }
@@ -77,4 +86,40 @@ test('the tracker type modules load and export no value', () => {
     reposTypes: [],
     webTypes: [],
   })
+})
+
+// ---------------------------------------------------------------- reasons are required (issue #62)
+
+test('a Claim must carry a reason, and a StoredItem must carry its reasons: the type check fails without them', () => {
+  // @ts-expect-error a claim with no `reason` does not compile
+  const noReason: Claim = { category: 'github', key: 'k', source: 'prompt', at: 1, fields: {} }
+  // @ts-expect-error a claim whose reason is not a core reason does not compile
+  const badReason: Claim = { category: 'github', key: 'k', source: 'prompt', reason: 'seen', at: 1, fields: {} }
+  // @ts-expect-error a record with no `reasons` does not compile
+  const noReasons: StoredItem = { key: 'k', category: 'x', sources: [], firstSeen: 1, lastSeen: 1 }
+  // @ts-expect-error a record whose reasons hold a word that is not a core reason does not compile
+  const badReasons: StoredItem = {
+    key: 'k',
+    category: 'x',
+    sources: [],
+    reasons: { first: 'seen', all: ['seen'], strongest: 'seen' },
+    firstSeen: 1,
+    lastSeen: 1,
+  }
+  expect([noReason, badReason, noReasons, badReasons]).toHaveLength(4)
+})
+
+test('a kind that adds a reason maps it to a core reason: `ItemKind.reasons` takes `{ id, core }` and nothing else', () => {
+  const k = {
+    category: 'note',
+    rank: 50,
+    reasons: [{ id: 'reviewed', core: 'read' }],
+    decode: i => (i.category === 'note' ? i : null),
+    merge: cur => cur,
+    row: i => ({ id: i.key, owner: 'notes', cells: {} }),
+  } satisfies ItemKind
+  expect(k.reasons).toEqual([{ id: 'reviewed', core: 'read' }])
+  // @ts-expect-error a kind reason must map to a core reason
+  const unmapped: ItemKind['reasons'] = [{ id: 'reviewed', core: 'seen' }]
+  expect(unmapped).toHaveLength(1)
 })

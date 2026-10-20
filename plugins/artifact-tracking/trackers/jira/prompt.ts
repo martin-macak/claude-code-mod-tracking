@@ -12,6 +12,11 @@ const SUMMARY_MAX = 100
 /** One line per tracked work item that the person has not dismissed. The composer caps the list. */
 export function jiraPrompt(ctx: Pick<ViewContext, 'items' | 'isDismissed'>): readonly string[] {
   return promptRecords(ctx, jiraKind.decode).map(r =>
-    promptLine(`jira: ${r.issueKey}`, [r.issueType ?? '', r.status ?? ''], r.summary ?? '', SUMMARY_MAX),
+    promptLine(
+      `jira: ${r.issueKey}`,
+      [r.reasons.strongest, r.issueType ?? '', r.status ?? ''],
+      r.summary ?? '',
+      SUMMARY_MAX,
+    ),
   )
 }

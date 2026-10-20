@@ -4,11 +4,13 @@
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
+import { addReason } from '../core/lib/reasons'
 import * as ev from './fixtures/events'
 import { prNode } from './fixtures/gh-discovery'
 import { porcelain as gitPorcelain } from './fixtures/git'
 import { LIMITS } from './fixtures/limits'
 import { headersOf, mountPane as mount, select } from './fixtures/pane'
+import { DISCOVERED, reasonsOfSources } from './fixtures/reasons'
 import { BAND, clearSession, prompt, quiet, response, START, sleep, track, world } from './fixtures/world'
 
 const MAIN = '/work'
@@ -427,7 +429,16 @@ test('a stored copy restores without auto sources, and with gh missing a tick do
     type: 'pr' as const,
     state: 'open' as const,
   }
-  const autoOnly = { ...base, key: PR7, number: 7, title: 'Auto PR 7', sources: ['auto'], seenCount: 0 }
+  const autoOnly = {
+    ...base,
+    key: PR7,
+    number: 7,
+    title: 'Auto PR 7',
+    sources: [],
+    reasons: DISCOVERED,
+    lane: true,
+    seenCount: 0,
+  }
   const mentioned = {
     ...base,
     key: 'gh:github.com/acme/web#5',
@@ -435,7 +446,9 @@ test('a stored copy restores without auto sources, and with gh missing a tick do
     url: 'https://github.com/acme/web/pull/5',
     label: 'acme/web#5',
     title: 'Web five',
-    sources: ['prompt', 'auto'],
+    sources: ['prompt'],
+    reasons: addReason(reasonsOfSources(['prompt']), 'discovered'),
+    lane: true,
     via: ['gh:github.com/acme/web#9'],
     seenCount: 1,
   }
@@ -468,6 +481,7 @@ test('/resume while a PR step is in flight: the stored copy of the new session l
     state: 'open' as const,
     title: 'Web five',
     sources: ['prompt'],
+    reasons: reasonsOfSources(['prompt']),
     seenCount: 1,
   }
   const w = world(on, { isolateState: true, seed: { 'v2:index': ['sess-2'], 'v2:s:sess-2': { items: [mentioned] } } })

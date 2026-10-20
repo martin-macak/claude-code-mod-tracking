@@ -2,7 +2,7 @@
 // facts), with inert ports for the rest. A caller that has no live tracker context uses it: the `/track prio` lookup, a
 // PR body, the old `extractRefs` binding, a unit test. Plan: L5 Task 5.
 
-import type { Json, JsonObject, KindContext, ScanMode } from '../interfaces/items'
+import type { Json, JsonObject, KindContext, KindReason, ScanMode } from '../interfaces/items'
 import { GLOBAL_DEFAULTS } from './global-config'
 
 export type ScanContextOptions = {
@@ -15,6 +15,8 @@ export type ScanContextOptions = {
   facts?: Readonly<Record<string, Json | undefined>>
   /** What `ctx.config.slice()` answers: the config of the tracker that owns the kind being asked. */
   slice?: JsonObject
+  /** The reasons of the kind that passed the check (`ctx.kindReasons`). Default: none. */
+  kindReasons?: readonly KindReason[]
 }
 
 export function scanContext(o: ScanContextOptions): KindContext {
@@ -25,6 +27,7 @@ export function scanContext(o: ScanContextOptions): KindContext {
     mode: o.mode,
     purpose: o.purpose,
     config: { slice: () => o.slice ?? {}, global: () => GLOBAL_DEFAULTS },
+    kindReasons: o.kindReasons ?? [],
     facts: { read: <T extends Json>(name: string) => facts[name] as T | undefined },
     tools: {
       handle: () => undefined,

@@ -80,6 +80,14 @@ Numbering: `A1` and up are this spec. `spec Dn` is the base spec. `KB Dn` is a r
 | A23 | Deferred until the T0 probe | Not in v1 until the T0 probe (section 15) observes them: the join of a workflow worktree to one agent (`<n> == agentIndex`) and the A6 step that reads it, `PendingCalls` and `AgentProof.isolation`, and the A6 expected-path step. The `gone` row state folds into `removed`, since both draw dimmed. Kept: workflow agents from `agent.spawn.workflow` (issue #5 asks for them), the run-prefix proof of workflow worktrees (A4 proof 4: it needs only the recorded run id), and the caps `maxProofs`, `maxAgents`, `maxDismissed` (a long workflow-heavy run can spawn hundreds of agents; one line each bounds `$.state`). | K1, K2 and K6 are inferences. The `agent-<id>` convention, the `Agent` result path and one `wf_<run>-<n>` worktree path are observed. That `<n>` is the `agentIndex` is not. | KB N4, N11; review of this spec |
 | A19 | Manual refresh | `/track refresh` and the pane's Refresh button also kick a `manual` round with the PR step. | The person expects one button to refresh all. | Spec section 7.1 |
 
+> **Note, 2026-10-20 (issue [#62](https://github.com/martin-macak/claude-code-mod-tracking/issues/62)).** The rows A10 to A13, section 3 and sections 8.3 to 8.5 name the sources `auto` and `pr-body`. They are gone. `sources` keeps channels only (`prompt`, `response`, `tool`). The PR lane now writes three things, and no source word:
+>
+> - the reason `discovered` on every item that discovery found;
+> - a kind-local `lane` marker on the `GitHubRecord` of a PR that the lane found (read through `isLanePr`, always beside the reason);
+> - `via`, the keys of the PRs whose body names the item. A ref in a PR body has the reason and `via`, and no marker.
+>
+> Read "source `auto`" as "reason `discovered` and the `lane` marker". Read "source `pr-body`" as "reason `discovered` and `via`". Read "auto-only" as "`discovered` is the only reason". The cap, the prune, `dropAuto` at a restore and the dismiss ids read the reason. The design of these rows is otherwise unchanged. See [arch hardening design, section 5.9](2026-10-18-arch-hardening-design.md#59-item-store-item-kinds-and-capture).
+
 ### 4.1 Changes to the base spec
 
 | Base | Change |
@@ -848,6 +856,8 @@ sequenceDiagram
 5. The PR step uses the `branches` of the committed snapshot.
 
 ### 8.3 Step 3: pull requests
+
+> Since 2026-10-20 (issue [#62](https://github.com/martin-macak/claude-code-mod-tracking/issues/62)) the step writes the reason `discovered`, the `lane` marker and `via` in place of the sources `auto` and `pr-body`. See the note before section 4.1.
 
 Runs when `reasons` holds `start`, `tick`, `manual` or `pr-event`, or when `branches` differs from the snapshot's `branches` before this round's save. It runs in the PR lane (A16): one at a time, one queued request, and the queued one reads the `branches` of the snapshot committed when it starts.
 

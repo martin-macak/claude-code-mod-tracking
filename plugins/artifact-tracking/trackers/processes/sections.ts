@@ -7,6 +7,7 @@ import type { Json } from '../../core/interfaces/items'
 import type { ColumnDef, SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
 import { content, flex, type Tone, textCells } from '../../core/lib/rows'
 import type { ProcessesConfig } from './config'
+import { processReasons } from './reasons'
 import { asRows } from './rows'
 import type { ProcessKind, ProcessRecord, ProcessUiState } from './types'
 import { UI_FACT } from './watch'
@@ -47,6 +48,7 @@ function processRow(r: ProcessRecord): TreeRow {
       tone: toneOf(r.state),
     }),
     can: { dismiss: false, priority: false },
+    reasons: processReasons(),
   }
 }
 

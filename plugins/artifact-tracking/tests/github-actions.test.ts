@@ -8,6 +8,7 @@ import { githubTracker } from '../trackers/github'
 import type { LaneState, MergeNote } from '../trackers/github/types'
 import { res, until } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
+import { LANE, named } from './fixtures/reasons'
 
 const NOW = 1_000_000
 const K7 = 'gh:github.com/acme/web#7'
@@ -19,7 +20,7 @@ const pr = (over: Record<string, unknown> = {}) => ({
   category: 'github',
   url: 'https://github.com/acme/web/pull/7',
   label: 'acme/web#7',
-  sources: ['auto'],
+  ...LANE,
   firstSeen: 1,
   lastSeen: 1,
   seenCount: 0,
@@ -39,7 +40,7 @@ const pr = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 const issue = () => ({
-  ...pr({ key: K5, number: 5, type: 'issue', url: 'https://github.com/acme/web/issues/5', sources: ['prompt'] }),
+  ...named(pr({ key: K5, number: 5, type: 'issue', url: 'https://github.com/acme/web/issues/5' })),
   mergeable: undefined,
 })
 

@@ -10,10 +10,10 @@ import type { FileRecord } from './types'
 
 const PATH_MAX = 120
 
-/** What happened to the file. A file that Claude created is not also `mentioned`. */
+/** The strongest reason, then how often the file was edited and viewed. */
 function factsOf(r: FileRecord): string[] {
   return [
-    ...(r.created ? ['created'] : r.mentions > 0 ? ['mentioned'] : []),
+    r.reasons.strongest,
     ...(r.edits > 0 ? [`edited ${r.edits}`] : []),
     ...(r.views > 0 ? [`viewed ${r.views}`] : []),
     ...(r.bySubagent ? ['by subagent'] : []),

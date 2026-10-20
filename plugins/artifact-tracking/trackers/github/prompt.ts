@@ -16,9 +16,9 @@ function refOf(r: GitHubRecord): string {
   return r.host && r.host.toLowerCase() !== 'github.com' ? `${r.host}/${base}` : base
 }
 
-/** The type, one of not found, draft or the state, and for a PR the checks and the review decision. */
+/** The strongest reason, then the type, one of not found, draft or the state, and for a PR the checks and the review decision. */
 function factsOf(r: GitHubRecord): string[] {
-  const facts: string[] = []
+  const facts: string[] = [r.reasons.strongest]
   if (r.type === 'pr' || r.type === 'issue') facts.push(r.type)
   if (r.error?.kind === 'not-found') facts.push('not found')
   else if (r.isDraft) facts.push('draft')

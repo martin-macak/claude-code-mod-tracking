@@ -25,6 +25,7 @@ import { GitHubItem } from '../../trackers/github/github-item'
 import { JiraItem } from '../../trackers/jira/jira-item'
 import type { FileActivity, FileRecord, HydratedItem, ItemRecord, Ref, RepoRef, Sighting, Tools } from './contracts'
 import { keyOf } from './keys'
+import { reasonFor } from './reasons'
 
 export { enforceCap, KINDS, MAX_PINNED, markArtifactDeleted }
 
@@ -34,7 +35,14 @@ const table: KindTable = category => byCategory.get(category)
 /** A ref as the kinds see it: the category, the key, where and when it was seen, and the ref fields. */
 function claimOf(ref: Ref, s: Sighting): Claim {
   const { category, ...fields } = ref
-  return { category, key: keyOf(ref), source: s.source, at: s.at, fields: fields as unknown as JsonObject }
+  return {
+    category,
+    key: keyOf(ref),
+    source: s.source,
+    reason: s.reason ?? reasonFor(s.source),
+    at: s.at,
+    fields: fields as unknown as JsonObject,
+  }
 }
 
 const typed = (list: readonly StoredItem[]): ItemRecord[] => list as unknown as ItemRecord[]

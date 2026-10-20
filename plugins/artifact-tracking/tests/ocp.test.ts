@@ -8,14 +8,16 @@ import { expect, test } from 'claude-code/testing'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import { NO_VIEW } from '../core/infra/views'
 import type { Claim, ItemKind, Refreshable, RefreshContext, StoredItem } from '../core/interfaces/items'
+import type { KindReason } from '../core/interfaces/reasons'
 import type { Tracker } from '../core/interfaces/tracker'
 import type { ColumnDef, SectionSpec, ViewContext } from '../core/interfaces/view'
 import { bool, specOf } from '../core/lib/normalise'
+import { kindReason, reasonOfSource, reasonSet } from '../core/lib/reasons'
 import { type BaseRecord, sighted } from '../core/lib/records'
 import { content, flex, itemRow, PRIO_COLUMN, sortedByLevel } from '../core/lib/rows'
 import { DISMISS, TRACKERS } from '../trackers'
 import { fakeConfig } from './fixtures/config-fs'
-import { promptRow, res } from './fixtures/items'
+import { promptRow, res, toolResultRow } from './fixtures/items'
 import { fakePorts } from './fixtures/ports'
 
 // ---------------------------------------------------------------- the test-local tracker
@@ -45,9 +47,13 @@ class Note implements Refreshable {
   }
 }
 
+/** The reasons of the notes: a note that a tool result showed was `reviewed`, which a filter reads as `read` (issue #62). */
+const NOTE_REASONS: readonly KindReason[] = [{ id: 'reviewed', core: 'read' }]
+
 const noteKind: ItemKind<NoteRecord> = {
   category: 'note',
   rank: 50,
+  reasons: NOTE_REASONS,
   claimUrl(url, _label, ctx): Claim | null {
     const id = NOTE_URL.exec(url)?.[1]
     if (id === undefined) return null
@@ -55,6 +61,7 @@ const noteKind: ItemKind<NoteRecord> = {
       category: 'note',
       key: `note:${id}`,
       source: ctx.source,
+      reason: ctx.source === 'tool' ? kindReason(ctx.kindReasons, 'reviewed') : reasonOfSource(ctx.source),
       at: ctx.now,
       fields: { url, label: `note ${id}` },
     }
@@ -69,6 +76,7 @@ const noteKind: ItemKind<NoteRecord> = {
           url: String(seen.fields.url),
           label: String(seen.fields.label),
           sources: [seen.source],
+          reasons: reasonSet(seen.reason),
           firstSeen: seen.at,
           lastSeen: seen.at,
           seenCount: 1,
@@ -95,6 +103,7 @@ const noteKind: ItemKind<NoteRecord> = {
       owner: 'notes',
       level: ctx.levelOf(item.key),
       dismiss: true,
+      reasons: item.reasons,
       text: { key: item.label, href: item.url, title: item.title ?? '' },
     }),
 }
@@ -213,6 +222,31 @@ test('ocp: a tracker added only through a test-local list is captured, refreshed
 
   expect(TRACKERS.length).toBe(8) // the shipped list did not change
   expect(TRACKERS.some(x => x.id === 'notes')).toBe(false)
+})
+
+test('ocp: the new tracker gets reasons through the base contract, with no edit of a shared type (#62)', async () => {
+  const t = world()
+  const p = t.w.ports
+  await t.m.ensureStarted(p)
+
+  // A prompt names the note: a mention. A tool result shows it: the kind's `reviewed`, which the core reads as `read`.
+  await t.see('Look at https://notes.example/n/7')
+  expect(t.items().find(i => i.key === 'note:7')).toMatchObject({
+    sources: ['prompt'],
+    reasons: { first: 'mentioned', all: ['mentioned'], strongest: 'mentioned' },
+  })
+  await t.m.row(p, toolResultRow('opened https://notes.example/n/7'))
+  const note = t.items().find(i => i.key === 'note:7')
+  expect(note?.sources).toEqual(['prompt', 'tool'])
+  expect(note?.reasons).toEqual({ first: 'mentioned', all: ['read', 'mentioned'], strongest: 'read' })
+
+  // The row of the kind carries them to the pane, where the detail lists them all.
+  const row = (await t.m.paneData(p, NO_VIEW)).find(s => s.id === 'notes')?.rows[0]
+  expect(row?.reasons).toEqual(note?.reasons)
+
+  // The kind's own word fails when it is not declared, and a kind that declares none has none to use.
+  expect(() => kindReason(noteKind.reasons, 'liked')).toThrow(/liked/)
+  expect(noteKind.reasons?.map(r => [r.id, r.core])).toEqual([['reviewed', 'read']])
 })
 
 test('ocp: without the tracker the same URL is a plain web link and the section is gone', async () => {

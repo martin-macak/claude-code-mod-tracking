@@ -15,6 +15,7 @@ export function artifactRow(item: ArtifactRecord, env: Pick<ViewContext, 'levelO
     owner: 'artifact',
     level: env.levelOf(item.key),
     dismiss: true,
+    reasons: item.reasons,
     ...(item.deleted ? { dim: true } : {}),
     text: {
       key: item.label,

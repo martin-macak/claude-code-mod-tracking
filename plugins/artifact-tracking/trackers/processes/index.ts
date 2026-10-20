@@ -5,6 +5,7 @@
 
 import type { CommandEvent, RowEvent, ToolCallEvent, TurnCompleteEvent } from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
+import type { Traceable } from '../../core/interfaces/reasons'
 import type { Handler, Tracker } from '../../core/interfaces/tracker'
 import { CircuitBreaker } from '../../core/lib/circuit-breaker'
 import { isRecord } from '../../core/lib/json'
@@ -17,6 +18,7 @@ import {
   processUpdateFromNotificationText,
   processUpdateFromTaskStop,
 } from './parse'
+import { processReasonsOf } from './reasons'
 import { addProcessRows, applyAgentEnd, applyTaskUpdate, asRows, mergeProcessRows, setProcesses } from './rows'
 import { sections } from './sections'
 import { type ProbeState, probeProcesses } from './watch'
@@ -34,7 +36,7 @@ const probes = new LoadState<ProbeState>()
 const probeOf = (ctx: LoadKey, b?: { threshold: number; openMs: number }): ProbeState =>
   probes.of(ctx, () => ({ breaker: b ? new CircuitBreaker(b.threshold, b.openMs) : new CircuitBreaker() }))
 
-export function processesTracker(): Tracker<ProcessesConfig, Json> {
+export function processesTracker(): Tracker<ProcessesConfig, Json> & Traceable<Json> {
   // A task notice completes the task-backed row. The person can type the same text, so only the origin counts.
   // The engine gives the notice by one of two doors. `prompt`: the session was idle. `delivery`: a turn was running, so
   // the engine folded the notice into it, as an attachment row (Claude Code 2.1.304, issue #56). The queue repeats the text
@@ -113,6 +115,7 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> {
       clear: ctx => setProcesses(ctx, () => []),
     },
     sections,
+    reasonsOf: processReasonsOf,
     events: {
       row: { doors: ['prompt', 'delivery'], run: onRow },
       toolCall: { Bash: onBash, Monitor: onMonitor, TaskStop: onTaskStop },

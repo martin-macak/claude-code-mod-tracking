@@ -3,6 +3,7 @@
 // subagent's publish is covered by artifact-tool.test.ts: the hook does not read it.
 import type { Engine } from 'claude-code/testing'
 import { expect, test } from 'claude-code/testing'
+import { addReason, reasonSet } from '../core/lib/reasons'
 import {
   ASSET,
   DELETE,
@@ -22,6 +23,7 @@ import {
 import type { ArtifactRecord, ItemRecord } from './fixtures/contracts'
 import { LIMITS } from './fixtures/limits'
 import { mountPane, select } from './fixtures/pane'
+import { MENTIONED, reasonsOfSources } from './fixtures/reasons'
 import { clearSession, prompt, quiet, response, SESSION, START, toolResult, track, world } from './fixtures/world'
 
 type World = ReturnType<typeof world>
@@ -48,7 +50,8 @@ const stored = (over: Partial<ArtifactRecord> = {}): ArtifactRecord => ({
   category: 'artifact',
   url: PAGE_URL,
   label: 'Probe Page 29',
-  sources: ['publish'],
+  sources: ['tool'],
+  reasons: over.deleted ? addReason(reasonSet('published'), 'deleted') : reasonSet('published'),
   firstSeen: 1,
   lastSeen: 1,
   seenCount: 1,
@@ -215,7 +218,7 @@ test('/track clear removes the artifact and its stored copy', async ($, on) => {
   expect(w.store.has('v2:s:' + SESSION)).toBe(false)
 })
 
-test('the stored copy holds the artifact with source publish, its title and the delete mark', async ($, on) => {
+test('the stored copy holds the artifact with the reasons published and deleted, its title and the delete mark', async ($, on) => {
   const w = world(on)
   await call($, w, PUBLISH)
   await call($, w, DELETE)
@@ -223,7 +226,7 @@ test('the stored copy holds the artifact with source publish, its title and the 
   await quiet(w.calls)
   const copy = w.store.get('v2:s:' + SESSION) as { items: ItemRecord[] }
   expect(copy.items).toEqual([
-    { ...stored(), firstSeen: expect.anything(), lastSeen: expect.anything(), deleted: true },
+    { ...stored({ deleted: true }), firstSeen: expect.anything(), lastSeen: expect.anything() },
   ])
 })
 
@@ -248,7 +251,7 @@ test('session.start backfills a publish and a delete from the transcript; tool t
 })
 
 test('session.start: a stale stored mention is repaired by the publish in the transcript', async ($, on) => {
-  const mention = stored({ url: PAGE_CODE_URL, label: PAGE_UUID, sources: ['response'] })
+  const mention = stored({ url: PAGE_CODE_URL, label: PAGE_UUID, sources: ['response'], reasons: MENTIONED })
   world(on, { seed: seed([mention]), messages: [{ role: 'assistant', text: '', toolUses: [use(PUBLISH)] }] })
   await $.session.start(START)
   expect(await text($)).toBe(`Artifacts  1 artifacts\n  ${ROW}`)
@@ -281,6 +284,7 @@ const oldWeb = (url: string, label: string): ItemRecord => ({
   url,
   label,
   sources: ['response'],
+  reasons: reasonsOfSources(['response']),
   firstSeen: 1,
   lastSeen: 1,
   seenCount: 1,

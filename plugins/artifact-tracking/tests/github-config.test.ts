@@ -8,6 +8,7 @@ import { prBodyRefs } from '../trackers/github/pr-body'
 import { buildDiscoveryQuery, discoverPrs, parseDiscovery } from '../trackers/github/pr-discovery'
 import type { GitHubDiscoveryApi, GitHubTarget, GraphqlReply, ItemRecord, RunInit, Runner } from './fixtures/contracts'
 import { discovered, discoveryData, prNode, REPO } from './fixtures/gh-discovery'
+import { reasonsOfSources } from './fixtures/reasons'
 import { extractRefs, scanBody } from './fixtures/refs'
 import { buildRecord } from './fixtures/registry'
 
@@ -185,6 +186,7 @@ test('applyDiscovery caps.maxItems caps the items that are not auto-only', () =>
       url: `https://h${n}.example/`,
       label: `h${n}`,
       sources: ['prompt'],
+      reasons: reasonsOfSources(['prompt']),
       firstSeen: 1,
       lastSeen: n,
       seenCount: 1,

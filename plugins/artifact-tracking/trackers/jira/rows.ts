@@ -4,6 +4,7 @@
 // Plan: L5 Task 13, L6 A1.
 
 import type { Effective, Priority, StoredItem } from '../../core/interfaces/items'
+import type { ReasonSet } from '../../core/interfaces/reasons'
 import type { TreeRow, ViewContext } from '../../core/interfaces/view'
 import { byLevel } from '../../core/lib/levels'
 import { itemRow, type Tone, viaPrefix } from '../../core/lib/rows'
@@ -14,14 +15,19 @@ import type { JiraNode, JiraRecord } from './types'
 /** What a row reads of the view context. */
 export type JiraEnv = Pick<ViewContext, 'tools' | 'levelOf'>
 
-/** A tracked Jira record, as its nested row shows it: the via marker and the level. */
-export type Tracked = { via: readonly string[] | undefined; level: Effective }
+/** A tracked Jira record, as its nested row shows it: the via marker, the level and why it is tracked (#62). */
+export type Tracked = { via: readonly string[] | undefined; level: Effective; reasons: ReasonSet }
 
 const lower = (s: string | undefined): string => (s ?? '').toLowerCase()
 
-/** The tracked records by `site/KEY`. A child node that is also a tracked issue takes its via marker and its level. */
+/**
+ * The tracked records by `site/KEY`. A child node that is also a tracked issue takes its via marker, its level and its
+ * reasons: such a record has no root row, so its nested row is the only place that says why it is tracked.
+ */
 export function trackedOf(records: readonly JiraRecord[], levelOf: JiraEnv['levelOf']): ReadonlyMap<string, Tracked> {
-  return new Map(records.map(r => [jiraSiteKey(r.site, r.issueKey), { via: r.via, level: levelOf(r.key) }]))
+  return new Map(
+    records.map(r => [jiraSiteKey(r.site, r.issueKey), { via: r.via, level: levelOf(r.key), reasons: r.reasons }]),
+  )
 }
 
 /** The tracked Jira records among the items of a view. */
@@ -54,6 +60,7 @@ function nodeRows(
         owner: 'jira',
         level: t?.level.level !== undefined ? t.level : markOf(n.priority),
         dismiss: false,
+        ...(t ? { reasons: t.reasons } : {}),
         children: nodeRows(id, n.children, site, tracked),
         text: {
           key: n.key,
@@ -87,6 +94,7 @@ export function jiraRow(item: JiraRecord, env: JiraEnv, tracked: ReadonlyMap<str
     owner: 'jira',
     level: env.levelOf(item.key),
     dismiss: true,
+    reasons: item.reasons,
     children: nodeRows(item.key, item.children, item.site, tracked),
     text: {
       key: item.issueKey,

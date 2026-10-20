@@ -12,6 +12,7 @@ import { toolNote } from '../../core/lib/text'
 import type { GithubConfig } from './config'
 import { githubKind } from './kind'
 import { branchesOf, EMPTY_LANE } from './lane'
+import { isLanePr } from './lane-pr'
 import { conflictCount, type MergeEnv, mergeEnvOf } from './merge'
 import { githubRow, prRow } from './rows'
 import type { GitHubRecord, LaneState } from './types'
@@ -56,8 +57,8 @@ const records = (ctx: Ctx): GitHubRecord[] =>
     return rec ? [rec] : []
   })
 
-/** A PR the PR lane found: source `auto`. A PR that the conversation also named stays in this section only. */
-const isDiscoveredPr = (i: GitHubRecord): boolean => i.type === 'pr' && i.sources.includes('auto')
+/** A PR the PR lane found: the `lane` marker. A PR that the conversation also named stays in this section only. */
+const isDiscoveredPr = (i: GitHubRecord): boolean => i.type === 'pr' && isLanePr(i)
 
 const failing = (list: readonly GitHubRecord[]): number => list.filter(i => i.checks === 'failure').length
 
@@ -110,7 +111,7 @@ function prsSection(ctx: Ctx): SectionSpec | null {
 /** The GitHub section: the issues and PRs that the conversation named, not the ones only the lane found. */
 function githubSection(ctx: Ctx): SectionSpec | null {
   const own = sortedByLevel(
-    records(ctx).filter(i => !i.sources.includes('auto')),
+    records(ctx).filter(i => !isLanePr(i)),
     ctx.levelOf,
   )
   if (own.length === 0) return null

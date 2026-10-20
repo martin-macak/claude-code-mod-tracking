@@ -12,11 +12,13 @@ import type { Json, JsonObject, Level, StoredItem, ToolStatus } from '../../type
 import type { ConfigView } from './config'
 import type { ReplayItem, RowEvent, SessionChangedEvent, ToolCallEvent } from './events'
 import type { Ports } from './ports'
+import type { CoreReason, KindReason } from './reasons'
 import type { DataSlot } from './slots'
 import type { FactsPort, ToolPort, TrackerContext } from './tracker'
 import type { TreeRow, ViewContext } from './view'
 
 export type { Json, JsonObject, Level, StoredItem } from '../../types'
+export type { CoreReason, KindReason, ReasonSet, Traceable } from './reasons'
 
 /** The level a person sets: `high`, `normal` or `low`. `top` comes from a kind rule only. */
 export type Priority = Exclude<Level, 'top'>
@@ -29,8 +31,14 @@ export interface Claim {
   readonly category: string
   /** The item key the claim is about. */
   readonly key: string
-  /** Where the text came from, e.g. `prompt`. */
+  /** Where the text came from, e.g. `prompt`. The channel of the sighting. */
   readonly source: string
+  /**
+   * Why the item is tracked: what the sighting says Claude did. Required, so a kind cannot leave it out. A text names
+   * the item (`mentioned`), a tool result reads it (`read`); a kind that knows more says so (`created`, `updated`, ...).
+   * A word a kind declared in `ItemKind.reasons` gives its core reason here (`kindReason`).
+   */
+  readonly reason: CoreReason
   /** When it was seen, epoch ms. */
   readonly at: number
   /** Where it sits in the text offered to `scan`. Absent for a URL claim: Capture knows that span. */
@@ -43,7 +51,7 @@ export interface Claim {
 export interface KindContext {
   /** Epoch ms. */
   readonly now: number
-  /** Where the text came from: `prompt`, `response`, `tool`, `auto`. */
+  /** Where the text came from: `prompt`, `response`, `tool`, or the label of the PR lane (`auto`, `pr-body`). */
   readonly source: string
   readonly mode: ScanMode
   /** `capture`: conversation text, strict short refs. `lookup`: `/track prio`, a PR body. */
@@ -54,6 +62,12 @@ export interface KindContext {
   readonly cwdBefore?: string
   /** The config of the tracker that owns the kind. */
   readonly config: ConfigView<JsonObject>
+  /**
+   * The reasons this kind declared that passed the check, in the order it declared them (`ItemKind.reasons` less what is
+   * off). A kind claims a word of its own with `kindReason(ctx.kindReasons, id)`, never with its raw list: a word that lost
+   * a clash with another kind is not in here, so it cannot claim its core reason. Empty for a context that no kind owns.
+   */
+  readonly kindReasons: readonly KindReason[]
   readonly facts: Pick<FactsPort, 'read'>
   readonly tools: ToolPort
   readonly fs: Pick<Ports['fs'], 'stat' | 'exists'>
@@ -145,6 +159,14 @@ export interface ItemKind<T extends StoredItem = StoredItem> {
   readonly category: string
   /** Claim order, lowest first. `web` is last. */
   readonly rank: number
+  /**
+   * The reasons this kind adds to the core vocabulary, e.g. `reviewed`, each mapped to one core reason. A claim carries
+   * the core reason (`kindReason`): the record and the row show that, not the kind's word. An unmapped or a repeated word,
+   * or one that clashes with an earlier kind, is dropped when the kinds are collected (`checkKindReasons`) and shown as a
+   * problem in the help view, like a key that is taken. The kind and the mod go on. The kind reads the words that stayed
+   * from `KindContext.kindReasons`, not from this list.
+   */
+  readonly reasons?: readonly KindReason[]
   /**
    * Runs before each scan of a live kind, e.g. to resolve what the scan needs. Memoise per session. `quick`: a replay
    * asks, and the kind returns once the cheap part is done (no CLI call); the rest runs on and a later full `prepare`
@@ -244,6 +266,8 @@ export interface ItemsHost extends ItemStorePort {
   toolCall(ev: ToolCallEvent, ctx?: HostContext): Promise<void>
   /** True when a kind reads the tool. Static: it needs no start. */
   wants(tool: string): boolean
+  /** The problems of the kinds: one line for each kind reason that is off. The help view lists them with the key problems. */
+  problems(): readonly string[]
   /** Merges a transcript read back: rows and tool calls, in order. */
   replay(batch: readonly ReplayItem[]): Promise<void>
   tick(): Promise<void>

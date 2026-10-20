@@ -6,6 +6,7 @@ import type { Claim, Json, JsonObject, KindContext, ScanMode } from '../../core/
 import type { RepoRef } from '../../core/interfaces/ports'
 import { locate, scanMarkdown } from '../../core/lib/links'
 import { maskForBare } from '../../core/lib/mask'
+import { reasonOfSource } from '../../core/lib/reasons'
 import { GITHUB_DEFAULTS } from './config'
 import type { GitHubRef } from './types'
 import { githubKeyOf, parseGitHubUrl } from './urls'
@@ -61,6 +62,7 @@ export function githubClaim(ref: GitHubRef, ctx: KindContext, span?: { start: nu
     category,
     key: githubKeyOf(ref),
     source: ctx.source,
+    reason: reasonOfSource(ctx.source),
     at: ctx.now,
     ...(span ? { span: { start: span.start, end: span.start + span.length } } : {}),
     fields: fields as unknown as JsonObject,

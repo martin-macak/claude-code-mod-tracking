@@ -1,14 +1,24 @@
 // Base class of a tracked item (spec section 5). Plain TypeScript: no `$`.
 // An item is rebuilt from an ItemRecord for each operation and turned back into a record afterwards.
 
-import type { Priority, Refreshable, StoredItem } from '../interfaces/items'
+import type { Priority, ReasonSet, Refreshable, StoredItem } from '../interfaces/items'
 import { GLOBAL_DEFAULTS } from './global-config'
 import type { BaseRecord, ItemError } from './records'
 
 /** The fields every record shares, without the kind's `category`. */
 type BaseFields = Pick<
   BaseRecord,
-  'key' | 'url' | 'label' | 'priority' | 'sources' | 'firstSeen' | 'lastSeen' | 'seenCount' | 'refreshedAt' | 'error'
+  | 'key'
+  | 'url'
+  | 'label'
+  | 'priority'
+  | 'sources'
+  | 'reasons'
+  | 'firstSeen'
+  | 'lastSeen'
+  | 'seenCount'
+  | 'refreshedAt'
+  | 'error'
 >
 
 /** A copy of `obj` without the keys whose value is undefined. */
@@ -26,6 +36,8 @@ export abstract class TrackedItem implements Refreshable {
   /** The person's manual mark. Absent: no mark. */
   priority?: Priority
   sources: string[]
+  /** Why the item is tracked. A refresh never changes it. */
+  reasons: ReasonSet
   firstSeen: number
   lastSeen: number
   seenCount: number
@@ -45,6 +57,7 @@ export abstract class TrackedItem implements Refreshable {
     this.label = rec.label
     if (rec.priority !== undefined) this.priority = rec.priority
     this.sources = [...rec.sources]
+    this.reasons = { ...rec.reasons, all: [...rec.reasons.all] }
     this.firstSeen = rec.firstSeen
     this.lastSeen = rec.lastSeen
     this.seenCount = rec.seenCount
@@ -75,6 +88,7 @@ export abstract class TrackedItem implements Refreshable {
       label: this.label,
       priority: this.priority,
       sources: [...this.sources],
+      reasons: { ...this.reasons, all: [...this.reasons.all] },
       firstSeen: this.firstSeen,
       lastSeen: this.lastSeen,
       seenCount: this.seenCount,

@@ -8,6 +8,7 @@ import { content, flex, textCells } from '../../core/lib/rows'
 import { ago, compactIds } from '../../core/lib/text'
 import type { AutoConfig } from './config'
 import { FACT_CHECKED_AT } from './facts'
+import { autoReasonsOf } from './reasons'
 import type { AgentRow, AutoState, WorktreeRow } from './types'
 
 type Ctx = ViewContext<AutoConfig, AutoState>
@@ -33,9 +34,10 @@ const can = (dismiss: boolean): TreeRow['can'] => ({ dismiss, priority: false })
 
 const branchText = (r: WorktreeRow): string => compactIds(r.branch ?? (r.detached ? '(detached)' : ''))
 
-function worktreeRow(r: WorktreeRow, children?: readonly TreeRow[]): TreeRow {
+function worktreeRow(auto: AutoState, r: WorktreeRow, children?: readonly TreeRow[]): TreeRow {
   const removed = r.state === 'removed'
   const root = r.depth === 0
+  const reasons = autoReasonsOf(auto, r.id)
   return {
     id: r.id,
     owner: OWNER,
@@ -49,6 +51,7 @@ function worktreeRow(r: WorktreeRow, children?: readonly TreeRow[]): TreeRow {
     // The root is open until the person closes it.
     ...(root ? { expandedByDefault: true } : {}),
     can: can(!root),
+    ...(reasons ? { reasons } : {}),
     ...(removed ? { dim: true } : {}),
   }
 }
@@ -59,7 +62,7 @@ function worktreesSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
   const kids = snap.worktrees.filter(r => r.depth === 1)
   if (kids.length === 0) return null
   const root = snap.worktrees.find(r => r.depth === 0)
-  const rows = kids.map(r => worktreeRow(r))
+  const rows = kids.map(r => worktreeRow(auto, r))
   const live = kids.filter(r => r.state === 'live').length
   const removed = kids.length - live
   // The time of the last round is the fact; a snapshot that no round has stamped yet reads its own age.
@@ -80,7 +83,7 @@ function worktreesSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
     rank: 10,
     band: { label: 'Worktrees', count: live, failing: 0, rank: 7 },
     columns: WORKTREE_COLUMNS,
-    rows: root ? [worktreeRow(root, rows)] : rows,
+    rows: root ? [worktreeRow(auto, root, rows)] : rows,
   }
 }
 
@@ -108,9 +111,10 @@ function nest(list: readonly AgentRow[]): AgentNode[] {
   return roots
 }
 
-function agentRow({ row: r, kids }: AgentNode): TreeRow {
+function agentRow(auto: AutoState, { row: r, kids }: AgentNode): TreeRow {
   const master = r.kind === 'master'
-  const children = kids.map(agentRow)
+  const children = kids.map(k => agentRow(auto, k))
+  const reasons = autoReasonsOf(auto, r.id)
   const wf = r.workflow ? `wf·${r.workflow.agentIndex} ` : ''
   const done = r.state === 'ended' || r.state === 'failed'
   return {
@@ -125,6 +129,7 @@ function agentRow({ row: r, kids }: AgentNode): TreeRow {
     // The master is open until the person closes it.
     ...(master ? { expandedByDefault: true } : {}),
     can: can(!master),
+    ...(reasons ? { reasons } : {}),
     ...(done ? { dim: true } : {}),
   }
 }
@@ -148,7 +153,7 @@ function agentsSection(auto: AutoState): SectionSpec | null {
     rank: 11,
     band: { label: 'Agents', count: running, failing: 0, rank: 8 },
     columns: AGENT_COLUMNS,
-    rows: nest(snap.agents).map(agentRow),
+    rows: nest(snap.agents).map(node => agentRow(auto, node)),
   }
 }
 

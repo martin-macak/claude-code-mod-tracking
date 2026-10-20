@@ -13,6 +13,7 @@ import {
 } from '../trackers/github/merge'
 import type { GitHubRecord, MergeNote } from '../trackers/github/types'
 import type { ToolStatus } from '../types'
+import { LANE } from './fixtures/reasons'
 
 const NOW = 5_000_000
 const K7 = 'gh:github.com/acme/web#7'
@@ -22,7 +23,7 @@ const pr = (over: Partial<GitHubRecord> = {}): GitHubRecord => ({
   category: 'github',
   url: 'https://github.com/acme/web/pull/7',
   label: 'acme/web#7',
-  sources: ['auto'],
+  ...LANE,
   firstSeen: 1,
   lastSeen: 1,
   seenCount: 0,

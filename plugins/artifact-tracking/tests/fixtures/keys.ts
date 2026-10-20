@@ -11,6 +11,7 @@ import { jiraKeyOf } from '../../trackers/jira/kind'
 import { childId } from '../../trackers/jira/nodes'
 import { webKeyOf } from '../../trackers/web/kind'
 import type { Ref } from './contracts'
+import { reasonFor } from './reasons'
 
 /** The key of a ref, or of a claim, which carries it. */
 export function keyOf(ref: Ref | Claim): string {
@@ -31,7 +32,7 @@ export function keyOf(ref: Ref | Claim): string {
 export function claimsOf(refs: readonly Ref[], source: string, at: number): Claim[] {
   return refs.map(ref => {
     const { category, ...fields } = ref
-    return { category, key: keyOf(ref), source, at, fields: fields as unknown as JsonObject }
+    return { category, key: keyOf(ref), source, reason: reasonFor(source), at, fields: fields as unknown as JsonObject }
   })
 }
 

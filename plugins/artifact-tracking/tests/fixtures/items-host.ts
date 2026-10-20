@@ -7,6 +7,7 @@ export const IDLE_ITEMS: Pick<
   | 'ready'
   | 'toolCall'
   | 'wants'
+  | 'problems'
   | 'prepare'
   | 'settle'
   | 'kick'
@@ -22,6 +23,7 @@ export const IDLE_ITEMS: Pick<
   ready: true,
   toolCall: async () => {},
   wants: () => false,
+  problems: () => [],
   prepare: async () => {},
   settle: async () => {},
   kick: () => {},

@@ -3,7 +3,7 @@
 // The tones and the cell order keep the text the pane drew before L6, so the /track text stays byte-identical (decision G2).
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 13, L6 A1.
 
-import type { Effective } from '../interfaces/items'
+import type { Effective, ReasonSet } from '../interfaces/items'
 import type { Cell, ColumnDef, TreeRow } from '../interfaces/view'
 import { byLevel, markerOf } from './levels'
 
@@ -74,6 +74,8 @@ export function itemRow(o: {
   level: Effective
   text: RowText
   dismiss: boolean
+  /** Why the item is tracked: the `reasons` of its record. */
+  reasons?: ReasonSet
   dim?: boolean
   children?: readonly TreeRow[]
 }): TreeRow {
@@ -84,6 +86,7 @@ export function itemRow(o: {
     cells: { prio: levelCell(o.level), ...textCells(o.text) },
     ...(kids ? { children: kids, expandedByDefault: true } : {}),
     can: { dismiss: o.dismiss, priority: true },
+    ...(o.reasons ? { reasons: o.reasons } : {}),
     ...(o.dim ? { dim: true } : {}),
   }
 }

@@ -12,6 +12,7 @@ import {
   quoted,
   stripControl,
 } from '../core/lib/prompt-text'
+import { reasonsOfSources } from './fixtures/reasons'
 
 test('stripControl turns a newline, a tab and a carriage return into one space', () => {
   expect(stripControl('a\n\nb\tc\rd')).toBe('a b c d')
@@ -177,6 +178,7 @@ test('promptRecords keeps the records a decoder accepts, drops the dismissed one
     key,
     category: 'x',
     sources: [],
+    reasons: reasonsOfSources([]),
     firstSeen,
     lastSeen: firstSeen,
     ...over,

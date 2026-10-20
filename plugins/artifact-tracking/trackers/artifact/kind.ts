@@ -3,8 +3,11 @@
 // delete marks its row; a page that no row knows gets no row. An error, a refusal or another action changes nothing.
 // Plan: L5 Task 4 (K17: the static item class goes), K4 (`fold`, `migrate`). Task 5 adds `claimUrl`; Task 8 the Artifact
 // tool call, `replayWins` and the delete claim.
+// Issue #62: a publish is a `tool` sighting with the reason `published`, a delete one with the reason `deleted`; the
+// origin of a page (`published` or `mentioned`) reads the reasons, not a `publish` source.
 
 import type { Claim, ItemKind, JsonObject } from '../../core/interfaces/items'
+import { addReason, reasonOfSource, reasonSet } from '../../core/lib/reasons'
 import { type BaseRecord, sighted } from '../../core/lib/records'
 import { artifactEvent } from './artifact-tool'
 import { artifactIdOf, artifactKeyOf, parseArtifactUrl } from './artifact-url'
@@ -20,7 +23,7 @@ export { artifactKeyOf }
 type Named = { url: string; label: string; published: boolean; rank: number }
 
 function named(rec: ArtifactRecord): Named {
-  const published = rec.sources.includes('publish')
+  const published = rec.reasons.all.includes('published')
   const rank = rec.label === artifactIdOf(rec.url) ? 0 : published ? 2 : 1
   return { url: rec.url, label: rec.label, published, rank }
 }
@@ -48,6 +51,7 @@ function artifactRecord(ref: ArtifactRef, claim: Claim): ArtifactRecord {
     url: ref.url,
     label: ref.label,
     sources: [claim.source],
+    reasons: reasonSet(claim.reason),
     firstSeen: claim.at,
     lastSeen: claim.at,
     seenCount: 1,
@@ -66,6 +70,7 @@ export const artifactKind: ItemKind<ArtifactRecord> = {
       category,
       key: artifactKeyOf(ref),
       source: ctx.source,
+      reason: reasonOfSource(ctx.source),
       at: ctx.now,
       fields: fields as unknown as JsonObject,
     }
@@ -76,13 +81,23 @@ export const artifactKind: ItemKind<ArtifactRecord> = {
       const found = artifactEvent(ev.input, ev.result)
       if (!found) return []
       if (found.kind === 'deleted')
-        return [{ category: 'artifact', key: found.key, source: 'publish', at: ctx.now, fields: { deleted: true } }]
+        return [
+          {
+            category: 'artifact',
+            key: found.key,
+            source: 'tool',
+            reason: 'deleted',
+            at: ctx.now,
+            fields: { deleted: true },
+          },
+        ]
       const { category, ...fields } = found.ref
       return [
         {
           category,
           key: artifactKeyOf(found.ref),
-          source: 'publish',
+          source: 'tool',
+          reason: 'published',
           at: ctx.now,
           fields: fields as unknown as JsonObject,
         },
@@ -91,13 +106,18 @@ export const artifactKind: ItemKind<ArtifactRecord> = {
   },
   decode: item => (item.category === 'artifact' ? (item as ArtifactRecord) : null),
   merge(cur, seen) {
-    // A delete marks the row (R12). With no row there is nothing to mark, and a marked row stays as it is.
-    if (seen.fields.deleted === true) return cur && !cur.deleted ? { ...cur, deleted: true } : cur
+    // A delete marks the row (R12). With no row there is nothing to mark, and a marked row stays as it is. The delete is
+    // a sighting of the channel it came by (`tool`), so a page that was only named in text gains that channel.
+    if (seen.fields.deleted === true) {
+      if (!cur || cur.deleted) return cur
+      const sources = cur.sources.includes(seen.source) ? cur.sources : [...cur.sources, seen.source]
+      return { ...cur, deleted: true, sources, reasons: addReason(cur.reasons, 'deleted') }
+    }
     const ref = refOf(seen)
     if (cur === null) return artifactRecord(ref, seen)
     const next = sighted(cur, seen)
     const rank = ref.titled ? 3 : ref.label === artifactIdOf(ref.url) ? 0 : 1
-    joinNames(next, named(cur), { url: ref.url, label: ref.label, published: seen.source === 'publish', rank })
+    joinNames(next, named(cur), { url: ref.url, label: ref.label, published: seen.reason === 'published', rank })
     return next
   },
   fold(winner, loser, out) {

@@ -12,6 +12,7 @@ import type { GitHubRef, ItemRecord, Ref, WebRef } from './fixtures/contracts'
 import { GHE_AUTH_STATUS_STDERR } from './fixtures/gh'
 import { claimOf, fakeItems, graphqlCalls, promptRow, res, sleep, until } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
+import { DISCOVERED, reasonsOfSources } from './fixtures/reasons'
 import { recordFromRef } from './fixtures/registry'
 
 const gh = (n: number, over: Partial<GitHubRef> = {}): GitHubRef => ({
@@ -24,7 +25,7 @@ const gh = (n: number, over: Partial<GitHubRef> = {}): GitHubRef => ({
   ...over,
 })
 const web = (url: string): WebRef => ({ category: 'web', url, label: url })
-const rec = (ref: Ref, source: 'prompt' | 'response' | 'tool' | 'auto' = 'prompt', at = 10): ItemRecord =>
+const rec = (ref: Ref, source: 'prompt' | 'response' | 'tool' = 'prompt', at = 10): ItemRecord =>
   recordFromRef(ref, { source, at })
 const asJson = (list: ItemRecord[]) => list as unknown as Json
 const asStored = (r: ItemRecord) => r as unknown as StoredItem
@@ -172,6 +173,7 @@ const jira = (site: string, key: string, sources: string[]): ItemRecord =>
     url: `https://${site}/browse/${key}`,
     label: key,
     sources,
+    reasons: reasonsOfSources(sources),
     firstSeen: 1,
     lastSeen: 1,
     seenCount: 1,
@@ -181,13 +183,13 @@ const jira = (site: string, key: string, sources: string[]): ItemRecord =>
     children: [],
   }) as unknown as ItemRecord
 
-test('restore load drops auto sources, foreign tool-only Jira items, not-found and dismissed items, and clears refreshedAt', async () => {
+test('restore load drops what discovery found, foreign tool-only Jira items, not-found and dismissed items, and clears refreshedAt', async () => {
   const t = fakeItems()
   const items = await t.started()
   t.dismissed.add('web:https://dismissed.example/')
   const stored = [
     { ...rec(web('https://kept.example/')), refreshedAt: 99 },
-    rec(gh(7), 'auto'),
+    { ...rec(gh(7)), sources: [], reasons: DISCOVERED, lane: true } as ItemRecord, // found by the PR lane only
     rec(web('https://dismissed.example/')),
     { ...rec(gh(8)), error: { kind: 'not-found', message: 'x', at: 1 } } as ItemRecord,
     jira('acme.atlassian.net', 'ISS-1', ['prompt']),
@@ -368,6 +370,7 @@ test('start re-keys web rows of artifact URLs on a warm list (R13)', async () =>
       url: 'https://claude.ai/artifact/D3zR4h4m4W1diV3brT2Mbo',
       label: 'x',
       sources: ['response'],
+      reasons: reasonsOfSources(['response']),
       firstSeen: 1,
       lastSeen: 1,
       seenCount: 1,
@@ -487,6 +490,7 @@ test('a stored record of a malformed shape is never due and does not stop the ru
     url: 'https://github.com/acme/web/issues/7',
     label: '#7',
     sources: ['prompt'],
+    reasons: reasonsOfSources(['prompt']),
     firstSeen: 1,
     lastSeen: 1,
     seenCount: 1,

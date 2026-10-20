@@ -1,9 +1,11 @@
 // Dismiss list: ids of the current auto rows and items. Pure.
 import { expect, test } from 'claude-code/testing'
+import { addReason } from '../core/lib/reasons'
 import { autoIds, dismiss } from '../trackers/auto/dismiss'
 import { emptyAuto, pinRoot } from '../trackers/auto/ledger'
 import type { AgentRow, AutoSnapshot, AutoState, ItemRecord, WorktreeRow } from './fixtures/contracts'
 import { LIMITS } from './fixtures/limits'
+import { DISCOVERED, MENTIONED, reasonsOfSources } from './fixtures/reasons'
 
 const wt = (path: string, depth: 0 | 1): WorktreeRow => ({
   id: `wt:${path}`,
@@ -36,19 +38,25 @@ const snapshot = (over: Partial<AutoSnapshot> = {}): AutoSnapshot => ({
 
 const state = (): AutoState => ({ ...pinRoot(emptyAuto(), '/r', 1), snapshot: snapshot() })
 
-const item = (key: string, sources: ItemRecord['sources']): ItemRecord => ({
+const item = (key: string, sources: ItemRecord['sources'], reasons = reasonsOfSources(sources)): ItemRecord => ({
   key,
   category: 'web',
   url: key,
   label: key,
   sources,
+  reasons,
   firstSeen: 1,
   lastSeen: 1,
   seenCount: 0,
 })
 
 test('autoIds lists children, agents and auto items; never the root or the master', () => {
-  const ids = autoIds(state(), [item('web:a', ['auto']), item('web:b', ['pr-body']), item('web:c', ['prompt'])])
+  const ids = autoIds(state(), [
+    item('web:a', [], DISCOVERED),
+    item('web:b', [], DISCOVERED),
+    item('web:c', ['prompt']),
+    item('web:d', ['prompt'], addReason(MENTIONED, 'discovered')),
+  ])
   expect(ids).toEqual([
     'wt:/r/.claude/worktrees/a',
     'wt:/r/.claude/worktrees/b',
@@ -57,11 +65,12 @@ test('autoIds lists children, agents and auto items; never the root or the maste
     'ag:q',
     'web:a',
     'web:b',
+    'web:d', // named in the conversation and found by discovery: still an auto item
   ])
 })
 
 test('autoIds on a state with no snapshot lists the items only', () => {
-  expect(autoIds(emptyAuto(), [item('web:a', ['auto'])])).toEqual(['web:a'])
+  expect(autoIds(emptyAuto(), [item('web:a', [], DISCOVERED)])).toEqual(['web:a'])
 })
 
 test('dismiss adds the ids and drops their rows from the snapshot', () => {

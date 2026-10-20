@@ -142,7 +142,13 @@ export class LifecycleManager extends PaneApi {
       live: id => this.host.live(id),
       log: ports.log,
     })
-    this.paneKeys = new PaneKeys({ trackers: d.trackers, host: this.host, views: this.views, log: ports.log })
+    this.paneKeys = new PaneKeys({
+      trackers: d.trackers,
+      host: this.host,
+      views: this.views,
+      kinds: this.items,
+      log: ports.log,
+    })
     this.sequence = new StartSequence({
       items: this.items,
       persistence: this.persistence,

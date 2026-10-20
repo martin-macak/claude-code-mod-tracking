@@ -3,9 +3,11 @@
 
 import type { Claim, JsonObject, StoredItem } from '../../core/interfaces/items'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
-import { type BaseRecord, enforceCap, isAutoOnly } from '../../core/lib/records'
+import { addReason, dropReason } from '../../core/lib/reasons'
+import { type BaseRecord, enforceCap, isAutoOnly, isDiscovered } from '../../core/lib/records'
 import { PR_LANE_DEFAULTS } from './config'
 import { githubKind } from './kind'
+import { isLanePr } from './lane-pr'
 import type { DiscoveredPr, DiscoveryApplied, GitHubRecord } from './types'
 import { githubKey, prKey } from './urls'
 
@@ -34,7 +36,7 @@ function discoveryFields(pr: DiscoveredPr) {
 
 function isCurrent(rec: GitHubRecord, pr: DiscoveredPr, at: number, staleMs: number): boolean {
   return (
-    rec.sources.includes('auto') &&
+    isLanePr(rec) &&
     rec.error === undefined &&
     rec.type === 'pr' &&
     rec.url === pr.url &&
@@ -56,7 +58,8 @@ function isCurrent(rec: GitHubRecord, pr: DiscoveredPr, at: number, staleMs: num
 function withDiscovery(rec: GitHubRecord, pr: DiscoveredPr, at: number): GitHubRecord {
   const next: GitHubRecord = {
     ...rec,
-    sources: rec.sources.includes('auto') ? rec.sources : [...rec.sources, 'auto'],
+    lane: true,
+    reasons: addReason(rec.reasons, 'discovered'),
     ...discoveryFields(pr),
     refreshedAt: at,
   }
@@ -69,21 +72,27 @@ function withDiscovery(rec: GitHubRecord, pr: DiscoveredPr, at: number): GitHubR
   return next
 }
 
-/** The claim of a PR the lane found: seen now, from `auto`. The github kind makes the record of it. */
+/**
+ * The claim of a PR the lane found: seen now, from `auto`. The github kind makes the record of it. `source` is the label
+ * of the claim, as `prompt` is for a text. No record keeps it: `sources` holds channels only, so `newPrRecord` clears it.
+ */
 function prClaim(pr: DiscoveredPr, at: number): Claim {
   const fields = { host: pr.host, owner: pr.owner, repo: pr.repo, number: pr.number, type: 'pr', url: pr.url }
-  return { category: 'github', key: prKey(pr), source: 'auto', at, fields: fields as JsonObject }
+  return { category: 'github', key: prKey(pr), source: 'auto', reason: 'discovered', at, fields: fields as JsonObject }
 }
 
 function newPrRecord(pr: DiscoveredPr, at: number): GitHubRecord {
   const base = githubKind.merge(null, prClaim(pr, at)) as GitHubRecord
-  return { ...base, seenCount: 0, ...discoveryFields(pr), refreshedAt: at }
+  return { ...base, sources: [], lane: true, seenCount: 0, ...discoveryFields(pr), refreshedAt: at }
 }
 
 /** The numbers `applyDiscovery` reads: how long a record stays current, and the two item caps. */
 export type DiscoveryCaps = { staleMs: number; maxAutoItems: number; maxItems: number }
 
-/** The source of a record that a PR body added. `build` gets each claim with it and the time of the step, whatever the scan said. */
+/**
+ * The label of the claim of a ref that a PR body named. `build` gets each claim with it and the time of the step, whatever
+ * the scan said. No record keeps it: `sources` holds channels only, so the new record has none.
+ */
 const BODY_SOURCE = 'pr-body'
 
 export function applyDiscovery(
@@ -147,19 +156,22 @@ export function applyDiscovery(
       if (i !== undefined) {
         const rec = out[i]!
         const via = viaOf(rec)
-        const hasSource = rec.sources.includes(BODY_SOURCE)
         const hasVia = via.includes(pk)
-        if (hasSource && hasVia) continue
-        out[i] = {
+        if (isDiscovered(rec) && hasVia) continue
+        const next = {
           ...rec,
-          sources: hasSource ? rec.sources : [...rec.sources, BODY_SOURCE],
+          reasons: addReason(rec.reasons, 'discovered'),
           via: hasVia ? via : [...via, pk],
-        }
+        } as BaseRecord & Pick<GitHubRecord, 'lane'>
+        // A marker with no `discovered` outlived a load: a body ref must not make the record a lane PR again.
+        if (next.lane === true && !isDiscovered(rec)) delete next.lane
+        out[i] = next
         changed = true
       } else if (budget > 0) {
-        const rec = build({ ...claim, source: BODY_SOURCE, at }) as BaseRecord | null
+        const rec = build({ ...claim, source: BODY_SOURCE, reason: 'discovered', at }) as BaseRecord | null
         if (!rec) continue // no kind makes a record of it
         budget--
+        rec.sources = []
         rec.seenCount = 0
         rec.via = [pk]
         index.set(rk, out.length)
@@ -179,25 +191,28 @@ export function applyDiscovery(
     const listed = new Map(livePrs.map(pr => [prKey(pr), new Set((refsByPr.get(prKey(pr)) ?? []).map(c => c.key))]))
     for (let i = 0; i < out.length; i++) {
       const rec = out[i]!
-      let sources = rec.sources
       const held = rec.via as string[] | undefined
       let via = held
-      if (sources.includes('auto') && !live.has(rec.key)) sources = sources.filter(s => s !== 'auto')
+      // The lane marker stays only while the lane still finds the PR.
+      const laneHeld = rec.lane === true
+      const lane = laneHeld && live.has(rec.key)
       if (via) {
         const kept = via.filter(k => listed.get(k)?.has(rec.key) === true)
         if (kept.length !== via.length) via = kept.length > 0 ? kept : undefined
       }
-      if (sources.includes(BODY_SOURCE) && (via === undefined || via.length === 0))
-        sources = sources.filter(s => s !== BODY_SOURCE)
-      if (sources === rec.sources && via === held) continue
+      // The reason `discovered` stays while the lane finds the record or a body of a live PR still names it.
+      const found = lane || (via !== undefined && via.length > 0)
+      const reasons = isDiscovered(rec) && !found ? dropReason(rec.reasons, 'discovered') : rec.reasons
+      if (lane === laneHeld && via === held && reasons === rec.reasons) continue
       changed = true
-      if (sources.length === 0) {
+      if (reasons === undefined) {
         drop.add(i)
         continue
       }
-      const next = { ...rec, sources } as BaseRecord
+      const next = { ...rec, reasons } as BaseRecord & Pick<GitHubRecord, 'lane'>
       if (via === undefined) delete next.via
       else next.via = via
+      if (!lane) delete next.lane
       out[i] = next
     }
   }

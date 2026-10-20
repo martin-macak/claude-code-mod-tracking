@@ -19,6 +19,8 @@ export interface PaneKeysDeps {
   host: Pick<TrackerHost, 'live' | 'failed' | 'ctx'>
   /** The read-only context a tracker builds its actions from. */
   views: Pick<Views, 'viewOf'>
+  /** The kinds: one problem line for each kind reason that is off (#62). */
+  kinds: { problems(): readonly string[] }
   log(line: string): void
 }
 
@@ -50,10 +52,11 @@ export class PaneKeys {
     return (this.d.trackers.find(t => t.id === owner)?.kinds?.length ?? 0) > 0
   }
 
-  /** The key problems, then one line per tracker that failed to start. */
+  /** The key problems, then the kind reasons that are off, then one line per tracker that failed to start. */
   problems(): readonly string[] {
     return [
       ...this.reg.problems(),
+      ...this.d.kinds.problems(),
       ...this.d.host
         .failed()
         .map(id => `trackers.${id}: init or store failed. Its sections, keys and commands are off.`),

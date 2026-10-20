@@ -18,6 +18,7 @@ import { porcelain } from './fixtures/git'
 import { IDLE_ITEMS } from './fixtures/items-host'
 import { LIMITS } from './fixtures/limits'
 import { fakePorts } from './fixtures/ports'
+import { DISCOVERED, reasonsOfSources } from './fixtures/reasons'
 import { hostWorld } from './fixtures/tracker-host'
 
 declare function setTimeout(fn: () => void, ms: number): unknown
@@ -285,8 +286,17 @@ test('tick kicks tick: a round runs at once, with no window', async () => {
 })
 
 test('command clear dismisses the auto ids of the current items', async () => {
-  const mk = (key: string, sources: string[]) => ({ key, category: 'github', sources, firstSeen: 1, lastSeen: 1 })
-  const t = setup({ items: [mk('gh:github.com/acme/web#7', ['auto']), mk('gh:github.com/acme/web#8', ['prompt'])] })
+  const mk = (key: string, sources: string[], reasons = reasonsOfSources(sources)) => ({
+    key,
+    category: 'github',
+    sources,
+    reasons,
+    firstSeen: 1,
+    lastSeen: 1,
+  })
+  const t = setup({
+    items: [mk('gh:github.com/acme/web#7', [], DISCOVERED), mk('gh:github.com/acme/web#8', ['prompt'])],
+  })
   await t.running()
   await t.m.command(t.w.ports, { sub: 'clear', args: '', wait: true })
   expect(t.auto()?.dismissed).toEqual(['gh:github.com/acme/web#7'])

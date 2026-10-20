@@ -4,10 +4,12 @@
 
 import type { Claim, ItemKind, Json, Refreshable, RefreshContext } from '../../core/interfaces/items'
 import type { RepoRef } from '../../core/interfaces/ports'
+import { reasonSet } from '../../core/lib/reasons'
 import { sighted } from '../../core/lib/records'
 import { ghOf } from './client'
 import type { GithubConfig } from './config'
 import { GitHubItem } from './github-item'
+import { isLanePr } from './lane-pr'
 import { ensureRepo, forgetRepo } from './repo'
 import { githubRow } from './rows'
 import { BRANCH_PR, CLOSED_BY_PR } from './rules'
@@ -19,7 +21,13 @@ import { githubKeyOf, githubUrl, parseGitHubUrl } from './urls'
 const refOf = (claim: Claim): GitHubRef => ({ category: 'github', ...claim.fields }) as unknown as GitHubRef
 
 function githubRecord(ref: GitHubRef, claim: Claim): GitHubRecord {
-  const base = { sources: [claim.source], firstSeen: claim.at, lastSeen: claim.at, seenCount: 1 }
+  const base = {
+    sources: [claim.source],
+    reasons: reasonSet(claim.reason),
+    firstSeen: claim.at,
+    lastSeen: claim.at,
+    seenCount: 1,
+  }
   const host = ref.host.toLowerCase()
   if (!ref.owner || !ref.repo) {
     return {
@@ -105,8 +113,12 @@ export const githubKind: ItemKind<GitHubRecord> = {
     if (cur.type === 'unknown') next.type = refOf(seen).type
     return next
   },
-  fold(_winner, loser, out) {
+  fold(winner, loser, out) {
     if (out.type === 'unknown') out.type = loser.type
+    // The lane marker joins like the old `auto` source did: either record found by the lane makes the fold found by it.
+    // Only a marker beside `discovered` joins. A stale one (it outlived a load) goes.
+    if (isLanePr(winner) || isLanePr(loser)) out.lane = true
+    else delete out.lane
     return out
   },
   refresh: {
