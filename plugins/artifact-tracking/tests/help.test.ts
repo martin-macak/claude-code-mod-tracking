@@ -3,6 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import { CORE_KEYS } from '../core/infra/keys'
 import type { PaneKey } from '../core/interfaces/view'
+import { KEYS as GITHUB_ROW_KEYS } from '../trackers/github/actions'
 import { compactHelp, helpModel, helpRows, helpText, renderHelp } from '../ux/tree-data-table/help'
 import { leaves } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
@@ -132,33 +133,41 @@ test('the drawn help and the printed help list the same lines', () => {
 const linesOf = (list: readonly unknown[]) => nodes(list).map(n => leaves(n).join('  '))
 
 test('renderHelp draws the full form unless the caller asks for the compact one', () => {
-  const m = helpModel(CORE_KEYS, [], PATH, [])
+  const m = helpModel(CORE_KEYS, [], PATH, [], '1.2.3')
   expect(renderHelp(EL, m, false)).toEqual(renderHelp(EL, m))
-  expect(renderHelp(EL, m)).toHaveLength(10) // 2 titles, 7 keys, the config line. #65 adds a version line: 11
+  expect(renderHelp(EL, m)).toHaveLength(11) // 2 titles, 7 keys, the config line, the version line
+  expect(renderHelp(EL, helpModel(CORE_KEYS, [], PATH, []))).toHaveLength(10) // no version yet: no line
 })
 
-test('renderHelp compact puts two keys on a line and keeps every title and the config line', () => {
+test('renderHelp compact puts three keys on a line and keeps every title and the config line', () => {
   const lines = linesOf(renderHelp(EL, helpModel(CORE_KEYS, [], PATH, []), true))
   expect(lines).toEqual([
     'Pane keys',
     'r  refresh  h  help',
     'Row keys (act on the selected row)',
-    'x  dismiss  1  high',
-    '2  normal  3  low',
-    '0  auto',
+    'x  dismiss  1  high  2  normal',
+    '3  low  0  auto',
     `Config file: ${PATH}`,
   ])
 })
 
-test('renderHelp compact lines up the second key of every line on one column', () => {
+test('renderHelp compact lines up the first two keys of every line on their columns', () => {
   const drawn = nodes(
     renderHelp(EL, helpModel([...CORE_KEYS, { ...open, label: 'open in the browser' }], [], PATH, []), true),
   )
-  const pairs = drawn.filter(n => n.type === 'Box')
-  expect(pairs[0]?.props).toEqual({ paddingLeft: 2, columnGap: 2 })
-  const firsts = pairs.map(p => (p.children[0] as Node).props.width)
-  expect(new Set(firsts)).toEqual(new Set(['o  open in the browser'.length]))
-  expect(pairs.every(p => (p.children[0] as Node).type === 'Box')).toBe(true)
+  const lines = drawn.filter(n => n.type === 'Box')
+  expect(lines[0]?.props).toEqual({ paddingLeft: 2, columnGap: 2 })
+  const widest = 'o  open in the browser'.length
+  // The keys of the first two columns sit in a Box of the widest key text, so the second and the third key start in
+  // the same cell on every line. The third key is the last of its line and needs no width.
+  for (const line of lines) {
+    for (const cell of line.children.slice(0, 2)) {
+      expect((cell as Node).type).toBe('Box')
+      expect((cell as Node).props.width).toBe(widest)
+    }
+    for (const cell of line.children.slice(2)) expect((cell as Node).type).toBe('Text')
+  }
+  expect(Math.max(...lines.map(l => l.children.length))).toBe(3)
 })
 
 test('renderHelp compact keeps the problems as wrapped Texts under their bold title', () => {
@@ -223,4 +232,83 @@ test('compactHelp: the full form needs its lines, the gap and the footer; a body
   expect(compactHelp(m, 1, 96, 12)).toBe(false) // 10 + 1 + 1
   expect(compactHelp(m, 1, 96, 11)).toBe(true)
   expect(compactHelp(m, 2, 96, 12)).toBe(true) // a footer that wraps takes one more
+})
+
+// ---------------------------------------------------------------- the version line (issue #65)
+
+test('helpModel carries the version it is given and none by default', () => {
+  expect(helpModel(CORE_KEYS, [], PATH, [], '1.2.3').version).toBe('1.2.3')
+  expect(helpModel(CORE_KEYS, [], PATH, []).version).toBeUndefined()
+})
+
+test('helpText prints the version line right after the config line, before the problems', () => {
+  const lines = helpText(helpModel(CORE_KEYS, [], PATH, ['A.'], '1.2.3')).split('\n')
+  const at = lines.indexOf(`Config file: ${PATH}`)
+  expect(lines.slice(at, at + 4)).toEqual([`Config file: ${PATH}`, 'Version: 1.2.3', 'Problems', '  A.'])
+})
+
+test('helpText prints a model with no version as before and one with an unknown version as unknown', () => {
+  expect(helpText(helpModel(CORE_KEYS, [], PATH, []))).not.toContain('Version')
+  const text = helpText(helpModel(CORE_KEYS, [], undefined, [], 'unknown'))
+  expect(text.endsWith('defaults apply\nVersion: unknown')).toBe(true)
+})
+
+test('renderHelp draws the version line after the config line, and nothing when the model has none', () => {
+  const drawn = nodes(renderHelp(EL, helpModel(CORE_KEYS, [], PATH, [], '1.2.3')))
+  expect(drawn.slice(-2)).toEqual([
+    { type: 'Text', props: {}, children: [`Config file: ${PATH}`] },
+    { type: 'Text', props: {}, children: ['Version: 1.2.3'] },
+  ])
+  expect(JSON.stringify(renderHelp(EL, helpModel(CORE_KEYS, [], PATH, [])))).not.toContain('Version')
+})
+
+test('the drawn help and the printed help list the same lines with a version and problems', () => {
+  const m = helpModel(CORE_KEYS, [], PATH, ['P.'], '0.2.0')
+  const drawn = nodes(renderHelp(EL, m)).map(n =>
+    n.type === 'Box' ? `  ${n.children.map(c => (c as Node).children[0]).join('  ')}` : String(n.children[0]),
+  )
+  const printed = helpText(m)
+    .split('\n')
+    .map(line => (line === '  P.' ? 'P.' : line))
+  expect(drawn).toEqual(printed)
+})
+
+test('helpRows counts the version line as one more row, and the compact form still fits the 100x40 inline body', () => {
+  const live = '/var/folders/sn/0_q8tr7x4vv44d69rbtyckwr0000gn/T/cc-tracker-config-SAq3DF/config.json' // 86 cells
+  const without = helpModel(CORE_KEYS, [], live, [])
+  const withVersion = helpModel(CORE_KEYS, [], live, [], '1.2.3')
+  expect(helpRows(withVersion, 96)).toBe(helpRows(without, 96) + 1) // helpRows reads the lines helpText prints: no edit for the line
+  expect(helpRows(withVersion, 96)).toBe(11 + 1) // 2 titles, 7 keys, the config line and the version line, and the path row
+  // 100 columns by 40 rows inline: a body of 96 columns and 11 rows. The full form, the gap and the footer need 14.
+  expect(compactHelp(withVersion, 1, 96, 11)).toBe(true)
+  // The compact form draws 7 lines. A line that wraps adds the rows it takes: the live path takes one more.
+  const wrapRows = helpRows(withVersion, 96) - helpText(withVersion).split('\n').length
+  const compactRows = renderHelp(EL, withVersion, true).length + wrapRows
+  expect(compactRows).toBe(7 + 1)
+  expect(compactRows + 1).toBeLessThanOrEqual(11) // with the footer row, the view fits the body
+})
+
+// The keys the help view lists once the mod started: the core keys and the row keys of the github tracker (issue #50).
+const GITHUB_KEYS: readonly PaneKey[] = GITHUB_ROW_KEYS.map(k => ({ ...k, owner: 'github' }))
+
+test('with the github keys, the version and the live config path the compact form and the footer fill the 11-row body', () => {
+  const live = '/var/folders/sn/0_q8tr7x4vv44d69rbtyckwr0000gn/T/cc-tracker-config-SAq3DF/config.json' // 86 cells
+  const m = helpModel([...CORE_KEYS, ...GITHUB_KEYS], [], live, [], '1.2.3')
+  expect(compactHelp(m, 1, 96, 11)).toBe(true)
+  const lines = linesOf(renderHelp(EL, m, true))
+  expect(lines).toEqual([
+    'Pane keys',
+    'r  refresh  h  help',
+    'Row keys (act on the selected row)',
+    'x  dismiss  1  high  2  normal',
+    '3  low  0  auto',
+    'github',
+    'c  resolve  f  files',
+    `Config file: ${live}`,
+    'Version: 1.2.3',
+  ])
+  const wrapRows = helpRows(m, 96) - helpText(m).split('\n').length
+  expect(wrapRows).toBe(1) // the path takes its own row
+  // 9 lines, the wrapped row and the footer: exactly the body. A tenth line or a longer path scrolls `Pane keys` away.
+  expect(lines.length + wrapRows + 1).toBeLessThanOrEqual(11)
 })

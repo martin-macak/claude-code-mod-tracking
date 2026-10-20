@@ -21,7 +21,7 @@ const webs = (...ids: string[]): TreeRow[] => ids.map(id => web(id))
 
 function setup(
   rows: readonly TreeRow[],
-  o: { path?: string; problems?: string[]; file?: Record<string, unknown> } = {},
+  o: { path?: string; problems?: string[]; file?: Record<string, unknown>; version?: string } = {},
 ) {
   resetWidths()
   const w = fakePorts()
@@ -31,6 +31,8 @@ function setup(
     views: [] as PaneView[],
     calls: [] as string[],
     keyProblems: [] as string[],
+    /** The version the manager read from the manifest. Absent: the help view has no version line. */
+    version: o.version,
     /** Every footer key live: the session's own route decides, not the footer's state. */
     allLive: false,
     setRows: (rows: readonly TreeRow[]): void => {
@@ -131,13 +133,22 @@ test('draw with the help on draws the help view in place of the rows', async () 
 })
 
 test('draw hands the body height to the help view: a short body draws it compact, a body that fits draws it whole', async () => {
-  const t = setup(webs('a'), { path: '/p/config.json' })
+  const t = setup(webs('a'), { path: '/p/config.json', version: '1.2.3' })
   t.w.state.set('help', true)
   const help = async (rows?: number) => (await t.draw(96, rows)) as unknown as { children: { children: unknown[] }[] }
-  // #65 adds a version line to the help view. It merges after this PR and adds one to each count below when it rebases.
-  expect((await help(undefined)).children[0]?.children).toHaveLength(10)
-  expect((await help(28)).children[0]?.children).toHaveLength(10)
+  // The full view is 2 titles, 7 keys, the config line and the version line. The compact view is 7 lines: three keys to a line.
+  expect((await help(undefined)).children[0]?.children).toHaveLength(11)
+  expect((await help(28)).children[0]?.children).toHaveLength(11)
   expect((await help(11)).children[0]?.children).toHaveLength(7)
+})
+
+test('draw with the help on draws the version line after the config line', async () => {
+  const t = setup(webs('a'), { path: '/p/config.json', version: '1.2.3' })
+  t.w.state.set('help', true)
+  const lines = leaves(await t.draw())
+  const at = lines.indexOf('Config file: /p/config.json')
+  expect(at).toBeGreaterThan(-1)
+  expect(lines[at + 1]).toBe('Version: 1.2.3')
 })
 
 test('focused writes selected for a row handle only', async () => {
@@ -501,4 +512,10 @@ test('helpTextOf prints the help view with the config path and every problem', a
   expect(out.startsWith('Pane keys\n  r  refresh\n  h  help')).toBe(true)
   expect(out.endsWith('Config file: /p/config.json\nProblems\n  X.\n  Y.')).toBe(true)
   expect(t.host.views[0]).toBe(TEXT_VIEW)
+})
+
+test('helpTextOf prints the version of the host after the config line', async () => {
+  const t = setup(webs('a'), { path: '/p/config.json', problems: ['X.'], version: 'unknown' })
+  const out = await helpTextOf(t.w.ports, t.m)
+  expect(out.endsWith('Config file: /p/config.json\nVersion: unknown\nProblems\n  X.')).toBe(true)
 })

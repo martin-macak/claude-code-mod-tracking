@@ -22,6 +22,11 @@ export interface PaneHost {
   runAction(p: Ports, owner: string, id: string, rowId: string | null): Promise<void>
   problems(): readonly string[]
   isItemOwner(owner: string): boolean
+  /**
+   * The version of the mod, from its manifest: `unknown` when it gave none. Read per call: the first start sets it, so a
+   * pane drawn before that (after a hot reload) has none and the help view shows no version line.
+   */
+  readonly version: string | undefined
   readonly keys: KeyRegistry
   readonly config: Pick<ConfigSource, 'global' | 'path' | 'problems'>
 }
@@ -39,15 +44,18 @@ export async function listText(p: Ports, m: Pick<PaneHost, 'paneData'>): Promise
   return sectionsText(await m.paneData(p, TEXT_VIEW))
 }
 
-/** The help view's data: every key, the config file, the config problems and the key and tracker problems. */
-export function helpOf(m: Pick<PaneHost, 'keys' | 'config' | 'problems'>, sections: readonly SectionSpec[]): HelpModel {
-  return helpModel(m.keys.all(), sections, m.config.path(), [...m.config.problems(), ...m.problems()])
+/** The help view's data: every key, the config file, the version, the config problems and the key and tracker problems. */
+export function helpOf(
+  m: Pick<PaneHost, 'keys' | 'config' | 'problems' | 'version'>,
+  sections: readonly SectionSpec[],
+): HelpModel {
+  return helpModel(m.keys.all(), sections, m.config.path(), [...m.config.problems(), ...m.problems()], m.version)
 }
 
 /** The help view as text, for `/track help` (`claude -p` has no pane). */
 export async function helpTextOf(
   p: Ports,
-  m: Pick<PaneHost, 'paneData' | 'keys' | 'config' | 'problems'>,
+  m: Pick<PaneHost, 'paneData' | 'keys' | 'config' | 'problems' | 'version'>,
 ): Promise<string> {
   return helpText(helpOf(m, await m.paneData(p, TEXT_VIEW)))
 }

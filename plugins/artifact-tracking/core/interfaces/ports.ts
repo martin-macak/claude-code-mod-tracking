@@ -174,6 +174,8 @@ export interface Ports {
     /** null on any refusal. `resolve` asks for `realPath`. */
     stat(path: string, opts?: { resolve?: boolean }): Promise<FsStat | null>
   }
+  /** Where the mod lives: the folder that holds `.claude-plugin/plugin.json`. Read when asked: a read may throw. */
+  readonly plugin: { readonly root: string }
   /** Literal names only. */
   readonly env: { get(name: EnvName): Promise<string | undefined> }
   /** For the file tracker. */

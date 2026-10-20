@@ -8,6 +8,7 @@ import type { ItemsHost } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { PendingEnd, RunCopy } from '../interfaces/slots'
 import type { EventBus } from './bus'
+import { announceVersion } from './manifest'
 import type { Persistence } from './persistence'
 import type { Scheduler } from './scheduler'
 import type { SessionWatch } from './session'
@@ -47,6 +48,8 @@ export interface StartDeps {
   paneId: string
   /** The tick period: a pending end counts when it is not older than two of them. */
   tickMs(): number
+  /** Keeps the version the manifest named (`unknown` when it named none): `/track version` and the help view read it. */
+  setVersion(version: string): void
   /** The ports of the first hook of the load. */
   ports: Ports
 }
@@ -66,6 +69,8 @@ export class StartSequence {
   async run(ports: Ports, launch: Launch): Promise<void> {
     const { items, persistence, host, bus, scheduler, config } = this.d
     const first = this.starts++ === 0
+    // The version first, so the debug log names the release before anything else of the load. Once per load.
+    if (first) await this.soft('version', () => announceVersion(ports, v => this.d.setVersion(v)), undefined)
     // The toggles and the limits of this load come from the file, so it is read before anything else uses them.
     await this.soft('config refresh', () => config.refresh(), false)
     await this.soft('toggles', async () => host.readToggles(), undefined) // once per load; the item host asks first

@@ -27,6 +27,7 @@ Feature: Drive the /track pane with the keys
     When I press "h"
     Then the screen shows "Row keys (act on the selected row)"
     And the screen shows "Config file:"
+    And the screen shows "Version:"
     When I press "h"
     Then the screen stops showing "Row keys"
     And the selected row shows "one.example"

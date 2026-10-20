@@ -1,6 +1,8 @@
-// The help view: every key with its label by group, the config file path and the problems. `h` swaps the pane to it and
-// `/track help` prints the same as text (`claude -p` has no pane). Pure: the caller gathers the keys and the problems.
+// The help view: every key with its label by group, the config file path, the version of the mod and the problems. `h`
+// swaps the pane to it and `/track help` prints the same as text (`claude -p` has no pane). Pure: the caller gathers
+// the keys, the version and the problems.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Help view". Plan: L6 Task 7, G14 to G16.
+// Issue #65: the version line.
 
 import type { RenderElement } from 'claude-code'
 import type { HelpGroup, HelpModel, PaneKey, SectionSpec, TreeRow } from '../../core/interfaces/view'
@@ -26,6 +28,7 @@ export function helpModel(
   sections: readonly SectionSpec[],
   configPath: string | undefined,
   problems: readonly string[],
+  version?: string,
 ): HelpModel {
   const owners = [...new Set(keys.filter(k => k.owner !== 'core').map(k => k.owner))]
   const groups: HelpGroup[] = [
@@ -33,23 +36,32 @@ export function helpModel(
     { title: ROW_KEYS, keys: keys.filter(k => k.owner === 'core' && k.scope === 'row') },
     ...owners.map(owner => ({ title: titleOf(owner, sections), keys: keys.filter(k => k.owner === owner) })),
   ]
-  return { groups: groups.filter(g => g.keys.length > 0), configPath, problems }
+  return { groups: groups.filter(g => g.keys.length > 0), configPath, problems, version }
 }
 
 const configLine = (path: string | undefined) =>
   path === undefined ? 'Config file: none, the defaults apply' : `Config file: ${path}`
+
+const versionLine = (version: string) => `Version: ${version}`
 
 /** The help view as plain text, one line each. */
 export function helpText(m: HelpModel): string {
   return [
     ...m.groups.flatMap(g => [g.title, ...g.keys.map(k => `  ${k.key}  ${k.label}`)]),
     configLine(m.configPath),
+    ...(m.version === undefined ? [] : [versionLine(m.version)]),
     ...(m.problems.length > 0 ? ['Problems', ...m.problems.map(p => `  ${p}`)] : []),
   ].join('\n')
 }
 
-/** Keys to a line in the compact form, the cells between them and the indent of a key line. */
-const PER_LINE = 2
+/**
+ * Keys to a line in the compact form, the cells between them and the indent of a key line. The body of a short inline
+ * pane (100x40) holds 11 rows. With the footer, the config line (two rows for a long path), the version line and the
+ * three groups of a started mod (core pane keys, core row keys, the row keys of one tracker), three keys to a line fill
+ * it exactly.
+ * Two keys to a line do not fit: `Pane keys` scrolls out of view (issue #92).
+ */
+const PER_LINE = 3
 const KEY_GAP = 2
 const KEY_INDENT = 2
 
@@ -98,21 +110,26 @@ export function compactHelp(m: HelpModel, footerRows: number, columns: number, b
   return bodyRows !== undefined && helpRows(m, columns) + ROW_GAP + footerRows > bodyRows
 }
 
-/** The compact form of one group's keys: `PER_LINE` keys to a line, the first of each line in a column `width` cells wide. */
-function pairLines(el: TableElements, keys: readonly PaneKey[], width: number): RenderElement[] {
+/**
+ * The compact form of one group's keys: `PER_LINE` keys to a line. Every key but the last column sits in a column
+ * `width` cells wide, so each column starts in the same cell on every line.
+ */
+function keyLines(el: TableElements, keys: readonly PaneKey[], width: number): RenderElement[] {
   const lines: RenderElement[] = []
   for (let i = 0; i < keys.length; i += PER_LINE) {
-    const [first, ...rest] = keys.slice(i, i + PER_LINE).map(k => text(el, {}, keyText(k)))
-    lines.push(
-      box(el, { paddingLeft: KEY_INDENT, columnGap: KEY_GAP }, box(el, { width }, first as RenderElement), ...rest),
-    )
+    const cells = keys
+      .slice(i, i + PER_LINE)
+      .map((k, column) =>
+        column < PER_LINE - 1 ? box(el, { width }, text(el, {}, keyText(k))) : text(el, {}, keyText(k)),
+      )
+    lines.push(box(el, { paddingLeft: KEY_INDENT, columnGap: KEY_GAP }, ...cells))
   }
   return lines
 }
 
 /**
  * The help view as elements: a bold title per group, one two-column row per key, the config line and the problems.
- * `compact` puts two keys on a line, so the view takes fewer rows. Both forms draw every key.
+ * `compact` puts three keys on a line, so the view takes fewer rows. Both forms draw every key.
  */
 export function renderHelp(el: TableElements, m: HelpModel, compact = false): readonly RenderElement[] {
   const width = Math.max(0, ...m.groups.flatMap(g => g.keys.map(k => cellWidth(keyText(k)))))
@@ -120,12 +137,13 @@ export function renderHelp(el: TableElements, m: HelpModel, compact = false): re
     ...m.groups.flatMap(g => [
       text(el, { weight: 'bold' }, g.title),
       ...(compact
-        ? pairLines(el, g.keys, width)
+        ? keyLines(el, g.keys, width)
         : g.keys.map(k =>
             box(el, { paddingLeft: KEY_INDENT, columnGap: KEY_GAP }, text(el, {}, k.key), text(el, {}, k.label)),
           )),
     ]),
     text(el, {}, configLine(m.configPath)),
+    ...(m.version === undefined ? [] : [text(el, {}, versionLine(m.version))]),
     ...(m.problems.length > 0
       ? [text(el, { weight: 'bold' }, 'Problems'), ...m.problems.map(p => text(el, { wrap: 'wrap' }, p))]
       : []),
