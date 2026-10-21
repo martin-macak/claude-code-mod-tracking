@@ -118,9 +118,11 @@ test('splitShell reads >| as a redirection, not a pipe', () => {
 
 // An escaped `>` is a word, so the `|` after it is a pipe. After an escaped backslash the `>` is typed again.
 test('splitShell reads a | after an escaped > as a pipe', () => {
+  // The escaped `>` stays a word of the first segment (`a >`), so the segment is named by it.
   const e = at('a \\>| b; c')
-  expect([e.a, e.b]).not.toContain('')
-  expect(e.a).not.toBe(e.b)
+  expect(Object.keys(e)).toEqual(['a >', 'b', 'c'])
+  expect([e['a >'], e.b]).not.toContain('')
+  expect(e['a >']).not.toBe(e.b)
   expect(e.c).toBe('')
   expect(Object.values(at('a \\\\>| b'))).toEqual([''])
 })
@@ -191,4 +193,220 @@ test('splitShell adds no scope level for a pipeline part that holds only a subsh
 test('splitShell takes a stray ) } or done as it comes, with no scope or compound open', () => {
   expect(Object.keys(at(') a } | b ) c; done; d'))).toEqual(['a', 'b', 'c', 'done', 'd'])
   expect(Object.values(at('a ) b; done'))).toEqual(['', '', ''])
+})
+
+// A `}` right before the closing backtick ends its group, as it does before `;` or `)` (issue #161). Else the group
+// stays open, and the `}` that comes later closes the wrong place.
+test('splitShell ends a group at a } right before a closing backtick', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  expect(words('{ echo `cd /x; { a; }`; } & b')).toEqual(['echo', 'cd /x', 'a', 'b'])
+  // The `&` backgrounds the whole outer group, so the `cd` in front of the backtick leaves the top scope.
+  const t = at('{ cd /y; echo `{ a; }`; } & b')
+  expect(t['cd /y']).not.toBe('')
+  expect(t.b).toBe('')
+  // A group in a backtick runs in the scope of the backtick.
+  expect(at('echo `cd /x; { a; }`; b')).toEqual({ echo: '', 'cd /x': '.1', a: '.1', b: '' })
+})
+
+// A `}` right before an opening backtick is part of a word (`}x`), so it closes no group.
+test('splitShell reads a } before an opening backtick as a word', () => {
+  expect(splitShell('echo }`x`; y').map(s => s.words.join(' '))).toEqual(['echo }', 'x', 'y'])
+})
+
+// Only a `>` that was typed, with no quote and no backslash, is a redirection (issue #162). A quoted or escaped one is
+// a word, and so is the word after it.
+test('splitShell keeps a quoted or escaped redirection word and the word after it', () => {
+  const words = (cmd: string) => splitShell(cmd)[0]?.words
+  expect(words('printf x \\> git -C /repo status')).toEqual(['printf', 'x', '>', 'git', '-C', '/repo', 'status'])
+  // The detached form of the issue: the name of the process is what stands after the wrappers.
+  expect(stripLead(words('nohup printf x \\> out.txt &')!).words).toEqual(['printf', 'x', '>', 'out.txt'])
+  expect(words("echo '>' a")).toEqual(['echo', '>', 'a'])
+  expect(words('echo ">" a')).toEqual(['echo', '>', 'a'])
+  expect(words("echo '>>' a")).toEqual(['echo', '>>', 'a'])
+  expect(words('echo \\< a')).toEqual(['echo', '<', 'a'])
+  expect(words("echo '>' >f a")).toEqual(['echo', '>', 'a'])
+  // The other characters of the word do not make a redirection of it: `>f`, `2>&1`, `>|`, `&>`, a quoted `2`.
+  expect(words('echo \\>f a')).toEqual(['echo', '>f', 'a'])
+  expect(words('echo 2\\>\\&1 a')).toEqual(['echo', '2>&1', 'a'])
+  expect(words('echo "2>&1" a')).toEqual(['echo', '2>&1', 'a'])
+  expect(words('echo ">|" a')).toEqual(['echo', '>|', 'a'])
+  expect(words("echo '&>' a")).toEqual(['echo', '&>', 'a'])
+  expect(words("echo '2'\\> a")).toEqual(['echo', '2>', 'a'])
+  // A typed character after the quote or the escape does not bring the word back: `'>'f` is the word `>f`.
+  expect(words("echo '>'f a")).toEqual(['echo', '>f', 'a'])
+  expect(words('echo ">"f a')).toEqual(['echo', '>f', 'a'])
+})
+
+test('splitShell still drops a typed redirection and its target', () => {
+  const words = (cmd: string) => splitShell(cmd)[0]?.words
+  expect(words('echo a > f b')).toEqual(['echo', 'a', 'b'])
+  expect(words('echo a >f b')).toEqual(['echo', 'a', 'b'])
+  expect(words('echo a >> f b')).toEqual(['echo', 'a', 'b'])
+  expect(words('echo a 2> f b')).toEqual(['echo', 'a', 'b'])
+  expect(words('echo a 2>&1 b')).toEqual(['echo', 'a', 'b'])
+  expect(words('echo a &>f b')).toEqual(['echo', 'a', 'b'])
+  expect(words('echo a < f b')).toEqual(['echo', 'a', 'b'])
+  expect(words('echo a >| f b')).toEqual(['echo', 'a', 'b'])
+  // A target that was quoted or escaped belongs to the redirection.
+  expect(words('echo a > "f g" b')).toEqual(['echo', 'a', 'b'])
+  expect(words("echo a > '>' b")).toEqual(['echo', 'a', 'b'])
+  expect(words('echo a >\\> b')).toEqual(['echo', 'a', 'b'])
+  expect(words("echo a >'>' b")).toEqual(['echo', 'a', 'b'])
+  // An empty quote glued to the `>` is the target, and adds no character to the word: the next word stays.
+  expect(words("echo a >'' b")).toEqual(['echo', 'a', 'b'])
+  expect(words('echo a >"" b')).toEqual(['echo', 'a', 'b'])
+})
+
+// The `&` of `>&` and `2>&1` belongs to a redirection only after a typed `>` or `<`. After a quoted or escaped one it is
+// the background operator, as in bash.
+test('splitShell reads a & after a quoted or escaped > as a background operator', () => {
+  const segs = (cmd: string) => splitShell(cmd).map(s => `${s.words.join(' ')}${s.bg ? ' &' : ''}`)
+  expect(segs("echo a '>'& echo b")).toEqual(['echo a > &', 'echo b'])
+  expect(segs('echo a \\>& echo b')).toEqual(['echo a > &', 'echo b'])
+  expect(segs('echo a \\<& echo b')).toEqual(['echo a < &', 'echo b'])
+  expect(segs('echo a 2>&1 & echo b')).toEqual(['echo a &', 'echo b'])
+  // A typed `>` with a quoted target is a redirection, and the `&` right after the target is a background operator.
+  expect(segs("echo >'x'& echo b")).toEqual(['echo &', 'echo b'])
+  expect(segs('echo a >&2; echo b')).toEqual(['echo a', 'echo b'])
+  expect(segs('echo a <&0; echo b')).toEqual(['echo a', 'echo b'])
+})
+
+// A case pattern is never a command (issue #163). Its words stand in no segment, so `cd)` moves no folder and `if)`,
+// `for)` or `done)` open or close no compound.
+test('splitShell reads a case pattern as no command', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  expect(words('case x in y) :;; cd) :;; esac; git -C . status')).toEqual([
+    'case x in',
+    ':',
+    ':',
+    'esac',
+    'git -C . status',
+  ])
+  // An alternation, a `(` in front, a keyword, a pattern on the line of the header or on the next.
+  expect(words('case x in a|cd) b ;; (cd|c) d ;; esac')).toEqual(['case x in', 'b', 'd', 'esac'])
+  expect(words('case x in if) a ;; for|done) b ;; (fi) c ;; esac; d')).toEqual([
+    'case x in',
+    'a',
+    'b',
+    'c',
+    'esac',
+    'd',
+  ])
+  expect(words('case x in\n cd) a ;;\n done) b ;;\n esac')).toEqual(['case x in', 'a', 'b', 'esac'])
+  expect(words('case x\nin cd) a ;; esac')).toEqual(['case x', 'a', 'esac'])
+  expect(words('case $(o) in cd) a ;; esac; b')).toEqual(['case', 'o', 'a', 'esac', 'b'])
+  // No white space between `in` or `;;` and the `(` in front of a pattern.
+  expect(words('case x in(x) a ;;(y) b ;; esac; c')).toEqual(['case x in', 'a', 'b', 'esac', 'c'])
+  // A pattern keeps its quotes and its glob characters, and the arm after it is a list of its own.
+  expect(words('case x in \'a b\'|"c"|*.ts) a ;; esac')).toEqual(['case x in', 'a', 'esac'])
+})
+
+// Bash reads `esac` as the end of the case when it comes first in the pattern position (`case x in esac` is an empty
+// case, and `esac)` there is a syntax error). Behind `(` or `|` it is a pattern.
+test('splitShell ends a case at an esac in the pattern position and reads it as a pattern behind ( or |', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  expect(words('case x in\nesac; a')).toEqual(['case x in', 'esac', 'a'])
+  expect(words('case x in x) a ;; esac; b')).toEqual(['case x in', 'a', 'esac', 'b'])
+  expect(words('case x in x) a ;; esac | b')).toEqual(['case x in', 'a', 'esac', 'b'])
+  expect(words('case x in a|esac) b ;; (esac) c ;; esac; d')).toEqual(['case x in', 'b', 'c', 'esac', 'd'])
+  expect(words('( case x in x) a ;; esac ); b')).toEqual(['case x in', 'a', 'esac', 'b'])
+})
+
+// A keyword is a keyword only as typed: `'esac'`, `"esac"` and `\esac` are patterns, so they end no case (the folder
+// differential found a regression against main here). The `esac` that really ends it comes later.
+test('splitShell reads a quoted or escaped esac in the pattern position as a pattern', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  expect(words("case x in 'esac') a ;; esac; b")).toEqual(['case x in', 'a', 'esac', 'b'])
+  expect(words('case x in "esac"|\\esac) a ;; esac; b')).toEqual(['case x in', 'a', 'esac', 'b'])
+  expect(words("case x in e'sac') a ;; esac; b")).toEqual(['case x in', 'a', 'esac', 'b'])
+  // An empty quote makes the word a pattern too, though it adds no character to it: `esac''` is not `esac`.
+  expect(words("case x in esac'') a ;; esac; b")).toEqual(['case x in', 'a', 'esac', 'b'])
+  expect(words('case x in esac"") a ;; esac; b')).toEqual(['case x in', 'a', 'esac', 'b'])
+  // The pattern `esac` ends no subshell around the case, so a `cd` in the arm stays in it.
+  const r = at("( case x in 'esac') cd /x ;; esac ); b")
+  expect([r['cd /x'], r.b]).toEqual(['.1', ''])
+  // The `&` after the `esac` backgrounds the whole case.
+  const g = at("case x in 'esac') cd /x ;; esac & b")
+  expect(g['cd /x']).not.toBe('')
+  expect(g.b).toBe('')
+})
+
+// A reserved word is one only as typed: a command named `'case'`, `"case"` or `\case` opens no case, so the commands after
+// it are not pattern words and are not dropped (Codex review of this PR).
+test('splitShell reads a quoted or escaped case as a command, not as a compound', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  expect(words("'case' x in; a")).toEqual(['case x in', 'a'])
+  expect(words('"case" x in; a')).toEqual(['case x in', 'a'])
+  expect(words('\\case x in; a')).toEqual(['case x in', 'a'])
+  expect(words("c'a'se x in; a")).toEqual(['case x in', 'a'])
+  // Also behind a typed lead word, and for a quoted lead word.
+  expect(words("if 'case' x in; a")).toEqual(['if case x in', 'a'])
+  expect(words("while 'case' x in; do a; done; b")).toEqual(['while case x in', 'do a', 'done', 'b'])
+  // The typed forms still open a case, behind each lead word: its pattern words are dropped.
+  expect(words('case x in y) a ;; esac; b')).toEqual(['case x in', 'a', 'esac', 'b'])
+  expect(words('time -p case x in y) a ;; esac; b')).toEqual(['time -p case x in', 'a', 'esac', 'b'])
+  expect(words('! case x in y) a ;; esac; b')).toEqual(['! case x in', 'a', 'esac', 'b'])
+  expect(words('if case x in y) a ;; esac; then b; fi')).toEqual(['if case x in', 'a', 'esac', 'then b', 'fi'])
+})
+
+// A pattern word opens or closes no compound, so the case stays one unit: the `&` after `esac` backgrounds all of it.
+test('splitShell opens and closes no compound for a case pattern word', () => {
+  const p = at('case x in if) a ;; while|done) b ;; (fi) c ;; esac & d')
+  expect([p.a, p.b, p.c].every(s => s !== '')).toBe(true)
+  expect(new Set([p.a, p.b, p.c]).size).toBe(1)
+  expect(p.d).toBe('')
+  // A pattern `done` does not close the `for` that holds the case.
+  const q = at('for i in 1; do case x in done) a ;; esac; b; done & c')
+  expect([q.a, q.b].every(s => s !== '')).toBe(true)
+  expect(q.c).toBe('')
+  // A pattern `esac` behind `|` does not close the case, so the arm after it stays in the case.
+  const r = at('( case x in a|esac) cd /x ;; esac ); b')
+  expect([r['cd /x'], r.b]).toEqual(['.1', ''])
+  // A `|` between patterns is no pipe, so no segment moves to a child scope. Neither does the pipe in an arm move the header.
+  expect(Object.values(at('case x in a|b) c ;; (d|e) f ;; esac; g'))).toEqual(['', '', '', '', ''])
+  expect(at('case x in x) a | b ;; esac; c')['case x in']).toBe('')
+  // A pattern `{` or `}` opens or closes no group, so the `}` at the end still closes the group that the `&` backgrounds.
+  const g = at('{ cd /y; case x in x) a ;; {) b ;; esac; c; } & d')
+  expect([g['cd /y'], g.a, g.b, g.c].every(v => v !== '')).toBe(true)
+  expect(g.d).toBe('')
+  const h = at('{ cd /y; case x in x) a ;; }) b ;; esac; c; } & d')
+  expect([h['cd /y'], h.a, h.b, h.c].every(v => v !== '')).toBe(true)
+  expect(h.d).toBe('')
+})
+
+// A `)` in an arm, with no `(` before it, is no valid shell. It ends no subshell: only the `)` that closes one does.
+test('splitShell takes a stray ) in a case arm as no end of a subshell', () => {
+  const s = at('( case x in x) a ) ; b ;; esac ); c')
+  expect([s.a, s.b, s.c]).toEqual(['.1', '.1', ''])
+})
+
+// A compound at the start of a condition opens a level of its own (issue #163): `if for ...; done; then` has two open
+// compounds, so its `done` closes the `for` and its `fi` closes the `if`.
+test('splitShell opens a compound of its own at the start of a condition', () => {
+  // The segment is found by its exact words, and the test fails when it is missing: a lookup that returns `undefined`
+  // would pass `!== ''` with no behavior behind it.
+  const scopeOf = (cmd: string, name: string): string => {
+    const hit = splitShell(cmd).find(s => s.words.join(' ') === name)
+    expect(hit).toBeDefined()
+    return hit!.scope
+  }
+  // Each named segment sits in the background unit, and `z` after the `&` does not.
+  const inUnit = (cmd: string, ...names: string[]) => {
+    for (const n of names) expect(scopeOf(cmd, n)).not.toBe('')
+    expect(scopeOf(cmd, 'z')).toBe('')
+  }
+  inUnit('if for i in 1; do a; done; then b; fi & z', 'do a', 'then b')
+  inUnit('while for i in 1; do a; done; do b; break; done & z', 'do a', 'do b')
+  inUnit('until if a; then b; fi; do c; done & z', 'then b', 'do c')
+  inUnit('if if a; then b; fi; then c; fi & z', 'then b', 'then c')
+  inUnit('if ! time for i in 1; do a; done; then b; fi & z', 'do a', 'then b')
+  inUnit('if case x in x) a ;; esac; then b; fi & z', 'a', 'then b')
+  inUnit('if :; then :; elif for i in 1; do a; done; then b; fi & z', 'do a', 'then b')
+  inUnit('for i in 1; do if for j in 1; do a; done; then b; fi; done & z', 'do a', 'then b')
+  // The same through a pipe: the whole `if` is one pipeline part, and `z` is the next part.
+  const p = 'if for i in 1; do a; done; then b; fi | z'
+  expect(scopeOf(p, 'do a')).not.toBe('')
+  expect(scopeOf(p, 'then b')).toBe(scopeOf(p, 'do a'))
+  expect(scopeOf(p, 'z')).not.toBe(scopeOf(p, 'do a'))
+  expect(scopeOf(p, 'z')).not.toBe('')
 })
