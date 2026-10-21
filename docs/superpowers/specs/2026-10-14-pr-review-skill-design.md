@@ -66,7 +66,7 @@ The score table comes from `design-study/scripts/score.mjs`, so its shape is sta
 ```json
 {
   "kind": "study",
-  "feature": "#31 Track other repositories that the session visits",
+  "title": "Track other repositories that the session visits",
   "overall": { "verdict": "Go with caveats", "mean": 74 },
   "items": [
     { "id": "R2", "name": "Shell: cd, git -C, gh -R", "priority": "Must", "verdict": "Partial",
@@ -75,9 +75,12 @@ The score table comes from `design-study/scripts/score.mjs`, so its shape is sta
     { "id": "R12", "name": "Hook timing across the two phases", "priority": "Must", "verdict": "Feasible",
       "evidence": 4, "ease": 4, "safety": 4, "score": 90,
       "mechanism": "…", "caveat": "…", "phases": ["Phase 1, PR 1", "Phase 2"] }
-  ]
+  ],
+  "warnings": []
 }
 ```
+
+`warnings` lists each item with no verdict or no score, each item on which two phases disagree, and each section 2 row that names an item no score table holds. The list is empty when the study is clean.
 
 `phases` appears on an item only when the study has more than one score table. It lists the label of each table that holds the item. R2 comes from a one-table study, so it has no `phases`. R12 is illustrative: it shows an item that two phase tables hold.
 
