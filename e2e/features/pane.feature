@@ -228,22 +228,28 @@ Feature: Drive the /track pane with the keys
     When I press "Up"
     Then the selected row shows "one.example"
 
-  # Issue #129, the key keeps its work. A click on `r: refresh` with the keys in the prompt also refreshes. The pane shows
-  # the age of the refresh when it draws and does not draw it again by itself, so "just now" comes from a refresh that
-  # finished a moment before the draw. The 3 seconds of waiting make the first draw say "Ns ago". A fake gh answers the
-  # calls of the mod: nothing here can reach GitHub.
+  # Issue #129, the key keeps its work. A click on `r: refresh` with the keys in the prompt also refreshes. The pane shows the
+  # age of the refresh when it draws and does not draw it again by itself. So the scenario shows the refresh by two ages: some
+  # seconds before the click, and younger after it. Issue #165: the first PR discovery of the mod stamps the age, and it runs
+  # at the start of the session, not at a fixed time after it. On a loaded machine it ran after the 3 seconds that the scenario
+  # used to wait, while `/track` opened, and the first drawing said "just now". The scenario now waits for the discovery call
+  # of the fake gh, and then for the log to be quiet: the mod stamps before it calls, so a drawing that comes 2 seconds after
+  # the last call says "2s ago" or more, whatever the speed of the machine. The click then makes the age younger. A fake gh
+  # answers the calls of the mod: nothing here can reach GitHub.
   Scenario: A click on r: refresh with the keys in the prompt gives the pane the keys and still refreshes
     Given a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-refresh"
     And the fake gh reports PR #7 "Refresh the fake PR" from "feat/fake-refresh" into "main" as MERGEABLE
     And a Claude Code session with the artifact-tracking mod
-    When I wait for 3 seconds
+    When the fake gh answered "graphql discovery"
+    And the fake gh has been quiet for 2 seconds
     And I type "/track"
     Then the screen matches /│Pull requests \d+ +gh · refreshed \d+s ago/
-    When I press "C-x"
+    When I note how old the last refresh on the screen is
+    And I press "C-x"
     And I press "Tab"
     Then the screen shows "Keys go to the prompt."
     When I click "r: refresh" in the pane to give it the keys
-    Then the screen matches /│Pull requests \d+ +gh · refreshed just now/
+    Then the last refresh on the screen is younger than the one noted
     And the screen stops showing "Keys go to the prompt."
     And the fake gh answered no unsupported call
 
@@ -348,6 +354,8 @@ Feature: Drive the /track pane with the keys
   # Issue #140. `x` on the only row takes the row and every tracker key out of the footer. The ring sat on `c: resolve`, a
   # Button that is gone, so it would land on none. The mod asks for the first footer Button once the drawing without the row
   # is on screen. The scenario reads the ring and the row text, not the gutter of the selected row, so it runs inline as well.
+  # Issue #165: the `/track` line of the transcript still says `#7` after the pane dropped the row, so the wait for the row
+  # to go reads the pane only (`the pane stops showing`), not the whole screen.
   Scenario: x on the last row puts the ring on r: refresh
     Given a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
     And the fake gh reports PR #7 "Fix the fake conflict" from "feat/fake-conflict" into "main" as CONFLICTING
@@ -356,6 +364,6 @@ Feature: Drive the /track pane with the keys
     Then the screen matches /│[^\n]*#7[^\n]*✗ conflicts/
     When I press "Tab" until the focus ring is on "c: resolve"
     And I press "x"
-    Then the screen stops showing "#7"
+    Then the pane stops showing "#7"
     And the focus ring is on "r: refresh"
     And the fake gh answered no unsupported call

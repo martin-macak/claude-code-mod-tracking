@@ -3,8 +3,10 @@ import { test } from 'node:test'
 import {
   arrowOf,
   focusedTexts,
+  paneShows,
   paneTextAt,
   placementOf,
+  refreshAge,
   selectedLine,
   stripOpenAt,
   withFocus,
@@ -181,6 +183,19 @@ test('paneTextAt ignores the transcript left of the border and a line with no bo
   assert.equal(paneTextAt('', 'x'), undefined)
 })
 
+// Issue #165. The `/track` line of the transcript names the row that the pane dropped (`#7`), and a step that asks whether
+// the pane stopped showing the row must not read that line. `paneShows` reads the pane only, as `paneTextAt` does.
+test('paneShows is false for a row the pane dropped while the transcript still names it', () => {
+  const screen = '❯ /track #7 │ r: refresh  h: help\n  /track #7 is open\nabc │    2 more'
+  assert.equal(paneShows(screen, '#7'), false)
+  assert.equal(paneShows(screen, 'r: refresh'), true)
+})
+
+test('paneShows is true while a row of the pane holds the text, and false for an empty screen', () => {
+  assert.equal(paneShows('❯ /track │ ▸ #7  Fix the fake conflict', '#7'), true)
+  assert.equal(paneShows('', '#7'), false)
+})
+
 // Issue #69, P2. The strip of `interactive` is one row under the duration line: two spaces, the counts, `open`. The lines
 // below are what `tmux capture-pane -p` returned for a live fullscreen session (Claude Code 2.1.306).
 test('stripOpenAt gives the 1-based column and row of the word open on the strip row, one cell inside the word', () => {
@@ -203,4 +218,30 @@ test('stripOpenAt ignores the band, the main-screen strip with no Button and the
   assert.equal(stripOpenAt('⏺ artifact-tracking+cc-plugin-agents-md: +2 new · /track turn 1'), undefined)
   assert.equal(stripOpenAt('│  +2 new open'), undefined) // a row of the pane is not the transcript
   assert.equal(stripOpenAt(''), undefined)
+})
+
+// Issue #165. The pane says how old the last refresh is in a section header (`gh · refreshed 3s ago`), and it draws that
+// age when it draws, from the clock of that moment. A scenario that needs "older than before" or "younger than before"
+// reads the age as a number of seconds instead of waiting for a text that depends on the speed of the machine.
+test('refreshAge reads the age of the last refresh of the section note, in seconds', () => {
+  assert.equal(refreshAge('│Pull requests 1   gh · refreshed just now  │'), 0)
+  assert.equal(refreshAge('│Pull requests 1   gh · refreshed 3s ago     │'), 3)
+  assert.equal(refreshAge('│Pull requests 1   gh · refreshed 59s ago    │'), 59)
+  assert.equal(refreshAge('│Pull requests 1   gh · refreshed 4m ago     │'), 240)
+  assert.equal(refreshAge('│Pull requests 1   gh · refreshed 2h ago     │'), 7200)
+  assert.equal(refreshAge('│Pull requests 1   gh · refreshed 3d ago     │'), 259200)
+})
+
+test('refreshAge is undefined while no section says it refreshed', () => {
+  assert.equal(refreshAge('│Pull requests 1   gh · ready            │'), undefined)
+  assert.equal(refreshAge('│Pull requests 0   gh · checking…        │'), undefined)
+  assert.equal(refreshAge('❯ the doc says it was refreshed 3s ago'), undefined) // the transcript is no section note
+  assert.equal(refreshAge(''), undefined)
+})
+
+test('refreshAge reads the first section that says it refreshed', () => {
+  assert.equal(
+    refreshAge('│Jira 1  acli · ready\n│Pull requests 1  gh · refreshed 7s ago\n│Files  refreshed 1s ago'),
+    7,
+  )
 })

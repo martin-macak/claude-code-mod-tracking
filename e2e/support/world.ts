@@ -53,6 +53,8 @@ export class DemoWorld extends World {
   fakeGh: FakeGhSpec | undefined
   /** The refs of the local copy that stands for the origin, as the scenario started (steps/fake-gh.steps.ts). */
   fakeOriginRefs: string | undefined
+  /** The age in seconds of the last refresh as the screen showed it when the scenario noted it (steps/screen.steps.ts). */
+  notedRefreshAge: number | undefined
   private release: (() => void) | undefined
   private launched = false
 

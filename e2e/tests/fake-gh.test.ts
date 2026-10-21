@@ -4,7 +4,15 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { test } from 'node:test'
-import { answer, callsOf, type FakeGhSpec, type FakePr, fakeGhSpec, parseOwnerRepo } from '../support/fake-gh.ts'
+import {
+  answer,
+  callsOf,
+  type FakeGhSpec,
+  type FakePr,
+  fakeGhSpec,
+  isQuiet,
+  parseOwnerRepo,
+} from '../support/fake-gh.ts'
 import { FAKE_GH_DIR, fakeGhEnv } from '../support/fake-gh-env.ts'
 
 const tempDir = (prefix: string) => mkdtempSync(join(tmpdir(), prefix))
@@ -221,6 +229,22 @@ test('callsOf reads one call per log line and skips a broken line', () => {
     ['--version', 'unsupported'],
   )
   assert.deepEqual(callsOf(''), [])
+})
+
+// Issue #165. A scenario waits for the log of the fake to be quiet to know that the first calls of the mod are over. The
+// harness creates the log empty, so a log with no call is not quiet: it is a fake that no call has reached yet (it is not
+// first on the PATH, or the start is slow), and a wait that passes on it would pass with no proof.
+test('isQuiet is true when the fake got a call and the last change of the log is old enough', () => {
+  const calls = [{ call: '--version', exit: 0, argv: ['--version'] }]
+  assert.equal(isQuiet(calls, 2000, 2), true)
+  assert.equal(isQuiet(calls, 5000, 2), true)
+  assert.equal(isQuiet(calls, 1999, 2), false)
+})
+
+test('isQuiet is false while the fake got no call, however long the log has been still', () => {
+  assert.equal(isQuiet([], 60_000, 2), false)
+  assert.equal(isQuiet([], undefined, 2), false)
+  assert.equal(isQuiet([{ call: '--version', exit: 0, argv: [] }], undefined, 2), false) // no log file
 })
 
 // The shim as claude runs it: a program named gh, first on PATH, that reads FAKE_GH_SPEC.

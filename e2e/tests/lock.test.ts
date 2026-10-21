@@ -794,36 +794,67 @@ test('a child that attempts after the lock holder won still loses', { timeout: 6
   }
 })
 
-test('a lock file never exists without a pid in it', { timeout: 60_000 }, async t => {
-  const dir = tempDir()
+// Takes the lock and lets it go in a loop, while a second process reads the lock file all the time. The check ends when the
+// poller has read the file POLLER_READS times, not when a clock says so: a loaded machine slows the poller down, and a
+// window of fixed length can end with no read at all (issue #165). The poller has no clock either (fixtures/lock-poller.ts).
+// Enough reads to meet the file of a two-step publish (an empty file, then the pid): about one read in five finds it empty.
+const POLLER_READS = 500
+
+// `stall`: the poller gets no CPU (SIGSTOP) until the lock was taken and released that many times, as a busy machine can
+// leave it. Its first reads then come late, and the check still waits for all of them.
+async function readWhileLocking(dir: string, signal: AbortSignal, { stall = 0 } = {}) {
   const poller = spawn(process.execPath, [pollerPath, dir], { stdio: ['pipe', 'pipe', 'pipe'] })
-  t.signal.addEventListener('abort', () => poller.kill(), { once: true })
+  signal.addEventListener('abort', () => poller.kill('SIGKILL'), { once: true }) // SIGKILL: a stopped process takes no other
   let stderr = ''
   poller.stderr.on('data', chunk => {
     stderr += chunk
   })
   const lines = createInterface({ input: poller.stdout })[Symbol.asyncIterator]()
-  const nextLine = async () => {
-    const next = await lines.next()
-    if (next.done) throw new Error(`lock poller ended early: ${stderr}`)
-    return next.value
-  }
   try {
-    assert.equal(await nextLine(), 'ready')
-    // Take and release the lock in a loop. The poller reads the file the whole time.
-    const until = Date.now() + 400
-    poller.stdin.write(`${until}\n`)
+    const first = await lines.next()
+    assert.equal(first.done ? undefined : first.value, 'ready', `the lock poller did not start: ${stderr}`)
+    if (stall > 0) poller.kill('SIGSTOP')
+    poller.stdin.write(`${POLLER_READS}\n`)
+    let report: string | undefined
+    let failure: Error | undefined
+    void lines.next().then(
+      next => {
+        if (next.done) failure = new Error(`lock poller ended early: ${stderr}`)
+        else report = next.value
+      },
+      err => {
+        failure = err as Error
+      },
+    )
     let cycles = 0
-    while (Date.now() < until) {
+    while (report === undefined && failure === undefined) {
       acquireLock(dir)()
       cycles++
+      if (cycles === stall) poller.kill('SIGCONT')
+      // The loop is synchronous without this: the report line could not come in.
+      await new Promise(resolve => setImmediate(resolve))
     }
-    const { reads, empty } = JSON.parse(await nextLine()) as { reads: number; empty: number }
-    assert.ok(reads > 0, `the poller never read the lock in ${cycles} cycles`)
-    assert.equal(empty, 0, `the poller read an empty lock file ${empty} times in ${reads} reads`)
+    if (failure !== undefined) throw failure
+    return { cycles, ...(JSON.parse(report as string) as { reads: number; empty: number }) }
   } finally {
-    poller.kill()
+    poller.kill('SIGKILL')
   }
+}
+
+test('a lock file never exists without a pid in it', { timeout: 60_000 }, async t => {
+  const { cycles, reads, empty } = await readWhileLocking(tempDir(), t.signal)
+  assert.equal(reads, POLLER_READS, `the poller read the lock ${reads} times in ${cycles} cycles`)
+  assert.equal(empty, 0, `the poller read an empty lock file ${empty} times in ${reads} reads`)
+})
+
+test('a lock file never exists without a pid in it, also when the poller gets no CPU at first', {
+  timeout: 60_000,
+}, async t => {
+  const stall = 300
+  const { cycles, reads, empty } = await readWhileLocking(tempDir(), t.signal, { stall })
+  assert.ok(cycles >= stall, `the poller reported after ${cycles} cycles, before it was let go at ${stall}`)
+  assert.equal(reads, POLLER_READS, `the poller read the lock ${reads} times in ${cycles} cycles`)
+  assert.equal(empty, 0, `the poller read an empty lock file ${empty} times in ${reads} reads`)
 })
 
 test('acquireLock creates a missing folder', () => {

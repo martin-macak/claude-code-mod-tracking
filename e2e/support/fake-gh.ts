@@ -177,6 +177,15 @@ export function answer(argv: readonly string[], spec: FakeGhSpec): FakeGhResult 
   return unsupported(argv)
 }
 
+/**
+ * Whether the log of the fake has been quiet for `seconds`: `idle` is how long ago the log last changed (undefined: no log
+ * file). The log starts empty, so an empty log is never quiet: no call has reached the fake yet, and a wait that passed on
+ * it would pass with no call at all.
+ */
+export function isQuiet(calls: readonly FakeGhCall[], idle: number | undefined, seconds: number): boolean {
+  return calls.length > 0 && idle !== undefined && idle >= seconds * 1000
+}
+
 const MAX_ARG = 200
 
 /** One line of the call log. A long argument (the query) is cut, because the call name says what it was. */
