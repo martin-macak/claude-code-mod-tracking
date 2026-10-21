@@ -23,7 +23,11 @@ export const indentOf = (columnWidth: number, depth: number): number =>
 
 export interface TableView {
   readonly bodyColumns: number | undefined
-  /** The most rows the pane may take (`scroll.bodyRows`). Only the help view reads it. Absent: no limit is known. */
+  /**
+   * The most rows the table may take: `scroll.bodyRows`, less the rows of a hint line the pane draws above the table. The
+   * help view, the window over the rows and the pin of the footer (`placement`) read it. Absent: no limit is known, and
+   * every row is drawn.
+   */
   readonly bodyRows: number | undefined
   readonly selected: string | null
   /**
@@ -31,6 +35,16 @@ export interface TableView {
    * keys go to the prompt box. Absent: the pane has them.
    */
   readonly focused?: boolean
+  /**
+   * Where the surface seated the pane (`Pane.placement`). A `dock` pane has a body of a fixed height (`bodyRows`): the
+   * footer sits at its bottom. An `inline` pane is as tall as its tree, so padding it would stretch every pane to its
+   * full height: the footer stays under the last row. Absent: as `inline`.
+   */
+  readonly placement?: 'dock' | 'inline'
+  /** The first unit the last drawing showed in full (`Drawn.top`). The window keeps its place until the focus leaves it. */
+  readonly top?: number
+  /** The key of the "N more" Button the ring sits on (`m0`, …). Its section row must show, so the window follows it. */
+  readonly onMore?: string
   readonly expanded: ReadonlySet<string>
   /** Rows shown beyond the cap, by section id. */
   shown(sectionId: string): number
@@ -56,9 +70,16 @@ export interface DrawnRow {
   readonly depth: number
 }
 
-/** The drawing, the map from row handle to row id, and the rows in drawing order. */
+/**
+ * The drawing, the map from row handle to row id, and the rows in drawing order. A windowed drawing still lists every
+ * row: a row out of the window keeps its focus stop (windowed.ts), so `handles` and `rows` hold all of them.
+ */
 export interface Drawn {
   readonly tree: RenderElement
   readonly handles: ReadonlyMap<string, string>
   readonly rows: readonly DrawnRow[]
+  /** The first unit drawn in full: give it back as `TableView.top`. 0 when the whole tree fits. */
+  readonly top: number
+  /** The rows drawn in full when the window cuts the tree, else undefined. A page key moves the selection by about this many. */
+  readonly page: number | undefined
 }

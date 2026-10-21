@@ -605,12 +605,14 @@ test('a body shorter than the footer plus one line still draws the compact help 
   }
 })
 
-test('the table view never turns compact: only the help view reads the body height', () => {
+test('the table view never turns compact: the root keeps its gap, and a body that holds the tree changes nothing', () => {
   const sections = [section('web', COLS, webRows(2))]
   const tall = draw(sections, { bodyRows: 28 }).drawn
-  const short = draw(sections, { bodyRows: 3 }).drawn
-  expect(JSON.stringify(short.tree)).toBe(JSON.stringify(tall.tree)) // closures differ, the shape does not
+  const exact = draw(sections, { bodyRows: 6 }).drawn // the title, the header, 2 rows, the gap and the footer
+  expect(JSON.stringify(exact.tree)).toBe(JSON.stringify(tall.tree)) // closures differ, the shape does not
+  const short = draw(sections, { bodyRows: 3 }).drawn // a window over the rows (table-window.test.ts), still with the gap
   expect((short.tree as unknown as Node).props.rowGap).toBe(1)
+  expect((tall.tree as unknown as Node).props.rowGap).toBe(1)
 })
 
 test('unavailable draws one dim line', () => {

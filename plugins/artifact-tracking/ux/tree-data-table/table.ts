@@ -1,6 +1,8 @@
 // TreeDataTable: the one component that draws the pane from the trackers' sections. A header row per section, one
-// focus Button per row, a sticky selected row, caps with an "N more" row, a footer of keys, a help view and a budget
-// guard that keeps the footer. Pure: it calls the global `h` through the typed wrappers and touches no state.
+// focus Button per row, a sticky selected row, caps with an "N more" row, a footer of keys, a help view, a budget
+// guard that keeps the footer and a window over the rows that keeps the title, the header and the footer in view when
+// the body is shorter than the tree, and on a docked pane a footer pinned to the last row of the body. Pure: it calls the
+// global `h` through the typed wrappers and touches no state.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L6 Task 8, G9, G10, G16, G18, G20.
 import type { RenderElement } from 'claude-code'
 import type { SectionSpec } from '../../core/interfaces/view'
@@ -21,6 +23,7 @@ import {
   UNAVAILABLE,
 } from './shape'
 import { EMPTY_TEXT } from './text'
+import { drawWindowed, pageOf, shownRows, type Windowed, windowOf } from './windowed'
 
 export { findRow, handleOf, type LaidRow, type LaidSection, layout, neighbourOf } from './layout'
 export {
@@ -58,21 +61,29 @@ export const TreeDataTable = {
     const compact =
       view.help !== null && compactHelp(view.help, footerRows(view.footer, columns, hint), columns, view.bodyRows)
     const laids: (readonly LaidSection[])[] = []
+    const windows: (Windowed | undefined)[] = []
     const attempt = (halve: number, detail: boolean) => (): RenderElement[] => {
       if (view.help !== null) {
         laids.push([])
+        windows.push(undefined)
         return [box(el, { flexDirection: 'column' }, ...renderHelp(el, view.help, compact))]
       }
       if (sections.length === 0) {
         laids.push([])
+        windows.push(undefined)
         return [text(el, { dimColor: true }, EMPTY_TEXT)]
       }
       const laid = layout(sections, view, halve)
       laids.push(laid)
       const rows = laid.flatMap(s => s.rows)
-      const focus = (rows.find(r => r.row.id === view.selected) ?? rows[0])?.handle
+      // A body shorter than the tree shows a window of it (windowed.ts). The ring goes to the selected row when it is drawn
+      // (issue #108), else to the first row in view.
+      const win = windowOf({ el, view, actions, detail, focus: undefined }, laid)
+      windows.push(win)
+      const shown = win === undefined ? rows : shownRows(win, laid)
+      const focus = (rows.find(r => r.row.id === view.selected) ?? shown[0])?.handle
       const draw: Draw = { el, view, actions, detail, focus }
-      return laid.map(s => drawSection(draw, s))
+      return win === undefined ? laid.map(s => drawSection(draw, s)) : drawWindowed(draw, laid, win)
     }
     const attempts =
       view.help !== null || sections.length === 0
@@ -83,6 +94,7 @@ export const TreeDataTable = {
             ...Array.from({ length: halvings(sections, view) }, (_, i) => attempt(i + 1, false)),
           ]
     const { body, step } = guard(footer, attempts, () => [text(el, { dimColor: true }, TOO_LARGE)], view.budget)
+    const win = windows[step]
     const rows: DrawnRow[] = (laids[step] ?? []).flatMap(s =>
       s.rows.map(r => ({
         id: r.row.id,
@@ -93,10 +105,22 @@ export const TreeDataTable = {
         depth: r.depth,
       })),
     )
+    // A docked body has a fixed height: the tree takes all of it and the footer grows to the end of the column (issue #109).
+    // The wrapper replaces the footer in the root, so it adds no child and no gap row. `minHeight` never clips: a tree that
+    // counts taller than the body only loses the pad.
+    const pinned = view.placement === 'dock' && view.bodyRows !== undefined
+    const root = {
+      flexDirection: 'column',
+      rowGap: compact ? 0 : ROW_GAP,
+      ...(pinned ? { minHeight: view.bodyRows } : {}),
+    } as const
+    const end = { flexDirection: 'column', flexGrow: 1, flexShrink: 0, justifyContent: 'flex-end' } as const
     return {
-      tree: box(el, { flexDirection: 'column', rowGap: compact ? 0 : ROW_GAP }, ...body, footer),
+      tree: box(el, root, ...body, pinned ? box(el, end, footer) : footer),
       handles: new Map(rows.map(r => [r.handle, r.id])),
       rows,
+      top: win?.plan.from ?? 0,
+      page: win === undefined ? undefined : pageOf(win),
     }
   },
 

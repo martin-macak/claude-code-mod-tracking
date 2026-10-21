@@ -7,6 +7,7 @@
 import type { RenderElement } from 'claude-code'
 import type { HelpGroup, HelpModel, PaneKey, SectionSpec, TreeRow } from '../../core/interfaces/view'
 import { cellWidth } from '../text/cell-width'
+import { wrapRows } from '../text/wrap'
 import { box, type TableElements, text } from './el'
 import { ROW_GAP } from './shape'
 
@@ -70,37 +71,13 @@ const KEY_INDENT = 2
 const keyText = (k: PaneKey): string => `${k.key}${' '.repeat(KEY_GAP)}${k.label}`
 
 /**
- * The rows a line takes in a body `columns` wide. The engine wraps a Text with no `wrap` at spaces and breaks a word
- * longer than a row. A long config path moves to its own row after `Config file:`, so the count must see words.
- */
-function rowsOf(line: string, columns: number): number {
-  const width = Math.max(1, columns)
-  let rows = 1
-  let used = 0
-  for (const word of line.split(' ')) {
-    const cells = cellWidth(word)
-    if (used === 0 || used + 1 + cells > width) {
-      if (used > 0) rows++
-      used = cells
-    } else {
-      used += 1 + cells
-    }
-    while (used > width) {
-      rows++
-      used -= width
-    }
-  }
-  return rows
-}
-
-/**
  * The rows of the full form in a body `columns` wide: every line `helpText` prints, each as many rows as it takes.
  * The count reads those lines, not a copy of how they are made, so a line added to the help view counts with no edit here.
  */
 export function helpRows(m: HelpModel, columns: number): number {
   return helpText(m)
     .split('\n')
-    .reduce((n, line) => n + rowsOf(line, columns), 0)
+    .reduce((n, line) => n + wrapRows(line, columns), 0)
 }
 
 /**

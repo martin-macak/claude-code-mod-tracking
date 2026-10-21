@@ -4,7 +4,11 @@
 // reads the tree.
 import type { Engine } from 'claude-code/testing'
 import { expect, mock } from 'claude-code/testing'
+import { wrapRows } from '../ux/text/wrap'
 import { BUDGET, fits, measure } from '../ux/tree-data-table/budget'
+import { footerRows } from '../ux/tree-data-table/footer'
+import { NO_KEYS_HINT } from '../ux/tree-data-table/hint'
+import { NO_ROW_FOOTER } from './fixtures/drawn'
 import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { focusOn, handleFor, headersOf, mountPane, type PaneUi, rowsOf, select } from './fixtures/pane'
@@ -436,6 +440,234 @@ test('pane: a section over its cap ends in an N more row; Enter shows the next c
   await ui.unmount()
 })
 
+// ---------------------------------------------------------------- the window (issue #109)
+
+// The engine scrolls a pane tree as a whole, so rows taller than the body push the title, the header and the footer out of
+// view. The pane draws a window of the rows instead. The inline pane at 100x40 has a body of 11 rows, the docked pane at
+// 120x37 one of 31. The kit does not show paint or the focus ring: the live checks of the PR do.
+const links = (n: number) => Array.from({ length: n }, (_, i) => `https://site${i}.example/page${i}`).join(' ')
+const INLINE = { bodyColumns: 96, bodyRows: 11, placement: 'inline' } as const
+const DOCKED = { bodyColumns: 95, bodyRows: 31, placement: 'dock' } as const
+const handlesIn = async (ui: PaneUi) =>
+  (await ui.findAll({ type: 'Button' })).map(b => b.key ?? '').filter(k => /^r\d+$/.test(k))
+const stops = async (ui: PaneUi) =>
+  ((await ui.findAll({ type: 'Box' })) as unknown as { props: Record<string, unknown> }[]).filter(
+    b => b.props.height === 0,
+  )
+
+test('pane: inline 100x40 with 12 links shows the title, the header and the footer with the rows that fit', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(12))
+  const ui = await mountPane($, INLINE)
+  const tree = await ui.drawn()
+  expect(rowsOf(tree)).toHaveLength(6)
+  expect(await ui.find({ text: 'Web links' })).toBeDefined()
+  expect(headersOf(tree)).toContainEqual(['Label', 'URL'])
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  expect(await ui.find({ text: '▼ 6 more below' })).toBeDefined()
+  expect(await ui.find({ text: /more above/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('pane: docked 120x37 with 36 links shows the title, the header and the footer with the rows that fit', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(36))
+  const ui = await mountPane($, DOCKED)
+  const tree = await ui.drawn()
+  expect(rowsOf(tree)).toHaveLength(26)
+  expect(await ui.find({ text: 'Web links' })).toBeDefined()
+  expect(headersOf(tree)).toContainEqual(['Label', 'URL'])
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  expect(await ui.find({ text: '▼ 10 more below' })).toBeDefined()
+  await ui.unmount()
+})
+
+// Issue #109, review finding M2: a pane that has no keys draws one hint line above the tree (issue #108). The window gets
+// the rows below that line, else the tree is one line too tall, the engine scrolls and the footer drops out of view.
+test('pane: a windowed pane with no keys keeps the title, the header, the hint and the footer in view', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(12))
+  const ui = await mountPane($, { ...INLINE, isFocused: false })
+  const tree = await ui.drawn()
+  const rows = rowsOf(tree).length
+  expect(rows).toBe(5) // one row less than the pane that has the keys
+  expect(await ui.find({ text: 'Web links' })).toBeDefined()
+  expect(headersOf(tree)).toContainEqual(['Label', 'URL'])
+  expect((await ui.findAll({ type: 'Text' })).some(t => t.text === NO_KEYS_HINT)).toBe(true)
+  expect(await ui.find({ text: '▼ 7 more below' })).toBeDefined()
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  // The hint line, the title, the header, the rows, the hint below, the gap and the footer are the body, to the line.
+  expect(1 + 2 + rows + 1 + 1 + 1).toBe(INLINE.bodyRows)
+  await ui.unmount()
+})
+
+test('pane: a hint line that wraps in a narrow body costs the window both of its rows', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(12))
+  const narrow = { bodyColumns: 40, bodyRows: 16, placement: 'inline' } as const
+  const hint = wrapRows(NO_KEYS_HINT, narrow.bodyColumns)
+  const footer = footerRows(NO_ROW_FOOTER, narrow.bodyColumns, false)
+  expect(hint).toBe(2)
+  const ui = await mountPane($, { ...narrow, isFocused: false })
+  const rows = rowsOf(await ui.drawn()).length
+  expect(hint + 2 + rows + 1 + 1 + footer).toBe(narrow.bodyRows)
+  await ui.unmount()
+})
+
+test('pane: a pane that has the keys gives the window the whole body: no hint line to pay for', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(12))
+  const ui = await mountPane($, { ...INLINE, isFocused: true })
+  expect(rowsOf(await ui.drawn())).toHaveLength(6)
+  expect((await ui.findAll({ type: 'Text' })).some(t => t.text === NO_KEYS_HINT)).toBe(false)
+  await ui.unmount()
+})
+
+// Issue #109, the owner's wish: with fewer rows than the body holds, the footer sits at the bottom of the pane. A docked body
+// has a fixed height, so the tree takes all of it and the footer grows to the end. An inline pane is as tall as its tree
+// (`Pane.scroll`: "Inline the frame fits the tree"): padding it would stretch every pane, so it stays under the last row.
+const pinOf = async (ui: PaneUi) =>
+  ((await ui.findAll({ type: 'Box' })) as unknown as { props: Record<string, unknown> }[])
+    .map(b => b.props)
+    .filter(p => p.minHeight !== undefined || p.flexGrow !== undefined)
+
+test('pane: docked with 3 links, the footer sits at the bottom of the body', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(3))
+  const ui = await mountPane($, DOCKED)
+  expect(rowsOf(await ui.drawn())).toHaveLength(3)
+  expect(await pinOf(ui)).toEqual([
+    expect.objectContaining({ minHeight: DOCKED.bodyRows }),
+    expect.objectContaining({ flexGrow: 1, justifyContent: 'flex-end' }),
+  ])
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  await ui.unmount()
+})
+
+test('pane: docked with 3 links and no keys, the tree and the hint line above it fill the body together', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(3))
+  const ui = await mountPane($, { ...DOCKED, isFocused: false })
+  expect((await pinOf(ui))[0]).toMatchObject({ minHeight: DOCKED.bodyRows - 1 }) // the hint line is the first row of the body
+  await ui.unmount()
+})
+
+test('pane: inline with 3 links, nothing is padded: the footer stays under the last row', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(3))
+  const ui = await mountPane($, INLINE)
+  expect(rowsOf(await ui.drawn())).toHaveLength(3)
+  expect(await pinOf(ui)).toEqual([])
+  await ui.unmount()
+})
+
+test('pane: a tall body shows all 12 links, with no hint and no stop', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(12))
+  const ui = await mountPane($, { ...DOCKED, bodyRows: 40 })
+  expect(rowsOf(await ui.drawn())).toHaveLength(12)
+  expect(await ui.find({ text: /more (above|below)/ })).toBeUndefined()
+  expect(await stops(ui)).toEqual([])
+  await ui.unmount()
+})
+
+test('pane: every row keeps a Button in the same order, so Tab and the arrows walk all 12 rows', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(12))
+  const ui = await mountPane($, INLINE)
+  expect(await handlesIn(ui)).toEqual(Array.from({ length: 12 }, (_, i) => `r${i}`))
+  expect(await stops(ui)).toHaveLength(6) // the 6 rows out of the window are bare stops
+  await ui.unmount()
+})
+
+test('pane: the ring walks down every row and back up; the window follows and the selected row stays in view', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(12))
+  const ui = await mountPane($, INLINE)
+  const walk = [...Array.from({ length: 12 }, (_, i) => i), ...Array.from({ length: 11 }, (_, i) => 10 - i)]
+  for (const at of walk) {
+    await focusOn($, `r${at}`) // Tab or an arrow: the ring lands on the stop, the hook selects its row
+    await ui.redraw() // a world with isolateState answers state.set itself, so the pane is drawn once more here
+    const rows = rowsOf(await ui.drawn())
+    expect(rows.length, `row ${at}`).toBeLessThanOrEqual(6)
+    expect(rows.find(r => r.selected)?.handle, `row ${at}`).toBe(`r${at}`)
+    expect(await footerKeys(ui), `row ${at}`).toHaveLength(7)
+    expect(await ui.find({ text: 'Web links' }), `row ${at}`).toBeDefined()
+  }
+  await ui.unmount()
+})
+
+test('pane: a focus on a stop below the window moves the window by the least, with no hint left below at the end', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(12))
+  const ui = await mountPane($, INLINE)
+  await focusOn($, 'r6') // the first stop below the window
+  await ui.redraw()
+  let rows = rowsOf(await ui.drawn())
+  expect(rows.map(r => r.handle)).toEqual(['r2', 'r3', 'r4', 'r5', 'r6']) // a hint above and one below take 2 of the 9 lines
+  expect(rows.find(r => r.selected)?.handle).toBe('r6')
+  await focusOn($, 'r11')
+  await ui.redraw()
+  rows = rowsOf(await ui.drawn())
+  expect(rows.at(-1)?.handle).toBe('r11')
+  expect(await ui.find({ text: /more below/ })).toBeUndefined()
+  expect(await ui.find({ text: '▲ 6 more above' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('pane: the help view of a short pane keeps its fit while rows are windowed', async ($, on) => {
+  const w = world(on, { manifest: MANIFEST })
+  await listed($, w, links(12))
+  const ui = await mountPane($, INLINE)
+  expect(rowsOf(await ui.drawn())).toHaveLength(6)
+  await ui.press({ key: 'help' })
+  const { gap, help } = await helpTree(ui)
+  expect(gap + help.length + 1).toBeLessThanOrEqual(11)
+  expect(JSON.stringify(help[0])).toContain('Pane keys')
+  expect(await stops(ui)).toEqual([])
+  await ui.unmount()
+})
+
+// The wheel or a page key reaches the `ui.scroll` hook with a whole-row `offset`; the kit refuses a call without one.
+const scroll = ($: Engine, by: number, bodyRows: number) =>
+  $.ui.scroll({
+    component: 'Pane',
+    requestId: 'track',
+    plugin: 'artifact-tracking',
+    offset: 0,
+    by,
+    bodyRows,
+    contentRows: bodyRows,
+    origin: { kind: 'person' },
+  } as never)
+
+test('pane: PageDown in a windowed pane selects the row a page less one below (ui.scroll hook)', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(12))
+  const ui = await mountPane($, INLINE)
+  await focusOn($, 'r0')
+  await ui.redraw()
+  expect(await scroll($, 11, 11)).toEqual({}) // the hook answered: the engine has nothing to scroll
+  await ui.redraw()
+  expect(rowsOf(await ui.drawn()).find(r => r.selected)?.handle).toBe('r5') // a page of 6 rows less one
+  await ui.unmount()
+})
+
+test('pane: with no window the ui.scroll hook leaves the move to the engine', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(12))
+  const ui = await mountPane($, { ...INLINE, bodyRows: 40 })
+  await focusOn($, 'r0')
+  await ui.redraw()
+  const err = await scroll($, 1, 40).then(
+    () => undefined,
+    e => String(e),
+  )
+  expect(err).toContain('no implementation for ui.scroll') // the kit engine behind next(e): the hook did not answer
+  expect(rowsOf(await ui.drawn()).find(r => r.selected)?.handle).toBe('r0')
+  await ui.unmount()
+})
+
 // ---------------------------------------------------------------- colors
 
 test('pane: a status tone draws its theme color', async ($, on) => {
@@ -463,7 +695,7 @@ const webRec = (n: number) => ({
   seenCount: 1,
 })
 
-test('pane: the largest list the store allows draws whole', async ($, on) => {
+test('pane: the largest list the store allows draws whole in a tall body', { timeoutMs: 20_000 }, async ($, on) => {
   const items = Array.from({ length: 500 }, (_, i) => webRec(i + 1))
   world(on, {
     disk: withUi({ sectionRows: 300, maxRows: 1000 }),
@@ -471,7 +703,7 @@ test('pane: the largest list the store allows draws whole', async ($, on) => {
   })
   mock.env(on, { HOME: '/home/u' })
   await $.session.start(START)
-  const ui = await mountPane($)
+  const ui = await mountPane($, { bodyRows: 1000 })
   const buttons = async () => (await ui.findAll({ type: 'Button' })).map(b => b.key ?? '')
   expect(rowsOf(await ui.drawn()).length).toBe(300)
   const more = (await buttons()).find(k => /^m\d+$/.test(k))
@@ -486,6 +718,29 @@ test('pane: the largest list the store allows draws whole', async ($, on) => {
   expect(fits(measure(tree), BUDGET)).toBe(true)
   await ui.unmount()
 })
+
+test(
+  'pane: the largest list the store allows, windowed, keeps every row a stop inside the budget',
+  { timeoutMs: 20_000 },
+  async ($, on) => {
+    const items = Array.from({ length: 500 }, (_, i) => webRec(i + 1))
+    world(on, {
+      disk: withUi({ sectionRows: 300, maxRows: 1000 }),
+      seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items } },
+    })
+    mock.env(on, { HOME: '/home/u' })
+    await $.session.start(START)
+    const ui = await mountPane($, DOCKED)
+    const more = (await ui.findAll({ type: 'Button' })).find(b => /^m\d+$/.test(b.key ?? ''))
+    await ui.press({ key: more?.key ?? 'none' })
+    const tree = await ui.drawn()
+    expect(rowsOf(tree).length).toBe(26)
+    expect((await handlesIn(ui)).length).toBe(500)
+    expect((await footerOf(ui)).length).toBe(7)
+    expect(fits(measure(tree), BUDGET)).toBe(true)
+    await ui.unmount()
+  },
+)
 
 // ---------------------------------------------------------------- /track help
 
