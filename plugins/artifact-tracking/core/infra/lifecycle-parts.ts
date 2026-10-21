@@ -18,6 +18,7 @@ import { Scheduler } from './scheduler'
 import type { SessionWatch } from './session'
 import { reason } from './steps'
 import type { TrackerHost } from './tracker-host'
+import { TurnLedgerService } from './turn-ledger'
 
 /** What the item host reads of the parts built after it. */
 export type ItemHostWiring = {
@@ -48,6 +49,32 @@ export function itemHostOf(given: ItemsHost | undefined, w: ItemHostWiring): Ite
       log: w.ports.log,
     })
   )
+}
+
+/** What the turn ledger reads of the manager and the parts built beside it. */
+export type TurnLedgerWiring = {
+  ports: Ports
+  /** The item host runs: it has loaded the stored copy of the session. */
+  ready(): boolean
+  /** Persistence writes the session copy soon. */
+  persist(): void
+}
+
+/**
+ * The TurnLedgerService over the `turns` atom (issue #69). Like the item list, it asks for no copy before the item host
+ * runs: a write then could replace the stored copy of a session that the start has not loaded yet. The item host and
+ * Persistence are built after it, so `ready` and `persist` read them at call time.
+ */
+export function turnLedgerOf(w: TurnLedgerWiring): TurnLedgerService {
+  return new TurnLedgerService({
+    atom: w.ports.state.turns,
+    persisted: () => {
+      if (w.ready()) w.persist()
+    },
+    sessionId: () => w.ports.session.id(),
+    wall: () => w.ports.clock.wall(),
+    log: w.ports.log,
+  })
 }
 
 /** The calls of the manager that the router makes. */

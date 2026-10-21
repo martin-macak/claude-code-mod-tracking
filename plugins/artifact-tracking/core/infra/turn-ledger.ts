@@ -2,8 +2,9 @@
 // `turn.complete`, tells the capture funnel which turn a row or a tool call belongs to, and keeps the entries that the
 // funnel reports: the items a turn added and the known items it saw again. The state is the `turns` atom, so a hot reload
 // keeps it. `slot` is the persisted copy: Persistence stores it per session and a switch carries it (`/clear`) or loads
-// it (`/resume`). All the rules are in `core/lib/turns.ts`; this class only reads events, writes the atom and tells
-// Persistence. It names no tracker and holds no `$`.
+// it (`/resume`). All the rules are in `core/lib/turns.ts`, `turn-entries.ts` and `turn-store.ts`; this class only reads
+// events, writes the atom and tells Persistence. It also words `/track turn` and gives the band its part. It names no
+// tracker and holds no `$`.
 // Spec: issue #69, the design study "Show what each turn tracked" (section 5) and the owner decisions of 2026-10-21.
 
 import type { AgentSpawnEvent, RowEvent, ToolCallEvent, TurnCompleteEvent, TurnStartEvent } from '../interfaces/events'
@@ -12,18 +13,15 @@ import type { AtomPort } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { Sightings, TurnLedger, TurnTarget } from '../interfaces/turns'
 import { isRecord } from '../lib/json'
+import { isEmpty, keysOf, latestWithEntries } from '../lib/turn-entries'
+import { isBare, joinLedgers, ledgerFrom, persisted, persistedChanged } from '../lib/turn-store'
+import { bandCounts, turnText } from '../lib/turn-text'
 import {
   called,
   commitTurn,
   emptyLedger,
-  isBare,
-  isEmpty,
-  joinLedgers,
-  ledgerFrom,
   noteSightings,
   openTurn,
-  persisted,
-  persistedChanged,
   personPrompt,
   spawned,
   startsTask,
@@ -43,6 +41,15 @@ export interface TurnLedgerDeps {
   /** Epoch ms, wall clock: the time of a record. */
   wall(): number
   log(line: string): void
+}
+
+/** The newest turn that tracked anything, as the band and its key read it. */
+export type TurnBand = {
+  readonly ord: number
+  /** `+3 new · 1 seen again`. */
+  readonly text: string
+  /** The keys of its entries, in the order the turn lists them: what it added, then what it saw again. */
+  readonly keys: readonly string[]
 }
 
 const stringOf = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined)
@@ -174,6 +181,27 @@ export class TurnLedgerService {
   async note(target: TurnTarget | undefined, s: Sightings): Promise<void> {
     if (target === undefined || isEmpty(s)) return // no engine call for a capture that found nothing
     await this.change(cur => noteSightings(cur, target, s))
+  }
+
+  // ---------------------------------------------------------------- what the surfaces read
+
+  /**
+   * The reply of `/track turn [n]`. `labels` gives the words of each row the list shows, by item key: the call comes after
+   * the ledger and the session are read, as the reply always read them. Absent: the key and the category stand.
+   */
+  async text(n: number | undefined, labels: () => Promise<ReadonlyMap<string, string> | undefined>): Promise<string> {
+    const [ledger, session, words] = [
+      await this.ledger(),
+      await this.d.sessionId(),
+      (await labels()) ?? new Map<string, string>(),
+    ]
+    return turnText(ledger, n, { session, label: e => words.get(e.k) ?? `${e.c} ${e.k}` })
+  }
+
+  /** The newest turn that tracked anything, live while it runs: the band shows it and its key opens it. Absent: none. */
+  async band(): Promise<TurnBand | undefined> {
+    const rec = latestWithEntries(await this.ledger())
+    return rec === undefined ? undefined : { ord: rec.ord, text: bandCounts(rec), keys: keysOf(rec) }
   }
 
   // ---------------------------------------------------------------- the atom

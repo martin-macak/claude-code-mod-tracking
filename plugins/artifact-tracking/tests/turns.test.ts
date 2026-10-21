@@ -5,35 +5,34 @@ import { expect, test } from 'claude-code/testing'
 import type { CoreReason } from '../core/interfaces/items'
 import type { Sightings, TurnEntry, TurnLedger } from '../core/interfaces/turns'
 import {
-  called,
-  commitTurn,
   countOf,
-  emptyLedger,
-  excerpt,
-  isTaskNotice,
-  joinLedgers,
   joinSightings,
   keysOf,
   latestWithEntries,
-  ledgerFrom,
   MAX_ENTRIES,
+  NO_SIGHTINGS,
+  sightingsOf,
+  withSightings,
+} from '../core/lib/turn-entries'
+import { joinLedgers, ledgerFrom, persisted, persistedChanged } from '../core/lib/turn-store'
+import {
+  called,
+  commitTurn,
+  emptyLedger,
+  excerpt,
+  isTaskNotice,
   MAX_MAPPED,
   MAX_TURNS,
-  NO_SIGHTINGS,
   noteSightings,
   noticeOf,
   openTurn,
   PROMPT_CHARS,
-  persisted,
-  persistedChanged,
   personPrompt,
   recordOf,
-  sightingsOf,
   spawned,
   startsTask,
   targetOf,
   taskNotice,
-  withSightings,
 } from '../core/lib/turns'
 
 const entry = (k: string, r: CoreReason = 'mentioned', c = 'github'): TurnEntry => ({ k, c, r })
@@ -604,4 +603,41 @@ test('R7: joinLedgers puts a stored ledger under the live one: the live record o
   expect(joinLedgers(emptyLedger(), persisted(runA())).turns).toHaveLength(1)
   const many = Array.from({ length: MAX_TURNS }, (_, i) => ({ ...live.turns[0]!, turnId: `a${i}`, ord: i + 100 }))
   expect(joinLedgers({ ...emptyLedger(), turns: many }, persisted(runA())).turns).toHaveLength(MAX_TURNS)
+})
+
+test('R7: joinLedgers with agent and call pairs on both sides: the live pair of a key wins, the stored-only pairs go first and fall to the cap first', () => {
+  const live: TurnLedger = {
+    ...emptyLedger(),
+    agents: [
+      ['a1', 5],
+      ['a2', 6],
+    ],
+    calls: [['c1', 5]],
+  }
+  const stored: TurnLedger = {
+    ...emptyLedger(),
+    agents: [
+      ['a1', 1],
+      ['a3', 2],
+    ],
+    calls: [
+      ['c1', 1],
+      ['c2', 2],
+    ],
+  }
+  const joined = joinLedgers(live, stored)
+  expect(joined.agents).toEqual([
+    ['a3', 2],
+    ['a1', 5],
+    ['a2', 6],
+  ])
+  expect(joined.calls).toEqual([
+    ['c2', 2],
+    ['c1', 5],
+  ])
+  // The cap keeps the newest pairs: the live ones, so a stored-only pair is the first to go.
+  const full = Array.from({ length: MAX_MAPPED }, (_, i) => [`live${i}`, 7] as const)
+  const capped = joinLedgers({ ...emptyLedger(), agents: full, calls: full }, stored)
+  expect(capped.agents).toEqual(full)
+  expect(capped.calls).toEqual(full)
 })

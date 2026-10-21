@@ -7,7 +7,7 @@
 // Without an item host of its own it builds the ItemService after the TrackerHost, whose `live` the service reads.
 // `/track` is routed by Commands (core/infra/commands.ts), `session.end` by SessionEnd, the pane is read by Views
 // and its keys are served by PaneKeys (the manager extends PaneApi, which hands both their calls). The parts the
-// constructor wires are in lifecycle-parts.ts.
+// constructor wires are in lifecycle-parts.ts, the turn ledger (issue #69) included.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.6. Plan: L3 Tasks 5 to 8, D4 to D9, D20.
 // L5 Tasks 9 and 13, K15, K19. L7 Task 6: PromptRebuild keeps the prompt text (S1, S2, S14).
 
@@ -24,12 +24,10 @@ import type { ItemsHost, Level } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
-import { bandCounts, turnText } from '../lib/turn-text'
-import { keysOf, latestWithEntries } from '../lib/turns'
 import { EventBus } from './bus'
 import type { Commands } from './commands'
 import { Facts } from './facts'
-import { commandsOf, configRefresher, itemHostOf, persistenceOf, schedulerOf } from './lifecycle-parts'
+import { commandsOf, configRefresher, itemHostOf, persistenceOf, schedulerOf, turnLedgerOf } from './lifecycle-parts'
 import { PaneApi } from './pane-api'
 import { PaneKeys } from './pane-keys'
 import type { Persistence } from './persistence'
@@ -42,7 +40,7 @@ import { type Launch, StartSequence } from './start-sequence'
 import { guard } from './steps'
 import { SwitchRunner } from './switch-runner'
 import { TrackerHost } from './tracker-host'
-import { TurnLedgerService } from './turn-ledger'
+import type { TurnBand, TurnLedgerService } from './turn-ledger'
 import { Views } from './views'
 
 export type { Launch } from './start-sequence'
@@ -65,15 +63,6 @@ export interface LifecycleDeps {
   helpText?(ports: Ports): Promise<string>
   /** The words of each row the list shows, by item key, for `/track turn` (issue #69). Absent: the key and category stand. */
   turnLabels?(ports: Ports): Promise<ReadonlyMap<string, string>>
-}
-
-/** The newest turn that tracked anything, as the band and its key read it (issue #69). */
-export type TurnBand = {
-  readonly ord: number
-  /** `+3 new · 1 seen again`. */
-  readonly text: string
-  /** The keys of its entries, in the order the turn lists them: what it added, then what it saw again. */
-  readonly keys: readonly string[]
 }
 
 export class LifecycleManager extends PaneApi {
@@ -123,17 +112,7 @@ export class LifecycleManager extends PaneApi {
     this.refreshConfig = this.prompt.afterRefresh(configRefresher(this.cfg, this.scheduler))
     this.bus = new EventBus({ log: ports.log })
     this.persistence = persistenceOf(ports, this.cfg, this.watch, () => this.slots())
-    this.turns = new TurnLedgerService({
-      atom: ports.state.turns,
-      // Like the item list: no copy before the item host runs, or it could replace the stored copy of a session that the
-      // start has not loaded yet.
-      persisted: () => {
-        if (this.items.ready) void this.persistence.touch()
-      },
-      sessionId: () => ports.session.id(),
-      wall: () => ports.clock.wall(),
-      log: ports.log,
-    })
+    this.turns = turnLedgerOf({ ports, ready: () => this.items.ready, persist: () => void this.persistence.touch() })
     const dismiss = d.dismiss(ports, this.cfg)
     this.items = itemHostOf(d.items, {
       trackers: d.trackers,
@@ -325,20 +304,14 @@ export class LifecycleManager extends PaneApi {
     await this.prompt.afterTurn(ports, ev)
   }
 
-  /** The reply of `/track turn [n]` (issue #69). */
-  async turnText(ports: Ports, n: number | undefined): Promise<string> {
-    const [ledger, session, labels] = [
-      await this.turns.ledger(),
-      await ports.session.id(),
-      (await this.d.turnLabels?.(ports)) ?? new Map<string, string>(),
-    ]
-    return turnText(ledger, n, { session, label: e => labels.get(e.k) ?? `${e.c} ${e.k}` })
+  /** The reply of `/track turn [n]` (issue #69). The ledger service words it; the pane gives the words of each row. */
+  turnText(ports: Ports, n: number | undefined): Promise<string> {
+    return this.turns.text(n, () => this.d.turnLabels?.(ports) ?? Promise.resolve(undefined))
   }
 
-  /** The newest turn that tracked anything, live while it runs: the band shows it and its key opens it. Absent: none. */
-  async bandTurn(): Promise<TurnBand | undefined> {
-    const rec = latestWithEntries(await this.turns.ledger())
-    return rec === undefined ? undefined : { ord: rec.ord, text: bandCounts(rec), keys: keysOf(rec) }
+  /** The newest turn that tracked anything: the band shows it and its key opens it (issue #69). */
+  bandTurn(): Promise<TurnBand | undefined> {
+    return this.turns.band()
   }
 
   /** `/track <args>`: the Commands router answers it. A failure rejects. */

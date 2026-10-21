@@ -10,7 +10,7 @@ import type { DismissPort } from '../interfaces/tracker'
 import type { Sightings } from '../interfaces/turns'
 import { withReasons } from '../lib/reasons'
 import { mergeClaims, migrateRecords, unionRecords } from '../lib/records'
-import { NO_SIGHTINGS, sightingsOf } from '../lib/turns'
+import { NO_SIGHTINGS, sightingsOf } from '../lib/turn-entries'
 import type { Kinds } from './kinds'
 
 export type StoreDeps = {

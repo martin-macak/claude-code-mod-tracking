@@ -5,7 +5,7 @@
 // Spec: issue #69, the design study (section 5, "Band") and the owner decisions of 2026-10-21.
 
 import { NO_ROOM } from '../core/infra/command-text'
-import type { TurnBand } from '../core/infra/lifecycle'
+import type { TurnBand } from '../core/infra/turn-ledger'
 import type { ItemsHost } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
 import { handleOf } from '../ux/tree-data-table/table'

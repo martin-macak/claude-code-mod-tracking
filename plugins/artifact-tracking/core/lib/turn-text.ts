@@ -4,7 +4,8 @@
 // #62 has a core reason `updated` that means Claude changed the item (owner decision of 2026-10-21).
 
 import type { TurnEntry, TurnLedger, TurnRecord } from '../interfaces/turns'
-import { countOf, MAX_TURNS, PROMPT_CHARS } from './turns'
+import { countOf } from './turn-entries'
+import { MAX_TURNS, PROMPT_CHARS } from './turns'
 
 /** `/track turn` with a word that is no turn number. */
 export const TURN_USAGE = 'Usage: /track turn [n]'

@@ -8,17 +8,17 @@
 // - A subagent works on after its spawning turn has ended. Its work goes to the turn that spawned it, marked `late`.
 // - A finished background task wakes the main loop: a task-notice prompt row, then a `turn.start`. A wake takes no ordinal
 //   (owner decision 2). Its work goes to the turn that started the task.
+// Three files share the job (review of #136, m4): this one holds the rules above and the caps of a ledger, `turn-entries.ts`
+// the lists of one turn and the sightings that fill them, `turn-store.ts` the stored copy. This file imports `turn-entries.ts`
+// only; `turn-store.ts` imports both.
 // Spec: issue #69, the design study "Show what each turn tracked", sections 4 and 5, and the owner decisions of 2026-10-21.
 
-import type { CoreReason } from '../interfaces/items'
-import type { Sightings, TurnEnd, TurnEntry, TurnLedger, TurnRecord, TurnSource, TurnTarget } from '../interfaces/turns'
+import type { Sightings, TurnEnd, TurnLedger, TurnRecord, TurnSource, TurnTarget } from '../interfaces/turns'
 import { isRecord } from './json'
-import { isCoreReason, strongerReason } from './reasons'
+import { isEmpty, withSightings } from './turn-entries'
 
 /** The turns the ledger keeps. The oldest go first. */
 export const MAX_TURNS = 50
-/** The entries of one list of one turn. More count as `moreNew` or `moreSeen`. */
-export const MAX_ENTRIES = 50
 /** The agent ids, and the tool call ids, the ledger maps to a turn. The oldest go first. */
 export const MAX_MAPPED = 200
 /** How much of the person's prompt a record keeps (owner decision of 2026-10-21). */
@@ -28,7 +28,7 @@ export const emptyLedger = (): TurnLedger => ({ next: 1, turns: [], agents: [], 
 
 /** The engine's words for how a turn ended. */
 const TURN_ENDS: readonly TurnEnd[] = ['answer', 'aborted', 'refusal', 'error']
-const isEnd = (v: unknown): v is TurnEnd => TURN_ENDS.includes(v as TurnEnd)
+export const isEnd = (v: unknown): v is TurnEnd => TURN_ENDS.includes(v as TurnEnd)
 
 /** The first `PROMPT_CHARS` characters of a prompt, white space folded to single spaces. Whole characters, never half a pair. */
 export const excerpt = (text: string): string => [...text.replace(/\s+/g, ' ').trim()].slice(0, PROMPT_CHARS).join('')
@@ -58,7 +58,7 @@ export function noticeOf(text: string): Notice {
 
 // ---------------------------------------------------------------- small reads
 
-type Pairs = readonly (readonly [string, number])[]
+export type Pairs = readonly (readonly [string, number])[]
 
 const mapped = (pairs: Pairs, key: string | undefined): number | undefined =>
   key === undefined ? undefined : pairs.find(([k]) => k === key)?.[1]
@@ -74,7 +74,7 @@ export const recordOf = (l: TurnLedger, ord: number): TurnRecord | undefined => 
 const latestOrd = (l: TurnLedger): number | undefined => l.turns.at(-1)?.ord
 
 /** The cap of a ledger: the newest turns, the newest pairs. The same ledger comes back when it fits. */
-function capped(l: TurnLedger): TurnLedger {
+export function capped(l: TurnLedger): TurnLedger {
   if (l.turns.length <= MAX_TURNS && l.agents.length <= MAX_MAPPED && l.calls.length <= MAX_MAPPED) return l
   return {
     ...l,
@@ -236,74 +236,6 @@ export function called(l: TurnLedger, e: { toolUseId?: string; agentId?: string 
   return { ...l, calls: put(l.calls, e.toolUseId, ord) }
 }
 
-// ---------------------------------------------------------------- entries
-
-type Lists = {
-  readonly new: readonly TurnEntry[]
-  readonly seen: readonly TurnEntry[]
-  readonly moreNew?: number
-  readonly moreSeen?: number
-}
-
-/** The entry with the stronger reason of the two. The first entry's `late` stays: it was told when it came. */
-const stronger = (a: TurnEntry, b: TurnEntry): TurnEntry => (strongerReason(a.r, b.r) === a.r ? a : { ...a, r: b.r })
-
-/** One entry into a list: a known key keeps its place and takes the stronger reason, else it goes last, up to the cap. */
-function listed(list: readonly TurnEntry[], more: number, e: TurnEntry): { list: readonly TurnEntry[]; more: number } {
-  const at = list.findIndex(x => x.k === e.k)
-  if (at >= 0) {
-    const next = stronger(list[at]!, e)
-    return next === list[at] ? { list, more } : { list: list.map((x, i) => (i === at ? next : x)), more }
-  }
-  if (list.length >= MAX_ENTRIES) return { list, more: more + 1 }
-  return { list: [...list, e], more }
-}
-
-/**
- * The sightings into the lists of one turn. An item that the turn added stays in `new` when a later claim of the turn
- * names it, with the stronger reason; it never moves to `seen`. An item the turn saw again counts once. A repeat (the
- * turn stamped the item before) only strengthens an entry that is listed, in `new` or in `seen`: an item that did not fit
- * a list was counted at its first sighting, and a repeat counts nothing more.
- */
-export function withSightings(lists: Lists, s: Sightings, late: boolean): Lists {
-  const mark = (e: TurnEntry): TurnEntry => (late ? { ...e, late: true } : e)
-  const st = { fresh: lists.new, again: lists.seen, moreNew: lists.moreNew ?? 0, moreSeen: lists.moreSeen ?? 0 }
-  for (const e of s.added.map(mark)) {
-    const was = st.again.find(x => x.k === e.k)
-    if (was !== undefined) st.again = st.again.filter(x => x.k !== e.k)
-    const into = listed(st.fresh, st.moreNew, was === undefined ? e : stronger(was, e))
-    st.fresh = into.list
-    st.moreNew = into.more
-  }
-  for (const e of s.seen.map(mark)) {
-    if (st.fresh.some(x => x.k === e.k)) {
-      const into = listed(st.fresh, st.moreNew, e)
-      st.fresh = into.list
-      st.moreNew = into.more
-    } else {
-      const into = listed(st.again, st.moreSeen, e)
-      st.again = into.list
-      st.moreSeen = into.more
-    }
-  }
-  for (const e of (s.repeat ?? []).map(mark)) {
-    if (st.fresh.some(x => x.k === e.k)) st.fresh = listed(st.fresh, st.moreNew, e).list
-    else if (st.again.some(x => x.k === e.k)) st.again = listed(st.again, st.moreSeen, e).list
-  }
-  const same =
-    st.fresh === lists.new &&
-    st.again === lists.seen &&
-    st.moreNew === (lists.moreNew ?? 0) &&
-    st.moreSeen === (lists.moreSeen ?? 0)
-  if (same) return lists
-  return {
-    new: st.fresh,
-    seen: st.again,
-    ...(st.moreNew > 0 ? { moreNew: st.moreNew } : {}),
-    ...(st.moreSeen > 0 ? { moreSeen: st.moreSeen } : {}),
-  }
-}
-
 /**
  * What a capture found goes to the turn it belongs to. No target, no sighting, or a turn the cap dropped: no change. The
  * entries of a turn that has not opened wait in `pending`.
@@ -325,148 +257,3 @@ export function noteSightings(l: TurnLedger, target: TurnTarget | undefined, s: 
   const { moreNew: _n, moreSeen: _s, ...bare } = rec
   return { ...l, turns: l.turns.map(r => (r === rec ? { ...bare, ...next } : r)) }
 }
-
-/** A capture that made no claim. */
-export const NO_SIGHTINGS: Sightings = { added: [], seen: [] }
-
-/** The capture named no item at all. */
-export const isEmpty = (s: Sightings): boolean => s.added.length + s.seen.length + (s.repeat?.length ?? 0) === 0
-
-/** The sightings of two captures: the entries of `a`, then those of `b`. */
-export function joinSightings(a: Sightings, b: Sightings): Sightings {
-  if (isEmpty(b)) return a
-  const repeat = [...(a.repeat ?? []), ...(b.repeat ?? [])]
-  return {
-    added: [...a.added, ...b.added],
-    seen: [...a.seen, ...b.seen],
-    ...(repeat.length > 0 ? { repeat } : {}),
-  }
-}
-
-/**
- * The sightings of one merge. Each key of `added`, `touched` and `repeated` becomes an entry: its category from the claim
- * that named it first, its reason the strongest of the claims that named it. Order: the order of the keys. `claims` are the
- * claims the merge took (dismissed keys and kinds that are off are out).
- */
-export function sightingsOf(
-  claims: readonly { readonly key: string; readonly category: string; readonly reason: CoreReason }[],
-  added: readonly string[],
-  touched: readonly string[],
-  repeated: readonly string[] = [],
-): Sightings {
-  const entry = (k: string): TurnEntry[] => {
-    const hits = claims.filter(c => c.key === k)
-    const first = hits[0]
-    if (first === undefined) return []
-    return [{ k, c: first.category, r: hits.reduce<CoreReason>((r, c) => strongerReason(r, c.reason), first.reason) }]
-  }
-  const repeat = repeated.flatMap(entry)
-  return { added: added.flatMap(entry), seen: touched.flatMap(entry), ...(repeat.length > 0 ? { repeat } : {}) }
-}
-
-// ---------------------------------------------------------------- reading
-
-/** How many items a turn listed, with the ones that did not fit. */
-export const countOf = (
-  r: Pick<TurnRecord, 'new' | 'seen' | 'moreNew' | 'moreSeen'>,
-): { added: number; seen: number } => ({
-  added: r.new.length + (r.moreNew ?? 0),
-  seen: r.seen.length + (r.moreSeen ?? 0),
-})
-
-/** The newest turn that tracked anything, the running one included. The band shows it. */
-export function latestWithEntries(l: TurnLedger): TurnRecord | undefined {
-  return [...l.turns].reverse().find(r => r.new.length + r.seen.length > 0)
-}
-
-/** The keys of a turn in the order it lists them: what it added, then what it saw again. */
-export const keysOf = (r: Pick<TurnRecord, 'new' | 'seen'>): readonly string[] => [...r.new, ...r.seen].map(e => e.k)
-
-// ---------------------------------------------------------------- the stored copy
-
-/** What a session copy keeps: the records and the counters. A running turn, the pending prompt and a notice are not kept. */
-export function persisted(l: TurnLedger): TurnLedger {
-  return { next: l.next, turns: l.turns, agents: l.agents, calls: l.calls }
-}
-
-/**
- * The change from `a` to `b` touches a stored part, so the session copy is out of date. The pure rules return the same
- * list when they change none of it, so identity tells. A change of the running turn, the pending prompt or a notice
- * alone writes nothing worth a copy.
- */
-export const persistedChanged = (a: TurnLedger, b: TurnLedger): boolean =>
-  a.next !== b.next || a.turns !== b.turns || a.agents !== b.agents || a.calls !== b.calls
-
-const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
-const str = (v: unknown): v is string => typeof v === 'string'
-
-function entryOf(v: unknown): TurnEntry | undefined {
-  if (!isRecord(v) || !str(v.k) || !str(v.c) || !isCoreReason(v.r)) return undefined
-  return { k: v.k, c: v.c, r: v.r as CoreReason, ...(v.late === true ? { late: true as const } : {}) }
-}
-
-const entriesOf = (v: unknown): TurnEntry[] =>
-  (Array.isArray(v) ? v : []).flatMap(x => entryOf(x) ?? []).slice(0, MAX_ENTRIES)
-
-/** A count that is more than 0, whole; else undefined. */
-const some = (v: unknown): number | undefined => (num(v) && v >= 1 ? Math.floor(v) : undefined)
-
-function recordFrom(v: unknown): TurnRecord | undefined {
-  if (!isRecord(v) || !num(v.ord) || !str(v.turnId) || !str(v.session) || !num(v.startedAt)) return undefined
-  const [moreNew, moreSeen, wakes] = [some(v.moreNew), some(v.moreSeen), some(v.wakes)]
-  return {
-    ord: v.ord,
-    turnId: v.turnId,
-    session: v.session,
-    startedAt: v.startedAt,
-    ...(num(v.endedAt) ? { endedAt: v.endedAt } : {}),
-    ...(isEnd(v.end) ? { end: v.end } : {}),
-    ...(str(v.prompt) && v.prompt !== '' ? { prompt: excerpt(v.prompt) } : {}),
-    new: entriesOf(v.new),
-    seen: entriesOf(v.seen),
-    ...(moreNew !== undefined ? { moreNew } : {}),
-    ...(moreSeen !== undefined ? { moreSeen } : {}),
-    ...(wakes !== undefined ? { wakes } : {}),
-  }
-}
-
-const pairsFrom = (v: unknown): Pairs =>
-  (Array.isArray(v) ? v : [])
-    .flatMap(p => (Array.isArray(p) && str(p[0]) && num(p[1]) ? [[p[0], p[1]] as const] : []))
-    .slice(-MAX_MAPPED)
-
-/**
- * A ledger from a stored value. The store holds JSON of a build, so the value is checked: a record or an entry that is
- * not well formed is dropped, the caps are applied again. undefined: not a ledger at all.
- */
-export function ledgerFrom(v: unknown): TurnLedger | undefined {
-  if (!isRecord(v) || !Array.isArray(v.turns)) return undefined
-  const turns = v.turns.flatMap(r => recordFrom(r) ?? []).slice(-MAX_TURNS)
-  const last = turns.at(-1)?.ord ?? 0
-  return {
-    next: Math.max(num(v.next) ? Math.floor(v.next) : 1, last + 1),
-    turns,
-    agents: pairsFrom(v.agents),
-    calls: pairsFrom(v.calls),
-  }
-}
-
-/**
- * Two ledgers of one lineage in one: `a` is the newer (the live one), so its record of a turn wins. The counters go on
- * from the larger. Used for `session.end`, for a carry over `/clear` and for a load. A running turn of `a` stays.
- */
-export function joinLedgers(a: TurnLedger, b: TurnLedger): TurnLedger {
-  const known = new Set(a.turns.map(r => r.turnId))
-  const turns = [...a.turns, ...b.turns.filter(r => !known.has(r.turnId))].sort((x, y) => x.ord - y.ord)
-  const out: TurnLedger = {
-    ...a,
-    next: Math.max(a.next, b.next),
-    turns,
-    agents: [...b.agents.filter(([k]) => !a.agents.some(([x]) => x === k)), ...a.agents],
-    calls: [...b.calls.filter(([k]) => !a.calls.some(([x]) => x === k)), ...a.calls],
-  }
-  return capped(out)
-}
-
-/** A ledger that holds no turn. */
-export const isBare = (l: TurnLedger): boolean => l.turns.length === 0
