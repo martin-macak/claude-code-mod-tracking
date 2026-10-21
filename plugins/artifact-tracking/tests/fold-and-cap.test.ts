@@ -5,15 +5,17 @@ import { expect, test } from 'claude-code/testing'
 import { ConfigManager } from '../core/infra/config-manager'
 import { NO_VIEW } from '../core/infra/views'
 import type { Json } from '../core/interfaces/items'
-import type { SectionSpec, TreeRow } from '../core/interfaces/view'
+import type { SectionSpec, TreeRow, ViewContext } from '../core/interfaces/view'
 import { listGroups } from '../core/lib/grouping'
+import { deepFreeze } from '../core/lib/normalise'
 import { type PaneHost, PaneSession } from '../hooks/pane-session'
 import { TRACKERS } from '../trackers'
 import { AUTO_DEFAULTS } from '../trackers/auto/config'
 import { autoIds } from '../trackers/auto/dismiss'
 import { shortRunId, workflowRowId } from '../trackers/auto/ids'
 import type { AgentProof, AgentRow, AutoState, WorktreeProof } from '../trackers/auto/types'
-import { PROCESSES_DEFAULTS } from '../trackers/processes/config'
+import { PROCESSES_DEFAULTS, type ProcessesConfig } from '../trackers/processes/config'
+import { sections as processSections } from '../trackers/processes/sections'
 import type { ProcessRecord } from '../trackers/processes/types'
 import { handleOf, layout } from '../ux/tree-data-table/table'
 import { fakeConfig, fakeConfigFs } from './fixtures/config-fs'
@@ -765,6 +767,96 @@ test('with no session root the name shows in full', async () => {
   t.m.facts.publish('auto.root', undefined)
   setProcesses(t, [proc('pid:5', 'running', { kind: 'detached-process', pid: 5, name: '/work/scripts/serve.sh' })])
   expect(name(await draw(t, 'processes'), 'pid:5')).toBe('/work/scripts/serve.sh')
+})
+
+// Issue #145: the home folder is `HOME`, and `ViewContext.home` carries it. A word of a name that starts with it shows from
+// `~/`. The world's session root is `/work`.
+test('a word under the home folder shows ~/ in the pane and in the /track text; the stored row and its fingerprint stay', async () => {
+  const t = await paneWorld()
+  t.w.env.HOME = '/home/me'
+  const vite = '/home/me/app/node_modules/.bin/vite --port 3000'
+  const stored = [
+    proc('pid:5', 'running', { kind: 'detached-process', pid: 5, name: vite, fingerprint: vite }),
+    proc('bg:2', 'running', { name: 'node /home/me/tools/a.js /work/b.js', fingerprint: 'node /home/me/tools/a.js' }),
+  ]
+  const before = structuredClone(stored) // the world stores the array itself, so compare with a copy made before the view
+  setProcesses(t, stored)
+  const s = await draw(t, 'processes')
+  expect(name(s, 'pid:5')).toBe('~/app/node_modules/.bin/vite --port 3000')
+  expect(name(s, 'bg:2')).toBe('node ~/tools/a.js ./b.js') // a word under the session root keeps the ./ form
+  expect(t.w.state.get('processes')).toEqual(before) // the stored name and the fingerprint are what the parser made
+  const text = (await t.m.track(t.w.ports, '')).text
+  expect(text).toContain('~/app/node_modules/.bin/vite')
+  expect(text).not.toContain('/home/me')
+})
+
+// R2 of issue #145, proved on the view itself: the port hands the view a copy, so the stored slot cannot show a change of
+// the view. The section reads rows that are frozen all the way down. A view that wrote the short name into a row throws.
+test('the view reads the stored rows and changes none: over frozen rows it draws ~/ and the rows stay as they are', async () => {
+  const t = await paneWorld()
+  t.w.env.HOME = '/home/me'
+  const vite = '/home/me/app/.bin/vite'
+  setProcesses(t, [proc('pid:5', 'running', { kind: 'detached-process', pid: 5, name: vite, fingerprint: vite })])
+  const ctx = await t.m.viewOf(t.w.ports, 'processes')
+  const frozen = deepFreeze(structuredClone(ctx.data))
+  const [s] = processSections({ ...ctx, data: frozen } as unknown as ViewContext<ProcessesConfig, Json>)
+  expect(s && name(s, 'pid:5')).toBe('~/app/.bin/vite')
+  expect(frozen).toEqual(ctx.data) // the name and the fingerprint are the full path still
+})
+
+test('a word under the session root keeps ./ when the root sits under the home folder', async () => {
+  const t = await paneWorld()
+  t.w.env.HOME = '/home/me'
+  t.m.facts.publish('auto.root', { cwd: '/home/me/app', at: 1 })
+  setProcesses(t, [
+    proc('pid:5', 'running', { kind: 'detached-process', pid: 5, name: '/home/me/app/x.sh /home/me/y.sh' }),
+  ])
+  expect(name(await draw(t, 'processes'), 'pid:5')).toBe('./x.sh ~/y.sh')
+})
+
+test('a home folder that is a prefix of another folder name does not shorten it: /home/me and /home/meg', async () => {
+  const t = await paneWorld()
+  t.w.env.HOME = '/home/me'
+  setProcesses(t, [proc('pid:5', 'running', { kind: 'detached-process', pid: 5, name: '/home/meg/serve.sh' })])
+  expect(name(await draw(t, 'processes'), 'pid:5')).toBe('/home/meg/serve.sh')
+})
+
+test('with no HOME, and with an env that refuses, the name shows in full', async () => {
+  const t = await paneWorld()
+  setProcesses(t, [proc('pid:5', 'running', { kind: 'detached-process', pid: 5, name: '/home/me/serve.sh' })])
+  expect(name(await draw(t, 'processes'), 'pid:5')).toBe('/home/me/serve.sh')
+  t.w.env.HOME = '/home/me'
+  const refused = { ...t.w.ports, env: { get: async () => Promise.reject(new Error('refused')) } }
+  const s = (await t.m.paneData(refused, NO_VIEW)).find(x => x.id === 'processes')
+  expect(s && name(s, 'pid:5')).toBe('/home/me/serve.sh')
+})
+
+test('a UNC HOME shortens a UNC word in the pane: the home that the view context carries is the home that shortens', async () => {
+  const t = await paneWorld()
+  t.w.env.HOME = '\\\\host\\share\\me'
+  setProcesses(t, [
+    proc('pid:5', 'running', { kind: 'detached-process', pid: 5, name: '\\\\host\\share\\me\\bin\\tool.exe --x' }),
+  ])
+  expect(name(await draw(t, 'processes'), 'pid:5')).toBe('~/bin\\tool.exe --x') // only the prefix changes, as for C:
+})
+
+test('a relative HOME is no home folder: a relative word is not shortened', async () => {
+  const t = await paneWorld()
+  t.w.env.HOME = 'me'
+  setProcesses(t, [proc('pid:5', 'running', { kind: 'detached-process', pid: 5, name: 'me/x/a.js /tmp/q' })])
+  expect(name(await draw(t, 'processes'), 'pid:5')).toBe('me/x/a.js /tmp/q')
+  expect((await t.m.viewOf(t.w.ports, 'processes')).home).toBeUndefined()
+})
+
+test('the view context carries the home folder: a path with / or a drive letter, not a relative one', async () => {
+  const t = await paneWorld()
+  expect((await t.m.viewOf(t.w.ports, 'processes')).home).toBeUndefined()
+  t.w.env.HOME = '/home/me'
+  expect((await t.m.viewOf(t.w.ports, 'processes')).home).toBe('/home/me')
+  t.w.env.HOME = 'C:\\Users\\me'
+  expect((await t.m.viewOf(t.w.ports, 'processes')).home).toBe('C:\\Users\\me')
+  t.w.env.HOME = '\\\\host\\share\\me'
+  expect((await t.m.viewOf(t.w.ports, 'processes')).home).toBe('\\\\host\\share\\me')
 })
 
 test('a long process name is cut in the middle, so both ends of a path stay', async () => {

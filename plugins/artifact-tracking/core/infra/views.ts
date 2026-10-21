@@ -37,6 +37,8 @@ export interface ViewRead {
   levels: ReadonlyMap<string, Effective>
   /** `/track show-all`: read once, so every tracker of the call hides, or shows, alike. */
   hidden: HiddenState
+  /** The home folder: `HOME` when absolute, else undefined (none, empty, relative, or the read is refused). */
+  home: string | undefined
 }
 
 export interface ViewsDeps {
@@ -53,23 +55,38 @@ export interface ViewsDeps {
 }
 
 /**
+ * `HOME`, or undefined when it is empty, relative, the engine has none or it refuses the read. A relative value would
+ * shorten a relative word to a wrong `~/`, so only an absolute path counts: it starts with `/` or `\`, or with a drive
+ * letter (`C:`). The home folder is display only.
+ */
+async function homeOf(ports: Ports): Promise<string | undefined> {
+  try {
+    const home = await ports.env.get('HOME')
+    return home && /^([A-Za-z]:)?[\\/]/.test(home) ? home : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * One read of the state for every tracker of a call: the atoms, the dismiss list and the levels. An item of a tracker
  * that is off is left out, and so is its level.
  */
 export async function readView(ports: Ports, d: ViewsDeps): Promise<ViewRead> {
   const owners = new Map<string, string>()
   for (const t of d.trackers) for (const k of t.kinds ?? []) if (!owners.has(k.category)) owners.set(k.category, t.id)
-  const [all, tools, dismissed, hidden] = await Promise.all([
+  const [all, tools, dismissed, hidden, home] = await Promise.all([
     ports.state.items.get(),
     ports.state.tools.get(),
     d.dismiss(ports).list(),
     ports.state.hidden.get(),
+    homeOf(ports),
   ])
   const items = all.filter(i => {
     const owner = owners.get(i.category)
     return owner === undefined || d.live(owner)
   })
-  return { now: ports.clock.wall(), items, tools, dismissed, hidden, levels: await d.levels(items) }
+  return { now: ports.clock.wall(), items, tools, dismissed, hidden, home, levels: await d.levels(items) }
 }
 
 /** The root the session is pinned to: the `cwd` of the fact `auto.root`. */
@@ -107,6 +124,7 @@ export class Views {
       selected: view.selected,
       expanded: view.expanded,
       root: rootOf(facts),
+      home: read.home,
       hidden: read.hidden,
       isDismissed: id => read.dismissed.has(id),
       levelOf: key => read.levels.get(key) ?? {},

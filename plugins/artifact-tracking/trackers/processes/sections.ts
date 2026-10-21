@@ -8,7 +8,7 @@ import type { Json } from '../../core/interfaces/items'
 import type { SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
 import { textCells } from '../../core/lib/rows'
 import type { ProcessesConfig } from './config'
-import { fromRoot } from './names'
+import { displayName } from './names'
 import { processReasons } from './reasons'
 import { asRows } from './rows'
 import { ENDED_STATES, FAILED_STATES, STATE_TOKEN } from './states'
@@ -20,17 +20,17 @@ const failing = (r: ProcessRecord): boolean => STATE_TOKEN[r.state] === 'failed'
 
 /**
  * A process row can be neither dismissed nor marked. The Name cell is the name of the process, shown from `./` for a path
- * under the session root, and it keeps both ends when it is cut. The Type cell is the kind. The Description cell is empty:
- * the kind was once the Name cell too, as a short word (`bg`, `docker`), and the name was the Description (issue #63, L2).
- * The row has no level, so its facets hold none.
+ * under the session root and from `~/` for a path under the home folder, and it keeps both ends when it is cut. The Type
+ * cell is the kind. The Description cell is empty: the kind was once the Name cell too, as a short word (`bg`, `docker`),
+ * and the name was the Description (issue #63, L2). The row has no level, so its facets hold none.
  */
-function processRow(r: ProcessRecord, root: string | undefined): TreeRow {
+function processRow(r: ProcessRecord, root: string | undefined, home: string | undefined): TreeRow {
   const status = { label: r.state, token: STATE_TOKEN[r.state] }
   return {
     id: r.id,
     owner: 'processes',
     cells: textCells({
-      key: fromRoot(r.name, root),
+      key: displayName(r.name, root, home),
       keyClip: 'middle',
       title: '',
       type: r.kind.replace('-', ' '),
@@ -83,7 +83,7 @@ export function sections(ctx: ViewContext<ProcessesConfig, Json>): readonly Sect
       note: { text: `${ui?.dockerIssue ?? `${rows.length} tracked`}${hidden > 0 ? ` (${hidden} hidden)` : ''}` },
       rank: 80,
       band: { label: 'Processes', count: rows.length, failing: rows.filter(failing).length, rank: 10 },
-      rows: rows.map(r => processRow(r, ctx.root)),
+      rows: rows.map(r => processRow(r, ctx.root, ctx.home)),
     },
   ]
 }
