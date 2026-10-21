@@ -56,6 +56,21 @@ test('caps: 50 per section, 300 in all, in pane order; N more counts the top-lev
   expect(drawn.handles.size).toBe(300)
 })
 
+test('stops lists the focus stops of the body in drawing order: the row handles, and `m<n>` after the rows of its section', () => {
+  const stopsOf = (tree: unknown) =>
+    nodes(tree, 'Button')
+      .map(b => String(b.props.key))
+      .filter(k => /^[rm]\d+$/.test(k))
+  const { drawn } = draw(many(3, 60))
+  expect(drawn.stops).toEqual(stopsOf(drawn.tree))
+  expect(drawn.stops.filter(k => k.startsWith('m'))).toEqual(['m0', 'm1', 'm2'])
+  expect(drawn.stops.indexOf('m0')).toBe(50) // after the 50 rows of the first section, before the next
+  expect(drawn.stops[51]).toBe('r50')
+  const some = draw([group('few', webRows(3)), ...many(1, 60)])
+  expect(some.drawn.stops).toEqual(stopsOf(some.drawn.tree))
+  expect(draw(many(2, 3)).drawn.stops.some(k => k.startsWith('m'))).toBe(false) // no row left over: no `m<n>`
+})
+
 test('shown adds a chunk and raises the total by the same', () => {
   const { drawn } = draw(many(7, 60), { shown: id => (id === 's0' ? 50 : 0) })
   const boxes = sectionBoxes(drawn.tree)

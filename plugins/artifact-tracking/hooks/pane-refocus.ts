@@ -3,7 +3,9 @@
 // (`take`), the engine refuses (`to`), or a drawing holds the key (`seen`). A press on a pane that has no keys asks for
 // them first (issues #115 and #129), and a press that began before the pane closed does nothing after it (issue #130).
 // It also knows where the ring is (`noted`): a press that changes the Buttons of the drawing asks for the ring again
-// (`keep`, issue #140).
+// (`keep`, issue #140). It waits for the drawing (`awaitFrame`), then for a pause (`pause`) that a drawing with other
+// controls starts again, then asks, and it chooses the Button from the latest drawing alone (`Frame`, issue #156). Only a
+// drawing that never comes (the bound) makes it read the state.
 // PaneSession owns one; nothing here touches the engine but the `ui.focus` and `ui.open` ports.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Selection". Plan: L6 Task 11, G8.
 
@@ -16,11 +18,50 @@ import { type PaneHost, paneGroups, shownOf } from './pane-text'
 /** How long a press waits for the drawing that follows its write. A drawing takes tens of milliseconds. */
 export const NEXT_DRAWING_MS = 1000
 
-/** What a press can tell about a drawing: whether it is the help view, and the ids of the rows it draws. */
-export type Frame = { readonly help: boolean; readonly ids: ReadonlySet<string> }
+/**
+ * The pause between the frame and the ring request of `keep` (`Refocus.pause`): one timer of the engine clock. The engine
+ * takes the frame that the render hook returned in a turn of its own loop, and a request that comes before that turn names
+ * a Button of the old frame. Live (Claude Code 2.1.306, `tree-table.md`), a request sent in the same turn as the frame, after
+ * one read of an atom, after fifty microtask turns, and after a busy wait of 20 ms that gives no turn to any loop, left
+ * the ring one Button off (`h: help` for `r: refresh`, `x: dismiss` for `h: back`). A `setTimeout` of 0 to 3 ms worked in 7
+ * of 9 runs. The engine's own timer (the `clock.after` port, 0, 1 and 10 ms) worked in every run, 14 of 14, and a timer of
+ * 0 ms fired 4 to 8 ms after the frame. 10 ms keeps room above that and is far below what a person sees.
+ */
+export const RING_PAUSE_MS = 10
 
-/** A press that waits for a drawing like `wants`. `release` ends the wait, once, and takes the press off the list. */
-type Waiter = { readonly wants: (frame: Frame) => boolean; readonly release: () => void }
+/**
+ * What a press can tell about a drawing: whether it is the help view, the handle of each row it draws (by row id) and the
+ * keys of its Buttons outside the rows: the footer in drawing order, then the view line (`g`, `a` and `t`, issue #63; the help
+ * view has none). `keep` chooses the Button for its ring request from this alone. A press whose drawing never came gets one
+ * from the state instead (`frameFromState`).
+ *
+ * `stops` is the key of every focus stop of the body in drawing order, the row handles and the `m<n>` Buttons (`Drawn.stops`).
+ * The pause compares drawings by it, and `keep` chooses from none of it: the ring sits on a position among the Buttons, so an
+ * `m<n>` that appears or goes moves the Buttons after it, though no row handle or footer key changes.
+ */
+export type Frame = {
+  readonly help: boolean
+  readonly rows: ReadonlyMap<string, string>
+  readonly keys: readonly string[]
+  readonly stops: readonly string[]
+}
+
+/**
+ * A press on `Refocus.waiting`: it waits for a drawing like the one it wants (`awaitFrame`) or for the pause after it
+ * (`pause`). `offer` hands it each drawing that returns. `close` ends the wait with no drawing, once: a closing does.
+ */
+type Waiter = {
+  readonly offer: (frame: Frame) => void
+  readonly close: () => void
+}
+
+/** True when `a` and `b` draw the same controls in the same order: the Button keys, the focus stops and the handle of each row. */
+function sameControls(a: Frame, b: Frame): boolean {
+  if (a.keys.length !== b.keys.length || a.stops.length !== b.stops.length || a.rows.size !== b.rows.size) return false
+  if (a.keys.some((key, i) => key !== b.keys[i]) || a.stops.some((key, i) => key !== b.stops[i])) return false
+  const rows = [...b.rows]
+  return [...a.rows].every(([id, handle], i) => rows[i]?.[0] === id && rows[i]?.[1] === handle)
+}
 
 /**
  * What a press knows when the person presses: it is taken from the drawing of the pressed Button, before any work starts.
@@ -40,6 +81,37 @@ export const unlessClosed =
   (cur: T): T =>
     press.still() ? next(cur) : cur
 
+/** The handle that a request for the row `id` names, from a fresh read of the state. Absent: no drawing would hold the row. */
+async function handleFromState(p: Ports, m: PaneHost, id: string): Promise<string | undefined> {
+  const expanded = new Set(await p.state.expanded.get())
+  const groups = await paneGroups(p, m, { selected: id, expanded })
+  const shown = await shownOf(p, groups)
+  return handleOf(groups, { expanded, shown: g => shown.get(g) ?? 0, limits: m.config.global().ui }, id)
+}
+
+/**
+ * The drawing that the state of `next` would give, from a fresh read: the `atBound` of `Refocus.keep`. It is the one read
+ * of `keep`, and only a drawing that never came calls it (`NEXT_DRAWING_MS`).
+ */
+export async function frameFromState(
+  p: Ports,
+  m: PaneHost,
+  next: { help: boolean; row: string | null },
+): Promise<Frame> {
+  const expanded = new Set(await p.state.expanded.get())
+  const groups = await paneGroups(p, m, { selected: next.row, expanded })
+  const footer = await m.footer(p, next.help ? undefined : findRow(groups, next.row), next.help)
+  const row = next.help ? null : next.row // the help view draws no row
+  const handle = row === null ? undefined : await handleFromState(p, m, row)
+  return {
+    help: next.help,
+    rows: row === null || handle === undefined ? new Map() : new Map([[row, handle]]),
+    // The view line holds `g`, `a` and `t` outside the footer, and a ring on one of them stays on it (not in the help view).
+    keys: [...footer, ...(next.help ? [] : viewKeys(m.keys))].map(k => k.buttonKey),
+    stops: [], // no pause follows the bound, so nothing compares this frame
+  }
+}
+
 export class Refocus {
   /** The element the ring was asked for, and the row it is meant for. */
   private pending: { readonly key: string; readonly id: string } | undefined
@@ -47,8 +119,10 @@ export class Refocus {
   private at: string | undefined
   /** The footer Button that `keep` put the ring on, because its own Button left the footer, until the ring moves on. */
   private displaced: string | undefined
-  /** The presses that wait for a drawing (`awaitFrame`). */
+  /** The presses that wait for a drawing (`awaitFrame`) or for the pause after it (`pause`). */
   private waiting: Waiter[] = []
+  /** The last drawing that returned. A press that runs on after its frame wait starts its pause from it (`pause`). */
+  private latest: Frame | undefined
 
   /**
    * The ring moved to `element` (the `ui.focus` hook, any origin). A move off the Button that `keep` chose ends its claim:
@@ -76,37 +150,103 @@ export class Refocus {
     this.pending = undefined
     this.at = undefined
     this.displaced = undefined
-    for (const { release } of [...this.waiting]) release() // a press that waits for a drawing ends: the pane closed
+    this.latest = undefined
+    for (const { close } of [...this.waiting]) close() // a press that waits for a drawing or a pause ends: the pane closed
   }
 
   /**
-   * Resolves when a drawing that returns after this call is a `wants` drawing: one that holds what the press wrote. Arm it
-   * before the write. The ring request of `keep` must come after that frame: the engine lands a request on the frame it
-   * holds, and then keeps the ring's position through the next one, so an early request ends up one Button off (issue #140).
-   * Any drawing that returns after the arming is not enough: live, a draw that the dismissal itself caused still held the
-   * row. It resolves at a closing (`clear`) and after `NEXT_DRAWING_MS`, so a frame that never comes cannot hold the chain
-   * of keys.
+   * Resolves with the first drawing that returns after this call and is a `wants` drawing: one that holds what the press
+   * wrote. Arm it before the write. The ring request of `keep` must come after that frame: the engine lands a request on the
+   * frame it holds, and then keeps the ring's position through the next one, so an early request ends up one Button off
+   * (issue #140). Any drawing that returns after the arming is not enough: live, a draw that the dismissal itself caused
+   * still held the row. It resolves with no frame at a closing (`clear`) and after `NEXT_DRAWING_MS`, so a frame that never
+   * comes cannot hold the chain of keys. A timer that the engine refuses never fires and says nothing, so the first drawing
+   * after the bound ends the wait too, with no frame, whether or not it is a `wants` drawing. A late frame is not used: it
+   * would start a pause whose timer the engine may refuse as well, and the bound says to fall back at once. The deadline is
+   * read from the wall clock, which is the one clock a refused timer does not stop (`Ports.clock.wall`).
    */
-  awaitFrame(p: Ports, wants: (frame: Frame) => boolean): Promise<void> {
-    return new Promise<void>(resolve => {
+  awaitFrame(p: Ports, wants: (frame: Frame) => boolean): Promise<Frame | undefined> {
+    return new Promise<Frame | undefined>(resolve => {
       let timer: Timer | undefined
+      const deadline = p.clock.wall() + NEXT_DRAWING_MS
+      const end = (frame?: Frame): void => {
+        timer?.cancel()
+        this.leave(waiter)
+        resolve(frame)
+      }
       const waiter: Waiter = {
-        wants,
-        release: (): void => {
-          timer?.cancel()
-          const at = this.waiting.indexOf(waiter)
-          if (at >= 0) this.waiting.splice(at, 1) // a frame, the bound and a closing leave the list alike
-          resolve()
+        offer: frame => {
+          // The deadline comes before `wants`: a late frame is not used, even one the press wants.
+          if (p.clock.wall() >= deadline) end()
+          else if (wants(frame)) end(frame)
         },
+        close: () => end(),
       }
       this.waiting.push(waiter)
-      timer = p.clock.after(NEXT_DRAWING_MS, waiter.release)
+      timer = p.clock.after(NEXT_DRAWING_MS, () => end())
     })
   }
 
-  /** A drawing returned: it releases the presses that wait for a frame like it. */
+  /** A drawing returned: it goes to every press that waits, for a frame (`awaitFrame`) or in a pause (`pause`). */
   frame(frame: Frame): void {
-    for (const waiter of this.waiting.filter(w => w.wants(frame))) waiter.release()
+    this.latest = frame
+    for (const waiter of [...this.waiting]) waiter.offer(frame)
+  }
+
+  /** A frame, the timer and a closing take a press off the list alike. */
+  private leave(waiter: Waiter): void {
+    const at = this.waiting.indexOf(waiter)
+    if (at >= 0) this.waiting.splice(at, 1)
+  }
+
+  /**
+   * The pause between the frame and the ring request: one timer of `RING_PAUSE_MS` on the engine clock. It resolves with the
+   * latest frame it saw, the one the request chooses from. The render hook has returned a frame by then, and the engine has
+   * not taken it yet (`RING_PAUSE_MS` has the evidence). Reads do not make this pause: an atom read answers in the same turn.
+   *
+   * The engine takes a second frame in a turn of its own loop too, so a drawing with other controls than the latest (the
+   * footer or view line Button keys, the handle of a row, or an "N more" Button, in drawing order, `sameControls`) becomes the latest frame and starts the
+   * pause again, `RING_PAUSE_MS` from it: a request that comes sooner could name a Button of the frame before it. A drawing
+   * with the same controls changes nothing: it neither ends the pause nor moves it. The restarts end `NEXT_DRAWING_MS` after
+   * the first frame, as the frame wait does after its arming: the last timer is cut to that bound, so a stream of changing
+   * drawings cannot hold the press for ever, and the request then names a Button of the latest frame.
+   *
+   * A press runs on in a microtask after its frame wait ends, so a second drawing can return before the pause exists. The
+   * pause then begins on that drawing (`latest`), and not on the frame that ended the wait.
+   *
+   * A closing ends the pause (`clear`), as it ends `awaitFrame`, and `keep` checks the press after it. A timer that the
+   * engine refuses never fires: the first drawing after the deadline of the running timer ends the pause then, and the
+   * request follows at once. That drawing counts when its controls differ, as the latest frame.
+   */
+  private pause(p: Ports, first: Frame): Promise<Frame> {
+    return new Promise<Frame>(resolve => {
+      let latest = this.latest ?? first
+      let timer: Timer | undefined
+      let deadline = 0
+      const limit = p.clock.wall() + NEXT_DRAWING_MS
+      const end = (): void => {
+        timer?.cancel()
+        this.leave(waiter)
+        resolve(latest)
+      }
+      const start = (): void => {
+        timer?.cancel()
+        const ms = Math.min(RING_PAUSE_MS, limit - p.clock.wall()) // positive: `offer` starts it only before its deadline
+        deadline = p.clock.wall() + ms
+        timer = p.clock.after(ms, end)
+      }
+      const waiter: Waiter = {
+        offer: frame => {
+          const changed = !sameControls(frame, latest)
+          if (changed) latest = frame
+          if (p.clock.wall() >= deadline) end()
+          else if (changed) start()
+        },
+        close: end,
+      }
+      this.waiting.push(waiter)
+      start()
+    })
   }
 
   /**
@@ -166,39 +306,39 @@ export class Refocus {
    * nothing, so no row follows it. `x` calls it only when no row is left to take the ring (`neighbourOf` is null).
    *
    * `drawn` is `awaitFrame`, armed before the press wrote its state. The request waits for it (live: a request sent at
-   * once, or after a drawing that still held the old state, left the ring one Button off).
+   * once, or after a drawing that still held the old state, left the ring one Button off), and then for `pause`: the engine
+   * has to take the frame before a request can name a Button of it (`RING_PAUSE_MS`, issue #156). A drawing with other
+   * controls during the pause starts it again from that drawing. The Buttons come from the latest frame of the pause
+   * (`Frame.keys`, `Frame.rows`): after a frame `keep` reads no state and asks the host for nothing.
    *
-   * The reads after the wait come before the request, and live that gap matters. A variant that chose from the buttons of
-   * the frame and asked at once failed both e2e scenarios of issue #140, and after `x` on the last row the ring sat on
-   * `h: help` (Claude Code 2.1.306). One read of an atom before the request did not change that. A pause of one macrotask
-   * did. So do not drop these reads before the pause is explicit. Evidence: `tree-table.md`.
+   * A wait that ended with no frame, because the bound passed, leaves nothing to choose from. Then, and only then, `atBound`
+   * reads the state as before issue #156 and the request follows at once: no frame waits for the engine, so no pause. A
+   * closing ends the press with no request.
    */
   async keep(
     p: Ports,
-    m: PaneHost,
     next: { help: boolean; row: string | null },
     press: Press,
-    drawn: Promise<void>,
+    drawn: Promise<Frame | undefined>,
+    atBound: () => Promise<Frame>,
   ): Promise<void> {
     if (this.at === undefined || !press.still()) return
-    await drawn
+    const first = await drawn
+    const drawing = first === undefined ? undefined : await this.pause(p, first) // the latest frame of the pause
     const at = this.at // the person may have moved the ring while the press waited
     if (at === undefined || !press.still()) return // or the pane closed
-    const expanded = new Set(await p.state.expanded.get())
-    const groups = await paneGroups(p, m, { selected: next.row, expanded })
-    const footer = await m.footer(p, next.help ? undefined : findRow(groups, next.row), next.help)
-    if (!press.still()) return // the reads took time: the pane may have closed
-    // The view line holds `g`, `a` and `t` outside the footer, and a ring on one of them stays on it (not in the help view).
-    const keys = [...footer, ...(next.help ? [] : viewKeys(m.keys))].map(k => k.buttonKey)
+    const frame = drawing ?? (await atBound())
+    if (!press.still()) return // the read took time: the pane may have closed
     const toRow = !next.help && next.row !== null
     const home = this.displaced !== undefined && toRow
     this.displaced = undefined
-    if (keys.includes(at) && !home) {
+    if (frame.keys.includes(at) && !home) {
       await this.request(p, at, undefined, press)
     } else if (toRow) {
-      await this.ring(p, m, next.row as string, press)
+      const key = frame.rows.get(next.row as string)
+      if (key !== undefined) await this.request(p, key, next.row as string, press)
     } else {
-      const key = next.help ? 'help' : keys[0] // the help footer always holds `h`
+      const key = next.help ? 'help' : frame.keys[0] // the help footer always holds `h`
       if (key === undefined) return
       if (next.help) this.displaced = key
       if (!(await this.request(p, key, undefined, press))) this.displaced = undefined
@@ -207,11 +347,8 @@ export class Refocus {
 
   /** Asks for the ring on the handle of `id`, when a drawing holds the row. */
   private async ring(p: Ports, m: PaneHost, id: string, press: Press): Promise<void> {
-    const expanded = new Set(await p.state.expanded.get())
-    const groups = await paneGroups(p, m, { selected: id, expanded })
-    const shown = await shownOf(p, groups)
-    const key = handleOf(groups, { expanded, shown: g => shown.get(g) ?? 0, limits: m.config.global().ui }, id)
-    if (key === undefined || !press.still()) return // the reads above took time: the pane may have closed
+    const key = await handleFromState(p, m, id)
+    if (key === undefined || !press.still()) return // the read above took time: the pane may have closed
     await this.request(p, key, id, press)
   }
 

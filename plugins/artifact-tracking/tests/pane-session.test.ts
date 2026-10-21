@@ -2,9 +2,9 @@
 // on fakePorts and a fake host. The text helpers (listText, helpTextOf) are tested here too. Plan: L6 Task 11 (G6, G8, G22).
 import { expect, test } from 'claude-code/testing'
 import { buttonKeyOf, footerKeys, KeyRegistry } from '../core/infra/keys'
-import type { AtomPort } from '../core/interfaces/ports'
+import type { AtomPort, Ports } from '../core/interfaces/ports'
 import type { FooterKey, PaneView, RowRef, SectionSpec, TreeRow } from '../core/interfaces/view'
-import { NEXT_DRAWING_MS, Refocus } from '../hooks/pane-refocus'
+import { type Frame, NEXT_DRAWING_MS, Refocus, RING_PAUSE_MS } from '../hooks/pane-refocus'
 import { helpTextOf, listText, type PaneHost, PaneSession, TEXT_VIEW } from '../hooks/pane-session'
 import { KEYS as GITHUB_ROW_KEYS } from '../trackers/github/actions'
 import { resetWidths } from '../ux/tree-data-table/columns'
@@ -1364,14 +1364,22 @@ test('closed clears help even when the selection write fails', async () => {
 // heard of stays alone: the tests above press `h` with no word of the ring and expect no ring request.
 
 /**
- * A press, then the drawing that the engine makes after the write of the press. The ring request waits for that drawing
- * (`Refocus.awaitFrame`), so a test that never draws would wait for the bound. `turn` lets the press reach its write.
+ * A press, then the drawing that the engine makes after the write of the press, then the pause before the request. The
+ * ring request waits for that drawing (`Refocus.awaitFrame`) and then for the pause (`Refocus.pause`), so a test that never
+ * draws would wait for the bound, and one that never ends the pause would wait for it. `turn` lets the press reach its write.
  */
-async function pressDraw(t: Pick<ReturnType<typeof setup>, 'draw' | 'session'>, key: string): Promise<void> {
+async function pressDraw(t: Pick<ReturnType<typeof setup>, 'draw' | 'session' | 'w'>, key: string): Promise<void> {
   press(buttonOf(await t.draw(), key))
   await turn()
   await t.draw()
+  await endPause(t)
   await t.session.idle()
+}
+
+/** The frame has returned: lets the press reach its pause, then lets the pause run out. */
+async function endPause(t: Pick<ReturnType<typeof setup>, 'w'>): Promise<void> {
+  await turn()
+  await t.w.clock.advance(RING_PAUSE_MS)
 }
 
 /** A pane with the rows `ids`, the github keys `c` and `f` on every row, and the ring where `at` says. `calls` is the engine log. */
@@ -1517,8 +1525,354 @@ test('the ring request waits for the drawing that follows the write', async () =
   expect(t.w.state.get('help')).toBe(true) // the write is done
   expect(t.calls).toEqual([]) // and no frame follows it yet: nothing is asked
   await t.draw()
+  await endPause(t)
   await t.session.idle()
   expect(t.calls).toEqual(['focus help'])
+})
+
+// Issue #156. The request needs one thing more than the frame: a turn of the engine's own loop, so that it has taken the
+// frame before the request names a Button of it. Live (Claude Code 2.1.306), a request sent at once, after one read of an
+// atom or after a busy wait of 20 ms landed one Button off. `Refocus.pause` is that turn: one timer of `RING_PAUSE_MS` on
+// the engine clock. These tests pin the order, frame wait then pause then request. The fake clock holds the pause open, so no
+// test waits for time.
+test('h: the ring request comes after the frame wait and then after the pause, and no sooner', async () => {
+  const t = await ringOn('web.resolve')
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.w.clock.advance(RING_PAUSE_MS) // time passes before any frame: the pause has not begun
+  await turn()
+  expect(t.calls).toEqual([])
+  await t.draw() // the frame
+  await turn()
+  expect(t.calls).toEqual([]) // the frame alone is not enough: the pause is running
+  await t.w.clock.advance(RING_PAUSE_MS - 1)
+  await turn()
+  expect(t.calls).toEqual([]) // and it has not ended
+  await t.w.clock.advance(1)
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help'])
+})
+
+test('x on the last row: the ring request comes after the frame without the row and then after the pause', async () => {
+  const t = await ringOn('r0', ['a'])
+  t.host.onDismiss = () => t.host.setRows([])
+  press(buttonOf(await t.draw(), 'dismiss'))
+  await turn()
+  expect(t.selected()).toBeNull() // the write is done
+  await t.w.clock.advance(RING_PAUSE_MS) // time passes before any frame: the pause has not begun
+  await turn()
+  expect(t.calls).toEqual([])
+  await t.draw() // the frame without the row
+  await turn()
+  expect(t.calls).toEqual([]) // the pause is running
+  await t.w.clock.advance(RING_PAUSE_MS)
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus refresh'])
+})
+
+test('h: a second drawing inside the pause neither ends it nor moves it', async () => {
+  const t = await ringOn('web.resolve')
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.draw() // the frame
+  await turn()
+  await t.w.clock.advance(RING_PAUSE_MS - 1)
+  await t.draw() // another drawing inside the pause
+  await turn()
+  expect(t.calls).toEqual([]) // it does not end the pause
+  await t.w.clock.advance(1)
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help']) // the pause ended RING_PAUSE_MS after the first frame
+})
+
+test('h: a ring that the person moves during the pause is the ring the request keeps', async () => {
+  const t = await ringOn('web.resolve')
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.draw()
+  await turn()
+  await t.session.focused(t.w.ports, 'refresh', 'person') // the person tabs onto r: refresh, a Button the help view keeps
+  await t.w.clock.advance(RING_PAUSE_MS)
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus refresh'])
+})
+
+// Codex review of PR #181. A second render can change the rows or the footer while the pause runs. The engine takes that
+// frame in a turn of its own loop too, so the pause is measured from it, and the request names a Button of it.
+test('x on the last row: a drawing with other rows during the pause restarts it, and the request follows that drawing', async () => {
+  const t = await ringOn('r0', ['a'])
+  t.host.onDismiss = () => t.host.setRows([])
+  press(buttonOf(await t.draw(), 'dismiss'))
+  await turn()
+  await t.draw() // the frame without the row: the pause begins
+  await turn()
+  await t.w.clock.advance(RING_PAUSE_MS - 1)
+  t.host.setRows(webs('b')) // another row shows up while the engine takes the first frame
+  await t.draw()
+  await turn()
+  await t.w.clock.advance(1) // the pause of the first frame would end here
+  await turn()
+  expect(t.calls).toEqual([]) // the new frame moved it
+  await t.w.clock.advance(RING_PAUSE_MS - 2)
+  await turn()
+  expect(t.calls).toEqual([]) // RING_PAUSE_MS - 1 after the new frame
+  await t.w.clock.advance(1)
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus refresh']) // RING_PAUSE_MS after the new frame
+})
+
+test('the frame of a drawing carries the keys of its footer and view line Buttons and the handle of each of its rows', async () => {
+  const t = await ringOn(undefined, ['a', 'b'], 'a')
+  const refocus = (t.session as unknown as { refocus: Refocus }).refocus
+  const waited = refocus.awaitFrame(t.w.ports, () => true)
+  const tree = await t.draw()
+  const frame = await waited
+  expect(frame?.help).toBe(false)
+  expect(frame?.rows).toEqual(
+    new Map([
+      ['a', 'r0'],
+      ['b', 'r1'],
+    ]),
+  )
+  expect(frame?.keys).toEqual([...footerOf(tree), ...viewLineOf(tree)].map(b => String(b.props.key))) // footer first
+  expect(frame?.stops).toEqual(['r0', 'r1']) // the focus stops of the body, in drawing order
+  expect(frame?.keys).toContain('web.resolve')
+  expect(frame?.keys).toContain('view') // `g`, on the view line (issue #63, L3)
+})
+
+/**
+ * A bare `Refocus` on ports that hold the clock and `ui.focus` alone, and no host: it reaches for nothing but those. `keep`
+ * runs with `next` and `atBound`, the read of the state that only the bound may call. `asked` collects the keys it asked
+ * the engine for, `done` ends with `keep`.
+ */
+function bareKeep(at: string, next: { help: boolean; row: string | null }, atBound: () => Promise<Frame>) {
+  const w = fakePorts()
+  const asked: string[] = []
+  const ports = {
+    clock: w.ports.clock,
+    ui: {
+      focus: async (key: string) => {
+        asked.push(key)
+        return true
+      },
+    },
+    log: w.ports.log,
+  } as unknown as Ports
+  const refocus = new Refocus()
+  refocus.noted(at)
+  const drawn = refocus.awaitFrame(ports, () => true)
+  const done = refocus.keep(ports, next, { keys: false, still: () => true }, drawn, atBound)
+  return { refocus, w, asked, done }
+}
+
+/** The state read of the bound. After a frame it must not run: a call fails the test. */
+const noRead = async (): Promise<Frame> => {
+  throw new Error('keep read the state after a frame')
+}
+
+/** `keep` with the frame `frame`, then the pause. Resolves with the keys it asked the engine for. */
+async function keepOn(at: string, next: { help: boolean; row: string | null }, frame: Frame): Promise<string[]> {
+  const k = bareKeep(at, next, noRead)
+  k.refocus.frame(frame)
+  await turn()
+  await k.w.clock.advance(RING_PAUSE_MS)
+  await k.done
+  return k.asked
+}
+
+test('keep reads nothing after the frame wait: it chooses from the Button keys and the row handles of the frame', async () => {
+  const rows = new Map([
+    ['a', 'r0'],
+    ['b', 'r1'],
+  ])
+  const keys = ['refresh', 'help', 'dismiss']
+  const none = new Map<string, string>()
+  // the ring's Button is in the frame: the ring stays on it
+  expect(await keepOn('dismiss', { help: false, row: 'a' }, { help: false, rows, keys, stops: [] })).toEqual([
+    'dismiss',
+  ])
+  // it is not: the selected row takes the ring, by its handle in the frame
+  expect(await keepOn('web.resolve', { help: false, row: 'b' }, { help: false, rows, keys, stops: [] })).toEqual(['r1'])
+  // no row is selected: the first Button of the footer
+  expect(await keepOn('web.resolve', { help: false, row: null }, { help: false, rows: none, keys, stops: [] })).toEqual(
+    ['refresh'],
+  )
+  // the help view: h: back
+  expect(
+    await keepOn(
+      'web.resolve',
+      { help: true, row: null },
+      { help: true, rows: none, keys: ['refresh', 'help'], stops: [] },
+    ),
+  ).toEqual(['help'])
+})
+
+test('keep with a row that the frame does not hold asks for no ring', async () => {
+  const rows = new Map([['a', 'r0']])
+  expect(
+    await keepOn('web.resolve', { help: false, row: 'zzz' }, { help: false, rows, keys: ['refresh'], stops: [] }),
+  ).toEqual([])
+})
+
+test('keep at the bound chooses from the frame that the state gives and asks at once, with no pause', async () => {
+  const state: Frame = { help: false, rows: new Map([['a', 'r0']]), keys: ['refresh'], stops: [] }
+  const k = bareKeep('web.resolve', { help: false, row: 'a' }, async () => state)
+  await k.w.clock.advance(NEXT_DRAWING_MS)
+  await k.done // a pause after the bound would hold it here
+  expect(k.asked).toEqual(['r0'])
+})
+
+// Codex review of PR #181. The pause follows the latest frame. A drawing with other controls (the footer Button keys or the
+// handle of a row, in drawing order) restarts it from that frame, and the request chooses from that frame. A drawing with
+// the same controls changes nothing ("h: a second drawing inside the pause neither ends it nor moves it"). Restarts end at
+// `NEXT_DRAWING_MS` after the first frame, so a stream of changing drawings cannot hold the press for ever.
+const BEFORE: Frame = {
+  help: false,
+  rows: new Map([
+    ['a', 'r0'],
+    ['b', 'r1'],
+  ]),
+  keys: ['web.resolve', 'refresh'],
+  stops: ['r0', 'r1'],
+}
+const AFTER: Frame = { help: false, rows: new Map([['b', 'r0']]), keys: ['refresh'], stops: ['r0'] } // `a` hid: `b` is r0
+
+test('a drawing with other controls during the pause restarts it from that frame, and the request chooses from it', async () => {
+  // From BEFORE the ring stays on web.resolve, a Button it holds. From AFTER the selected row `b` takes it, as r0.
+  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  k.refocus.frame(BEFORE)
+  await turn()
+  await k.w.clock.advance(RING_PAUSE_MS - 1)
+  k.refocus.frame(AFTER)
+  await turn()
+  await k.w.clock.advance(1) // the pause of BEFORE would end here
+  await turn()
+  expect(k.asked).toEqual([])
+  await k.w.clock.advance(RING_PAUSE_MS - 2)
+  await turn()
+  expect(k.asked).toEqual([]) // RING_PAUSE_MS - 1 after AFTER
+  await k.w.clock.advance(1) // RING_PAUSE_MS after AFTER
+  await k.done
+  expect(k.asked).toEqual(['r0'])
+})
+
+test('a drawing that returns before the press reaches its pause is the latest frame of the pause', async () => {
+  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  k.refocus.frame(BEFORE) // ends the frame wait: the press runs on in a microtask
+  k.refocus.frame(AFTER) // a second render, before it does
+  await turn()
+  await k.w.clock.advance(RING_PAUSE_MS - 1)
+  await turn()
+  expect(k.asked).toEqual([])
+  await k.w.clock.advance(1)
+  await k.done
+  expect(k.asked).toEqual(['r0'])
+})
+
+test('a drawing with the same controls during the pause neither ends it nor moves it, and the frame stays', async () => {
+  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  k.refocus.frame(BEFORE)
+  await turn()
+  await k.w.clock.advance(RING_PAUSE_MS - 1)
+  k.refocus.frame({ help: false, rows: new Map(BEFORE.rows), keys: [...BEFORE.keys], stops: [...BEFORE.stops] }) // equal, but another object
+  await turn()
+  expect(k.asked).toEqual([])
+  await k.w.clock.advance(1) // RING_PAUSE_MS after the first frame
+  await k.done
+  expect(k.asked).toEqual(['web.resolve'])
+})
+
+test('a drawing that adds or drops an "N more" Button has other controls, though its keys and rows are the same', async () => {
+  // The ring sits on a position among the Buttons: an `m0` before the footer shifts every Button after it.
+  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  k.refocus.frame(BEFORE)
+  await turn()
+  await k.w.clock.advance(RING_PAUSE_MS - 1)
+  k.refocus.frame({ ...BEFORE, stops: ['r0', 'r1', 'm0'] }) // a row beyond the cap came: `m0` appears, no handle moves
+  await turn()
+  await k.w.clock.advance(1) // the pause of BEFORE would end here
+  await turn()
+  expect(k.asked).toEqual([])
+  await k.w.clock.advance(RING_PAUSE_MS - 2)
+  await turn()
+  expect(k.asked).toEqual([]) // RING_PAUSE_MS - 1 after the drawing with `m0`
+  k.refocus.frame(BEFORE) // `m0` is gone again: the Buttons shift back
+  await turn()
+  await k.w.clock.advance(RING_PAUSE_MS - 1)
+  await turn()
+  expect(k.asked).toEqual([]) // the pause started again, so the earlier timer did not end it
+  await k.w.clock.advance(1)
+  await k.done
+  expect(k.asked).toEqual(['web.resolve'])
+})
+
+test('a drawing that holds the same keys and rows in another order has other controls', async () => {
+  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  const swappedKeys: Frame = { ...BEFORE, keys: ['refresh', 'web.resolve'] }
+  const swappedRows: Frame = { ...BEFORE, rows: new Map([...BEFORE.rows].reverse()) }
+  k.refocus.frame(BEFORE)
+  await turn()
+  for (const next of [swappedKeys, BEFORE, swappedRows]) {
+    await k.w.clock.advance(RING_PAUSE_MS - 1)
+    k.refocus.frame(next) // each one differs from the one before it: the pause starts again
+    await turn()
+    expect(k.asked).toEqual([])
+  }
+  await k.w.clock.advance(RING_PAUSE_MS)
+  await k.done
+  expect(k.asked).toEqual(['web.resolve'])
+})
+
+test('a stream of drawings with other controls does not hold the request for ever: it goes out with the latest at the bound', async () => {
+  const k = bareKeep('web.resolve', { help: false, row: 'a' }, noRead)
+  const nth = (n: number): Frame => ({
+    help: false,
+    rows: new Map([['a', `r${n}`]]),
+    keys: ['refresh'],
+    stops: [`r${n}`],
+  })
+  let n = 0
+  k.refocus.frame(nth(n))
+  let elapsed = 0
+  while (elapsed + RING_PAUSE_MS - 1 < NEXT_DRAWING_MS) {
+    await turn()
+    await k.w.clock.advance(RING_PAUSE_MS - 1) // each drawing comes just before the pause would end
+    elapsed += RING_PAUSE_MS - 1
+    k.refocus.frame(nth(++n))
+    await turn()
+    expect(k.asked).toEqual([]) // no drawing ends it, and each one starts it again
+  }
+  expect(n).toBeGreaterThan(50) // a long stream
+  await k.w.clock.advance(NEXT_DRAWING_MS - elapsed) // the bound, NEXT_DRAWING_MS after the first frame
+  await turn()
+  expect(k.asked).toEqual([`r${n}`]) // the latest frame, at the bound
+  await k.done
+})
+
+test('a pause whose timer the engine refuses ends with a drawing after its deadline that has other controls, and asks from it', async () => {
+  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  k.w.clock.refuse('after', RING_PAUSE_MS)
+  k.refocus.frame(BEFORE)
+  await turn()
+  await k.w.clock.advance(RING_PAUSE_MS) // the deadline: the refused timer never fires
+  await turn()
+  expect(k.asked).toEqual([]) // nothing tells the press yet
+  k.refocus.frame(AFTER) // the first drawing after the deadline ends the pause and is the latest frame
+  await k.done
+  expect(k.asked).toEqual(['r0'])
+})
+
+test('a closing ends a pause that a drawing restarted, with no request', async () => {
+  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  k.refocus.frame(BEFORE)
+  await turn()
+  await k.w.clock.advance(RING_PAUSE_MS - 1)
+  k.refocus.frame(AFTER)
+  await turn()
+  k.refocus.clear() // the pane closed
+  await k.done // it would hang here until the clock moves
+  await k.w.clock.advance(RING_PAUSE_MS) // the timer of the restart finds nobody
+  expect(k.asked).toEqual([])
 })
 
 test('a drawing that still holds the row does not release the ring request of x on the last row', async () => {
@@ -1542,10 +1896,14 @@ test('a drawing that still holds the row does not release the ring request of x 
   await turn()
   expect(t.calls).toEqual([]) // the row is gone, but no frame shows it yet
   await t.draw()
+  await endPause(t)
   await t.session.idle()
   expect(t.calls).toEqual(['focus refresh'])
 })
 
+// The bound is the one path that reads the state (owner decision on PR #181): with no frame to choose a Button from, the
+// press reads the footer and the rows as before issue #156 and asks for the ring at once. No pause follows: no frame waits
+// for the engine, and the bound is long past.
 test('a drawing that never comes does not hold the press for ever: the request follows after the bound', async () => {
   const t = await ringOn('web.resolve')
   press(buttonOf(await t.draw(), 'help'))
@@ -1555,8 +1913,19 @@ test('a drawing that never comes does not hold the press for ever: the request f
   await turn()
   expect(t.calls).toEqual([])
   await t.w.clock.advance(1)
-  await t.session.idle()
+  await t.session.idle() // no pause follows the bound: it would hang here otherwise
   expect(t.calls).toEqual(['focus help'])
+})
+
+test('the second h at the bound reads the state and sends the ring home to the selected row', async () => {
+  const t = await ringOn('web.resolve')
+  await pressDraw(t, 'help')
+  await t.session.focused(t.w.ports, 'help', 'plugin') // the ring sits on h: back
+  press(buttonOf(await t.draw(), 'help')) // the second h
+  await turn()
+  await t.w.clock.advance(NEXT_DRAWING_MS) // no frame comes
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help', 'focus r0']) // the row handle comes from the state read of the bound
 })
 
 test('a pane that closes while the press waits for the drawing gets no ring request, and the press ends', async () => {
@@ -1568,30 +1937,80 @@ test('a pane that closes while the press waits for the drawing gets no ring requ
   expect(t.calls).toEqual([])
 })
 
-// The closing guard of `keep`. `closed` clears the ring (`Refocus.clear`), so a pane that closes alone ends the press at the
-// ring check, not at the closing count. The count matters when the pane closes and opens again, and the new pane reports
-// its ring, while `keep` reads the footer: the press then holds a ring that is not its own.
-test('a pane that closes and reopens while keep reads the footer gets no ring request from the old press', async () => {
+// A closing ends the pause as it ends the frame wait (`Refocus.clear`): the press does not wait for a timer of a pane that is
+// gone, and a pane that opens again at once and reports its ring gets no request from the old press. The closing count of
+// the press (`Press.still`) says the same when the pause ends by itself, and `request` checks it too.
+test('a pane that closes and reopens during the pause ends the press at once and gets no ring request from it', async () => {
   const t = await ringOn('web.resolve')
-  let open!: () => void
-  const gate = new Promise<void>(resolve => {
-    open = resolve
-  })
-  const paneData = t.host.paneData
-  t.host.paneData = async (p: unknown, view: PaneView) => {
-    if (view.selected === null) await gate // the read of `keep` (the help view has no row), not the drawing
-    return paneData(p, view)
-  }
   press(buttonOf(await t.draw(), 'help'))
   await turn()
-  await t.draw() // the help drawing releases the wait: `keep` stops at its read
+  await t.draw() // the help drawing ends the frame wait: `keep` is in its pause
   await turn()
+  expect(t.calls).toEqual([])
   await t.session.closed(t.w.ports) // the pane closes and opens again, and the person's ring is reported
   t.w.state.set('selected', 'a')
   await t.session.focused(t.w.ports, 'r0', 'plugin')
-  open()
-  await t.session.idle()
+  await t.session.idle() // the closing ended the pause: it would hang here until the clock moves
   expect(t.calls).toEqual([]) // the old press must not ask for a ring in the new pane
+  await t.w.clock.advance(RING_PAUSE_MS) // the timer of the pause comes later and finds nobody
+  expect(t.calls).toEqual([])
+})
+
+// The engine can refuse a timer (a hook that denies `clock.after`). The timer never fires and the caller hears nothing: a
+// `Timer` has `cancel` and no more. The press tells by the clock. A drawing that returns after the deadline of its wait
+// ends it as the timer would have: the press must not hang until the pane closes (owner decision on PR #181). Without a
+// drawing, nothing wakes it.
+test('a pause whose timer the engine refuses ends with the first drawing after its deadline, and asks then', async () => {
+  const t = await ringOn('web.resolve')
+  t.w.clock.refuse('after', RING_PAUSE_MS)
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.draw() // the frame
+  await turn()
+  await t.w.clock.advance(RING_PAUSE_MS - 1)
+  await t.draw() // inside the pause: the deadline has not come
+  await turn()
+  expect(t.calls).toEqual([])
+  await t.w.clock.advance(1) // the deadline: the refused timer never fires
+  await turn()
+  expect(t.calls).toEqual([]) // nothing tells the press yet
+  await t.draw() // the first drawing after the deadline
+  await t.session.idle() // the drawing ended the pause: it would hang here otherwise
+  expect(t.calls).toEqual(['focus help'])
+})
+
+test('a frame bound whose timer the engine refuses ends with the first drawing after it, and the press reads the state', async () => {
+  const t = await ringOn('r0', ['a']) // x on the last row, and the row stays: no drawing is the one the press waits for
+  t.w.clock.refuse('after', NEXT_DRAWING_MS)
+  press(buttonOf(await t.draw(), 'dismiss'))
+  await turn()
+  expect(t.selected()).toBeNull() // the write is done
+  await t.draw() // still holds the row: not the frame the ring waits for
+  await t.w.clock.advance(NEXT_DRAWING_MS - 1)
+  await t.draw() // inside the bound
+  await turn()
+  expect(t.calls).toEqual([])
+  await t.w.clock.advance(1) // the bound: the refused timer never fires
+  await turn()
+  expect(t.calls).toEqual([])
+  await t.draw() // the first drawing after the bound
+  await t.session.idle() // it ended the wait with no frame, and no pause follows: it would hang here otherwise
+  expect(t.calls).toEqual(['focus refresh'])
+})
+
+// A frame that the press wants and that comes after the deadline of a refused bound is late: the bound has passed, so the
+// press falls back to the state read at once. It does not start a pause, whose timer the engine may refuse as well.
+test('a frame bound whose timer the engine refuses ends with a wanted frame that comes after it, with no frame and no pause', async () => {
+  const t = await ringOn('web.resolve')
+  t.w.clock.refuse('after', NEXT_DRAWING_MS)
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.w.clock.advance(NEXT_DRAWING_MS) // the bound: the refused timer never fires
+  await turn()
+  expect(t.calls).toEqual([])
+  await t.draw() // the help view, which the press wants, but after the bound
+  await t.session.idle() // no pause follows it: it would hang here otherwise
+  expect(t.calls).toEqual(['focus help'])
 })
 
 // A drawing that began before the write read the old help state. It returns after the press armed its wait, but it is not
@@ -1622,6 +2041,7 @@ test('a drawing that still holds the old help state does not release the ring re
   await turn()
   expect(t.calls).toEqual([])
   await t.draw() // the drawing that holds the help view
+  await endPause(t)
   await t.session.idle()
   expect(t.calls).toEqual(['focus help'])
 })
@@ -1636,6 +2056,7 @@ test('x on the only drawn row waits for the drawing without that row, also when 
   await turn()
   expect(t.calls).toEqual([])
   await t.draw() // the drawing that holds `b` and not `a`
+  await endPause(t)
   await t.session.idle() // that drawing released the wait: otherwise it would wait for the bound
   expect(t.selected()).toBeNull()
   expect(t.calls).toEqual(['focus refresh'])
@@ -1660,6 +2081,7 @@ test('x waits through the drawings that still hold the dismissed row even when o
   land()
   await turn()
   await t.draw()
+  await endPause(t)
   await t.session.idle()
   expect(t.calls).toEqual(['focus refresh'])
 })
@@ -1675,7 +2097,7 @@ test('a press that the bound released is no longer asked about the drawings that
   })
   await w.clock.advance(NEXT_DRAWING_MS)
   await waited // the bound released it
-  refocus.frame({ help: false, ids: new Set() })
+  refocus.frame({ help: false, rows: new Map(), keys: [], stops: [] })
   expect(asked).toBe(0)
 })
 
@@ -1687,6 +2109,7 @@ test('x on the last row waits for the drawing that follows it before it asks for
   expect(t.selected()).toBeNull()
   expect(t.calls).toEqual([])
   await t.draw()
+  await endPause(t)
   await t.session.idle()
   expect(t.calls).toEqual(['focus refresh'])
 })
@@ -1738,6 +2161,20 @@ test('x on the only row while the ring sits on g keeps the ring on g: a view lin
     const t = await ringOn(at, ['a'])
     t.host.onDismiss = () => t.host.setRows([])
     await pressDraw(t, 'dismiss')
+    expect(t.selected(), at).toBeNull()
+    expect(t.calls, at).toEqual([`focus ${at}`])
+  }
+})
+
+// The bound reads the state (`frameFromState`), which must name the view line Buttons too, as the drawing does.
+test('x on the only row while the ring sits on g, with no frame before the bound: the state read keeps the ring on g', async () => {
+  for (const at of ['view', 'show-all', 'touched']) {
+    const t = await ringOn(at, ['a'])
+    t.host.onDismiss = () => t.host.setRows([])
+    press(buttonOf(await t.draw(), 'dismiss'))
+    await turn()
+    await t.w.clock.advance(NEXT_DRAWING_MS) // no frame comes
+    await t.session.idle()
     expect(t.selected(), at).toBeNull()
     expect(t.calls, at).toEqual([`focus ${at}`])
   }

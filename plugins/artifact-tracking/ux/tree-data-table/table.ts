@@ -129,6 +129,7 @@ export const TreeDataTable = {
       tree: box(el, root, ...body, pinned ? box(el, end, footer) : footer),
       handles: new Map(rows.map(r => [r.handle, r.id])),
       rows,
+      stops: (laids[step] ?? []).flatMap(s => [...s.rows.map(r => r.handle), ...(s.more > 0 ? [`m${s.index}`] : [])]),
       top: win?.plan.from ?? 0,
       page: win === undefined ? undefined : pageOf(win),
     }
