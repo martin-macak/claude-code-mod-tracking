@@ -191,26 +191,30 @@ type RunNode = { runId: string; members: AgentNode[] }
 type Shown = { row: AgentRow; kids: Shown[] } | RunNode
 type RunStat = { agents: number; failed: number }
 
+/** A finished run folds only with this many agents. A run of one is one row already. A fixed rule: issue #146. */
+const MIN_FOLD_AGENTS = 2
+
 /**
- * The run ids that fold: every agent of the run is over, and so is every agent below one. A run with one live agent, or
- * with a live agent below one of its agents, stays as plain rows. Rule: issue #49.
+ * The run ids that fold: the run has {@link MIN_FOLD_AGENTS} agents or more, every agent of it is over, and so is every
+ * agent below one. A run with one live agent, or with a live agent below one of its agents, stays as plain rows, and so
+ * does a run of one agent. The agents are counted over the whole tree, wherever they sit. Rule: issues #49 and #146.
  */
 function finishedRuns(roots: readonly AgentNode[]): Set<string> {
-  const seen = new Set<string>()
+  const agents = new Map<string, number>()
   const open = new Set<string>()
   const over = (n: AgentNode): boolean => isDone(n.row) && n.kids.every(over)
   const walk = (nodes: readonly AgentNode[]): void => {
     for (const n of nodes) {
       const id = n.row.workflow?.runId
       if (id !== undefined) {
-        seen.add(id)
+        agents.set(id, (agents.get(id) ?? 0) + 1)
         if (!over(n)) open.add(id)
       }
       walk(n.kids)
     }
   }
   walk(roots)
-  return new Set([...seen].filter(id => !open.has(id)))
+  return new Set([...agents].filter(([id, n]) => n >= MIN_FOLD_AGENTS && !open.has(id)).map(([id]) => id))
 }
 
 /**
@@ -279,7 +283,7 @@ function runRow(auto: AutoState, run: RunNode, stat: RunStat): TreeRow {
     owner: OWNER,
     cells: textCells({
       key: `${stat.failed > 0 ? '✗' : '✓'} ${shortRunId(run.runId)}`,
-      title: `${stat.agents} ${stat.agents === 1 ? 'agent' : 'agents'} · ${stat.failed} failed`,
+      title: `${stat.agents} agents · ${stat.failed} failed`, // a fold has 2 agents or more (issue #146)
       type: '',
       titleClip: 'middle',
     }),

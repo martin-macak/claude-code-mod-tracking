@@ -18,7 +18,8 @@ export const AUTO_SCHEMA = {
   failedTtlMs: int(3600000, 0, 86400000),
   // A removed worktree row leaves the view after the TTL, counted from the proof's `removedAt`.
   removedTtlMs: int(600000, 0, 86400000),
-  // A workflow run whose agents have all ended is one row (`ag:wf:<runId>`) that opens to its agents.
+  // A workflow run of 2 agents or more, whose agents have all ended, is one row (`ag:wf:<runId>`) that opens to its agents.
+  // The minimum of 2 is fixed: issue #146.
   foldWorkflows: bool(true),
 } as const satisfies Schema
 

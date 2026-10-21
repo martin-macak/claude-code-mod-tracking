@@ -17,7 +17,7 @@ import { PROCESSES_DEFAULTS } from '../trackers/processes/config'
 import type { ProcessRecord } from '../trackers/processes/types'
 import { handleOf, layout } from '../ux/tree-data-table/table'
 import { fakeConfig, fakeConfigFs } from './fixtures/config-fs'
-import { buttonOf, nodes } from './fixtures/drawn'
+import { buttonOf, handlesOf, nodes } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
 import {
   draw,
@@ -228,12 +228,77 @@ test('the fold row cuts its title in the middle, as every row of the Agents sect
   expect(fold.cells.description).toEqual({ text: '3 agents · 1 failed', clip: 'middle' })
 })
 
-test('the fold row has no failure marker when no agent failed, says 1 agent, and counts 0 failed', async () => {
+test('the fold row has no failure marker when no agent failed, and counts 0 failed', async () => {
   const t = await paneWorld()
-  setAgents(t, [wfProof('w1', 1, { endedAt: NOW })], [master(), wfRow('w1', 1)])
+  setAgents(
+    t,
+    [wfProof('w1', 1, { endedAt: NOW }), wfProof('w2', 2, { endedAt: NOW })],
+    [master(), wfRow('w1', 1), wfRow('w2', 2)],
+  )
   const fold = foldOf(await draw(t, 'agents')) as TreeRow
   expect(fold.cells.name?.text).toBe('✓ wf_a35565')
-  expect(fold.cells.description?.text).toBe('1 agent · 0 failed')
+  expect(fold.cells.description?.text).toBe('2 agents · 0 failed')
+})
+
+// Issue #146: a run folds only from 2 agents. The rule is fixed: no config key. A run of 1 agent is one row already, so
+// the fold would cost a keypress and show nothing more. Its agent row is a row like any other: the TTL, the selection and
+// the /track text treat it as they treat an agent of no run.
+test('a finished run of 1 agent shows its agent row with no fold row, whether the agent ended or failed', async () => {
+  for (const failed of [false, true]) {
+    const t = await paneWorld()
+    setAgents(
+      t,
+      [wfProof('w1', 1, { endedAt: NOW, failed })],
+      [master(), wfRow('w1', 1, { state: failed ? 'failed' : 'ended' })],
+    )
+    const s = await draw(t, 'agents')
+    expect(shown(s.rows)).toEqual(['ag:master', 'ag:w1'])
+    expect(foldOf(s)).toBeUndefined()
+    // The agent row still says its run, so the person can tell which workflow it came from.
+    expect(find(s.rows, 'ag:w1')?.cells.name?.text).toBe(`${failed ? '✗' : '✓'} wf_a35565·1 w1`)
+    expect(find(s.rows, 'ag:w1')?.can).toEqual({ dismiss: true, priority: false })
+  }
+})
+
+test('the minimum counts the agents of one run together: a run of 2 folds, a run of 1 next to it does not', async () => {
+  const t = await paneWorld()
+  setAgents(
+    t,
+    [
+      wfProof('a1', 1, { endedAt: NOW }),
+      wfProof('b1', 1, { endedAt: NOW }, RUN_B),
+      wfProof('b2', 2, { endedAt: NOW }, RUN_B),
+    ],
+    [master(), wfRow('a1', 1), wfRow('b1', 1, {}, RUN_B), wfRow('b2', 2, {}, RUN_B)],
+  )
+  const s = await draw(t, 'agents')
+  expect(shown(s.rows)).toEqual(['ag:master', 'ag:a1', `ag:wf:${RUN_B}`])
+  expect(foldOf(s, RUN_B)?.cells.description?.text).toBe('2 agents · 0 failed')
+  expect(foldOf(s)).toBeUndefined()
+})
+
+test('a run of 1 agent that has a live agent below it stays as rows too: nothing folds', async () => {
+  const t = await paneWorld()
+  setAgents(t, [], [master(), wfRow('w1', 1), plain('child', { depth: 2, state: 'running' })])
+  const s = await draw(t, 'agents')
+  expect(shown(s.rows)).toEqual(['ag:master', 'ag:w1', 'ag:child'])
+})
+
+test('a run of 1 agent hides by the TTL of its own agent, like a row of no run, and counts as 1 hidden', async () => {
+  const t = await paneWorld()
+  // Ended 20 min ago: past the 10 min TTL of an ended agent. The failed one has 60 min, so it stays.
+  setAgents(
+    t,
+    [wfProof('w1', 1, { endedAt: NOW - 20 * MIN }), wfProof('w2', 1, { endedAt: NOW - 20 * MIN, failed: true }, RUN_B)],
+    [master(), wfRow('w1', 1), wfRow('w2', 1, { state: 'failed' }, RUN_B)],
+  )
+  const s = await draw(t, 'agents')
+  expect(shown(s.rows)).toEqual(['ag:master', 'ag:w2'])
+  expect(s.note?.text).toBe('2 ended (1 hidden)')
+  t.w.clock.now = NOW + 41 * MIN // the failed one is 61 min past its end
+  const gone = await draw(t, 'agents')
+  expect(shown(gone.rows)).toEqual(['ag:master'])
+  expect(gone.note?.text).toBe('2 ended (2 hidden)')
 })
 
 test('the fold row is closed, dim, and cannot be dismissed or marked; the agent rows below it can be dismissed', async () => {
@@ -280,8 +345,13 @@ test('each agent label carries the short run id, so wf·1 of one run is not the 
   const t = await paneWorld()
   setAgents(
     t,
-    [wfProof('a1', 1, { endedAt: NOW }), wfProof('b1', 1, { endedAt: NOW }, RUN_B)],
-    [master(), wfRow('a1', 1), wfRow('b1', 1, {}, RUN_B)],
+    [
+      wfProof('a1', 1, { endedAt: NOW }),
+      wfProof('a2', 2, { endedAt: NOW }),
+      wfProof('b1', 1, { endedAt: NOW }, RUN_B),
+      wfProof('b2', 2, { endedAt: NOW }, RUN_B),
+    ],
+    [master(), wfRow('a1', 1), wfRow('a2', 2), wfRow('b1', 1, {}, RUN_B), wfRow('b2', 2, {}, RUN_B)],
   )
   const s = await draw(t, 'agents')
   expect(shown(s.rows)).toEqual(['ag:master', `ag:wf:${RUN}`, `ag:wf:${RUN_B}`])
@@ -413,16 +483,18 @@ test('a folded run with a young child below one of its agents stays whole until 
 })
 
 test('hideEnded false keeps a folded run for ever, show-all keeps it too, and an agent with no endedAt keeps it', async () => {
+  const proofs = (endedAt?: number) => [wfProof('w1', 1, { endedAt }), wfProof('w2', 2, { endedAt })]
+  const rows = [master(), wfRow('w1', 1), wfRow('w2', 2)]
   const off = await paneWorld({ config: { auto: { hideEnded: false } } })
-  setAgents(off, [wfProof('w1', 1, { endedAt: NOW - 999 * MIN })], [master(), wfRow('w1', 1)])
+  setAgents(off, proofs(NOW - 999 * MIN), rows)
   expect(foldOf(await draw(off, 'agents'))).toBeDefined()
   const t = await paneWorld()
-  setAgents(t, [wfProof('w1', 1, { endedAt: NOW - 999 * MIN })], [master(), wfRow('w1', 1)])
+  setAgents(t, proofs(NOW - 999 * MIN), rows)
   expect(foldOf(await draw(t, 'agents'))).toBeUndefined()
   await t.m.track(t.w.ports, 'show-all')
   expect(foldOf(await draw(t, 'agents'))).toBeDefined()
   const undated = await paneWorld()
-  setAgents(undated, [wfProof('w1', 1)], [master(), wfRow('w1', 1)])
+  setAgents(undated, proofs(), rows)
   expect(foldOf(await draw(undated, 'agents'))).toBeDefined()
 })
 
@@ -432,6 +504,15 @@ test('the /track text prints the fold row and every agent below it, so the text 
   expect(text).toContain('wf_a35565')
   expect(text).toContain('3 agents · 1 failed')
   for (const label of ['wf_a35565·1 w1', 'wf_a35565·2 w2', 'wf_a35565·3 w3']) expect(text).toContain(label)
+})
+
+test('the /track text of a run of 1 agent prints the agent row and no fold row, as the pane does', async () => {
+  const t = await paneWorld()
+  setAgents(t, [wfProof('w1', 1, { endedAt: NOW })], [master(), wfRow('w1', 1)])
+  expect(shown((await draw(t, 'agents')).rows)).toEqual(['ag:master', 'ag:w1']) // the pane
+  const text = (await t.m.track(t.w.ports, '')).text
+  expect(text).toContain('✓ wf_a35565·1 w1')
+  expect(text).not.toMatch(/\d+ agents? · \d+ failed/) // no fold row line
 })
 
 test('the run id is short: wf_ and six characters, whatever the shape of the id', () => {
@@ -607,6 +688,29 @@ test('the selected agent of a run that folds: the ring and the keys fall to the 
   const folded = await drawPane()
   expect(ringOf(folded)).toEqual([await handleIn(t, `ag:wf:${RUN}`)])
   expect(buttonOf(folded, 'dismiss').props.dimColor).toBe(true) // x is dim on a fold row
+  expect(t.w.state.get('selected')).toBe('ag:w1') // a render writes nothing
+})
+
+test('the selected agent of a run of 1 agent keeps its row when the run ends, and falls to the next shown row when it hides', async () => {
+  const t = await paneWorld()
+  setAgents(t, [], [master(), wfRow('w1', 1, { state: 'running' }), plain('after')])
+  t.w.state.set('selected', 'ag:w1')
+  const host: PaneHost = t.m
+  const session = new PaneSession()
+  const drawPane = () => session.draw(t.w.ports, host, EL, { bodyColumns: 120 })
+  expect(ringOf(await drawPane())).toEqual([await handleIn(t, 'ag:w1')])
+  // The run ends. It is 1 agent, so nothing folds: the ring stays on the agent row, and x works on it.
+  setAgents(t, [wfProof('w1', 1, { endedAt: NOW })], [master(), wfRow('w1', 1), plain('after')])
+  const ended = await drawPane()
+  expect(ringOf(ended)).toEqual([await handleIn(t, 'ag:w1')])
+  expect(buttonOf(ended, 'dismiss').props.dimColor).toBeUndefined()
+  const stops = handlesOf(ended).length
+  // Its TTL passes (10 min). The row is no unit of the window, so it loses its stop, and the ring falls to the next row.
+  t.w.clock.now = NOW + 11 * MIN
+  const hidden = await drawPane()
+  expect(flat((await draw(t, 'agents')).rows)).toEqual(['ag:master', 'ag:after'])
+  expect(handlesOf(hidden).length).toBe(stops - 1)
+  expect(ringOf(hidden)).toEqual([await handleIn(t, 'ag:after')])
   expect(t.w.state.get('selected')).toBe('ag:w1') // a render writes nothing
 })
 
