@@ -52,7 +52,7 @@ const lane = (merge: Record<string, MergeNote> | undefined, over: Partial<LaneSt
 })
 
 const WT = { worktree: '/x/wt-a' }
-const ROW = (id = K7): RowRef => ({ id, owner: 'github', section: 'prs', can: { dismiss: true, priority: true } })
+const ROW = (id = K7): RowRef => ({ id, owner: 'github', group: 'prs', can: { dismiss: true, priority: true } })
 
 type Setup = {
   items?: object[]
@@ -140,7 +140,7 @@ test('AC8: the row reads queued after the press', async () => {
   const t = await setup()
   await t.m.runAction(t.w.ports, 'github', 'resolve', K7)
   const prs = (await t.m.paneData(t.w.ports, { selected: null, expanded: new Set() })).find(s => s.id === 'prs')!
-  expect(prs.rows[0]?.cells.merge?.text).toBe('queued')
+  expect(prs.rows[0]?.extras?.[0]?.text).toBe('queued')
 })
 
 test('AC9: a second press sends no second prompt, also when two presses race', async () => {
@@ -181,7 +181,7 @@ test('m3: a prompt that a hook refuses is taken back: the row stops reading queu
   expect(t.w.ui.toasts).toEqual(['Resolve prompt sent', 'Resolve prompt refused: blocked by a hook'])
   expect(laneState(t).merge?.[K7]?.worktree).toBe('/x/wt-a') // only the press is taken back
   const prs = (await t.m.paneData(t.w.ports, { selected: null, expanded: new Set() })).find(s => s.id === 'prs')!
-  expect(prs.rows[0]?.cells.merge?.text).toBe('✗ conflicts')
+  expect(prs.rows[0]?.extras?.[0]?.text).toBe('✗ conflicts')
   t.w.promptRefusal = undefined
   await t.m.runAction(t.w.ports, 'github', 'resolve', K7)
   expect(t.w.prompts).toHaveLength(2)
@@ -231,7 +231,7 @@ test('M3: a fork PR whose head name is a local worktree branch has both keys off
     'files: the head branch is in a fork, not in this repo',
   ])
   const prs = (await t.m.paneData(t.w.ports, { selected: null, expanded: new Set() })).find(s => s.id === 'prs')!
-  expect(prs.rows[0]?.cells.mark).toEqual({ text: 'fork PR', dim: true }) // where a person reads why
+  expect(prs.rows[0]?.extras?.at(-1)).toEqual({ text: 'fork PR', dim: true }) // where a person reads why
 })
 
 test('n2: the keys also work with a file row selected under the PR, and the note is the PR note', async () => {
@@ -290,7 +290,7 @@ test('the files key fetches the two refs and runs merge-tree in the worktree, th
   expect(git.every(c => c.opts?.timeoutMs === 5000)).toBe(true) // trackers.github.gitTimeoutMs
   expect(laneState(t).merge?.[K7]?.files).toEqual({ at: NOW, files: ['src/a.ts', 'src/b.ts'] })
   const prs = (await t.m.paneData(t.w.ports, { selected: null, expanded: new Set() })).find(s => s.id === 'prs')!
-  expect(prs.rows[0]?.children?.map(c => c.cells.title?.text)).toEqual(['src/a.ts', 'src/b.ts'])
+  expect(prs.rows[0]?.children?.map(c => c.cells.description?.text)).toEqual(['src/a.ts', 'src/b.ts'])
 })
 
 test('the files key with no worktree runs in the session folder', async () => {

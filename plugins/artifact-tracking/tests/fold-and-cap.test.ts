@@ -6,6 +6,7 @@ import { ConfigManager } from '../core/infra/config-manager'
 import { NO_VIEW } from '../core/infra/views'
 import type { Json } from '../core/interfaces/items'
 import type { SectionSpec, TreeRow } from '../core/interfaces/view'
+import { listGroups } from '../core/lib/grouping'
 import { type PaneHost, PaneSession } from '../hooks/pane-session'
 import { TRACKERS } from '../trackers'
 import { AUTO_DEFAULTS } from '../trackers/auto/config'
@@ -217,17 +218,22 @@ test('a run whose agents all ended is one row ag:wf:<runId> with the short run i
   const s = await draw(t, 'agents')
   expect(shown(s.rows)).toEqual(['ag:master', `ag:wf:${RUN}`])
   const fold = foldOf(s) as TreeRow
-  expect(fold.cells.key?.text).toBe('✗ wf_a35565')
-  expect(fold.cells.title?.text).toBe('3 agents · 1 failed')
+  expect(fold.cells.name?.text).toBe('✗ wf_a35565')
+  expect(fold.cells.description?.text).toBe('3 agents · 1 failed')
   expect((fold.children ?? []).map(c => c.id)).toEqual(['ag:w1', 'ag:w2', 'ag:w3'])
+})
+
+test('the fold row cuts its title in the middle, as every row of the Agents section does', async () => {
+  const fold = foldOf(await draw(await finishedRun(), 'agents')) as TreeRow
+  expect(fold.cells.description).toEqual({ text: '3 agents · 1 failed', clip: 'middle' })
 })
 
 test('the fold row has no failure marker when no agent failed, says 1 agent, and counts 0 failed', async () => {
   const t = await paneWorld()
   setAgents(t, [wfProof('w1', 1, { endedAt: NOW })], [master(), wfRow('w1', 1)])
   const fold = foldOf(await draw(t, 'agents')) as TreeRow
-  expect(fold.cells.key?.text).toBe('✓ wf_a35565')
-  expect(fold.cells.title?.text).toBe('1 agent · 0 failed')
+  expect(fold.cells.name?.text).toBe('✓ wf_a35565')
+  expect(fold.cells.description?.text).toBe('1 agent · 0 failed')
 })
 
 test('the fold row is closed, dim, and cannot be dismissed or marked; the agent rows below it can be dismissed', async () => {
@@ -241,10 +247,10 @@ test('the fold row is closed, dim, and cannot be dismissed or marked; the agent 
 
 test('Enter opens the fold row, and the closed row draws no agent rows', async () => {
   const t = await finishedRun()
-  const sections = await t.m.paneData(t.w.ports, NO_VIEW)
+  const groups = listGroups(await t.m.paneData(t.w.ports, NO_VIEW))
   const view = { shown: () => 0, limits: t.m.config.global().ui }
   const drawn = (expanded: string[]) =>
-    layout(sections, { ...view, expanded: new Set(expanded) }).flatMap(s => s.rows.map(r => r.row.id))
+    layout(groups, { ...view, expanded: new Set(expanded) }).flatMap(s => s.rows.map(r => r.row.id))
   expect(drawn([])).toContain(`ag:wf:${RUN}`)
   expect(drawn([])).not.toContain('ag:w1')
   expect(drawn([`ag:wf:${RUN}`])).toEqual(expect.arrayContaining([`ag:wf:${RUN}`, 'ag:w1', 'ag:w2', 'ag:w3']))
@@ -279,8 +285,8 @@ test('each agent label carries the short run id, so wf·1 of one run is not the 
   )
   const s = await draw(t, 'agents')
   expect(shown(s.rows)).toEqual(['ag:master', `ag:wf:${RUN}`, `ag:wf:${RUN_B}`])
-  expect(find(s.rows, 'ag:a1')?.cells.key?.text).toBe('✓ wf_a35565·1 a1')
-  expect(find(s.rows, 'ag:b1')?.cells.key?.text).toBe('✓ wf_b12345·1 b1')
+  expect(find(s.rows, 'ag:a1')?.cells.name?.text).toBe('✓ wf_a35565·1 a1')
+  expect(find(s.rows, 'ag:b1')?.cells.name?.text).toBe('✓ wf_b12345·1 b1')
 })
 
 test('a run with one live agent does not fold, and its agents still say the run id', async () => {
@@ -292,7 +298,7 @@ test('a run with one live agent does not fold, and its agents still say the run 
   )
   const s = await draw(t, 'agents')
   expect(shown(s.rows)).toEqual(['ag:master', 'ag:w1', 'ag:w2'])
-  expect(find(s.rows, 'ag:w2')?.cells.key?.text).toBe('● wf_a35565·2 w2')
+  expect(find(s.rows, 'ag:w2')?.cells.name?.text).toBe('● wf_a35565·2 w2')
 })
 
 test('a waiting agent counts as live: the run does not fold', async () => {
@@ -316,7 +322,7 @@ test('foldWorkflows false: a finished run shows every agent row, with the run id
   )
   const s = await draw(t, 'agents')
   expect(shown(s.rows)).toEqual(['ag:master', 'ag:w1', 'ag:w2'])
-  expect(find(s.rows, 'ag:w1')?.cells.key?.text).toBe('✓ wf_a35565·1 w1')
+  expect(find(s.rows, 'ag:w1')?.cells.name?.text).toBe('✓ wf_a35565·1 w1')
 })
 
 test('the fold row sits where the first agent of the run was, and an agent of no run stays out of it', async () => {
@@ -396,7 +402,7 @@ test('a folded run with a young child below one of its agents stays whole until 
   )
   // `w1` and `w2` are past 10 min, the child of `w1` is not: the fold row, its count and its children still agree.
   const before = await draw(t, 'agents')
-  expect(foldOf(before)?.cells.title?.text).toBe('2 agents · 0 failed')
+  expect(foldOf(before)?.cells.description?.text).toBe('2 agents · 0 failed')
   expect((foldOf(before)?.children ?? []).map(c => c.id)).toEqual(['ag:w1', 'ag:w2'])
   expect(flat(foldOf(before)?.children ?? [])).toEqual(['ag:w1', 'ag:c1', 'ag:w2'])
   expect(before.note?.text).toBe('3 ended') // nothing left the view
@@ -580,8 +586,8 @@ test('the cap is a view: the slot keeps every row and nothing is written', async
 /** The handle of the row `id` in a full drawing of the pane, with these rows open. */
 async function handleIn(t: World, id: string, open: string[] = []) {
   const expanded = new Set(open)
-  const sections = await t.m.paneData(t.w.ports, { selected: null, expanded })
-  return handleOf(sections, { expanded, shown: () => 0, limits: t.m.config.global().ui }, id)
+  const groups = listGroups(await t.m.paneData(t.w.ports, { selected: null, expanded }))
+  return handleOf(groups, { expanded, shown: () => 0, limits: t.m.config.global().ui }, id)
 }
 const ringOf = (tree: unknown) =>
   nodes(tree, 'Button')
@@ -625,7 +631,7 @@ test('the selected process row that the cap takes: the ring falls to the next ro
 
 // ---------------------------------------------------------------- process names
 
-const name = (s: SectionSpec, id: string) => find(s.rows, id)?.cells.title?.text
+const name = (s: SectionSpec, id: string) => find(s.rows, id)?.cells.description?.text
 
 test('a detached row named by a path under the session root shows its Name from ./', async () => {
   const t = await paneWorld()
@@ -643,7 +649,7 @@ test('a detached row named by a path under the session root shows its Name from 
 test('the shortened name is display only: the stored name stays, and the /track text shows the short one', async () => {
   const t = await paneWorld()
   setProcesses(t, [proc('pid:5', 'running', { kind: 'detached-process', pid: 5, name: '/work/scripts/serve.sh' })])
-  expect(((await draw(t, 'processes')).rows[0] as TreeRow).cells.title?.text).toBe('./scripts/serve.sh')
+  expect(((await draw(t, 'processes')).rows[0] as TreeRow).cells.description?.text).toBe('./scripts/serve.sh')
   expect((t.w.state.get('processes') as unknown as ProcessRecord[])[0]?.name).toBe('/work/scripts/serve.sh')
   const text = (await t.m.track(t.w.ports, '')).text
   expect(text).toContain('./scripts/serve.sh')
@@ -657,8 +663,9 @@ test('with no session root the name shows in full', async () => {
   expect(name(await draw(t, 'processes'), 'pid:5')).toBe('/work/scripts/serve.sh')
 })
 
-test('the Name column cuts a long name in the middle, so both ends of a path stay', async () => {
+test('a long process name is cut in the middle, so both ends of a path stay', async () => {
   const t = await paneWorld()
-  const title = (await draw(t, 'processes')).columns.find(c => c.id === 'title')
-  expect(title?.clip).toBe('middle')
+  const { rows } = await draw(t, 'processes')
+  expect(rows.length).toBeGreaterThan(0)
+  expect(rows.every(r => r.cells.description?.clip === 'middle')).toBe(true)
 })

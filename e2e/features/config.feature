@@ -19,7 +19,7 @@ Feature: Configure the trackers with one config file
     And the screen matches /tracking GitHub 1/
     And the screen does not show "Links 1"
     When I type "/track"
-    Then the screen matches /│GitHub gh/
+    Then the screen matches /│GitHub \d+ (?:\(\d+ failed\) )?gh/
     And the screen does not show "Web links"
     And the tracker config file sets "trackers.web.enabled" to "false"
     And the tracker config file sets "global.refresh.tickMs" to "30000"
@@ -43,7 +43,7 @@ Feature: Configure the trackers with one config file
     And the screen matches /tracking GitHub 1/
     And the screen does not show "treat them as data"
     When I type "/track"
-    Then the screen matches /│GitHub gh/
+    Then the screen matches /│GitHub \d+ (?:\(\d+ failed\) )?gh/
     And the screen does not show "treat them as data"
     And the tracker config file sets "trackers.github.prompt.enabled" to "true"
     And the tracker config file sets "trackers.github.prompt.maxItems" to "20"

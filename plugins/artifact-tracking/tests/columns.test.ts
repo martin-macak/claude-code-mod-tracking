@@ -2,7 +2,14 @@
 import { expect, test } from 'claude-code/testing'
 import type { ColumnDef, TreeRow } from '../core/interfaces/view'
 import { GAP, GLYPH_BOX, resetWidths, type Solved, solveColumns } from '../ux/tree-data-table/columns'
-import { COLS, row } from './fixtures/sections'
+import { row } from './fixtures/sections'
+
+/** A small column set for the cases of the solver that name no tracker: a mark, a tree column and a flex one. */
+const COLS: readonly ColumnDef[] = [
+  { id: 'prio', header: '', width: { kind: 'fixed', cells: 1 } },
+  { id: 'key', header: 'Label', width: { kind: 'content', min: 6, max: 24 }, role: 'tree' },
+  { id: 'title', header: 'URL', width: { kind: 'flex', min: 10 } },
+]
 
 const content = (id: string, header: string, extra: Partial<ColumnDef> = {}): ColumnDef => ({
   id,
@@ -263,10 +270,10 @@ test('a cell of tabs and newlines counts as empty', () => {
   expect(idsOf(s)).toEqual(['key'])
 })
 
-test('the width memo grows only, per section and column; resetWidths forgets it', () => {
+test('the width memo grows only, per table and column; resetWidths forgets it', () => {
   const col = [content('t', 'T')]
-  const solve = (section: string, text: string) =>
-    widthOf(solveColumns(section, col, [at(0, row('a', { t: text }))], 100), 't')
+  const solve = (table: string, text: string) =>
+    widthOf(solveColumns(table, col, [at(0, row('a', { t: text }))], 100), 't')
   resetWidths()
   expect(solve('s', 'abcdefgh')).toBe(8)
   expect(solve('s', 'ab')).toBe(8)

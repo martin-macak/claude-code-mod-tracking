@@ -1,17 +1,17 @@
-// TreeDataTable: the one component that draws the pane from the trackers' sections. A header row per section, one
-// focus Button per row, a sticky selected row, caps with an "N more" row, a footer of keys, a help view, a budget
+// TreeDataTable: the one component that draws the pane from the groups of the view (today one per section of a tracker).
+// One header row for the whole table, a title row per group, one focus Button per row, a sticky selected row, caps with an "N more" row, a footer of keys, a help view, a budget
 // guard that keeps the footer and a window over the rows that keeps the title, the header and the footer in view when
 // the body is shorter than the tree, and on a docked pane a footer pinned to the last row of the body. Pure: it calls the
 // global `h` through the typed wrappers and touches no state.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L6 Task 8, G9, G10, G16, G18, G20.
 import type { RenderElement } from 'claude-code'
-import type { SectionSpec } from '../../core/interfaces/view'
+import type { GroupSpec } from '../../core/interfaces/view'
 import { guard } from './budget'
 import { box, type TableElements, text } from './el'
 import { footerBox, footerRows, moveHintFits } from './footer'
 import { compactForm, renderHelp } from './help'
-import { type LaidSection, layout } from './layout'
-import { type Draw, drawSection } from './rows'
+import { type LaidGroup, layout } from './layout'
+import { type Draw, drawGroups } from './rows'
 import {
   DEFAULT_BODY_COLUMNS,
   type Drawn,
@@ -25,7 +25,7 @@ import {
 import { EMPTY_TEXT } from './text'
 import { drawWindowed, pageOf, shownRows, type Windowed, windowOf } from './windowed'
 
-export { findRow, handleOf, type LaidRow, type LaidSection, layout, neighbourOf, shownSelection } from './layout'
+export { findRow, handleOf, type LaidGroup, type LaidRow, layout, neighbourOf, shownSelection } from './layout'
 export {
   DEFAULT_BODY_COLUMNS,
   DETAIL_CELLS,
@@ -39,9 +39,9 @@ export {
   UNAVAILABLE,
 } from './shape'
 
-/** The halving steps: from 1 up to the first `k` where every section's halved cap is 1. */
-function halvings(sections: readonly SectionSpec[], view: TableView): number {
-  const wants = sections.map(s => view.limits.sectionRows + view.shown(s.id))
+/** The halving steps: from 1 up to the first `k` where every group's halved cap is 1. */
+function halvings(groups: readonly GroupSpec[], view: TableView): number {
+  const wants = groups.map(g => view.limits.sectionRows + view.shown(g.id))
   let k = 1
   while (k < 32 && wants.some(w => Math.floor(w / 2 ** k) > 1)) k++
   return k
@@ -52,7 +52,7 @@ export const TreeDataTable = {
    * The guard tries a full drawing, one with no detail lines, then the caps halved until each is 1, then one dim
    * line. `handles` and `rows` describe the drawing that was kept.
    */
-  render(sections: readonly SectionSpec[], view: TableView, el: TableElements, actions: TableActions): Drawn {
+  render(groups: readonly GroupSpec[], view: TableView, el: TableElements, actions: TableActions): Drawn {
     const columns = view.bodyColumns ?? DEFAULT_BODY_COLUMNS
     // The move hint only where it adds no footer row (issue #108), so it never turns the help view compact by itself.
     const hint = moveHintFits(view.footer, columns)
@@ -63,7 +63,7 @@ export const TreeDataTable = {
       view.help === null
         ? undefined
         : compactForm(view.help, footerRows(view.footer, columns, hint), columns, view.bodyRows)
-    const laids: (readonly LaidSection[])[] = []
+    const laids: (readonly LaidGroup[])[] = []
     const windows: (Windowed | undefined)[] = []
     const attempt = (halve: number, detail: boolean) => (): RenderElement[] => {
       if (view.help !== null) {
@@ -71,12 +71,12 @@ export const TreeDataTable = {
         windows.push(undefined)
         return [box(el, { flexDirection: 'column' }, ...renderHelp(el, view.help, compact ?? false))]
       }
-      if (sections.length === 0) {
+      if (groups.length === 0) {
         laids.push([])
         windows.push(undefined)
         return [text(el, { dimColor: true }, EMPTY_TEXT)]
       }
-      const laid = layout(sections, view, halve)
+      const laid = layout(groups, view, halve)
       laids.push(laid)
       const rows = laid.flatMap(s => s.rows)
       // A body shorter than the tree shows a window of it (windowed.ts). The ring goes to the selected row when it is drawn
@@ -86,15 +86,15 @@ export const TreeDataTable = {
       const shown = win === undefined ? rows : shownRows(win, laid)
       const focus = (rows.find(r => r.row.id === view.selected) ?? shown[0])?.handle
       const draw: Draw = { el, view, actions, detail, focus }
-      return win === undefined ? laid.map(s => drawSection(draw, s)) : drawWindowed(draw, laid, win)
+      return win === undefined ? drawGroups(draw, laid) : drawWindowed(draw, laid, win)
     }
     const attempts =
-      view.help !== null || sections.length === 0
+      view.help !== null || groups.length === 0
         ? [attempt(0, true)]
         : [
             attempt(0, true),
             attempt(0, false),
-            ...Array.from({ length: halvings(sections, view) }, (_, i) => attempt(i + 1, false)),
+            ...Array.from({ length: halvings(groups, view) }, (_, i) => attempt(i + 1, false)),
           ]
     const { body, step } = guard(footer, attempts, () => [text(el, { dimColor: true }, TOO_LARGE)], view.budget)
     const win = windows[step]
@@ -102,7 +102,7 @@ export const TreeDataTable = {
       s.rows.map(r => ({
         id: r.row.id,
         owner: r.row.owner,
-        section: s.spec.id,
+        group: s.spec.id,
         can: r.row.can,
         handle: r.handle,
         depth: r.depth,

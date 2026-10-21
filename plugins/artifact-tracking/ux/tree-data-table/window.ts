@@ -26,7 +26,10 @@ export interface Plan {
 
 export interface WindowInput {
   readonly units: readonly Unit[]
-  /** The lines the title and the header of a section take. 0 for a section with no row: its unit holds them. */
+  /**
+   * The lines the title line of a group takes. 0 for a group with no row: its unit holds them. The one header of the table
+   * is not in it: `windowOf` takes it off the budget.
+   */
   readonly chrome: readonly number[]
   /** The lines the units may take: the body less the footer and the gap above it. */
   readonly budget: number
@@ -37,8 +40,9 @@ export interface WindowInput {
 }
 
 /**
- * The lines the units `a` to `b` take with what they need around them: the title and the header of each section that
- * shows a unit, one gap between two shown sections (the root Box has `rowGap`), and a hint on each side that has hidden units.
+ * The lines the units `a` to `b` take with what they need around them: the title line of each group that shows a unit,
+ * one gap between two shown groups (the root Box has `rowGap`), and a hint on each side that has hidden units. The one
+ * header of the table is not counted here: `windowOf` takes it off the budget.
  */
 export function linesOf(units: readonly Unit[], chrome: readonly number[], a: number, b: number): number {
   let lines = 0

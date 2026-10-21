@@ -18,7 +18,7 @@ import {
 import { ROW_GAP } from '../ux/tree-data-table/shape'
 import { leaves } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
-import { COLS, row, section } from './fixtures/sections'
+import { row, section } from './fixtures/sections'
 
 const PATH = '/h/.config/claude-code/mods/tracker/config.json'
 // The first title names the keys that move between rows. They are no footer keys (issue #108).
@@ -35,9 +35,9 @@ const nodes = (list: readonly unknown[]) => list as Node[]
 
 test('helpModel groups core keys into pane and row keys, then tracker keys under their section titles', () => {
   const sections = [
-    section('prs', COLS, [row('p1', {}, { owner: 'github' })], { title: 'Pull requests' }),
-    section('github', COLS, [row('g1', {}, { owner: 'github' })], { title: 'GitHub' }),
-    section('web', COLS, [row('w1', {}, { owner: 'web' })], { title: 'Web links' }),
+    section('prs', [row('p1', {}, { owner: 'github' })], { title: 'Pull requests' }),
+    section('github', [row('g1', {}, { owner: 'github' })], { title: 'GitHub' }),
+    section('web', [row('w1', {}, { owner: 'web' })], { title: 'Web links' }),
   ]
   const m = helpModel([...CORE_KEYS, open], sections, PATH, [])
   expect(m.groups.map(g => g.title)).toEqual([PANE_KEYS, 'Row keys (act on the selected row)', 'Pull requests, GitHub'])
@@ -49,24 +49,14 @@ test('helpModel groups core keys into pane and row keys, then tracker keys under
 })
 
 test('helpModel titles a tracker group by its owner id when the owner draws no section', () => {
-  const m = helpModel(
-    [...CORE_KEYS, { ...open, owner: 'quiet' }],
-    [section('web', COLS, [row('w1', {})])],
-    undefined,
-    [],
-  )
+  const m = helpModel([...CORE_KEYS, { ...open, owner: 'quiet' }], [section('web', [row('w1', {})])], undefined, [])
   expect(m.groups.at(-1)?.title).toBe('quiet')
 })
 
 test('helpModel finds the owner of a nested row and groups one owner once', () => {
   const nested = row('top', {}, { owner: 'jira', children: [row('kid', {}, { owner: 'github' })] })
   const second: PaneKey = { ...open, id: 'copy', key: 'c' }
-  const m = helpModel(
-    [...CORE_KEYS, open, second],
-    [section('jira', COLS, [nested], { title: 'Jira work items' })],
-    PATH,
-    [],
-  )
+  const m = helpModel([...CORE_KEYS, open, second], [section('jira', [nested], { title: 'Jira work items' })], PATH, [])
   expect(m.groups.map(g => g.title)).toEqual([PANE_KEYS, 'Row keys (act on the selected row)', 'Jira work items'])
   expect(m.groups[2]?.keys.map(k => k.id)).toEqual(['open', 'copy'])
 })
@@ -133,7 +123,7 @@ test('renderHelp draws the config line and, only with problems, a bold title and
 test('the drawn help and the printed help list the same lines', () => {
   const m = helpModel(
     [...CORE_KEYS, open],
-    [section('github', COLS, [row('g', {}, { owner: 'github' })], { title: 'GitHub' })],
+    [section('github', [row('g', {}, { owner: 'github' })], { title: 'GitHub' })],
     PATH,
     ['P.'],
   )

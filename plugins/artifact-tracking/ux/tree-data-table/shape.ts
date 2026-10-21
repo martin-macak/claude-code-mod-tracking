@@ -11,6 +11,8 @@ export const GUTTER = 2
 export const DEFAULT_BODY_COLUMNS = 80
 /** The blank rows between the body of the pane and its footer. */
 export const ROW_GAP = 1
+/** The row of column names above the groups. The one header of the table, drawn once a row is drawn. */
+export const HEADER_ROWS = 1
 /** A detail line is cut at this many cells. */
 export const DETAIL_CELLS = 500
 export const TOO_LARGE = 'The pane is too large to draw. /track prints the list.'
@@ -43,11 +45,11 @@ export interface TableView {
   readonly placement?: 'dock' | 'inline'
   /** The first unit the last drawing showed in full (`Drawn.top`). The window keeps its place until the focus leaves it. */
   readonly top?: number
-  /** The key of the "N more" Button the ring sits on (`m0`, …). Its section row must show, so the window follows it. */
+  /** The key of the "N more" Button the ring sits on (`m0`, …). Its group row must show, so the window follows it. */
   readonly onMore?: string
   readonly expanded: ReadonlySet<string>
-  /** Rows shown beyond the cap, by section id. */
-  shown(sectionId: string): number
+  /** Rows shown beyond the cap, by group id (`<view>:<group>`, e.g. `list:prs`). */
+  shown(groupId: string): number
   readonly limits: { readonly sectionRows: number; readonly maxRows: number }
   readonly footer: readonly FooterKey[]
   readonly help: HelpModel | null
@@ -57,7 +59,7 @@ export interface TableView {
 
 export interface TableActions {
   toggle(rowId: string): void
-  more(sectionId: string): void
+  more(groupId: string): void
   press(buttonKey: string): void
   /** A press that does no work: it only gives the pane the keys (issue #129). A dim footer key calls it. */
   keys(): void
@@ -66,7 +68,8 @@ export interface TableActions {
 export interface DrawnRow {
   readonly id: string
   readonly owner: string
-  readonly section: string
+  /** The id of the group the row sits in. */
+  readonly group: string
   readonly can: TreeRow['can']
   readonly handle: string
   readonly depth: number

@@ -12,7 +12,7 @@ const ALL = { dismiss: true, priority: true } as const
 const ref = (owner: string, ...can: [RowRef['can']] | []): RowRef => ({
   id: 'row-1',
   owner,
-  section: 's',
+  group: 's',
   can: can.length === 0 ? ALL : can[0],
 })
 const items = (owner: string) => owner === 'items'

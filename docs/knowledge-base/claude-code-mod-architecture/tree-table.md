@@ -7,6 +7,7 @@ The page gives prior art, what the engine allows, constraints and options. Recom
 Short answer:
 
 - **Keys.** Tab and Shift+Tab walk the rows through the engine focus ring (`verified-live`). Up and Down only scroll while the tree is taller than the pane. A hotkey is one lowercase letter or digit. No other key reaches a pane.
+- **One table.** Since [issue #63](https://github.com/martin-macak/claude-code-mod-tracking/issues/63) (L1) the pane draws one header row for every group of rows, over columns that every tracker shares ([§5.5a](#55a-one-table-with-shared-columns-issue-63-l1)).
 - **Window.** A pane cannot pin a header or a footer, but the mod can keep the tree as tall as the body: it draws the rows that fit and every other row as a bare focus stop, and a `ui.focus` hook that selects the row moves the window (`verified-live`, [§3.2](#32-keyboard), issue #109). A docked pane also pins the footer to the last row of its body (`verified-live`, the same rows). The focus ring sits on a position among the Buttons, not on a key, so every row must keep its stop in the same order.
 - **Selection.** A `ui.focus` hook may write a `selected` atom. A render hook may not (`verified-kit`). Live, the highlight follows Tab on the first frame and the ring stays on the same `Button` (`verified-live`). Make the selection sticky: write `selected` only for row keys.
 - **Hotkeys.** A hotkey acts on the selected row and does not move the ring (`verified-live`). Read the selection from state at press time.
@@ -378,6 +379,87 @@ Rules:
 | Move the table into a `Client` region | Sticky header possible, but a click is needed for focus. |
 
 **Recommendation (inference):** a non-sticky header row per section in the first version. **Decided (D11, 2026-10-17):** one non-sticky header row per section. Live, the footer is not sticky either ([§3.2](#32-keyboard)): a status line in the header or the footer is hidden while the window sits between them.
+
+**Replaced by issue #63, L1 (2026-10-21):** the pane has one header row for the whole table, not one per section ([§5.5a](#55a-one-table-with-shared-columns-issue-63-l1)). D11 stands for the rest: the header is not sticky, and the window keeps it in view.
+
+### 5.5a One table with shared columns (issue #63, L1)
+
+The sections of the trackers have no columns of their own any more. Every row writes the same columns, and one solver sizes them over the rows of every group. `SectionSpec` lost `columns`. A tracker writes cells by `ColumnId` and badges in `TreeRow.extras` (`inference` for the design, `verified-kit` and `verified-live` for the layout below).
+
+| Column | Width | Priority | Header | Holds |
+| --- | --- | --- | --- | --- |
+| `control` | `fixed(2)` | | none | The level marker (`★ ▲ ▽`). |
+| `name` | `content(6, 24)`, tree | | `Name` | The key of the row, with the indent and the fold glyph. |
+| `description` | `flex(10)` | | `Description` | The title, the URL, the branch or the path. |
+| `type` | `content(max 20)` | 2 | `Type` | The kind: branch of a PR, issue type, origin. |
+| `status` | `content(max 14)` | | `Status` | The state word, with its color token. |
+| `extras` | `content(max 14)` | 1 | none | Badges: the cells of `TreeRow.extras`, one `Text` each, a space between. |
+
+- **Drop order.** A pane too narrow for the columns drops the highest priority number first: `type`, then `extras`. Control, name, description and status stay. At 96 body cells all six show. At 49 and at 40 the type and the extras are gone (`verified-kit`, `tests/shared-columns.test.ts`).
+- **Caps (review of the L1 PR).** The design study planned 12 cells for the type and 10 for the status. That cut a Jira status (`In Progress` read `In Progre…`) and a PR branch, an agent worktree and a repo's agents that the sections showed whole. The sections cut a Jira status at 14, a PR branch at 26, an agent worktree and a repo's agents at 20 and a process kind at 18. The shared caps are 20 and 14, so only a PR branch of 21 to 26 cells reads shorter than before (cut in the middle). With a full row (name 19, type 15, status 11, extras 14) all six columns show from 78 body cells, the type drops under 78 and the extras under 62 (`verified-kit`, `tests/shared-columns.test.ts`).
+- **Badges.** A badge is a `Cell` with no Button, so it takes no Tab stop. A badge that fits is drawn whole. The first one that does not fit is cut to the room left (two cells at least), and the rest are left out. Enter on a row lists each badge that the column cut, one detail line each, with no label: the column has no header word and its id is not for the person (`verified-kit`, `tests/table.test.ts`). A PR row has the merge chip, the checks and the hint, in that order.
+- **One solution.** The width memo is keyed by `table/column`, and the solver reads the rows of every group, drawn or not. A window that moves over the rows never changes a width, and the cells of two groups stand under one header.
+- **Group title.** One line: the title (bold), the number of rows of the group, `(n failed)` in the error color when the band of the section counts failures, then the note. The count is `SectionSpec.count` when the section sets it, else its top-level rows. Worktrees and Agents hang every row under one root row (the root worktree, the master agent), so they set the rows they hold: `Worktrees 4`, `Agents 5` in the pane world (`verified-kit`, `tests/tracker-sections.test.ts`). The caps of the table still count top-level rows. The `/track` text prints `title  note` as before and no count (`verified-kit`, `tests/list-text-golden.test.ts`, byte for byte).
+- **Window budget.** The table header is one line that no group owns. The budget is the body less the footer, the gap above it and that line. A group that shows a row costs its title line, not a title and a header, so a body of 11 rows keeps one more row for each group after the first than before (`verified-kit`, `tests/table-window.test.ts`). The floor does not change: header, group title, one row, two hints, the gap and the footer need 7 rows.
+- **Caps.** The rows opened with "N more" are keyed by the id of the group, `<view>:<group>` (`list:prs` in the by-list view). `RowRef.group` and `DrawnRow.group` hold that id. It is no tracker section id: L3 code that reads it must not treat `status:failed` as a section.
+- **L3 task: the help titles.** `helpOf` titles a tracker by the groups that hold its rows. In L1 the drawn groups are the by-list groups, so the titles are the section titles. L3 adds views, and the drawn groups of the status view would title the GitHub keys "Failed, Active". L3 must pass `listGroups(...)` of the sections to `helpOf` (in `PaneSession.draw` and in `helpTextOf`), whatever the view.
+
+Live check, Claude Code 2.1.306, tmux, the mod loaded from the branch with `--plugin-dir`, model haiku, the e2e fake gh, a PR in conflict, a worktree made by Claude and a background `sleep` (`verified-live`). The frames below were taken before the review raised the caps of the type to 20 and of the status to 14 (they show a type cap of 12). What the caps change in them, `verified-kit` and not repeated live: the docked frame stays as it is (the type and the extras are gone). In the inline frames the Type column is 15 cells wide, `feat/fake-frame` and `background task` read whole in place of `feat/f…frame` and `background …`, and the Description column is 3 cells narrower. Frames of the pane:
+
+**Docked, 120x37** (the pane is 49 cells wide: the type and the extras columns are gone; the body is 31 rows, the footer sits on its last rows):
+
+```text
+│                                                   ✕
+│     Name                       Description   Status
+│Worktrees 1 git · 1 live · checked 18s ago
+│>    ▾ claude-code-mod-tracking feat/f…-frame
+│       ▸ demo-wt                worktr…emo-wt
+│
+│Pull requests 1 gh · refreshed 47s ago
+│     ▸ #7                       Draw the fak… open
+│
+│Processes 1 1 tracked
+│     ▸ bg                       sleep 900     running
+│  … 20 blank rows …
+│r: refresh  h: help  x: dismiss  1: high  2: normal
+│3: low  0: auto  Tab ↑↓ move  Esc close
+│
+```
+
+**Inline, 100x40** (the body is 11 rows: the header, the title of the first group with its rows and the next group, a hint, the gap and the footer; the process row is the "1 more below"):
+
+```text
+╭────────────────────────────────────────────────────────────────────────────────────────────────✕─╮
+│      Name                       Description                  Type         Status                 │
+│ Worktrees 1 git · 1 live · checked 18s ago                                                       │
+│ >    ▾ claude-code-mod-tracking feat/fake-frame                                                  │
+│        ▸ demo-wt                worktree-demo-wt                                                 │
+│                                                                                                  │
+│ Pull requests 1 gh · refreshed 47s ago                                                           │
+│      ▸ #7                       Draw the fake PR             feat/f…frame open    ✗ conflicts ✓… │
+│   ▼ 1 more below                                                                                 │
+│                                                                                                  │
+│ r: refresh  h: help  x: dismiss  1: high  2: normal  3: low  0: auto  Tab ↑↓ move  Esc close     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+**Inline, 100x40, after three Tabs** (the window follows the selected row: the header and the footer stay, the groups above scroll out):
+
+```text
+╭────────────────────────────────────────────────────────────────────────────────────────────────✕─╮
+│      Name                       Description                  Type         Status                 │
+│ Pull requests 1 gh · refreshed 51s ago                                                           │
+│   ▲ 2 more above                                                                                 │
+│      ▸ #7                       Draw the fake PR             feat/f…frame open    ✗ conflicts ✓… │
+│                                                                                                  │
+│ Processes 1 1 tracked                                                                            │
+│ >    ▸ bg                       sleep 900                    background … running                │
+│                                                                                                  │
+│ r: refresh  h: help  x: dismiss  1: high  2: normal  3: low  0: auto  Tab ↑↓ move  Esc close     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+The extras column cuts `✗ conflicts ✓ checks` of a conflicted PR at 14 cells, so only the chip and the start of the checks show. The detail lines of the row hold both. In the docked pane (49 cells) the type goes first and the extras go too when a long name takes the room, so the chip and the checks are not on the row there (`verified-kit`, `tests/one-table.test.ts`). The band still counts the conflict. Whether 14 cells is enough, whether the notes keep their counts and whether the selected-row line shows the badges of a docked pane is [Q35](open-questions.md#1-unknowns).
 
 ### 5.6 Colors (U4)
 

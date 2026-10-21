@@ -8,7 +8,7 @@ import type { RenderElement } from 'claude-code'
 import { route } from '../core/infra/keys'
 import { reason } from '../core/infra/steps'
 import type { Ports } from '../core/interfaces/ports'
-import type { SectionSpec } from '../core/interfaces/view'
+import type { GroupSpec } from '../core/interfaces/view'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import type { TableElements } from '../ux/tree-data-table/el'
 import { hintRows, withKeysHint } from '../ux/tree-data-table/hint'
@@ -25,7 +25,7 @@ import {
 } from '../ux/tree-data-table/table'
 import { WorkQueue } from './pane-queue'
 import { type Press, Refocus, unlessClosed } from './pane-refocus'
-import { helpOf, type PaneHost, shownOf } from './pane-text'
+import { helpOf, type PaneHost, paneGroups, shownOf } from './pane-text'
 import { openTurn, type TurnPaneHost } from './pane-turn'
 
 export { helpOf, helpTextOf, listText, type PaneHost, TEXT_VIEW, turnLabels } from './pane-text'
@@ -45,7 +45,7 @@ export type PaneDrawProps = {
 /** Who moved the ring: the person (Tab, arrows, click) or the plugin itself (`UiFocusOrigin.kind`). */
 export type FocusOrigin = 'person' | 'plugin'
 
-/** The key of the "N more" Button of a section. */
+/** The key of the "N more" Button of a group. */
 const MORE_KEY = /^m\d+$/
 
 export class PaneSession {
@@ -58,14 +58,14 @@ export class PaneSession {
   private onMore: string | undefined
   /** The rows of the last drawing that held any. The help view and an empty pane draw none (issue #49). */
   private rows: readonly DrawnRow[] = []
-  private sections: readonly SectionSpec[] = []
+  private groups: readonly GroupSpec[] = []
   /** The `selected` atom as the last drawing read it, and the row that drawing treated as selected (issue #49). */
   private chosen: { readonly atom: string | null; readonly id: string | null } | undefined
   private readonly refocus = new Refocus()
   private readonly work = new WorkQueue()
 
   /**
-   * Reads the state and the sections, and draws. It writes nothing and calls no entry (E9). `focused` is
+   * Reads the state and the groups, and draws. It writes nothing and calls no entry (E9). `focused` is
    * `Pane.isFocused`: with `false` the keys go to the prompt box, so the selected row is not drawn live and a hint says why.
    */
   async draw(p: Ports, m: PaneHost, el: TableElements, props: PaneDrawProps = {}): Promise<RenderElement> {
@@ -75,14 +75,14 @@ export class PaneSession {
       p.state.selected.get(),
       p.state.help.get(),
     ])
-    const sections = await m.paneData(p, { selected, expanded: new Set(expanded) })
-    const shown = await shownOf(p, sections)
+    const groups = await paneGroups(p, m, { selected, expanded: new Set(expanded) })
+    const shown = await shownOf(p, groups)
     const limits = m.config.global().ui
     // A row can hide with no key from the person. The drawing, the ring and the keys then follow the row the selection
     // falls to. The atom is not written here (E9): `pressed` reads the same row from `chosen` (issue #49). The window
     // follows that row too (`view.selected`), so a row that hid moves it onto the row the selection fell to (issue #109).
     const chosen = shownSelection(
-      sections,
+      groups,
       { expanded: new Set(expanded), shown: id => shown.get(id) ?? 0, limits },
       selected,
       this.rows,
@@ -111,15 +111,15 @@ export class PaneSession {
       limits,
       // The help view works only `r` and `h`, so its footer is drawn as with no row selected: a tracker's dim, inert keys
       // would wrap the footer to a second row and push `Pane keys` out of the body again (issue #105).
-      footer: await m.footer(p, help ? undefined : findRow(sections, chosen), help),
-      help: help ? helpOf(m, sections) : null,
+      footer: await m.footer(p, help ? undefined : findRow(groups, chosen), help),
+      help: help ? helpOf(m, groups) : null,
     }
-    const drawn = TreeDataTable.render(sections, view, el, this.actionsOf(p, m, focused === false))
+    const drawn = TreeDataTable.render(groups, view, el, this.actionsOf(p, m, focused === false))
     this.refocus.seen(drawn)
     this.drawn = drawn
     if (!help) this.top = drawn.top // the help view draws no window: its place of 0 would reset the one the rows left
     if (drawn.rows.length > 0) this.rows = drawn.rows
-    this.sections = sections
+    this.groups = groups
     // The help view fills the body of a short pane to the row (issue #92): no line is added to it.
     this.refocus.frame({ help, ids: new Set(drawn.rows.map(r => r.id)) }) // a press that waits for a frame like this one goes on
     return hinted ? withKeysHint(el, drawn.tree) : drawn.tree
@@ -268,10 +268,10 @@ export class PaneSession {
       // row, a row the window may hide. The ring goes back onto the selected row, as after `x`, and the window follows it.
       // The press asks for the keys too, once: `Refocus.to` asks before it asks for the ring, and with no row selected there
       // is no ring request, so the press asks alone.
-      more: sectionId => {
+      more: groupId => {
         const press = this.pressOf(keysInPrompt)
         this.work.detach(p, 'more', async () => {
-          await p.state.shown.update(sectionId, n => n + m.config.global().ui.sectionRows)
+          await p.state.shown.update(groupId, n => n + m.config.global().ui.sectionRows)
           this.onMore = undefined
           const selected = await this.selectedRow(p) // the atom names a row that hid: it has no handle for the ring
           if (selected !== null) await this.refocus.to(p, m, selected, press)
@@ -308,7 +308,7 @@ export class PaneSession {
     if (!begun.still()) return // the read took time: after a closing and a reopening it returns a row of the new pane
     await this.refocus.askKeys(p, begun)
     const afterAsk: Press = { ...begun, keys: false } // one press asks once: the refocus below must not ask again
-    const row = findRow(this.sections, selected)
+    const row = findRow(this.groups, selected)
     const to = route(key, row, owner => m.isItemOwner(owner))
     switch (to.to) {
       case 'refresh':

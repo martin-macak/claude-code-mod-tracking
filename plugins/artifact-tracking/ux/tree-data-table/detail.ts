@@ -4,7 +4,7 @@
 // Decision G13 of plan L6. Spec 5.10 "Rows".
 import type { ColumnDef, DetailLine, TreeRow } from '../../core/interfaces/view'
 import { cellWidth, normaliseCell } from '../text/cell-width'
-import { GLYPH_BOX, type Solved } from './columns'
+import { cellOf, GLYPH_BOX, type Solved } from './columns'
 import { indentOf, NOTHING_MORE } from './shape'
 
 /** The one line that says why the row is tracked: every reason, strongest first (issue #62). None for a row with no reasons. */
@@ -32,16 +32,22 @@ export function detailOf(
   )
   const lines: DetailLine[] = []
   for (const def of columns) {
-    const cell = row.cells[def.id]
+    const cell = cellOf(row, def.id)
     const text = normaliseCell(cell?.text ?? '')
     if (cell === undefined || text.trim() === '') continue
     const have = room.get(def.id)
-    // The links follow below, so a clipped cell leaves its own href out.
-    if (have === undefined || cellWidth(text) > have)
-      lines.push({ label: def.header || def.id, cell: { ...cell, href: undefined } })
+    if (have !== undefined && cellWidth(text) <= have) continue
+    // The links follow below, so a clipped cell leaves its own href out. The badges of the extras column keep their own
+    // color, so each is a line of its own. A badge line has no label: the column has no header word, and its id is not
+    // for the person.
+    if (def.id === 'extras') {
+      for (const badge of row.extras ?? []) {
+        if (normaliseCell(badge.text).trim() !== '') lines.push({ cell: { ...badge, href: undefined } })
+      }
+    } else lines.push({ label: def.header || def.id, cell: { ...cell, href: undefined } })
   }
   const links = new Set(
-    columns.map(def => row.cells[def.id]?.href).filter((h): h is string => h !== undefined && h !== ''),
+    columns.map(def => cellOf(row, def.id)?.href).filter((h): h is string => h !== undefined && h !== ''),
   )
   for (const href of links) lines.push({ label: 'link', cell: { text: href } })
   lines.push(...why)

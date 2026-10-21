@@ -3,10 +3,10 @@ import { expect, test } from 'claude-code/testing'
 import type { SectionSpec } from '../core/interfaces/view'
 import { bandText, renderBand } from '../ux/band'
 import { EL } from './fixtures/elements'
-import { COLS, section } from './fixtures/sections'
+import { section } from './fixtures/sections'
 
 const part = (label: string, count: number, failing = 0): SectionSpec =>
-  section(label.toLowerCase(), COLS, [], { band: { label, count, failing } })
+  section(label.toLowerCase(), [], { band: { label, count, failing } })
 
 interface Node {
   type: string
@@ -20,7 +20,7 @@ test('bandText joins label and count with · and adds (n ✗) when failing', () 
 })
 
 const conflicted = (label: string, count: number, failing: number, conflicts: number): SectionSpec =>
-  section(label.toLowerCase(), COLS, [], { band: { label, count, failing, conflicts } })
+  section(label.toLowerCase(), [], { band: { label, count, failing, conflicts } })
 
 test('AC7: bandText puts the conflicts next to the ✗ count: PRs 3 (1 ✗ · 2 conflicts)', () => {
   expect(bandText([conflicted('PRs', 3, 1, 2)])).toBe('PRs 3 (1 ✗ · 2 conflicts)')
@@ -36,7 +36,7 @@ test('bandText: conflicts alone read (n conflicts); a zero or absent count adds 
 test('bandText leaves out a zero count and gives null when all are zero or none has a band', () => {
   expect(bandText([part('Jira', 0), part('Links', 2), part('Files', 0)])).toBe('Links 2')
   expect(bandText([part('Jira', 0), part('Links', 0)])).toBeNull()
-  expect(bandText([section('web', COLS, [])])).toBeNull()
+  expect(bandText([section('web', [])])).toBeNull()
   expect(bandText([])).toBeNull()
 })
 

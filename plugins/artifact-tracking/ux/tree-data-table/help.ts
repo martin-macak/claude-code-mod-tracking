@@ -5,7 +5,7 @@
 // Issue #65: the version line. Issue #105: the compact form fits the body (keys to a line from the width, capped problems).
 
 import type { RenderElement } from 'claude-code'
-import type { HelpGroup, HelpModel, PaneKey, SectionSpec, TreeRow } from '../../core/interfaces/view'
+import type { GroupSpec, HelpGroup, HelpModel, PaneKey, TreeRow } from '../../core/interfaces/view'
 import { cellWidth } from '../text/cell-width'
 import { wrapRows } from '../text/wrap'
 import { box, type TableElements, text } from './el'
@@ -19,16 +19,19 @@ const ROW_KEYS = 'Row keys (act on the selected row)'
 const owns = (rows: readonly TreeRow[], owner: string): boolean =>
   rows.some(r => r.owner === owner || owns(r.children ?? [], owner))
 
-/** A tracker's group title: the titles of the sections it draws rows in, or its id when it draws none. */
-function titleOf(owner: string, sections: readonly SectionSpec[]): string {
-  const titles = sections.filter(s => owns(s.rows, owner)).map(s => s.title)
+/** What the help view reads of a group: its title and its rows. A section of a tracker has both. */
+type Titled = Pick<GroupSpec, 'title' | 'rows'>
+
+/** A tracker's group title: the titles of the groups it draws rows in, or its id when it draws none. */
+function titleOf(owner: string, groups: readonly Titled[]): string {
+  const titles = groups.filter(g => owns(g.rows, owner)).map(g => g.title)
   return titles.length > 0 ? titles.join(', ') : owner
 }
 
 /** Groups: the core pane keys, the core row keys, then one group per tracker that has keys, in order of first key. */
 export function helpModel(
   keys: readonly PaneKey[],
-  sections: readonly SectionSpec[],
+  drawn: readonly Titled[],
   configPath: string | undefined,
   problems: readonly string[],
   version?: string,
@@ -37,7 +40,7 @@ export function helpModel(
   const groups: HelpGroup[] = [
     { title: PANE_KEYS, keys: keys.filter(k => k.owner === 'core' && k.scope === 'pane') },
     { title: ROW_KEYS, keys: keys.filter(k => k.owner === 'core' && k.scope === 'row') },
-    ...owners.map(owner => ({ title: titleOf(owner, sections), keys: keys.filter(k => k.owner === owner) })),
+    ...owners.map(owner => ({ title: titleOf(owner, drawn), keys: keys.filter(k => k.owner === owner) })),
   ]
   return { groups: groups.filter(g => g.keys.length > 0), configPath, problems, version }
 }

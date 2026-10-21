@@ -15,15 +15,15 @@ Feature: Set the priority of a tracked item with the keys
     And I press "Tab"
     Then the selected row shows "three.example"
     When I press "1"
-    Then the screen matches /Web links 3 links[^\n]*\n[^\n]*│ +Label[^\n]*\n[^\n]*│> ▲ ▸ three\.example/
+    Then the screen matches /│ +Name[^\n]*\n[^\n]*Web links 3 +3 links[^\n]*\n[^\n]*│> ▲ +▸ three\.example/
     When I press "3"
-    Then the screen matches /│ +▸ +two\.example\/b[^\n]*\n[^\n]*│> ▽ ▸ three\.example/
+    Then the screen matches /│ +▸ +two\.example\/b[^\n]*\n[^\n]*│> ▽ +▸ three\.example/
     When I press "0"
     Then the screen stops showing "▽"
     And the selected row shows "three.example"
     # three moves to the top again. x drops the selected row, and the next row (one) takes the selection.
     When I press "1"
-    Then the screen matches /Web links 3 links[^\n]*\n[^\n]*│ +Label[^\n]*\n[^\n]*│> ▲ ▸ three\.example/
+    Then the screen matches /│ +Name[^\n]*\n[^\n]*Web links 3 +3 links[^\n]*\n[^\n]*│> ▲ +▸ three\.example/
     When I press "x"
     Then the screen stops showing "▲"
-    And the screen matches /Web links 2 links[^\n]*\n[^\n]*│ +Label[^\n]*\n[^\n]*│> +▸ +one\.example\/a[^\n]*\n[^\n]*│ +▸ +two\.example\/b/
+    And the screen matches /│ +Name[^\n]*\n[^\n]*Web links 2 +2 links[^\n]*\n[^\n]*│> +▸ +one\.example\/a[^\n]*\n[^\n]*│ +▸ +two\.example\/b/

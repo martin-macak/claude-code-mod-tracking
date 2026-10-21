@@ -3,7 +3,7 @@
 // synthetic records. The pane-world cases are in item-sections.test.ts.
 import { expect, test } from 'claude-code/testing'
 import type { Effective } from '../core/interfaces/items'
-import type { Cell, TreeRow } from '../core/interfaces/view'
+import type { Cell, CellId, TreeRow } from '../core/interfaces/view'
 import { addReason } from '../core/lib/reasons'
 import { githubRow } from '../trackers/github/rows'
 import { jiraSiteKey, nestedJira } from '../trackers/jira/nested'
@@ -55,8 +55,8 @@ const jira = (issueKey: string, over: Partial<JiraRecord> = {}): JiraRecord => (
   ...over,
 })
 
-const text = (row: TreeRow | undefined, id: string): string => row?.cells[id]?.text ?? '<no cell>'
-const cellOf = (row: TreeRow | undefined, id: string): Cell => row?.cells[id] ?? { text: '<no cell>' }
+const text = (row: TreeRow | undefined, id: CellId): string => row?.cells[id]?.text ?? '<no cell>'
+const cellOf = (row: TreeRow | undefined, id: CellId): Cell => row?.cells[id] ?? { text: '<no cell>' }
 
 /** Every row of a tree with its depth, parents first. */
 function flat(rows: readonly TreeRow[], depth = 0): { row: TreeRow; depth: number }[] {
@@ -70,7 +70,7 @@ function rootsOf(records: readonly JiraRecord[], e: JiraEnv = env()): TreeRow[] 
   return records.filter(r => !nested.has(jiraSiteKey(r.site, r.issueKey))).map(r => jiraRow(r, e, tracked))
 }
 
-const keysOf = (rows: readonly TreeRow[]) => flat(rows).map(({ row, depth }) => [text(row, 'key'), depth])
+const keysOf = (rows: readonly TreeRow[]) => flat(rows).map(({ row, depth }) => [text(row, 'name'), depth])
 
 // ---------------------------------------------------------------- the Jira tree
 
@@ -94,10 +94,10 @@ test('jira tree: root, children and subtasks with depth, ids, links and tones', 
     [`jira:${SITE}/ISS-101/ISS-110`, 1],
   ])
   const [root, child, sub, leaf] = rows.map(r => r.row)
-  expect([text(root, 'key'), text(root, 'title'), text(root, 'type')]).toEqual(['ISS-101', 'Onboarding', 'Epic'])
+  expect([text(root, 'name'), text(root, 'description'), text(root, 'type')]).toEqual(['ISS-101', 'Onboarding', 'Epic'])
   expect(cellOf(root, 'status')).toEqual({ text: 'In Progress', fg: 'warning' })
-  expect(cellOf(root, 'key').href).toBe(`https://${SITE}/browse/ISS-101`)
-  expect(cellOf(child, 'key').href).toBe(`https://${SITE}/browse/ISS-102`)
+  expect(cellOf(root, 'name').href).toBe(`https://${SITE}/browse/ISS-101`)
+  expect(cellOf(child, 'name').href).toBe(`https://${SITE}/browse/ISS-102`)
   expect(cellOf(sub, 'status')).toEqual({ text: 'Done', fg: 'success' })
   expect(cellOf(leaf, 'status')).toEqual({ text: 'To Do' })
   expect(root?.expandedByDefault).toBe(true)
@@ -119,7 +119,7 @@ test('jira child rows sort by priority inside their parent and stay in the tree'
 
 test('jira title falls back to the label; not-found wins over everything', () => {
   const [row] = rootsOf([jira('ISS-5', { error: { kind: 'not-found', message: 'x', at: 1 } })])
-  expect(text(row, 'title')).toBe('ISS-5')
+  expect(text(row, 'description')).toBe('ISS-5')
   expect(cellOf(row, 'status')).toEqual({ text: 'not found', fg: 'error' })
 })
 
@@ -179,8 +179,8 @@ test('tracked jira child: the nested row keeps the via marker and the level of t
   const [root] = rootsOf([subParent, high, sub2], e)
   const nested = root?.children?.[0]
   expect(nested?.id).toBe(`${subParent.key}/BUG-3202`)
-  expect(text(nested, 'title')).toBe('↳#2659 Sub BUG-3202')
-  expect(text(nested, 'prio')).toBe('▲')
+  expect(text(nested, 'description')).toBe('↳#2659 Sub BUG-3202')
+  expect(text(nested, 'control')).toBe('▲')
   expect(nested?.can).toEqual({ dismiss: false, priority: true })
   expect(root?.can).toEqual({ dismiss: true, priority: true })
 })
@@ -204,8 +204,8 @@ test('tracked jira child: a record named by two PRs shows both on its nested row
     via: ['gh:github.com/o/r#1', 'gh:github.com/o/r#2'],
   })
   const rows = flat(rootsOf([subParent, both])).map(r => r.row)
-  expect(rows.filter(r => text(r, 'key') === 'BUG-3202')).toHaveLength(1)
-  expect(text(rows[1], 'title')).toBe('↳#1,#2 Sub BUG-3202')
+  expect(rows.filter(r => text(r, 'name') === 'BUG-3202')).toHaveLength(1)
+  expect(text(rows[1], 'description')).toBe('↳#1,#2 Sub BUG-3202')
 })
 
 test('tracked jira child: without the parent (dismissed or never tracked) the children are roots', () => {
@@ -257,7 +257,7 @@ test('tracked jira child: identity is site and key: case does not matter, anothe
     ['a-2', 1],
     ['A-2', 0],
   ])
-  expect(cellOf(rows[1], 'key').href).toContain('other.atlassian.net')
+  expect(cellOf(rows[1], 'name').href).toContain('other.atlassian.net')
 })
 
 test('tracked jira child: a cycle in stale data keeps every record as a root', () => {
@@ -265,7 +265,7 @@ test('tracked jira child: a cycle in stale data keeps every record as a root', (
     keys.map((k, i) => jira(k, { firstSeen: i + 1, children: [node(keys[(i + 1) % keys.length]!, 'To Do', 'new')] }))
   expect(nestedKeys(ring(['A', 'B']))).toEqual([])
   expect(nestedKeys(ring(['A', 'B', 'C']))).toEqual([])
-  expect(rootsOf(ring(['A', 'B', 'C'])).map(r => text(r, 'key'))).toEqual(['A', 'B', 'C'])
+  expect(rootsOf(ring(['A', 'B', 'C'])).map(r => text(r, 'name'))).toEqual(['A', 'B', 'C'])
 })
 
 // ---------------------------------------------------------------- GitHub status words
@@ -292,11 +292,11 @@ test('github status and tone: open ok, merged and closed dim, draft dim, not fou
   expect(text(githubRow(gh({ type: 'issue' }), ghEnv), 'type')).toBe('Issue')
 })
 
-test('github checks: failure red, pending yellow, success green; none and absent leave the cell empty', () => {
-  const extra = (checks: GitHubRecord['checks']) => cellOf(githubRow(gh({ state: 'open', checks }), ghEnv), 'extra')
-  expect(extra('failure')).toEqual({ text: '✗ checks', fg: 'error' })
-  expect(extra('pending')).toEqual({ text: '… checks', fg: 'warning' })
-  expect(extra('success')).toEqual({ text: '✓ checks', fg: 'success' })
-  expect(extra('none').text).toBe('')
-  expect(extra(undefined).text).toBe('')
+test('github checks: failure red, pending yellow, success green; none and absent leave no badge', () => {
+  const extras = (checks: GitHubRecord['checks']) => githubRow(gh({ state: 'open', checks }), ghEnv).extras
+  expect(extras('failure')).toEqual([{ text: '✗ checks', fg: 'error' }])
+  expect(extras('pending')).toEqual([{ text: '… checks', fg: 'warning' }])
+  expect(extras('success')).toEqual([{ text: '✓ checks', fg: 'success' }])
+  expect(extras('none')).toBeUndefined()
+  expect(extras(undefined)).toBeUndefined()
 })

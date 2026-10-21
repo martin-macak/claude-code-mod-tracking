@@ -10,11 +10,11 @@ import { NO_VIEW } from '../core/infra/views'
 import type { Claim, ItemKind, Refreshable, RefreshContext, StoredItem } from '../core/interfaces/items'
 import type { KindReason } from '../core/interfaces/reasons'
 import type { Tracker } from '../core/interfaces/tracker'
-import type { ColumnDef, SectionSpec, ViewContext } from '../core/interfaces/view'
+import type { SectionSpec, ViewContext } from '../core/interfaces/view'
 import { bool, specOf } from '../core/lib/normalise'
 import { kindReason, reasonOfSource, reasonSet } from '../core/lib/reasons'
 import { type BaseRecord, sighted } from '../core/lib/records'
-import { content, flex, itemRow, PRIO_COLUMN, sortedByLevel } from '../core/lib/rows'
+import { itemRow, sortedByLevel } from '../core/lib/rows'
 import { DISMISS, TRACKERS } from '../trackers'
 import { fakeConfig } from './fixtures/config-fs'
 import { promptRow, res, toolResultRow } from './fixtures/items'
@@ -108,12 +108,6 @@ const noteKind: ItemKind<NoteRecord> = {
     }),
 }
 
-const NOTES_COLUMNS: readonly ColumnDef[] = [
-  PRIO_COLUMN,
-  { id: 'key', header: 'Note', width: content(6, 24), role: 'tree' },
-  { id: 'title', header: 'Title', width: flex(10) },
-]
-
 /** What the `notes` command handler heard: the arguments of each `/track notes …`. */
 function notesTracker(heard: string[]): Tracker {
   return {
@@ -140,7 +134,6 @@ function notesTracker(heard: string[]): Tracker {
           id: 'notes',
           title: 'Notes',
           rank: 65,
-          columns: NOTES_COLUMNS,
           rows: own.map(rec => noteKind.row(rec, ctx)),
         },
       ]
@@ -213,7 +206,7 @@ test('ocp: a tracker added only through a test-local list is captured, refreshed
   expect(ids[ids.indexOf('web') + 1]).toBe('notes')
   const notes = sections.find(s => s.id === 'notes')
   expect(notes?.title).toBe('Notes')
-  expect(notes?.rows.map(r => [r.id, r.owner, r.cells.title?.text])).toEqual([['note:7', 'notes', 'Seven']])
+  expect(notes?.rows.map(r => [r.id, r.owner, r.cells.description?.text])).toEqual([['note:7', 'notes', 'Seven']])
 
   // The router: the sub-command reaches the tracker's handler with its arguments, and the hint names it.
   await t.m.track(p, 'notes 7')

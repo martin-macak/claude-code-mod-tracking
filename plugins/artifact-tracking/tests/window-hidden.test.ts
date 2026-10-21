@@ -76,7 +76,7 @@ test('the selected row hides in a windowed pane: the selection falls to a row in
   const session = new PaneSession()
   const draw = () => session.draw(t.w.ports, t.m as PaneHost, EL, BODY)
   const before = await draw()
-  expect(rowsOf(before).filter(r => r.startsWith('>'))).toEqual(['>|bg|bg:done7|background task|completed'])
+  expect(rowsOf(before).filter(r => r.startsWith('>'))).toEqual(['>||bg|bg:done7|background task|completed'])
 
   t.w.clock.now = NOW + 10 * MIN // 50 min after they ended: every ended row is past its TTL
   const after = await draw()
@@ -85,7 +85,7 @@ test('the selected row hides in a windowed pane: the selection falls to a row in
   expect(handlesOf(before).length - stops).toBe(8) // the eight hidden rows lost their stops
   // The window follows the row the selection fell to: the last live row is in view and marked, nothing is below it, and the
   // hint above counts the rows out of view and no hidden row.
-  expect(rowsOf(after).filter(r => r.startsWith('>'))).toEqual(['>|bg|bg:live7|background task|running'])
+  expect(rowsOf(after).filter(r => r.startsWith('>'))).toEqual(['>||bg|bg:live7|background task|running'])
   const hint = (word: 'above' | 'below'): number =>
     Number(
       texts(after)

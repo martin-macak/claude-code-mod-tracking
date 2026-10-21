@@ -49,13 +49,11 @@ const lineOf = (text: string, s: string) => text.split('\n').findIndex(l => l.in
 // ---------------------------------------------------------------- rows
 
 for (const surface of ['terminal', 'desktop'] as const) {
-  test(`pane: each section has a bold header row with its column headers (${surface})`, async ($, on) => {
+  test(`pane: one bold header row names the columns of every group, and no group has its own (${surface})`, async ($, on) => {
     const w = world(on)
     await listed($, w, 'Look at issue #5 and https://acme.atlassian.net/browse/ISS-1', prompt)
     const ui = await mountPane($, { surface })
-    const headers = headersOf(await ui.drawn())
-    expect(headers).toContainEqual(['Key', 'Summary', 'Type', 'Status'])
-    expect(headers.some(h => h[0] === 'Ref' && h[1] === 'Title')).toBe(true)
+    expect(headersOf(await ui.drawn())).toEqual([['Name', 'Description', 'Type', 'Status']])
     await ui.unmount()
   })
 
@@ -444,7 +442,8 @@ test('pane: a section over its cap ends in an N more row; Enter shows the next c
 
 // The engine scrolls a pane tree as a whole, so rows taller than the body push the title, the header and the footer out of
 // view. The pane draws a window of the rows instead. The inline pane at 100x40 has a body of 11 rows, the docked pane at
-// 120x37 one of 31. The kit does not show paint or the focus ring: the live checks of the PR do.
+// 120x37 one of 31 (drawn here 95 cells wide as in #109; the live check of issue #63 measured 49 cells, which
+// tests/one-table.test.ts holds). The kit does not show paint or the focus ring: the live checks of the PR do.
 const links = (n: number) => Array.from({ length: n }, (_, i) => `https://site${i}.example/page${i}`).join(' ')
 const INLINE = { bodyColumns: 96, bodyRows: 11, placement: 'inline' } as const
 const DOCKED = { bodyColumns: 95, bodyRows: 31, placement: 'dock' } as const
@@ -462,7 +461,7 @@ test('pane: inline 100x40 with 12 links shows the title, the header and the foot
   const tree = await ui.drawn()
   expect(rowsOf(tree)).toHaveLength(6)
   expect(await ui.find({ text: 'Web links' })).toBeDefined()
-  expect(headersOf(tree)).toContainEqual(['Label', 'URL'])
+  expect(headersOf(tree)).toContainEqual(['Name', 'Description'])
   expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
   expect(await ui.find({ text: '▼ 6 more below' })).toBeDefined()
   expect(await ui.find({ text: /more above/ })).toBeUndefined()
@@ -476,7 +475,7 @@ test('pane: docked 120x37 with 36 links shows the title, the header and the foot
   const tree = await ui.drawn()
   expect(rowsOf(tree)).toHaveLength(26)
   expect(await ui.find({ text: 'Web links' })).toBeDefined()
-  expect(headersOf(tree)).toContainEqual(['Label', 'URL'])
+  expect(headersOf(tree)).toContainEqual(['Name', 'Description'])
   expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
   expect(await ui.find({ text: '▼ 10 more below' })).toBeDefined()
   await ui.unmount()
@@ -492,7 +491,7 @@ test('pane: a windowed pane with no keys keeps the title, the header, the hint a
   const rows = rowsOf(tree).length
   expect(rows).toBe(5) // one row less than the pane that has the keys
   expect(await ui.find({ text: 'Web links' })).toBeDefined()
-  expect(headersOf(tree)).toContainEqual(['Label', 'URL'])
+  expect(headersOf(tree)).toContainEqual(['Name', 'Description'])
   expect((await ui.findAll({ type: 'Text' })).some(t => t.text === NO_KEYS_HINT)).toBe(true)
   expect(await ui.find({ text: '▼ 7 more below' })).toBeDefined()
   expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
