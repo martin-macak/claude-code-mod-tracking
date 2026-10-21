@@ -85,3 +85,11 @@ export function worktreeOfBranch(list: readonly GitWorktree[], branch: string): 
 export function agentWorktreePath(main: string, id: string): string {
   return `${normPath(main)}/.claude/worktrees/agent-${id}`
 }
+
+/**
+ * `<main>/.claude/worktrees/<runId>-<agentIndex>`: where a workflow agent that runs with `isolation: 'worktree'` works.
+ * The number is the place of the agent among the `agent()` calls of the run, so it counts agents that run in no worktree.
+ */
+export function workflowWorktreePath(main: string, runId: string, agentIndex: number): string {
+  return `${normPath(main)}/.claude/worktrees/${runId}-${agentIndex}`
+}

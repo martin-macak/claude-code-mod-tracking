@@ -219,7 +219,7 @@ The mod also tracks the work around the session, with no mention:
 | Section | Content |
 | --- | --- |
 | Worktrees | The root (the cwd at session start, pinned) and the worktrees that this session or its agents made. Only proven children show. A removed one stays, dimmed. |
-| Agents | The main loop, its subagents and its workflow agents, each with branch and worktree. An ended agent stays, dimmed, until its TTL passes, then it leaves the view (see [Ended rows](#ended-rows)). |
+| Agents | The main loop, its subagents and its workflow agents, each with branch and worktree. A workflow agent that runs in a worktree of its own shows it as soon as git lists that worktree, and keeps it after the worktree is removed. An ended agent stays, dimmed, until its TTL passes, then it leaves the view (see [Ended rows](#ended-rows)). |
 | Pull requests | PRs whose head is a tracked branch, or whose base is a tracked branch (stacked PRs). One GraphQL query for each 30 s tick. |
 
 The refs in a PR body become items with a `↳#N` prefix. HTML comments are skipped. The items go when the PR leaves the tracked set. The band adds `Worktrees n · Agents n · PRs n`.

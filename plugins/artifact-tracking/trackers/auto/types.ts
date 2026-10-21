@@ -33,7 +33,7 @@ export type AgentProof = {
   workflow?: { runId: string; agentIndex: number }
   /** Spawn cwd: `agent.spawn.cwd`, else the parent's at spawn time (A6). */
   cwd?: string
-  /** Exact path from the Agent tool result. */
+  /** Exact path: from the Agent tool result, or the `<runId>-<agentIndex>` path of a workflow agent once a round saw it. */
   worktreePath?: string
   /** From the agent's own Bash `gitOperation.commit.branch` or `push.branch`, or the Agent result. */
   branch?: string

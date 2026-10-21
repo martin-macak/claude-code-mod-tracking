@@ -1,7 +1,14 @@
 // trackAgents: rows for the master loop, subagents and workflow agents of this run (spec A5 to A7, 8.2).
 // Pure and synchronous. Rows come only from `agent.spawn` records; a list entry with no record is ignored.
 
-import { agentWorktreePath, basename, findByPath, locate, normPath } from '../../core/lib/porcelain'
+import {
+  agentWorktreePath,
+  basename,
+  findByPath,
+  locate,
+  normPath,
+  workflowWorktreePath,
+} from '../../core/lib/porcelain'
 import { AUTO_DEFAULTS } from './config'
 import { agentRowId, MASTER_ID } from './ids'
 import { type AgentPatch, patchRecord } from './ledger'
@@ -92,6 +99,10 @@ export function trackAgents(
 
   // 3. Locations in spawn order, so a parent resolves before its child (A6, first match wins).
   const locs = new Map<string, Loc | undefined>()
+  // A resume restarts `agentIndex`, so two agents of one run can share a convention path. The first agent that holds a
+  // path keeps it, and `proven` collects the paths this round found, to write them to their agents.
+  const held = new Set(agents.flatMap(a => (a.worktreePath ? [normPath(a.worktreePath)] : [])))
+  const proven = new Map<string, string>()
   for (const a of agents) {
     let loc: Loc | undefined
     if (a.worktreePath) {
@@ -106,6 +117,18 @@ export function trackAgents(
       if (r) loc = fromRecord(r)
       else if (s.worktrees.some(w => w.path === conv))
         loc = { name: basename(conv), branch: a.branch ?? proofBranch(conv), live: false }
+    }
+    // A workflow agent that runs in a worktree of its own: `<runId>-<agentIndex>`. A path in porcelain is proof, so keep
+    // it on the agent. The exact-path step above then owns it: a removed worktree stays (dimmed), and a later worktree
+    // that checks out the same branch does not take it.
+    if (!loc && main && a.workflow) {
+      const wf = workflowWorktreePath(main, a.workflow.runId, a.workflow.agentIndex)
+      const r = held.has(wf) ? undefined : findByPath(list, wf)
+      if (r) {
+        loc = fromRecord(r)
+        held.add(wf)
+        proven.set(a.id, wf)
+      }
     }
     if (!loc && a.branch) {
       const r = list.find(x => x.branch === a.branch)
@@ -162,5 +185,7 @@ export function trackAgents(
     }
   }
   walk('master', 1)
-  return { state, rows }
+  if (proven.size === 0) return { state, rows }
+  const withPaths = agents.map(a => (proven.has(a.id) ? patchRecord(a, { worktreePath: proven.get(a.id) }) : a))
+  return { state: { ...state, agents: withPaths }, rows }
 }
