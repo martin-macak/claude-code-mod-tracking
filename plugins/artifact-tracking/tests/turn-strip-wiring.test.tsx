@@ -8,7 +8,7 @@ import type { On, SessionAppendInput } from 'claude-code'
 import { type Engine, expect, mock } from 'claude-code/testing'
 import { test } from './fixtures/kit'
 import { mountPane, rowsOf } from './fixtures/pane'
-import { prompt, quiet, response, START, sleep, world } from './fixtures/world'
+import { prompt, quiet, response, START, world } from './fixtures/world'
 
 const A = 'https://one.example/a'
 const B = 'https://two.example/b'
@@ -216,9 +216,16 @@ test('interactive: the row hook may finish after the turn.complete hook, as it d
   const gate = new Promise<void>(resolve => {
     release = resolve
   })
+  let entered = () => {}
+  const inside = new Promise<void>(resolve => {
+    entered = resolve
+  })
   // The engine keeps the duration row until the turn.complete hook has resumed: the row hook enters first and ends last.
   on('session.append', async (_$, e, next) => {
-    if (e.message.name === 'turn_duration') await gate
+    if (e.message.name === 'turn_duration') {
+      entered() // this hook runs inside the mod's row hook, so the mod has noted the uuid and waits in next(e)
+      await gate
+    }
     return next(e)
   })
   const w = stripWorld(on, 'interactive')
@@ -226,7 +233,7 @@ test('interactive: the row hook may finish after the turn.complete hook, as it d
   await $.session.append(prompt(`see ${A}`))
   await start($, 'turn-1', `see ${A}`)
   const row = $.session.append(durationRow('row-1')) // in flight: the hook has entered, its next is held
-  await sleep(50)
+  await inside // wait for the event, not for the clock
   expect(await end($, 'turn-1')).toEqual({ text: '' }) // the commit runs now, before the row hook has finished
   release()
   await row

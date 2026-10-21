@@ -6,11 +6,12 @@ This page records what a mod can show near the end of a turn, and what the engin
 
 ## Grades
 
-Each claim carries one of these. The first three are the tags of the study. The last column is the grade of the [KB rules](../README.md#how-claims-are-sourced).
+Each claim carries one of these. `[observed]`, `[primary source]` and `[inference]` are the tags of the study. The second row splits `[observed]` for one case that the KB rules do not name. The last column is the grade of the [KB rules](../README.md#how-claims-are-sourced).
 
 | Tag | Meaning | KB grade |
 | --- | --- | --- |
 | `[observed]` | Seen in a log or on a screen of a run | *verified-live* for a run in a tmux session (runs C1 to C4 and the live checks below). *verified-kit* for a headless `claude -p` run against a fake API (runs A, B, D). |
+| `[observed]`, headless with the real model | A `claude -p` run with no fake API (the 2.1.306 check) | Neither grade fits by the rule: not *verified-live* (headless), not the fake-API case of *verified-kit*. Stated as such. |
 | `[primary source]` | Stated by the types file or by code in this repo | *types-only* when only the types say it |
 | `[inference]` | Nobody ran it | *inference* |
 
@@ -211,7 +212,7 @@ After the click the pane opened docked at the right with the keys (its footer li
 tracking Links 2 turn 1 +2 new /track                               [-] │3: low  0: auto  Tab ↑↓ move  Esc close
 ```
 
-Main screen (`CLAUDE_CODE_NO_FLICKER=0`): the line shows `+2 new` and no Button. `[observed, verified-live]` With the pane open, `ctrl+x Tab` went to the pane at once: the transcript Button of an earlier duration line did not stop the chord, and the hint "Keys go to the prompt." went away. `[observed, verified-live]` The band Button is a stop of that chord while the pane is closed (PR #136), and the strip Button is not: with the pane closed and two strips on screen, `ctrl+x Tab` put the focus ring on the band Button `9: open` (reverse video on that Button only), and a second `Tab` left it there. `[observed, verified-live]` So a transcript Button is no stop of the focus ring. A keyboard path to it was not found. `[observed]`
+Main screen (`CLAUDE_CODE_NO_FLICKER=0`): the line shows `+2 new` and no Button. `[observed, verified-live]` With the pane open, `ctrl+x Tab` went to the pane at once: the transcript Button of an earlier duration line did not stop the chord, and the hint "Keys go to the prompt." went away. `[observed, verified-live]` The band Button is a stop of that chord while the pane is closed (PR #136), and the strip Button is not: with the pane closed and two strips on screen, `ctrl+x Tab` put the focus ring on the band Button `9: open` (reverse video on that Button only), and a second `Tab` left it there. `[observed, verified-live]` So `ctrl+x Tab` does not stop at a transcript Button. `[observed, verified-live]` No other keyboard path was tried, so a keyboard path to it is an open question (see [open questions, 42](../open-questions.md#not-yet-observed-on-21306)).
 
 After `claude --continue` the older duration lines drew their strips again, once the stored ledger had loaded (the mod kept the uuid of each `turn_duration` row in the stored copy, and the engine drew the lines with the same uuids). The first render ran with an empty ledger and drew none, and a later render, after the load, drew the strips. `[observed, verified-live]` One run, before the mod asked for a redraw, showed no strips 9 s after the start, so the mod now calls `$.ui.invalidate("ui.render")` when a stored ledger loads. A kit test pins the call. With the call in place, a run showed the strips 7 s after the start. `[observed, verified-live]` One run is no proof that the first run's gap is closed. `[inference]`
 
@@ -234,7 +235,7 @@ After two turns that showed `artifact-tracking+cc-plugin-agents-md: +2 new · /t
 
 ## `claude -p` on 2.1.306
 
-With `global.ui.turnStrip` set to `text`, one prompt that named two links. `[observed, verified-kit]` (a headless run, with the real model and no fake API)
+With `global.ui.turnStrip` set to `text`, one prompt that named two links. `[observed]` A headless run with the real model and no fake API: not *verified-live* (a headless run never is), and not the fake-API case of *verified-kit*.
 
 ```text
 $ claude -p --output-format text ... "Reply with only this sentence: noted https://example.com/p1 and https://example.com/p2"
@@ -252,6 +253,8 @@ $ claude -p --output-format stream-json --verbose ...        (the informational 
 On this machine the managed plugin `cc-plugin-sec-default` sits outermost. It reports that the `session.append` hook of the mod was skipped, once for the first prompt of a session and once for each `claude -p` process. The rows that matter here still reached the mod: the prompt row, the response row and the `turn_duration` notice (L96 and the live check). The row that the plugin bypasses is not named by the engine. `[observed]` Nothing tried to bypass or turn off the plugin.
 
 ## Not tested
+
+The open engine questions are also rows 41 to 43 of [open-questions](../open-questions.md#not-yet-observed-on-21306).
 
 - `refusal` and `error` turn ends (typed only).
 - A real mouse (all clicks were synthetic SGR bytes in tmux).

@@ -67,6 +67,16 @@ Left open by the 2.1.302 research. Each row names the architecture-slug question
 | 39 | Does `$.fs.read` of `${$.plugin.root}/.claude-plugin/plugin.json` work in an interactive session and in a marketplace install (a release zip)? A headless `claude -p --plugin-dir` run read it ([fs-and-config](reference/fs-and-config.md#scope-and-paths), *verified-kit*, 2.1.304). | Open. Run `/track version` in an interactive session with the plugin installed from the marketplace. It prints the stamped release version, or `unknown` when the read fails (issue [#65](https://github.com/martin-macak/claude-code-mod-tracking/issues/65)). |
 | 40 | Does the engine stop an armed Monitor when a synchronous subagent, or the main loop of a headless session, gives its final response? Does it stop a `persistent: true` Monitor of a workflow agent ([d.ts 302:21567-21568](sources/claude-code-2.1.302/types/claude-code.d.ts#L21567-L21568))? What happens to the Monitors of the retry of a stalled workflow agent (another agent id, no `agent.spawn`: [d.ts 302:356-357](sources/claude-code-2.1.302/types/claude-code.d.ts#L356-L357))? What does the expiry text say for a Monitor that delivered events before its deadline? Does the agent list always name a running subagent at its first Monitor call (the check after a reload relies on it: one interactive run saw it)? In headless 2.1.304 runs the Monitors of a workflow agent stopped with the agent and sent no notice, and the Monitors of a background subagent ran to their deadline (*verified-kit*). An interactive 2.1.305 run showed the same for a workflow agent: `/track` ended its Monitor rows and `ps` showed no process of the Monitor armed at the agent's end (*verified-live*). See [process-tracking-signals](concepts/process-tracking-signals.md#how-a-monitor-ends-issue-118-claude-code-21304). The Monitor result has no flag like `backgroundEndsWithFinalResponse` ([d.ts 302:21562-21569](sources/claude-code-2.1.302/types/claude-code.d.ts#L21562-L21569)). | Open. The tracker flags only the Monitors of workflow agents. A Monitor of the main loop, of a synchronous subagent or of a retry stays `running` until its notice or `TaskStop`. The anchor of the expiry text is the short `[Monitor expired`. |
 
+## Not yet observed on 2.1.306
+
+Left open by the strip of issue [#69](https://github.com/martin-macak/claude-code-mod-tracking/issues/69). The page [turn-strip](concepts/turn-strip.md) holds the evidence.
+
+| # | Question | Status |
+| --- | --- | --- |
+| 41 | Do `refusal` and `error` turn ends append a `turn_duration` row and draw a `TurnDuration` line? The strip treats them like `aborted` (*inference*). | Open. End a turn by a refusal and by an API error in tmux, log the rows and the render. See [turn-strip](concepts/turn-strip.md#not-tested). |
+| 42 | Is there a keyboard path to a transcript `Button` (the `TurnDuration` Button)? `ctrl+x Tab` does not stop at it (*verified-live*). | Open. Nothing else was tried. See [turn-strip](concepts/turn-strip.md#interactive-on-the-screen). |
+| 43 | Do the desktop app and the VS Code panel raise `TurnDuration` or append `turn_duration` rows? The types say terminal only (*types-only*). | Open. See [turn-strip](concepts/turn-strip.md#the-spikes). |
+
 ## See also
 
 - [gotchas](gotchas.md)
