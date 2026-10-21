@@ -15,6 +15,7 @@ import {
   helpText,
   renderHelp,
 } from '../ux/tree-data-table/help'
+import { ROW_GAP } from '../ux/tree-data-table/shape'
 import { leaves } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
 import { COLS, row, section } from './fixtures/sections'
@@ -446,6 +447,21 @@ test('compactForm raises the keys to a line only as far as the body needs, and n
   expect(compactForm(m, 1, 96, 11)).toEqual({ perLine: 3, problems: 0 })
   // A body of 10 rows needs the row keys on one line: 5 to a line.
   expect(compactForm(m, 1, 96, 10)).toEqual({ perLine: 5, problems: 0 })
+})
+
+// The window of issue #109 never touches the help view (the table runs one attempt and no window for it), so the body
+// height is the only thing that sets the room: the help view fits at every height from the 11 rows of 100x40 inline.
+test('with no tracker row selected the help view fits every body height from 11 to 40 rows, with any number of problems', () => {
+  const over: string[] = []
+  for (const n of [0, 1, 3, 30]) {
+    const m = helpModel(MOD_KEYS, [], LIVE, problems(n), '1.2.3')
+    for (let bodyRows = 11; bodyRows <= 40; bodyRows++) {
+      const form = compactForm(m, 1, 96, bodyRows)
+      const used = form === undefined ? helpRows(m, 96) + ROW_GAP + 1 : compactRows(m, 96, form) + 1
+      if (used > bodyRows) over.push(`${n} problems in ${bodyRows} rows take ${used}`)
+    }
+  }
+  expect(over).toEqual([])
 })
 
 // A key label wider than 22 cells wrapped the three columns of a narrow pane (the note of issue #105).

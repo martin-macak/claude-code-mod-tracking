@@ -5,6 +5,7 @@ import { buttonKeyOf, footerKeys, KeyRegistry } from '../core/infra/keys'
 import type { AtomPort } from '../core/interfaces/ports'
 import type { FooterKey, PaneView, RowRef, SectionSpec, TreeRow } from '../core/interfaces/view'
 import { helpTextOf, listText, type PaneHost, PaneSession, TEXT_VIEW } from '../hooks/pane-session'
+import { KEYS as GITHUB_ROW_KEYS } from '../trackers/github/actions'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import { neighbourOf } from '../ux/tree-data-table/table'
 import { fakeConfig } from './fixtures/config-fs'
@@ -153,6 +154,41 @@ test('with many problems a short body draws the help view capped with a count, a
   expect(shown.filter(l => /^\d+ (more )?problems: \/track help$/.test(l))).toHaveLength(1)
   const printed = await helpTextOf(t.w.ports, t.m)
   expect(printed.split('\n').filter(l => /^ {2}Problem \d+\.$/.test(l))).toEqual(problems.map(p => `  ${p}`))
+})
+
+test('with a tracker row selected the help view still fits the 11-row inline body: the footer has no tracker keys', async () => {
+  const path = '/var/folders/sn/0_q8tr7x4vv44d69rbtyckwr0000gn/T/cc-tracker-config-oa5411/config.json' // 86 cells
+  const t = setup(webs('a'), { path, problems: ['A.', 'B.', 'C.'], version: '1.2.3' })
+  t.m.keys.add('web', GITHUB_ROW_KEYS) // c and f: the keys that wrap the footer in a row of 96 cells
+  t.w.state.set('selected', 'a')
+  t.w.state.set('help', true)
+  const tree = await t.draw(96, 11)
+  expect(leaves(tree)[0]).toBe('Pane keys (Tab, Shift+Tab, Up, Down move between rows)')
+  expect(footerOf(tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
+  const [body] = (tree as unknown as { children: unknown[] }).children
+  expect((body as { children: unknown[] }).children.length + 1 + 1).toBeLessThanOrEqual(11) // body, the wrapped path, the footer
+})
+
+test('the selected row hides while the help view is open: the help footer keeps the core keys, and the row the selection fell to has its keys back after', async () => {
+  // Issue #105 with issue #49: the help footer never holds a tracker's keys, and the keys of a closed help view follow the
+  // row the selection fell to, not the atom that names the row that went.
+  const path = '/var/folders/sn/0_q8tr7x4vv44d69rbtyckwr0000gn/T/cc-tracker-config-oa5411/config.json' // 86 cells
+  const t = setup(webs('a', 'b'), { path, problems: ['A.', 'B.', 'C.'], version: '1.2.3' })
+  t.m.keys.add('web', GITHUB_ROW_KEYS) // c and f
+  t.w.state.set('selected', 'a')
+  await t.draw(96, 11) // the last drawing holds `a` and `b`
+  t.w.state.set('help', true)
+  await t.draw(96, 11)
+  t.host.setRows(webs('b')) // `a` hides while the person reads the help
+  const help = await t.draw(96, 11)
+  expect(leaves(help)[0]).toBe('Pane keys (Tab, Shift+Tab, Up, Down move between rows)')
+  expect(footerOf(help).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
+  const [body] = (help as unknown as { children: unknown[] }).children
+  expect((body as { children: unknown[] }).children.length + 1 + 1).toBeLessThanOrEqual(11)
+  t.w.state.set('help', false)
+  const rows = await t.draw(96, 11)
+  expect(footerOf(rows).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'c', 'f'])
+  expect(footerOf(rows).every(b => b.props.dimColor !== true)).toBe(true) // the keys of `b` are live
 })
 
 test('draw with the help on draws the version line after the config line', async () => {
