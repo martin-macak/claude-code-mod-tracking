@@ -3,10 +3,16 @@
 // them on the tick and on `/track`. It publishes the probe state as the fact `processes.ui`.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 8.
 
-import type { CommandEvent, RowEvent, ToolCallEvent, TurnCompleteEvent } from '../../core/interfaces/events'
+import type {
+  AgentSpawnEvent,
+  CommandEvent,
+  RowEvent,
+  ToolCallEvent,
+  TurnCompleteEvent,
+} from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
 import type { Traceable } from '../../core/interfaces/reasons'
-import type { Handler, Tracker } from '../../core/interfaces/tracker'
+import type { Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { CircuitBreaker } from '../../core/lib/circuit-breaker'
 import { isRecord } from '../../core/lib/json'
 import { type LoadKey, LoadState } from '../../core/lib/load-state'
@@ -17,6 +23,7 @@ import {
   processUpdateFromNotification,
   processUpdateFromNotificationText,
   processUpdateFromTaskStop,
+  workflowAgentOf,
 } from './parse'
 import { processReasonsOf } from './reasons'
 import { addProcessRows, applyAgentEnd, applyTaskUpdate, asRows, mergeProcessRows, setProcesses } from './rows'
@@ -35,6 +42,27 @@ type H<E> = Handler<ProcessesConfig, Json, E>
 const probes = new LoadState<ProbeState>()
 const probeOf = (ctx: LoadKey, b?: { threshold: number; openMs: number }): ProbeState =>
   probes.of(ctx, () => ({ breaker: b ? new CircuitBreaker(b.threshold, b.openMs) : new CircuitBreaker() }))
+
+/**
+ * The workflow agents of this load, by id. The engine stops the Monitors of such an agent when it gives its final response,
+ * and the Monitor result has no flag that says so (issue #118). Kept per load for the same reason as the breaker.
+ */
+const workflowAgents = new LoadState<Set<string>>()
+
+/**
+ * Is `agentId` a workflow agent? The spawn this load saw says so. A reload empties that set (module variables reset, and
+ * `agent.spawn` is not replayed), so an id the set lacks is checked against the engine's agent list too. The list names the
+ * subagents and teammates, never a workflow's agents (d.ts 302:3262-3268), so an agent it does not name is a workflow's.
+ * A list that cannot be read says nothing: the Monitor gets no flag, as before #118.
+ */
+async function isWorkflowAgent(ctx: LoadKey & Pick<TrackerContext, 'env'>, agentId: string): Promise<boolean> {
+  if (workflowAgents.get(ctx)?.has(agentId) === true) return true
+  try {
+    return !(await ctx.env.agents()).some(a => a.id === agentId)
+  } catch {
+    return false
+  }
+}
 
 export function processesTracker(): Tracker<ProcessesConfig, Json> & Traceable<Json> {
   // A task notice completes the task-backed row. The person can type the same text, so only the origin counts.
@@ -64,11 +92,19 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> & Traceable<J
     )
   }
 
-  const onMonitor: H<ToolCallEvent> = (ctx, ev) => {
+  const onMonitor: H<ToolCallEvent> = async (ctx, ev) => {
     const result = isRecord(ev.result) && isRecord(ev.result.result) ? ev.result.result : undefined
     const taskId = result?.taskId
     if (typeof taskId !== 'string' || taskId === '') return
-    return addProcessRows(ctx, [monitorRow(taskId, ctx.clock.wall(), ev.toolUseId)])
+    const endsWithAgent = ev.agentId !== undefined && (await isWorkflowAgent(ctx, ev.agentId))
+    return addProcessRows(ctx, [
+      monitorRow(taskId, ctx.clock.wall(), { toolUseId: ev.toolUseId, agentId: ev.agentId, endsWithAgent }),
+    ])
+  }
+
+  const onSpawn: H<AgentSpawnEvent> = (ctx, ev) => {
+    const id = workflowAgentOf(ev.input, ev.answer)
+    if (id !== undefined) workflowAgents.of(ctx, () => new Set()).add(id)
   }
 
   const onTaskStop: H<ToolCallEvent> = (ctx, ev) =>
@@ -123,6 +159,7 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> & Traceable<J
     events: {
       row: { doors: ['prompt', 'delivery'], run: onRow },
       toolCall: { Bash: onBash, Monitor: onMonitor, TaskStop: onTaskStop },
+      agentSpawn: onSpawn,
       turnComplete: onTurnComplete,
       tick: { run: onTick },
       command: onCommand,

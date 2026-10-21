@@ -117,7 +117,7 @@ The tracker list and tiers are in [current-architecture §6](current-architectur
 | artifact | funnel, `tool.call` `Artifact` | none | records in `items` | session id |
 | file | funnel, `tool.call` `Write`, `Edit`, `Read` | `$.fs.stat` | records in `items` | `HOME`, config dir, memory dir, session cwd, auto root, agent spawn cwd |
 | repos | `tool.call` for six path tools and `Bash`, `agent.spawn` | `git` | `repos` atom | runner, clock, auto root and session repo (from two other trackers), serial queue |
-| processes | `tool.call` `Bash`, `Monitor`, `TaskStop`, task-notice door | `docker`, `tmux`, `screen`, `ps` | `processes` atom | runner, own breaker |
+| processes | `tool.call` `Bash`, `Monitor`, `TaskStop`, task-notice door, `agent.spawn` (workflow agent ids), `turn.complete` | `docker`, `tmux`, `screen`, `ps` | `processes` atom | runner, own breaker |
 | auto | `session.start`, `EnterWorktree`, `ExitWorktree`, `Agent`, `Bash`, `agent.spawn`, `turn.complete` | `git`, `$.agent.list`, `gh` GraphQL | `auto` atom, never stored | first cwd, seven dependencies |
 
 Three observations:
