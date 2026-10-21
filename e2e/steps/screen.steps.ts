@@ -1,5 +1,5 @@
 import { defineParameterType, Then } from '@cucumber/cucumber'
-import { focusedTexts, selectedLine } from '../support/pane.ts'
+import { focusedTexts, placementOf, selectedLine } from '../support/pane.ts'
 import { PERMISSION_MARKERS } from '../support/session.ts'
 import type { DemoWorld } from '../support/world.ts'
 
@@ -25,6 +25,15 @@ Then('the screen does not show {string}', function (this: DemoWorld, text: strin
 // The pane starts a row with a gutter: ">" marks the selected row (support/pane.ts).
 Then('the selected row shows {string}', async function (this: DemoWorld, text: string) {
   await this.waitScreen(screen => selectedLine(screen)?.includes(text) === true, `the selected row to show "${text}"`)
+})
+
+// Where Claude Code seats the pane depends on the width of the terminal: docked beside the transcript, or inline under it
+// (support/pane.ts). A scenario that runs at two sizes says which one it expects, so a size that did not take effect fails.
+const PLACEMENTS = ['docked', 'inline']
+Then('the pane is {word}', async function (this: DemoWorld, placement: string) {
+  if (!PLACEMENTS.includes(placement))
+    throw new Error(`the pane is "${placement}": use one of ${PLACEMENTS.join(', ')}`)
+  await this.waitScreen(screen => placementOf(screen) === placement, `the pane to be ${placement}`)
 })
 
 // The focus ring draws the focused Button in reverse video. The selected row follows the focus over the rows, but the

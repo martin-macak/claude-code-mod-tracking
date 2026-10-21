@@ -2,15 +2,14 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { Given, Then } from '@cucumber/cucumber'
+import { CONFIG_FILE } from '../support/config-dir.ts'
 import { waitUntil } from '../support/wait.ts'
 import type { DemoWorld } from '../support/world.ts'
-
-const FILE = 'config.json'
 
 // The file text, or undefined while it is missing.
 function readText(world: DemoWorld): string | undefined {
   try {
-    return readFileSync(join(world.configDir, FILE), 'utf8')
+    return readFileSync(join(world.configDir, CONFIG_FILE), 'utf8')
   } catch {
     return undefined
   }
@@ -34,7 +33,14 @@ function valueAt(text: string | undefined, path: string): unknown {
 // Before the session starts. The folder is this scenario's CLAUDE_TRACKER_CONFIG_DIR (world.ts).
 Given('the tracker config file:', function (this: DemoWorld, text: string) {
   this.tl.phase('cut')
-  writeFileSync(join(this.configDir, FILE), text)
+  writeFileSync(join(this.configDir, CONFIG_FILE), text)
+})
+
+// Before the step that writes the config file and the step that starts the session. The help view of the pane prints
+// the path of the config file, and the rows that it takes depend on the width of that path. The temporary folder of
+// a system is as wide as it is, so a scenario that counts those rows sets the width (support/config-dir.ts).
+Given('the tracker config file path is {int} cells wide', function (this: DemoWorld, cells: number) {
+  this.setConfigPathWidth(cells)
 })
 
 // The value is JSON text: "30000", "true", "false" or a quoted string.

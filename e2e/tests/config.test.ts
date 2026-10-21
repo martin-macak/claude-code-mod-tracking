@@ -12,6 +12,7 @@ test('loadConfig gives the spec defaults for an empty env', () => {
     typeDelayMs: 35,
     turnTimeoutMs: 120_000,
     screenTimeoutMs: 20_000,
+    lockWaitMs: 1_800_000,
     keep: false,
   })
 })
@@ -36,4 +37,19 @@ test('loadConfig reads overrides', () => {
 test('loadConfig rejects a value that is not a positive integer', () => {
   assert.throws(() => loadConfig({ DEMO_COLS: 'wide' }), /DEMO_COLS must be a positive integer, got "wide"/)
   assert.throws(() => loadConfig({ DEMO_ROWS: '0' }), /DEMO_ROWS/)
+})
+
+test('loadConfig reads the lock wait in seconds, and 0 means do not wait', () => {
+  assert.equal(loadConfig({ DEMO_LOCK_WAIT_S: '90' }).lockWaitMs, 90_000)
+  assert.equal(loadConfig({ DEMO_LOCK_WAIT_S: '0' }).lockWaitMs, 0)
+  assert.equal(loadConfig({ DEMO_LOCK_WAIT_S: '' }).lockWaitMs, 1_800_000)
+})
+
+test('loadConfig rejects a lock wait that is not a whole number of seconds from 0', () => {
+  assert.throws(
+    () => loadConfig({ DEMO_LOCK_WAIT_S: '-1' }),
+    /DEMO_LOCK_WAIT_S must be a non-negative integer, got "-1"/,
+  )
+  assert.throws(() => loadConfig({ DEMO_LOCK_WAIT_S: '1.5' }), /DEMO_LOCK_WAIT_S/)
+  assert.throws(() => loadConfig({ DEMO_LOCK_WAIT_S: 'soon' }), /DEMO_LOCK_WAIT_S/)
 })

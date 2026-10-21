@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -12,19 +12,27 @@ import {
   World,
 } from '@cucumber/cucumber'
 import { CLONE_NAME, type Config, LOCK_DIR, loadConfig, OUT_DIR, PLUGIN_DIR, REPO_ROOT } from './config.ts'
+import { CONFIG_FILE, makeConfigDir, pathWidthRefusal } from './config-dir.ts'
 import type { FakeGhSpec } from './fake-gh.ts'
 import { fakeGhEnv } from './fake-gh-env.ts'
-import { claimRun } from './lock.ts'
+import { makeClaimer } from './lock.ts'
 import { withFocus } from './pane.ts'
 import { Recorder } from './recorder.ts'
 import { countLines, FAKE_ORIGIN_NAME, launchClaude, prepareClone, waitForTurnEnd } from './session.ts'
+import { sizeRefusal } from './size.ts'
 import { slug } from './slug.ts'
 import { Timeline } from './timeline.ts'
 import { Tmux } from './tmux.ts'
 import { waitUntil } from './wait.ts'
 
 // Each wait inside a step has its own, shorter timeout from Config.
-setDefaultTimeout(10 * 60 * 1000)
+const STEP_TIMEOUT_MS = 10 * 60 * 1000
+setDefaultTimeout(STEP_TIMEOUT_MS)
+
+// Every scenario takes the lock of the machine in its Before hook, and waits for it while another run holds it
+// (support/lock.ts). After the first timeout the later scenarios do not wait again.
+const { lockWaitMs } = loadConfig()
+const claimRun = makeClaimer({ waitMs: lockWaitMs })
 
 let recordedScenarios = 0
 
@@ -46,6 +54,7 @@ export class DemoWorld extends World {
   /** The refs of the local copy that stands for the origin, as the scenario started (steps/fake-gh.steps.ts). */
   fakeOriginRefs: string | undefined
   private release: (() => void) | undefined
+  private launched = false
 
   get cloneDir(): string {
     return join(this.config.dir, CLONE_NAME)
@@ -75,8 +84,8 @@ export class DemoWorld extends World {
     const { record, cols, rows, dir } = this.config
     if (record && ++recordedScenarios > 1) throw new Error('demo: only one @demo scenario can be recorded per run')
     this.outDir = join(OUT_DIR, record ? 'demo' : slug(name))
-    this.release = claimRun(LOCK_DIR, this.outDir)
-    this.configDir = mkdtempSync(join(tmpdir(), 'cc-tracker-config-'))
+    this.release = await claimRun(LOCK_DIR, this.outDir)
+    this.configDir = makeConfigDir(tmpdir())
     this.signalFile = join(this.outDir, 'signal')
     this.timeline = new Timeline(join(this.outDir, 'timeline.ndjson'))
     this.tmux.kill()
@@ -89,7 +98,32 @@ export class DemoWorld extends World {
     this.tl.phase('cut')
   }
 
+  /** Gives the scenario another terminal size than DEMO_COLS and DEMO_ROWS, before the session starts (support/size.ts). */
+  setTerminalSize(cols: number, rows: number): void {
+    const refusal = sizeRefusal({ record: this.config.record, launched: this.launched })
+    if (refusal !== undefined) throw new Error(refusal)
+    this.tl.phase('cut')
+    this.tmux.resize(cols, rows)
+  }
+
+  /**
+   * Gives the path of the config file this width, before the session starts and before the config file is written
+   * (support/config-dir.ts). The folder is made again, so `configDir` is the new one and the old one is gone.
+   */
+  setConfigPathWidth(cells: number): void {
+    const refusal = pathWidthRefusal({
+      launched: this.launched,
+      written: existsSync(join(this.configDir, CONFIG_FILE)),
+    })
+    if (refusal !== undefined) throw new Error(refusal)
+    this.tl.phase('cut')
+    const next = makeConfigDir(tmpdir(), cells) // Throws first when the width is too small: the old folder stays.
+    rmSync(this.configDir, { recursive: true, force: true })
+    this.configDir = next
+  }
+
   async launch(prompt?: string, tools?: readonly string[]): Promise<void> {
+    this.launched = true
     this.tl.phase('cut')
     await launchClaude(
       {
@@ -158,7 +192,8 @@ export class DemoWorld extends World {
 
 setWorldConstructor(DemoWorld)
 
-Before(async function (this: DemoWorld, { pickle }: ITestCaseHookParameter) {
+// The hook may wait for the lock as long as Config allows, and then needs the time that the default gives it.
+Before({ timeout: lockWaitMs + STEP_TIMEOUT_MS }, async function (this: DemoWorld, { pickle }: ITestCaseHookParameter) {
   await this.setUp(pickle.name)
 })
 

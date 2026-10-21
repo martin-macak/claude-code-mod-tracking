@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { after, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { acquireLock, claimRun } from '../support/lock.ts'
+import { acquireLock, claimRun, describeHolder, LockBusyError, makeClaimer } from '../support/lock.ts'
 import type { FaultPlan } from './fixtures/lock-faults.ts'
 
 // Every folder that a test made. They go when the file is done, so a run leaves nothing behind.
@@ -49,6 +49,11 @@ function spawnLockChild(dir: string, signal: AbortSignal, faults?: FaultPlan) {
     attempt: async (deadline?: number) => {
       proc.stdin.write(deadline === undefined ? 'go\n' : `go ${deadline}\n`)
       return nextLine()
+    },
+    // The child lets go of the lock it won and lives on, so its pid stays live.
+    release: async () => {
+      proc.stdin.write('release\n')
+      assert.equal(await nextLine(), 'released')
     },
     // Closes stdin. The child then exits. A lock it won stays in the folder with a dead pid.
     finish: () => {
@@ -192,25 +197,474 @@ test('acquireLock gives up while a live run holds the guard, and names it', { ti
   assert.equal(readFileSync(join(dir, '.lock'), 'utf8'), '999999')
 })
 
-test('claimRun leaves a running scenario folder alone when the lock is held', () => {
+// Some tests hold the lock as a live run that is not this one: the parent of the test process. Its pid is live while
+// the test runs. Pid 1 is a second live holder.
+const holdLock = (dir: string, pid = process.ppid) => writeFileSync(join(dir, '.lock'), String(pid))
+
+// A claim that does not wait: it fails at once when a live run holds the lock.
+const NO_WAIT = { waitMs: 0 }
+
+test('claimRun leaves a running scenario folder alone when the lock is held', async () => {
   const lockDir = tempDir()
   const runDir = join(tempDir(), 'demo')
-  const releaseFirst = claimRun(lockDir, runDir)
+  // The parent of this process stands for the other run: a lock that this process holds fails with its own message.
+  holdLock(lockDir)
+  mkdirSync(runDir)
   writeFileSync(join(runDir, 'signal'), 'stop\n')
-  assert.throws(() => claimRun(lockDir, runDir), /another demo run/)
+  await assert.rejects(claimRun(lockDir, runDir, NO_WAIT), /another demo run/)
   assert.equal(readFileSync(join(runDir, 'signal'), 'utf8'), 'stop\n')
-  releaseFirst()
 })
 
-test('claimRun wipes the scenario folder once it holds the lock', () => {
+test('claimRun wipes the scenario folder once it holds the lock', async () => {
   const lockDir = tempDir()
   const runDir = join(tempDir(), 'demo')
-  claimRun(lockDir, runDir)()
+  ;(await claimRun(lockDir, runDir, NO_WAIT))()
   writeFileSync(join(runDir, 'old'), 'x')
-  const release = claimRun(lockDir, runDir)
+  const release = await claimRun(lockDir, runDir, NO_WAIT)
   assert.equal(existsSync(join(runDir, 'old')), false)
   assert.equal(existsSync(runDir), true)
   release()
+})
+
+// A fake clock and a fake sleep. A sleep advances the clock and then runs `onSleep(n)`, so a test says
+// what happens during the n-th wait. No real time passes: the tests check order and counts.
+function fakeWait(onSleep?: (n: number) => void | Promise<void>) {
+  let clock = 0
+  const sleeps: number[] = []
+  return {
+    sleeps,
+    now: () => clock,
+    sleep: async (ms: number) => {
+      sleeps.push(ms)
+      clock += ms
+      await onSleep?.(sleeps.length)
+    },
+  }
+}
+
+const HALF_HOUR = 30 * 60_000
+
+// The run that holds the lock in the tests below, as the claim sees it: it is live until `end` lets go of the lock
+// and ends. A claim waits for the process of the holder, not only for the file (see the test of the gap).
+function fakeRun(dir: string, pid = process.ppid) {
+  const run = {
+    live: true,
+    isLive: () => run.live,
+    end: () => {
+      rmSync(join(dir, '.lock'))
+      run.live = false
+    },
+  }
+  holdLock(dir, pid)
+  return run
+}
+
+test('claimRun polls while a live run holds the lock, names it once, and takes the lock when it is free', async () => {
+  const dir = tempDir()
+  const run = fakeRun(dir)
+  const wait = fakeWait(n => {
+    if (n === 3) run.end()
+  })
+  const notes: string[] = []
+  const release = await claimRun(dir, join(tempDir(), 'demo'), {
+    waitMs: HALF_HOUR,
+    pollMs: 5000,
+    now: wait.now,
+    sleep: wait.sleep,
+    isLive: run.isLive,
+    describeHolder: pid => `fake run ${pid}`,
+    onWait: note => notes.push(note),
+  })
+  assert.deepEqual(wait.sleeps, [5000, 5000, 5000])
+  assert.equal(readFileSync(join(dir, '.lock'), 'utf8'), String(process.pid))
+  assert.equal(notes.length, 1)
+  assert.match(notes[0]!, new RegExp(`fake run ${process.ppid}`))
+  assert.match(notes[0]!, /\.lock/)
+  release()
+})
+
+// An older checkout does not wait. It lets go of the lock after each scenario and takes it again a moment later.
+// A claim that took the lock in that moment would fail the next scenario of that run at once, as in issue #143.
+// So a claim waits for the process of the holder it named, and tries again only when that process has ended or
+// another run holds the lock.
+test('claimRun does not take the lock in the instant between two scenarios of a run that still lives', async () => {
+  const dir = tempDir()
+  const run = fakeRun(dir)
+  const lock = join(dir, '.lock')
+  const notes: string[] = []
+  const wait = fakeWait(n => {
+    if (n === 1) rmSync(lock) // The run lets go after a scenario: the file is gone, the run lives.
+    if (n === 2 || n === 3) assert.equal(existsSync(lock), false, `the claim took the lock in the gap, at wait ${n}`)
+    if (n === 4) holdLock(dir) // The run takes the lock again for its next scenario.
+    if (n === 6) run.end() // The run ends.
+  })
+  const release = await claimRun(dir, join(tempDir(), 'demo'), {
+    waitMs: HALF_HOUR,
+    pollMs: 5000,
+    now: wait.now,
+    sleep: wait.sleep,
+    isLive: run.isLive,
+    describeHolder: pid => `fake run ${pid}`,
+    onWait: note => notes.push(note),
+  })
+  // It waited through the gap (waits 2 and 3), and the lock it holds now is its own.
+  assert.deepEqual(wait.sleeps, Array(6).fill(5000))
+  assert.equal(readFileSync(lock, 'utf8'), String(process.pid))
+  assert.equal(notes.length, 1, 'the same run is named once, in the gap as well')
+  release()
+})
+
+test('claimRun in the gap says again every minute and gives up after the bound', async () => {
+  const dir = tempDir()
+  const run = fakeRun(dir)
+  const lock = join(dir, '.lock')
+  const notes: string[] = []
+  const wait = fakeWait(n => {
+    if (n === 1) rmSync(lock)
+  })
+  await assert.rejects(
+    claimRun(dir, join(tempDir(), 'demo'), {
+      waitMs: 150_000,
+      pollMs: 5000,
+      now: wait.now,
+      sleep: wait.sleep,
+      isLive: run.isLive,
+      describeHolder: pid => `fake run ${pid}`,
+      onWait: note => notes.push(note),
+    }),
+    (err: unknown) => {
+      assert.ok(err instanceof LockBusyError)
+      assert.equal(err.kind, 'timeout')
+      assert.equal(err.pid, process.ppid)
+      assert.match(err.message, /Waited 2 min 30 s/)
+      assert.match(err.message, new RegExp(`fake run ${process.ppid}`))
+      return true
+    },
+  )
+  assert.equal(wait.now(), 150_000)
+  assert.equal(existsSync(lock), false, 'the claim never took the lock of a run that lives')
+  // 150 s of waiting: the first note, then one each minute (at 60 s and at 120 s).
+  assert.equal(notes.length, 3)
+  assert.match(notes[1]!, /still waiting after 1 min/)
+  assert.match(notes[2]!, /still waiting after 2 min/)
+})
+
+test('claimRun says again every minute that it still waits, and when the holder changes', async () => {
+  const dir = tempDir()
+  const runDir = join(tempDir(), 'demo')
+  const notes: string[] = []
+  const options = {
+    waitMs: HALF_HOUR,
+    pollMs: 5000,
+    describeHolder: (pid: number) => `fake run ${pid}`,
+    onWait: (note: string) => notes.push(note),
+  }
+  // 13 sleeps are 65 s: the first note, and one more after the 12th sleep (60 s).
+  const first = fakeRun(dir)
+  const long = fakeWait(n => {
+    if (n === 13) first.end()
+  })
+  ;(await claimRun(dir, runDir, { ...options, now: long.now, sleep: long.sleep, isLive: first.isLive }))()
+  assert.equal(notes.length, 2)
+  assert.match(notes[0]!, /Waiting for it/)
+  assert.match(notes[1]!, /still waiting after 1 min/)
+  assert.match(notes[1]!, new RegExp(`fake run ${process.ppid}`))
+
+  // Another run takes the lock after the first holder: the claim names the new holder at once.
+  notes.length = 0
+  const second = fakeRun(dir)
+  const handOver = fakeWait(n => {
+    if (n === 2) holdLock(dir, 1)
+    if (n === 4) second.end()
+  })
+  ;(await claimRun(dir, runDir, { ...options, now: handOver.now, sleep: handOver.sleep, isLive: second.isLive }))()
+  assert.equal(notes.length, 2)
+  assert.match(notes[0]!, new RegExp(`fake run ${process.ppid}`))
+  assert.match(notes[1]!, /fake run 1\b/)
+})
+
+test('claimRun gives up after the bound with a clear error, and never removes the lock of a live run', async () => {
+  const dir = tempDir()
+  const runDir = join(tempDir(), 'demo')
+  mkdirSync(runDir)
+  writeFileSync(join(runDir, 'signal'), 'stop\n')
+  holdLock(dir)
+  const wait = fakeWait()
+  await assert.rejects(
+    claimRun(dir, runDir, {
+      waitMs: HALF_HOUR,
+      pollMs: 5000,
+      now: wait.now,
+      sleep: wait.sleep,
+      describeHolder: pid => `fake run ${pid}`,
+      onWait: () => {},
+    }),
+    (err: unknown) => {
+      assert.ok(err instanceof LockBusyError)
+      assert.equal(err.pid, process.ppid)
+      // The old text stays the prefix. The rest says how long it waited, who still holds the lock and what to do.
+      assert.match(err.message, new RegExp(`^lock: another demo run \\(pid ${process.ppid}\\) holds .*\\.lock\\. `))
+      assert.match(err.message, /Waited 30 min/)
+      assert.match(err.message, new RegExp(`fake run ${process.ppid}`))
+      assert.match(err.message, /DEMO_LOCK_WAIT_S/)
+      return true
+    },
+  )
+  assert.equal(wait.now(), HALF_HOUR)
+  assert.equal(readFileSync(join(dir, '.lock'), 'utf8'), String(process.ppid))
+  assert.equal(readFileSync(join(runDir, 'signal'), 'utf8'), 'stop\n')
+})
+
+test('claimRun with no wait fails at once and does not sleep', async () => {
+  const dir = tempDir()
+  holdLock(dir)
+  const wait = fakeWait()
+  await assert.rejects(
+    claimRun(dir, join(tempDir(), 'demo'), { waitMs: 0, now: wait.now, sleep: wait.sleep }),
+    new RegExp(`another demo run \\(pid ${process.ppid}\\)`),
+  )
+  assert.deepEqual(wait.sleeps, [])
+})
+
+test('claimRun fails at once when this very process holds the lock: waiting could not end', async () => {
+  const dir = tempDir()
+  const release = acquireLock(dir)
+  const wait = fakeWait()
+  await assert.rejects(
+    claimRun(dir, join(tempDir(), 'demo'), { waitMs: HALF_HOUR, now: wait.now, sleep: wait.sleep }),
+    /this process.*did not release/,
+  )
+  assert.deepEqual(wait.sleeps, [])
+  release()
+})
+
+test('claimRun with no wait says that this very process holds the lock, when it does', async () => {
+  const dir = tempDir()
+  const release = acquireLock(dir)
+  await assert.rejects(claimRun(dir, join(tempDir(), 'demo'), NO_WAIT), /this process.*did not release/)
+  release()
+})
+
+test('a claimer says that an earlier scenario waited only after a scenario that did wait', async () => {
+  const dir = tempDir()
+  const runDir = join(tempDir(), 'demo')
+  const release = acquireLock(dir) // A scenario of this process did not release the lock.
+  const wait = fakeWait()
+  const claim = makeClaimer({ waitMs: HALF_HOUR, now: wait.now, sleep: wait.sleep, onWait: () => {} })
+  await assert.rejects(claim(dir, runDir), /this process.*did not release/)
+  // Nothing waited, so the next scenario names the same cause and no wait.
+  await assert.rejects(claim(dir, runDir), (err: unknown) => {
+    assert.ok(err instanceof LockBusyError)
+    assert.match(err.message, /this process.*did not release/)
+    assert.doesNotMatch(err.message, /already waited/)
+    return true
+  })
+  assert.deepEqual(wait.sleeps, [])
+  release()
+})
+
+test('claimRun does not treat another error as a busy lock', async () => {
+  const file = join(tempDir(), 'file')
+  writeFileSync(file, 'a file where the lock folder should be')
+  const wait = fakeWait()
+  await assert.rejects(
+    claimRun(file, join(tempDir(), 'demo'), { waitMs: HALF_HOUR, now: wait.now, sleep: wait.sleep }),
+    {
+      code: 'EEXIST',
+    },
+  )
+  assert.deepEqual(wait.sleeps, [])
+})
+
+// A stale lock and the takeover guard of a live run: the parent of this process stands for that run.
+function liveGuard(dir: string) {
+  writeFileSync(join(dir, '.lock'), '999999')
+  mkdirSync(join(dir, '.lock.takeover'))
+  writeFileSync(join(dir, '.lock.takeover', String(process.ppid)), '')
+}
+
+// A fake guard pause. A try waits for a live guard in 5 ms pauses (synchronous), and the test reads how many it made.
+function fakePause() {
+  const pauses: number[] = []
+  return { pauses, pause: (ms: number) => void pauses.push(ms), total: () => pauses.reduce((a, b) => a + b, 0) }
+}
+
+test('claimRun waits out a live takeover guard and then takes the stale lock', async () => {
+  const dir = tempDir()
+  liveGuard(dir)
+  const guard = fakePause()
+  const wait = fakeWait(n => {
+    if (n === 1) rmSync(join(dir, '.lock.takeover'), { recursive: true })
+  })
+  const release = await claimRun(dir, join(tempDir(), 'demo'), {
+    waitMs: HALF_HOUR,
+    pollMs: 5000,
+    now: wait.now,
+    sleep: wait.sleep,
+    onWait: () => {},
+    guardPause: guard.pause,
+  })
+  assert.deepEqual(wait.sleeps, [5000])
+  // A try waits 5 s at most for the guard of a live run, as `acquireLock` does by itself.
+  assert.equal(guard.total(), 5000)
+  assert.equal(readFileSync(join(dir, '.lock'), 'utf8'), String(process.pid))
+  release()
+})
+
+// Issue #168 review. A try waits for the guard of a live run in 5 ms pauses, and it does not return before they are
+// over. So it may not spend more than the claim has left: with no wait it does not pause at all, and with a bound of a
+// few ms it pauses for that long at most.
+test('a claim with no wait does not wait for a live takeover guard: it fails at once and names the guard', async () => {
+  const dir = tempDir()
+  liveGuard(dir)
+  const guard = fakePause()
+  await assert.rejects(
+    claimRun(dir, join(tempDir(), 'demo'), { waitMs: 0, guardPause: guard.pause }),
+    (err: unknown) => {
+      assert.ok(err instanceof LockBusyError)
+      assert.equal(err.kind, 'guard')
+      assert.match(err.message, new RegExp(`takeover guard .* held by pid ${process.ppid}`))
+      return true
+    },
+  )
+  assert.deepEqual(guard.pauses, [])
+  // The live guard and the stale lock stay as they were.
+  assert.deepEqual(readdirSync(join(dir, '.lock.takeover')), [String(process.ppid)])
+  assert.equal(readFileSync(join(dir, '.lock'), 'utf8'), '999999')
+})
+
+test('a claim with a short bound waits for a live takeover guard no longer than that bound', async () => {
+  const dir = tempDir()
+  liveGuard(dir)
+  const guard = fakePause()
+  const wait = fakeWait()
+  await assert.rejects(
+    claimRun(dir, join(tempDir(), 'demo'), {
+      waitMs: 12,
+      pollMs: 5000,
+      now: wait.now,
+      sleep: wait.sleep,
+      onWait: () => {},
+      guardPause: guard.pause,
+    }),
+    /Waited .* for it and gave up/,
+  )
+  // 12 ms hold two pauses of 5 ms. The poll after that has no time left and does not pause.
+  assert.equal(guard.total(), 10)
+  assert.deepEqual(wait.sleeps, [12])
+})
+
+test('after one timeout the claimer does not wait for a live takeover guard either', async () => {
+  const dir = tempDir()
+  const runDir = join(tempDir(), 'demo')
+  holdLock(dir)
+  const guard = fakePause()
+  const wait = fakeWait()
+  const claim = makeClaimer({
+    waitMs: 20_000,
+    pollMs: 5000,
+    now: wait.now,
+    sleep: wait.sleep,
+    onWait: () => {},
+    guardPause: guard.pause,
+  })
+  await assert.rejects(claim(dir, runDir), /Waited 20 s/)
+  // The lock is stale now and a live run holds its guard. The next scenario fails at once.
+  rmSync(join(dir, '.lock'))
+  liveGuard(dir)
+  await assert.rejects(claim(dir, runDir), /could not take .*takeover guard/)
+  assert.deepEqual(guard.pauses, [])
+})
+
+test('after one timeout the claimer does not wait again for the later scenarios of the run', async () => {
+  const dir = tempDir()
+  const runDir = join(tempDir(), 'demo')
+  holdLock(dir)
+  const wait = fakeWait()
+  const claim = makeClaimer({ waitMs: 20_000, pollMs: 5000, now: wait.now, sleep: wait.sleep, onWait: () => {} })
+  await assert.rejects(claim(dir, runDir), /Waited 20 s/)
+  assert.equal(wait.sleeps.length, 4)
+  // Later scenarios try once and fail at once, and say why.
+  await assert.rejects(claim(dir, runDir), /another demo run.*earlier scenario of this run already waited 20 s/s)
+  assert.equal(wait.sleeps.length, 4)
+  // A lock that is free by now is taken.
+  rmSync(join(dir, '.lock'))
+  ;(await claim(dir, runDir))()
+})
+
+// `describeHolder` asks `ps`. A slim container has none, and then it names the pid alone by design.
+const hasPs = spawnSync('ps', ['-p', String(process.pid)], { stdio: 'ignore' }).status === 0
+
+test('describeHolder names the pid and, for a live process, its command line', {
+  skip: hasPs ? false : 'ps is not installed',
+}, () => {
+  const own = describeHolder(process.pid)
+  assert.match(own, new RegExp(`^pid ${process.pid}\\b`))
+  assert.match(own, /node/)
+})
+
+test('describeHolder names only the pid of a process that is gone', () => {
+  assert.equal(describeHolder(999999), 'pid 999999')
+})
+
+test('a second run waits for a live first run and takes the lock when that run has ended', {
+  timeout: 60_000,
+}, async t => {
+  const lockDir = tempDir()
+  const runDir = join(tempDir(), 'demo')
+  const first = spawnLockChild(lockDir, t.signal)
+  try {
+    await first.ready()
+    assert.equal(await first.attempt(), 'won')
+    const firstPid = readFileSync(join(lockDir, '.lock'), 'utf8')
+    let settled = false
+    let sawHolder!: () => void
+    const noted = new Promise<void>(resolve => {
+      sawHolder = resolve
+    })
+    const notes: string[] = []
+    // The poll is a few ms of real time. The test counts the polls, and never reads a clock.
+    let polls = 0
+    let pollsWanted = Number.POSITIVE_INFINITY
+    let enough!: () => void
+    const polled = new Promise<void>(resolve => {
+      enough = resolve
+    })
+    const claim = claimRun(lockDir, runDir, {
+      waitMs: 60_000,
+      pollMs: 5,
+      sleep: async ms => {
+        if (++polls >= pollsWanted) enough()
+        await new Promise(resolve => setTimeout(resolve, ms))
+      },
+      onWait: note => {
+        notes.push(note)
+        sawHolder()
+      },
+    }).then(release => {
+      settled = true
+      return release
+    })
+    // The claim has seen the live first run and waits. The first run lets go only now, so the claim cannot
+    // have taken the lock before.
+    await noted
+    assert.equal(settled, false)
+    assert.match(notes[0]!, new RegExp(`pid ${firstPid}\\b`))
+    // The first run lets go of the lock and lives on: the instant between two scenarios of a run. The claim
+    // polls on and takes nothing, because that run still lives.
+    await first.release()
+    pollsWanted = polls + 3
+    await polled
+    assert.equal(settled, false)
+    assert.equal(existsSync(join(lockDir, '.lock')), false)
+    // The first run ends. The claim takes the lock now.
+    await first.finish()
+    const release = await claim
+    assert.equal(readFileSync(join(lockDir, '.lock'), 'utf8'), String(process.pid))
+    release()
+  } finally {
+    first.kill()
+  }
 })
 
 test('only one of two runs that attempt at once takes over a stale lock', { timeout: 60_000 }, async t => {

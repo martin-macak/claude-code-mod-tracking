@@ -80,6 +80,28 @@ export class Tmux {
     this.run(['set-option', '-t', this.target, '@caption', ''])
   }
 
+  // The size that `start` and `resize` take: the columns and the rows of the window without its status line. The
+  // window is one row taller. A client that is attached shows that row as the caption bar. With no client, the
+  // pane takes that row too.
+  size(): { cols: number; rows: number } {
+    const [cols, rows] = this.run(['display-message', '-p', '-t', this.target, '#{window_width} #{window_height}'])
+      .trim()
+      .split(' ')
+      .map(Number)
+    return { cols: cols!, rows: rows! - 1 }
+  }
+
+  // Gives the session another size, as `start` sizes it. The program in the pane gets a resize signal, and a pane
+  // that has not started a program yet starts at the new size. It throws when tmux gives another size than the one
+  // asked for, so a step never runs at a size it did not set.
+  resize(cols: number, rows: number): void {
+    this.run(['resize-window', '-t', this.target, '-x', String(cols), '-y', String(rows + 1)])
+    const got = this.size()
+    if (got.cols !== cols || got.rows !== rows) {
+      throw new Error(`tmux: asked for ${cols}x${rows}, got ${got.cols}x${got.rows}`)
+    }
+  }
+
   caption(text: string): void {
     this.run(['set-option', '-t', this.target, '@caption', text.replaceAll('#[', '##[')])
     for (const client of this.clients()) this.run(['refresh-client', '-S', '-t', client])

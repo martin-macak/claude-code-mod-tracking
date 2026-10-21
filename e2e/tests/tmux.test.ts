@@ -83,3 +83,25 @@ test('Tmux click sends an SGR mouse press and release at the 1-based column and 
   tmux.click(30, 5)
   await screenHas(tmux, '^[[<0;30;5M^[[<0;30;5m')
 })
+
+const paneRows = (tmux: Tmux) => tmux.run(['display-message', '-p', '-t', tmux.target, '#{pane_height}']).trim()
+
+test('Tmux resize gives the session the size, and the program in the pane sees it', { skip }, async t => {
+  const tmux = await shell('resize')
+  t.after(() => tmux.kill())
+  assert.deepEqual(tmux.size(), { cols: 80, rows: 20 })
+  tmux.resize(100, 40)
+  assert.deepEqual(tmux.size(), { cols: 100, rows: 40 })
+  tmux.line('stty size') // rows, then columns, as the program in the pane reads them
+  await screenHas(tmux, `${paneRows(tmux)} 100`)
+  // A second resize, to a smaller size, works too.
+  tmux.resize(90, 30)
+  assert.deepEqual(tmux.size(), { cols: 90, rows: 30 })
+})
+
+test('Tmux resize throws when tmux refuses the size, and the old size stays', { skip }, async t => {
+  const tmux = await shell('resize-refused')
+  t.after(() => tmux.kill())
+  assert.throws(() => tmux.resize(0, 40), /tmux/)
+  assert.deepEqual(tmux.size(), { cols: 80, rows: 20 })
+})
