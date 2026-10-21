@@ -628,6 +628,64 @@ test('builtin: a backgrounded cd, pushd, export, docker, tmux or screen start gi
   }
 })
 
+// A cd that runs in the background (`cd /x & ...`, or a list that ends with `&`) does not move the folder of the later
+// commands (issue #141): the compose project and the $PWD of a detached command stay the session's.
+const composeProject = (command: string) =>
+  parseBashProcesses(command, out(''), { cwd: '/work/app' }).find(r => r.kind === 'docker-compose')?.project
+
+test('parseBashProcesses keeps the session folder after a cd that runs in the background', () => {
+  const project = composeProject
+  expect(project('cd /x && docker compose up -d')).toBe('x')
+  expect(project('cd /x || docker compose up -d')).toBe('x')
+  expect(project('cd /x & docker compose up -d')).toBe('app')
+  expect(project('cd /x && true & docker compose up -d')).toBe('app')
+  expect(project('{ cd /x; } & docker compose up -d')).toBe('app')
+  expect(project('pushd /x & docker compose up -d')).toBe('app')
+  expect(project('for d in a; do cd /x & docker compose up -d; done')).toBe('app')
+  expect(detachedOf('cd /x & srv $PWD/app.js &', '/w')[0]?.fingerprint).toBe('srv /w/app.js')
+})
+
+// A `{` group opens a list of its own: an `&` inside it does not background the `cd` before the group.
+test('parseBashProcesses keeps a cd before a group that holds a background job', () => {
+  expect(composeProject('cd /x && { npm start & }; docker compose up -d')).toBe('x')
+  expect(composeProject('cd /x && { npm start & docker compose up -d; }')).toBe('x')
+  expect(composeProject('cd /x && { ( cd /y ) & }; docker compose up -d')).toBe('x')
+  expect(composeProject('cd /x && { true; } && npm start & docker compose up -d')).toBe('app')
+})
+
+// A newline right after `&&`, `||` or `|` continues the list, as in bash.
+test('parseBashProcesses keeps the session folder after a cd in a list that continues on the next line', () => {
+  expect(composeProject('cd /x &&\nsleep 1 &\ndocker compose up -d')).toBe('app')
+  expect(composeProject('cd /x ||\n\n# note\nsleep 1 &\ndocker compose up -d')).toBe('app')
+  expect(composeProject('cd /x |\nsleep 1 &\ndocker compose up -d')).toBe('app')
+  expect(composeProject('cd /x && true\nsleep 1 &\ndocker compose up -d')).toBe('x')
+})
+
+// A `for`, `while`, `until`, `if`, `case` or `select` that ends with `&` runs in the background as a whole.
+test('parseBashProcesses keeps the session folder after a cd in a loop that runs in the background', () => {
+  expect(composeProject('for d in a; do cd /x; done & docker compose up -d')).toBe('app')
+  expect(composeProject('while true; do cd /x; sleep 1; done & docker compose up -d')).toBe('app')
+  expect(composeProject('until false; do cd /x; break; done & docker compose up -d')).toBe('app')
+  expect(composeProject('if true; then cd /x; fi & docker compose up -d')).toBe('app')
+  expect(composeProject('case x in x) cd /x ;; esac & docker compose up -d')).toBe('app')
+  expect(composeProject('select d in a; do cd /x; break; done & docker compose up -d')).toBe('app')
+  // `time [-p]` can stand in front of a compound. The loop after it runs in the background as a whole, and its `done`
+  // does not close the compound around it.
+  expect(composeProject('time -p for d in a; do cd /x; done & docker compose up -d')).toBe('app')
+  expect(composeProject('if true; then cd /x; time for i in 1; do :; done & docker compose up -d; fi')).toBe('x')
+  expect(composeProject('for d in a; do for e in b; do cd /x; done; done & docker compose up -d')).toBe('app')
+  expect(composeProject('cd /x && for d in a; do :; done & docker compose up -d')).toBe('app')
+  expect(composeProject('for d in a; do cd /x; done; docker compose up -d')).toBe('x')
+  expect(composeProject('if true; then cd /x; fi && docker compose up -d')).toBe('x')
+})
+
+// The variables follow the scope of the directory: a variable set in a background list does not reach the commands
+// after the `&`, as in bash. `export` keeps the env global.
+test('parseBashProcesses hides a variable set in a background list from the commands after the `&`', () => {
+  expect(detachedOf('D=/x & srv $D/a.js &', '/w')[0]?.fingerprint).toBe('srv $D/a.js')
+  expect(detachedOf('D=/x; srv $D/a.js &', '/w')[0]?.fingerprint).toBe('srv /x/a.js')
+})
+
 test('loop: the $! line of a backgrounded loop is not the pid of the next background job', () => {
   const rows = detachedOf(
     'sleep 100 & for i in 1; do :; done & echo $!; sleep 101 & echo $!',

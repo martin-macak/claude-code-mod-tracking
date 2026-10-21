@@ -381,7 +381,9 @@ export function parseBashProcesses(
   const detached: Detached[] = []
   let lastBg: Detached | undefined
   const pids = pidLines(stdout)
-  // `export` stays global on purpose: a subshell scope is not tracked for env, only for the directory.
+  // `export` stays global on purpose: a subshell scope is not tracked for env, only for the directory. The shell variables
+  // below follow the scope of the directory, so a variable set in a background list (`D=/x & srv $D/a.js &`) does not
+  // reach the commands after the `&`, as in bash.
   const exported: Record<string, string> = {}
   // The shell variables the command sets, bare or with `export`, per subshell scope like the directory. They expand in a
   // detached command.

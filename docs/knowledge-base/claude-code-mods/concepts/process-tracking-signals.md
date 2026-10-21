@@ -67,6 +67,16 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   sleep.
 - `cd` and `export` move the cwd and env for the parts after them. The Bash
   `tool.call` input has no cwd, so the hook reads `$.session.cwd()`.
+- A `cd` in a list that ends with `&` runs in a background subshell and does
+  not move the folder of the parts after the `&`. That holds for `cd x &`,
+  `cd x && y &`, `{ cd x; } &` and `for ...; do cd x; done &`. A `{` group
+  opens a list of its own (`cd x && { y & }` keeps the `cd`). A newline right
+  after `&&`, `||` or `|` continues the list.
+  Evidence (grade: *verified-kit* for the parser): the tests in
+  `repos.test.ts` and `process-parse.test.ts` named "after a cd that runs in
+  the background", and a differential run against real `bash` (macOS) of
+  random `cd`, `pushd`, `&`, `&&`, `;`, newline, group, subshell and loop
+  lists, which showed no difference in the folder of the last command.
 - The container id is a stdout line of exactly 64 hex characters. Other hex
   in the output (`docker info` prints commit ids) is not an id.
 - A foreground `nohup cmd` (no `&`) is not a detached process.
