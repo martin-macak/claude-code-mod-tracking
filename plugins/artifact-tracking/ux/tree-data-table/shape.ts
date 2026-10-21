@@ -59,6 +59,8 @@ export interface TableActions {
   toggle(rowId: string): void
   more(sectionId: string): void
   press(buttonKey: string): void
+  /** A press that does no work: it only gives the pane the keys (issue #129). A dim footer key calls it. */
+  keys(): void
 }
 
 export interface DrawnRow {

@@ -1,6 +1,7 @@
 import { When } from '@cucumber/cucumber'
 import { clickUntil } from '../support/click.ts'
-import { arrowOf, selectedLine } from '../support/pane.ts'
+import { arrowOf, paneTextAt, selectedLine } from '../support/pane.ts'
+import { sleep } from '../support/wait.ts'
 import type { DemoWorld } from '../support/world.ts'
 
 // One click may take this long to show its effect on a loaded machine, the state must then hold this long, and the step
@@ -33,5 +34,28 @@ When('I click the arrow of the row showing {string}', async function (this: Demo
     waitMs: WAIT_MS,
     settleMs: SETTLE_MS,
     what: `a click on the arrow of the row showing "${text}" did not select and toggle the row`,
+  })
+})
+
+// Issue #129. A click on a footer key (`x: dismiss`) or on an `N more` row is a press, and with the keys in the prompt it
+// must also give them to the pane: the hint goes. A click that comes at once after the chord that took the keys away is
+// lost (live: the handler never ran), so the step waits KEYS_SETTLE_MS first, as the live click runs of the pane did, and
+// clicks again only while the hint still shows after WAIT_MS. A click that ran its key and got no keys would run the key
+// again, and the step then fails with the screen, as it should. It is done when the hint has gone and stays gone.
+const KEYS_HINT = 'Keys go to the prompt.'
+const KEYS_SETTLE_MS = 300
+
+When('I click {string} in the pane to give it the keys', async function (this: DemoWorld, text: string) {
+  this.tl.phase('normal')
+  await sleep(KEYS_SETTLE_MS)
+  await clickUntil({
+    capture: () => this.tmux.capture(),
+    locate: screen => paneTextAt(screen, text),
+    click: (column, row) => this.tmux.click(column, row),
+    landed: screen => !screen.includes(KEYS_HINT),
+    tries: TRIES,
+    waitMs: WAIT_MS,
+    settleMs: SETTLE_MS,
+    what: `a click on "${text}" did not give the pane the keys`,
   })
 })

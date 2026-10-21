@@ -15,7 +15,11 @@ const ESC_HINT = 'Esc close'
 /** The cells between two footer keys. */
 const KEY_GAP = 2
 
-/** One Button per key, then the hints (the move hint only when `hint`). A disabled key stays, dim and inert: a letter with no Button leaves the pane. */
+/**
+ * One Button per key, then the hints (the move hint only when `hint`). A disabled key stays, dim, and does no work: a
+ * letter with no Button leaves the pane. A click on it still gives the pane the keys (`actions.keys`, issue #129), as a
+ * click on a live key does: a Button moves no focus, so it would leave the keys in the prompt.
+ */
 export function footerBox(
   el: TableElements,
   keys: readonly FooterKey[],
@@ -32,7 +36,7 @@ export function footerBox(
         hotkey: k.key,
         label: k.label,
         ...(k.enabled ? {} : { dimColor: true }),
-        onPress: k.enabled ? () => actions.press(k.buttonKey) : () => undefined,
+        onPress: k.enabled ? () => actions.press(k.buttonKey) : () => actions.keys(),
       }),
     ),
     ...(hint ? [text(el, { dimColor: true }, MOVE_HINT)] : []),

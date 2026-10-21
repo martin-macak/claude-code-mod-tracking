@@ -75,15 +75,21 @@ export function view(over: Partial<TableView> = {}): TableView {
   }
 }
 
-/** `calls` lists each action as `toggle:<id>`, `more:<section>` or `press:<buttonKey>`. */
-export function recorder(): { calls: string[]; actions: TableActions } {
+/**
+ * `calls` lists each action as `toggle:<id>`, `more:<section>` or `press:<buttonKey>`. `asks` counts the presses that only
+ * ask for the keys (a dim footer key), which are not work.
+ */
+export function recorder(): { calls: string[]; asks: { count: number }; actions: TableActions } {
   const calls: string[] = []
+  const asks = { count: 0 }
   return {
     calls,
+    asks,
     actions: {
       toggle: id => void calls.push(`toggle:${id}`),
       more: id => void calls.push(`more:${id}`),
       press: key => void calls.push(`press:${key}`),
+      keys: () => void asks.count++,
     },
   }
 }

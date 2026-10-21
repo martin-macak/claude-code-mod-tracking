@@ -199,3 +199,82 @@ Feature: Drive the /track pane with the keys
     And the screen matches /│.*link: https:\/\/three\.example\/c/
     And the screen shows "Keys go to the prompt."
     And the screen matches /^❯\s+j\s*$/
+
+  # Issue #129. A click on a footer key is a press too, and it moves no focus. With the keys in the prompt it must also
+  # give them to the pane, so Down and Up move the selection and not the prompt history. The key still does its work.
+  # `r` refreshes (the fake gh scenario below shows it). `x` dismisses the row, selects the next one and asks for the ring
+  # on it: the ring is refused while the prompt has the keys, so the keys must come first.
+  Scenario: A click on a footer key gives the pane the keys when they are in the prompt
+    Given a Claude Code session with the artifact-tracking mod
+    When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "one.example"
+    When I press "C-x"
+    And I press "Tab"
+    Then the screen shows "Keys go to the prompt."
+    When I click "r: refresh" in the pane to give it the keys
+    Then the screen stops showing "Keys go to the prompt."
+    When I press "Down"
+    Then the selected row shows "two.example"
+    When I press "C-x"
+    And I press "Tab"
+    Then the screen shows "Keys go to the prompt."
+    When I click "x: dismiss" in the pane to give it the keys
+    Then the screen matches /Web links 2 links/
+    And the selected row shows "three.example"
+    And the focus ring is on "▸"
+    When I press "Up"
+    Then the selected row shows "one.example"
+
+  # Issue #129, the key keeps its work. A click on `r: refresh` with the keys in the prompt also refreshes. The pane shows
+  # the age of the refresh when it draws and does not draw it again by itself, so "just now" comes from a refresh that
+  # finished a moment before the draw. The 3 seconds of waiting make the first draw say "Ns ago". A fake gh answers the
+  # calls of the mod: nothing here can reach GitHub.
+  Scenario: A click on r: refresh with the keys in the prompt gives the pane the keys and still refreshes
+    Given a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-refresh"
+    And the fake gh reports PR #7 "Refresh the fake PR" from "feat/fake-refresh" into "main" as MERGEABLE
+    And a Claude Code session with the artifact-tracking mod
+    When I wait for 3 seconds
+    And I type "/track"
+    Then the screen matches /│Pull requests gh · refreshed \d+s ago/
+    When I press "C-x"
+    And I press "Tab"
+    Then the screen shows "Keys go to the prompt."
+    When I click "r: refresh" in the pane to give it the keys
+    Then the screen matches /│Pull requests gh · refreshed just now/
+    And the screen stops showing "Keys go to the prompt."
+    And the fake gh answered no unsupported call
+
+  # Issue #129. The same for an N more row: the click shows the next rows and gives the pane the keys.
+  Scenario: A click on an N more row gives the pane the keys when they are in the prompt
+    Given the tracker config file:
+      """
+      { "version": 1, "global": { "ui": { "sectionRows": 5 } } }
+      """
+    And a Claude Code session with the artifact-tracking mod
+    When I type "Note https://a.example/1, https://b.example/2, https://c.example/3, https://d.example/4, https://e.example/5, https://f.example/6 and https://g.example/7 for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "a.example"
+    And the screen shows "2 more"
+    When I press "C-x"
+    And I press "Tab"
+    Then the screen shows "Keys go to the prompt."
+    When I click "2 more" in the pane to give it the keys
+    Then the screen stops showing "2 more"
+    And the screen matches /│ +▸ +g\.example\/7/
+    When I press "Down"
+    Then the selected row shows "b.example"
+
+  # Issue #129, a dim footer key. With nothing tracked no row is selected, so `x: dismiss` is dim and does no work. It is a
+  # Button all the same: a click on it moves no focus, so with the keys in the prompt it must give them to the pane too.
+  Scenario: A click on a dim footer key gives the pane the keys when they are in the prompt
+    Given a Claude Code session with the artifact-tracking mod
+    When I type "/track"
+    Then the screen shows "x: dismiss"
+    When I press "C-x"
+    And I press "Tab"
+    Then the screen shows "Keys go to the prompt."
+    When I click "x: dismiss" in the pane to give it the keys
+    Then the screen stops showing "Keys go to the prompt."
