@@ -651,7 +651,7 @@ test('hideEnded false and /track show-all show every row, whatever the cap', asy
   expect(all.note?.text).toBe('25 tracked')
 })
 
-test('the cap is a view: the slot keeps every row and nothing is written', async () => {
+test('drawing the capped view writes nothing: the slot keeps the rows it holds', async () => {
   const t = await capWorld()
   noDockerIssue(t)
   setProcesses(
@@ -662,6 +662,28 @@ test('the cap is a view: the slot keeps every row and nothing is written', async
   await draw(t, 'processes')
   expect(t.w.state.get('processes') as unknown as ProcessRecord[]).toHaveLength(25)
   expect(t.w.stateSets.processes).toBeUndefined()
+})
+
+test('the store cap and the view cap are one number: /track show-all cannot show a row the store dropped', async () => {
+  const t = await capWorld()
+  noDockerIssue(t)
+  setProcesses(
+    t,
+    many(25, 'done', 'completed', i => ({ endedAt: NOW - (30 - i) * 1000 })),
+  )
+  // A new row merges into the slot (issue #134). 26 rows are over the cap of 20: the 6 oldest ended rows leave the slot.
+  await t.m.toolCall(t.w.ports, {
+    tool: 'Bash',
+    input: { tool: 'Bash', command: 'tmux new -d -s dev' },
+    result: { result: { stdout: '', stderr: '', interrupted: false } },
+  })
+  expect(t.w.state.get('processes') as unknown as ProcessRecord[]).toHaveLength(20)
+  await t.m.track(t.w.ports, 'show-all')
+  const all = await draw(t, 'processes')
+  expect(all.rows).toHaveLength(20) // show-all shows what the slot holds, and no more
+  expect(all.note?.text).toBe('20 tracked')
+  expect(ids(all)).not.toContain('done0')
+  expect(ids(all)).toContain('done6')
 })
 
 // ---------------------------------------------------------------- the selection follows a row that hides

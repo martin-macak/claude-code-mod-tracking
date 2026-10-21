@@ -4,7 +4,8 @@
 
 import type { Json, JsonObject } from '../../core/interfaces/items'
 import type { TrackerContext } from '../../core/interfaces/tracker'
-import { ENDED_STATES } from './states'
+import type { ProcessesConfig } from './config'
+import { ENDED_STATES, FAILED_STATES } from './states'
 import type { ProcessRecord, ProcessState } from './types'
 
 /** What the writes need of a context: the data slot only. */
@@ -47,12 +48,52 @@ function endedBy(merged: ProcessRecord, copies: readonly (ProcessRecord | undefi
   return next
 }
 
+/** What the cap reads of the config: the row limit and the two TTLs. */
+export type ProcessCap = Pick<ProcessesConfig, 'maxRows' | 'endedTtlMs' | 'failedTtlMs'>
+
+/**
+ * True for a row that is over and ended longer ago than its TTL: `failedTtlMs` for a failure, else `endedTtlMs`. A row
+ * with no `endedAt` is never expired: the mod cannot date it. Rule: issue #49. `ENDED_STATES` names the end states.
+ */
+export function expired(r: ProcessRecord, cap: ProcessCap, now: number): boolean {
+  if (!ENDED_STATES.has(r.state) || r.endedAt === undefined) return false
+  return now - r.endedAt >= (FAILED_STATES.has(r.state) ? cap.failedTtlMs : cap.endedTtlMs)
+}
+
+/**
+ * The ids of the rows over `cap.maxRows`. Only ended rows go, and a live row never does, so live rows alone may pass
+ * `maxRows`. A row past its TTL (`expired`) goes before a row inside it, even before an older one. Within each group the
+ * oldest end goes first, by `endedAt` (a row with none, by its first sighting). Two rows with the same time go by first
+ * sighting, then by id, so the answer does not depend on the order of `rows`. The cap drops no more than the rows over
+ * `maxRows`: the TTL orders the cut, it does not start one. Rule: issues #49 and #134. The merge and the view share it.
+ */
+export function overCap(rows: readonly ProcessRecord[], cap: ProcessCap, now: number): ReadonlySet<string> {
+  const extra = rows.length - cap.maxRows
+  if (extra <= 0) return new Set()
+  const ended = rows.filter(r => ENDED_STATES.has(r.state))
+  const endOf = (r: ProcessRecord) => r.endedAt ?? r.firstSeen
+  const staleFirst = (r: ProcessRecord) => (expired(r, cap, now) ? 0 : 1)
+  ended.sort(
+    (a, b) =>
+      staleFirst(a) - staleFirst(b) || endOf(a) - endOf(b) || a.firstSeen - b.firstSeen || a.id.localeCompare(b.id),
+  )
+  return new Set(ended.slice(0, extra).map(r => r.id))
+}
+
 /**
  * Folds `added` into `cur` by id. A known row keeps its `firstSeen` and gets a new `lastSeen`. Oldest first. `endedAt`
  * follows `endedBy`: a live copy clears it, and two ended copies keep the first. `now` is the time of the merge: the new
  * `lastSeen`, and the `endedAt` of an ended row that has none. A caller with the engine clock passes it.
+ *
+ * `cap` caps the rows the merge keeps (issue #134): the rows over `maxRows` leave, by `overCap`. A live row never leaves.
+ * A caller that stores the result passes the config of the tracker. No `cap`: no cap.
  */
-export function mergeProcessRows(cur: ProcessRecord[], added: ProcessRecord[], now = Date.now()): ProcessRecord[] {
+export function mergeProcessRows(
+  cur: ProcessRecord[],
+  added: ProcessRecord[],
+  now = Date.now(),
+  cap?: ProcessCap,
+): ProcessRecord[] {
   const byId = new Map(cur.map(r => [r.id, endedBy(r, [r], now)]))
   for (const row of added) {
     const old = byId.get(row.id)
@@ -63,7 +104,9 @@ export function mergeProcessRows(cur: ProcessRecord[], added: ProcessRecord[], n
         : endedBy(row, [row], now),
     )
   }
-  return [...byId.values()].sort((a, b) => a.firstSeen - b.firstSeen || a.id.localeCompare(b.id))
+  const rows = [...byId.values()].sort((a, b) => a.firstSeen - b.firstSeen || a.id.localeCompare(b.id))
+  const over = cap === undefined ? undefined : overCap(rows, cap, now)
+  return over !== undefined && over.size > 0 ? rows.filter(r => !over.has(r.id)) : rows
 }
 
 /** The slot value as rows. The family stores Json, so a value that is not a list reads as none. */
@@ -79,9 +122,10 @@ export async function setProcesses(ctx: RowsCtx, change: (rows: ProcessRecord[])
   await ctx.data.update(cur => change(asRows(cur)) as unknown as Json)
 }
 
-export async function addProcessRows(ctx: RowsCtx, rows: ProcessRecord[]): Promise<void> {
+/** Adds rows to the slot. `cap` is the config of the tracker: the slot keeps no more rows than `maxRows` (see `mergeProcessRows`). */
+export async function addProcessRows(ctx: RowsCtx, rows: ProcessRecord[], cap: ProcessCap): Promise<void> {
   if (rows.length === 0) return
-  await setProcesses(ctx, cur => mergeProcessRows(cur, rows))
+  await setProcesses(ctx, cur => mergeProcessRows(cur, rows, undefined, cap))
 }
 
 /**

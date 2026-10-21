@@ -47,7 +47,7 @@ function lstart(ms: number): string {
 }
 const CID = `${'c'.repeat(12)}${'0123456789abcdef'.repeat(3)}abcd`
 
-function setup(o: { cwd?: string; agents?: AgentInfo[] } = {}) {
+function setup(o: { cwd?: string; agents?: AgentInfo[]; maxRows?: number } = {}) {
   // Engine time starts at the real time: `ps` start times in the cases below are real dates.
   const w = fakePorts({
     now: Date.now(),
@@ -80,7 +80,11 @@ function setup(o: { cwd?: string; agents?: AgentInfo[] } = {}) {
       trackers,
       items: host,
       dismiss: () => ({ list: async () => new Set(), add: async () => {} }),
-      config: () => fakeConfig({ specs: trackers }),
+      config: () =>
+        fakeConfig({
+          specs: trackers,
+          ...(o.maxRows !== undefined ? { file: { trackers: { processes: { maxRows: o.maxRows } } } } : {}),
+        }),
       paneId: 'track',
     },
     w.ports,
@@ -404,6 +408,104 @@ test('a resume switch folds the stored rows over the live ones; an empty stored 
   t.w.session.id = 'sess-3'
   await t.m.entry(t.w.ports)
   expect(t.rows()).toHaveLength(1)
+})
+
+// ---------------------------------------------------------------- the cap of the stored rows (#134)
+
+/** An ended row. A higher `i` started and ended later. */
+const endedRow = (i: number) =>
+  ({
+    id: `e${i}`,
+    kind: 'tmux',
+    name: `e${i}`,
+    state: 'completed',
+    firstSeen: 10 + i,
+    lastSeen: 10 + i,
+    endedAt: 1000 + i,
+  }) as unknown as Json
+const endedRows = (n: number) => Array.from({ length: n }, (_, i) => endedRow(i))
+/** The ids `e<from>` to `e<to - 1>`. */
+const eIds = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `e${from + i}`)
+
+test('the saved copy keeps the maxRows newest ended rows, and a load brings the same rows back', async () => {
+  const t = setup({ maxRows: 20 })
+  t.w.state.set('processes', endedRows(25))
+  await t.m.entry(t.w.ports)
+  await t.m.end(t.w.ports, 'resume', 1500)
+  const stored = t.w.store.get('v2:s:sess-1') as { processes: ProcessRecord[] }
+  expect(stored.processes.map(r => r.id)).toEqual(eIds(5, 25))
+  t.w.session.id = 'sess-2' // another session, then back to the first: the load reads the copy
+  t.w.state.set('processes', [])
+  await t.m.entry(t.w.ports)
+  await t.m.end(t.w.ports, 'resume', 1500)
+  t.w.session.id = 'sess-1'
+  await t.m.entry(t.w.ports)
+  expect(t.rows().map(r => r.id)).toEqual(eIds(5, 25))
+})
+
+test('a stored copy that an older build wrote past the cap is cut when it loads', async () => {
+  const t = setup({ maxRows: 20 })
+  t.w.store.set('v2:s:sess-2', { processes: endedRows(25) })
+  await t.m.entry(t.w.ports)
+  await t.m.end(t.w.ports, 'resume', 1500)
+  t.w.session.id = 'sess-2'
+  await t.m.entry(t.w.ports)
+  expect(t.rows().map(r => r.id)).toEqual(eIds(5, 25))
+})
+
+test('a clear switch cuts the carried rows to the cap too, and a live row stays', async () => {
+  const t = setup({ maxRows: 20 })
+  t.w.state.set('processes', [...endedRows(24), row('live', 1, 'running')])
+  await t.m.entry(t.w.ports)
+  await t.m.end(t.w.ports, 'clear', 1500)
+  t.w.session.id = 'sess-2'
+  t.w.state.set('processes', [])
+  await t.m.entry(t.w.ports)
+  expect(t.rows().map(r => r.id)).toEqual(['live', ...eIds(5, 24)])
+})
+
+test('a Bash row that joins a full slot pushes out the oldest ended row', async () => {
+  const t = setup({ maxRows: 20 })
+  t.w.state.set('processes', endedRows(20))
+  await t.bash('tmux new -d -s dev')
+  expect(t.rows().map(r => r.id)).toHaveLength(20)
+  expect(t.rows().map(r => r.name)).toContain('dev')
+  expect(t.rows().map(r => r.id)).not.toContain('e0')
+  expect(t.rows().map(r => r.id)).toContain('e1')
+})
+
+test('a Bash row that joins a full slot pushes out the expired rows first: a failed row inside its TTL stays', async () => {
+  const t = setup({ maxRows: 20 })
+  const at = Date.now()
+  const MIN = 60_000
+  // `bad` ended 50 minutes ago and has 60. Each `old` row ended 40 minutes ago, after `bad`, and has 30 (the defaults).
+  const old = (i: number) =>
+    ({ ...(endedRow(i) as object), id: `old${i}`, name: `old${i}`, endedAt: at - 40 * MIN + i }) as unknown as Json
+  const bad = { ...(endedRow(99) as object), id: 'bad', name: 'bad', state: 'failed', endedAt: at - 50 * MIN }
+  t.w.state.set('processes', [bad as unknown as Json, ...Array.from({ length: 21 }, (_, i) => old(i))])
+  await t.bash('tmux new -d -s dev') // 23 rows over a cap of 20: the 3 oldest expired rows go
+  expect(t.rows().map(r => r.id)).toHaveLength(20)
+  expect(t.rows().map(r => r.id)).toContain('bad')
+  expect(t.rows().map(r => r.id)).not.toContain('old0')
+  expect(t.rows().map(r => r.id)).not.toContain('old2')
+  expect(t.rows().map(r => r.id)).toContain('old3')
+})
+
+test('a Monitor row that joins a full slot pushes out the oldest ended row', async () => {
+  const t = setup({ maxRows: 20 })
+  t.w.state.set('processes', endedRows(20))
+  await armMonitor(t)
+  expect(t.rows()).toHaveLength(20)
+  expect(t.rows().map(r => r.kind)).toContain('monitor')
+  expect(t.rows().map(r => r.id)).not.toContain('e0')
+})
+
+test('live rows over the cap all stay when a row joins', async () => {
+  const t = setup({ maxRows: 20 })
+  t.w.state.set('processes', [...Array.from({ length: 22 }, (_, i) => row(`run${i}`, i, 'running')), ...endedRows(3)])
+  await t.bash('tmux new -d -s dev')
+  expect(t.rows()).toHaveLength(23) // 22 live and the new one: no ended row is left
+  expect(t.rows().every(r => r.state === 'running')).toBe(true)
 })
 
 test('init keeps one breaker per load: a second init does not close an open breaker', async () => {

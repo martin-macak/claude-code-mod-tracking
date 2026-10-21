@@ -12,7 +12,8 @@ export const PROCESSES_SCHEMA = {
   hideEnded: bool(true),
   endedTtlMs: int(1800000, 0, 86400000),
   failedTtlMs: int(3600000, 0, 86400000),
-  // Issue #49: past this many rows, the oldest ended rows go first. A live row never goes.
+  // Issues #49 and #134: past this many rows, ended rows go, from the view and from the stored rows. The stored rows lose
+  // the rows past their TTL first, then the oldest ended rows. A live row never goes.
   maxRows: int(200, 20, 2000),
 } as const satisfies Schema
 
