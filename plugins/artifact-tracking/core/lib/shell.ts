@@ -35,23 +35,52 @@ export type Segment = {
 }
 
 // A compound command spans several segments: `for ...; do ...; done`. `COMPOUND_LEAD` are the reserved words that can
-// stand in front of the opener (`do for`, `then if`, `else if`). `time` and its options (`time -p for ...`) can too.
+// stand in front of the opener (`do for`, `then if`, `else if`, `elif for`). `time` and its options (`time -p for ...`)
+// can too. `COMPOUND_COND` open a compound and then take a command as their condition, so that command can open one too:
+// `if for i in 1; do :; done; then ...` opens an `if` and a `for` in one segment.
 const COMPOUND_OPEN = new Set(['for', 'while', 'until', 'if', 'case', 'select'])
+const COMPOUND_COND = new Set(['while', 'until', 'if'])
 const COMPOUND_CLOSE = new Set(['done', 'fi', 'esac'])
-const COMPOUND_LEAD = new Set(['!', 'do', 'then', 'else'])
+const COMPOUND_LEAD = new Set(['!', 'do', 'then', 'else', 'elif'])
 
-/** The word that starts the command of a segment, behind the reserved words and `time [-p]`. */
-function compoundHead(words: readonly string[]): string | undefined {
+/**
+ * What `splitShell` knows of a word besides its text. `head`: how many of its first characters were typed, not inside
+ * quotes and not after a backslash. `whole`: it holds no quote and no escape at all, so a quote of no length (`esac''`)
+ * counts too. A reserved word is one only when it is `whole`: `'case'` and `\if` are commands.
+ */
+type Typed = { head: number; whole: boolean }
+
+/**
+ * The compounds that a segment opens, in order, and the index of the word of the last one. The scan starts at the first
+ * word and goes past the reserved words and `time [-p]` up to the command. A quoted or escaped word is no reserved word.
+ */
+function compoundLead(words: readonly string[], typed: readonly Typed[]): { opens: string[]; at: number } {
+  const opens: string[] = []
+  let at = -1
   let afterTime = false
-  for (const w of words) {
-    if (COMPOUND_LEAD.has(w)) afterTime = false
-    else if (w === 'time') afterTime = true
-    else if (!(afterTime && w.startsWith('-'))) return w
+  for (let k = 0; k < words.length; k++) {
+    const w = words[k]!
+    const kw = typed[k]?.whole === true ? w : ''
+    if (COMPOUND_LEAD.has(kw)) afterTime = false
+    else if (kw === 'time') afterTime = true
+    else if (afterTime && w.startsWith('-')) continue
+    else if (COMPOUND_COND.has(kw)) {
+      opens.push(kw)
+      at = k
+      afterTime = false
+    } else {
+      if (COMPOUND_OPEN.has(kw)) {
+        opens.push(kw)
+        at = k
+      }
+      break
+    }
   }
-  return undefined
+  return { opens, at }
 }
 
-const OPS = ['&&', '||', '|&', ';', '|', '&', '\n', '(', ')', '`', '$(', '{', '}'] as const
+// `;;`, `;&` and `;;&` end an arm of a `case`. Outside a `case` they read like `;`.
+const OPS = ['&&', '||', '|&', ';;&', ';;', ';&', ';', '|', '&', '\n', '(', ')', '`', '$(', '{', '}'] as const
 
 /** Where the splitter stands in the lists around a point: a scope, a group or a compound saves and gives back one. */
 type Place = {
@@ -70,11 +99,18 @@ type Place = {
  * Each part of a pipeline (`cd x | cat`, `cat | cd x`) runs in a subshell too, the last part as well (no `lastpipe`).
  * Its segments move to a child scope of their own, so a `cd` in a part does not reach the segments after the pipeline
  * (issue #147). The `)` that ends a `case` pattern is no end of a subshell (issue #148).
+ * The words of a `case` pattern are no command (issue #163): they stand in no segment and open or close no compound.
+ * Only a `>` or `<` that was typed (no quote, no backslash) is a redirection (issue #162).
  */
 export function splitShell(command: string): Segment[] {
   const out: Segment[] = []
   let words: string[] = []
+  // For each word, how many of its first characters were typed: not inside quotes, not after a backslash. It ends at the
+  // first quote or escape of the word. `dropRedirections` reads the redirection from that typed head only.
+  let heads: Typed[] = []
   let word = ''
+  let typedHead = 0
+  let headOpen = true
   let inWord = false
   const heredocs: { tag: string; strip: boolean }[] = []
   let i = 0
@@ -97,8 +133,12 @@ export function splitShell(command: string): Segment[] {
   let partFrom = 0
   let piped = false
   const groups: Place[] = []
-  // `isCase`: the compound is a `case`, whose `)` after a pattern is no end of a subshell.
-  const compounds: (Place & { isCase: boolean })[] = []
+  // `isCase`: the compound is a `case`. Its `arm` says where the reader is in it: `head` is the subject (`case $(x)`, before
+  // the `in`), `pattern` the pattern list of an arm (`in`, or `;;`, up to the `)`), `arm` the commands after the `)`. The
+  // words of a pattern are no command, and the `)` that ends one is no end of a subshell. `fresh`: no word of this pattern
+  // list yet. `paren`: it began with a `(`. An `esac` that comes first in a pattern list, with no `(` before it, ends the
+  // case: bash reads `case x in esac` as an empty case, and `esac)` there is a syntax error.
+  const compounds: (Place & { isCase: boolean; arm: 'head' | 'pattern' | 'arm'; fresh: boolean; paren: boolean })[] = []
   const here = (): Place => ({ list: listFrom, part: partFrom, piped })
   const back = (p: Place) => {
     listFrom = p.list
@@ -107,8 +147,9 @@ export function splitShell(command: string): Segment[] {
   }
   // The last operator was `&&`, `||`, `|` or `|&` and no word has come after it: the list goes on after a newline.
   let wantsMore = false
-  // Where the last `>` that was typed (no quote, no backslash) stands. `>|` is a redirection only after such a `>`.
-  let typedGt = -2
+  // Where the last `>` or `<` that was typed (no quote, no backslash) stands. `>|` and the `&` of `>&` and `<&` belong to a
+  // redirection only after such a character: after a quoted or escaped one, the `|` is a pipe and the `&` a background.
+  let typedRedir = -2
   // A scope opens a list and a pipeline part of its own. Its close gives back the place it sat in.
   const openScope = (tick: boolean) => {
     stack.push({ id: `${scope()}.${++scopes}`, tick, saved: here(), compounds: compounds.length })
@@ -119,18 +160,27 @@ export function splitShell(command: string): Segment[] {
     const top = stack.pop()
     if (top) back(top.saved)
   }
-  // The `)` is the end of a `case` pattern when the innermost open compound is a `case` that opened inside the innermost
-  // scope. A subshell, a `$(` or a backtick in an arm opens a scope after the `case`, so its `)` closes that scope.
-  const endsPattern = () => compounds.at(-1)?.isCase === true && compounds.length > (stack.at(-1)?.compounds ?? 0)
-  // A `(` in front of a `case` pattern (`case x in (x) ...`, `;; (y) ...`) is no subshell. The text before it ends with
-  // the `in` of the `case` header, or with the `;;`, `;&` or `;;&` of the arm before. A `(` after a pattern is a subshell:
-  // the text ends with `)`. The header is the segment that just ended (`case x in`), or the lone `in` after `case $(x)`.
-  // Any other word `in` at the end of a line (`echo logged in`) starts no pattern.
-  const startsPattern = () => {
-    if (!endsPattern()) return false
-    if (/(?:;;&?|;&)$/.test(s.slice(0, i).trimEnd())) return true
-    const last = out.at(-1)
-    return last?.words.at(-1) === 'in' && (compoundHead(last.words) === 'case' || last.words.length === 1)
+  // The `case` that the reader is in right now: the innermost open compound, when it is a `case` that opened inside the
+  // innermost scope. A subshell, a `$(` or a backtick in an arm opens a scope after the `case`, so inside it there is none:
+  // its `)` closes that scope, and a pattern word there is a command.
+  const theCase = () => {
+    const c = compounds.at(-1)
+    return c?.isCase === true && compounds.length > (stack.at(-1)?.compounds ?? 0) ? c : undefined
+  }
+  const inPattern = () => theCase()?.arm === 'pattern'
+  const startPattern = (c: NonNullable<ReturnType<typeof theCase>>) => {
+    c.arm = 'pattern'
+    c.fresh = true
+    c.paren = false
+  }
+  // The `in` of a header that sits in one segment: `case x in`, behind the reserved words and `time [-p]`. A header split by
+  // a substitution (`case $(x) in`, `case x` newline `in`) ends in `endWord` instead, at its lone `in`.
+  const caseHeaderEnds = () => {
+    // The `case` stands two words before the `in`. This O(1) check keeps a long run of lead words that all continue the
+    // scan (`if if if ... in in in`) from costing a full scan at each `in`.
+    if (words.at(-1) !== 'in' || words.at(-3) !== 'case') return false
+    const lead = compoundLead(words, heads)
+    return lead.opens.at(-1) === 'case' && words.length === lead.at + 3
   }
   // The segments from `from` run in a subshell of their own: a background list or a pipeline part. They move to a child
   // of the current scope. Every segment of them sits in that scope or in a scope under it. A part that holds only
@@ -153,20 +203,59 @@ export function splitShell(command: string): Segment[] {
   }
 
   const endWord = () => {
-    if (inWord) words.push(word)
+    if (inWord) {
+      const c = theCase()
+      // A keyword is a keyword only as typed: `'esac'`, `"esac"`, `\esac` and `esac''` are patterns, and the cleaned word
+      // cannot tell. `headOpen` is still true when the word held no quote and no escape.
+      const plain = headOpen
+      if (c?.arm === 'head' && word === 'in' && plain) {
+        // The `in` of `case $(x) in` or `case x` newline `in` ends the header. It is no command, and the words before it
+        // in the segment are the rest of the subject.
+        startPattern(c)
+        words = []
+        heads = []
+      } else {
+        if (c?.arm === 'pattern') {
+          if (c.fresh && !c.paren && word === 'esac' && plain) c.arm = 'arm' // the case ends: the segment `esac` closes it
+          c.fresh = false
+        }
+        words.push(word)
+        heads.push({ head: typedHead, whole: plain })
+      }
+    }
     word = ''
     inWord = false
+    typedHead = 0
+    headOpen = true
+  }
+  // A typed character: no quote, no backslash. It stays in the typed head of the word as long as every character before it
+  // in the word was typed too.
+  const typed = (ch: string) => {
+    word += ch
+    inWord = true
+    if (headOpen) typedHead = word.length
   }
   const endSegment = (bg: boolean) => {
     endWord()
-    const clean = dropRedirections(words)
+    if (inPattern()) {
+      // The words of a pattern are no command: they open or close no compound, and `cd)` moves no folder.
+      words = []
+      heads = []
+      return
+    }
+    const { words: clean, heads: cleanHeads } = dropRedirections(words, heads)
     if (clean.length > 0) {
       out.push({ words: clean.map(unmarkDollars), marked: clean, bg, scope: scope() })
-      const head = compoundHead(clean)
-      if (head !== undefined && COMPOUND_OPEN.has(head)) {
-        compounds.push({ ...here(), isCase: head === 'case' })
-        partFrom = out.length - 1
-        piped = false
+      const lead = compoundLead(clean, cleanHeads)
+      if (lead.opens.length > 0) {
+        // `if for i in 1; do ...; done; then` opens an `if` and a `for` in one segment: each gets its own level.
+        for (const kind of lead.opens) {
+          compounds.push({ ...here(), isCase: kind === 'case', arm: 'head', fresh: false, paren: false })
+          partFrom = out.length - 1
+          piped = false
+        }
+        const top = compounds.at(-1)!
+        if (top.isCase && clean[lead.at + 2] === 'in') startPattern(top)
       } else if (COMPOUND_CLOSE.has(clean[0]!)) {
         // `esac` can follow a compound with no `;;` (`a | { b; } esac`), and `fi esac` or `done esac` close two compounds.
         // Each close ends the pipeline that is open in it, then gives back the place from before its compound.
@@ -178,6 +267,7 @@ export function splitShell(command: string): Segment[] {
       }
     }
     words = []
+    heads = []
   }
   const skipHeredocs = () => {
     // At a newline: skip each pending heredoc body up to its tag line.
@@ -201,6 +291,7 @@ export function splitShell(command: string): Segment[] {
       }
       word += literalDollars(s[i + 1] ?? '')
       inWord = true
+      headOpen = false
       i += 2
       continue
     }
@@ -208,10 +299,12 @@ export function splitShell(command: string): Segment[] {
       const end = s.indexOf("'", i + 1)
       word += literalDollars(s.slice(i + 1, end === -1 ? s.length : end))
       inWord = true
+      headOpen = false
       i = end === -1 ? s.length : end + 1
       continue
     }
     if (c === '"') {
+      headOpen = false
       let j = i + 1
       while (j < s.length && s[j] !== '"') {
         if (s[j] === '\\' && j + 1 < s.length) {
@@ -233,6 +326,8 @@ export function splitShell(command: string): Segment[] {
     }
     if (c === ' ' || c === '\t') {
       endWord()
+      // The `in` of `case x in` ends the header: what comes after it is a pattern, not a part of the segment.
+      if (caseHeaderEnds()) endSegment(false)
       i++
       continue
     }
@@ -252,39 +347,64 @@ export function splitShell(command: string): Segment[] {
       i += 2
       continue
     }
-    // `&` inside a redirection (`2>&1`, `>&2`, `&>file`, `&>>file`) is not an operator.
-    if (c === '&' && (word.endsWith('>') || word.endsWith('<') || s[i + 1] === '>')) {
-      word += c
-      inWord = true
+    // `&` inside a redirection (`2>&1`, `>&2`, `&>file`, `&>>file`) is not an operator. The `>` or `<` just before must be
+    // typed: after a quoted or escaped one (`'>'&`, `\>&`) the `&` runs the command in the background.
+    if (c === '&' && (typedRedir === i - 1 || s[i + 1] === '>')) {
+      typed(c)
       i++
       continue
     }
     // `>|` is a redirection that overrides `noclobber`, not a pipe. The `>` just before must be typed: a quoted or escaped
     // `>` (`\>|`) is a word, so the `|` after it is a pipe.
-    if (c === '|' && typedGt === i - 1) {
-      word += c
-      inWord = true
+    if (c === '|' && s[i - 1] === '>' && typedRedir === i - 1) {
+      typed(c)
       i++
       continue
     }
     const op = OPS.find(o => s.startsWith(o, i))
-    // `{` and `}` group commands only as whole words: `{a,b}` and `${X}` stay words.
-    const wordEnds = i + 1 >= s.length || /[\s;&|)]/.test(s[i + 1]!)
-    if ((op === '{' || op === '}') && (inWord || !wordEnds)) {
-      word += c
-      inWord = true
+    // `{` and `}` group commands only as whole words: `{a,b}` and `${X}` stay words. The closing backtick of a `\`...\``
+    // ends a word too (`{ a; }\``), and an opening one does not (`}\`x\`` is the word `}x`). A pattern word is no group.
+    const wordEnds =
+      i + 1 >= s.length || /[\s;&|)]/.test(s[i + 1]!) || (s[i + 1] === '`' && stack.at(-1)?.tick === true)
+    if ((op === '{' || op === '}') && (inWord || !wordEnds || inPattern())) {
+      typed(c)
       i++
       continue
     }
     if (op) {
-      if (inWord || words.length > 0) wantsMore = false
+      const pending = inWord || words.length > 0
+      // The word `in` or `esac` can change where the reader is in a `case`, so it ends before the operator is read.
+      endWord()
+      const pc = theCase()
+      if (pc?.arm === 'pattern') {
+        // In a pattern list only `)` ends the pattern, and `|` separates the alternatives: it is no pipe. Any other operator
+        // is read as usual, and each one drops the pattern words.
+        if (op === '|' || op === ')') {
+          endSegment(false) // drops the words of the pattern
+          if (op === ')') {
+            // The arm after the pattern is a list of its own.
+            endPipe()
+            listFrom = out.length
+            pc.arm = 'arm'
+          }
+          i++
+          continue
+        }
+      }
+      if (pending) wantsMore = false
       endSegment(op === '&')
-      if (op === '(' || op === '$(') {
-        if (op === '$(' || !startsPattern()) openScope(false)
+      if (op === '(') {
+        // A `(` in front of the first word of a pattern list is part of the pattern, no subshell. The segment above can have
+        // ended the header just now (`case x in(x)`), so the case is read again.
+        const c = theCase()
+        if (c?.arm === 'pattern' && c.fresh && !c.paren) c.paren = true
+        else openScope(false)
+      } else if (op === '$(') {
+        openScope(false)
       } else if (op === ')') {
         endPipe()
-        // A `)` that ends a `case` pattern closes no scope. The arm after it is a list of its own.
-        if (endsPattern()) listFrom = out.length
+        // A `)` in a `case` closes no scope: the pattern ends there. The arm after it is a list of its own.
+        if (theCase()) listFrom = out.length
         else if (!stack.at(-1)?.tick) closeScope()
       } else if (op === '`') {
         if (stack.at(-1)?.tick) {
@@ -307,18 +427,20 @@ export function splitShell(command: string): Segment[] {
         endPipe()
         moveToChild(listFrom)
         listFrom = out.length
-      } else if (op === ';' || (op === '\n' && !wantsMore)) {
+      } else if (op === ';' || op === ';;' || op === ';&' || op === ';;&' || (op === '\n' && !wantsMore)) {
         endPipe()
         listFrom = out.length
+        // The end of an arm: the next words are a pattern list.
+        const arm = theCase()
+        if (op.length > 1 && arm?.arm === 'arm') startPattern(arm)
       } else if (op === '&&' || op === '||') endPipe()
       if (op !== '\n') wantsMore = op === '&&' || op === '||' || op === '|' || op === '|&'
       i += op.length
       if (op === '\n') skipHeredocs()
       continue
     }
-    if (c === '>') typedGt = i
-    word += c
-    inWord = true
+    if (c === '>' || c === '<') typedRedir = i
+    typed(c)
     i++
   }
   endSegment(false)
@@ -370,17 +492,25 @@ export function scopedVars(): {
 
 const REDIRECT = /^(?:\d*|&)(?:>\||>>?|<<?<?|>&|<&)(.*)$/
 
-/** Drops redirections (`> f`, `2>&1`, `&>f`, `<f`) and their targets. */
-function dropRedirections(words: readonly string[]): string[] {
-  const out: string[] = []
+/**
+ * Drops redirections (`> f`, `2>&1`, `&>f`, `<f`) and their targets. `typed[i].head` is how many of the first characters
+ * of `words[i]` were typed. Only that head can hold the redirection: a quoted or escaped `>` is a word (`\>`, `'>'`,
+ * `2\>&1`), and so is the word after it (issue #162). Returns the words that stay, with their `Typed`.
+ */
+function dropRedirections(words: readonly string[], typed: readonly Typed[]): { words: string[]; heads: Typed[] } {
+  const out: { words: string[]; heads: Typed[] } = { words: [], heads: [] }
   for (let i = 0; i < words.length; i++) {
-    const m = REDIRECT.exec(words[i]!)
+    const word = words[i]!
+    const t = typed[i]!
+    const m = REDIRECT.exec(word.slice(0, t.head))
     if (!m) {
-      out.push(words[i]!)
+      out.words.push(word)
+      out.heads.push(t)
       continue
     }
-    // `>` alone takes the next word as its target; `>file` and `2>&1` carry it.
-    if (m[1] === '') i++
+    // `>` alone takes the next word as its target; `>file` and `2>&1` carry it. So does a target that was quoted or
+    // escaped, right behind the typed `>` (`>\>`, `>'f g'`, and an empty quote: `>''`).
+    if (m[1] === '' && t.whole) i++
   }
   return out
 }

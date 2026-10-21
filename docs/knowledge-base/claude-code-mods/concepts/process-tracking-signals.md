@@ -93,10 +93,10 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   case, and the pipeline before it. Only the `in` of the `case` header makes a
   `(` a pattern start: a word `in` at the end of an arm (`echo logged in`) does
   not.
-  Code: `splitShell` [shell.ts:74](../../../../plugins/artifact-tracking/core/lib/shell.ts#L74), the pattern end
-  [:124](../../../../plugins/artifact-tracking/core/lib/shell.ts#L124) and start [:129](../../../../plugins/artifact-tracking/core/lib/shell.ts#L129), the part move
-  [:139](../../../../plugins/artifact-tracking/core/lib/shell.ts#L139) and [:149](../../../../plugins/artifact-tracking/core/lib/shell.ts#L149), the close of a compound
-  [:170](../../../../plugins/artifact-tracking/core/lib/shell.ts#L170), the `>|` guard [:264](../../../../plugins/artifact-tracking/core/lib/shell.ts#L264).
+  Code: `splitShell` [shell.ts:105](../../../../plugins/artifact-tracking/core/lib/shell.ts#L105), the case state
+  `theCase` [:166](../../../../plugins/artifact-tracking/core/lib/shell.ts#L166) and the header end [:178](../../../../plugins/artifact-tracking/core/lib/shell.ts#L178), the part move
+  [:189](../../../../plugins/artifact-tracking/core/lib/shell.ts#L189) and [:199](../../../../plugins/artifact-tracking/core/lib/shell.ts#L199), the close of a compound
+  [:259](../../../../plugins/artifact-tracking/core/lib/shell.ts#L259), the `>|` guard [:359](../../../../plugins/artifact-tracking/core/lib/shell.ts#L359).
   Evidence (grade: *verified-kit* for the parser): the pipeline part in
   [repos.test.ts:264](../../../../plugins/artifact-tracking/tests/repos.test.ts#L264), [:276](../../../../plugins/artifact-tracking/tests/repos.test.ts#L276), [:293](../../../../plugins/artifact-tracking/tests/repos.test.ts#L293)
   and [:304](../../../../plugins/artifact-tracking/tests/repos.test.ts#L304), and in [process-parse.test.ts:684](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L684),
@@ -109,17 +109,83 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   bookkeeping in [repos.test.ts:393](../../../../plugins/artifact-tracking/tests/repos.test.ts#L393), [:401](../../../../plugins/artifact-tracking/tests/repos.test.ts#L401),
   [:407](../../../../plugins/artifact-tracking/tests/repos.test.ts#L407), [process-parse.test.ts:800](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L800),
   [:808](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L808), [:813](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L813), and the scopes in
-  [shell.test.ts:66](../../../../plugins/artifact-tracking/tests/shell.test.ts#L66) to [:184](../../../../plugins/artifact-tracking/tests/shell.test.ts#L184). A differential run
+  [shell.test.ts:66](../../../../plugins/artifact-tracking/tests/shell.test.ts#L66) to [:186](../../../../plugins/artifact-tracking/tests/shell.test.ts#L186). A differential run
   against real `bash` 5.3 (macOS) of random `cd`, `pushd`, `|`, `|&`, `&`, `&&`,
   `;`, newline, group, subshell, loop and `case` lists (`;;`, `;&`, `;;&`, `(x)`
   and `a|b` patterns): 21500 random commands, 0 differences in the folder of the
   last command, and the two readers never disagree. The same commands gave 6756
   differences before the fix. The fuzz harness is a scratch script and is not in
   the repo, so only the tests above can be run again.
-  Not covered: a `case` pattern word is read as a command (`cd)` resets the
-  folder), a compound at the start of an `if` condition (`if for ...; then`)
-  does not open a compound of its own, and a `}` right before a closing backtick
-  (`` `{ a; }` ``) is no group end.
+- A `}` right before the closing backtick of a `` `...` `` pair ends its group
+  (`` `cd x; { a; }` ``). A `}` right before an opening backtick does not:
+  `` }`x` `` is the word `}x`. Only a `>` or `<` that was typed, with no quote
+  and no backslash, is a redirection. `\>`, `'>'` and `2\>\&1` are words, and so
+  is the word after them (`printf x \> git -C /repo status` keeps every word).
+  `splitShell` counts for each word how many of its first characters were typed,
+  and notes whether the word held any quote or escape (an empty quote counts).
+  `dropRedirections` reads a redirection from that head only. A target that was
+  quoted or escaped belongs to the typed `>` before it (`>\>`, `>'f g'`). The
+  `&` of `>&` and `2>&1` is part of the redirection only after a typed `>` or
+  `<`. After `'>'&` or `\>&` it runs the command in the background.
+  A `case` pattern is no command. Its words stand in no segment, so `cd)` moves
+  no folder, and `if)`, `for)` or `done)` open or close no compound. The reader
+  knows three places of a `case`: the subject, a pattern list and an arm. In a
+  pattern list a `|` is no pipe, and a `{` or `}` is a word. `esac` first in a
+  pattern list ends the case: `case x in esac` is an empty case, and `esac)` there
+  is a syntax error in `bash`. Behind `(` or `|` it is a pattern. A keyword is a
+  keyword only as typed: `'esac'`, `"esac"`, `\esac` and `esac''` (an empty quote
+  counts) are patterns in every position, so they end no case. A quoted `case`,
+  `if` or `!` opens no compound: `'case' x in; a` is a command named `case`, and
+  `a` is no pattern word. A condition can
+  open a compound: the segment `if for i in 1; do :; done; then` opens an `if`
+  and a `for`, and `elif` takes one too. So the `done` closes the `for`, the `fi`
+  closes the `if`, and the `&` after the `fi` backgrounds the whole `if`.
+  Code: the word end before a backtick [shell.ts:367](../../../../plugins/artifact-tracking/core/lib/shell.ts#L367), the typed head
+  [:233](../../../../plugins/artifact-tracking/core/lib/shell.ts#L233) and its use [:500](../../../../plugins/artifact-tracking/core/lib/shell.ts#L500), the `&` guard
+  [:352](../../../../plugins/artifact-tracking/core/lib/shell.ts#L352), the compounds of a segment [:57](../../../../plugins/artifact-tracking/core/lib/shell.ts#L57) and [:252](../../../../plugins/artifact-tracking/core/lib/shell.ts#L252), the
+  pattern words [:238](../../../../plugins/artifact-tracking/core/lib/shell.ts#L238) and [:379](../../../../plugins/artifact-tracking/core/lib/shell.ts#L379), the end of an arm
+  [:435](../../../../plugins/artifact-tracking/core/lib/shell.ts#L435), the `in` and `esac` of a header and a pattern list [:205](../../../../plugins/artifact-tracking/core/lib/shell.ts#L205).
+  Evidence (grade: *verified-kit* for the parser): a `}` before a backtick in
+  [shell.test.ts:200](../../../../plugins/artifact-tracking/tests/shell.test.ts#L200) and [:212](../../../../plugins/artifact-tracking/tests/shell.test.ts#L212), [repos.test.ts:1231](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1231) and
+  [process-parse.test.ts:927](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L927). Quoted and escaped redirections in
+  [shell.test.ts:218](../../../../plugins/artifact-tracking/tests/shell.test.ts#L218), [:240](../../../../plugins/artifact-tracking/tests/shell.test.ts#L240) and [:262](../../../../plugins/artifact-tracking/tests/shell.test.ts#L262), [repos.test.ts:1242](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1242) and
+  [process-parse.test.ts:942](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L942). Case patterns in [shell.test.ts:276](../../../../plugins/artifact-tracking/tests/shell.test.ts#L276),
+  [:306](../../../../plugins/artifact-tracking/tests/shell.test.ts#L306), [:317](../../../../plugins/artifact-tracking/tests/shell.test.ts#L317), [:336](../../../../plugins/artifact-tracking/tests/shell.test.ts#L336), [:353](../../../../plugins/artifact-tracking/tests/shell.test.ts#L353) and [:378](../../../../plugins/artifact-tracking/tests/shell.test.ts#L378), [repos.test.ts:1258](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1258) and
+  [process-parse.test.ts:957](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L957). Compounds in a condition in
+  [shell.test.ts:385](../../../../plugins/artifact-tracking/tests/shell.test.ts#L385), [repos.test.ts:1289](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1289) and
+  [process-parse.test.ts:985](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L985). A differential run against real `bash` 5.3
+  (macOS) of random lists as in the run above, now also with backtick groups,
+  keyword and `cd` patterns (`cd)`, `if|x)`, `a|esac)`, `(esac)`) and compounds in
+  conditions (`if`, `elif` and `while` over a loop, a group, a subshell, an `if`
+  or a `case`). Each probe wrote its own folder, so every probe was compared, not
+  only the last one. Five runs of 3000 to 4000 commands: 14,271 commands ran in
+  `bash` and in the readers, with 0 differences, and the two readers never
+  disagree. The splitter before the fix gave 319 differences in 14,274 commands
+  of the same seeds (0 in the old grammar, 8 with backtick groups, 90 with
+  keyword patterns, 63 with conditions, 158 with everything). Another seed with
+  everything (4,601 commands) gave 0 differences after and 241 before. A
+  further run compared the words of 3,000 random argument lists with quoted,
+  escaped and typed `>` and `<` against the arguments that `bash` passes: 0
+  differences after the fix, 2,163 before. A mutation run broke one line of the
+  new bookkeeping at a time: the tests killed 33 of 34 mutants. The one that
+  lives treats a `(` after a pattern word as the `(` in front of a pattern, which
+  only an extended glob can show (not covered, see below).
+  The fuzz harnesses are scratch scripts and are not in the repo, so only the
+  tests above can be run again.
+  Not covered, all as before the fix: a typed `>` or `<` glued to the text before
+  it (`echo hi>f`) stays in its word, where `bash` splits the word at the
+  operator. A typed `>&` with a space before its target (`cmd >& f`) keeps the
+  target as a word. An extended glob in a pattern (`+(a|b))`) reads its words as
+  commands in a subshell. The readers still apply every `cd` in text order, so a
+  `cd` in an arm that does not match, or after a short-circuit `||`, counts.
+  A quoted or escaped `done`, `fi` or `esac` at the start of a segment still
+  closes a compound, where `bash` reads a command of that name. A here-string is
+  read as a heredoc: in `cat <<<hi` followed by a newline, the splitter takes
+  `<<hi` as a heredoc tag and skips the lines after it, so
+  `cat <<<hi\ncd /x\ngit -C . status` gives the one segment `cat`, where `bash`
+  runs both later commands. `cat <<<hi; cd /x; git -C . status` is read right.
+  `<>` (open for reading and writing) is no redirection: `cmd <> f` keeps the
+  word `f`.
 - The container id is a stdout line of exactly 64 hex characters. Other hex
   in the output (`docker info` prints commit ids) is not an id.
 - A foreground `nohup cmd` (no `&`) is not a detached process.

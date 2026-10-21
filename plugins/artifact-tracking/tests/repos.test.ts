@@ -1225,3 +1225,82 @@ test('RepoTracker: parallel visits after a tick share one branch call', async ()
   expect(out.map(v => v?.branch)).toEqual(['feat', 'feat'])
   expect(branchCalls).toBe(2)
 })
+
+// A `}` right before a closing backtick ends its group (issue #161). Else the group stays open and the later `}` closes
+// the wrong place, so the `&` leaves the `cd` in front of the backtick out of the background list.
+test('parseRepoHintsFromBash ends a group at a } right before a closing backtick', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('{ echo `cd /x; { git -C . status; }`; } & git -C . status')).toEqual(['/x', '/x', '/session/proj'])
+  expect(paths('{ cd /y; echo `{ :; }`; } & git -C . status')).toEqual(['/y', '/session/proj'])
+  expect(paths('cd /y && echo `{ :; }` & git -C . status')).toEqual(['/y', '/session/proj'])
+  // Without the `&` the group ends in the same shell, so the `cd` still moves the folder.
+  expect(paths('{ cd /y; echo `{ :; }`; }; git -C . status')).toEqual(['/y', '/y'])
+})
+
+// Only a `>` that was typed, with no quote and no backslash, is a redirection (issue #162). A quoted or escaped one is a
+// word, and so is the word after it. The `&` after it is a background operator.
+test('parseRepoHintsFromBash reads a quoted or escaped > as a word', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths("cd '>'; git -C . status")).toEqual(['/session/proj/>', '/session/proj/>'])
+  expect(paths('cd \\>; git -C . status')).toEqual(['/session/proj/>', '/session/proj/>'])
+  expect(paths("git -C '>' status")).toEqual(['/session/proj/>'])
+  expect(paths("git -C '>' -c x=y status")).toEqual(['/session/proj/>'])
+  expect(paths("echo '>'& cd /x; git -C . status")).toEqual(['/x', '/x'])
+  expect(paths('echo a \\>& cd /x; git -C . status')).toEqual(['/x', '/x'])
+  // A typed redirection is no word, and a quoted or escaped target belongs to it.
+  expect(paths('cd /x > f; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cd /x >\\> 2>&1; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths("git -C /y status 2>&1 > '>'")).toEqual(['/y'])
+})
+
+// A case pattern is never a command (issue #163): `cd)` moves no folder, and `if)`, `for)` or `done)` open or close no
+// compound.
+test('parseRepoHintsFromBash reads a case pattern as no command', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('case x in y) :;; cd) :;; esac; git -C . status')).toEqual(['/session/proj'])
+  expect(paths('case x in a|cd) :;; (cd|c) :;; esac; git -C . status')).toEqual(['/session/proj'])
+  expect(paths('case x in\n cd) :;;\n esac; git -C . status')).toEqual(['/session/proj'])
+  expect(paths('case $(echo x) in cd) :;; esac; git -C . status')).toEqual(['/session/proj'])
+  // No white space between `in` or `;;` and the `(` in front of a pattern.
+  expect(paths('( case x in(x) cd /x ;;(y) cd /y ;; esac ); git -C . status')).toEqual(['/x', '/y', '/session/proj'])
+  // A pattern keyword opens or closes no compound: the case stays one unit, and the arm that matches keeps its subshell.
+  expect(paths('( case x in if) :;; for|done) :;; (fi) :;; x) cd /x ;; esac ); git -C . status')).toEqual([
+    '/x',
+    '/session/proj',
+  ])
+  expect(paths('case x in if) :;; while|done) cd /y ;; esac & git -C . status')).toEqual(['/y', '/session/proj'])
+  expect(paths('for i in 1; do case x in done) cd /y ;; esac; done & git -C . status')).toEqual(['/y', '/session/proj'])
+  // `esac` first in the pattern position ends the case. Behind `|` or `(` it is a pattern.
+  expect(paths('case x in\nesac; cd /x; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('( case x in a|esac) cd /x ;; (esac) :;; esac ); git -C . status')).toEqual(['/x', '/session/proj'])
+  // A quoted or escaped `esac` is a pattern in every position: it ends no case and no subshell around it.
+  expect(paths("( case x in 'esac') cd /x ;; esac ); git -C . status")).toEqual(['/x', '/session/proj'])
+  expect(paths('( case x in "esac"|\\esac) cd /x ;; esac ); git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths("case x in 'esac') cd /x ;; esac & git -C . status")).toEqual(['/x', '/session/proj'])
+  // An empty quote makes it a pattern too.
+  expect(paths("case x in esac'') cd /x ;; esac & git -C . status")).toEqual(['/x', '/session/proj'])
+  // A command named `case`, quoted or escaped, opens no case: the commands after it are no pattern words.
+  expect(paths("'case' x in; git -C /y status")).toEqual(['/y'])
+  expect(paths('\\case x in; cd /y; git -C . status')).toEqual(['/y', '/y'])
+})
+
+// A compound at the start of a condition opens a level of its own (issue #163): the `done` of `if for ...; done; then`
+// closes the `for`, and the `fi` closes the `if`. So the `&` after the `fi` backgrounds the whole `if`.
+test('parseRepoHintsFromBash opens a compound of its own at the start of a condition', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('if for i in 1; do :; done; then cd /x; fi & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('while for i in 1; do :; done; do cd /x; break; done & git -C . status')).toEqual([
+    '/x',
+    '/session/proj',
+  ])
+  expect(paths('if if :; then :; fi; then cd /x; fi & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('if :; then :; elif for i in 1; do :; done; then cd /x; fi & git -C . status')).toEqual([
+    '/x',
+    '/session/proj',
+  ])
+  expect(paths('if case x in x) :;; esac; then cd /x; fi | cat; git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('until if :; then :; fi; do cd /x; break; done & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('if ! time for i in 1; do :; done; then cd /x; fi & git -C . status')).toEqual(['/x', '/session/proj'])
+  // A foreground `if` still moves the folder.
+  expect(paths('if for i in 1; do :; done; then cd /x; fi; git -C . status')).toEqual(['/x', '/x'])
+})
