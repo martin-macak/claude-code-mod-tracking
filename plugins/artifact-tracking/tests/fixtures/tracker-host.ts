@@ -5,6 +5,7 @@ import { Facts } from '../../core/infra/facts'
 import { TrackerHost } from '../../core/infra/tracker-host'
 import type { ItemStorePort, Json, JsonObject } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
+import type { TurnPort, TurnTarget } from '../../core/interfaces/turns'
 import { fakeConfig } from './config-fs'
 import { fakePorts } from './ports'
 
@@ -25,7 +26,7 @@ export function fake(id: string, order: number, extra: Partial<Tracker<Cfg, Json
 /** `file` is the parsed config file the host's config reads, e.g. `{ trackers: { t: { enabled: false } } }`. */
 export function hostWorld(
   trackers: readonly Tracker<Cfg, Json>[] | readonly Tracker[],
-  o: { due?: boolean; file?: JsonObject } = {},
+  o: { due?: boolean; file?: JsonObject; turnPort?: (target: TurnTarget) => TurnPort } = {},
 ) {
   const w = fakePorts()
   const cfg = fakeConfig({ specs: trackers, ...(o.file ? { file: o.file } : {}) })
@@ -68,6 +69,7 @@ export function hostWorld(
       },
     },
     items,
+    ...(o.turnPort ? { turnPort: o.turnPort } : {}),
     watch,
     due: (owner, everyMs) => {
       dues.push(`${owner}:${everyMs}`)

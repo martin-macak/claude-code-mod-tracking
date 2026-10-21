@@ -4,6 +4,7 @@
 // holds a `ReasonSet`; they are re-exported here and from `./items`.
 
 import type { CoreReason, ReasonSet } from '../../types'
+import type { TurnSpan } from './turns'
 
 export type { CoreReason, ReasonSet } from '../../types'
 
@@ -25,4 +26,10 @@ export interface KindReason {
 export interface Traceable<D = unknown> {
   /** The reasons of the row `rowId` in the tracker's data. undefined: no such row, or a row that is context, not a find. */
   reasonsOf(data: D | undefined, rowId: string): ReasonSet | undefined
+  /**
+   * Optional (issue #133, P1b of #69). The first and the last turn that named the row `rowId`: the stamps the tracker put on
+   * the row from `ctx.turn`. The view puts them on the pane row, so the detail ends with a `turns` line. undefined: no such
+   * row, or a row no turn stamped. A tracker without this method works as before: its rows show no turns.
+   */
+  turnsOf?(data: D | undefined, rowId: string): TurnSpan | undefined
 }

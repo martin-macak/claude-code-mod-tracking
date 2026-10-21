@@ -11,7 +11,7 @@ import type { Tracker } from '../core/interfaces/tracker'
 import type { TreeRow } from '../core/interfaces/view'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { bool, specOf } from '../core/lib/normalise'
-import { isTraceable, kindReason, reasonSet } from '../core/lib/reasons'
+import { hasTurns, isTraceable, kindReason, reasonSet } from '../core/lib/reasons'
 import { helpTextOf } from '../hooks/pane-session'
 import { TRACKERS } from '../trackers'
 import { autoReasonsOf } from '../trackers/auto/reasons'
@@ -164,6 +164,10 @@ test('file: edited, then made, then named: the order of the sightings changes ne
 test('repos, processes and auto implement Traceable, and no other tracker does', () => {
   expect(TRACKERS.filter(isTraceable).map(t => t.id)).toEqual(['repos', 'processes', 'auto'])
   expect(TRACKERS.filter(t => !isTraceable(t)).map(t => t.id)).toEqual(['github', 'jira', 'web', 'artifact', 'file'])
+})
+
+test('repos, processes and auto also answer turnsOf (issue #133); the Traceable guard does not need it', () => {
+  expect(TRACKERS.filter(hasTurns).map(t => t.id)).toEqual(['repos', 'processes', 'auto'])
 })
 
 test('repos: an edited repo is updated, a read one is read, an older row with no mode reads as read', () => {

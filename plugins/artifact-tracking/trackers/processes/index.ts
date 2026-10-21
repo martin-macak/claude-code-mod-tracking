@@ -28,6 +28,7 @@ import {
 import { processReasonsOf } from './reasons'
 import { addProcessRows, applyAgentEnd, applyTaskUpdate, asRows, mergeProcessRows, setProcesses } from './rows'
 import { sections } from './sections'
+import { processTurnsOf } from './turns'
 import { type ProbeState, probeProcesses } from './watch'
 
 export { type ProcessesConfig, processesConfig }
@@ -90,6 +91,7 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> & Traceable<J
         agentId: ev.agentId,
       }),
       ctx.config.slice(),
+      ctx.turn,
     )
   }
 
@@ -102,6 +104,7 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> & Traceable<J
       ctx,
       [monitorRow(taskId, ctx.clock.wall(), { toolUseId: ev.toolUseId, agentId: ev.agentId, endsWithAgent })],
       ctx.config.slice(),
+      ctx.turn,
     )
   }
 
@@ -162,6 +165,7 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> & Traceable<J
     },
     sections,
     reasonsOf: processReasonsOf,
+    turnsOf: processTurnsOf,
     events: {
       row: { doors: ['prompt', 'delivery'], run: onRow },
       toolCall: { Bash: onBash, Monitor: onMonitor, TaskStop: onTaskStop },

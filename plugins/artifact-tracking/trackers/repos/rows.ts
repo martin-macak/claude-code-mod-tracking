@@ -1,4 +1,5 @@
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
+import { stampedTurn, withSpan } from '../../core/lib/turn-span'
 import { REPOS_DEFAULTS, type ReposConfig } from './config'
 import type { RepoMode } from './hints'
 import type { RepoVisit } from './tracker'
@@ -21,6 +22,8 @@ const sameRow = (a: RepoRecord, b: RepoRecord): boolean =>
   a.branch === b.branch &&
   a.firstSeen === b.firstSeen &&
   a.lastSeen === b.lastSeen &&
+  a.firstTurn === b.firstTurn &&
+  a.lastTurn === b.lastTurn &&
   sameList(a.touchedBy, b.touchedBy)
 
 /** `cur` and `other` in one row: cur's agents first. The newer record (tie: cur) wins; a missing field never wipes one. */
@@ -36,7 +39,8 @@ function mergeRow(cur: RepoRecord, other: RepoRecord): RepoRecord {
     lastSeen: Math.max(cur.lastSeen, other.lastSeen),
   }
   if (modeOf(cur) === 'edit' || modeOf(other) === 'edit') next.mode = 'edit'
-  return sameRow(next, cur) ? cur : next
+  const spanned = withSpan(next, cur, other) // `defined` took the newer copy's turns: the span is of both
+  return sameRow(spanned, cur) ? cur : spanned
 }
 
 /**
@@ -88,11 +92,12 @@ export function capRepoRows(
  * Record one visit. An older visit never moves the name, root, branch or lastSeen of a newer row. A visit within
  * `tickMs` (`global.refresh.tickMs`) of lastSeen leaves lastSeen alone, so a burst of tool calls is one write. A ref
  * visit (no root) does not rename a row that git already named. Edit wins over read, whatever the age of the visit.
- * Returns `rows` itself when no field changes.
+ * `turn` (issue #133) is the ordinal of the turn that made the visit: it stamps `firstTurn` and `lastTurn`, and a turn the
+ * row has not seen yet is a change though `lastSeen` stays. Returns `rows` itself when no field changes.
  */
 export function upsertRepoRows(
   rows: readonly RepoRecord[],
-  visit: RepoVisit & { at: number },
+  visit: RepoVisit & { at: number; turn?: number },
   tickMs: number = GLOBAL_DEFAULTS.refresh.tickMs,
 ): RepoRecord[] {
   const i = rows.findIndex(r => r.key === visit.key)
@@ -108,6 +113,7 @@ export function upsertRepoRows(
         touchedBy: [visit.touchedBy],
         firstSeen: visit.at,
         lastSeen: visit.at,
+        ...(visit.turn !== undefined ? { firstTurn: visit.turn, lastTurn: visit.turn } : {}),
       },
     ]
   }
@@ -121,8 +127,9 @@ export function upsertRepoRows(
     if (visit.root !== undefined || cur.name === '') next.name = visit.name
     if (visit.at - cur.lastSeen >= tickMs) next.lastSeen = visit.at
   }
-  if (sameRow(next, cur)) return rows as RepoRecord[]
+  const stamped = visit.turn === undefined ? next : stampedTurn(next, visit.turn)
+  if (sameRow(stamped, cur)) return rows as RepoRecord[]
   const out = rows.slice()
-  out[i] = next
+  out[i] = stamped
   return out
 }

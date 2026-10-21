@@ -135,6 +135,16 @@ test('a handler gets the event and the via value of the emit', async () => {
   expect(got[1]).toBe(via)
 })
 
+test('a handler gets the turn of the emit as its third argument, and none when the emit names none (issue #133)', async () => {
+  const { bus } = make()
+  const got: unknown[] = []
+  bus.add('toolCall', 'processes', 1, (_e, _v, turn) => void got.push(turn))
+  await bus.emit('toolCall', { tool: 'Bash' }, null, undefined, { ord: 3, late: true })
+  await bus.emit('toolCall', { tool: 'Bash' }, null)
+  await bus.emit('toolCall', { tool: 'Bash' }, null, 'processes', { ord: 4 })
+  expect(got).toEqual([{ ord: 3, late: true }, undefined, { ord: 4 }])
+})
+
 test('toolCall reaches only the trackers that declared the tool', async () => {
   const { bus } = make()
   const seen: string[] = []

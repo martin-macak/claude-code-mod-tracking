@@ -156,6 +156,7 @@ test('R3: work of a subagent goes to the turn that spawned it, also after that t
   await t.row({ ...responseRow(`sub says ${B}`), agentId: 'afe3f3796716e44ee' })
   await t.end('turn-1')
   expect(t.rec(1).new.map(e => [e.k, e.late])).toEqual([
+    ['ag:afe3f3796716e44ee', undefined], // the agent that the turn spawned is a row of its own (issue #133)
     [t.keyOf(A), undefined],
     [t.keyOf(B), undefined],
   ])
@@ -227,7 +228,7 @@ test('R4: a task notice wakes the main loop: no new ordinal, and its work goes t
   await t.row(responseRow(`spare one ${A}`))
   await t.end('wake-1')
   expect(t.rec(1)).toMatchObject({ wakes: 1, end: 'answer' })
-  expect(t.rec(1).new.map(e => e.k)).toEqual([t.keyOf(A)])
+  expect(t.rec(1).new.map(e => e.k)).toEqual(['ag:afe3f3796716e44ee', t.keyOf(A)]) // the spawned agent, then the wake's item
   expect(t.stamps(A)).toEqual([1, 1])
   expect(t.ledger().next).toBe(2)
   // The next real prompt is turn 2, not 3.

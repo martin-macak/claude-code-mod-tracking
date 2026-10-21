@@ -10,6 +10,7 @@ import type { HostContext, ItemStorePort, Json, JsonObject } from '../interfaces
 import type { EnvName, Ports, RunOpts, Timer } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { CommandSpec, DismissPort, FactsPort, ToolPort, Tracker, TrackerContext } from '../interfaces/tracker'
+import type { TurnPort, TurnTarget } from '../interfaces/turns'
 import { isRecord } from '../lib/json'
 import type { BusKind, EventBus } from './bus'
 import type { SessionWatch } from './session'
@@ -31,6 +32,11 @@ export interface TrackerHostDeps {
   itemsOf?(owner: string): ItemStorePort
   /** The tools of one tracker: the handles of the ToolRunner. undefined before the tools are built. */
   toolsOf?(owner: string): ToolPort | undefined
+  /**
+   * What `ctx.turn` is for an event of a turn (issue #133): the turn the ledger named for it. The ledger exists after this
+   * host, so the manager hands a function. Absent: no handler gets a turn.
+   */
+  turnPort?(target: TurnTarget): TurnPort
   watch: Pick<SessionWatch, 'generation' | 'check' | 'current'>
   /** True once per period per owner (the Scheduler). */
   due(owner: string, everyMs: number, now: number): boolean
@@ -135,9 +141,9 @@ export class TrackerHost {
           kind,
           t.id,
           t.order,
-          async (e, via) => {
+          async (e, via, turn) => {
             if (this.failedIds.has(t.id)) return
-            await run(this.contextOf(t, via as Ports, !UNGUARDED.has(kind)), e)
+            await run(this.contextOf(t, via as Ports, !UNGUARDED.has(kind), turn), e)
           },
           filter,
         )
@@ -188,9 +194,10 @@ export class TrackerHost {
     }
   }
 
-  private contextOf(t: Tracker, ports: Ports, guard: boolean): TrackerContext<JsonObject, Json> {
+  private contextOf(t: Tracker, ports: Ports, guard: boolean, turn?: TurnTarget): TrackerContext<JsonObject, Json> {
     const { d } = this
     const persist = t.persist !== false
+    const port = turn === undefined ? undefined : d.turnPort?.(turn)
     return this.make(t.id, ports, {
       data: {
         get: () => ports.state.slot.get(t.id),
@@ -203,6 +210,7 @@ export class TrackerHost {
         },
       },
       items: d.itemsOf?.(t.id) ?? d.items,
+      ...(port !== undefined ? { turn: port } : {}),
     })
   }
 

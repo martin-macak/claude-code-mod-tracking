@@ -22,4 +22,10 @@ export type RepoRecord = {
   touchedBy: string[]
   firstSeen: number
   lastSeen: number
+  /**
+   * The first and the last turn that visited the repo (issue #133). `lastTurn` moves with each later turn, though `lastSeen`
+   * may not (a burst of visits is one write). Absent: no turn stamped the row (a row from before the lineage).
+   */
+  firstTurn?: number
+  lastTurn?: number
 }

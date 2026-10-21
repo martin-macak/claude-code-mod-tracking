@@ -24,7 +24,7 @@ import type { ItemsHost, Level } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
-import type { DurationStrip } from '../interfaces/turns'
+import type { DurationStrip, TurnTarget } from '../interfaces/turns'
 import { EventBus } from './bus'
 import type { Commands } from './commands'
 import { Facts } from './facts'
@@ -142,6 +142,7 @@ export class LifecycleManager extends PaneApi {
       items: this.items,
       itemsOf: owner => this.items.port(owner),
       toolsOf: owner => this.items.tools(owner),
+      turnPort: target => this.turns.portOf(target),
       watch: this.watch,
       due: (owner, everyMs, now) => this.scheduler.due(owner, everyMs, now),
       persisted: () => void this.persistence.touch(),
@@ -270,26 +271,35 @@ export class LifecycleManager extends PaneApi {
 
   /**
    * A row was appended: capture first (the item host), then the handlers of the declared doors. The turn ledger says which
-   * turn the row belongs to and keeps what the capture found (issue #69).
+   * turn the row belongs to and keeps what the capture found (issue #69). The handlers get that turn as `ctx.turn` (issue #133).
    */
   async row(ports: Ports, ev: RowEvent): Promise<void> {
     await this.entry(ports)
-    await this.guard('capture', () => this.turns.withRow(ev, turn => this.items.capture(ev, turn)), 'a row')
-    await this.bus.emit('row', ev, ports)
+    const turn = await this.turns.rowTurn(ev)
+    await this.guard('capture', () => this.turns.withTurn(turn, t => this.items.capture(ev, t)), 'a row')
+    await this.bus.emit('row', ev, ports, undefined, turn)
   }
 
   /** A finished tool call: the kinds that read the tool (the item host), then the handlers of the trackers. */
   async toolCall(ports: Ports, ev: ToolCallEvent): Promise<void> {
     await this.entry(ports)
-    const capture = (turn?: number) => this.items.toolCall(ev, this.host.hostCtx(ports), turn)
-    await this.guard('item toolCall', () => this.turns.withToolCall(ev, capture), 'a tool call')
-    await this.bus.emit('toolCall', ev, ports)
+    const turn = await this.turns.callTurn(ev)
+    const capture = (t?: number) => this.items.toolCall(ev, this.host.hostCtx(ports), t)
+    await this.guard('item toolCall', () => this.turns.withTurn(turn, capture), 'a tool call')
+    await this.bus.emit('toolCall', ev, ports, undefined, turn)
   }
 
   async agentSpawn(ports: Ports, ev: AgentSpawnEvent): Promise<void> {
     await this.entry(ports)
-    await this.guard('turn spawn', () => this.turns.spawn(ev), 'a spawn')
-    await this.bus.emit('agentSpawn', ev, ports)
+    let turn: TurnTarget | undefined
+    await this.guard(
+      'turn spawn',
+      async () => {
+        turn = await this.turns.spawn(ev)
+      },
+      'a spawn',
+    )
+    await this.bus.emit('agentSpawn', ev, ports, undefined, turn)
   }
 
   /** A main-loop turn began (issue #69): the ledger opens its record, or a wake opens the record of the turn that started the task. */

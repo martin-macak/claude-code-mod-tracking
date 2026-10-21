@@ -54,6 +54,12 @@ export type AgentProof = {
   failed?: boolean
   /** Ended by the workflow idle bound, not by an event (A7). */
   stale?: boolean
+  /**
+   * The first and the last turn whose `agent.spawn` made or named the agent (issue #133). Absent: no turn stamped it (a
+   * proof from before the lineage, or a spawn outside a turn).
+   */
+  firstTurn?: number
+  lastTurn?: number
 }
 
 export type Health = { ok: boolean; at: number; error?: string }

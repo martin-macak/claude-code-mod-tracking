@@ -9,6 +9,7 @@ import type {
 } from '../core/interfaces/items'
 import type { CoreReason, ReasonSet, Traceable } from '../core/interfaces/reasons'
 import type { Tracker, TrackerContext } from '../core/interfaces/tracker'
+import type { Sightings, TurnPort, TurnSpan } from '../core/interfaces/turns'
 
 test('a minimal tracker satisfies Tracker and joins a Tracker list', () => {
   const fake = {
@@ -77,4 +78,22 @@ test('core/interfaces exports CoreReason and ReasonSet, and a plain object imple
     ...rows,
   } satisfies Tracker<JsonObject, readonly string[] & Json> & Traceable<readonly string[]>
   expect(tracker.reasonsOf(['x'], 'x')).toBe(set)
+})
+
+test('Traceable.turnsOf is optional, and TrackerContext.turn is a port with an ordinal and a note (issue #133)', () => {
+  const span: TurnSpan = { first: 2, last: 5 }
+  const plain: Traceable<readonly string[]> = { reasonsOf: () => undefined } // no turnsOf: a tracker as before
+  const turned: Traceable<readonly string[]> = {
+    reasonsOf: () => undefined,
+    turnsOf: (data, rowId) => (data?.includes(rowId) ? span : undefined),
+  }
+  expect(plain.turnsOf).toBeUndefined()
+  expect(turned.turnsOf?.(['a'], 'a')).toBe(span)
+  expect(turned.turnsOf?.(['a'], 'b')).toBeUndefined()
+  const noted: Sightings[] = []
+  const port: TurnPort = { ord: 4, note: async s => void noted.push(s) }
+  type Held = Pick<TrackerContext, 'turn'>
+  const held: Held = { turn: port } // a handler of a turn's event
+  const bare: Held = {} // a tick, a command, a start, a replay
+  expect([held.turn?.ord, bare.turn?.ord]).toEqual([4, undefined])
 })

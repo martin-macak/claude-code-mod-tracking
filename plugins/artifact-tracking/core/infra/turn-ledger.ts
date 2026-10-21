@@ -12,7 +12,7 @@ import type { AgentSpawnEvent, RowEvent, ToolCallEvent, TurnCompleteEvent, TurnS
 import type { Json } from '../interfaces/items'
 import type { AtomPort } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
-import type { DurationStrip, Sightings, TurnLedger, TurnTarget } from '../interfaces/turns'
+import type { DurationStrip, Sightings, TurnLedger, TurnPort, TurnTarget } from '../interfaces/turns'
 import { isRecord } from '../lib/json'
 import { isEmpty, keysOf, latestWithEntries } from '../lib/turn-entries'
 import { isBare, joinLedgers, ledgerFrom, persisted, persistedChanged } from '../lib/turn-store'
@@ -101,21 +101,34 @@ export class TurnLedgerService {
   // ---------------------------------------------------------------- the capture funnel
 
   /**
-   * Runs the capture of a row for the turn the row belongs to: the ledger says which (the ordinal), the capture stamps the
-   * items with it and says what it did, the ledger keeps that. A fault of the ledger is logged and never stops the capture.
-   * A fault of the capture rejects: the caller's guard logs it, as it did before the ledger.
+   * Which turn the work of a row belongs to (see `rowTarget`). A fault of the ledger is logged and gives `undefined`: the
+   * row is not stamped, and the capture and the handlers go on without a turn.
    */
-  async withRow(ev: RowEvent, capture: (turn?: number) => Promise<Sightings>): Promise<void> {
-    const target = await this.quiet('row', () => this.rowTarget(ev))
-    const seen = await capture(target?.ord)
-    await this.quiet('entries of a row', () => this.note(target, seen))
+  rowTurn(ev: RowEvent): Promise<TurnTarget | undefined> {
+    return this.quiet('row', () => this.rowTarget(ev))
   }
 
-  /** The same for a finished tool call: its id also maps to the turn, for the wake of a background task. */
-  async withToolCall(ev: ToolCallEvent, capture: (turn?: number) => Promise<Sightings>): Promise<void> {
-    const target = await this.quiet('tool call', () => this.callTarget(ev))
+  /** The same for a finished tool call (see `callTarget`): its id also maps to the turn, for the wake of a background task. */
+  callTurn(ev: ToolCallEvent): Promise<TurnTarget | undefined> {
+    return this.quiet('tool call', () => this.callTarget(ev))
+  }
+
+  /**
+   * Runs a capture for the turn `target` names: the capture stamps its items with the ordinal and says what it did, the
+   * ledger keeps that. A fault of the ledger is logged and never stops the capture. A fault of the capture rejects: the
+   * caller's guard logs it, as it did before the ledger.
+   */
+  async withTurn(target: TurnTarget | undefined, capture: (turn?: number) => Promise<Sightings>): Promise<void> {
     const seen = await capture(target?.ord)
-    await this.quiet('entries of a tool call', () => this.note(target, seen))
+    await this.quiet('entries of a capture', () => this.note(target, seen))
+  }
+
+  /**
+   * What a tracker handler holds of a turn (issue #133): the ordinal to stamp its rows with, and the call that lists the rows
+   * an event named. The target keeps its flags, so work of an agent after its turn ended is marked late. Never rejects.
+   */
+  portOf(target: TurnTarget): TurnPort {
+    return { ord: target.ord, note: async s => void (await this.quiet('slot rows', () => this.note(target, s))) }
   }
 
   private async quiet<T>(what: string, step: () => Promise<T>): Promise<T | undefined> {
@@ -156,8 +169,13 @@ export class TurnLedgerService {
     return targetOf(l, who)
   }
 
-  /** A subagent or workflow agent spawned: it and its tool call map to the turn that made the spawn. */
-  async spawn(ev: AgentSpawnEvent): Promise<void> {
+  /**
+   * A subagent or workflow agent spawned: it and its tool call map to the turn that made the spawn. Says which turn owns the
+   * spawn, for the handlers of the spawn (issue #133): the running turn for the main loop, the turn of the parent for a
+   * nested spawn. A spawn that no turn owns (the main loop, no turn running) has none: `spawned` still maps the agent to the
+   * newest turn, but only for the wake of its end, so the handlers get no turn to stamp their rows with. Undefined: none.
+   */
+  async spawn(ev: AgentSpawnEvent): Promise<TurnTarget | undefined> {
     const input = isRecord(ev.input) ? ev.input : {}
     const answer = isRecord(ev.answer) ? ev.answer : {}
     const spawn = {
@@ -165,13 +183,17 @@ export class TurnLedgerService {
       toolUseId: stringOf(input.tool_use_id),
       parentAgentId: stringOf(input.parentAgentId),
     }
-    await this.change(cur =>
-      spawned(cur, {
+    let owner: TurnTarget | undefined
+    await this.change(cur => {
+      // The owner comes from the ledger as the spawn found it: the fallback map of `spawned` must not make a turn its owner.
+      owner = targetOf(cur, spawn.parentAgentId !== undefined ? { agentId: spawn.parentAgentId } : {})
+      return spawned(cur, {
         ...(spawn.agentId !== undefined ? { agentId: spawn.agentId } : {}),
         ...(spawn.toolUseId !== undefined ? { toolUseId: spawn.toolUseId } : {}),
         ...(spawn.parentAgentId !== undefined ? { parentAgentId: spawn.parentAgentId } : {}),
-      }),
-    )
+      })
+    })
+    return owner
   }
 
   /** A main-loop turn began: a record opens, or a wake reopens the turn that started the task. */

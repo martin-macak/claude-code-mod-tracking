@@ -48,6 +48,12 @@ export type ProcessRecord = {
   pid?: number
   /** Command fingerprint to defend against PID reuse. */
   fingerprint?: string
+  /**
+   * The first and the last turn whose Bash or Monitor call started or named the row (issue #133). Absent: no turn stamped it
+   * (a row from before the lineage, or one started outside a turn). A state change stamps nothing.
+   */
+  firstTurn?: number
+  lastTurn?: number
 }
 
 export type ProcessUiState = {

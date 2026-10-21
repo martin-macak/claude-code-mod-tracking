@@ -3,6 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Json, JsonObject } from '../core/interfaces/items'
 import type { TrackerContext } from '../core/interfaces/tracker'
+import type { TurnPort, TurnTarget } from '../core/interfaces/turns'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { fakePorts } from './fixtures/ports'
 import { fake, hostWorld as setup } from './fixtures/tracker-host'
@@ -367,6 +368,33 @@ test('a handler gets the ports of its own dispatch', async () => {
   t.host.fill(t.bus)
   await t.bus.emit('command', {}, other.ports)
   expect(ids).toEqual(['sess-other'])
+})
+
+test('ctx.turn is the port of the turn the bus emitted; no port, no turn: a handler of any other event has none (issue #133)', async () => {
+  const noted: string[] = []
+  const turnPort = (target: TurnTarget): TurnPort => ({
+    ord: target.ord,
+    note: async () => void noted.push(`${target.ord}${target.late ? ' late' : ''}`),
+  })
+  const seen: (number | undefined)[] = []
+  const hear = async (ctx: TrackerContext) => {
+    seen.push(ctx.turn?.ord)
+    await ctx.turn?.note({ added: [], seen: [] })
+  }
+  const tracker = fake('a', 10, { events: { toolCall: { Bash: hear }, command: hear } })
+  const t = setup([tracker], { turnPort })
+  await t.host.init()
+  t.host.fill(t.bus)
+  await t.bus.emit('toolCall', { tool: 'Bash' }, t.w.ports, undefined, { ord: 7, late: true })
+  await t.bus.emit('toolCall', { tool: 'Bash' }, t.w.ports) // an event no turn owns
+  await t.bus.emit('command', { sub: '' }, t.w.ports, undefined, { ord: 8 })
+  expect(seen).toEqual([7, undefined, 8])
+  expect(noted).toEqual(['7 late', '8'])
+  const bare = setup([fake('b', 10, { events: { toolCall: { Bash: hear } } })]) // a host with no turnPort
+  await bare.host.init()
+  bare.host.fill(bare.bus)
+  await bare.bus.emit('toolCall', { tool: 'Bash' }, bare.w.ports, undefined, { ord: 9 })
+  expect(seen).toEqual([7, undefined, 8, undefined])
 })
 
 test('the context passes the engine through: tools, fs, env, session, facts, items, dismiss', async () => {

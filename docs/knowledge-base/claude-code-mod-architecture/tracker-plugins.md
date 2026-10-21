@@ -178,6 +178,14 @@ What to copy: one explicit composition root that names every tracker (ESLint con
 
 **Recommendation (inference):** the capability ports. Ports are plain functions, never `$`.
 
+**Update (issue [#133](https://github.com/martin-macak/claude-code-mod-tracking/issues/133), P1b of [#69](https://github.com/martin-macak/claude-code-mod-tracking/issues/69)):** the contract has one more optional capability. The first design of #69 said "Trackers need no new method". That held for items: the capture funnel stamps their claims with the turn. The rows of a slot tracker (processes, repos, auto) are no claims, so the tracker must learn the turn and say what it stamped. P1b adds the three parts below, and each is optional for a tracker (the core asks `hasTurns(tracker)`, as it asks `isTraceable`):
+
+- `TrackerContext.turn`: the turn of the event the handler runs for, as `{ ord, note(sightings) }`. The core sets it for a row, a tool call and an agent spawn that a turn of the main loop owns. A tick, a command, a start and a replay have none.
+- `Traceable.turnsOf(data, rowId)`: the first and the last turn that stamped a row. The view puts it on the pane row.
+- A tracker that does neither works as before (tested in `tests/slot-turns.test.ts`).
+
+The turn travels on the bus call (`EventBus.emit(kind, ev, via, only, turn)`), not on the event: an event is what the engine said, and the turn is what the ledger decided. The spike that fixed this is in [reference/events.md](../claude-code-mods/reference/events.md#notes-on-the-engine-events).
+
 ### 5.4 Phases
 
 The issue names `init` and `store`. The engine adds limits.
