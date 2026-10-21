@@ -259,6 +259,159 @@ test('parseRepoHintsFromBash keeps the session folder after a cd in a loop that 
   expect(paths('if true; then cd /x; fi && git -C . status')).toEqual(['/x', '/x'])
 })
 
+// Bash runs each part of a pipeline in a subshell, the last part too (no `lastpipe`). A `cd` in a part does not move the
+// folder of the commands after the pipeline (issue #147). A `cd` outside a pipeline still moves it.
+test('parseRepoHintsFromBash keeps the session folder after a cd in a pipeline part', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('cd /x | cat; git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('cat f | cd /x; git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('cd /x |& cat; git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('echo a | cd /x | cat; git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('! cd /x | cat; git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('cd /x |\ncat\ngit -C . status')).toEqual(['/x', '/session/proj'])
+})
+
+// A part is a whole command: a group, a loop or a subshell. The pipeline ends at the closing bracket of a group
+// or a subshell, and the parts run side by side.
+test('parseRepoHintsFromBash keeps the session folder after a cd in a group, a loop or a subshell that is a pipeline part', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('{ cd /x; } | cat; git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('for d in a; do cd /x; done | cat; git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('cat f | while read l; do cd /x; done; git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('( cd /x ) | cat; git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('if cd /x | cat; then git -C . status; fi')).toEqual(['/x', '/session/proj'])
+  // Inside a group or a subshell the pipeline ends at the closing bracket.
+  expect(paths('(cd /x | cat); git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('{ cat | cd /x; git -C . status; }')).toEqual(['/x', '/session/proj'])
+  // The parts run side by side: a cd in one part does not reach the next. In a group part, it does reach the commands
+  // after it in the same part.
+  expect(paths('cd /x | git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('cat | { cd /x; git -C . status; }')).toEqual(['/x', '/x'])
+})
+
+// A `cd` outside a pipeline still moves the folder, and a part reads the folder it starts in.
+test('parseRepoHintsFromBash moves the folder for a cd outside a pipeline', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('cd /x; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cd /x && cat | cat; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cat | cat; cd /x; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cd /x && git -C . status | cat; git -C . status')).toEqual(['/x', '/x', '/x'])
+  // A part resolves a relative cd against the folder it starts in.
+  expect(paths('cd /a; cd b | cat; git -C . status')).toEqual(['/a', '/a/b', '/a'])
+})
+
+// `>|` is a redirection, no pipe: its `cd` is no pipeline part.
+test('parseRepoHintsFromBash reads >| as a redirection, not a pipe', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('cd /x >| f; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cd /x 2>| f; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths("cd /x; echo '>'| cat; git -C . status")).toEqual(['/x', '/x'])
+  expect(paths("echo '>'| cd /x; git -C . status")).toEqual(['/x', '/session/proj'])
+  // An escaped `>` is a word, so the `|` after it is a pipe. After an escaped backslash the `>` is typed again.
+  expect(paths('printf x \\>|git -C /repo status')).toEqual(['/repo'])
+  expect(paths('printf x \\>| git -C /repo status')).toEqual(['/repo'])
+  expect(paths('printf x \\\\>| git -C /repo status')).toEqual([])
+})
+
+// The `)` that ends a `case` pattern is no end of a subshell (issue #148). A `cd` in the arm of a case in a subshell stays
+// in that subshell.
+test('parseRepoHintsFromBash keeps the session folder after a cd in a case arm inside a subshell', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('( case x in x) cd /x ;; esac ); git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('( case x in y) :;; x) cd /x ;; esac ); git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('( case x in a|x) cd /x ;; esac ); git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('( case x in\n x) cd /x ;;\n esac\n ); git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('( case x in x) cd /x ;& y) cd /y ;;& z) cd /z ;; esac ); git -C . status')).toEqual([
+    '/x',
+    '/y',
+    '/z',
+    '/session/proj',
+  ])
+  expect(paths('( case $(echo x) in x) cd /x ;; esac ); git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('( case x in (x) cd /x ;; esac ); git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('x=$(case a in a) cd /x ;; esac); git -C . status')).toEqual(['/x', '/session/proj'])
+})
+
+// A `case` in a case, and a subshell or a substitution in an arm: each closes at its own `)`.
+test('parseRepoHintsFromBash keeps the session folder after a cd in a case in a case or in a subshell in an arm', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('( case x in x) case y in y) cd /x ;; esac; cd /z ;; esac ); git -C . status')).toEqual([
+    '/x',
+    '/z',
+    '/session/proj',
+  ])
+  // A subshell in an arm closes at its own `)`, and so does a substitution in a pattern or in an arm.
+  expect(paths('case x in x) (cd /y); git -C . status ;; esac')).toEqual(['/y', '/session/proj'])
+  expect(paths('( case x in x) ( cd /y ) ;; esac ); git -C . status')).toEqual(['/y', '/session/proj'])
+  expect(paths('( case x in x) echo $(cd /y) ;; esac ); git -C . status')).toEqual(['/y', '/session/proj'])
+  expect(paths('( case x in $(echo x)) cd /x ;; esac ); git -C . status')).toEqual(['/x', '/session/proj'])
+})
+
+// `esac` ends the case, so the `)` of a subshell after it closes that subshell. Outside a subshell the arm is no
+// subshell.
+test('parseRepoHintsFromBash closes the subshell after esac and moves the folder for a case outside a subshell', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('case x in x) : ;; esac; ( cd /x ); git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('( case x in x) cd /x ;; esac; cd /z ); git -C . status')).toEqual(['/x', '/z', '/session/proj'])
+  // Outside a subshell the arm is no subshell: its cd moves the folder, as before.
+  expect(paths('case x in x) cd /x ;; esac; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('case x in y) cd /y ;; x) cd /x ;; esac; git -C . status')).toEqual(['/y', '/x', '/x'])
+  expect(paths('( case x in x) cd /x ;; esac; git -C . status )')).toEqual(['/x', '/x'])
+})
+
+// A `(` in front of a pattern (after `in` or after `;;`) is no subshell. A `(` after a pattern is one.
+test('parseRepoHintsFromBash reads a ( in front of a case pattern as no subshell', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('( case x in (x) cd /x ;; (y|z) cd /y ;; esac ); git -C . status')).toEqual([
+    '/x',
+    '/y',
+    '/session/proj',
+  ])
+  expect(paths('case x in\n (x) cd /x ;;\n (y) : ;;\n esac; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('case x in x) ( cd /y ) ;; (z) ( cd /z ) ;; esac; git -C . status')).toEqual([
+    '/y',
+    '/z',
+    '/session/proj',
+  ])
+  expect(paths('cd /x && case y in (y) sleep 1 & esac; git -C . status')).toEqual(['/x', '/x'])
+})
+
+// The arm after a pattern is a list of its own. A case that ends with `&` or `|` is one background job or
+// pipeline part.
+test('parseRepoHintsFromBash keeps the arm after a pattern a list of its own and ends a case at & or |', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('cd /x && case x in x) sleep 1 & esac; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('{ cd /x && case x in a|x) sleep 1 &\n true ;;& z) : ;; esac; }; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('case x in x) cd /y & ;; esac; git -C . status')).toEqual(['/y', '/session/proj'])
+  // A case that ends with `&` or `|` is one background job or pipeline part.
+  expect(paths('( case x in x) cd /x ;; esac & ); git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('case x in x) cd /x ;; esac | cat; git -C . status')).toEqual(['/x', '/session/proj'])
+})
+
+// `esac` can stand right after a compound with no `;;`: `a | { b; } esac`, `fi esac`, `done esac`. It still ends the
+// case, and the compound before it still ends its pipeline part.
+test('parseRepoHintsFromBash ends the case and the pipeline at an esac that follows a compound', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('case x in x) echo hi | { cd /x; } esac; git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('( case x in x) if :; then cd /x; fi esac ); git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('( case x in x) for i in 1; do cd /x; done esac ); git -C . status')).toEqual(['/x', '/session/proj'])
+})
+
+// Only the `in` of the case header makes a `(` a pattern start. A word `in` at the end of a line of an arm does not.
+test('parseRepoHintsFromBash reads a ( after a line that ends with the word in as a subshell', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('case x in x) echo logged in\n( cd /y ); git -C . status ;; esac')).toEqual(['/y', '/session/proj'])
+})
+
+// A pipeline part ends where bash ends it: at a background `&`, at the close of a subshell, a substitution or a group.
+test('parseRepoHintsFromBash ends a pipeline part at a background &, a subshell, a substitution and a group', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('cat | cd /x & cd /y; git -C . status')).toEqual(['/x', '/y', '/y'])
+  expect(paths('cat | ( cd /x; git -C . status ); git -C . status')).toEqual(['/x', '/x', '/session/proj'])
+  expect(paths('cat | cd $(echo /x); git -C . status')).toEqual(['/session/proj'])
+  expect(paths('{ cat | { cd /x; } }; git -C . status')).toEqual(['/x', '/session/proj'])
+})
+
 test('isNoisePath filters tmp, scratchpad, node_modules and claude config paths', () => {
   for (const p of ['/tmp/x', '/private/tmp/x', '/w/node_modules/pkg/a.ts', '/x/scratchpad/run.md', '~/.claude/plugins'])
     expect(isNoisePath(p)).toBe(true)

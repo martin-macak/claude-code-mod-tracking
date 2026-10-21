@@ -29,7 +29,7 @@ export type Segment = {
   /**
    * The subshell the segment runs in. `''` is the top level. `(`, `$(` and a backtick pair open a child scope
    * `${parent}.${n}`. `{ }` is the same shell, so it keeps the scope. A list that ends with `&` runs in a subshell
-   * too, so its segments get a child scope of their own (see `splitShell`).
+   * too, and so does each part of a pipeline, so their segments get a child scope of their own (see `splitShell`).
    */
   scope: string
 }
@@ -53,10 +53,23 @@ function compoundHead(words: readonly string[]): string | undefined {
 
 const OPS = ['&&', '||', '|&', ';', '|', '&', '\n', '(', ')', '`', '$(', '{', '}'] as const
 
+/** Where the splitter stands in the lists around a point: a scope, a group or a compound saves and gives back one. */
+type Place = {
+  /** The first segment of the and-or list that the next `&`, `;` or newline ends. */
+  list: number
+  /** The first segment of the pipeline part that is open now. */
+  part: number
+  /** A `|` or `|&` came, so the part from `part` on belongs to a pipeline. */
+  piped: boolean
+}
+
 /**
  * Splits `command` into simple commands on `;`, `&&`, `||`, `|`, `&`, newlines, subshells and groups.
  * A list that ends with `&` (`cd x && npm start &`, `{ cd x; } &`, `for ...; do cd x; done &`) runs in a background
  * subshell. Its segments move to a child scope, so a `cd` in it does not reach the segments after the `&` (issue #141).
+ * Each part of a pipeline (`cd x | cat`, `cat | cd x`) runs in a subshell too, the last part as well (no `lastpipe`).
+ * Its segments move to a child scope of their own, so a `cd` in a part does not reach the segments after the pipeline
+ * (issue #147). The `)` that ends a `case` pattern is no end of a subshell (issue #148).
  */
 export function splitShell(command: string): Segment[] {
   const out: Segment[] = []
@@ -67,8 +80,8 @@ export function splitShell(command: string): Segment[] {
   let i = 0
   const s = command
   // Open subshells, innermost last. The segment ends before a scope opens or closes, so it keeps the scope it ran in.
-  // `from` is the `listFrom` of the scope that opened it.
-  const stack: { id: string; tick: boolean; from: number }[] = []
+  // `saved` is the `Place` of the scope that opened it. `compounds` is how many compounds were open then.
+  const stack: { id: string; tick: boolean; saved: Place; compounds: number }[] = []
   let scopes = 0
   const scope = () => stack.at(-1)?.id ?? ''
   // The first segment of the and-or list that the next `&`, `;` or newline ends. `&&` and `||` keep it, and a newline
@@ -77,27 +90,66 @@ export function splitShell(command: string): Segment[] {
   // does the same in `compounds`: its `;` inside reset the list, so `done`, `fi` or `esac` gives back the list that
   // holds the whole compound, and the `&` after it backgrounds the loop as a unit.
   let listFrom = 0
-  const groups: number[] = []
-  const compounds: number[] = []
+  // The first segment of the pipeline part that is open now, and whether a `|` or `|&` made it part of a pipeline. A
+  // `|` closes the part before it, and the end of the pipeline closes the last part. A part is a whole command: a group,
+  // a compound or a subshell with all its segments. So a scope, a group and a compound save this with the list, and the
+  // opener of a compound is the first segment of the part that its head (`if cd x | cat; then`) opens.
+  let partFrom = 0
+  let piped = false
+  const groups: Place[] = []
+  // `isCase`: the compound is a `case`, whose `)` after a pattern is no end of a subshell.
+  const compounds: (Place & { isCase: boolean })[] = []
+  const here = (): Place => ({ list: listFrom, part: partFrom, piped })
+  const back = (p: Place) => {
+    listFrom = p.list
+    partFrom = p.part
+    piped = p.piped
+  }
   // The last operator was `&&`, `||`, `|` or `|&` and no word has come after it: the list goes on after a newline.
   let wantsMore = false
-  // A scope opens a list of its own. Its close gives back the list it sat in.
+  // Where the last `>` that was typed (no quote, no backslash) stands. `>|` is a redirection only after such a `>`.
+  let typedGt = -2
+  // A scope opens a list and a pipeline part of its own. Its close gives back the place it sat in.
   const openScope = (tick: boolean) => {
-    stack.push({ id: `${scope()}.${++scopes}`, tick, from: listFrom })
-    listFrom = out.length
+    stack.push({ id: `${scope()}.${++scopes}`, tick, saved: here(), compounds: compounds.length })
+    listFrom = partFrom = out.length
+    piped = false
   }
   const closeScope = () => {
     const top = stack.pop()
-    if (top) listFrom = top.from
+    if (top) back(top.saved)
   }
-  // The list from `from` runs in the background. Its segments move to a child of the current scope. Every segment of
-  // the list sits in that scope or in a scope under it.
-  const backgroundFrom = (from: number) => {
+  // The `)` is the end of a `case` pattern when the innermost open compound is a `case` that opened inside the innermost
+  // scope. A subshell, a `$(` or a backtick in an arm opens a scope after the `case`, so its `)` closes that scope.
+  const endsPattern = () => compounds.at(-1)?.isCase === true && compounds.length > (stack.at(-1)?.compounds ?? 0)
+  // A `(` in front of a `case` pattern (`case x in (x) ...`, `;; (y) ...`) is no subshell. The text before it ends with
+  // the `in` of the `case` header, or with the `;;`, `;&` or `;;&` of the arm before. A `(` after a pattern is a subshell:
+  // the text ends with `)`. The header is the segment that just ended (`case x in`), or the lone `in` after `case $(x)`.
+  // Any other word `in` at the end of a line (`echo logged in`) starts no pattern.
+  const startsPattern = () => {
+    if (!endsPattern()) return false
+    if (/(?:;;&?|;&)$/.test(s.slice(0, i).trimEnd())) return true
+    const last = out.at(-1)
+    return last?.words.at(-1) === 'in' && (compoundHead(last.words) === 'case' || last.words.length === 1)
+  }
+  // The segments from `from` run in a subshell of their own: a background list or a pipeline part. They move to a child
+  // of the current scope. Every segment of them sits in that scope or in a scope under it. A part that holds only
+  // subshells has scopes of its own already, and a wrapper scope with no segment changes nothing. So it moves nothing:
+  // else each `)` of a deep `( a | ( b | ... ) )` would relabel every inner segment again.
+  const moveToChild = (from: number) => {
     const parent = scope()
+    const moving = out.slice(from)
+    if (!moving.some(seg => seg.scope === parent)) return
     const child = `${parent}.${++scopes}`
-    for (const seg of out.slice(from)) {
+    for (const seg of moving) {
       if (seg.scope === parent || seg.scope.startsWith(`${parent}.`)) seg.scope = child + seg.scope.slice(parent.length)
     }
+  }
+  // The pipeline ends: its last part runs in a subshell too, and the next part starts after the segments so far.
+  const endPipe = () => {
+    if (piped) moveToChild(partFrom)
+    piped = false
+    partFrom = out.length
   }
 
   const endWord = () => {
@@ -111,8 +163,19 @@ export function splitShell(command: string): Segment[] {
     if (clean.length > 0) {
       out.push({ words: clean.map(unmarkDollars), marked: clean, bg, scope: scope() })
       const head = compoundHead(clean)
-      if (head !== undefined && COMPOUND_OPEN.has(head)) compounds.push(listFrom)
-      else if (COMPOUND_CLOSE.has(clean[0]!)) listFrom = compounds.pop() ?? listFrom
+      if (head !== undefined && COMPOUND_OPEN.has(head)) {
+        compounds.push({ ...here(), isCase: head === 'case' })
+        partFrom = out.length - 1
+        piped = false
+      } else if (COMPOUND_CLOSE.has(clean[0]!)) {
+        // `esac` can follow a compound with no `;;` (`a | { b; } esac`), and `fi esac` or `done esac` close two compounds.
+        // Each close ends the pipeline that is open in it, then gives back the place from before its compound.
+        for (let k = 0; COMPOUND_CLOSE.has(clean[k] ?? ''); k++) {
+          endPipe()
+          const open = compounds.pop()
+          if (open) back(open)
+        }
+      }
     }
     words = []
   }
@@ -196,6 +259,14 @@ export function splitShell(command: string): Segment[] {
       i++
       continue
     }
+    // `>|` is a redirection that overrides `noclobber`, not a pipe. The `>` just before must be typed: a quoted or escaped
+    // `>` (`\>|`) is a word, so the `|` after it is a pipe.
+    if (c === '|' && typedGt === i - 1) {
+      word += c
+      inWord = true
+      i++
+      continue
+    }
     const op = OPS.find(o => s.startsWith(o, i))
     // `{` and `}` group commands only as whole words: `{a,b}` and `${X}` stay words.
     const wordEnds = i + 1 >= s.length || /[\s;&|)]/.test(s[i + 1]!)
@@ -208,30 +279,50 @@ export function splitShell(command: string): Segment[] {
     if (op) {
       if (inWord || words.length > 0) wantsMore = false
       endSegment(op === '&')
-      if (op === '(' || op === '$(') openScope(false)
-      else if (op === ')') {
-        if (!stack.at(-1)?.tick) closeScope()
+      if (op === '(' || op === '$(') {
+        if (op === '$(' || !startsPattern()) openScope(false)
+      } else if (op === ')') {
+        endPipe()
+        // A `)` that ends a `case` pattern closes no scope. The arm after it is a list of its own.
+        if (endsPattern()) listFrom = out.length
+        else if (!stack.at(-1)?.tick) closeScope()
       } else if (op === '`') {
-        if (stack.at(-1)?.tick) closeScope()
-        else openScope(true)
+        if (stack.at(-1)?.tick) {
+          endPipe()
+          closeScope()
+        } else openScope(true)
       } else if (op === '{') {
-        groups.push(listFrom)
-        listFrom = out.length // the group opens a list of its own; `}` gives back the outer one
-      } else if (op === '}') listFrom = groups.pop() ?? listFrom
-      else if (op === '&') {
-        backgroundFrom(listFrom)
+        groups.push(here())
+        listFrom = partFrom = out.length // the group opens a list and a part of its own; `}` gives back the outer ones
+        piped = false
+      } else if (op === '}') {
+        endPipe()
+        const outer = groups.pop()
+        if (outer) back(outer)
+      } else if (op === '|' || op === '|&') {
+        moveToChild(partFrom) // the part before the `|` runs in a subshell
+        partFrom = out.length
+        piped = true
+      } else if (op === '&') {
+        endPipe()
+        moveToChild(listFrom)
         listFrom = out.length
-      } else if (op === ';' || (op === '\n' && !wantsMore)) listFrom = out.length
+      } else if (op === ';' || (op === '\n' && !wantsMore)) {
+        endPipe()
+        listFrom = out.length
+      } else if (op === '&&' || op === '||') endPipe()
       if (op !== '\n') wantsMore = op === '&&' || op === '||' || op === '|' || op === '|&'
       i += op.length
       if (op === '\n') skipHeredocs()
       continue
     }
+    if (c === '>') typedGt = i
     word += c
     inWord = true
     i++
   }
   endSegment(false)
+  endPipe()
   return out
 }
 
@@ -277,7 +368,7 @@ export function scopedVars(): {
   }
 }
 
-const REDIRECT = /^(?:\d*|&)(?:>>?|<<?<?|>&|<&|>\|)(.*)$/
+const REDIRECT = /^(?:\d*|&)(?:>\||>>?|<<?<?|>&|<&)(.*)$/
 
 /** Drops redirections (`> f`, `2>&1`, `&>f`, `<f`) and their targets. */
 function dropRedirections(words: readonly string[]): string[] {
