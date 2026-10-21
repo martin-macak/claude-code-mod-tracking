@@ -202,6 +202,63 @@ test('parseRepoHintsFromBash keeps a cd inside a subshell out of later commands'
   expect(paths('cd /a && (cd b && (cd c); git -C d status)', '/work')).toEqual(['/a', '/a/b', '/a/b/c', '/a/b/d'])
 })
 
+// A cd that runs in the background (`cd /x & ...`, or a list that ends with `&`) does not move the folder of the later
+// commands (issue #141). The cd still counts as a read of its own folder, as in a plain list.
+test('parseRepoHintsFromBash keeps the session folder after a cd that runs in the background', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('cd /x & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('cd /x && git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('pushd /x & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('popd & git -C . status')).toEqual(['/session/proj'])
+  expect(paths('for d in a; do cd /x & git -C . status; done')).toEqual(['/x', '/session/proj'])
+  expect(paths('{ cd /x; } & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('cd /x && git status & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('cd /x && git status; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cd /x || git -C . status')).toEqual(['/x', '/x'])
+})
+
+// A `{` group opens a list of its own: an `&` inside it does not background the `cd` before the group. `}` gives the
+// outer list back.
+test('parseRepoHintsFromBash keeps a cd before a group that holds a background job', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('cd /x && { sleep 1 & }; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cd /x && { sleep 1 & git -C . status; }')).toEqual(['/x', '/x'])
+  expect(paths('cd /x && { ( cd /y ) & }; git -C . status')).toEqual(['/x', '/y', '/x'])
+  // `}` still gives the outer list back: the group and `sleep` are one background job.
+  expect(paths('cd /x && { git status; } && sleep 1 & git -C . status')).toEqual(['/x', '/session/proj'])
+})
+
+// A newline right after `&&`, `||` or `|` continues the list, as in bash.
+test('parseRepoHintsFromBash keeps the session folder after a cd in a list that continues on the next line', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('cd /x &&\nsleep 1 &\ngit -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('cd /x ||\n\n# note\nsleep 1 &\ngit -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('cd /x |\nsleep 1 &\ngit -C . status')).toEqual(['/x', '/session/proj'])
+  // A newline after a finished command ends the list: this `cd` is a foreground command.
+  expect(paths('cd /x && true\nsleep 1 &\ngit -C . status')).toEqual(['/x', '/x'])
+})
+
+// A `for`, `while`, `until`, `if`, `case` or `select` that ends with `&` runs in the background as a whole.
+test('parseRepoHintsFromBash keeps the session folder after a cd in a loop that runs in the background', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('for d in a; do cd /x; done & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('while true; do cd /x; sleep 1; done & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('until false; do cd /x; break; done & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('if true; then cd /x; fi & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('case x in x) cd /x ;; esac & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('select d in a; do cd /x; break; done & git -C . status')).toEqual(['/x', '/session/proj'])
+  // `time [-p]` can stand in front of a compound. The loop after it runs in the background as a whole, and its `done`
+  // does not close the compound around it.
+  expect(paths('time -p for d in a; do cd /x; done & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('if true; then cd /x; time for i in 1; do :; done & git -C . status; fi')).toEqual(['/x', '/x'])
+  // A loop in a loop, and a loop after a `cd` in the same list: the whole list runs in the background.
+  expect(paths('for d in a; do for e in b; do cd /x; done; done & git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths('cd /x && for d in a; do :; done & git -C . status')).toEqual(['/x', '/session/proj'])
+  // A foreground loop, or a loop followed by `;`, still moves the folder.
+  expect(paths('for d in a; do cd /x; done; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('if true; then cd /x; fi && git -C . status')).toEqual(['/x', '/x'])
+})
+
 test('isNoisePath filters tmp, scratchpad, node_modules and claude config paths', () => {
   for (const p of ['/tmp/x', '/private/tmp/x', '/w/node_modules/pkg/a.ts', '/x/scratchpad/run.md', '~/.claude/plugins'])
     expect(isNoisePath(p)).toBe(true)

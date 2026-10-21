@@ -28,14 +28,36 @@ export type Segment = {
   bg: boolean
   /**
    * The subshell the segment runs in. `''` is the top level. `(`, `$(` and a backtick pair open a child scope
-   * `${parent}.${n}`. `{ }` is the same shell, so it keeps the scope.
+   * `${parent}.${n}`. `{ }` is the same shell, so it keeps the scope. A list that ends with `&` runs in a subshell
+   * too, so its segments get a child scope of their own (see `splitShell`).
    */
   scope: string
 }
 
+// A compound command spans several segments: `for ...; do ...; done`. `COMPOUND_LEAD` are the reserved words that can
+// stand in front of the opener (`do for`, `then if`, `else if`). `time` and its options (`time -p for ...`) can too.
+const COMPOUND_OPEN = new Set(['for', 'while', 'until', 'if', 'case', 'select'])
+const COMPOUND_CLOSE = new Set(['done', 'fi', 'esac'])
+const COMPOUND_LEAD = new Set(['!', 'do', 'then', 'else'])
+
+/** The word that starts the command of a segment, behind the reserved words and `time [-p]`. */
+function compoundHead(words: readonly string[]): string | undefined {
+  let afterTime = false
+  for (const w of words) {
+    if (COMPOUND_LEAD.has(w)) afterTime = false
+    else if (w === 'time') afterTime = true
+    else if (!(afterTime && w.startsWith('-'))) return w
+  }
+  return undefined
+}
+
 const OPS = ['&&', '||', '|&', ';', '|', '&', '\n', '(', ')', '`', '$(', '{', '}'] as const
 
-/** Splits `command` into simple commands on `;`, `&&`, `||`, `|`, `&`, newlines, subshells and groups. */
+/**
+ * Splits `command` into simple commands on `;`, `&&`, `||`, `|`, `&`, newlines, subshells and groups.
+ * A list that ends with `&` (`cd x && npm start &`, `{ cd x; } &`, `for ...; do cd x; done &`) runs in a background
+ * subshell. Its segments move to a child scope, so a `cd` in it does not reach the segments after the `&` (issue #141).
+ */
 export function splitShell(command: string): Segment[] {
   const out: Segment[] = []
   let words: string[] = []
@@ -45,9 +67,38 @@ export function splitShell(command: string): Segment[] {
   let i = 0
   const s = command
   // Open subshells, innermost last. The segment ends before a scope opens or closes, so it keeps the scope it ran in.
-  const stack: { id: string; tick: boolean }[] = []
+  // `from` is the `listFrom` of the scope that opened it.
+  const stack: { id: string; tick: boolean; from: number }[] = []
   let scopes = 0
   const scope = () => stack.at(-1)?.id ?? ''
+  // The first segment of the and-or list that the next `&`, `;` or newline ends. `&&` and `||` keep it, and a newline
+  // right after `&&`, `||` or `|` keeps it too (`wantsMore`). A group saves the list it sits in and opens one of its own:
+  // `}` gives the outer list back, so `{ a; } && b &` stays one list. A `for`, `while`, `until`, `if`, `case` or `select`
+  // does the same in `compounds`: its `;` inside reset the list, so `done`, `fi` or `esac` gives back the list that
+  // holds the whole compound, and the `&` after it backgrounds the loop as a unit.
+  let listFrom = 0
+  const groups: number[] = []
+  const compounds: number[] = []
+  // The last operator was `&&`, `||`, `|` or `|&` and no word has come after it: the list goes on after a newline.
+  let wantsMore = false
+  // A scope opens a list of its own. Its close gives back the list it sat in.
+  const openScope = (tick: boolean) => {
+    stack.push({ id: `${scope()}.${++scopes}`, tick, from: listFrom })
+    listFrom = out.length
+  }
+  const closeScope = () => {
+    const top = stack.pop()
+    if (top) listFrom = top.from
+  }
+  // The list from `from` runs in the background. Its segments move to a child of the current scope. Every segment of
+  // the list sits in that scope or in a scope under it.
+  const backgroundFrom = (from: number) => {
+    const parent = scope()
+    const child = `${parent}.${++scopes}`
+    for (const seg of out.slice(from)) {
+      if (seg.scope === parent || seg.scope.startsWith(`${parent}.`)) seg.scope = child + seg.scope.slice(parent.length)
+    }
+  }
 
   const endWord = () => {
     if (inWord) words.push(word)
@@ -57,7 +108,12 @@ export function splitShell(command: string): Segment[] {
   const endSegment = (bg: boolean) => {
     endWord()
     const clean = dropRedirections(words)
-    if (clean.length > 0) out.push({ words: clean.map(unmarkDollars), marked: clean, bg, scope: scope() })
+    if (clean.length > 0) {
+      out.push({ words: clean.map(unmarkDollars), marked: clean, bg, scope: scope() })
+      const head = compoundHead(clean)
+      if (head !== undefined && COMPOUND_OPEN.has(head)) compounds.push(listFrom)
+      else if (COMPOUND_CLOSE.has(clean[0]!)) listFrom = compounds.pop() ?? listFrom
+    }
     words = []
   }
   const skipHeredocs = () => {
@@ -150,14 +206,23 @@ export function splitShell(command: string): Segment[] {
       continue
     }
     if (op) {
+      if (inWord || words.length > 0) wantsMore = false
       endSegment(op === '&')
-      if (op === '(' || op === '$(') stack.push({ id: `${scope()}.${++scopes}`, tick: false })
+      if (op === '(' || op === '$(') openScope(false)
       else if (op === ')') {
-        if (!stack.at(-1)?.tick) stack.pop()
+        if (!stack.at(-1)?.tick) closeScope()
       } else if (op === '`') {
-        if (stack.at(-1)?.tick) stack.pop()
-        else stack.push({ id: `${scope()}.${++scopes}`, tick: true })
-      }
+        if (stack.at(-1)?.tick) closeScope()
+        else openScope(true)
+      } else if (op === '{') {
+        groups.push(listFrom)
+        listFrom = out.length // the group opens a list of its own; `}` gives back the outer one
+      } else if (op === '}') listFrom = groups.pop() ?? listFrom
+      else if (op === '&') {
+        backgroundFrom(listFrom)
+        listFrom = out.length
+      } else if (op === ';' || (op === '\n' && !wantsMore)) listFrom = out.length
+      if (op !== '\n') wantsMore = op === '&&' || op === '||' || op === '|' || op === '|&'
       i += op.length
       if (op === '\n') skipHeredocs()
       continue
