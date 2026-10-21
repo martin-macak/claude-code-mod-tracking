@@ -20,9 +20,9 @@ An `acli jira workitem <sub> KEY` command in a Bash tool call tracks `KEY` on ac
 
 The Jira tracker registers a `toolCall.Bash` handler.
 
-1. Split the command on `&&`, `||`, `;`, `|` and newlines.
-2. A part counts when it starts with `acli jira workitem <sub>` and `<sub>` is not `search`. A `comment` or `link` form takes its own sub-sub-command first (`comment list`, `comment create`).
-3. The key comes from one of two places. `view` takes it as the first positional argument. The other sub-commands take it as the value of `--key` or `-k`, as `--key KEY`, `--key=KEY` or `-k KEY`. It must match `JIRA_KEY` after upper-casing. A comma list (`--key "A-1,B-2"`) names more than one key, so it adds nothing. Quotes are stripped.
+1. Split the command into simple commands with `splitShell` (`core/lib/shell.ts`). It keeps quoted text in one word.
+2. A part counts when it starts with `acli jira workitem <sub>` and `<sub>` is `view`, `comment`, `edit`, `assign`, `transition`, `clone`, `archive` or `unarchive`. `search`, `create`, `delete` and `link` name no single tracked item. The `acli` word may carry a path.
+3. The key comes from one of two places. `view` takes it as the first positional argument. The other sub-commands take it as the value of `--key` or `-k`, as `--key KEY`, `--key=KEY` or `-k KEY`. It must match `JIRA_KEY` as typed: `utf-8` is not a key, and Jira writes keys in upper case. A comma list (`--key "A-1,B-2"`) names more than one key, so it adds nothing. Quotes are stripped.
 4. A denied call, or one the tool reported as an error, adds nothing. The result check is the one `trackers/repos/index.ts` already has. A failing `acli` call often means an unknown key, and tracking it would show a row that can never refresh.
 
 ### Site

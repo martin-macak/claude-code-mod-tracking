@@ -3,8 +3,10 @@
 // Plan: L5 Task 4, K4, K5. Task 5 adds `claimUrl`; Task 6 `setLevel` and `findRow`; Task 8 `accept` and `restore`.
 
 import type { Claim, ItemKind, JsonObject, KindContext, Refreshable, RefreshContext } from '../../core/interfaces/items'
+import { isRecord } from '../../core/lib/json'
 import { reasonOfSource, reasonSet } from '../../core/lib/reasons'
 import { sighted } from '../../core/lib/records'
+import { acliWorkitems } from './acli-command'
 import { acliOf } from './client'
 import { JiraItem } from './jira-item'
 import { carryPriorities, childRow, mergeNodePriorities, setNode } from './nodes'
@@ -79,6 +81,36 @@ export const jiraKind: ItemKind<JiraRecord> = {
       at: ctx.now,
       fields: fields as unknown as JsonObject,
     }
+  },
+  /**
+   * An `acli jira workitem` call names its item by key, with no URL in its output. acli acts on its active site, so the
+   * key is an item of that site. A denied call, a call the tool reported as an error and a run with no active site add
+   * nothing: a failing call usually names a key that does not exist.
+   */
+  fromTool: {
+    Bash: async (ev, ctx) => {
+      if (isRecord(ev.result) && (ev.result.deny !== undefined || ev.result.isError === true)) return []
+      const command = isRecord(ev.input) && typeof ev.input.command === 'string' ? ev.input.command : ''
+      const found = acliWorkitems(command)
+      if (found.length === 0) return []
+      const site = await activeSite(ctx)
+      if (!site) return []
+      return found.flatMap(({ key, read }): Claim[] => {
+        const ref = parseJiraUrl(`https://${site}/browse/${key}`)
+        if (!ref) return []
+        const { category, ...fields } = ref
+        return [
+          {
+            category,
+            key: jiraKeyOf(ref),
+            source: ctx.source,
+            reason: read ? 'read' : 'mentioned',
+            at: ctx.now,
+            fields: fields as unknown as JsonObject,
+          },
+        ]
+      })
+    },
   },
   /** A Jira URL in tool output counts only on the active site: a test file or a log may name any other. */
   async accept(claims, ctx) {
