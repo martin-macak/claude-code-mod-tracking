@@ -9,6 +9,7 @@ import type { SectionSpec, TreeRow, ViewContext } from '../core/interfaces/view'
 import { listGroups } from '../core/lib/grouping'
 import { deepFreeze } from '../core/lib/normalise'
 import { type PaneHost, PaneSession } from '../hooks/pane-session'
+import { paneGroups } from '../hooks/pane-text'
 import { TRACKERS } from '../trackers'
 import { AUTO_DEFAULTS } from '../trackers/auto/config'
 import { autoIds } from '../trackers/auto/dismiss'
@@ -691,7 +692,7 @@ test('the store cap and the view cap are one number: /track show-all cannot show
 /** The handle of the row `id` in a full drawing of the pane, with these rows open. */
 async function handleIn(t: World, id: string, open: string[] = []) {
   const expanded = new Set(open)
-  const groups = listGroups(await t.m.paneData(t.w.ports, { selected: null, expanded }))
+  const groups = await paneGroups(t.w.ports, t.m, { selected: null, expanded })
   return handleOf(groups, { expanded, shown: () => 0, limits: t.m.config.global().ui }, id)
 }
 const ringOf = (tree: unknown) =>

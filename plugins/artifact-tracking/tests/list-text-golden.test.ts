@@ -3,11 +3,18 @@
 // row. The literal below was captured on `main` before L1. A change here is a change of what `/track` prints.
 // Issue #63, L2 changed three places, each on purpose: an agent says its state (a new Status cell), a file says its name
 // before its folder, and a process says its name where the short kind word (`bg`, `docker`, `pid`) stood.
+// Issue #63, L3 changed one place, on purpose: the rows at the top level (`★`) or at the high that the person set (`▲`) are a
+// group of their own, `Pinned`, first, and no longer rows of their section (owner decision of 2026-10-21).
 import { expect, test } from 'claude-code/testing'
 import { listText, turnLabels } from '../hooks/pane-text'
 import { paneWorld } from './fixtures/pane-world'
 
-const GOLDEN = `Worktrees  git · 2 live · 1 removed · checked 30s ago
+const GOLDEN = `Pinned
+  ★ #5  Issue 5  Issue  open
+  ★ #21  Rework the capture scan  feat/x  open  ✗ checks
+  ▲ #12  ↳#21 Name the lane  Issue  open
+
+Worktrees  git · 2 live · 1 removed · checked 30s ago
   work  main
     feat-x  feat/x
     old-wt  feat/old  removed
@@ -21,7 +28,6 @@ Agents  2 running · 2 ended
     ✗ lint  failed
 
 Pull requests  gh · refreshed 2m ago
-  ★ #21  Rework the capture scan  feat/x  open  ✗ checks
   #22  Stacked on the scan  →feat/x  open  … checks
   #23  Old work  feat/old  merged  ✓ checks
   #24  Named and found  feat/z  open  ✓ checks
@@ -35,8 +41,6 @@ Jira work items  acli · acme.atlassian.net · refreshed 1m ago
   GONE-1  GONE-1  not found
 
 GitHub  gh · refreshed 2m ago
-  ★ #5  Issue 5  Issue  open
-  ▲ #12  ↳#21 Name the lane  Issue  open
   #9  PR 9  PR  open  … checks
   cli/cli#14640  Crash on exit  Issue  closed
   #7  unresolved: no repo

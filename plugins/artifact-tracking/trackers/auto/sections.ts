@@ -48,8 +48,9 @@ function worktreeRow(auto: AutoState, r: WorktreeRow, provenAt: ProvenAt, childr
     }),
     facets: { status, ...(first !== undefined ? { firstSeen: first } : {}) },
     ...(children !== undefined ? { children } : {}),
-    // The root is open until the person closes it.
-    ...(root ? { expandedByDefault: true } : {}),
+    // The root is open until the person closes it. The worktrees below it are worktrees of their own: a view that groups
+    // by status lifts them, so a removed one lands in the gone group, not under its live root (issue #63, L3).
+    ...(root ? { expandedByDefault: true, lift: true as const } : {}),
     can: can(!root),
     ...(reasons ? { reasons } : {}),
     ...(removed ? { dim: true } : {}),
@@ -173,8 +174,11 @@ function agentRow(auto: Drawn, r: AgentRow, children: readonly TreeRow[]): TreeR
     }),
     facets: { status, kind: r.kind, ...(spawnedAt !== undefined ? { firstSeen: spawnedAt } : {}) },
     ...(children.length > 0 ? { children } : {}),
-    // The master is open until the person closes it.
+    // The master is open until the person closes it. The nesting is lineage: who spawned whom. Every agent is a row of its
+    // own in the views that group by status, so a failed sub-agent is in the failed group (issue #63, L3). A folded run
+    // (`runRow`) is no agent: it keeps its members.
     ...(master ? { expandedByDefault: true } : {}),
+    lift: true,
     can: can(!master),
     ...(reasons ? { reasons } : {}),
     ...(isDone(r) ? { dim: true } : {}),

@@ -58,6 +58,13 @@ export interface ColumnDef {
  */
 export type StatusToken = 'failed' | 'waiting' | 'active' | 'done' | 'gone' | 'none'
 
+/**
+ * The views of the pane (issue #63, L3): how the one table groups its rows. `list`: one group for each section of a tracker,
+ * today's pane. `tracker`: one group for each tracker. `status`: one group for each status token. `reason`: one group for each
+ * strongest reason. `flat`: one group of every row. Every view puts the pinned rows in a group of their own, first.
+ */
+export type ViewId = 'list' | 'tracker' | 'status' | 'reason' | 'flat'
+
 /** A state as the status cell says it: a free word, and the token that sorts it. */
 export interface RowStatus {
   readonly label: string
@@ -117,6 +124,14 @@ export interface TreeRow {
   readonly turns?: { readonly first: number; readonly last: number }
   /** What a view groups, sorts and filters by. Set on the top-level rows of every tracker (issue #63, L2). */
   readonly facets?: Facets
+  /**
+   * The rows below this row are rows of their own, not parts of it: the root worktree and the master agent hold the others
+   * only to show where they came from. The by-list view draws them below it. Every other view draws each at the top level,
+   * so a failed sub-agent lands in the failed group and not under its healthy master (issue #63, L3). The lifted row keeps
+   * no child. A row below a row that does not say `lift` is a part of it (a Jira sub-task, the agents of a folded run) and
+   * stays under it in every view. Rows below a lifted row may say `lift` too: the lift goes on through them.
+   */
+  readonly lift?: true
 }
 
 export interface SectionSpec {
@@ -183,6 +198,14 @@ export interface PaneView {
  */
 export interface HiddenState {
   readonly showAll: boolean
+}
+
+/**
+ * The filters of the pane, for the session (issue #63, L3). `touchedOnly` (`t`): the top-level rows that were only discovered or
+ * mentioned are left out. A session atom like `hidden`: `/clear` resets it, and it is never written to the config file.
+ */
+export interface FilterState {
+  readonly touchedOnly: boolean
 }
 
 /** What a tracker reads to draw. All reads, no writes: a render must not write (E8, E9). */

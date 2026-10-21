@@ -3,8 +3,8 @@
 // /clear. All of it is a view: no slot, no store and no config write. The clock is the world's: NOW.
 import { expect, test } from 'claude-code/testing'
 import { ConfigManager } from '../core/infra/config-manager'
-import { listGroups } from '../core/lib/grouping'
 import { type PaneHost, PaneSession } from '../hooks/pane-session'
+import { paneGroups } from '../hooks/pane-text'
 import { TRACKERS } from '../trackers'
 import { AUTO_DEFAULTS } from '../trackers/auto/config'
 import type { AgentRow } from '../trackers/auto/types'
@@ -355,7 +355,7 @@ test('the selected row hides: the ring and the keys fall to the next row, and th
   t.w.stateSets = {}
   const after = await drawPane()
   const open = new Set(['ag:explore'])
-  const groups = listGroups(await t.m.paneData(t.w.ports, { selected: null, expanded: open }))
+  const groups = await paneGroups(t.w.ports, t.m, { selected: null, expanded: open })
   const build = handleOf(groups, { expanded: open, shown: () => 0, limits: t.m.config.global().ui }, 'ag:build')
   expect(build).toBeDefined()
   expect(ring(after)).toEqual([build]) // `ag:build` followed `ag:review` in the last drawing

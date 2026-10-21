@@ -5,6 +5,7 @@ import {
   bool,
   deepFreeze,
   defaultsOf,
+  enums,
   int,
   movedKeys,
   normaliseWith,
@@ -22,6 +23,7 @@ const S = {
   w: words(['issue', 'bug'], 3),
   o: obj({ t: int(3, 1, 10) }),
   mode: oneOf('off', ['off', 'text', 'full']),
+  picks: enums(['a', 'b'], ['a', 'b', 'c', 'd']),
 }
 
 /** Normalises `raw` against `S` and returns the result with the problems it reported. */
@@ -33,7 +35,7 @@ function run(raw: unknown, path?: string) {
 
 test('an empty object gives the defaults and no problem', () => {
   const { value, out } = run({})
-  expect(value).toEqual({ enabled: true, n: 50, w: ['issue', 'bug'], o: { t: 3 }, mode: 'off' })
+  expect(value).toEqual({ enabled: true, n: 50, w: ['issue', 'bug'], o: { t: 3 }, mode: 'off', picks: ['a', 'b'] })
   expect(out).toEqual([])
 })
 
@@ -115,6 +117,42 @@ test('words: the rule for a word is the WORD pattern', () => {
   expect(WORD.test('a-b-1')).toBe(true)
   expect(WORD.test('Issue')).toBe(false)
   expect(WORD.test('-x')).toBe(false)
+})
+
+test('enums: a list of the listed words, in the order given, each once; the default list is a copy', () => {
+  const { value, out } = run({ picks: ['d', 'a', 'd', 'c'] })
+  expect(value.picks).toEqual(['d', 'a', 'c'])
+  expect(out).toEqual([])
+  const defaults = defaultsOf(S).picks as string[]
+  expect(defaults).toEqual(['a', 'b'])
+  defaults.push('x')
+  expect(defaultsOf(S).picks).toEqual(['a', 'b'])
+})
+
+test('enums: a word that is not listed is left out with one problem each, as written (no case folding)', () => {
+  const { value, out } = run({ picks: ['a', 'B', 7, 'zzz', 'c'] })
+  expect(value.picks).toEqual(['a', 'c'])
+  expect(out).toEqual([
+    'picks: "B" is not one of a, b, c, d. The mod leaves it out.',
+    'picks: 7 is not one of a, b, c, d. The mod leaves it out.',
+    'picks: "zzz" is not one of a, b, c, d. The mod leaves it out.',
+  ])
+})
+
+test('enums: a value that is no list, a list with no word left and an empty list give the default list', () => {
+  const none = run({ picks: ['x', 'y'] })
+  expect(none.value.picks).toEqual(['a', 'b'])
+  expect(none.out).toEqual([
+    'picks: "x" is not one of a, b, c, d. The mod leaves it out.',
+    'picks: "y" is not one of a, b, c, d. The mod leaves it out.',
+    'picks: no listed word is left. Using the default list.',
+  ])
+  const text = run({ picks: 'a' })
+  expect(text.value.picks).toEqual(['a', 'b'])
+  expect(text.out).toEqual(['picks: "a" is not a list of a, b, c, d. Using the default list.'])
+  const empty = run({ picks: [] })
+  expect(empty.value.picks).toEqual(['a', 'b'])
+  expect(empty.out).toEqual(['picks: no listed word is left. Using the default list.'])
 })
 
 test('oneOf: a listed word is kept, and the default is the word of a missing key', () => {

@@ -146,6 +146,7 @@ test('the /track text prints Repos before Files when there are no web links', as
   const titles = (text: string) => text.split('\n\n').map(block => (block.split('\n')[0] ?? '').split('  ')[0])
   const t = await paneWorld()
   expect(titles(await listText(t.w.ports, t.m))).toEqual([
+    'Pinned',
     'Worktrees',
     'Agents',
     'Pull requests',
@@ -159,6 +160,7 @@ test('the /track text prints Repos before Files when there are no web links', as
   ])
   t.w.state.set('items', paneItems().filter(i => i.category !== 'web') as unknown as Json)
   expect(titles(await listText(t.w.ports, t.m))).toEqual([
+    'Pinned',
     'Worktrees',
     'Agents',
     'Pull requests',

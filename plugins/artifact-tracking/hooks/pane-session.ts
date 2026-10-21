@@ -9,6 +9,7 @@ import { route } from '../core/infra/keys'
 import { reason } from '../core/infra/steps'
 import type { Ports } from '../core/interfaces/ports'
 import type { GroupSpec } from '../core/interfaces/view'
+import { listGroups } from '../core/lib/grouping'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import type { TableElements } from '../ux/tree-data-table/el'
 import { hintRows, withKeysHint } from '../ux/tree-data-table/hint'
@@ -25,7 +26,7 @@ import {
 } from '../ux/tree-data-table/table'
 import { WorkQueue } from './pane-queue'
 import { type Press, Refocus, unlessClosed } from './pane-refocus'
-import { helpOf, type PaneHost, paneGroups, shownOf } from './pane-text'
+import { helpOf, type PaneHost, paneModel, shownOf } from './pane-text'
 import { openTurn, type TurnPaneHost } from './pane-turn'
 
 export { helpOf, helpTextOf, listText, type PaneHost, TEXT_VIEW, turnLabels } from './pane-text'
@@ -75,7 +76,8 @@ export class PaneSession {
       p.state.selected.get(),
       p.state.help.get(),
     ])
-    const groups = await paneGroups(p, m, { selected, expanded: new Set(expanded) })
+    const model = await paneModel(p, m, { selected, expanded: new Set(expanded) })
+    const { groups } = model
     const shown = await shownOf(p, groups)
     const limits = m.config.global().ui
     // A row can hide with no key from the person. The drawing, the ring and the keys then follow the row the selection
@@ -112,7 +114,8 @@ export class PaneSession {
       // The help view works only `r` and `h`, so its footer is drawn as with no row selected: a tracker's dim, inert keys
       // would wrap the footer to a second row and push `Pane keys` out of the body again (issue #105).
       footer: await m.footer(p, help ? undefined : findRow(groups, chosen), help),
-      help: help ? helpOf(m, groups) : null,
+      // The help titles a tracker's keys by the sections that hold its rows, whatever the view draws (issue #63, L3).
+      help: help ? helpOf(m, listGroups(model.sections)) : null,
     }
     const drawn = TreeDataTable.render(groups, view, el, this.actionsOf(p, m, focused === false))
     this.refocus.seen(drawn)

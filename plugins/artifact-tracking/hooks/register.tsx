@@ -38,6 +38,10 @@ const expanded = atom({ plugin: 'artifact-tracking', key: 'expanded' } as const,
 const selected = atom({ plugin: 'artifact-tracking', key: 'selected' } as const, null as string | null)
 const help = atom({ plugin: 'artifact-tracking', key: 'help' } as const, false)
 const hidden = atom({ plugin: 'artifact-tracking', key: 'hidden' } as const, { showAll: false })
+// Issue #63, L3: the view and the filters of the pane. `null` is "no choice yet": the pane reads `global.ui.view`, so a `/clear`
+// that resets the atom puts the pane back on the configured view with no seeding from the config at start.
+const view = atom({ plugin: 'artifact-tracking', key: 'view' } as const, null as string | null)
+const filters = atom({ plugin: 'artifact-tracking', key: 'filters' } as const, { touchedOnly: false })
 // Issue #69: what each main-loop turn tracked. The module that declares the atoms is the only one that may touch the state
 // keys; the empty ledger is the rule's own, so a field added to it cannot drift from this default.
 const turns = atom({ plugin: 'artifact-tracking', key: 'turns' } as const, emptyLedger() as TurnLedger)
@@ -150,6 +154,8 @@ function portsOf($: EngineInterface): Ports {
       selected: { get: () => read($, selected), update: fn => update($, selected, fn) },
       help: { get: () => read($, help), update: fn => update($, help, fn) },
       hidden: { get: () => read($, hidden), update: fn => update($, hidden, fn) },
+      view: { get: () => read($, view), update: fn => update($, view, fn) },
+      filters: { get: () => read($, filters), update: fn => update($, filters, fn) },
       turns: { get: () => read($, turns), update: fn => update($, turns, fn) },
       shown: {
         get: async id => (await read($, { plugin: 'artifact-tracking', key: 'shown', id } as const)) ?? 0,

@@ -26,7 +26,8 @@ export function groupsText(groups: readonly GroupSpec[]): string {
   const lines: string[] = []
   for (const g of groups) {
     if (lines.length > 0) lines.push('')
-    lines.push(`${g.title}  ${g.note?.text ?? ''}`)
+    // A group of a view other than by list has no note: its title line ends at the title, with no trailing space.
+    lines.push(g.note === undefined ? g.title : `${g.title}  ${g.note.text}`)
     const walk = (rows: readonly TreeRow[], depth: number): void => {
       for (const r of rows) {
         const lead = textsOf(r, 0, treeAt + 1).join(' ')
