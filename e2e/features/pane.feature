@@ -278,3 +278,46 @@ Feature: Drive the /track pane with the keys
     Then the screen shows "Keys go to the prompt."
     When I click "x: dismiss" in the pane to give it the keys
     Then the screen stops showing "Keys go to the prompt."
+
+  # Issue #140. The ring sits on `c: resolve` of a conflicted PR row. The help view has no `c`, so `h` must put the ring on
+  # `h: back`, and the next Tab walks on from there: with no ring the Tab would start from the first Button. The second `h`
+  # gives the ring back to the selected row. Tab walks the footer in key order: r, h, x, 1, 2, 3, 0, c, f. A fake gh answers
+  # the calls of the mod: nothing here can reach GitHub.
+  Scenario: h moves the ring from a tracker key to h: back, and the second h gives it back to the selected row
+    Given a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
+    And the fake gh reports PR #7 "Fix the fake conflict" from "feat/fake-conflict" into "main" as CONFLICTING
+    And a Claude Code session with the artifact-tracking mod
+    When I type "/track"
+    Then the selected row shows "#7"
+    And the screen matches /│[^\n]*#7[^\n]*✗ conflicts/
+    When I press "Tab" until the focus ring is on "c: resolve"
+    Then the focus ring is on "c: resolve"
+    When I press "h"
+    Then the screen shows "Row keys (act on the selected row)"
+    And the focus ring is on "h: back"
+    When I press "h"
+    Then the screen stops showing "Row keys"
+    And the selected row shows "#7"
+    And the focus ring is on "▸"
+    When I press "Tab" until the focus ring is on "c: resolve"
+    Then the focus ring is on "c: resolve"
+    When I press "h"
+    Then the focus ring is on "h: back"
+    When I press "Tab"
+    Then the focus ring is on "x: dismiss"
+    And the fake gh answered no unsupported call
+
+  # Issue #140. `x` on the only row takes the row and every tracker key out of the footer. The ring sat on `c: resolve`, a
+  # Button that is gone, so it would land on none. The mod asks for the first footer Button once the drawing without the row
+  # is on screen. The scenario reads the ring and the row text, not the gutter of the selected row, so it runs inline as well.
+  Scenario: x on the last row puts the ring on r: refresh
+    Given a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
+    And the fake gh reports PR #7 "Fix the fake conflict" from "feat/fake-conflict" into "main" as CONFLICTING
+    And a Claude Code session with the artifact-tracking mod
+    When I type "/track"
+    Then the screen matches /│[^\n]*#7[^\n]*✗ conflicts/
+    When I press "Tab" until the focus ring is on "c: resolve"
+    And I press "x"
+    Then the screen stops showing "#7"
+    And the focus ring is on "r: refresh"
+    And the fake gh answered no unsupported call

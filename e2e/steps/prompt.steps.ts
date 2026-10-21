@@ -1,5 +1,5 @@
 import { When } from '@cucumber/cucumber'
-import { selectedLine } from '../support/pane.ts'
+import { focusedTexts, selectedLine } from '../support/pane.ts'
 import { countLines } from '../support/session.ts'
 import { sleep, waitUntil } from '../support/wait.ts'
 import type { DemoWorld } from '../support/world.ts'
@@ -27,6 +27,30 @@ When('I press {string} {int} times', async function (this: DemoWorld, key: strin
     )
   }
 })
+
+// A key the person repeats until the focus ring reaches a Button. Each press waits until the ring moved (reverse video), so
+// a slow redraw cannot swallow a key (issue #104), and the count of presses is no part of the scenario. For a walk over
+// the footer, where the selected row does not move and `I press {string} {int} times` would time out.
+const MOST_PRESSES = 30
+
+When(
+  'I press {string} until the focus ring is on {string}',
+  async function (this: DemoWorld, key: string, text: string) {
+    this.tl.phase('normal')
+    for (let presses = 0; ; presses++) {
+      const before = focusedTexts(this.tmux.captureAnsi())
+      if (before.some(focused => focused.includes(text))) return
+      if (presses >= MOST_PRESSES)
+        throw new Error(`the focus ring did not reach "${text}" in ${MOST_PRESSES} presses of ${key}`)
+      this.tmux.key(key)
+      await this.waitScreen(
+        screen => focusedTexts(screen).join('\n') !== before.join('\n'),
+        `press ${presses + 1} of ${key} to move the focus ring off ${JSON.stringify(before)}`,
+        { ansi: true },
+      )
+    }
+  },
+)
 
 When('Claude finishes', async function (this: DemoWorld) {
   await this.finishTurn()

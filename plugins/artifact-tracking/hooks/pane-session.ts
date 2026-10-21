@@ -121,6 +121,7 @@ export class PaneSession {
     if (drawn.rows.length > 0) this.rows = drawn.rows
     this.sections = sections
     // The help view fills the body of a short pane to the row (issue #92): no line is added to it.
+    this.refocus.frame({ help, ids: new Set(drawn.rows.map(r => r.id)) }) // a press that waits for a frame like this one goes on
     return hinted ? withKeysHint(el, drawn.tree) : drawn.tree
   }
 
@@ -139,6 +140,7 @@ export class PaneSession {
    */
   async focused(p: Ports, element: string | undefined, origin: FocusOrigin = 'person'): Promise<void> {
     try {
+      this.refocus.noted(element)
       if (element === undefined) return
       if (MORE_KEY.test(element)) {
         this.onMore = element
@@ -313,13 +315,27 @@ export class PaneSession {
         resetWidths()
         await m.refreshManual(p)
         return
-      case 'help':
-        await p.state.help.update(unlessClosed(afterAsk, v => !v))
+      case 'help': {
+        // The rows leave with the help view and come back with the next `h`: the engine keeps the ring's position, not its
+        // Button, so the press asks for the ring again (issue #140).
+        const was = await p.state.help.get()
+        const drawn = this.refocus.awaitFrame(p, frame => frame.help !== was) // armed before the write
+        const open = await p.state.help.update(unlessClosed(afterAsk, v => !v))
+        if (!afterAsk.still()) return
+        const next = { help: open, row: open ? null : await this.selectedRow(p) }
+        await this.refocus.keep(p, m, next, afterAsk, drawn)
         return
+      }
       case 'dismiss': {
         const next = neighbourOf(this.drawn?.rows ?? [], to.rowId)
+        // Armed before the write that takes the row. A drawing that still holds the row is not the frame the ring waits for.
+        // Rows that were hidden behind an "N more" can take its place, so the frame need not be empty.
+        const drawn =
+          next === null ? this.refocus.awaitFrame(p, frame => !frame.help && !frame.ids.has(to.rowId)) : undefined
         await m.dismiss(p, [to.rowId])
         await this.refocus.to(p, m, next, afterAsk)
+        // The last row went: no row is left to take the ring, and the tracker keys left the footer with it (issue #140).
+        if (drawn !== undefined) await this.refocus.keep(p, m, { help: false, row: null }, afterAsk, drawn)
         return
       }
       case 'priority':

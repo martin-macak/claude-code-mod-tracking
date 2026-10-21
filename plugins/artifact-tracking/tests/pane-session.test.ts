@@ -4,6 +4,7 @@ import { expect, test } from 'claude-code/testing'
 import { buttonKeyOf, footerKeys, KeyRegistry } from '../core/infra/keys'
 import type { AtomPort } from '../core/interfaces/ports'
 import type { FooterKey, PaneView, RowRef, SectionSpec, TreeRow } from '../core/interfaces/view'
+import { NEXT_DRAWING_MS, Refocus } from '../hooks/pane-refocus'
 import { helpTextOf, listText, type PaneHost, PaneSession, TEXT_VIEW } from '../hooks/pane-session'
 import { KEYS as GITHUB_ROW_KEYS } from '../trackers/github/actions'
 import { resetWidths } from '../ux/tree-data-table/columns'
@@ -1350,6 +1351,388 @@ test('closed clears help even when the selection write fails', async () => {
   await t.session.closed(t.w.ports)
   expect(t.w.state.get('help')).toBe(false)
   expect(t.w.logs).toEqual(['pane: close failed: boom'])
+})
+
+// Issue #140. The engine keeps the ring at its position among the Buttons, not on its key (live, Claude Code 2.1.306). `h`
+// swaps the rows and the tracker keys for the help view, and `x` on the last row takes the rows and the tracker keys away.
+// The ring then lands on another Button or on none, and the engine tells the mod nothing. So the press asks for the ring
+// again: on its own Button when the next footer holds it, else on `h: back` (the help view) or on the selected row.
+// The session knows the ring from the `ui.focus` hook (`focused`), so each test tells it where the ring is. A ring it never
+// heard of stays alone: the tests above press `h` with no word of the ring and expect no ring request.
+
+/**
+ * A press, then the drawing that the engine makes after the write of the press. The ring request waits for that drawing
+ * (`Refocus.awaitFrame`), so a test that never draws would wait for the bound. `turn` lets the press reach its write.
+ */
+async function pressDraw(t: Pick<ReturnType<typeof setup>, 'draw' | 'session'>, key: string): Promise<void> {
+  press(buttonOf(await t.draw(), key))
+  await turn()
+  await t.draw()
+  await t.session.idle()
+}
+
+/** A pane with the rows `ids`, the github keys `c` and `f` on every row, and the ring where `at` says. `calls` is the engine log. */
+async function ringOn(at: string | undefined, ids: string[] = ['a', 'b'], selected = 'a') {
+  const t = setup(webs(...ids))
+  t.m.keys.add('web', GITHUB_ROW_KEYS) // buttons web.resolve and web.files
+  t.w.state.set('selected', selected)
+  await t.draw()
+  const calls = engineLog(t)
+  if (at !== undefined) await t.session.focused(t.w.ports, at)
+  return { ...t, calls }
+}
+
+test('h opens the help view while the ring is on a tracker key: the ring goes to h: back', async () => {
+  const t = await ringOn('web.resolve')
+  await pressDraw(t, 'help')
+  expect(t.w.state.get('help')).toBe(true)
+  expect(t.calls).toEqual(['focus help'])
+  expect(t.selected()).toBe('a') // a footer Button leaves the selection alone
+})
+
+test('h opens the help view while the ring is on a row: the ring goes to h: back', async () => {
+  const t = await ringOn('r1', ['a', 'b'], 'b')
+  await pressDraw(t, 'help')
+  expect(t.calls).toEqual(['focus help'])
+  expect(t.selected()).toBe('b')
+})
+
+test('h opens the help view while the ring is on an N more Button: the ring goes to h: back', async () => {
+  const t = await ringOn('m0')
+  await pressDraw(t, 'help')
+  expect(t.calls).toEqual(['focus help'])
+})
+
+test('the second h closes the help view and the ring goes back to the selected row', async () => {
+  for (const [selected, handle] of [
+    ['a', 'r0'],
+    ['b', 'r1'],
+  ] as const) {
+    const t = await ringOn('web.resolve', ['a', 'b'], selected)
+    await pressDraw(t, 'help')
+    await t.session.focused(t.w.ports, 'help', 'plugin') // the engine reports the landing of the request
+    await pressDraw(t, 'help')
+    expect(t.w.state.get('help')).toBe(false)
+    expect(t.calls).toEqual(['focus help', `focus ${handle}`])
+    await t.session.focused(t.w.ports, handle, 'plugin') // and the landing on the row, which selects the row it was asked for
+    expect(t.selected()).toBe(selected)
+  }
+})
+
+test('the second h returns the ring to the row that the selection fell to while the help view was open', async () => {
+  const t = await ringOn('web.resolve', ['a', 'b'], 'a')
+  await pressDraw(t, 'help')
+  await t.session.focused(t.w.ports, 'help', 'plugin')
+  t.host.setRows(webs('b')) // `a` hid while the person read the help: the selection falls to `b`, which is now r0
+  await t.draw()
+  await pressDraw(t, 'help')
+  expect(t.calls).toEqual(['focus help', 'focus r0'])
+})
+
+test('a ring that the person moved off h: back stays on that Button when the help view closes', async () => {
+  const t = await ringOn('web.resolve')
+  await pressDraw(t, 'help')
+  await t.session.focused(t.w.ports, 'help', 'plugin')
+  await t.session.focused(t.w.ports, 'refresh') // Tab in the help view
+  await pressDraw(t, 'help')
+  expect(t.w.state.get('help')).toBe(false)
+  expect(t.calls).toEqual(['focus help', 'focus refresh']) // not home to the row: the person chose r
+})
+
+// The rows leave with the help view, so every footer Button changes its position. The engine keeps the position, so a
+// ring that is left alone lands on the next Button (live: the ring on `h: help` went to `x: dismiss`). The press asks for
+// the ring on the same Button again, and no other.
+test('a ring on h or r stays on that Button when h opens or closes the help view: the press asks for it again', async () => {
+  for (const at of ['help', 'refresh']) {
+    const t = await ringOn(at)
+    await pressDraw(t, 'help')
+    expect(t.w.state.get('help')).toBe(true)
+    await pressDraw(t, 'help')
+    expect(t.w.state.get('help')).toBe(false)
+    expect(t.calls).toEqual([`focus ${at}`, `focus ${at}`])
+    expect(t.selected()).toBe('a')
+  }
+})
+
+test('a ring on a core key that the help view keeps (x, a digit) stays on it when h opens the help view', async () => {
+  for (const at of ['dismiss', 'prio-2']) {
+    const t = await ringOn(at)
+    await pressDraw(t, 'help')
+    expect(t.w.state.get('help')).toBe(true)
+    expect(t.calls).toEqual([`focus ${at}`])
+  }
+})
+
+test('with no row selected the second h leaves the ring on h: no row can take it home', async () => {
+  const t = setup(webs('a', 'b'))
+  await t.draw()
+  const calls = engineLog(t)
+  await t.session.focused(t.w.ports, 'r0', 'plugin') // autoFocus took the ring onto the first row; it selects that row
+  t.w.state.set('selected', null) // the person never selected: this is the pane before any selection
+  await pressDraw(t, 'help')
+  await t.session.focused(t.w.ports, 'help', 'plugin')
+  await pressDraw(t, 'help')
+  expect(calls).toEqual(['focus help', 'focus help'])
+})
+
+test('a ring that nobody reported stays alone when h opens the help view', async () => {
+  const t = await ringOn(undefined)
+  await pressDraw(t, 'help')
+  expect(t.w.state.get('help')).toBe(true)
+  expect(t.calls).toEqual([])
+})
+
+test('a refused ring request leaves nothing to bring home: the second h asks for the Button the person had', async () => {
+  const t = await ringOn('web.resolve')
+  ;(t.w.ports.ui as { focus: unknown }).focus = async (key: string) => {
+    t.calls.push(`focus ${key}`)
+    return false
+  }
+  await pressDraw(t, 'help')
+  await pressDraw(t, 'help')
+  expect(t.calls).toEqual(['focus help', 'focus web.resolve']) // the ring never moved: c is still the ring's Button
+})
+
+test('a pane that closed since the ring moved to h: back does not bring the ring back to the next pane', async () => {
+  const t = await ringOn('web.resolve')
+  await pressDraw(t, 'help')
+  await t.session.focused(t.w.ports, 'help', 'plugin')
+  await t.session.closed(t.w.ports)
+  t.w.state.set('selected', 'a') // the next pane, with the help view open again
+  t.w.state.set('help', true)
+  await pressDraw(t, 'help')
+  expect(t.calls).toEqual(['focus help'])
+})
+
+// Live (Claude Code 2.1.306): a request that came before the drawing of the new state landed on the old frame, and the
+// engine then kept its position through the new one, so the ring ended one Button off (`h: back` became `x: dismiss`).
+// The request must follow the drawing that began after the write. These tests pin the order, not the time.
+test('the ring request waits for the drawing that follows the write', async () => {
+  const t = await ringOn('web.resolve')
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  expect(t.w.state.get('help')).toBe(true) // the write is done
+  expect(t.calls).toEqual([]) // and no frame follows it yet: nothing is asked
+  await t.draw()
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help'])
+})
+
+test('a drawing that still holds the row does not release the ring request of x on the last row', async () => {
+  // Live: the dismissal caused a draw of its own, and it came before the row was gone. The request that followed it landed
+  // on the old frame, and the engine moved the ring one Button on.
+  const t = await ringOn('r0', ['a'])
+  let land!: () => void
+  const gate = new Promise<void>(resolve => {
+    land = resolve
+  })
+  t.host.dismiss = async () => {
+    await gate
+    t.host.setRows([])
+  }
+  press(buttonOf(await t.draw(), 'dismiss'))
+  await turn()
+  await t.draw() // the dismissal has not landed: this frame holds the row
+  await turn()
+  expect(t.calls).toEqual([])
+  land()
+  await turn()
+  expect(t.calls).toEqual([]) // the row is gone, but no frame shows it yet
+  await t.draw()
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus refresh'])
+})
+
+test('a drawing that never comes does not hold the press for ever: the request follows after the bound', async () => {
+  const t = await ringOn('web.resolve')
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  expect(t.calls).toEqual([])
+  await t.w.clock.advance(NEXT_DRAWING_MS - 1)
+  await turn()
+  expect(t.calls).toEqual([])
+  await t.w.clock.advance(1)
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help'])
+})
+
+test('a pane that closes while the press waits for the drawing gets no ring request, and the press ends', async () => {
+  const t = await ringOn('web.resolve')
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.session.closed(t.w.ports)
+  await t.session.idle() // the closing released the wait: it would hang here otherwise
+  expect(t.calls).toEqual([])
+})
+
+// The closing guard of `keep`. `closed` clears the ring (`Refocus.clear`), so a pane that closes alone ends the press at the
+// ring check, not at the closing count. The count matters when the pane closes and opens again, and the new pane reports
+// its ring, while `keep` reads the footer: the press then holds a ring that is not its own.
+test('a pane that closes and reopens while keep reads the footer gets no ring request from the old press', async () => {
+  const t = await ringOn('web.resolve')
+  let open!: () => void
+  const gate = new Promise<void>(resolve => {
+    open = resolve
+  })
+  const paneData = t.host.paneData
+  t.host.paneData = async (p: unknown, view: PaneView) => {
+    if (view.selected === null) await gate // the read of `keep` (the help view has no row), not the drawing
+    return paneData(p, view)
+  }
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.draw() // the help drawing releases the wait: `keep` stops at its read
+  await turn()
+  await t.session.closed(t.w.ports) // the pane closes and opens again, and the person's ring is reported
+  t.w.state.set('selected', 'a')
+  await t.session.focused(t.w.ports, 'r0', 'plugin')
+  open()
+  await t.session.idle()
+  expect(t.calls).toEqual([]) // the old press must not ask for a ring in the new pane
+})
+
+// A drawing that began before the write read the old help state. It returns after the press armed its wait, but it is not
+// the frame the ring waits for. The `x` side has the same test ("a drawing that still holds the row ...").
+test('a drawing that still holds the old help state does not release the ring request of h', async () => {
+  const t = await ringOn('web.resolve')
+  const tree = await t.draw()
+  let land!: () => void
+  const gate = new Promise<void>(resolve => {
+    land = resolve
+  })
+  const paneData = t.host.paneData
+  let first = true
+  t.host.paneData = async (p: unknown, view: PaneView) => {
+    if (first) {
+      first = false
+      await gate // the drawing has read `help` (false) and waits for its sections
+    }
+    return paneData(p, view)
+  }
+  const old = t.draw()
+  await turn()
+  press(buttonOf(tree, 'help'))
+  await turn()
+  expect(t.w.state.get('help')).toBe(true) // the write is done
+  land()
+  await old // the old drawing returns: it shows the rows, not the help view
+  await turn()
+  expect(t.calls).toEqual([])
+  await t.draw() // the drawing that holds the help view
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help'])
+})
+
+// The wait for `x` ends with the drawing that no longer holds the dismissed row, not with an empty pane: a drawing that
+// shows one row can have more rows behind an "N more" (`sectionRows`, the budget), and those take its place. The selection
+// is cleared then as well (`neighbourOf` found no drawn neighbour), so the tracker keys left the footer in this case too.
+test('x on the only drawn row waits for the drawing without that row, also when other rows take its place', async () => {
+  const t = await ringOn('r0', ['a'])
+  t.host.onDismiss = () => t.host.setRows(webs('b')) // `b` was hidden behind an "N more" and is drawn now
+  press(buttonOf(await t.draw(), 'dismiss'))
+  await turn()
+  expect(t.calls).toEqual([])
+  await t.draw() // the drawing that holds `b` and not `a`
+  await t.session.idle() // that drawing released the wait: otherwise it would wait for the bound
+  expect(t.selected()).toBeNull()
+  expect(t.calls).toEqual(['focus refresh'])
+})
+
+test('x waits through the drawings that still hold the dismissed row even when other rows are drawn with it', async () => {
+  const t = await ringOn('r0', ['a'])
+  let land!: () => void
+  const gate = new Promise<void>(resolve => {
+    land = resolve
+  })
+  t.host.dismiss = async () => {
+    await gate
+    t.host.setRows(webs('b'))
+  }
+  press(buttonOf(await t.draw(), 'dismiss'))
+  await turn()
+  t.host.setRows(webs('a', 'b')) // a drawing that holds the dismissed row and a second row
+  await t.draw()
+  await turn()
+  expect(t.calls).toEqual([])
+  land()
+  await turn()
+  await t.draw()
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus refresh'])
+})
+
+// A press that the bound released leaves the queue, so a drawing that comes later does not test it again.
+test('a press that the bound released is no longer asked about the drawings that follow', async () => {
+  const w = fakePorts()
+  const refocus = new Refocus()
+  let asked = 0
+  const waited = refocus.awaitFrame(w.ports, () => {
+    asked++
+    return true
+  })
+  await w.clock.advance(NEXT_DRAWING_MS)
+  await waited // the bound released it
+  refocus.frame({ help: false, ids: new Set() })
+  expect(asked).toBe(0)
+})
+
+test('x on the last row waits for the drawing that follows it before it asks for the ring', async () => {
+  const t = await ringOn('r0', ['a'])
+  t.host.onDismiss = () => t.host.setRows([])
+  press(buttonOf(await t.draw(), 'dismiss'))
+  await turn()
+  expect(t.selected()).toBeNull()
+  expect(t.calls).toEqual([])
+  await t.draw()
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus refresh'])
+})
+
+test('x on the last row: the ring request sits behind the dismiss and the write of the selection, not before them', async () => {
+  const t = await ringOn('r0', ['a'])
+  const order: string[] = []
+  t.host.dismiss = async () => {
+    order.push('dismiss')
+    t.host.setRows([])
+  }
+  ;(t.w.ports.ui as { focus: unknown }).focus = async (key: string) => {
+    order.push(`focus ${key}`)
+    return true
+  }
+  await pressDraw(t, 'dismiss')
+  expect(order).toEqual(['dismiss', 'focus refresh'])
+})
+
+test('x on the last row while the ring is on that row: the ring goes to the first footer Button', async () => {
+  const t = await ringOn('r0', ['a'])
+  t.host.onDismiss = () => t.host.setRows([])
+  await pressDraw(t, 'dismiss')
+  expect(t.selected()).toBeNull()
+  expect(t.calls).toEqual(['focus refresh'])
+})
+
+test('x on the last row while the ring is on a tracker key: the ring goes to the first footer Button', async () => {
+  const t = await ringOn('web.files', ['a'])
+  t.host.onDismiss = () => t.host.setRows([])
+  await pressDraw(t, 'dismiss')
+  expect(t.calls).toEqual(['focus refresh'])
+})
+
+test('x on the last row while the ring is on x or r asks for the ring on that Button again: the row Button left, so its position moved', async () => {
+  for (const at of ['dismiss', 'refresh']) {
+    const t = await ringOn(at, ['a'])
+    t.host.onDismiss = () => t.host.setRows([])
+    await pressDraw(t, 'dismiss')
+    expect(t.selected()).toBeNull()
+    expect(t.calls).toEqual([`focus ${at}`])
+  }
+})
+
+test('x on a row that has a neighbour asks for the ring on the neighbour only', async () => {
+  const t = await ringOn('r1', ['a', 'b', 'c'], 'b')
+  t.host.onDismiss = () => t.host.setRows(webs('a', 'c'))
+  await pressDraw(t, 'dismiss')
+  expect(t.calls).toEqual(['focus r1']) // c is r1 now: no second request for a footer Button
 })
 
 test('neighbourOf: the next row at the same or a lower depth, else the one before, else none', () => {
