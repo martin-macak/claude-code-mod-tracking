@@ -23,6 +23,7 @@ import {
   UNAVAILABLE,
 } from './shape'
 import { EMPTY_TEXT } from './text'
+import { viewLineBox } from './viewline'
 import { drawWindowed, pageOf, shownRows, type Windowed, windowOf } from './windowed'
 
 export { findRow, handleOf, type LaidGroup, type LaidRow, layout, neighbourOf, shownSelection } from './layout'
@@ -56,7 +57,13 @@ export const TreeDataTable = {
     const columns = view.bodyColumns ?? DEFAULT_BODY_COLUMNS
     // The move hint only where it adds no footer row (issue #108), so it never turns the help view compact by itself.
     const hint = moveHintFits(view.footer, columns)
-    const footer = footerBox(el, view.footer, actions, hint)
+    const keys = footerBox(el, view.footer, actions, hint)
+    // The view line sits right above the keys, in the same Box, so the gap above the bottom is one and the window counts the
+    // rows of both. The help view has no view line: its keys are `r` and `h`, and the compact form is budgeted to the row.
+    const footer =
+      view.viewLine === undefined || view.help !== null
+        ? keys
+        : box(el, { flexDirection: 'column' }, viewLineBox(el, view.viewLine, columns, actions), keys)
     // The help view is one tree, so a short body turns it compact, with no gap, once for every attempt. The compact form
     // fits the body: it takes the keys to a line from the width and names only the problems it has rows for (issue #105).
     const compact =

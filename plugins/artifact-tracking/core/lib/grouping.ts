@@ -6,7 +6,7 @@
 // Design study of issue #63, sections 5.2 and 5.8; owner decisions of 2026-10-21.
 
 import type { CoreReason } from '../interfaces/reasons'
-import type { GroupSpec, SectionSpec, StatusToken, TreeRow, ViewId } from '../interfaces/view'
+import type { FilterState, GroupSpec, HiddenState, SectionSpec, StatusToken, TreeRow, ViewId } from '../interfaces/view'
 import { byLevel } from './levels'
 import { REASON_ORDER } from './reasons'
 import { countFailed } from './status'
@@ -29,21 +29,34 @@ export function nextView(current: ViewId, views: readonly ViewId[]): ViewId {
 /** The view the pane draws: the person's choice (the session atom), else `fallback` (`global.ui.view`). A value that is no view reads as no choice. */
 export const resolveView = (choice: string | null, fallback: ViewId): ViewId => (isViewId(choice) ? choice : fallback)
 
-/** What the view line says: the view, the filter, the rows it hid and whether the TTL-hidden rows show. */
+/** `a` and `/track show-all`: the one flip of the toggle, so the key and the command always leave the same state. */
+export const flipShowAll = (cur: HiddenState): HiddenState => ({ ...cur, showAll: !cur.showAll })
+
+/** `t`: the one flip of the touched-only filter. */
+export const flipTouched = (cur: FilterState): FilterState => ({ ...cur, touchedOnly: !cur.touchedOnly })
+
+/** What the view line says: the view, the filter, the rows it hid and the ended rows that wait for show-all, or that they show. */
 export interface ViewSummary {
   readonly view: ViewId
   readonly touchedOnly: boolean
   readonly showAll: boolean
   /** The rows that `touchedOnly` hid. */
   readonly hidden: number
+  /** The rows that the sections leave out until `a` (`SectionSpec.hiddenRows`, summed): the TTL and the row cap. */
+  readonly ended: number
 }
 
-/** `View: status · touched only · 2 hidden · showing all`: the line of the pane and the first line of `/track`. */
+/**
+ * `View: status · touched only · 2 hidden · 3 ended hidden`: the line of the pane and the first line of `/track`. The ended
+ * rows are counted in every view but by list, because only the by-list view draws the notes that say it already
+ * (`(3 hidden)`, owner decision of 2026-10-22, Q37). While `a` is on, the line says `showing all` and no count.
+ */
 export function viewSummary(s: ViewSummary): string {
+  const ended = s.view !== LIST_VIEW && s.ended > 0 ? [`${s.ended} ended hidden`] : []
   const parts = [
     `View: ${s.view}`,
     ...(s.touchedOnly ? ['touched only', ...(s.hidden > 0 ? [`${s.hidden} hidden`] : [])] : []),
-    ...(s.showAll ? ['showing all'] : []),
+    ...(s.showAll ? ['showing all'] : ended),
   ]
   return parts.join(' · ')
 }
@@ -103,7 +116,9 @@ function isPinned(row: TreeRow): boolean {
   return level?.level === 'top' || (level?.level === 'high' && level.auto !== true)
 }
 
-const hides = (row: TreeRow): boolean => row.reasons !== undefined && UNTOUCHED.has(row.reasons.strongest)
+/** A pin wins over `t` (owner decision of 2026-10-22, Q37): R12 puts the pinned rows at the top of every view, so none is hidden. */
+const hides = (row: TreeRow): boolean =>
+  !isPinned(row) && row.reasons !== undefined && UNTOUCHED.has(row.reasons.strongest)
 
 /** What a filter dropped: the top-level rows, and every row of the dropped trees (a section that sets `count` loses those). */
 interface Tally {
@@ -208,8 +223,7 @@ function listView(
  * - Flat: one group of every row.
  *
  * The other views sort each group by level, first seen and id, and lift the children of a `lift` row to the top. A group with
- * no row is left out, and so is the Pinned group. A pinned row is in no other group. `touchedOnly` drops rows first, so a
- * pinned row that nobody touched is hidden too.
+ * no row is left out, and so is the Pinned group. A pinned row is in no other group, and `touchedOnly` never hides one.
  */
 export function viewGroups(sections: readonly SectionSpec[], view: ViewId, options: GroupOptions): Grouped {
   const tally: Tally = { hidden: 0, rows: 0 }

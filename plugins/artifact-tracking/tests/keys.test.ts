@@ -1,7 +1,7 @@
 // KeyRegistry and the key routing: which keys exist, which are dropped at init, and where a key press goes.
 // Pure. Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Keys". Plan: L6 Task 6 (G6, G7, G16).
 import { expect, test } from 'claude-code/testing'
-import { buttonKeyOf, CORE_KEYS, footerKeys, KeyRegistry, PRIO_LEVEL, route } from '../core/infra/keys'
+import { buttonKeyOf, CORE_KEYS, footerKeys, KeyRegistry, PRIO_LEVEL, route, viewKeys } from '../core/infra/keys'
 import type { KeySpec } from '../core/interfaces/tracker'
 import type { RowRef } from '../core/interfaces/view'
 import { TRACKERS } from '../trackers'
@@ -23,11 +23,77 @@ const core = (id: string) => {
   return k
 }
 
-test("core keys are r h x 1 2 3 0 in footer order with today's labels", () => {
-  expect(CORE_KEYS.map(k => k.key)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
-  expect(CORE_KEYS.map(k => k.label)).toEqual(['refresh', 'help', 'dismiss', 'high', 'normal', 'low', 'auto'])
-  expect(CORE_KEYS.map(k => k.id)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+/** The core keys that have a Button in the footer: all but the view line keys. */
+const FOOTER_CORE = CORE_KEYS.filter(k => k.bar !== 'view').map(k => k.id)
+
+test("core keys are r h, the view line keys g a t, then x 1 2 3 0, with today's labels for the footer keys", () => {
+  expect(CORE_KEYS.map(k => k.key)).toEqual(['r', 'h', 'g', 'a', 't', 'x', '1', '2', '3', '0'])
+  expect(CORE_KEYS.map(k => k.label)).toEqual([
+    'refresh',
+    'help',
+    'view',
+    'show all',
+    'touched only',
+    'dismiss',
+    'high',
+    'normal',
+    'low',
+    'auto',
+  ])
+  expect(CORE_KEYS.map(k => k.id)).toEqual([
+    'refresh',
+    'help',
+    'view',
+    'show-all',
+    'touched',
+    'dismiss',
+    'prio-1',
+    'prio-2',
+    'prio-3',
+    'prio-0',
+  ])
   expect(CORE_KEYS.every(k => k.owner === 'core')).toBe(true)
+})
+
+test('g, a and t are pane keys that sit on the view line, so the footer keeps its keys and its rows (issue #63, L3)', () => {
+  const bar = CORE_KEYS.filter(k => k.bar === 'view')
+  expect(bar.map(k => k.key)).toEqual(['g', 'a', 't'])
+  expect(bar.every(k => k.scope === 'pane')).toBe(true)
+  expect(FOOTER_CORE).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  const reg = new KeyRegistry()
+  reg.add('a', [spec('open', 'o')])
+  for (const row of [undefined, ref('a'), ref('items')])
+    expect(footerKeys(reg, row, items, false).some(k => ['g', 'a', 't'].includes(k.key))).toBe(false)
+})
+
+test('viewKeys: the view line keys, all enabled, each with its Button key', () => {
+  const reg = new KeyRegistry()
+  reg.add('a', [spec('open', 'o')])
+  const on = viewKeys(reg)
+  expect(on.map(k => [k.key, k.label, k.buttonKey, k.enabled])).toEqual([
+    ['g', 'view', 'view', true],
+    ['a', 'show all', 'show-all', true],
+    ['t', 'touched only', 'touched', true],
+  ])
+  for (const k of on) expect(reg.get(k.buttonKey)?.id).toBe(k.id)
+})
+
+test('a tracker cannot take g, a or t: the keys are taken by core', () => {
+  const reg = new KeyRegistry()
+  reg.add('x', [spec('go', 'g'), spec('all', 'A'), spec('tag', 't')])
+  expect(reg.problems()).toEqual([
+    'keys: x key "g" (go) is taken by core (view). The key is off.',
+    'keys: x key "a" (all) is taken by core (show-all). The key is off.',
+    'keys: x key "t" (tag) is taken by core (touched). The key is off.',
+  ])
+})
+
+test('route: g, a and t route at once, with no row and with any row', () => {
+  for (const row of [undefined, ref('items'), ref('t', {})]) {
+    expect(route(core('view'), row, items)).toEqual({ to: 'view' })
+    expect(route(core('show-all'), row, items)).toEqual({ to: 'showAll' })
+    expect(route(core('touched'), row, items)).toEqual({ to: 'touched' })
+  }
 })
 
 test('a key is folded to lowercase', () => {
@@ -156,7 +222,7 @@ test("footerKeys: core keys first, then the selected row's owner's keys, with en
   const keys = footerKeys(reg, ref('a', { dismiss: true }), items, false, (_owner, id) =>
     id === 'kill' ? 'disabled' : 'enabled',
   )
-  expect(keys.map(buttonKeyOf)).toEqual([...CORE_KEYS.map(k => k.id), 'a.open', 'a.kill'])
+  expect(keys.map(buttonKeyOf)).toEqual([...FOOTER_CORE, 'a.open', 'a.kill'])
   expect(Object.fromEntries(keys.map(k => [buttonKeyOf(k), k.enabled]))).toEqual({
     refresh: true,
     help: true,
@@ -175,7 +241,7 @@ test('footerKeys: with no row only the core keys show, and the row keys are disa
   const reg = new KeyRegistry()
   reg.add('a', [spec('open', 'o')])
   const keys = footerKeys(reg, undefined, items, false)
-  expect(keys.map(buttonKeyOf)).toEqual(CORE_KEYS.map(k => k.id))
+  expect(keys.map(buttonKeyOf)).toEqual(FOOTER_CORE)
   expect(keys.filter(k => k.enabled).map(k => k.key)).toEqual(['r', 'h'])
 })
 
@@ -191,13 +257,13 @@ test('footerKeys in the help view: only r and h are enabled and h is labelled ba
   expect(keys.filter(k => k.enabled).map(k => k.key)).toEqual(['r', 'h'])
   expect(keys.find(k => k.id === 'help')?.label).toBe('back')
   expect(keys.find(k => k.id === 'refresh')?.label).toBe('refresh')
-  expect(keys.map(buttonKeyOf)).toEqual([...CORE_KEYS.map(k => k.id), 'a.open'])
+  expect(keys.map(buttonKeyOf)).toEqual([...FOOTER_CORE, 'a.open'])
 })
 
 test('footerKeys: each key carries its footer Button key, the one the registry finds it by', () => {
   const reg = new KeyRegistry()
   reg.add('a', [spec('open', 'o')])
   const keys = footerKeys(reg, ref('a'), items, false)
-  expect(keys.map(k => k.buttonKey)).toEqual([...CORE_KEYS.map(k => k.id), 'a.open'])
+  expect(keys.map(k => k.buttonKey)).toEqual([...FOOTER_CORE, 'a.open'])
   for (const k of keys) expect(reg.get(k.buttonKey)?.id).toBe(k.id)
 })

@@ -88,6 +88,7 @@ test('a removed worktree row that was removed 11 min ago is absent, and the note
   const s = await draw(t, 'worktrees')
   expect(flat(s.rows)).toEqual(['wt:/work', 'wt:/work/feat-x', 'wt:/work/detached-wt'])
   expect(s.note?.text).toBe('git · 2 live · 1 removed · checked 30s ago (1 hidden)')
+  expect(s.hiddenRows).toBe(1)
 })
 
 test('a removed worktree row that was removed 9 min ago shows, dimmed, with no hidden count', async () => {
@@ -298,10 +299,12 @@ test('a run of 1 agent hides by the TTL of its own agent, like a row of no run, 
   const s = await draw(t, 'agents')
   expect(shown(s.rows)).toEqual(['ag:master', 'ag:w2'])
   expect(s.note?.text).toBe('2 ended (1 hidden)')
+  expect(s.hiddenRows).toBe(1)
   t.w.clock.now = NOW + 41 * MIN // the failed one is 61 min past its end
   const gone = await draw(t, 'agents')
   expect(shown(gone.rows)).toEqual(['ag:master'])
   expect(gone.note?.text).toBe('2 ended (2 hidden)')
+  expect(gone.hiddenRows).toBe(2)
 })
 
 test('the fold row is closed, dim, and cannot be dismissed or marked; the agent rows below it can be dismissed', async () => {
@@ -550,6 +553,7 @@ test('past maxRows the oldest ended rows leave the view first, and the note coun
   expect(ids(s)[0]).toBe('live')
   expect(ids(s).slice(1)).toEqual(Array.from({ length: 19 }, (_, i) => `done${i + 6}`)) // done0 to done5 left
   expect(s.note?.text).toBe('20 tracked (6 hidden)')
+  expect(s.hiddenRows).toBe(6) // the cap counts as hidden, as the note says
   expect(s.band?.count).toBe(20)
 })
 
@@ -610,6 +614,7 @@ test('the TTL hides first, and the cap counts what is left: both go into one hid
   const s = await draw(t, 'processes')
   expect(s.rows).toHaveLength(20)
   expect(s.note?.text).toBe('20 tracked (5 hidden)') // 3 by the TTL, 2 by the cap
+  expect(s.hiddenRows).toBe(5)
 })
 
 test('at maxRows exactly nothing is capped, and the default cap is 200 rows', async () => {

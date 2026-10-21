@@ -77,8 +77,8 @@ test('the view is the choice of the person, else the configured view; a value th
   expect(resolveView('', 'tracker')).toBe('tracker')
 })
 
-test('the summary says the view, then the filter with the rows it hid, then whether the ended rows show', () => {
-  const base = { view: 'status' as const, touchedOnly: false, showAll: false, hidden: 0 }
+test('the summary says the view, then the filter with the rows it hid, the ended rows that wait for show-all, or that they show', () => {
+  const base = { view: 'status' as const, touchedOnly: false, showAll: false, hidden: 0, ended: 0 }
   expect(viewSummary(base)).toBe('View: status')
   expect(viewSummary({ ...base, touchedOnly: true })).toBe('View: status · touched only')
   expect(viewSummary({ ...base, touchedOnly: true, hidden: 3 })).toBe('View: status · touched only · 3 hidden')
@@ -87,6 +87,24 @@ test('the summary says the view, then the filter with the rows it hid, then whet
   expect(viewSummary({ ...base, touchedOnly: true, hidden: 1, showAll: true })).toBe(
     'View: status · touched only · 1 hidden · showing all',
   )
+  // The rows that the TTL hides (the sections count them) wait for `a`: the line says how many, in every view.
+  expect(viewSummary({ ...base, ended: 2 })).toBe('View: status · 2 ended hidden')
+  expect(viewSummary({ ...base, touchedOnly: true, hidden: 3, ended: 2 })).toBe(
+    'View: status · touched only · 3 hidden · 2 ended hidden',
+  )
+  // With `a` on nothing waits: the line says so, and a count that a section still carries is not repeated.
+  expect(viewSummary({ ...base, showAll: true, ended: 2 })).toBe('View: status · showing all')
+})
+
+// Owner decision of 2026-10-22 (Q37): the by-list view draws the section notes, which already say `(N hidden)`, so its line
+// does not say the count a second time. The other views have no notes and keep it.
+test('the summary of the by-list view leaves out the ended count that the section notes already say', () => {
+  const list = { view: 'list' as const, touchedOnly: false, showAll: false, hidden: 0, ended: 2 }
+  expect(viewSummary(list)).toBe('View: list')
+  expect(viewSummary({ ...list, touchedOnly: true, hidden: 3 })).toBe('View: list · touched only · 3 hidden')
+  expect(viewSummary({ ...list, showAll: true })).toBe('View: list · showing all')
+  for (const view of ['tracker', 'status', 'reason', 'flat'] as const)
+    expect(viewSummary({ ...list, view })).toBe(`View: ${view} · 2 ended hidden`)
 })
 
 // ---------------------------------------------------------------- by list
@@ -146,6 +164,31 @@ test('a high that a rule gave (auto) is no pin: only the high of the person is',
   ]
   const { groups } = viewGroups(sections, 'list', OFF)
   expect(byId(groups)).toEqual({ 'list:pinned': ['chosen'], 'list:github': ['issue'] })
+})
+
+// A tree stays whole in every view (R5), so only a top-level row is pinned. A sub-task that the person set to high keeps
+// its place below its parent, whatever the view, and no group of pinned rows appears for it (Codex review of the PR).
+test('a sub-task that the person set to high stays below its parent in every view: only a top-level row is pinned', () => {
+  const epic = withStatus(
+    'epic',
+    'active',
+    {},
+    { children: [withStatus('low', 'active'), withStatus('sub', 'active', level({ level: 'high' }))] },
+  )
+  const only = { list: 'jira', tracker: 't', status: 'active', reason: 'context', flat: 'all' } as const
+  for (const view of VIEW_IDS) {
+    const { groups } = viewGroups([section('jira', [epic])], view, OFF)
+    expect(
+      groups.map(g => g.id),
+      view,
+    ).toEqual([groupId(view, only[view])]) // one group: no `pinned` among them
+    const rows = groups.flatMap(g => g.rows)
+    expect(ids(rows), view).toEqual(['epic'])
+    expect(
+      rows[0]?.children?.map(c => c.id),
+      view,
+    ).toEqual(['low', 'sub'])
+  }
 })
 
 test('the pinned group sorts by level (top first), then first seen, then id; its count and failing follow its rows', () => {
@@ -422,8 +465,29 @@ test('touched only filters top-level rows: a child stays with its parent, and a 
   }
 })
 
-test('touched only hides a row before it can be pinned', () => {
-  const sections = [section('prs', [row('star', level({ level: 'top', auto: true }), { reason: 'discovered' })])]
+// Owner decision of 2026-10-22 (Q37): a pin wins over `t`. R12 puts the pinned rows at the top of every view, so the filter
+// never hides one, whether a rule pinned it (`★`) or the person did (`1`).
+test('touched only keeps a pinned row: the pin wins over the filter in every view, and only the other finds go', () => {
+  const sections = [
+    section('prs', [
+      row('star', level({ level: 'top', auto: true }), { reason: 'discovered' }),
+      row('mine', level({ level: 'high' }), { reason: 'mentioned' }),
+      row('found', {}, { reason: 'discovered' }),
+      row('made', {}, { reason: 'created' }),
+    ]),
+  ]
+  for (const view of VIEW_IDS) {
+    const { groups, hidden } = viewGroups(sections, view, { touchedOnly: true })
+    const pinned = groups.find(g => g.id === groupId(view, 'pinned'))
+    expect(ids(pinned?.rows ?? []), view).toEqual(['star', 'mine'])
+    expect(pinned?.count, view).toBe(2)
+    expect(ids(groups.flatMap(g => g.rows)).sort(), view).toEqual(['made', 'mine', 'star'])
+    expect(hidden, view).toBe(1) // `found` only: the pinned finds are not counted as hidden
+  }
+})
+
+test('touched only still hides a find that a rule gave a high (an issue of a high PR): that high is no pin', () => {
+  const sections = [section('issues', [row('issue', level({ level: 'high', auto: true }), { reason: 'discovered' })])]
   const { groups, hidden } = viewGroups(sections, 'status', { touchedOnly: true })
   expect(groups).toEqual([])
   expect(hidden).toBe(1)

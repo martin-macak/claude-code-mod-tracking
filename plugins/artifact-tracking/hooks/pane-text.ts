@@ -56,6 +56,8 @@ export interface PaneModel {
   readonly showAll: boolean
   /** The rows that `touchedOnly` hid. */
   readonly hidden: number
+  /** The rows that the sections leave out until `a` (the TTL, the row cap), summed. Only the by-list view draws their notes. */
+  readonly ended: number
 }
 
 /** The sections, the atoms and the groups, read once: the pane, the text and a refocus agree on one drawing. */
@@ -72,7 +74,8 @@ export async function paneModel(
   ])
   const current = resolveView(choice, m.config.global().ui.view)
   const { groups, hidden } = viewGroups(sections, current, filters)
-  return { sections, groups, view: current, touchedOnly: filters.touchedOnly, showAll: hide.showAll, hidden }
+  const ended = sections.reduce((n, s) => n + (s.hiddenRows ?? 0), 0)
+  return { sections, groups, view: current, touchedOnly: filters.touchedOnly, showAll: hide.showAll, hidden, ended }
 }
 
 /** The groups the pane draws in the active view. The text and a refocus read the same groups. */

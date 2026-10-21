@@ -11,7 +11,7 @@ import type { CommandEvent } from '../interfaces/events'
 import type { ItemsHost, Priority } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { CommandSpec } from '../interfaces/tracker'
-import { isViewId } from '../lib/grouping'
+import { flipShowAll, isViewId } from '../lib/grouping'
 import { TURN_USAGE } from '../lib/turn-text'
 import { CORE_HINT, CORE_SUBS, PRIO_WORDS, problemsText, USAGE, VIEW_USAGE, versionText } from './command-text'
 
@@ -118,7 +118,7 @@ export class Commands {
    */
   private async showAll(p: Ports): Promise<Reply> {
     await this.host.refreshConfig(p)
-    const { showAll } = await p.state.hidden.update(cur => ({ ...cur, showAll: !cur.showAll }))
+    const { showAll } = await p.state.hidden.update(flipShowAll)
     p.ui.invalidate()
     const { text } = await this.list(p)
     return { text: `${showAll ? 'Showing all rows.' : 'Hiding ended rows again.'}\n\n${text}` }

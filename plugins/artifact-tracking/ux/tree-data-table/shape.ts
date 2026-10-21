@@ -23,6 +23,16 @@ export const NOTHING_MORE = '(nothing more to show)'
 export const indentOf = (columnWidth: number, depth: number): number =>
   Math.min(INDENT * depth, Math.max(0, columnWidth - GLYPH_BOX))
 
+/**
+ * The view line (issue #63, L3): one line above the footer. `text` says the view, the filters and the rows they hid. `keys` are
+ * the Buttons of `g`, `a` and `t`: they sit here and not in the footer, so the footer keeps its rows. The line is clipped to
+ * the width, and its Buttons wrap like the footer's.
+ */
+export interface ViewLine {
+  readonly text: string
+  readonly keys: readonly FooterKey[]
+}
+
 export interface TableView {
   readonly bodyColumns: number | undefined
   /**
@@ -52,6 +62,8 @@ export interface TableView {
   shown(groupId: string): number
   readonly limits: { readonly sectionRows: number; readonly maxRows: number }
   readonly footer: readonly FooterKey[]
+  /** The line above the footer. Absent: none is drawn. The help view never draws it. */
+  readonly viewLine?: ViewLine
   readonly help: HelpModel | null
   /** Default `BUDGET`. Tests pass a small one. */
   readonly budget?: Cost

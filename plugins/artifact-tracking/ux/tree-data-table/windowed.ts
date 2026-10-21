@@ -26,6 +26,7 @@ import {
   tableHeader,
 } from './rows'
 import { DEFAULT_BODY_COLUMNS, GUTTER, HEADER_ROWS, ROW_GAP } from './shape'
+import { viewLineRows } from './viewline'
 import { type Plan, planWindow, rowsIn, type Unit } from './window'
 
 type Kind = 'row' | 'more' | 'block'
@@ -82,8 +83,10 @@ export function windowOf(d: Draw, laid: readonly LaidGroup[]): Windowed | undefi
   const { units, chrome, solved } = unitsOf(d, laid)
   // The footer takes the same rows with or without the move hint: the table draws it only where it adds no row.
   const header = solved === undefined ? 0 : HEADER_ROWS
+  const columns = view.bodyColumns ?? DEFAULT_BODY_COLUMNS
+  // The view line is in the Box of the footer: its rows come off the budget with the footer's (issue #63, L3).
   const budget =
-    view.bodyRows - footerRows(view.footer, view.bodyColumns ?? DEFAULT_BODY_COLUMNS, false) - ROW_GAP - header
+    view.bodyRows - footerRows(view.footer, columns, false) - viewLineRows(view.viewLine, columns) - ROW_GAP - header
   const find = (pick: (u: Placed, s: LaidGroup) => boolean): number =>
     units.findIndex(u => {
       const s = laid[u.section]

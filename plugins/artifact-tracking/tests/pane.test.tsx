@@ -4,11 +4,13 @@
 // reads the tree.
 import type { Engine } from 'claude-code/testing'
 import { expect, mock } from 'claude-code/testing'
+import { KeyRegistry, viewKeys } from '../core/infra/keys'
 import { wrapRows } from '../ux/text/wrap'
 import { BUDGET, fits, measure } from '../ux/tree-data-table/budget'
 import { footerRows } from '../ux/tree-data-table/footer'
 import { NO_KEYS_HINT } from '../ux/tree-data-table/hint'
-import { NO_ROW_FOOTER } from './fixtures/drawn'
+import { viewLineRows } from '../ux/tree-data-table/viewline'
+import { NO_ROW_FOOTER, VIEW_LINE_KEYS } from './fixtures/drawn'
 import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { focusOn, handleFor, headersOf, mountPane, type PaneUi, rowsOf, select } from './fixtures/pane'
@@ -40,7 +42,13 @@ async function paneOver($: Engine, on: On, text: string): Promise<{ w: World; ui
   return { w, ui: await mountPane($) }
 }
 
-const footerOf = async (ui: PaneUi) => (await ui.findAll({ type: 'Button' })).filter(b => b.props.hotkey !== undefined)
+/** The footer Buttons: the ones with a hotkey that are not on the view line (issue #63, L3). */
+const footerOf = async (ui: PaneUi) =>
+  (await ui.findAll({ type: 'Button' })).filter(
+    b => b.props.hotkey !== undefined && !VIEW_LINE_KEYS.includes(String(b.key)),
+  )
+const viewLineOf = async (ui: PaneUi) =>
+  (await ui.findAll({ type: 'Button' })).filter(b => VIEW_LINE_KEYS.includes(String(b.key)))
 const footerKeys = async (ui: PaneUi) => (await footerOf(ui)).map(b => b.key)
 const hotkeysOf = async (ui: PaneUi) => (await footerOf(ui)).map(b => b.props.hotkey)
 const HOTKEYS = ['r', 'h', 'x', '1', '2', '3', '0']
@@ -65,7 +73,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(rows.length).toBeGreaterThan(2)
     expect(rows.map(r => r.handle)).toEqual(rows.map((_, i) => `r${i}`))
     const buttons = await ui.findAll({ type: 'Button' })
-    expect(buttons.length - (await footerOf(ui)).length).toBe(rows.length)
+    expect(buttons.length - (await footerOf(ui)).length - (await viewLineOf(ui)).length).toBe(rows.length)
     await ui.unmount()
   })
 }
@@ -341,9 +349,9 @@ test('pane: h shows the help view with every key and the config path; h again re
 // title and two keys) and the help view has the version line of issue #65. The compact form keeps its first lines and the
 // footer in view together.
 const MANIFEST = JSON.stringify({ name: 'artifact-tracking', version: '1.2.3' })
-// 9 help elements and the footer, one row each, with no gap: Pane keys (title, one line of keys), Row keys (title, two
-// lines of keys), the github group (title, one line of keys), the config line and the version line.
-const SHORT_ROWS = 10
+// 10 help elements and the footer, one row each, with no gap: Pane keys (title, two lines of keys: r h g, a t), Row keys
+// (title, two lines of keys), the github group (title, one line of keys), the config line and the version line.
+const SHORT_ROWS = 11
 // The help view of the live screen of issue #92: the config path of the e2e world, in the temp folder of macOS.
 const LIVE_DIR = '/var/folders/sn/0_q8tr7x4vv44d69rbtyckwr0000gn/T/cc-tracker-config-SAq3DF'
 const LIVE_PATH = `${LIVE_DIR}/config.json` // 86 cells: `Config file: <path>` is 99 cells and wraps at 96
@@ -361,7 +369,7 @@ test('pane: h in a short inline pane draws the compact help view, so Pane keys a
   await ui.press({ key: 'help' })
   const { gap, help, footer } = await helpTree(ui)
   expect(gap + help.length + 1).toBe(SHORT_ROWS)
-  expect(gap + help.length + 1).toBeLessThanOrEqual(11 - 1) // the drawn view fits the body with one row of slack
+  expect(gap + help.length + 1).toBeLessThanOrEqual(11) // the drawn view fills the body to the row: g, a and t took the slack
   expect(JSON.stringify(help.at(-1))).toContain('Version: 1.2.3')
   expect(JSON.stringify(help[0])).toContain('Pane keys')
   expect(footer).toBeDefined()
@@ -398,7 +406,7 @@ test('pane: h in a docked pane keeps the full help view, one key to a line', asy
   await ui.press({ key: 'help' })
   const { gap, help } = await helpTree(ui)
   expect(gap).toBe(1)
-  expect(help).toHaveLength(14) // 3 titles, 9 keys (the started mod adds the github keys c and f), the config line, the version line
+  expect(help).toHaveLength(17) // 3 titles, 12 keys (g, a and t, and the github keys c and f of the started mod), the config line, the version line
   expect(JSON.stringify(help[0])).toContain('Pane keys')
   expect(JSON.stringify(help[1])).toContain('refresh')
   await ui.unmount()
@@ -473,6 +481,53 @@ test('pane: a section over its cap ends in an N more row; Enter shows the next c
   await ui.unmount()
 })
 
+// ---------------------------------------------------------------- the views (issue #63, L3)
+
+test('pane: g cycles by list, by status and flat: the group titles and the view line change, the row stays selected', async ($, on) => {
+  const { ui } = await paneOver($, on, LINKS)
+  await focusOn($, 'r1')
+  expect(await ui.find({ text: 'Web links' })).toBeDefined()
+  expect(await ui.find({ text: 'View: list' })).toBeDefined()
+  await ui.press({ key: 'view' })
+  // A web link has no state to speak of: the status token is none, so by status it is the one group, "No status".
+  expect(await ui.find({ text: 'No status' })).toBeDefined()
+  expect(await ui.find({ text: 'Web links' })).toBeUndefined()
+  expect(await ui.find({ text: 'View: status' })).toBeDefined()
+  expect(rowsOf(await ui.drawn()).filter(r => r.selected).length).toBe(1)
+  await ui.press({ key: 'view' })
+  expect(await ui.find({ text: 'All' })).toBeDefined()
+  expect(await ui.find({ text: 'View: flat' })).toBeDefined()
+  await ui.press({ key: 'view' })
+  expect(await ui.find({ text: 'Web links' })).toBeDefined()
+  expect(await ui.find({ text: 'View: list' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('pane: /track view and global.ui.view set the view the pane opens in; g then goes on from there', async ($, on) => {
+  const w = world(on, { disk: withUi({ view: 'status', views: ['status', 'reason'] }) })
+  mock.env(on, { HOME: '/home/u' })
+  await $.session.start(START)
+  await listed($, w, LINKS)
+  const ui = await mountPane($)
+  expect(await ui.find({ text: 'View: status' })).toBeDefined()
+  await ui.press({ key: 'view' })
+  expect(await ui.find({ text: 'View: reason' })).toBeDefined()
+  expect(await ui.find({ text: 'Mentioned' })).toBeDefined() // the links were named in a reply: the strongest reason
+  await ui.unmount()
+})
+
+test('pane: t hides the rows that were only mentioned, and a second t shows them again; the view line counts them', async ($, on) => {
+  const { ui } = await paneOver($, on, LINKS)
+  expect(rowsOf(await ui.drawn()).length).toBe(2)
+  await ui.press({ key: 'touched' })
+  expect(rowsOf(await ui.drawn())).toEqual([])
+  expect(await ui.find({ text: 'View: list · touched only · 2 hidden' })).toBeDefined()
+  await ui.press({ key: 'touched' })
+  expect(rowsOf(await ui.drawn()).length).toBe(2)
+  expect(await ui.find({ text: 'View: list' })).toBeDefined()
+  await ui.unmount()
+})
+
 // ---------------------------------------------------------------- the window (issue #109)
 
 // The engine scrolls a pane tree as a whole, so rows taller than the body push the title, the header and the footer out of
@@ -494,12 +549,15 @@ test('pane: inline 100x40 with 12 links shows the title, the header and the foot
   await listed($, w, links(12))
   const ui = await mountPane($, INLINE)
   const tree = await ui.drawn()
-  expect(rowsOf(tree)).toHaveLength(6)
+  // The view line takes one of the 11 rows (issue #63, L3): 5 of the 12 rows show where 6 did.
+  expect(rowsOf(tree)).toHaveLength(5)
   expect(await ui.find({ text: 'Web links' })).toBeDefined()
   expect(headersOf(tree)).toContainEqual(['Name', 'Description'])
   expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
-  expect(await ui.find({ text: '▼ 6 more below' })).toBeDefined()
+  expect(await ui.find({ text: '▼ 7 more below' })).toBeDefined()
   expect(await ui.find({ text: /more above/ })).toBeUndefined()
+  expect(await ui.find({ text: 'View: list' })).toBeDefined()
+  expect((await viewLineOf(ui)).map(b => b.props.hotkey)).toEqual(['g', 'a', 't'])
   await ui.unmount()
 })
 
@@ -508,11 +566,11 @@ test('pane: docked 120x37 with 36 links shows the title, the header and the foot
   await listed($, w, links(36))
   const ui = await mountPane($, DOCKED)
   const tree = await ui.drawn()
-  expect(rowsOf(tree)).toHaveLength(26)
+  expect(rowsOf(tree)).toHaveLength(25) // the view line takes one of the 26 rows
   expect(await ui.find({ text: 'Web links' })).toBeDefined()
   expect(headersOf(tree)).toContainEqual(['Name', 'Description'])
   expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
-  expect(await ui.find({ text: '▼ 10 more below' })).toBeDefined()
+  expect(await ui.find({ text: '▼ 11 more below' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -524,14 +582,14 @@ test('pane: a windowed pane with no keys keeps the title, the header, the hint a
   const ui = await mountPane($, { ...INLINE, isFocused: false })
   const tree = await ui.drawn()
   const rows = rowsOf(tree).length
-  expect(rows).toBe(5) // one row less than the pane that has the keys
+  expect(rows).toBe(4) // one row less than the pane that has the keys
   expect(await ui.find({ text: 'Web links' })).toBeDefined()
   expect(headersOf(tree)).toContainEqual(['Name', 'Description'])
   expect((await ui.findAll({ type: 'Text' })).some(t => t.text === NO_KEYS_HINT)).toBe(true)
-  expect(await ui.find({ text: '▼ 7 more below' })).toBeDefined()
+  expect(await ui.find({ text: '▼ 8 more below' })).toBeDefined()
   expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
-  // The hint line, the title, the header, the rows, the hint below, the gap and the footer are the body, to the line.
-  expect(1 + 2 + rows + 1 + 1 + 1).toBe(INLINE.bodyRows)
+  // The hint line, the title, the header, the rows, the hint below, the gap, the view line and the footer are the body, to the line.
+  expect(1 + 2 + rows + 1 + 1 + 1 + 1).toBe(INLINE.bodyRows)
   await ui.unmount()
 })
 
@@ -541,10 +599,13 @@ test('pane: a hint line that wraps in a narrow body costs the window both of its
   const narrow = { bodyColumns: 40, bodyRows: 16, placement: 'inline' } as const
   const hint = wrapRows(NO_KEYS_HINT, narrow.bodyColumns)
   const footer = footerRows(NO_ROW_FOOTER, narrow.bodyColumns, false)
+  // `View: list` and the three keys do not fit 40 cells in one row: the view line takes two (issue #63, L3).
+  const line = viewLineRows({ text: 'View: list', keys: viewKeys(new KeyRegistry()) }, narrow.bodyColumns)
   expect(hint).toBe(2)
+  expect(line).toBe(2)
   const ui = await mountPane($, { ...narrow, isFocused: false })
   const rows = rowsOf(await ui.drawn()).length
-  expect(hint + 2 + rows + 1 + 1 + footer).toBe(narrow.bodyRows)
+  expect(hint + 2 + rows + 1 + 1 + line + footer).toBe(narrow.bodyRows)
   await ui.unmount()
 })
 
@@ -552,7 +613,7 @@ test('pane: a pane that has the keys gives the window the whole body: no hint li
   const w = world(on)
   await listed($, w, links(12))
   const ui = await mountPane($, { ...INLINE, isFocused: true })
-  expect(rowsOf(await ui.drawn())).toHaveLength(6)
+  expect(rowsOf(await ui.drawn())).toHaveLength(5)
   expect((await ui.findAll({ type: 'Text' })).some(t => t.text === NO_KEYS_HINT)).toBe(false)
   await ui.unmount()
 })
@@ -610,7 +671,7 @@ test('pane: every row keeps a Button in the same order, so Tab and the arrows wa
   await listed($, w, links(12))
   const ui = await mountPane($, INLINE)
   expect(await handlesIn(ui)).toEqual(Array.from({ length: 12 }, (_, i) => `r${i}`))
-  expect(await stops(ui)).toHaveLength(6) // the 6 rows out of the window are bare stops
+  expect(await stops(ui)).toHaveLength(7) // the 7 rows out of the window are bare stops
   await ui.unmount()
 })
 
@@ -635,17 +696,17 @@ test('pane: a focus on a stop below the window moves the window by the least, wi
   const w = world(on)
   await listed($, w, links(12))
   const ui = await mountPane($, INLINE)
-  await focusOn($, 'r6') // the first stop below the window
+  await focusOn($, 'r5') // the first stop below the window
   await ui.redraw()
   let rows = rowsOf(await ui.drawn())
-  expect(rows.map(r => r.handle)).toEqual(['r2', 'r3', 'r4', 'r5', 'r6']) // a hint above and one below take 2 of the 9 lines
-  expect(rows.find(r => r.selected)?.handle).toBe('r6')
+  expect(rows.map(r => r.handle)).toEqual(['r2', 'r3', 'r4', 'r5']) // a hint above and one below take 2 of the 8 lines
+  expect(rows.find(r => r.selected)?.handle).toBe('r5')
   await focusOn($, 'r11')
   await ui.redraw()
   rows = rowsOf(await ui.drawn())
   expect(rows.at(-1)?.handle).toBe('r11')
   expect(await ui.find({ text: /more below/ })).toBeUndefined()
-  expect(await ui.find({ text: '▲ 6 more above' })).toBeDefined()
+  expect(await ui.find({ text: '▲ 7 more above' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -653,7 +714,7 @@ test('pane: the help view of a short pane keeps its fit while rows are windowed'
   const w = world(on, { manifest: MANIFEST })
   await listed($, w, links(12))
   const ui = await mountPane($, INLINE)
-  expect(rowsOf(await ui.drawn())).toHaveLength(6)
+  expect(rowsOf(await ui.drawn())).toHaveLength(5)
   await ui.press({ key: 'help' })
   const { gap, help } = await helpTree(ui)
   expect(gap + help.length + 1).toBeLessThanOrEqual(11)
@@ -683,7 +744,7 @@ test('pane: PageDown in a windowed pane selects the row a page less one below (u
   await ui.redraw()
   expect(await scroll($, 11, 11)).toEqual({}) // the hook answered: the engine has nothing to scroll
   await ui.redraw()
-  expect(rowsOf(await ui.drawn()).find(r => r.selected)?.handle).toBe('r5') // a page of 6 rows less one
+  expect(rowsOf(await ui.drawn()).find(r => r.selected)?.handle).toBe('r4') // a page of 5 rows less one
   await ui.unmount()
 })
 
@@ -769,7 +830,7 @@ test(
     const more = (await ui.findAll({ type: 'Button' })).find(b => /^m\d+$/.test(b.key ?? ''))
     await ui.press({ key: more?.key ?? 'none' })
     const tree = await ui.drawn()
-    expect(rowsOf(tree).length).toBe(26)
+    expect(rowsOf(tree).length).toBe(25)
     expect((await handlesIn(ui)).length).toBe(500)
     expect((await footerOf(ui)).length).toBe(7)
     expect(fits(measure(tree), BUDGET)).toBe(true)

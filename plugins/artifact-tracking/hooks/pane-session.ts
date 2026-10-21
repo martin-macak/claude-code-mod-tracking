@@ -5,11 +5,11 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Selection". Plan: L6 Task 11, G6, G8, G22.
 
 import type { RenderElement } from 'claude-code'
-import { route } from '../core/infra/keys'
+import { route, viewKeys } from '../core/infra/keys'
 import { reason } from '../core/infra/steps'
 import type { Ports } from '../core/interfaces/ports'
 import type { GroupSpec } from '../core/interfaces/view'
-import { listGroups } from '../core/lib/grouping'
+import { flipShowAll, flipTouched, listGroups, nextView, resolveView, viewSummary } from '../core/lib/grouping'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import type { TableElements } from '../ux/tree-data-table/el'
 import { hintRows, withKeysHint } from '../ux/tree-data-table/hint'
@@ -26,7 +26,7 @@ import {
 } from '../ux/tree-data-table/table'
 import { WorkQueue } from './pane-queue'
 import { type Press, Refocus, unlessClosed } from './pane-refocus'
-import { helpOf, type PaneHost, paneModel, shownOf } from './pane-text'
+import { helpOf, type PaneHost, paneGroups, paneModel, shownOf } from './pane-text'
 import { openTurn, type TurnPaneHost } from './pane-turn'
 
 export { helpOf, helpTextOf, listText, type PaneHost, TEXT_VIEW, turnLabels } from './pane-text'
@@ -114,6 +114,8 @@ export class PaneSession {
       // The help view works only `r` and `h`, so its footer is drawn as with no row selected: a tracker's dim, inert keys
       // would wrap the footer to a second row and push `Pane keys` out of the body again (issue #105).
       footer: await m.footer(p, help ? undefined : findRow(groups, chosen), help),
+      // The view line above the footer: the view, the filters and the keys `g`, `a` and `t` (issue #63, L3). The help view has none.
+      ...(help ? {} : { viewLine: { text: viewSummary(model), keys: viewKeys(m.keys) } }),
       // The help titles a tracker's keys by the sections that hold its rows, whatever the view draws (issue #63, L3).
       help: help ? helpOf(m, listGroups(model.sections)) : null,
     }
@@ -300,6 +302,24 @@ export class PaneSession {
   }
 
   /**
+   * After `g`, `a` or `t` the pane draws other groups: the rows keep their ids and get new handles. The same row stays selected
+   * and the ring goes to its new handle. A row that the new drawing lacks (the filter hid it) hands the selection to a row that
+   * is shown: the next one of the last drawing, else the one before (`shownSelection`). The press that wrote the atom
+   * redraws the pane once. A press that began before a closing asks for nothing after it (`Refocus.to`).
+   */
+  private async redrawn(p: Ports, m: PaneHost, selected: string | null, press: Press): Promise<void> {
+    if (!press.still()) return
+    // The key of an "N more" Button is its group index, and the groups of the next view are other groups.
+    this.onMore = undefined
+    p.ui.invalidate()
+    const expanded = new Set(await p.state.expanded.get())
+    const groups = await paneGroups(p, m, { selected, expanded })
+    const shown = await shownOf(p, groups)
+    const view = { expanded, shown: (id: string) => shown.get(id) ?? 0, limits: m.config.global().ui }
+    await this.refocus.to(p, m, shownSelection(groups, view, selected, this.rows), press)
+  }
+
+  /**
    * The keys come before the work, after the read of `selected`: `x` and the digits end in a ring request, which the
    * engine refuses while the prompt has the keys, and `r` may run long. `Refocus.to` asks no more: one press asks once.
    * A closing that comes while `selected` is read ends the press: the read may return a row of the next pane.
@@ -345,6 +365,19 @@ export class PaneSession {
         await m.setPriority(p, to.rowId, to.level)
         await this.refocus.to(p, m, to.rowId, afterAsk)
         return
+      // `g`, `a` and `t` (issue #63, L3) write a session atom and nothing else: no file, no store key. The rows get new
+      // handles, and the ring keeps its place among the Buttons, so each key asks for the ring on the selected row again.
+      case 'view': {
+        const { view, views } = m.config.global().ui
+        await p.state.view.update(unlessClosed(afterAsk, cur => nextView(resolveView(cur, view), views)))
+        return this.redrawn(p, m, selected, afterAsk)
+      }
+      case 'showAll':
+        await p.state.hidden.update(unlessClosed(afterAsk, flipShowAll))
+        return this.redrawn(p, m, selected, afterAsk)
+      case 'touched':
+        await p.state.filters.update(unlessClosed(afterAsk, flipTouched))
+        return this.redrawn(p, m, selected, afterAsk)
       case 'owner':
         // A tracker's own work may take long. It must not hold the keys that come after it.
         this.work.detach(p, buttonKey, async () => {
