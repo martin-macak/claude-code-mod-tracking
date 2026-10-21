@@ -7,8 +7,8 @@ import { box, type TableElements, text } from './el'
 
 /**
  * How the keys come back: the chord (`verified-live`, 2.1.304). A click on a blank part of the pane gives them back too,
- * and so does a click on the arrow of a row, unless the composer holds text (issue #115). The chord works in both
- * cases, so the hint names it alone.
+ * and so does a click on the arrow of a row, a footer key (a dim one too) or an "N more" row, unless the composer holds
+ * text (issues #115 and #129). The chord works in all cases, so the hint names it alone.
  */
 export const NO_KEYS_HINT = 'Keys go to the prompt. ctrl+x Tab gives them back.'
 

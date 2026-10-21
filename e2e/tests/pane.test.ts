@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { arrowOf, focusedTexts, selectedLine, withFocus } from '../support/pane.ts'
+import { arrowOf, focusedTexts, paneTextAt, selectedLine, withFocus } from '../support/pane.ts'
 
 test('selectedLine finds the row with the > gutter', () => {
   const line = 'abc │> ▲ ▸ two.example/b  two.example/b'
@@ -85,4 +85,18 @@ test('arrowOf gives the 1-based column and row of the arrow of the row that show
 test('arrowOf skips a line whose text after the arrow is another row and returns undefined without a match', () => {
   assert.equal(arrowOf('│    ▸ one.example/a\nno arrow two.example', 'two.example'), undefined)
   assert.equal(arrowOf('', 'one'), undefined)
+})
+
+test('paneTextAt gives the 1-based column and row of the text in the pane, right of the first border', () => {
+  const screen = 'header\nabc │r: refresh  h: help\nabc │    2 more\n'
+  assert.deepEqual(paneTextAt(screen, 'r: refresh'), { column: 6, row: 2 })
+  assert.deepEqual(paneTextAt(screen, 'h: help'), { column: 18, row: 2 })
+  assert.deepEqual(paneTextAt(screen, '2 more'), { column: 10, row: 3 })
+})
+
+test('paneTextAt ignores the transcript left of the border and a line with no border', () => {
+  const screen = 'x: dismiss in a line with no border\n❯ say x: dismiss │ nothing here\nabc │x: dismiss'
+  assert.deepEqual(paneTextAt(screen, 'x: dismiss'), { column: 6, row: 3 })
+  assert.equal(paneTextAt('❯ 2 more │ none', '2 more'), undefined)
+  assert.equal(paneTextAt('', 'x'), undefined)
 })

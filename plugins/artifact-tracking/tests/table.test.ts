@@ -420,7 +420,7 @@ test('a deeply nested row whose indent fills its column draws the glyph only, in
   expect(leaves(treeBox)).toEqual([])
 })
 
-test('every core key has one footer Button in every state; disabled ones are dim and inert (Review Focus 5, G16)', () => {
+test('every core key has one footer Button in every state; disabled ones are dim, do no work and ask for the keys (G16, issue #129)', () => {
   const reg = new KeyRegistry()
   const sections = [section('web', COLS, webRows(1))]
   const process: RowRef = { id: 'w0', owner: 'p', section: 'processes', can: {} }
@@ -436,7 +436,7 @@ test('every core key has one footer Button in every state; disabled ones are dim
     },
   ]
   for (const c of cases) {
-    const { drawn, calls } = draw(sections, { footer: c.footer, help: c.help })
+    const { drawn, calls, asks } = draw(sections, { footer: c.footer, help: c.help })
     const buttons = footerOf(drawn.tree)
     expect(buttons.map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
     expect(buttons.map(b => b.props.key)).toEqual(CORE_KEYS.map(k => k.id))
@@ -446,7 +446,8 @@ test('every core key has one footer Button in every state; disabled ones are dim
       expect(b.props.plain).toBe(true)
       press(b)
     }
-    expect(calls).toEqual(c.on.map(k => `press:${k}`))
+    expect(calls).toEqual(c.on.map(k => `press:${k}`)) // a dim key does no work
+    expect(asks.count).toBe(buttons.length - c.on.length) // and each dim key asks for the keys, once
     const footer = (drawn.tree as unknown as Node).children.at(-1) as Node
     expect(footer.props).toEqual({ columnGap: 2, flexWrap: 'wrap' })
     expect(footer.children.at(-1)).toEqual({ type: 'Text', props: { dimColor: true }, children: ['Esc close'] })

@@ -24,7 +24,7 @@ import {
   TreeDataTable,
 } from '../ux/tree-data-table/table'
 import { WorkQueue } from './pane-queue'
-import { Refocus } from './pane-refocus'
+import { type Press, Refocus, unlessClosed } from './pane-refocus'
 import { helpOf, type PaneHost, shownOf } from './pane-text'
 
 export { helpOf, helpTextOf, listText, type PaneHost, TEXT_VIEW } from './pane-text'
@@ -49,7 +49,7 @@ const MORE_KEY = /^m\d+$/
 
 export class PaneSession {
   private drawn: Drawn | undefined
-  /** How often the pane closed. A press that began before a closing must not ask for the keys after it (issue #115). */
+  /** How often the pane closed. A press that began before a closing does nothing after it (issues #115 and #130). */
   private closings = 0
   /** The first unit the last drawing showed in full. The window keeps its place until the selection leaves it. */
   private top = 0
@@ -173,13 +173,14 @@ export class PaneSession {
     const page = this.drawn?.page
     if (page === undefined || rows.length === 0) return false
     if (!Number.isFinite(by) || by === 0) return true // a window cuts the rows and nothing asks for a move: nothing to scroll
+    const press = this.pressOf(false) // the move reads `selected` first: a closing in between ends it (issue #130)
     try {
       const step = Math.sign(by) * Math.min(Math.abs(by), Math.max(1, page - 1))
       const selected = await this.selectedRow(p) // the row the pane treats as selected: the atom names a row that hid
       const at = rows.findIndex(r => r.id === selected) // -1: nothing selected, the move starts at the first row
       const to = Math.min(rows.length - 1, Math.max(0, Math.max(0, at) + step))
       const id = rows[to]?.id
-      if (id !== undefined && (at < 0 || to !== at)) await this.refocus.to(p, m, id)
+      if (id !== undefined && (at < 0 || to !== at)) await this.refocus.to(p, m, id, press)
     } catch (e) {
       p.log(`pane: scroll failed: ${reason(e)}`)
     }
@@ -215,6 +216,12 @@ export class PaneSession {
     return this.work.idle()
   }
 
+  /** A press of the drawing whose actions these are: it knows the closing count of now (issue #130). */
+  private pressOf(keysInPrompt: boolean): Press {
+    const closings = this.closings
+    return { keys: keysInPrompt, still: () => closings === this.closings }
+  }
+
   /**
    * Only a press that reads `selected` waits in the chain: `x`, `0`-`3` and a tracker key. Those writes must see each
    * other's selection. An Enter, an "N more", `h` and `r` run at once, so a press that waits for the entry (after a
@@ -227,40 +234,68 @@ export class PaneSession {
    *
    * `keysInPrompt` is `Pane.isFocused === false` of the drawing these actions belong to. One session can be drawn on
    * several surfaces and each has its own value, so a press uses the value of its own tree, not that of the last drawing.
+   * A click on any Button then gives the pane the keys, so the next Up or Down moves the selection and not the prompt
+   * history (issues #115 and #129). Each press takes its closing count when the person presses, before it waits in the
+   * chain: a press that began before a closing does nothing after it (issue #130).
    */
   private actionsOf(p: Ports, m: PaneHost, keysInPrompt: boolean): TableActions {
     return {
       // A press is a click or Enter. It opens or closes the row and selects it (issue #108): the row stays selected
-      // whether it opens or closes, and the ring goes to the handle the drawing gives the row. A click on a pane that has
-      // no keys asks for them too, so the next Up or Down moves the selection and not the prompt history (issue #115).
+      // whether it opens or closes, and the ring goes to the handle the drawing gives the row. The keys come before the
+      // ring, as the ring is refused for a pane that has none.
       toggle: id => {
-        const closings = this.closings
+        const press = this.pressOf(keysInPrompt)
         this.work.detach(p, 'toggle', async () => {
-          await p.state.expanded.update(cur => (cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]))
-          await this.refocus.to(p, m, id, keysInPrompt ? { still: () => closings === this.closings } : undefined)
+          const flip = (cur: string[]) => (cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id])
+          await p.state.expanded.update(unlessClosed(press, flip))
+          await this.refocus.to(p, m, id, press)
         })
       },
       // The new rows come in before the N more Button, so the position the ring sits on now holds the stop of the first new
       // row, a row the window may hide. The ring goes back onto the selected row, as after `x`, and the window follows it.
-      more: sectionId =>
+      // The press asks for the keys too, once: `Refocus.to` asks before it asks for the ring, and with no row selected there
+      // is no ring request, so the press asks alone.
+      more: sectionId => {
+        const press = this.pressOf(keysInPrompt)
         this.work.detach(p, 'more', async () => {
           await p.state.shown.update(sectionId, n => n + m.config.global().ui.sectionRows)
           this.onMore = undefined
           const selected = await this.selectedRow(p) // the atom names a row that hid: it has no handle for the ring
-          if (selected !== null) await this.refocus.to(p, m, selected)
-        }),
+          if (selected !== null) await this.refocus.to(p, m, selected, press)
+          else await this.refocus.askKeys(p, press)
+        })
+      },
+      // A dim footer key does no work, but a click on a Button moves no focus: the press asks for the keys alone.
+      keys: () => {
+        const press = this.pressOf(keysInPrompt)
+        this.work.detach(p, 'keys', () => this.refocus.askKeys(p, press))
+      },
+      // A press that waited in the chain through a closing does nothing: it reads `selected`, and that may be a row of the
+      // next pane.
       press: key => {
-        const run = () => this.pressed(p, m, key)
+        const press = this.pressOf(keysInPrompt)
+        const run = async () => {
+          if (press.still()) await this.pressed(p, m, key, press)
+        }
         if (m.keys.get(key)?.scope === 'pane') this.work.detach(p, key, run)
         else this.work.queue(p, key, run)
       },
     }
   }
 
-  private async pressed(p: Ports, m: PaneHost, buttonKey: string): Promise<void> {
+  /**
+   * The keys come before the work, after the read of `selected`: `x` and the digits end in a ring request, which the
+   * engine refuses while the prompt has the keys, and `r` may run long. `Refocus.to` asks no more: one press asks once.
+   * A closing that comes while `selected` is read ends the press: the read may return a row of the next pane.
+   */
+  private async pressed(p: Ports, m: PaneHost, buttonKey: string, begun: Press): Promise<void> {
     const key = m.keys.get(buttonKey)
     if (key === undefined) return
-    const row = findRow(this.sections, await this.selectedRow(p))
+    const selected = await this.selectedRow(p)
+    if (!begun.still()) return // the read took time: after a closing and a reopening it returns a row of the new pane
+    await this.refocus.askKeys(p, begun)
+    const afterAsk: Press = { ...begun, keys: false } // one press asks once: the refocus below must not ask again
+    const row = findRow(this.sections, selected)
     const to = route(key, row, owner => m.isItemOwner(owner))
     switch (to.to) {
       case 'refresh':
@@ -268,17 +303,17 @@ export class PaneSession {
         await m.refreshManual(p)
         return
       case 'help':
-        await p.state.help.update(v => !v)
+        await p.state.help.update(unlessClosed(afterAsk, v => !v))
         return
       case 'dismiss': {
         const next = neighbourOf(this.drawn?.rows ?? [], to.rowId)
         await m.dismiss(p, [to.rowId])
-        await this.refocus.to(p, m, next)
+        await this.refocus.to(p, m, next, afterAsk)
         return
       }
       case 'priority':
         await m.setPriority(p, to.rowId, to.level)
-        await this.refocus.to(p, m, to.rowId)
+        await this.refocus.to(p, m, to.rowId, afterAsk)
         return
       case 'owner':
         // A tracker's own work may take long. It must not hold the keys that come after it.

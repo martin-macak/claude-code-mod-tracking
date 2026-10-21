@@ -67,3 +67,15 @@ export function arrowOf(screen: string, text: string): { column: number; row: nu
   }
   return undefined
 }
+
+// The 1-based column and row of the first `text` that the pane draws, or undefined. The transcript sits left of the pane,
+// so only the part of a line after its first border (`│`) counts: the prompt may hold the same words.
+export function paneTextAt(screen: string, text: string): { column: number; row: number } | undefined {
+  for (const [at, line] of screen.split('\n').entries()) {
+    const border = line.indexOf('│')
+    if (border < 0) continue
+    const found = line.indexOf(text, border + 1)
+    if (found >= 0) return { column: found + 1, row: at + 1 }
+  }
+  return undefined
+}

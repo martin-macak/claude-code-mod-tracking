@@ -363,6 +363,21 @@ test('scrolled: a page key moves the selection by a page less one row and the ri
   expect(t.selected()).toBe('w6')
 })
 
+// Issue #130, the refocus of a scroll. It reads `selected` first, and the pane may close while that read is in flight.
+test('scrolled that began before the pane closed selects nothing and asks for no ring after it', async () => {
+  const t = setup(TWELVE)
+  t.w.state.set('selected', 'w0')
+  await t.draw(96, SHORT)
+  const release = holdFirst(t.w.ports.state.selected, 'get')
+  const done = t.session.scrolled(t.w.ports, t.m, 11)
+  await turn()
+  await t.session.closed(t.w.ports)
+  release()
+  expect(await done).toBe(true)
+  expect(t.selected()).toBeNull()
+  expect(t.w.ui.focused).toEqual([])
+})
+
 test('scrolled: a wheel tick moves one row; at the first row it moves nothing but the engine stays out of it', async () => {
   const t = setup(TWELVE)
   t.w.state.set('selected', 'w1')
@@ -656,6 +671,287 @@ test('a press that began before the pane closed asks for no keys after it, and a
   expect(calls.filter(c => c === 'open').length).toBe(1)
 })
 
+// Issue #129. A click on a footer key or on an "N more" row is a press too, and a press moves no focus. With the keys in
+// the prompt each of them asks for the keys, as a row press does since #115, so Up and Down then move the selection. The
+// ask comes before the work: `x` and the digits end in a ring request that the engine refuses while the prompt has the
+// keys, and `r` may run long. One press asks once: `x` and the digits must not ask again when they refocus.
+const SMALL = { file: { global: { ui: { sectionRows: 5 } } } }
+const seven = () => webs('a', 'b', 'c', 'd', 'e', 'f', 'g')
+
+test('N more while the pane has no keys asks for them and shows the next rows', async () => {
+  const t = setup(seven(), SMALL)
+  const calls = engineLog(t)
+  press(buttonOf(await t.draw(80, undefined, false), 'm0'))
+  await t.session.idle()
+  expect(calls).toEqual(['open'])
+  expect(await t.w.ports.state.shown.get('web')).toBe(5)
+})
+
+test('N more with a row selected asks for the keys once, then for the ring on that row', async () => {
+  const t = setup(seven(), SMALL)
+  t.w.state.set('selected', 'b')
+  const calls = engineLog(t)
+  press(buttonOf(await t.draw(80, undefined, false), 'm0'))
+  await t.session.idle()
+  expect(calls).toEqual(['open', 'focus r1'])
+  expect(t.selected()).toBe('b')
+})
+
+test('N more while the pane has the keys, or does not say, asks for no keys', async () => {
+  for (const focused of [true, undefined]) {
+    const t = setup(seven(), SMALL)
+    const calls = engineLog(t)
+    press(buttonOf(await t.draw(80, undefined, focused), 'm0'))
+    await t.session.idle()
+    expect(calls).toEqual([])
+    expect(await t.w.ports.state.shown.get('web')).toBe(5)
+  }
+})
+
+/**
+ * A press of a footer key and what it should do. `engine` is one log: the calls the engine sees (`open`, `focus`) and the
+ * work of the host (`refreshManual`, `dismiss`, `setPriority`, `entry`, `runAction`), in the order they happen. The ask
+ * (`open`) comes first, then the work, then the ring. `help` has no work in the log: the test reads its atom.
+ */
+const FOOTER_KEYS = [
+  { key: 'refresh', what: 'refreshManual', engine: ['open', 'refreshManual'] },
+  { key: 'help', what: 'help', engine: ['open'] },
+  { key: 'dismiss', what: 'x', engine: ['open', 'dismiss b', 'focus r1'] },
+  { key: 'prio-1', what: 'a digit', engine: ['open', 'setPriority b high', 'focus r1'] },
+  { key: 'web.open', what: 'a tracker key', engine: ['open', 'entry', 'runAction web.open b'] },
+] as const
+
+for (const { key, what, engine } of FOOTER_KEYS) {
+  test(`a click on the footer key ${key} (${what}) while the pane has no keys asks for them once, before the work`, async () => {
+    const t = setup(webs('a', 'b', 'c'))
+    t.host.keys.add('web', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+    t.host.allLive = true
+    t.w.state.set('selected', 'b')
+    const calls = engineLog(t)
+    t.host.calls = calls // one log: the work of the host and the calls the engine sees
+    t.host.onDismiss = () => t.host.setRows(webs('a', 'c'))
+    press(buttonOf(await t.draw(80, undefined, false), key))
+    await t.session.idle()
+    expect(calls).toEqual(engine)
+    expect(t.w.state.get('help') === true).toBe(key === 'help')
+  })
+
+  test(`a click on the footer key ${key} (${what}) while the pane has the keys asks for none`, async () => {
+    for (const focused of [true, undefined]) {
+      const t = setup(webs('a', 'b', 'c'))
+      t.host.keys.add('web', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+      t.host.allLive = true
+      t.w.state.set('selected', 'b')
+      const calls = engineLog(t)
+      t.host.calls = calls
+      t.host.onDismiss = () => t.host.setRows(webs('a', 'c'))
+      press(buttonOf(await t.draw(80, undefined, focused), key))
+      await t.session.idle()
+      expect(calls).toEqual(engine.slice(1))
+      expect(t.w.state.get('help') === true).toBe(key === 'help')
+    }
+  })
+}
+
+// Issue #130. `closed` clears the selection and the help view. A press that began before the closing must write none of
+// them after it. The pane's work runs detached, so a closing can land between two writes of one press, or while one
+// write is in flight: an atom `update` reads, applies its function and writes, and a retry applies it again to the value
+// that the closing wrote. These tests hold one engine call open, close the pane, and let the call go on.
+
+/** Holds the first call of `fn` of `owner` until `release()`: an engine call that is still in flight. Later calls run at once. */
+function holdFirst<T extends object, K extends keyof T>(owner: T, name: K): () => void {
+  const real = (owner[name] as (...a: unknown[]) => Promise<unknown>).bind(owner)
+  let release!: () => void
+  const held = new Promise<void>(r => {
+    release = r
+  })
+  let first = true
+  ;(owner as Record<K, unknown>)[name] = async (...a: unknown[]) => {
+    if (first) {
+      first = false
+      await held
+    }
+    return real(...a)
+  }
+  return release
+}
+
+test('a row press whose expanded write is in flight when the pane closes writes nothing after it', async () => {
+  const t = setup(webs('a', 'b', 'c'))
+  const calls = engineLog(t)
+  const release = holdFirst(t.w.ports.state.expanded, 'update')
+  press(buttonOf(await t.draw(80, undefined, false), 'r1'))
+  await turn()
+  await t.session.closed(t.w.ports)
+  release()
+  await t.session.idle()
+  expect(t.w.state.get('expanded') ?? []).toEqual([])
+  expect(t.selected()).toBeNull()
+  expect(calls).toEqual([]) // no ask for the keys, no ring request
+})
+
+test('a row press whose selected write is in flight when the pane closes does not select after it', async () => {
+  const t = setup(webs('a', 'b', 'c'))
+  const calls = engineLog(t)
+  const release = holdFirst(t.w.ports.state.selected, 'update')
+  press(buttonOf(await t.draw(80, undefined, false), 'r1'))
+  await turn() // the row is open, and its selection is the call in flight
+  expect(t.w.state.get('expanded')).toEqual(['b'])
+  await t.session.closed(t.w.ports)
+  release()
+  await t.session.idle()
+  expect(t.selected()).toBeNull()
+  expect(calls).toEqual([])
+})
+
+test('a refocus that began before the pane closed asks for no ring after it', async () => {
+  const t = setup(webs('a', 'b', 'c'))
+  const calls = engineLog(t)
+  const tree = await t.draw()
+  let release!: () => void
+  const held = new Promise<void>(r => {
+    release = r
+  })
+  const real = t.host.paneData
+  t.host.paneData = async (p: unknown, v: PaneView) => {
+    await held // the ring request reads the sections to find the handle of the row
+    return real(p, v)
+  }
+  press(buttonOf(tree, 'r1'))
+  await turn() // the row is open and selected, and the refocus waits for its sections
+  expect(t.selected()).toBe('b')
+  await t.session.closed(t.w.ports)
+  release()
+  await t.session.idle()
+  expect(t.selected()).toBeNull()
+  expect(calls).toEqual([])
+  await t.session.focused(t.w.ports, 'r1') // no request is pending: the drawn map answers, as for any ring move
+  expect(t.selected()).toBe('b')
+})
+
+test('x that began before the pane closed does not select after it', async () => {
+  const t = await abc()
+  const calls = engineLog(t)
+  let release!: () => void
+  const held = new Promise<void>(r => {
+    release = r
+  })
+  t.host.dismiss = async (_p: unknown, ids: readonly string[]) => {
+    t.host.calls.push(`dismiss ${ids.join(',')}`)
+    await held
+  }
+  press(buttonOf(await t.draw(), 'dismiss'))
+  await turn()
+  await t.session.closed(t.w.ports)
+  t.w.stateSets = {}
+  release()
+  await t.session.idle()
+  expect(t.host.calls).toEqual(['dismiss b']) // the press began before the closing: its own work finished
+  expect(t.selected()).toBeNull()
+  expect(t.w.stateSets.selected).toBeUndefined() // no write of `selected` at all, not even one that keeps the value
+  expect(calls).toEqual([])
+})
+
+test('a digit whose setPriority is in flight when the pane closes does not select or ask for a ring after it', async () => {
+  const t = await abc()
+  const calls = engineLog(t)
+  let release!: () => void
+  const held = new Promise<void>(r => {
+    release = r
+  })
+  t.host.setPriority = async (_p: unknown, id: string, level: string | undefined) => {
+    t.host.calls.push(`setPriority ${id} ${level}`)
+    await held
+  }
+  press(buttonOf(await t.draw(), 'prio-1'))
+  await turn()
+  await t.session.closed(t.w.ports)
+  t.w.stateSets = {}
+  release()
+  await t.session.idle()
+  expect(t.host.calls).toEqual(['setPriority b high']) // the press began before the closing: its own work finished
+  expect(t.selected()).toBeNull()
+  expect(t.w.stateSets.selected).toBeUndefined() // no write of `selected` at all, not even one that keeps the value
+  expect(calls).toEqual([]) // no ask for the keys, no ring request
+})
+
+// The "N more" press writes `shown`, then reads `selected`. A closing in between ends the press: no ask, no ring. The pane
+// had no keys when the person pressed, so without the check the press would ask `ui.open` for the keys of a closed pane.
+test('N more whose shown write is in flight when the pane closes asks for no keys and no ring after it', async () => {
+  const t = setup(seven(), SMALL)
+  t.w.state.set('selected', 'b')
+  const calls = engineLog(t)
+  const release = holdFirst(t.w.ports.state.shown, 'update')
+  press(buttonOf(await t.draw(80, undefined, false), 'm0'))
+  await turn()
+  await t.session.closed(t.w.ports)
+  release()
+  await t.session.idle()
+  expect(t.selected()).toBeNull()
+  expect(calls).toEqual([])
+})
+
+// The read of `selected` is the first await of a footer press. It can still be in flight when the pane closes and opens
+// again, and then it returns a row of the new pane: the old key must not act on it (a review finding on this PR).
+test('a digit whose read of selected is in flight through a closing and a reopening acts on nothing', async () => {
+  for (const key of ['prio-1', 'dismiss']) {
+    const t = setup(webs('a', 'b', 'c', 'd'))
+    t.w.state.set('selected', 'b')
+    const calls = engineLog(t)
+    t.host.calls = calls
+    const tree = await t.draw(80, undefined, false) // the pane has no keys: the press would ask for them
+    const release = holdFirst(t.w.ports.state.selected, 'get') // after the draw, which reads `selected` too
+    press(buttonOf(tree, key))
+    await turn()
+    await t.session.closed(t.w.ports)
+    t.w.state.set('selected', 'd') // /track again, and a click on d
+    release()
+    await t.session.idle()
+    expect(calls, key).toEqual([]) // no `setPriority d high`, no `dismiss d`, no ask, no ring
+    expect(t.selected(), key).toBe('d')
+  }
+})
+
+test('h whose write is in flight when the pane closes does not bring the help view back', async () => {
+  const t = setup(webs('a'))
+  const release = holdFirst(t.w.ports.state.help, 'update')
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.session.closed(t.w.ports)
+  expect(t.w.state.get('help')).toBe(false)
+  release()
+  await t.session.idle()
+  expect(t.w.state.get('help')).toBe(false)
+})
+
+// A key that waits in the chain behind a press that does not end began before the closing too. It must not run after the
+// pane opened again: it reads `selected`, and by then that is a row the person chose in the new pane (a priority key
+// would set the priority of that row).
+test('a digit that waited in the chain through a closing and a reopening acts on nothing', async () => {
+  const t = setup(webs('a', 'b', 'c', 'd'))
+  t.w.state.set('selected', 'b')
+  const calls = engineLog(t)
+  let release!: () => void
+  const held = new Promise<void>(r => {
+    release = r
+  })
+  t.host.dismiss = async (_p: unknown, ids: readonly string[]) => {
+    t.host.calls.push(`dismiss ${ids.join(',')}`)
+    await held
+  }
+  const tree = await t.draw()
+  press(buttonOf(tree, 'dismiss')) // starts and waits
+  press(buttonOf(tree, 'prio-1')) // waits behind it
+  await turn()
+  await t.session.closed(t.w.ports)
+  t.w.state.set('selected', 'd') // /track again, and a click on d
+  release()
+  await t.session.idle()
+  expect(t.host.calls).toEqual(['dismiss b']) // no `setPriority d high`
+  expect(t.selected()).toBe('d') // and the old x did not refocus onto c
+  expect(calls).toEqual([])
+})
+
 // When the pane gets the keys, the engine puts the ring on the autoFocus handle of the frame it has, and that frame may
 // have been read before the press wrote its row (live: the ring landed on the old row and `ui.focus` hook wrote it back
 // into `selected`, while the ring request of the press was skipped as a re-entry of that hook). The row that was pressed
@@ -881,6 +1177,33 @@ test('a disabled key does nothing', async () => {
   press(buttonOf(tree, 'dismiss'))
   await dim.session.idle()
   expect(dim.host.calls).toEqual([])
+})
+
+// Issue #129, a dim footer key. It does no work, but it is a Button: a click on it moves no focus, so with the keys in the
+// prompt it would be a dead spot that leaves them there. The click asks for the keys and does nothing else.
+test('a click on a dim footer key while the pane has no keys asks for them and does no work', async () => {
+  const t = setup([web('a', { can: {} })])
+  t.w.state.set('selected', 'a')
+  const calls = engineLog(t)
+  t.host.calls = calls
+  const tree = await t.draw(80, undefined, false)
+  expect(buttonOf(tree, 'dismiss').props.dimColor).toBe(true)
+  press(buttonOf(tree, 'dismiss'))
+  await t.session.idle()
+  expect(calls).toEqual(['open']) // no `dismiss a`, no ring
+  expect(t.selected()).toBe('a')
+})
+
+test('a click on a dim footer key while the pane has the keys, or does not say, asks for none', async () => {
+  for (const focused of [true, undefined]) {
+    const t = setup([web('a', { can: {} })])
+    t.w.state.set('selected', 'a')
+    const calls = engineLog(t)
+    t.host.calls = calls
+    press(buttonOf(await t.draw(80, undefined, focused), 'dismiss'))
+    await t.session.idle()
+    expect(calls).toEqual([])
+  }
 })
 
 test('a tracker key runs after the entry, with the owner, the id and the row', async () => {
