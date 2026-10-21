@@ -170,3 +170,45 @@ test('R11: a refused open after a closing does not put back the selection that t
   await t.press()
   expect(t.selected() ?? null).toBeNull() // a restore would bring 'row-before' back into a pane that is closed
 })
+
+// ---------------------------------------------------------------- the refresh of the press (owner decision of 2026-10-21)
+
+/** The reasons of `ItemsHost.kick`, in the order they came. */
+function kicks(t: ReturnType<typeof world>): string[] {
+  const seen: string[] = []
+  const kick = t.m.items.kick.bind(t.m.items)
+  t.m.items.kick = reason => {
+    seen.push(reason)
+    kick(reason)
+  }
+  return seen
+}
+
+test('R11: the press runs the same refresh as /track: kick("open"), once, after the pane opened', async () => {
+  const t = world()
+  await t.turn(1, `one ${url('a')}`)
+  const seen = kicks(t)
+  const open = t.w.ports.ui.open
+  t.w.ports.ui.open = async () => {
+    expect(seen).toEqual([]) // the refresh waits for the pane, as /track opens the pane first
+    return open()
+  }
+  await t.press()
+  expect(seen).toEqual(['open'])
+})
+
+test('R11: with no room for the pane the press refreshes nothing: no pane came to show the rows', async () => {
+  const t = world()
+  await t.turn(1, `one ${url('a')}`)
+  const seen = kicks(t)
+  t.w.ui.placed = false
+  await t.press()
+  expect(seen).toEqual([])
+})
+
+test('R11: a press that finds no turn still runs the refresh of /track', async () => {
+  const t = world()
+  const seen = kicks(t)
+  await t.press()
+  expect(seen).toEqual(['open'])
+})

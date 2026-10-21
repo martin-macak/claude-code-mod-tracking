@@ -23,8 +23,8 @@ export function bandText(sections: readonly SectionSpec[]): string | null {
 }
 
 /**
- * The hotkey of the band Button that opens `/track` on the last turn's items (owner decision of 2026-10-21). A bare digit in
- * an empty prompt presses a band Button. The pane uses 0 to 3 and a survey 1 to 3, so 9 is free.
+ * The hotkey of the band Button that opens `/track` on the items of the newest turn that tracked anything (owner decision
+ * of 2026-10-21). A bare digit in an empty prompt presses a band Button. The pane uses 0 to 3 and a survey 1 to 3, so 9 is free.
  */
 export const TURN_KEY = '9'
 
@@ -34,10 +34,10 @@ export interface TurnPart {
   /** `+3 new · 1 seen again`. */
   readonly text: string
   /**
-   * The press: open `/track` with the first entry of the turn selected. It returns its work, so the engine keeps the press
-   * open while the work runs: a pane that a press asks for is placed at any width, one that nothing asked for needs 144 columns.
-   * Absent: the words show and no Button is drawn. A band with a Button is a focus target of `ctrl+x Tab`, which then stops
-   * there before it reaches the pane, so the Button stays out while the pane is open.
+   * The press: open `/track` with the first entry of the turn selected, and run the refresh of `/track`. It returns its
+   * work, so the engine keeps the press open while the work runs: a pane that a press asks for is placed at any width, one
+   * that nothing asked for needs 144 columns. Absent: the words show and no Button is drawn. A band with a Button is a focus
+   * target of `ctrl+x Tab`, which then stops there before it reaches the pane, so the Button stays out while the pane is open.
    */
   press?(): void | Promise<void>
 }
