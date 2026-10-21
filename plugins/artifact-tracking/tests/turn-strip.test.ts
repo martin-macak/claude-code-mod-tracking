@@ -3,7 +3,7 @@
 // the duration line (L33, L199), an aborted turn has no duration line (L118 to L134).
 import { expect, test } from 'claude-code/testing'
 import type { TurnEntry, TurnLedger, TurnRecord } from '../core/interfaces/turns'
-import { durationStrip, stripLine, stripText } from '../core/lib/turn-strip'
+import { durationStrip, stripLine, stripText, withLine } from '../core/lib/turn-strip'
 import { emptyLedger } from '../core/lib/turns'
 
 const entry = (k: string): TurnEntry => ({ k, c: 'github', r: 'mentioned' })
@@ -85,4 +85,19 @@ test('durationStrip: no strip for a turn that tracked nothing, nor for a turn th
     expect(durationStrip(ledger(record(1, { ...some, end })), ROW)).toBeUndefined()
   const { end: _running, ...running } = record(1, some) // not committed yet: the text line cannot be decided either
   expect(durationStrip(ledger(running as TurnRecord), ROW)).toBeUndefined()
+})
+
+test("withLine: the answer itself is the engine's text, so the line replaces it", () => {
+  expect(withLine('the answer', 'the answer', '+1 new · /track turn 1')).toBe('+1 new · /track turn 1')
+  expect(withLine('', '', '+1 new · /track turn 1')).toBe('+1 new · /track turn 1')
+})
+
+test('withLine: a text of another hook stays, and the line follows it on a new line', () => {
+  expect(withLine('agents-md: a note', 'the answer', '+1 new · /track turn 1')).toBe(
+    'agents-md: a note\n+1 new · /track turn 1',
+  )
+})
+
+test('withLine: an empty text is no text of another hook, even when the answer has words', () => {
+  expect(withLine('', 'the answer', '+1 new · /track turn 1')).toBe('+1 new · /track turn 1')
 })

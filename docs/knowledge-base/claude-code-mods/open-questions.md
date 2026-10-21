@@ -76,6 +76,7 @@ Left open by the strip of issue [#69](https://github.com/martin-macak/claude-cod
 | 41 | Do `refusal` and `error` turn ends append a `turn_duration` row and draw a `TurnDuration` line? The strip treats them like `aborted` (*inference*). | Open. End a turn by a refusal and by an API error in tmux, log the rows and the render. See [turn-strip](concepts/turn-strip.md#not-tested). |
 | 42 | Is there a keyboard path to a transcript `Button` (the `TurnDuration` Button)? `ctrl+x Tab` does not stop at it (*verified-live*). | Open. Nothing else was tried. See [turn-strip](concepts/turn-strip.md#interactive-on-the-screen). |
 | 43 | Do the desktop app and the VS Code panel raise `TurnDuration` or append `turn_duration` rows? The types say terminal only (*types-only*). | Open. See [turn-strip](concepts/turn-strip.md#the-spikes). |
+| 44 | How does the engine draw a `turn.complete` text of two lines? The mod joins the text of a hook below it and its strip line with a new line (the kit pins the string only). | Open. Run a second plugin that returns its own `turn.complete` text with `global.ui.turnStrip` on `text`, and capture the screen. See [turn-strip](concepts/turn-strip.md#what-turncomplete-may-return). |
 
 ## See also
 

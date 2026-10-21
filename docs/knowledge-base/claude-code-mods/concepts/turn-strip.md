@@ -151,6 +151,8 @@ L80 {"type":"system","subtype":"informational","content":"s69-probe+cc-plugin-ag
 
 `TurnCompleteResult` is `{ text, usage? }`. "A text other than a main-loop answer's is shown beneath it." `[primary source]` ([d.ts 302:14009](../sources/claude-code-2.1.302/types/claude-code.d.ts#L14009)) The study saw the same: a hook that returned a text equal to the answer added no row, and a hook that returned another text added one (S7). The text is shown with the names of the plugins in front: the study's row reads `s69-probe+cc-plugin-agents-md: TL69-MARKER ...` (L33, L199) and the mod's own row reads `artifact-tracking+cc-plugin-agents-md: +2 new · /track turn 1`. The prefix is the engine's. The mod does not control it. `[observed]` Why `cc-plugin-agents-md` is named is not known: it hooks `turn.complete` too (L219). `[observed]`
 
+The engine's own text is the answer: a hook that returned `next(e)` unchanged gave a text equal to the answer (L180, L181, L191, L192). `[observed]` So a text that differs from the answer, which `next(e)` resolves to inside the mod's hook, is the notice of a hook below it. The mod keeps such a text and puts its line after it, separated by a new line, and replaces a text that equals the answer. `[inference]` The kit pins the returned text. How the engine draws a two-line text was not run (open question 44).
+
 ## The order of one TUI turn
 
 The order decides how a mod pairs the duration line with its turn. Runs C1 to C4 (2.1.305) showed it, and the live check on 2.1.306 showed it again with the hooks of the mod logged at each step.
@@ -254,7 +256,7 @@ On this machine the managed plugin `cc-plugin-sec-default` sits outermost. It re
 
 ## Not tested
 
-The open engine questions are also rows 41 to 43 of [open-questions](../open-questions.md#not-yet-observed-on-21306).
+The open engine questions are also rows 41 to 44 of [open-questions](../open-questions.md#not-yet-observed-on-21306).
 
 - `refusal` and `error` turn ends (typed only).
 - A real mouse (all clicks were synthetic SGR bytes in tmux).

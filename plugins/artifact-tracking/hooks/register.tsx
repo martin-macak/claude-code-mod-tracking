@@ -8,6 +8,7 @@ import { ConfigManager } from '../core/infra/config-manager'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
+import { withLine } from '../core/lib/turn-strip'
 import { emptyLedger } from '../core/lib/turns'
 import { DISMISS, parseRemote, TRACKERS } from '../trackers'
 import type { ToolStatus, TurnLedger } from '../types'
@@ -293,8 +294,8 @@ export const register: Register = on => {
   // uuid. The ledger commits the turn and keeps that uuid in the same write. The strip (issue #69, P2, `global.ui.turnStrip`):
   // a returned text that differs from the answer is a notice row under the duration line, kept in the transcript and never in
   // a request (design study S7, S8). It is the line of `text`, and the line of `interactive` for a turn whose duration line
-  // cannot carry the strip (aborted, refusal, error, or no duration row). A subagent's end and a fault of the ledger return
-  // what `next` gave.
+  // cannot carry the strip (aborted, refusal, error, or no duration row). A text that a hook beneath returned (another plugin's
+  // notice) stays, and the line follows it. A subagent's end and a fault of the ledger return what `next` gave.
   on('turn.complete', async ($, e, next) => {
     const out = await next(e)
     const row = e.agentId === undefined ? durationRow : undefined
@@ -304,7 +305,7 @@ export const register: Register = on => {
     const line = await managerOf($)
       .turnStrip(e.turnId)
       .catch(() => undefined)
-    return line === undefined ? out : { ...out, text: line }
+    return line === undefined ? out : { ...out, text: withLine(out.text, e.answer, line) }
   }).catch((_$, e, next) => next(e))
 
   on('command.run', { command: 'track' }, ($, e) => managerOf($).track(portsOf($), e.args)).catch(() => ({

@@ -116,6 +116,56 @@ test('text: a subagent turn.complete is left alone, and so is the wake of a task
   expect(await end($, 'wake-1')).toEqual({ text: '' }) // its work is turn 1's; no line for the wake
 })
 
+/** A hook below the mod: what another plugin that hooks `turn.complete` returns (the engine prefix names such a plugin). */
+const below = (on: On, text: string) =>
+  // A matcher keeps it apart from the mod's own matcherless hook: the engine refuses two of those for one event. The kit runs
+  // the hook that was registered first beneath the ones registered after it, so a test registers it before the mod's world.
+  on('turn.complete', { reason: ['answer', 'aborted', 'refusal', 'error'] }, async (_$, e, next) => ({
+    ...(await next(e)),
+    text,
+  }))
+
+test('text: a text that a hook below returned for the turn stays, and the line follows it on a new line', async ($, on) => {
+  below(on, 'agents-md: a note of another plugin')
+  stripWorld(on, 'text')
+  await $.session.start(START)
+  expect(await turn($, 1, [A])).toEqual({ text: 'agents-md: a note of another plugin\n+1 new · /track turn 1' })
+})
+
+test("text: a text that is the answer itself is the engine's, so the line replaces it", async ($, on) => {
+  below(on, 'the answer')
+  stripWorld(on, 'text')
+  await $.session.start(START)
+  await $.session.append(prompt(`see ${A}`))
+  await start($, 'turn-1', `see ${A}`)
+  const done = (await $.turn.complete({
+    turnId: 'turn-1',
+    reason: 'answer',
+    isAborted: false,
+    durationMs: 5,
+    answer: 'the answer',
+  } as never)) as { text: string }
+  expect(done).toEqual({ text: '+1 new · /track turn 1' })
+})
+
+test('text: a turn that tracked nothing leaves the text of a hook below as it was', async ($, on) => {
+  below(on, 'agents-md: a note of another plugin')
+  stripWorld(on, 'text')
+  await $.session.start(START)
+  await $.session.append(prompt('hello there'))
+  await start($, 'turn-1', 'hello there')
+  expect(await end($, 'turn-1')).toEqual({ text: 'agents-md: a note of another plugin' })
+})
+
+test('interactive: an aborted turn keeps the text of a hook below too, with the line after it', async ($, on) => {
+  below(on, 'agents-md: a note of another plugin')
+  stripWorld(on, 'interactive')
+  await $.session.start(START)
+  expect(await turn($, 1, [A], 'aborted')).toEqual({
+    text: 'agents-md: a note of another plugin\n+1 new · /track turn 1',
+  })
+})
+
 test('text: a turn that ends aborted gets the line too', async ($, on) => {
   stripWorld(on, 'text')
   await $.session.start(START)

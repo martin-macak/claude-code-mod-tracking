@@ -22,6 +22,16 @@ export function stripLine(r: TurnRecord): string | undefined {
 }
 
 /**
+ * The text the `turn.complete` hook returns when it adds its line. `below` is what the hooks beneath it gave (`next(e)`),
+ * `answer` the answer of the turn. The engine's own text is the answer (design study, L181 and L192), so a different, non-empty
+ * text is the notice of another plugin: it stays, and the line follows it on a new line. Anything else is replaced.
+ * How the engine draws a two-line text was not run live.
+ */
+export function withLine(below: string, answer: string, line: string): string {
+  return below === answer || below === '' ? line : `${below}\n${line}`
+}
+
+/**
  * The text a `turn.complete` hook returns for the turn that ended, or undefined for none (the hook then returns what `next`
  * gave, and the engine adds no row). `off`: none. `text`: the line, whatever the end of the turn was. `interactive`: the
  * duration line carries the strip of a turn that ended with an answer and has a duration row, so only the other turns get
