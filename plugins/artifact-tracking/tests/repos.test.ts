@@ -1304,3 +1304,46 @@ test('parseRepoHintsFromBash opens a compound of its own at the start of a condi
   // A foreground `if` still moves the folder.
   expect(paths('if for i in 1; do :; done; then cd /x; fi; git -C . status')).toEqual(['/x', '/x'])
 })
+
+// A here-string takes one word (issue #182). The lines after it are commands: the splitter read `<<` in `<<<` as a heredoc
+// and skipped them, so the `cd` and the `git` after a `jq . <<< "$json"` line were lost.
+test('parseRepoHintsFromBash reads the lines after a here-string', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('cat <<< hi\ncd /x\ngit -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cat <<<hi\ncd /x\ngit -C . status')).toEqual(['/x', '/x'])
+  expect(paths('jq . <<<"$j"\ncd /x\ngit -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cat <<<EOF\ncd /x\nEOF\ngit -C . status')).toEqual(['/x', '/x'])
+  // The here-string carries no path of its own, and a heredoc still hides its body.
+  expect(paths("git -C /y status <<< 'git -C /z status'")).toEqual(['/y'])
+  expect(paths('cat <<EOF\ncd /y\nEOF\ncd /x\ngit -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cat <<< hi <<EOF\ncd /y\nEOF\ncd /x\ngit -C . status')).toEqual(['/x', '/x'])
+})
+
+// `<>` and `n<>` are redirections (issue #183). Their target is no word of the command: it is no folder of a `cd`.
+test('parseRepoHintsFromBash drops the target of a <> redirection', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('cd <> lock /x; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cd 3<> lock /x; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cd <>lock /x; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cd /x <> lock; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('exec 3<> lock; git -C /y status')).toEqual(['/y'])
+  // A quoted `<>` is a word: `cd '<>'` goes to a folder of that name.
+  expect(paths("cd '<>'; git -C . status")).toEqual(['/session/proj/<>', '/session/proj/<>'])
+})
+
+// Only an unquoted, unescaped `done`, `fi` or `esac` closes a compound (issue #184). A quoted one is a command, so the
+// loop stays in its pipeline and its `cd` does not reach the `git` after the pipeline.
+test('parseRepoHintsFromBash keeps a compound open at a quoted done, fi or esac', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  // The control: a typed `done` ends the loop, which is one part of the pipeline.
+  expect(paths('for i in 1; do cd /x; done | cat; git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths("for i in 1; do cd /x; 'done' y; done | cat; git -C . status")).toEqual(['/x', '/session/proj'])
+  expect(paths('for i in 1; do cd /x; \\done y; done | cat; git -C . status')).toEqual(['/x', '/session/proj'])
+  expect(paths("if true; then :; 'fi' y; cd /x; fi | cat; git -C . status")).toEqual(['/x', '/session/proj'])
+  expect(paths("case x in x) 'esac' y; cd /x ;; esac | cat; git -C . status")).toEqual(['/x', '/session/proj'])
+  expect(paths("a; for i in 1; do cd /x; 'done' y; cd /y; done & git -C . status")).toEqual([
+    '/x',
+    '/y',
+    '/session/proj',
+  ])
+})

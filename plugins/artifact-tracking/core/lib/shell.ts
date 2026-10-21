@@ -79,6 +79,14 @@ function compoundLead(words: readonly string[], typed: readonly Typed[]): { open
   return { opens, at }
 }
 
+/**
+ * The word at `k` is a `done`, `fi` or `esac` that closes a compound. Like a reserved word in `compoundLead`, it counts
+ * only as typed: `'done'`, `\fi` and `esac''` are commands of that name, and the cleaned text cannot tell (issue #184).
+ */
+function closesAt(words: readonly string[], typed: readonly Typed[], k: number): boolean {
+  return typed[k]?.whole === true && COMPOUND_CLOSE.has(words[k] ?? '')
+}
+
 // `;;`, `;&` and `;;&` end an arm of a `case`. Outside a `case` they read like `;`.
 const OPS = ['&&', '||', '|&', ';;&', ';;', ';&', ';', '|', '&', '\n', '(', ')', '`', '$(', '{', '}'] as const
 
@@ -100,7 +108,9 @@ type Place = {
  * Its segments move to a child scope of their own, so a `cd` in a part does not reach the segments after the pipeline
  * (issue #147). The `)` that ends a `case` pattern is no end of a subshell (issue #148).
  * The words of a `case` pattern are no command (issue #163): they stand in no segment and open or close no compound.
- * Only a `>` or `<` that was typed (no quote, no backslash) is a redirection (issue #162).
+ * Only a `>` or `<` that was typed (no quote, no backslash) is a redirection (issue #162). A here-string (`<<<`) is one
+ * too, with one word: it is no heredoc, so the next line is a command (issue #182). So are `<>` and `n<>` (issue #183).
+ * Only a `done`, `fi` or `esac` that was typed whole closes a compound: `'done' y` is a command (issue #184).
  */
 export function splitShell(command: string): Segment[] {
   const out: Segment[] = []
@@ -256,10 +266,10 @@ export function splitShell(command: string): Segment[] {
         }
         const top = compounds.at(-1)!
         if (top.isCase && clean[lead.at + 2] === 'in') startPattern(top)
-      } else if (COMPOUND_CLOSE.has(clean[0]!)) {
+      } else {
         // `esac` can follow a compound with no `;;` (`a | { b; } esac`), and `fi esac` or `done esac` close two compounds.
         // Each close ends the pipeline that is open in it, then gives back the place from before its compound.
-        for (let k = 0; COMPOUND_CLOSE.has(clean[k] ?? ''); k++) {
+        for (let k = 0; closesAt(clean, cleanHeads, k); k++) {
           endPipe()
           const open = compounds.pop()
           if (open) back(open)
@@ -331,8 +341,10 @@ export function splitShell(command: string): Segment[] {
       i++
       continue
     }
-    // Heredoc: `<<TAG`, `<<-TAG`, `<<'TAG'`. The body starts after the next newline.
-    if (c === '<' && s[i + 1] === '<' && s[i + 2] !== '<') {
+    // Heredoc: `<<TAG`, `<<-TAG`, `<<'TAG'`. The body starts after the next newline. The `<<` inside a here-string (`<<<`)
+    // is none: the first `<` of `<<<` is rejected by the third `<`, and the second one by the typed `<` just before it. A
+    // quoted or escaped `<` before the pair (`\<<<EOF`) is a word, so the heredoc stays.
+    if (c === '<' && s[i + 1] === '<' && s[i + 2] !== '<' && typedRedir !== i - 1) {
       endWord()
       let j = i + 2
       const strip = s[j] === '-'
@@ -490,12 +502,13 @@ export function scopedVars(): {
   }
 }
 
-const REDIRECT = /^(?:\d*|&)(?:>\||>>?|<<?<?|>&|<&)(.*)$/
+// `<>` stands before `<<?<?`: that branch matches the lone `<` of `<>` and leaves the `>` in the target (issue #183).
+const REDIRECT = /^(?:\d*|&)(?:>\||>>?|<>|<<?<?|>&|<&)(.*)$/
 
 /**
- * Drops redirections (`> f`, `2>&1`, `&>f`, `<f`) and their targets. `typed[i].head` is how many of the first characters
- * of `words[i]` were typed. Only that head can hold the redirection: a quoted or escaped `>` is a word (`\>`, `'>'`,
- * `2\>&1`), and so is the word after it (issue #162). Returns the words that stay, with their `Typed`.
+ * Drops redirections (`> f`, `2>&1`, `&>f`, `<f`, `<> f`, `<<< word`) and their targets. `typed[i].head` is how many of
+ * the first characters of `words[i]` were typed. Only that head can hold the redirection: a quoted or escaped `>` is a
+ * word (`\>`, `'>'`, `2\>&1`), and so is the word after it (issue #162). Returns the kept words and their `Typed`.
  */
 function dropRedirections(words: readonly string[], typed: readonly Typed[]): { words: string[]; heads: Typed[] } {
   const out: { words: string[]; heads: Typed[] } = { words: [], heads: [] }

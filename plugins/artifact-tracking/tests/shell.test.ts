@@ -410,3 +410,114 @@ test('splitShell opens a compound of its own at the start of a condition', () =>
   expect(scopeOf(p, 'z')).not.toBe(scopeOf(p, 'do a'))
   expect(scopeOf(p, 'z')).not.toBe('')
 })
+
+// A here-string (`<<<`) takes one word, as `<` takes a file (issue #182). The line after it is a new command. The splitter
+// read the `<<` inside `<<<` as a heredoc and skipped the lines up to a tag line that never came.
+test('splitShell reads a here-string as a redirection with one word, so the next line is a command', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  const rest = ['cd /x', 'git -C . status']
+  expect(words('cat <<< hi\ncd /x\ngit -C . status')).toEqual(['cat', ...rest])
+  expect(words('cat <<<hi\ncd /x\ngit -C . status')).toEqual(['cat', ...rest])
+  expect(words('jq . <<<"$j"\ncd /x\ngit -C . status')).toEqual(['jq .', ...rest])
+  // The word can be quoted, spaced or glued, and it can look like a heredoc tag.
+  expect(words('cat <<< "a b"\ncd /x\ngit -C . status')).toEqual(['cat', ...rest])
+  expect(words("cat <<<'a b'\ncd /x\ngit -C . status")).toEqual(['cat', ...rest])
+  expect(words('cat <<<EOF\ncd /x\nEOF\ngit -C . status')).toEqual(['cat', 'cd /x', 'EOF', 'git -C . status'])
+  expect(words("cat <<< 'EOF'\ncd /x\ngit -C . status")).toEqual(['cat', ...rest])
+  // A file descriptor in front, two here-strings in one command, and a substitution as the word.
+  expect(words('cat 3<<<hi\ncd /x\ngit -C . status')).toEqual(['cat', ...rest])
+  expect(words('cat <<< x <<< y\ncd /x\ngit -C . status')).toEqual(['cat', ...rest])
+  expect(words('cat <<<$(echo hi)\ncd /x\ngit -C . status')).toEqual(['cat', 'echo hi', ...rest])
+  // The words around it stay: only the redirection and its word go.
+  expect(words('grep a <<< hi b\ncd /x')).toEqual(['grep a b', 'cd /x'])
+  expect(words('grep a <<<hi b\ncd /x')).toEqual(['grep a b', 'cd /x'])
+  // Other operators after it work as usual.
+  expect(words('cat <<< hi; cd /x; git -C . status')).toEqual(['cat', ...rest])
+  expect(words('cat <<< hi && cd /x\ngit -C . status')).toEqual(['cat', ...rest])
+  expect(words('cat <<< hi | wc\ncd /x')).toEqual(['cat', 'wc', 'cd /x'])
+  // Glued to the word before it, the here-string stays in that word (a KB limit). The lines after it are commands.
+  expect(words('cat<<<hi\ncd /x\ngit -C . status')).toEqual(['cat<<<hi', ...rest])
+})
+
+// A heredoc has the same first characters as a here-string. Each form that the splitter knows still hides its body, and the
+// command after the tag line is read. An escaped `<` in front is a word, so the `<<` after it is a heredoc. An escaped tag
+// (`<<\EOF`) and a file descriptor in front (`3<<EOF`) are KB limits, not forms of this test.
+test('splitShell still skips the body of every form of heredoc that it knows', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  const body = 'cd /y\nEOF\ncd /x'
+  expect(words(`cat <<EOF\n${body}`)).toEqual(['cat', 'cd /x'])
+  expect(words(`cat << EOF\n${body}`)).toEqual(['cat', 'cd /x'])
+  expect(words(`cat <<'EOF'\n${body}`)).toEqual(['cat', 'cd /x'])
+  expect(words(`cat <<"EOF"\n${body}`)).toEqual(['cat', 'cd /x'])
+  expect(words('cat <<-EOF\n\tcd /y\n\tEOF\ncd /x')).toEqual(['cat', 'cd /x'])
+  // Another command on the line of the heredoc, a redirection after it, two heredocs.
+  expect(words(`cat <<EOF; echo a\n${body}`)).toEqual(['cat', 'echo a', 'cd /x'])
+  expect(words(`cat <<EOF > f\n${body}`)).toEqual(['cat', 'cd /x'])
+  expect(words('cat <<A <<B\ncd /y\nA\ncd /z\nB\ncd /x')).toEqual(['cat', 'cd /x'])
+  expect(words(`echo \\<<<EOF\n${body}`)).toEqual(['echo <', 'cd /x'])
+})
+
+// A heredoc and a here-string on one line: the here-string takes its word, and the heredoc still hides its body.
+test('splitShell reads a here-string and a heredoc on one line', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  const body = 'cd /y\nEOF\ncd /x'
+  expect(words(`cat <<< hi <<EOF\n${body}`)).toEqual(['cat', 'cd /x'])
+  expect(words(`cat <<<hi <<EOF\n${body}`)).toEqual(['cat', 'cd /x'])
+  expect(words(`cat <<EOF <<< hi\n${body}`)).toEqual(['cat', 'cd /x'])
+  expect(words(`cat <<EOF <<<hi\n${body}`)).toEqual(['cat', 'cd /x'])
+})
+
+// `<>` opens a file for reading and writing, and `n<>` does the same on a file descriptor. They are redirections, as `<`
+// and `>` are, and their target goes with them (issue #183).
+test('splitShell drops <> and n<> with their target', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  expect(words('cmd <> f; git status')).toEqual(['cmd', 'git status'])
+  expect(words('exec 3<> lock; git -C /y status')).toEqual(['exec', 'git -C /y status'])
+  // The target glued, quoted or escaped, and the words around it.
+  expect(words('cmd a <>f b')).toEqual(['cmd a b'])
+  expect(words('cmd a 3<>f b')).toEqual(['cmd a b'])
+  expect(words('cmd a <> "f g" b')).toEqual(['cmd a b'])
+  expect(words("cmd a <>'f g' b")).toEqual(['cmd a b'])
+  expect(words('cmd a 4<> \\> b')).toEqual(['cmd a b'])
+  expect(words("cmd a <>'' b")).toEqual(['cmd a b'])
+  expect(words('cmd a 3<>f 4<> g b')).toEqual(['cmd a b'])
+  // Operators after the target work as usual.
+  expect(words('cmd <> f && a\nb | c')).toEqual(['cmd', 'a', 'b', 'c'])
+  expect(words('cmd <>f & a')).toEqual(['cmd', 'a'])
+  // A quoted or escaped `<>` is a word, and so is the word after it.
+  expect(words("echo '<>' a")).toEqual(['echo <> a'])
+  expect(words('echo "<>" a')).toEqual(['echo <> a'])
+  expect(words('echo "3<>f" a')).toEqual(['echo 3<>f a'])
+  expect(words("echo '<>'f a")).toEqual(['echo <>f a'])
+})
+
+// Only an unquoted, unescaped `done`, `fi` or `esac` closes a compound (issue #184). Bash reads any other spelling as a
+// command of that name, so the compound goes on, and so does the pipeline or the list that holds it.
+test('splitShell reads a quoted or escaped done, fi or esac as a command, not as the end of a compound', () => {
+  // A quoted `done` leaves the loop open, so the loop stays one part of the pipeline: its `cd /x` runs in the subshell.
+  const loop = { 'for i in 1': '.1', 'do cd /x': '.1', 'done y': '.1', done: '.1', cat: '.2', z: '' }
+  for (const q of ["'done'", '"done"', '\\done', "d'on'e", 'd\\one', "done''", 'done""', "''done"])
+    expect(at(`for i in 1; do cd /x; ${q} y; done | cat; z`)).toEqual(loop)
+  // The same for `fi` and `esac`, in the middle of a branch or an arm.
+  const ifs = { 'if true': '.1', 'then :': '.1', 'fi y': '.1', 'cd /x': '.1', fi: '.1', cat: '.2', z: '' }
+  for (const q of ["'fi'", '"fi"', '\\fi', "f'i'", "fi''"])
+    expect(at(`if true; then :; ${q} y; cd /x; fi | cat; z`)).toEqual(ifs)
+  const cases = { 'case x in': '.1', 'esac y': '.1', 'cd /x': '.1', esac: '.1', cat: '.2', z: '' }
+  for (const q of ["'esac'", '"esac"', '\\esac', "e'sac'", "esac''"])
+    expect(at(`case x in x) ${q} y; cd /x ;; esac | cat; z`)).toEqual(cases)
+  // The loop still ends at its real `done`: the `&` after it backgrounds the whole loop, the `cd` after the quoted word too.
+  const bg = at("a; for i in 1; do cd /x; 'done' y; cd /y; done & z")
+  expect([bg['do cd /x'], bg['cd /y'], bg.z]).toEqual(['.1', '.1', ''])
+  // A quoted `done` closes no inner loop, so the real ones close the inner and then the outer loop.
+  const nested = at("for i in 1; do for j in 1; do :; 'done' y; cd /x; done; cd /y; done | cat; z")
+  expect([nested['cd /x'], nested['cd /y'], nested.z]).toEqual(['.1', '.1', ''])
+  // A typed `done` still closes, and a word that only starts like one is no close.
+  expect(at('for i in 1; do cd /x; done | cat; z')).toEqual({
+    'for i in 1': '.1',
+    'do cd /x': '.1',
+    done: '.1',
+    cat: '.2',
+    z: '',
+  })
+  expect(at('for i in 1; do cd /x; doner; done | cat; z').doner).toBe('.1')
+})

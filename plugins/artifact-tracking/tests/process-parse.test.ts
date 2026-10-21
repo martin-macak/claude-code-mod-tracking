@@ -994,3 +994,44 @@ test('parseBashProcesses opens a compound of its own at the start of a condition
   // A foreground `if` still moves the folder.
   expect(project('if for i in 1; do :; done; then cd /x; fi; docker compose up -d')).toBe('x')
 })
+
+// A here-string takes one word (issue #182). The lines after it are commands: the splitter read `<<` in `<<<` as a heredoc
+// and skipped them.
+test('parseBashProcesses reads the lines after a here-string', () => {
+  const project = composeProject
+  expect(project('cat <<< hi\ncd /x\ndocker compose up -d')).toBe('x')
+  expect(project('cat <<<hi\ncd /x\ndocker compose up -d')).toBe('x')
+  expect(project('jq . <<<"$j"\ncd /x\ndocker compose up -d')).toBe('x')
+  expect(project('cat <<<EOF\ncd /x\nEOF\ndocker compose up -d')).toBe('x')
+  expect(detachedOf('cat <<< hi\nnohup node srv.js &').map(r => r.name)).toEqual(['node srv.js'])
+  // The word of the here-string is no argument of the command, and a heredoc still hides its body.
+  expect(detachedOf('nohup node srv.js <<< hi &')[0]?.name).toBe('node srv.js')
+  expect(detachedOf('nohup node srv.js <<<"a b" &')[0]?.name).toBe('node srv.js')
+  expect(project('cat <<EOF\ncd /y\nEOF\ncd /x\ndocker compose up -d')).toBe('x')
+  expect(project('cat <<< hi <<EOF\ncd /y\nEOF\ncd /x\ndocker compose up -d')).toBe('x')
+})
+
+// `<>` and `n<>` are redirections (issue #183). Their target is no word of the command: no argument of a process, no folder
+// of a `cd`.
+test('parseBashProcesses drops the target of a <> redirection', () => {
+  expect(detachedOf('nohup node srv.js <> io.sock &')[0]?.name).toBe('node srv.js')
+  expect(detachedOf('nohup node srv.js 3<>io.sock -v &')[0]?.name).toBe('node srv.js -v')
+  expect(detachedOf('nohup node srv.js <>io.sock 2>&1 &')[0]?.name).toBe('node srv.js')
+  expect(composeProject('cd <> lock /x; docker compose up -d')).toBe('x')
+  expect(composeProject('cd 3<>lock /x; docker compose up -d')).toBe('x')
+  // A quoted `<>` is a word.
+  expect(detachedOf("nohup node srv.js '<>' io.sock &")[0]?.name).toBe('node srv.js <> io.sock')
+})
+
+// Only an unquoted, unescaped `done`, `fi` or `esac` closes a compound (issue #184). A quoted one is a command, so the
+// loop stays in its pipeline and its `cd` does not reach the command after the pipeline.
+test('parseBashProcesses keeps a compound open at a quoted done, fi or esac', () => {
+  const project = composeProject
+  // The control: a typed `done` ends the loop, which is one part of the pipeline.
+  expect(project('for i in 1; do cd /x; done | cat; docker compose up -d')).toBe('app')
+  expect(project("for i in 1; do cd /x; 'done' y; done | cat; docker compose up -d")).toBe('app')
+  expect(project('for i in 1; do cd /x; \\done y; done | cat; docker compose up -d')).toBe('app')
+  expect(project("if true; then :; 'fi' y; cd /x; fi | cat; docker compose up -d")).toBe('app')
+  expect(project("case x in x) 'esac' y; cd /x ;; esac | cat; docker compose up -d")).toBe('app')
+  expect(project("a; for i in 1; do cd /x; 'done' y; cd /y; done & docker compose up -d")).toBe('app')
+})
