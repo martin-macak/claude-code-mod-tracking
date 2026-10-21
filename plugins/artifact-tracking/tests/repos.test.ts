@@ -145,6 +145,41 @@ test('parseRepoHintsFromBash marks a git write subcommand as edit and anything e
   expect(parseRepoHintsFromBash('gh pr create -R acme/sdk').repos).toHaveLength(1)
 })
 
+// A git command after a shell keyword reads as the command alone (issue #131).
+test('parseRepoHintsFromBash reads a git command after do, then, else, elif, if, while and until as the command alone', () => {
+  const edit = [hit('/tmp/r', 'edit')]
+  expect(parseRepoHintsFromBash('git -C /tmp/r push').paths).toEqual(edit)
+  for (const cmd of [
+    'for d in a b; do git -C /tmp/r commit -m x; done',
+    'if true; then git -C /tmp/r push; fi',
+    'if true; then :; else git -C /tmp/r push; fi',
+    'if false; then :; elif git -C /tmp/r push; then :; fi',
+    'if git -C /tmp/r push; then :; fi',
+    'while git -C /tmp/r push; do :; done',
+    'until git -C /tmp/r push; do :; done',
+    'if ! git -C /tmp/r push; then :; fi',
+    'while ! git -C /tmp/r push; do :; done',
+    'time ! git -C /tmp/r push',
+    '! time git -C /tmp/r push',
+    'if time ! git -C /tmp/r push; then :; fi',
+  ]) {
+    expect({ cmd, paths: parseRepoHintsFromBash(cmd).paths }).toEqual({ cmd, paths: edit })
+  }
+})
+
+test('parseRepoHintsFromBash reads a cd after do as the cd it is', () => {
+  expect(parseRepoHintsFromBash('for d in a b; do cd /tmp/r; git commit -m x; done').paths).toEqual([
+    hit('/tmp/r'),
+    hit('/tmp/r', 'edit'),
+  ])
+})
+
+// A cd after a keyword moves the directory, as in the process parser. A cd in a branch that does not run counts as run,
+// as with `a || cd x`.
+test('parseRepoHintsFromBash counts a cd in a branch that does not run as run', () => {
+  expect(parseRepoHintsFromBash('if false; then cd /x; fi; git push').paths).toEqual([hit('/x'), hit('/x', 'edit')])
+})
+
 test('parseRepoHintsFromBash flags only checkout and switch as able to change the branch', () => {
   const hits = (cmd: string, cwd?: string) => parseRepoHintsFromBash(cmd, cwd).paths
   expect(hits('git -C /x/sdk checkout feat')).toEqual([moved('/x/sdk')])

@@ -1,5 +1,5 @@
 import type { RepoRef } from '../../core/interfaces/ports'
-import { resolvePath, scopedDir, splitShell, stripWrappers } from '../../core/lib/shell'
+import { resolvePath, scopedDir, splitShell, stripLead } from '../../core/lib/shell'
 import { isAbs, lower } from './paths'
 
 /**
@@ -194,7 +194,7 @@ export function parseRepoHintsFromBash(command: string, cwd?: string): { paths: 
   // A cd moves only its own subshell and the ones inside it.
   const dirs = scopedDir(cwd)
   for (const seg of splitShell(command)) {
-    const words = stripWrappers(seg.words).words
+    const words = stripLead(seg.words).words
     if (words.length === 0) continue
     const head = words[0]!
     let dir = dirs.get(seg.scope)
