@@ -202,6 +202,8 @@ export interface ViewContext<C = JsonObject, D = Json> {
   readonly expanded: ReadonlySet<string>
   /** The pinned session root. */
   readonly root: string | undefined
+  /** The home folder of the person: `HOME`, when absolute. Absent: the engine gave none, or a relative one. Display only. */
+  readonly home: string | undefined
   /** The `/track show-all` toggle. A tracker that hides rows by time shows them all while `showAll` is on. */
   readonly hidden: HiddenState
   isDismissed(id: string): boolean
