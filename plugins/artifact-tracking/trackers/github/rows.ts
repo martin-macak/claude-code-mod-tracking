@@ -5,10 +5,10 @@
 
 import type { Json } from '../../core/interfaces/items'
 import type { RepoRef } from '../../core/interfaces/ports'
-import type { TreeRow, ViewContext } from '../../core/interfaces/view'
+import type { RowStatus, StatusToken, TreeRow, ViewContext } from '../../core/interfaces/view'
 import { itemRow, type Tone, toned, viaPrefix } from '../../core/lib/rows'
 import { compactIds } from '../../core/lib/text'
-import { conflictNote, type MergeEnv, mergeChip } from './merge'
+import { conflictNote, isConflicted, type MergeEnv, mergeChip } from './merge'
 import { blockedHint } from './resolve'
 import type { Checks, ConflictFiles, GitHubRecord } from './types'
 
@@ -31,12 +31,31 @@ const lower = (s: string | undefined): string => (s ?? '').toLowerCase()
 const sessionRepoOf = (env: Pick<GithubEnv, 'facts'>): RepoRef | null | undefined =>
   env.facts.read<Json>('session.repo') as unknown as RepoRef | null | undefined
 
-/** The state of a record as the status cell shows it, and its tone. */
-function statusOf(item: GitHubRecord): { status: string; tone: Tone } {
-  if (item.error?.kind === 'not-found') return { status: 'not found', tone: 'bad' }
-  if (item.isDraft) return { status: 'draft', tone: 'dim' }
-  const tone = item.state === 'open' ? 'ok' : item.state === 'merged' || item.state === 'closed' ? 'dim' : 'plain'
-  return { status: item.state ?? '', tone }
+/**
+ * The token of a record (design study of issue #63, section 5.4). An open item with failing checks or a merge conflict has
+ * failed, and with pending checks it waits; any other open item is active. A merged or closed item is done, whatever its
+ * checks said last. A record with no state yet has none.
+ */
+function tokenOf(item: GitHubRecord, env: GithubEnv): StatusToken {
+  switch (item.state) {
+    case 'open':
+      if (item.checks === 'failure' || isConflicted(item, env.merge)) return 'failed'
+      return item.checks === 'pending' ? 'waiting' : 'active'
+    case 'merged':
+    case 'closed':
+      return 'done'
+    default:
+      return 'none'
+  }
+}
+
+/**
+ * The state of a record as the status cell shows it, with its token. A draft says `draft` and keeps the token of an open
+ * item. A record that GitHub does not know (`not found`) has failed: the person has a wrong reference to fix.
+ */
+function statusOf(item: GitHubRecord, env: GithubEnv): RowStatus {
+  if (item.error?.kind === 'not-found') return { label: 'not found', token: 'failed' }
+  return { label: item.isDraft ? 'draft' : (item.state ?? ''), token: tokenOf(item, env) }
 }
 
 /** An issue or a PR in the GitHub section. A key in the session repo reads `#N`, any other `owner/repo#N`. */
@@ -55,12 +74,14 @@ export function githubRow(item: GitHubRecord, env: GithubEnv): TreeRow {
     level: env.levelOf(item.key),
     dismiss: true,
     reasons: item.reasons,
+    firstSeen: item.firstSeen,
+    ...(item.type === 'unknown' ? {} : { kind: item.type }),
     text: {
       key: unresolved || inSession ? `#${item.number}` : `${item.owner}/${item.repo}#${item.number}`,
       href: item.url,
       title: viaPrefix(item.via) + (item.title ?? (unresolved ? 'unresolved: no repo' : '')),
       type: item.type === 'pr' ? 'PR' : item.type === 'issue' ? 'Issue' : '',
-      ...statusOf(item),
+      status: statusOf(item, env),
       ...CHECKS[item.checks ?? 'none'],
     },
   })

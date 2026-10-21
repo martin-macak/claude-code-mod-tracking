@@ -1,9 +1,10 @@
 // The Repos section: one row for each git repository the session read from or edited, oldest first. Pure: it reads the view
-// context and writes nothing. Title, note, cell texts, tones and band keep the text the pane drew before L6;
-// tests/tracker-sections.test.ts pins them.
+// context and writes nothing. Title, note, cell texts and band keep the text the pane drew before L6. The mode word takes
+// its token and color from the mode (issue #63, L2): edit is active (green), read is none (plain).
+// tests/tracker-sections.test.ts and tests/status-tokens.test.ts pin them.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 14, L6 A1.
 
-import type { SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
+import type { RowStatus, SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
 import { textCells } from '../../core/lib/rows'
 import { compactIds } from '../../core/lib/text'
 import type { ReposConfig } from './config'
@@ -13,7 +14,9 @@ import { asRepoRows } from './rows'
 import type { RepoRecord } from './types'
 
 function repoRow(r: RepoRecord): TreeRow {
-  const edit = r.mode === 'edit'
+  // Owner decision (issue #63, L2, comment 6321134636): a repo the session edits is active and draws green, as on main; a repo
+  // it only reads has no state to speak of, so the token is none and the word draws plain.
+  const status: RowStatus = r.mode === 'edit' ? { label: 'edit', token: 'active' } : { label: 'read', token: 'none' }
   return {
     id: repoRowId(r.key),
     owner: 'repos',
@@ -23,11 +26,11 @@ function repoRow(r: RepoRecord): TreeRow {
       type: compactIds(r.touchedBy.join(', ')),
       titleClip: 'middle',
       typeClip: 'middle',
-      status: edit ? 'edit' : 'read',
-      tone: edit ? 'ok' : 'dim',
+      status,
     }),
     can: { dismiss: true, priority: false },
     reasons: repoReasons(r),
+    facets: { status, firstSeen: r.firstSeen },
   }
 }
 

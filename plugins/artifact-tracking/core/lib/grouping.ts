@@ -3,6 +3,7 @@
 // Design study of issue #63, sections 5.2 and 5.10.
 
 import type { GroupSpec, SectionSpec } from '../interfaces/view'
+import { countFailed } from './status'
 
 /** The view the pane draws today: one group for each section of a tracker. */
 export const LIST_VIEW = 'list'
@@ -12,7 +13,9 @@ export const groupId = (view: string, key: string): string => `${view}:${key}`
 
 /**
  * The by-list view: a group for each section, in the order given. The count is the one the section sets, else its
- * top-level rows, and the failing count is the one its band carries (a section with no band has none).
+ * top-level rows, and the failing count is the failures read from the status token `failed`, each once (issue #63, L2,
+ * `countFailed`). The band of the section counts on its own terms and keeps its numbers: the band line above the prompt
+ * does not change.
  */
 export function listGroups(sections: readonly SectionSpec[]): readonly GroupSpec[] {
   return sections.map(s => ({
@@ -21,7 +24,7 @@ export function listGroups(sections: readonly SectionSpec[]): readonly GroupSpec
     ...(s.note !== undefined ? { note: s.note } : {}),
     rows: s.rows,
     count: s.count ?? s.rows.length,
-    failing: s.band?.failing ?? 0,
+    failing: countFailed(s.rows),
     ...(s.empty !== undefined ? { empty: s.empty } : {}),
   }))
 }

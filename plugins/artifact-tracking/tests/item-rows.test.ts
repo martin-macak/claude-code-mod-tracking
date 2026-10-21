@@ -85,7 +85,7 @@ const epic = jira('ISS-101', {
   ],
 })
 
-test('jira tree: root, children and subtasks with depth, ids, links and tones', () => {
+test('jira tree: root, children and subtasks with depth, ids, links and status tokens', () => {
   const rows = flat(rootsOf([epic]))
   expect(rows.map(({ row, depth }) => [row.id, depth])).toEqual([
     [`jira:${SITE}/ISS-101`, 0],
@@ -95,11 +95,11 @@ test('jira tree: root, children and subtasks with depth, ids, links and tones', 
   ])
   const [root, child, sub, leaf] = rows.map(r => r.row)
   expect([text(root, 'name'), text(root, 'description'), text(root, 'type')]).toEqual(['ISS-101', 'Onboarding', 'Epic'])
-  expect(cellOf(root, 'status')).toEqual({ text: 'In Progress', fg: 'warning' })
+  expect(cellOf(root, 'status')).toEqual({ text: 'In Progress', fg: 'success' }) // indeterminate: active
   expect(cellOf(root, 'name').href).toBe(`https://${SITE}/browse/ISS-101`)
   expect(cellOf(child, 'name').href).toBe(`https://${SITE}/browse/ISS-102`)
-  expect(cellOf(sub, 'status')).toEqual({ text: 'Done', fg: 'success' })
-  expect(cellOf(leaf, 'status')).toEqual({ text: 'To Do' })
+  expect(cellOf(sub, 'status')).toEqual({ text: 'Done', fg: 'inactive' }) // done
+  expect(cellOf(leaf, 'status')).toEqual({ text: 'To Do', fg: 'warning' }) // new: waiting
   expect(root?.expandedByDefault).toBe(true)
   expect(sub?.expandedByDefault).toBeUndefined() // a leaf has nothing to open
 })
@@ -125,11 +125,8 @@ test('jira title falls back to the label; not-found wins over everything', () =>
 
 test('jira on another site, or flagged trackOnly, shows track-only; an unknown active site does not', () => {
   const other = jira('ISS-200', { site: 'other.atlassian.net', status: 'Done', statusCategory: 'done' })
-  expect(cellOf(rootsOf([other])[0], 'status')).toEqual({ text: 'track-only', dim: true })
-  expect(cellOf(rootsOf([jira('ISS-201', { trackOnly: true })])[0], 'status')).toEqual({
-    text: 'track-only',
-    dim: true,
-  })
+  expect(cellOf(rootsOf([other])[0], 'status')).toEqual({ text: 'track-only' }) // no state is known: token none
+  expect(cellOf(rootsOf([jira('ISS-201', { trackOnly: true })])[0], 'status')).toEqual({ text: 'track-only' })
   // The site comparison ignores case.
   const upper = jira('ISS-202', { site: SITE.toUpperCase(), status: 'To Do', statusCategory: 'new' })
   expect(text(rootsOf([upper])[0], 'status')).toBe('To Do')
@@ -282,12 +279,12 @@ const gh = (over: Partial<GitHubRecord> = {}): GitHubRecord => ({
 })
 const ghEnv = { facts: { read: () => undefined }, levelOf: () => ({}) } as unknown as Parameters<typeof githubRow>[1]
 
-test('github status and tone: open ok, merged and closed dim, draft dim, not found bad', () => {
+test('github status words and their token colors: open active, merged and closed done, draft as open, not found failed', () => {
   const st = (over: Partial<GitHubRecord>) => cellOf(githubRow(gh(over), ghEnv), 'status')
   expect(st({ state: 'open' })).toEqual({ text: 'open', fg: 'success' })
-  expect(st({ state: 'merged' })).toEqual({ text: 'merged', dim: true })
-  expect(st({ state: 'closed' })).toEqual({ text: 'closed', dim: true })
-  expect(st({ state: 'open', isDraft: true })).toEqual({ text: 'draft', dim: true })
+  expect(st({ state: 'merged' })).toEqual({ text: 'merged', fg: 'inactive' })
+  expect(st({ state: 'closed' })).toEqual({ text: 'closed', fg: 'inactive' })
+  expect(st({ state: 'open', isDraft: true })).toEqual({ text: 'draft', fg: 'success' })
   expect(st({ error: { kind: 'not-found', message: 'x', at: 1 } })).toEqual({ text: 'not found', fg: 'error' })
   expect(text(githubRow(gh({ type: 'issue' }), ghEnv), 'type')).toBe('Issue')
 })

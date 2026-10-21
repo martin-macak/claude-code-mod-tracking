@@ -256,7 +256,7 @@ test('every section writes the shared columns: control for the item sections, th
   }
   expect(Object.fromEntries(sections.map(s => [s.id, cellsOf(s.id)]))).toEqual({
     worktrees: { cells: ['name', 'description', 'status'], extras: false },
-    agents: { cells: ['name', 'description', 'type'], extras: false },
+    agents: { cells: ['name', 'description', 'type', 'status'], extras: false },
     prs: { cells: ['control', 'name', 'description', 'type', 'status'], extras: true },
     jira: { cells: ['control', 'name', 'description', 'type', 'status'], extras: false },
     github: { cells: ['control', 'name', 'description', 'type', 'status'], extras: true },
@@ -281,7 +281,8 @@ test('the extras of a PR are the checks, and of a file the views and who read it
 })
 
 // Main cut these cells in the middle (`truncate-middle`): a branch or a path keeps both ends. Every other cell is cut at the end.
-// The Name of a process row joined them in issue #49: its path shows from `./`, and the end of a command matters.
+// The name of a process row joined them in issue #49: its path shows from `./`, and the end of a command matters. Since
+// issue #63, L2, that name is the Name cell, and so is the file name, which keeps its extension.
 test('the branch, path and process name cells cut in the middle, every other cell at the end', async () => {
   const t = await paneWorld()
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)
@@ -299,8 +300,9 @@ test('the branch, path and process name cells cut in the middle, every other cel
     'prs.type',
     'repos.description',
     'repos.type',
+    'file.name',
     'file.description',
-    'processes.description', // issue #49: a command with a long path keeps both ends
+    'processes.name', // issue #49: a command with a long path keeps both ends
   ])
   for (const id of ['github', 'jira', 'web', 'artifact'])
     for (const r of walk(section(sections, id).rows))
@@ -350,14 +352,14 @@ test('a Jira root holds its children with expandedByDefault and child ids parent
   expect(cell(root, 'name').href).toBe('https://acme.atlassian.net/browse/ISS-1')
 })
 
-test('the Jira status words: track-only on a site that is not active, not found, and the category tones', async () => {
+test('the Jira status words: track-only on a site that is not active, not found, and the category tokens', async () => {
   const t = await paneWorld()
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)
-  expect(cell(find(sections, 'jira', KEYS.jiraTrackOnly), 'status')).toEqual({ text: 'track-only', dim: true })
+  expect(cell(find(sections, 'jira', KEYS.jiraTrackOnly), 'status')).toEqual({ text: 'track-only' })
   expect(cell(find(sections, 'jira', KEYS.jiraGone), 'status')).toEqual({ text: 'not found', fg: 'error' })
-  expect(cell(find(sections, 'jira', KEYS.jira), 'status')).toEqual({ text: 'In Progress', fg: 'warning' })
+  expect(cell(find(sections, 'jira', KEYS.jira), 'status')).toEqual({ text: 'In Progress', fg: 'success' })
   const subtask = find(sections, 'jira', 'jira:acme.atlassian.net/ISS-1/PROJ-201/PROJ-301')
-  expect(cell(subtask, 'status')).toEqual({ text: 'Done', fg: 'success' })
+  expect(cell(subtask, 'status')).toEqual({ text: 'Done', fg: 'inactive' })
   expect(cell(subtask, 'control')).toEqual({ text: '▲' })
   expect(section(sections, 'jira').note).toEqual({ text: 'acli · acme.atlassian.net · refreshed 1m ago' })
   // A site is "not the active one" only when acli names an active one.
@@ -368,17 +370,17 @@ test('the Jira status words: track-only on a site that is not active, not found,
   expect(section(idle, 'github').note).toEqual({ text: 'gh · checking…' })
 })
 
-test('cells carry tones as tokens', async () => {
+test('cells carry the color of their status token and of their tone', async () => {
   const t = await paneWorld()
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)
   const head = find(sections, 'prs', KEYS.head)
-  expect(cell(head, 'status')).toEqual({ text: 'open', fg: 'success' })
+  expect(cell(head, 'status')).toEqual({ text: 'open', fg: 'error' }) // open with failing checks: failed
   expect(head?.extras).toEqual([{ text: '✗ checks', fg: 'error' }])
   expect(cell(head, 'control')).toEqual({ text: '★', dim: true }) // a rule gave the level
   expect(find(sections, 'prs', KEYS.stacked)?.extras).toEqual([{ text: '… checks', fg: 'warning' }])
-  expect(cell(find(sections, 'prs', KEYS.merged), 'status')).toEqual({ text: 'merged', dim: true })
+  expect(cell(find(sections, 'prs', KEYS.merged), 'status')).toEqual({ text: 'merged', fg: 'inactive' })
   expect(cell(find(sections, 'github', KEYS.viaIssue), 'control')).toEqual({ text: '▲' }) // the person's mark
-  expect(cell(find(sections, 'github', KEYS.draft), 'status')).toEqual({ text: 'draft', dim: true })
+  expect(cell(find(sections, 'github', KEYS.draft), 'status')).toEqual({ text: 'draft', fg: 'success' }) // an open PR: active
   expect(find(sections, 'file', KEYS.viewed)?.extras?.at(-1)).toEqual({ text: 'subagent', dim: true })
 })
 
@@ -510,7 +512,7 @@ test('artifact, web and file rows', async () => {
   const deleted = find(sections, 'artifact', KEYS.deleted)
   expect(deleted?.dim).toBe(true)
   expect(cell(deleted, 'name').href).toBeUndefined() // a deleted page has no link
-  expect(cell(deleted, 'status')).toEqual({ text: 'deleted', dim: true })
+  expect(cell(deleted, 'status')).toEqual({ text: 'deleted', fg: 'inactive' })
   const mentioned = find(sections, 'artifact', KEYS.mentioned)
   expect(cell(mentioned, 'description').text).toBe('') // the name is the id: it shows once
   expect(cell(mentioned, 'type').text).toBe('mentioned')
@@ -520,17 +522,18 @@ test('artifact, web and file rows', async () => {
   expect(cell(find(sections, 'web', KEYS.web2), 'description').text).toBe('docs.example/b')
   expect(cell(find(sections, 'web', KEYS.web2), 'name').text).toBe('The B page')
   expect(section(sections, 'web').note).toEqual({ text: '2 links' })
-  // A file shows its path below the session root, one cell per activity.
+  // A file shows its name, its folder below the session root (empty at the root), one cell per activity.
   const created = find(sections, 'file', KEYS.created)
-  expect(cell(created, 'name')).toEqual({ text: '' })
-  expect(cell(created, 'description').text).toBe('plan.md')
+  expect(cell(created, 'name')).toEqual({ text: 'plan.md', clip: 'middle' })
+  expect(cell(created, 'description').text).toBe('')
   expect(cell(created, 'type').text).toBe('created')
   const edited = find(sections, 'file', KEYS.edited)
-  expect([cell(edited, 'description').text, cell(edited, 'status').text, edited?.extras?.[0]?.text]).toEqual([
-    'docs/spec.md',
-    'edited 2',
-    'viewed 1',
-  ])
+  expect([
+    cell(edited, 'name').text,
+    cell(edited, 'description').text,
+    cell(edited, 'status').text,
+    edited?.extras?.[0]?.text,
+  ]).toEqual(['spec.md', 'docs', 'edited 2', 'viewed 1'])
   expect(section(sections, 'file').note).toEqual({ text: '3 files' })
   // With no root the path shows as written; a mention that nothing else touched reads as mentioned.
   t.m.facts.publish('auto.root', undefined)
@@ -543,8 +546,14 @@ test('artifact, web and file rows', async () => {
   }
   t.w.state.set('items', [{ ...mention, views: 0, bySubagent: undefined }] as unknown as Json)
   const rows = section(await t.m.paneData(t.w.ports, NO_VIEW), 'file').rows
-  expect([cell(rows[0], 'description').text, cell(rows[0], 'type').text, rows[0]?.extras]).toEqual([
-    '/work/m.md',
+  expect([
+    cell(rows[0], 'name').text,
+    cell(rows[0], 'description').text,
+    cell(rows[0], 'type').text,
+    rows[0]?.extras,
+  ]).toEqual([
+    'm.md',
+    '/work',
     'mentioned',
     undefined, // nothing viewed and no subagent: no badge
   ])

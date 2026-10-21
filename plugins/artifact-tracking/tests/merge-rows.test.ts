@@ -103,7 +103,8 @@ test('the checks badge stays beside the chip: a conflict hides no checks glyph',
 test('AC6: a draft PR with CONFLICTING and DRAFT shows the chip; its state cell still says draft', () => {
   const ctx = view([pr(7, { isDraft: true, mergeable: 'CONFLICTING', mergeStateStatus: 'DRAFT' })])
   expect(texts(ctx, 7)[0]).toBe('✗ conflicts')
-  expect(rowOf(ctx, 7).cells.status).toEqual({ text: 'draft', dim: true })
+  // The word stays `draft`. A draft takes the token of an open PR, and a conflict is a failure: the word draws red.
+  expect(rowOf(ctx, 7).cells.status).toEqual({ text: 'draft', fg: 'error' })
 })
 
 test('AC4: an UNKNOWN PR shows no chip until the retries are spent, then the dim ? merge', () => {

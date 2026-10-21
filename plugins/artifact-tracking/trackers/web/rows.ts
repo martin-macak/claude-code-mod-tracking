@@ -23,6 +23,7 @@ export function webRow(item: WebRecord, env: Pick<ViewContext, 'levelOf'>): Tree
     level: env.levelOf(item.key),
     dismiss: true,
     reasons: item.reasons,
+    firstSeen: item.firstSeen,
     text: { key: item.label, href: item.url, title: viaPrefix(item.via) + urlText(item.url) },
   })
 }

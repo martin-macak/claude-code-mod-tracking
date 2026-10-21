@@ -59,10 +59,22 @@ test('the count of a section wins over its top-level rows: a tree section that h
   expect(listGroups([section('wt', [], { count: 0 })])[0]?.count).toBe(0)
 })
 
-test('the failing count is the failing count of the band of the section, 0 when it has none', () => {
+test('the failing count is the rows with the token failed, at every depth; the band of the section does not count', () => {
+  const failed = (id: string, children?: TreeRow[]): TreeRow => ({
+    ...row(id, children),
+    facets: { status: { label: 'x', token: 'failed' } },
+  })
+  const active = (id: string, children?: TreeRow[]): TreeRow => ({
+    ...row(id, children),
+    facets: { status: { label: 'x', token: 'active' } },
+  })
   const band = (failing: number) => ({ label: 'PRs', count: 5, failing, rank: 1 })
-  expect(listGroups([section('prs', [row('a')], { band: band(2) })])[0]?.failing).toBe(2)
+  // Two failed rows and a band that says 0: the group says 2. A band that says 5 and no failed row: 0.
+  expect(listGroups([section('prs', [failed('a'), active('b'), failed('c')], { band: band(0) })])[0]?.failing).toBe(2)
+  expect(listGroups([section('prs', [active('a'), row('b')], { band: band(5) })])[0]?.failing).toBe(0)
   expect(listGroups([section('web', [row('a')])])[0]?.failing).toBe(0)
+  // A failed row below a row that did not fail counts: the agents hang under one root row.
+  expect(listGroups([section('agents', [active('m', [failed('a'), active('b', [failed('c')])])])])[0]?.failing).toBe(2)
 })
 
 test('a group has the rows of its section, as the same array', () => {
