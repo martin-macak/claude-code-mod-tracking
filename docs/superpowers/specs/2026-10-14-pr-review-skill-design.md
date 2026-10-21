@@ -55,7 +55,7 @@ The issue has the label `design available`. The study lives in an issue comment.
 
 | Shape | How to find it | What the parser gets |
 | --- | --- | --- |
-| Design study (#28–#31) | Comment starts with `## Design study:` | Score table (`Rank`, `Item`, `Priority`, `Verdict`, `Evidence`, `Ease`, `Safety`, `Score`). Mechanism and caveat from any table whose first cell starts with `R<n>`, matched by header name. Overall line. |
+| Design study (#28–#31, #63, #69) | Comment starts with `## Design study:` | One score table per phase (`Rank`, `Item`, `Priority`, `Verdict`, `Evidence`, `Ease`, `Safety`, `Score`), each under a whole-line bold label such as `**Phase 1, PR 1**`. An item in several phase tables takes its scores from the first table that holds it, and `phases` lists the label of each table. A score table in `<details>` is a roll-up: it runs last and adds no phase to a known item. A phase table must not sit in `<details>`. Section 2 rows give mechanism and caveat, matched by header name. Overall line. |
 | Design draft (#33) | Comment starts with `## Design draft` or the issue body has `### Proposal` | No scores. The parser returns `{ kind: 'draft', items: [] }`. The review uses the acceptance criteria and states "Design has no feasibility scores" under How the review ran. |
 | Label but no comment | — | A `Minor` finding: "Label `design available` but no design found". |
 
@@ -66,15 +66,23 @@ The score table comes from `design-study/scripts/score.mjs`, so its shape is sta
 ```json
 {
   "kind": "study",
-  "feature": "#31 Track other repositories that the session visits",
+  "title": "Track other repositories that the session visits",
   "overall": { "verdict": "Go with caveats", "mean": 74 },
   "items": [
     { "id": "R2", "name": "Shell: cd, git -C, gh -R", "priority": "Must", "verdict": "Partial",
       "evidence": 5, "ease": 3, "safety": 3, "score": 60,
-      "mechanism": "splitShell + stripWrappers …", "caveat": "Not seen: commands inside quotes …" }
-  ]
+      "mechanism": "splitShell + stripWrappers …", "caveat": "Not seen: commands inside quotes …" },
+    { "id": "R12", "name": "Hook timing across the two phases", "priority": "Must", "verdict": "Feasible",
+      "evidence": 4, "ease": 4, "safety": 4, "score": 90,
+      "mechanism": "…", "caveat": "…", "phases": ["Phase 1, PR 1", "Phase 2"] }
+  ],
+  "warnings": []
 }
 ```
+
+`warnings` lists each item with no verdict or no score, each item on which two phases give a different verdict or a different evidence, ease, safety or score (the warning names each field that differs, and the first phase's value stays), and each section 2 row that names an item no score table holds. The list is empty when the study is clean.
+
+`phases` appears on an item only when the study has more than one score table. It lists the label of each table that holds the item. R2 comes from a one-table study, so it has no `phases`. R12 is illustrative: it shows an item that two phase tables hold.
 
 ### 3.4 Existing review threads
 
@@ -133,7 +141,7 @@ Agents load the `jev_*` tools with `ToolSearch`. A Jev answer is a proposal: `re
   "pr": { "number": 42, "title": "…", "base": "<sha>", "head": "<sha>", "files": ["…"] },
   "issue": { "number": 31, "title": "…", "source": "closing" },
   "design": { "kind": "study", "overall": { "verdict": "Go with caveats", "mean": 74 } },
-  "items": [ { "id": "R1", "text": "…", "priority": "Must", "study": { "verdict": "Partial", "score": 63, "mechanism": "…", "caveat": "…" } } ],
+  "items": [ { "id": "R1", "text": "…", "priority": "Must", "study": { "verdict": "Partial", "score": 63, "mechanism": "…", "caveat": "…", "phases": ["…"] } } ],
   "threads": [ { "path": "…", "line": 204, "body": "…", "resolved": false } ],
   "jev": true
 }
@@ -244,7 +252,7 @@ The body stays under 60,000 characters. When it is longer, the Nit section colla
 
 ## 9. Testing
 
-- `parse-study.test.mjs`: fixtures cut from the #30 and #31 study comments (merged and split tables) and the #33 draft. Checks: item ids, priorities, verdicts, scores, mechanism and caveat merged by id, overall line, `kind: 'draft'` with no items, an error on text with no table.
+- `parse-study.test.mjs`: fixtures cut from the #30 and #31 study comments (merged and split tables), the #33 draft, and the #63 and #69 studies (`study-63.md` and `study-69.md`, each with several phase tables). Checks: item ids, priorities, verdicts, scores, mechanism and caveat merged by id, overall line, `kind: 'draft'` with no items, an error on text with no table. For phase tables: every phase gives its items; an item in two phases keeps both labels; a later table fills a blank; a disagreement between phases warns, also when only one of evidence, ease or safety differs; a `<details>` roll-up adds no phase; a study with one table has no `phases`; a section 2 row alone gives a warning; no verdict or no score gives a warning, never a 0.
 - `workflow.test.mjs`: loads `workflow.js` with fake `agent`, `pipeline`, `parallel`, `phase`, `log` and `args`. Checks: only items not `Implemented` reach Reassess; a refuted finding is dropped; duplicates merge with the highest severity; findings sort by severity; the verdict rule; dropped items are logged.
 - Acceptance run: the skill reviews PR #42 against #31 and stops at the preview. Nothing is posted. The preview must list R1–R15 with a status each and at least one reassessed item.
 

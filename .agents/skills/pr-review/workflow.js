@@ -13,7 +13,7 @@ export const meta = {
 
 // Spec: docs/superpowers/specs/2026-10-14-pr-review-skill-design.md
 // args: { pr: { number, title, base, head, files }, issue: { number, title, source } | null,
-//   design: { kind, overall } | null, items: [{ id, text, priority, study? }],
+//   design: { kind, overall } | null, items: [{ id, text, priority, study?: { verdict, score, mechanism, caveat, phases? } }],
 //   threads: [{ path, line, body }], findings: [finding], jev: boolean }
 // Without the Workflow tool, run each agent() step below yourself, in order.
 
