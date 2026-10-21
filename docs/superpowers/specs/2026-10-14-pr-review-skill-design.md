@@ -80,7 +80,7 @@ The score table comes from `design-study/scripts/score.mjs`, so its shape is sta
 }
 ```
 
-`warnings` lists each item with no verdict or no score, each item on which two phases disagree, and each section 2 row that names an item no score table holds. The list is empty when the study is clean.
+`warnings` lists each item with no verdict or no score, each item on which two phases give a different verdict or a different evidence, ease, safety or score (the warning names each field that differs, and the first phase's value stays), and each section 2 row that names an item no score table holds. The list is empty when the study is clean.
 
 `phases` appears on an item only when the study has more than one score table. It lists the label of each table that holds the item. R2 comes from a one-table study, so it has no `phases`. R12 is illustrative: it shows an item that two phase tables hold.
 
@@ -252,7 +252,7 @@ The body stays under 60,000 characters. When it is longer, the Nit section colla
 
 ## 9. Testing
 
-- `parse-study.test.mjs`: fixtures cut from the #30 and #31 study comments (merged and split tables), the #33 draft, and the #63 and #69 studies (`study-63.md` and `study-69.md`, each with several phase tables). Checks: item ids, priorities, verdicts, scores, mechanism and caveat merged by id, overall line, `kind: 'draft'` with no items, an error on text with no table. For phase tables: every phase gives its items; an item in two phases keeps both labels; a later table fills a blank; a disagreement between phases warns; a `<details>` roll-up adds no phase; a study with one table has no `phases`; a section 2 row alone gives a warning; no verdict or no score gives a warning, never a 0.
+- `parse-study.test.mjs`: fixtures cut from the #30 and #31 study comments (merged and split tables), the #33 draft, and the #63 and #69 studies (`study-63.md` and `study-69.md`, each with several phase tables). Checks: item ids, priorities, verdicts, scores, mechanism and caveat merged by id, overall line, `kind: 'draft'` with no items, an error on text with no table. For phase tables: every phase gives its items; an item in two phases keeps both labels; a later table fills a blank; a disagreement between phases warns, also when only one of evidence, ease or safety differs; a `<details>` roll-up adds no phase; a study with one table has no `phases`; a section 2 row alone gives a warning; no verdict or no score gives a warning, never a 0.
 - `workflow.test.mjs`: loads `workflow.js` with fake `agent`, `pipeline`, `parallel`, `phase`, `log` and `args`. Checks: only items not `Implemented` reach Reassess; a refuted finding is dropped; duplicates merge with the highest severity; findings sort by severity; the verdict rule; dropped items are logged.
 - Acceptance run: the skill reviews PR #42 against #31 and stops at the preview. Nothing is posted. The preview must list R1–R15 with a status each and at least one reassessed item.
 

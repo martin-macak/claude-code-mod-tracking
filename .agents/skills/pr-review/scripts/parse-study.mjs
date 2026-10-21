@@ -9,7 +9,7 @@
 // <details>: its label is lost for an item that another table holds. Section 2
 // rows add text, mechanism and caveat, and an item that only they name. A warning
 // names each item with no verdict or no score, and each item on which two phases
-// disagree.
+// give a different verdict or a different evidence, ease, safety or score.
 // Usage: node parse-study.mjs <comment.md>   (or the text on stdin)
 
 import { readFileSync } from 'node:fs'
@@ -91,17 +91,18 @@ function scoreItem(row, m, phase) {
   }
 }
 
-// A later table fills a blank of the first one. It never replaces a value.
+// A later table fills a blank of the first one. It never replaces a value. Two
+// tables disagree when they give different values for the verdict or for any
+// score axis (evidence, ease, safety, score). The warning names those fields.
 function mergeRow(it, row, m, phase, warn) {
   const next = scoreItem(row, m, phase)
-  const said = (v, s) => `${DASHES.test(v) ? '-' : v} ${s ?? '-'}`
-  const clash =
-    (!noVerdict(it) && !noVerdict(next) && it.verdict !== next.verdict) ||
-    (it.score !== null && next.score !== null && it.score !== next.score)
-  if (clash) {
-    warn(
-      `${it.id}: phases disagree ("${it.labels[0]}": ${said(it.verdict, it.score)}, "${phase}": ${said(next.verdict, next.score)}). Kept the first.`,
-    )
+  const differs = [
+    !noVerdict(it) && !noVerdict(next) && it.verdict !== next.verdict && 'verdict',
+    ...NUMBERS.filter((k) => it[k] !== null && next[k] !== null && it[k] !== next[k]),
+  ].filter(Boolean)
+  if (differs.length) {
+    const said = (x) => differs.map((k) => `${k} ${x[k]}`).join(', ')
+    warn(`${it.id}: phases disagree ("${it.labels[0]}": ${said(it)}; "${phase}": ${said(next)}). Kept the first.`)
   }
   if (noVerdict(it)) it.verdict = next.verdict
   if (DASHES.test(it.priority)) it.priority = next.priority

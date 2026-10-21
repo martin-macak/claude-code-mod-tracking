@@ -245,7 +245,63 @@ ${SCORE_HEAD}
   )
   assert.equal(s.items[1].score, 65)
   assert.deepEqual([s.items[2].verdict, s.items[2].score], ['Partial', 60])
-  assert.deepEqual(s.warnings, ['R3: phases disagree ("Phase 1": Partial 60, "Phase 2": Feasible 90). Kept the first.'])
+  assert.deepEqual(s.warnings, [
+    'R3: phases disagree ("Phase 1": verdict Partial, evidence 4, ease 3, safety 3, score 60; "Phase 2": verdict Feasible, evidence 5, ease 4, safety 4, score 90). Kept the first.',
+  ])
+})
+
+// Same verdict and same total, one other axis differs: the phases still disagree.
+const rowWith = (axis, value) => {
+  const axes = { evidence: 5, ease: 4, safety: 4, [axis]: value }
+  return `| 1 | R1 One | Must | Feasible | ${axes.evidence} | ${axes.ease} | ${axes.safety} | 90 |`
+}
+for (const [axis, first, second] of [
+  ['evidence', 5, 3],
+  ['ease', 4, 2],
+  ['safety', 4, 1],
+]) {
+  test(`two phases with the same verdict and total but a different ${axis} warn, and keep the first`, () => {
+    const s = parseStudy(
+      study(`**Phase 1**
+
+${SCORE_HEAD}
+${rowWith(axis, first)}
+
+**Phase 2**
+
+${SCORE_HEAD}
+${rowWith(axis, second)}`),
+    )
+    assert.deepEqual(s.warnings, [
+      `R1: phases disagree ("Phase 1": ${axis} ${first}; "Phase 2": ${axis} ${second}). Kept the first.`,
+    ])
+    assert.equal(s.items[0][axis], first)
+    assert.deepEqual(s.items[0].phases, ['Phase 1', 'Phase 2'])
+  })
+}
+
+test('a disagreement names every axis that differs, and a blank axis is filled with no warning', () => {
+  const s = parseStudy(
+    study(`**Phase 1**
+
+${SCORE_HEAD}
+| 1 | R1 One | Must | Feasible | 5 | 4 | 4 | 90 |
+| 2 | R2 Two | Must | Partial | 4 |  | 3 | 60 |
+
+**Phase 2**
+
+${SCORE_HEAD}
+| 1 | R1 One | Must | Feasible | 3 | 4 | 1 | 90 |
+| 2 | R2 Two | Must | Partial | 4 | 3 | 3 | 60 |`),
+  )
+  assert.deepEqual(s.warnings, ['R1: phases disagree ("Phase 1": evidence 5, safety 4; "Phase 2": evidence 3, safety 1). Kept the first.'])
+  assert.deepEqual(
+    s.items.map((i) => [i.id, i.evidence, i.ease, i.safety]),
+    [
+      ['R1', 5, 4, 4],
+      ['R2', 4, 3, 3],
+    ],
+  )
 })
 
 test('a score table in details is a roll-up: it adds no phase to a known item, but a new item stays', () => {
