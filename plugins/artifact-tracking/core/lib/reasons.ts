@@ -29,6 +29,9 @@ export const isCoreReason = (v: unknown): v is CoreReason => typeof v === 'strin
 const ordered = (reasons: Iterable<CoreReason>): CoreReason[] =>
   [...new Set(reasons)].sort((a, b) => RANK.get(a)! - RANK.get(b)!)
 
+/** The stronger of two reasons by the fixed precedence. `a` when they are equal. */
+export const strongerReason = (a: CoreReason, b: CoreReason): CoreReason => (RANK.get(b)! < RANK.get(a)! ? b : a)
+
 /** The set of one sighting: `reason` is first, all and strongest. */
 export function reasonSet(reason: CoreReason): ReasonSet {
   return { first: reason, all: [reason], strongest: reason }

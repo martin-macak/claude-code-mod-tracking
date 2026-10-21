@@ -49,7 +49,6 @@ function stubHost(): ItemsHost & { ctx?: HostContext } {
     start: async ctx => {
       host.ctx = ctx
     },
-    capture: async () => {},
     replay: async () => {},
     tick: async () => {},
     sessionChanged: async () => {},

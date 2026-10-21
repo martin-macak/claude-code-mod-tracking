@@ -5,13 +5,24 @@
 
 import { UNKNOWN } from './manifest'
 
-export const USAGE = 'Usage: /track [refresh|clear|help|version|show-all|prio <ref> <high|normal|low|auto>]'
+/** The toast when the terminal has no room for the pane. */
+export const NO_ROOM = 'Widen the terminal to see the tracking pane'
+
+export const USAGE = 'Usage: /track [refresh|clear|help|version|show-all|turn [n]|prio <ref> <high|normal|low|auto>]'
 /** The argument hint while no tracker declares a sub-command. */
-export const CORE_HINT = '[refresh|clear|help|version|show-all|prio <ref> <level>]'
+export const CORE_HINT = '[refresh|clear|help|version|show-all|turn [n]|prio <ref> <level>]'
 /** `/track prio` levels: `auto` removes the person's mark. */
 export const PRIO_WORDS: ReadonlySet<string> = new Set(['high', 'normal', 'low', 'auto'])
 /** The subs core answers. A tracker cannot take one of them. */
-export const CORE_SUBS: ReadonlySet<string> = new Set(['refresh', 'clear', 'help', 'version', 'show-all', 'prio'])
+export const CORE_SUBS: ReadonlySet<string> = new Set([
+  'refresh',
+  'clear',
+  'help',
+  'version',
+  'show-all',
+  'turn',
+  'prio',
+])
 
 /** The reply of `/track version`: the name and the version of the mod, so a bug report can quote one line. */
 export const versionText = (version: string | undefined): string => `artifact-tracking ${version ?? UNKNOWN}`

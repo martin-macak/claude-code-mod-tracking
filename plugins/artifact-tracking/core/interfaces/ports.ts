@@ -2,7 +2,7 @@
 // The type is split, so each consumer takes only its part (ISP).
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.4 and 5.13.
 
-import type { Json, StoredItem, ToolStatus } from '../../types'
+import type { Json, StoredItem, ToolStatus, TurnLedger } from '../../types'
 import type { HiddenState } from './view'
 
 /** The engine's timer handle. */
@@ -147,6 +147,8 @@ export interface StatePorts {
   readonly help: AtomPort<boolean>
   /** `/track show-all`: shows the rows the TTL hides, until `/clear`. */
   readonly hidden: AtomPort<HiddenState>
+  /** Issue #69: what each main-loop turn tracked. The TurnLedger writes it, Persistence stores it. */
+  readonly turns: AtomPort<TurnLedger>
 }
 
 /** The plugin store: the plugin's key-value store. Persistence is its only writer. */

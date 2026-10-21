@@ -1,10 +1,12 @@
 // The members of an item host that a test double of `ItemsHost` rarely needs: they do nothing and answer nothing.
 // A stub spreads it first and lists the members it cares about after it. `port` hands back the host itself.
 import type { ItemStorePort, ItemsHost } from '../../core/interfaces/items'
+import { NO_SIGHTINGS } from '../../core/lib/turns'
 
 export const IDLE_ITEMS: Pick<
   ItemsHost,
   | 'ready'
+  | 'capture'
   | 'toolCall'
   | 'wants'
   | 'problems'
@@ -21,7 +23,8 @@ export const IDLE_ITEMS: Pick<
   | 'build'
 > = {
   ready: true,
-  toolCall: async () => {},
+  capture: async () => NO_SIGHTINGS,
+  toolCall: async () => NO_SIGHTINGS,
   wants: () => false,
   problems: () => [],
   prepare: async () => {},

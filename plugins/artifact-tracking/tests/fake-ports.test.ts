@@ -155,9 +155,19 @@ test('session, env, settings, agents and ui answer what the test set', async () 
   w.ports.ui.invalidate()
   w.ports.ui.toast('hi')
   w.ports.log('line')
-  expect(w.ui).toEqual({ opened: 1, placed: true, focused: ['k'], invalidated: 1, toasts: ['hi'], panes: [] })
+  expect(w.ui).toEqual({
+    opened: 1,
+    openedWith: [null], // nothing was selected at the open
+    placed: true,
+    focused: ['k'],
+    invalidated: 1,
+    toasts: ['hi'],
+    panes: [],
+  })
   w.ui.placed = false // a terminal too narrow for the pane
+  w.state.set('selected', 'row-1')
   expect(await w.ports.ui.open()).toBe(false)
+  expect(w.ui.openedWith).toEqual([null, 'row-1']) // the row that is selected when the pane opens
   expect(await w.ports.ui.panes()).toEqual([])
   expect(w.logs).toEqual(['line'])
 })

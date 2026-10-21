@@ -43,8 +43,8 @@ test('/track version needs no session.start: the entry of the command starts the
 test('the usage line and the argument hint name version', async ($, on) => {
   const w = world(on, { manifest: MANIFEST })
   await $.session.start(START)
-  expect(w.registered.at(-1)?.argumentHint).toBe('[refresh|clear|help|version|show-all|prio <ref> <level>]')
-  expect(await text($, 'bogus')).toContain('help|version|show-all|prio')
+  expect(w.registered.at(-1)?.argumentHint).toBe('[refresh|clear|help|version|show-all|turn [n]|prio <ref> <level>]')
+  expect(await text($, 'bogus')).toContain('help|version|show-all|turn [n]|prio')
 })
 
 // ---------------------------------------------------------------- AC 2: the help view shows the version

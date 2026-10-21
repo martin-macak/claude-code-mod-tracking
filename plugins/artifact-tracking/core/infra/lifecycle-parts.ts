@@ -10,6 +10,7 @@ import type { Ports } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
 import type { EventBus } from './bus'
+import { NO_ROOM } from './command-text'
 import { type CommandHost, Commands } from './commands'
 import { ItemService } from './items'
 import { Persistence } from './persistence'
@@ -57,6 +58,8 @@ export interface CommandOwner {
   clear(p: Ports): Promise<void>
   flushNow(): Promise<void>
   refreshConfig(p: Ports): Promise<boolean>
+  /** The reply of `/track turn [n]`. */
+  turnText(p: Ports, n: number | undefined): Promise<string>
   /** The version of the mod. Read per call: the first start sets it, so it is `undefined` before that. */
   readonly version: string | undefined
 }
@@ -76,12 +79,13 @@ export function commandHostOf(
       await w.bus.emit('command', ev, p, owner)
     },
     openPane: async p => {
-      if (!(await p.ui.open())) p.ui.toast('Widen the terminal to see the tracking pane')
+      if (!(await p.ui.open())) p.ui.toast(NO_ROOM)
     },
     setPriority: (p, rowId, level) => m.setPriority(p, rowId, level),
     clear: p => m.clear(p),
     flushNow: () => m.flushNow(),
     refreshConfig: p => m.refreshConfig(p),
+    turnText: (p, n) => m.turnText(p, n),
     config: w.config,
     version: () => m.version,
   }

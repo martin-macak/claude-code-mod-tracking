@@ -3,7 +3,7 @@
 // The tones and the cell order keep the text the pane drew before L6, so the /track text stays byte-identical (decision G2).
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 13, L6 A1.
 
-import type { Effective, ReasonSet } from '../interfaces/items'
+import type { Effective, ReasonSet, StoredItem } from '../interfaces/items'
 import type { Cell, ColumnDef, TreeRow } from '../interfaces/view'
 import { byLevel, markerOf } from './levels'
 
@@ -117,4 +117,35 @@ export function viaPrefix(via: readonly string[] | undefined): string {
     return n === undefined ? [] : [`#${n}`]
   })
   return numbers.length > 0 ? `↳${numbers.join(',')} ` : ''
+}
+
+/** The first and the last turn of each item that a turn tracked, by item key. */
+export function turnSpans(items: readonly StoredItem[]): ReadonlyMap<string, NonNullable<TreeRow['turns']>> {
+  const out = new Map<string, NonNullable<TreeRow['turns']>>()
+  for (const i of items) {
+    const first = i.firstTurn
+    const last = i.lastTurn
+    if (typeof first === 'number' && typeof last === 'number') out.set(i.key, { first, last })
+  }
+  return out
+}
+
+/**
+ * The rows with `turns` set from their item (issue #69): the row id is the item key. A row of no item, or of an item no
+ * turn tracked, is left as it is; the same array comes back when no row changes.
+ */
+export function withTurns(
+  rows: readonly TreeRow[],
+  spans: ReadonlyMap<string, NonNullable<TreeRow['turns']>>,
+): readonly TreeRow[] {
+  if (spans.size === 0) return rows
+  let changed = false
+  const out = rows.map(row => {
+    const turns = spans.get(row.id)
+    const children = row.children === undefined ? undefined : withTurns(row.children, spans)
+    if (turns === undefined && children === row.children) return row
+    changed = true
+    return { ...row, ...(turns !== undefined ? { turns } : {}), ...(children !== undefined ? { children } : {}) }
+  })
+  return changed ? out : rows
 }

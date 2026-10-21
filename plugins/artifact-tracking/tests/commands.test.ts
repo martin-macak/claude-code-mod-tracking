@@ -15,7 +15,7 @@ import { promptRow } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
 import { fakePorts, MANIFEST_FILE } from './fixtures/ports'
 
-const USAGE_LITERAL = 'Usage: /track [refresh|clear|help|version|show-all|prio <ref> <high|normal|low|auto>]'
+const USAGE_LITERAL = 'Usage: /track [refresh|clear|help|version|show-all|turn [n]|prio <ref> <high|normal|low|auto>]'
 
 /** A tracker that writes the commands it hears to `log`, with the number of items at that moment. */
 function recorder(log: string[], count: () => number): Tracker {
@@ -155,6 +155,10 @@ function fakeHost(
       return false
     },
     config: { path: () => '/p/config.json', problems: () => o.problems ?? [] },
+    turnText: async (_p, n) => {
+      note(`turnText:${n ?? '-'}`)
+      return `TURN ${n ?? 'last'}`
+    },
     version: () => (o.noVersion ? undefined : (o.version ?? '1.2.3')),
   }
   const commands = new Commands(
@@ -256,10 +260,10 @@ test('a sub that no tracker declared, or that core claims, prints the usage', as
 })
 
 test('the hint is the core literal with no declared command and grows with one', () => {
-  expect(fakeHost().commands.hint()).toBe('[refresh|clear|help|version|show-all|prio <ref> <level>]')
-  expect(CORE_HINT).toBe('[refresh|clear|help|version|show-all|prio <ref> <level>]')
+  expect(fakeHost().commands.hint()).toBe('[refresh|clear|help|version|show-all|turn [n]|prio <ref> <level>]')
+  expect(CORE_HINT).toBe('[refresh|clear|help|version|show-all|turn [n]|prio <ref> <level>]')
   const one = fakeHost({ declared: [notes('a')] }).commands.hint()
-  expect(one).toBe('[refresh|clear|help|version|show-all|prio <ref> <level>|notes <id>]')
+  expect(one).toBe('[refresh|clear|help|version|show-all|turn [n]|prio <ref> <level>|notes <id>]')
   const more = fakeHost({
     declared: [
       notes('a'),
@@ -268,7 +272,7 @@ test('the hint is the core literal with no declared command and grows with one',
       { owner: 'b', spec: { sub: 'sweep', hint: '' } }, // no hint text: no trailing space
     ],
   }).commands.hint()
-  expect(more).toBe('[refresh|clear|help|version|show-all|prio <ref> <level>|notes <id>|sweep]')
+  expect(more).toBe('[refresh|clear|help|version|show-all|turn [n]|prio <ref> <level>|notes <id>|sweep]')
 })
 
 test('the usage line is the core literal and names help', () => {
@@ -353,7 +357,7 @@ function noter(id: string, order: number, log: string[]): Tracker {
 test('a declared command of a live tracker runs through the manager: its first owner only, no broadcast', async () => {
   const log: string[] = []
   const t = managerWorld({ extra: [noter('second', 7, log), noter('first', 6, log)] })
-  expect(t.m.commands.hint()).toBe('[refresh|clear|help|version|show-all|prio <ref> <level>|notes <id>]')
+  expect(t.m.commands.hint()).toBe('[refresh|clear|help|version|show-all|turn [n]|prio <ref> <level>|notes <id>]')
   expect((await t.m.track(t.w.ports, 'notes 7')).text).toBe('No tracked items yet.')
   expect(log).toEqual(['first:notes:7:true'])
 })
@@ -415,7 +419,7 @@ test('version prints unknown when the manifest cannot be read, and the rest of /
 test('a bad argument prints the usage line with help', async () => {
   const t = managerWorld()
   expect((await t.m.track(t.w.ports, 'bogus')).text).toBe(
-    'Usage: /track [refresh|clear|help|version|show-all|prio <ref> <high|normal|low|auto>]',
+    'Usage: /track [refresh|clear|help|version|show-all|turn [n]|prio <ref> <high|normal|low|auto>]',
   )
 })
 
@@ -429,4 +433,29 @@ test('a manager with no listText or helpText in its deps prints no text', async 
   expect(m.items.ready).toBe(true)
   expect((await m.track(w.ports, 'refresh')).text).toBe('')
   expect((await m.track(w.ports, 'help')).text).toBe('')
+})
+
+// ---------------------------------------------------------------- /track turn [n] (issue #69)
+
+test('turn asks the host for the newest turn, or turn n, and prints no list and opens no pane', async () => {
+  const t = fakeHost()
+  expect((await t.commands.run(t.ports, 'turn')).text).toBe('TURN last')
+  expect((await t.commands.run(t.ports, ' TURN  7 ')).text).toBe('TURN 7')
+  expect(t.calls).toEqual(['entry', 'turnText:-', 'entry', 'turnText:7'])
+})
+
+test('turn takes a whole number from 1 and prints its own usage for any other word, after the ready check', async () => {
+  const t = fakeHost()
+  for (const word of ['0', '-1', 'x', '1.5', '1 2', '1234567890', '07x'])
+    expect((await t.commands.run(t.ports, `turn ${word}`)).text).toBe('Usage: /track turn [n]')
+  expect(t.calls.filter(c => c.startsWith('turnText'))).toEqual([])
+  const idle = fakeHost({ ready: false })
+  expect((await idle.commands.run(idle.ports, 'turn')).text).toBe('artifact-tracking: not ready.')
+})
+
+test('a tracker cannot declare the sub turn: core owns it', async () => {
+  const mine: Declared = { owner: 'mine', spec: { sub: 'turn', hint: '<x>' } }
+  const t = fakeHost({ declared: [mine] })
+  expect((await t.commands.run(t.ports, 'turn')).text).toBe('TURN last')
+  expect(t.calls.some(c => c.startsWith('run:'))).toBe(false)
 })

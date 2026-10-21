@@ -15,6 +15,7 @@ import type { Ports } from './ports'
 import type { CoreReason, KindReason } from './reasons'
 import type { DataSlot } from './slots'
 import type { FactsPort, ToolPort, TrackerContext } from './tracker'
+import type { Sightings } from './turns'
 import type { TreeRow, ViewContext } from './view'
 
 export type { Json, JsonObject, Level, StoredItem } from '../../types'
@@ -257,13 +258,16 @@ export interface ItemsHost extends ItemStorePort {
   readonly ready: boolean
   /** Builds the tools and the coordinator once per load, probes the tools, drops the records of a kind that is off. */
   start(ctx: HostContext): Promise<void>
-  /** Reads one row for items: the capture funnel. */
-  capture(ev: RowEvent): Promise<void>
+  /**
+   * Reads one row for items: the capture funnel. `turn` is the ordinal of the main-loop turn the row belongs to (issue
+   * #69): the records its claims reach get the stamps `firstTurn` and `lastTurn`. Says what the claims did.
+   */
+  capture(ev: RowEvent, turn?: number): Promise<Sightings>
   /**
    * A finished tool call: the claims of each live kind that reads the tool. `ctx` is the context of the dispatch (its
-   * own ports); absent, the context of the first hook of the load.
+   * own ports); absent, the context of the first hook of the load. `turn` and the answer as for `capture`.
    */
-  toolCall(ev: ToolCallEvent, ctx?: HostContext): Promise<void>
+  toolCall(ev: ToolCallEvent, ctx?: HostContext, turn?: number): Promise<Sightings>
   /** True when a kind reads the tool. Static: it needs no start. */
   wants(tool: string): boolean
   /** The problems of the kinds: one line for each kind reason that is off. The help view lists them with the key problems. */

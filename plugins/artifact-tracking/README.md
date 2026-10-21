@@ -79,6 +79,7 @@ An artifact row shows its name: the page title from the Artifact tool, else the 
 | `/track help` | Prints the help view as text: every pane key, the config file path, the version and the problems. Use it in `claude -p`. |
 | `/track show-all` | Shows the ended rows that their TTL hides, and prints the list. A second call hides them again. It lasts until `/clear` and writes nothing to the config file. See [Ended rows](#ended-rows). |
 | `/track version` | Prints the version of the mod (`artifact-tracking 0.2.0`), read from its `.claude-plugin/plugin.json`. It prints `unknown` when the manifest cannot be read. The help view (key `h`) shows it too, and one debug log line names it at the start of a session. |
+| `/track turn [n]` | Prints what turn `n` tracked: the items it added and the known items it saw again, each with its reason. Without `n`, the newest turn. It opens no pane and works in `claude -p`. See [What each turn tracked](#what-each-turn-tracked). |
 | `/track prio <ref> <level>` | Sets the priority of one item: `high`, `normal`, `low`, or `auto` to remove your mark. See [Priority](#priority). |
 
 The pane has one section for each source: Worktrees, Agents, Pull requests, Jira, GitHub, Artifacts, Repos, Web links, Files and Processes. A section with nothing to show is left out. Each section starts with a title line and a bold header row of column names. A narrow terminal drops the less important columns first. The title, the key and the flexible column stay.
@@ -110,7 +111,7 @@ A 30 s tick runs from the start of the session, with the pane open or closed. An
 
 A deleted artifact stays in its section, dim and without a link.
 
-The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Artifacts 3 · Links 2 · Files 3 · Repos 2  /track`. `(n ✗)` counts PRs with failing checks, and `PRs 3 (1 ✗ · 2 conflicts)` adds the PRs that have merge conflicts. `Artifacts n` counts the artifacts that are not deleted. `Repos` and the auto parts (Worktrees, Agents, PRs) come after `Files`. The band is empty when nothing is tracked.
+The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Artifacts 3 · Links 2 · Files 3 · Repos 2  turn 7 +3 new · 1 seen again  9: open  /track`. `(n ✗)` counts PRs with failing checks, and `PRs 3 (1 ✗ · 2 conflicts)` adds the PRs that have merge conflicts. `Artifacts n` counts the artifacts that are not deleted. `Repos` and the auto parts (Worktrees, Agents, PRs) come after `Files`. The turn part and its `9: open` Button come last, see [What each turn tracked](#what-each-turn-tracked). The band is empty when nothing is tracked.
 
 ### Markdown files
 
@@ -214,6 +215,35 @@ A tracker author adds no field for this. A claim carries a `reason`, and the rec
 
 The `sources` of a record hold channels only: `prompt`, `response` and `tool`. A record that only the PR lane found has no source, and its reason is `discovered`. A stored copy from a build before reasons has no `reasons`. The mod drops such records when it loads a copy. It does not migrate them.
 
+## What each turn tracked
+
+The mod numbers the turns of the main loop (issue [#69](https://github.com/martin-macak/claude-code-mod-tracking/issues/69)). It records, for each turn, the items that the turn added and the known items that it saw again. Trackers capture as before, so the pane stays live during a turn. The ledger only groups what they find.
+
+- **`/track turn [n]`** prints turn `n`, or the newest turn:
+
+  ```text
+  Turn 7 · answer · 12:31 · "fix the flaky test in the runner" · 2 new, 1 seen again
+    new    PR #12 Fix flaky test      created
+    new    Issue #13 Flaky on CI      mentioned · late (subagent)
+    again  PR #5 Old fix              mentioned
+  ```
+
+  The head names the turn, how it ended (the engine's own word: `answer`, `aborted`, `refusal` or `error`; `running` while it runs), the time, the first 60 characters of your prompt and the counts. `new` items were not tracked before. `again` items were tracked already, and this turn named them again. The word is "seen again", not "updated": `updated` is a reason that means Claude changed the item (see [Why an item is tracked](#why-an-item-is-tracked)). Each line ends with the strongest reason of the turn's claims for the item. An item with no row left (dismissed, hidden by its TTL) shows its category and key.
+- **The band** shows the newest turn that tracked anything, live while the turn runs: `turn 7 +3 new · 1 seen again`. A turn that tracked nothing adds no part. The Button `9: open` opens the pane with the keys and selects the first entry of that turn: what it added first, then what it saw again. A bare `9` in an empty prompt presses it, so while the Button shows (the pane is closed and a turn tracked something) a prompt cannot start with `9`. Open the pane first (`/track`): the band draws no Button while the pane is open, so `9` is no band key then. When the pane does not list that entry, the pane opens and a toast says so. Selecting a whole turn waits for [#63](https://github.com/martin-macak/claude-code-mod-tracking/issues/63).
+- **The detail of an open row** ends with a `turns:` line, `first 3 · last 7`: the first and the last turn that tracked the item. An item that no turn tracked (the PR lane found it, or a copy from a build before #69 holds it) has none.
+
+Which turn gets the work:
+
+| Work | Turn |
+| --- | --- |
+| Your prompt row. It comes before its `turn.start`, so its items wait and the next turn adopts them. | The turn that your prompt starts. |
+| A row, a tool result or a tool call while a turn runs. | That turn. |
+| A subagent or a workflow agent. Its work may come after the main turn ended. | The turn that spawned it. Work that comes after that turn ended is marked `late (subagent)`. An agent id the mod does not know yet goes to the running turn, else to the newest turn. |
+| A finished background task wakes the main loop. | No new number. The wake adds its work to the turn that started the task, found by the `<tool-use-id>` or the `<task-id>` of the notice, else the newest turn. The mod keeps the id of a tool call only when its result says the call started a task (a Bash call that went to the background, a Monitor). The wake counts in `wakes`. |
+| A PR that the lane finds on a tick, a status refresh, a priority mark. | None: they change nothing the turn did. |
+
+The ledger is stored with the session (`v2:s:<id>`), next to the items. It keeps the newest 50 turns, at most 50 entries in each list of a turn, and a count of the entries that did not fit. An item counts once in a turn: a later claim of the same turn that names it again only strengthens its entry when the turn lists it, and adds nothing to the count. `/clear` carries it, the numbers go on, and the turns of the older session read `(earlier session)`. `/resume` loads the stored ledger. `/track clear` empties it. It never reaches the model: it is not in the prompt section. The reply of `/track turn` is a transcript line, as every `/track` reply is, so the model reads it.
+
 ## Auto tracking
 
 The mod also tracks the work around the session, with no mention:
@@ -312,6 +342,7 @@ By default, a tool that fails three times in a row is paused for 5 minutes (circ
 - `/clear` gives a new session. The items of the old session carry over, with their priority marks. The live list wins over an older stored copy.
 - `x` and `/track clear` remove an item with its mark. An item tracked again starts with no mark. A new session starts with no marks.
 - `--resume` and `--continue` restore the stored copy, then add what the transcript holds. Restored items are due for a refresh.
+- The turn ledger is one more slot of the stored copy (see [What each turn tracked](#what-each-turn-tracked)). A cold load with no stored copy has no ledger: the replayed transcript gives items no turn.
 
 ## Configuration
 
@@ -484,6 +515,7 @@ Cost. A block is short: 134 characters for one link, 164 for two (about 34 and 4
 - **GitHub Enterprise.** A GHE issue URL is a web link, unless the host is the host of the session repo and `gh` is logged in to it.
 - **Other github.com URLs** (repo pages, commits, files) are web links.
 - **Bare `#N` without a repo** stays unresolved. It has no link and no status.
+- **Turns.** No lineage across `/rewind` (it raises no event), after a cold load with no stored copy, or past the cap of 50 turns. The band exists on the terminal and the desktop only. Queued prompts, nested agents, workflow agents and teammates were not tried live, and neither were the end words `refusal` and `error`. A background task that no tool call the mod hears started, and whose agent id is unknown, wakes the newest turn. Work that comes late (a subagent or a wake that names an older turn than the item's last turn) still counts an item again that did not fit the 50 entries of its list. The rows of processes, repos and agents have no turn yet.
 - **`/clear`.** The items come back at the next hook, command or 30 s tick, not at the `/clear` itself. The tick runs from session.start. A `/resume` of a session that the store knows restores that session only, not the one you left.
 - **`--resume` backfill.** The transcript has no `isMeta` or origin flags. The backfill skips the wrappers it knows (`<system-reminder>`, `<teammate-message>`, command output, task notifications). Other meta rows, for example a skill body or a coordinator message, may add items that the live session did not track.
 - **`claude -p "/track"`** ends before its background refresh finishes. Use `/track refresh`.
@@ -511,9 +543,9 @@ claude plugin test .
 | Folder | Content |
 | --- | --- |
 | `hooks/register.tsx` | Hooks, command, timers, state, store, render. |
-| `hooks/` (rest) | The hook events (`events.ts`) and the pane state: `pane-session.ts` (selection, help, `N more`, the place of the window, key presses and page keys), `pane-queue.ts` and `pane-text.ts` (the `/track` text and the help text). |
-| `core/lib/` | Pure helpers: JSON parsing, `git status` porcelain, shell splitting, the link scanner, the config schema rules (`normalise.ts`) and the global config (`global-config.ts`), the prompt text helpers (`prompt-text.ts`), the `prompt` config rule (`prompt-config.ts`) and the reason algebra (`reasons.ts`). |
-| `core/infra/` | The base `Tool` and the circuit breaker, the refresh coordinator, the scheduler, the dismiss store, the pane key registry, key routing (`keys.ts`, `pane-keys.ts`), the config path rule, file format and `ConfigManager` (`config-path.ts`, `config-file.ts`, `config-manager.ts`), and the prompt composer and its rebuild (`prompt.ts`, `prompt-rebuild.ts`). |
+| `hooks/` (rest) | The hook events (`events.ts`) and the pane state: `pane-session.ts` (selection, help, `N more`, the place of the window, key presses and page keys), `pane-queue.ts`, `pane-text.ts` (the `/track` text and the help text) and `pane-turn.ts` (the press of the band Button `9: open`). |
+| `core/lib/` | Pure helpers: JSON parsing, `git status` porcelain, shell splitting, the link scanner, the config schema rules (`normalise.ts`) and the global config (`global-config.ts`), the prompt text helpers (`prompt-text.ts`), the `prompt` config rule (`prompt-config.ts`), the reason algebra (`reasons.ts`), and the turn ledger rules and words (`turns.ts`, `turn-text.ts`). |
+| `core/infra/` | The base `Tool` and the circuit breaker, the refresh coordinator, the scheduler, the dismiss store, the pane key registry, key routing (`keys.ts`, `pane-keys.ts`), the config path rule, file format and `ConfigManager` (`config-path.ts`, `config-file.ts`, `config-manager.ts`), the prompt composer and its rebuild (`prompt.ts`, `prompt-rebuild.ts`), and the turn ledger (`turn-ledger.ts`). |
 | `ux/` | Pure drawing code, one component for every section: `tree-data-table/` (the table, the column solver, the budget guard, the window over the rows, the help view and the `/track` text), `band.ts`, `theme.ts` and `text/cell-width.ts`, `text/wrap.ts`. It imports only `core/interfaces/`. |
 | `trackers/github/` | GitHub items, `GhTool`, PR discovery and the PR body scanner. |
 | `trackers/jira/` | Jira items and `AcliTool`. |

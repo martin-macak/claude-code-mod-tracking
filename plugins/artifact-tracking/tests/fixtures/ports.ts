@@ -18,7 +18,8 @@ import type {
   Timer,
 } from '../../core/interfaces/ports'
 import type { HiddenState } from '../../core/interfaces/view'
-import type { ToolStatus } from '../../types'
+import { emptyLedger } from '../../core/lib/turns'
+import type { ToolStatus, TurnLedger } from '../../types'
 
 /**
  * The start logs one line that names the version: `version: <v>`, then ` (<why>)` when it is `unknown`. The fake keeps
@@ -81,8 +82,19 @@ export type FakeWorld = {
   settings?: Json
   session: { id: string; cwd: string; repo: RepoRemote | null; messages: SessionRow[] }
   agents: AgentInfo[]
-  /** `placed` is what `ui.open` answers: false when the terminal is too narrow for the pane. */
-  ui: { opened: number; placed: boolean; focused: string[]; invalidated: number; toasts: string[]; panes: PaneInfo[] }
+  /**
+   * `placed` is what `ui.open` answers: false when the terminal is too narrow for the pane. `openedWith` holds the selected
+   * row at the time of each `ui.open`: the first drawing of a pane that opens now reads it.
+   */
+  ui: {
+    opened: number
+    openedWith: (string | null)[]
+    placed: boolean
+    focused: string[]
+    invalidated: number
+    toasts: string[]
+    panes: PaneInfo[]
+  }
   logs: string[]
   /** The `version:` line of the start (one per load), kept out of `logs`. */
   versionLogs: string[]
@@ -207,6 +219,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       selected: atom<string | null>('selected', () => null),
       help: atom<boolean>('help', () => false),
       hidden: atom<HiddenState>('hidden', () => ({ showAll: false })),
+      turns: atom<TurnLedger>('turns', emptyLedger),
       // A family member sits under `shown:<id>`: a bare section id would collide with a tracker slot of the same id.
       shown: {
         get: async id => (world.state.get(`shown:${id}`) as number | undefined) ?? 0,
@@ -232,6 +245,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
     ui: {
       async open() {
         world.ui.opened++
+        world.ui.openedWith.push((world.state.get('selected') as string | null | undefined) ?? null)
         return world.ui.placed
       },
       async focus(key) {
@@ -295,7 +309,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       messages: o.session?.messages ?? [],
     },
     agents: o.agents ?? [],
-    ui: { opened: 0, placed: true, focused: [], invalidated: 0, toasts: [], panes: o.panes ?? [] },
+    ui: { opened: 0, openedWith: [], placed: true, focused: [], invalidated: 0, toasts: [], panes: o.panes ?? [] },
     logs: [],
     versionLogs: [],
   }

@@ -59,7 +59,7 @@ The next rows are for a bus: core owns every `on()`, trackers declare events as 
 | The "third identical open call waits behind the second" rule covers nouns a plugin declares on `$`, not `tool`, `session` or `ui`. A bus on engine events does not meet it. | `types-only` | [d.ts:7801-7807](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L7801-L7807). Not tested. |
 | An observe-only bus hook with no `.catch` is listed by `validate` as `gating hook without .catch`. Add `.catch((_$, e, next) => next(e))`. The `.catch` did not change the self-call skip. What a `.catch` does when its hook is skipped is not shown. | `verified-kit` | [`r02c-reentry`](../claude-code-mods/sources/spikes-2026-10-17/r02c-reentry/): `gating hook with .catch: session.append`. [Q24](open-questions.md#1-unknowns). |
 
-The only matcherless events the mod uses today are `session.start`, `agent.spawn` and `turn.complete`. All other hooks carry a matcher ([current-architecture §3](current-architecture.md#3-entry-and-hooks)).
+The only matcherless events the mod uses today are `session.start`, `agent.spawn`, `turn.start` and `turn.complete`. All other hooks carry a matcher ([current-architecture §3](current-architecture.md#3-entry-and-hooks)).
 
 ### 2.2 Passing `$` and building ports
 

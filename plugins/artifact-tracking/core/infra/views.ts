@@ -9,6 +9,7 @@ import type { Ports } from '../interfaces/ports'
 import type { DismissPort, FactsPort, ToolStatus, Tracker } from '../interfaces/tracker'
 import type { HiddenState, PaneView, SectionSpec, ViewContext } from '../interfaces/view'
 import { isRecord } from '../lib/json'
+import { turnSpans, withTurns } from '../lib/rows'
 import { reason } from './steps'
 
 /** The view of a pane nobody touched: nothing selected, nothing opened. */
@@ -146,9 +147,12 @@ export class Views {
       Promise.all(drawing.map(t => ports.state.slot.get(t.id))),
     ])
     const out: { s: SectionSpec; order: number }[] = []
+    // The first and the last turn of each item go on its row (issue #69), so no kind draws them.
+    const spans = turnSpans(read.items)
     drawing.forEach((t, i) => {
       try {
-        for (const s of t.sections?.(this.contextOf(t, read, view, data[i])) ?? []) out.push({ s, order: t.order })
+        for (const s of t.sections?.(this.contextOf(t, read, view, data[i])) ?? [])
+          out.push({ s: spans.size === 0 ? s : { ...s, rows: withTurns(s.rows, spans) }, order: t.order })
       } catch (e) {
         this.d.log(`views: sections of ${t.id} failed: ${reason(e)}`)
       }

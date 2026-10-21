@@ -1,0 +1,200 @@
+// TurnLedger: what each main-loop turn tracked (issue #69). It opens a record on `turn.start` and commits it on
+// `turn.complete`, tells the capture funnel which turn a row or a tool call belongs to, and keeps the entries that the
+// funnel reports: the items a turn added and the known items it saw again. The state is the `turns` atom, so a hot reload
+// keeps it. `slot` is the persisted copy: Persistence stores it per session and a switch carries it (`/clear`) or loads
+// it (`/resume`). All the rules are in `core/lib/turns.ts`; this class only reads events, writes the atom and tells
+// Persistence. It names no tracker and holds no `$`.
+// Spec: issue #69, the design study "Show what each turn tracked" (section 5) and the owner decisions of 2026-10-21.
+
+import type { AgentSpawnEvent, RowEvent, ToolCallEvent, TurnCompleteEvent, TurnStartEvent } from '../interfaces/events'
+import type { Json } from '../interfaces/items'
+import type { AtomPort } from '../interfaces/ports'
+import type { DataSlot } from '../interfaces/slots'
+import type { Sightings, TurnLedger, TurnTarget } from '../interfaces/turns'
+import { isRecord } from '../lib/json'
+import {
+  called,
+  commitTurn,
+  emptyLedger,
+  isBare,
+  isEmpty,
+  joinLedgers,
+  ledgerFrom,
+  noteSightings,
+  openTurn,
+  persisted,
+  persistedChanged,
+  personPrompt,
+  spawned,
+  startsTask,
+  targetOf,
+  taskNotice,
+} from '../lib/turns'
+import { isPersonPrompt, isTaskNoticeRow } from './doors'
+import { reason } from './steps'
+
+export interface TurnLedgerDeps {
+  /** The `turns` atom. */
+  atom: AtomPort<TurnLedger>
+  /** The ledger changed: Persistence writes the session copy soon. */
+  persisted(): void
+  /** The id of the current session. A record keeps it, so a later session can call it "earlier". */
+  sessionId(): Promise<string>
+  /** Epoch ms, wall clock: the time of a record. */
+  wall(): number
+  log(line: string): void
+}
+
+const stringOf = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined)
+
+export class TurnLedgerService {
+  readonly slot: DataSlot
+
+  constructor(private readonly d: TurnLedgerDeps) {
+    this.slot = {
+      id: 'turns',
+      persist: true,
+      // A ledger with no turn holds nothing worth a write: the session copy then has no `turns` member.
+      read: async () => this.stored(await d.atom.get()),
+      empty: v => {
+        const l = ledgerFrom(v)
+        return l === undefined || isBare(l)
+      },
+      settle: async (live, stored) => {
+        const [a, b] = [ledgerFrom(live) ?? emptyLedger(), ledgerFrom(stored) ?? emptyLedger()]
+        return this.stored(joinLedgers(a, b))
+      },
+      // Carry (`/clear`) and load (`/resume`) put a stored ledger under the live one: the live record of a turn wins, the
+      // ordinals go on from the larger counter. The running turn, the pending prompt and the notice are the live one's.
+      restore: async value => {
+        const loaded = ledgerFrom(value)
+        if (loaded !== undefined) await this.change(cur => joinLedgers(cur, loaded))
+      },
+      clear: async () => void (await d.atom.update(() => emptyLedger())),
+    }
+  }
+
+  /** The ledger now. */
+  ledger(): Promise<TurnLedger> {
+    return this.d.atom.get()
+  }
+
+  // ---------------------------------------------------------------- the capture funnel
+
+  /**
+   * Runs the capture of a row for the turn the row belongs to: the ledger says which (the ordinal), the capture stamps the
+   * items with it and says what it did, the ledger keeps that. A fault of the ledger is logged and never stops the capture.
+   * A fault of the capture rejects: the caller's guard logs it, as it did before the ledger.
+   */
+  async withRow(ev: RowEvent, capture: (turn?: number) => Promise<Sightings>): Promise<void> {
+    const target = await this.quiet('row', () => this.rowTarget(ev))
+    const seen = await capture(target?.ord)
+    await this.quiet('entries of a row', () => this.note(target, seen))
+  }
+
+  /** The same for a finished tool call: its id also maps to the turn, for the wake of a background task. */
+  async withToolCall(ev: ToolCallEvent, capture: (turn?: number) => Promise<Sightings>): Promise<void> {
+    const target = await this.quiet('tool call', () => this.callTarget(ev))
+    const seen = await capture(target?.ord)
+    await this.quiet('entries of a tool call', () => this.note(target, seen))
+  }
+
+  private async quiet<T>(what: string, step: () => Promise<T>): Promise<T | undefined> {
+    try {
+      return await step()
+    } catch (e) {
+      this.d.log(`turns: ${what} failed: ${reason(e)}`)
+      return undefined
+    }
+  }
+
+  // ---------------------------------------------------------------- events
+
+  /**
+   * A row was appended. The person's prompt row opens the pending bucket, a task notice marks the wake that follows. Says
+   * which turn the work of the row belongs to: the target of the capture. Undefined: the row is not stamped.
+   */
+  async rowTarget(ev: RowEvent): Promise<TurnTarget | undefined> {
+    const person = isPersonPrompt(ev)
+    const l = await this.change(cur =>
+      person ? personPrompt(cur, ev.text) : isTaskNoticeRow(ev) ? taskNotice(cur, ev.text) : cur,
+    )
+    return targetOf(l, { ...(ev.agentId !== undefined ? { agentId: ev.agentId } : {}), person })
+  }
+
+  /**
+   * A finished tool call. Says which turn its work belongs to. A call that started a task also maps its id to that turn,
+   * for the notice that comes when the task ends. Any other call leaves the ledger alone: the map serves the wake of a
+   * task, and a write of the session copy for each Read or Edit would buy nothing.
+   */
+  async callTarget(ev: ToolCallEvent): Promise<TurnTarget | undefined> {
+    const who = ev.agentId !== undefined ? { agentId: ev.agentId } : {}
+    const l = startsTask(ev.result)
+      ? await this.change(cur =>
+          called(cur, { ...(ev.toolUseId !== undefined ? { toolUseId: ev.toolUseId } : {}), ...who }),
+        )
+      : await this.d.atom.get()
+    return targetOf(l, who)
+  }
+
+  /** A subagent or workflow agent spawned: it and its tool call map to the turn that made the spawn. */
+  async spawn(ev: AgentSpawnEvent): Promise<void> {
+    const input = isRecord(ev.input) ? ev.input : {}
+    const answer = isRecord(ev.answer) ? ev.answer : {}
+    const spawn = {
+      agentId: stringOf(answer.agentId),
+      toolUseId: stringOf(input.tool_use_id),
+      parentAgentId: stringOf(input.parentAgentId),
+    }
+    await this.change(cur =>
+      spawned(cur, {
+        ...(spawn.agentId !== undefined ? { agentId: spawn.agentId } : {}),
+        ...(spawn.toolUseId !== undefined ? { toolUseId: spawn.toolUseId } : {}),
+        ...(spawn.parentAgentId !== undefined ? { parentAgentId: spawn.parentAgentId } : {}),
+      }),
+    )
+  }
+
+  /** A main-loop turn began: a record opens, or a wake reopens the turn that started the task. */
+  async start(ev: TurnStartEvent): Promise<void> {
+    const [session, at] = [await this.d.sessionId(), this.d.wall()]
+    await this.change(cur => openTurn(cur, { turnId: ev.turnId, text: ev.text, session, at }))
+  }
+
+  /** A turn ended. The ledger commits the main-loop turn that runs; a subagent's end is not its concern. */
+  async complete(ev: TurnCompleteEvent): Promise<void> {
+    const input = isRecord(ev.input) ? ev.input : {}
+    const turnId = stringOf(input.turnId)
+    if (turnId === undefined || input.agentId !== undefined) return
+    const at = this.d.wall()
+    await this.change(cur => commitTurn(cur, { turnId, reason: input.reason, at }))
+  }
+
+  /** What a capture found goes to the turn it belongs to. */
+  async note(target: TurnTarget | undefined, s: Sightings): Promise<void> {
+    if (target === undefined || isEmpty(s)) return // no engine call for a capture that found nothing
+    await this.change(cur => noteSightings(cur, target, s))
+  }
+
+  // ---------------------------------------------------------------- the atom
+
+  /** The ledger as a stored value: `undefined` when it holds no turn. */
+  private stored(l: TurnLedger): Json | undefined {
+    return isBare(l) ? undefined : (persisted(l) as unknown as Json)
+  }
+
+  /**
+   * Applies a pure change and writes it, when it changes anything: a read first, so a call that changes nothing is one
+   * engine call. The write is version-checked by the atom and `fn` runs again on a retry. Persistence hears of it only when
+   * a stored part changed: the pending prompt, the running turn and a notice are not in the session copy, and the next
+   * write or the end of the session takes whatever else changed.
+   */
+  private async change(fn: (cur: TurnLedger) => TurnLedger): Promise<TurnLedger> {
+    const cur = await this.d.atom.get()
+    const want = fn(cur)
+    if (want === cur) return cur
+    const next = await this.d.atom.update(fn)
+    if (persistedChanged(cur, want)) this.d.persisted()
+    return next
+  }
+}

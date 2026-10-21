@@ -42,7 +42,6 @@ function stubHost(): ItemsHost {
       restore: async () => {},
     },
     start: async () => {},
-    capture: async () => {},
     replay: async () => {},
     tick: async () => {},
     sessionChanged: async () => {},

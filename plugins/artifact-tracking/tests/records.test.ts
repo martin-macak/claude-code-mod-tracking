@@ -361,3 +361,115 @@ test('reasons: dropAuto takes `discovered` away, `sources` stay as they are; a m
     ['t:a', ['prompt'], ['mentioned', ['mentioned'], 'mentioned']],
   ])
 })
+
+// ---------------------------------------------------------------- turns (issue #69)
+
+test('turns: a claim made in a turn stamps firstTurn and lastTurn on a new record; a later turn moves lastTurn only', () => {
+  const first = mergeClaims([], [claim('t:a', 1)], kinds, 100, 3)
+  expect(first.list[0]).toMatchObject({ key: 't:a', firstTurn: 3, lastTurn: 3 })
+  const later = mergeClaims(first.list, [claim('t:a', 2)], kinds, 100, 7)
+  expect(later.list[0]).toMatchObject({ firstTurn: 3, lastTurn: 7 })
+  // An older turn (late work of a subagent) lowers firstTurn and never raises lastTurn.
+  const early = mergeClaims(later.list, [claim('t:a', 3)], kinds, 100, 1)
+  expect(early.list[0]).toMatchObject({ firstTurn: 1, lastTurn: 7 })
+})
+
+test('turns: a claim with no turn stamps nothing, and leaves the stamps of a known record', () => {
+  const plain = mergeClaims([], [claim('t:a', 1)], kinds, 100)
+  expect('firstTurn' in plain.list[0]!).toBe(false)
+  expect('lastTurn' in plain.list[0]!).toBe(false)
+  const stamped = mergeClaims(plain.list, [claim('t:a', 2)], kinds, 100, 4).list
+  const again = mergeClaims(stamped, [claim('t:a', 3)], kinds, 100)
+  expect(again.list[0]).toMatchObject({ firstTurn: 4, lastTurn: 4 })
+})
+
+test('turns: a kind that keeps no unknown field still gets the stamps, read from the list record', () => {
+  const lossy: ItemKind<TRec> = {
+    ...tKind,
+    merge: (cur, seen) => (cur === null ? rec(seen.key, seen.at) : rec(cur.key, seen.at)),
+  }
+  const table: KindTable = c => (c === 't' ? lossy : undefined)
+  const one = mergeClaims([], [claim('t:a', 1)], table, 100, 2).list
+  const two = mergeClaims(one, [claim('t:a', 2)], table, 100, 5)
+  expect(two.list[0]).toMatchObject({ firstTurn: 2, lastTurn: 5 })
+})
+
+test('turns: mergeClaims lists the known keys a claim touched, also when the kind returned cur; an added key is not touched', () => {
+  const same: ItemKind<TRec> = {
+    ...tKind,
+    merge: (cur, seen) => (seen.fields.skip === true ? null : (cur ?? rec(seen.key, seen.at))),
+  }
+  const table: KindTable = c => (c === 't' ? same : undefined)
+  const list = [rec('t:a', 1), rec('t:b', 1)]
+  const r = mergeClaims(list, [claim('t:a', 2), claim('t:c', 2), claim('t:c', 3), claim('t:a', 4)], table, 100)
+  expect(r.added).toEqual(['t:c'])
+  expect(r.touched).toEqual(['t:a']) // once, and not t:c: it was new in this call
+  expect(r.changed).toBe(true)
+  const none = mergeClaims(list, [claim('t:a', 2)], table, 100)
+  expect(none.touched).toEqual(['t:a'])
+  expect(none.changed).toBe(false) // nothing to write, and the touch is still reported
+})
+
+test('turns: a known key that the same turn stamped already is a repeat, apart from the first sighting of the turn', () => {
+  const same: ItemKind<TRec> = { ...tKind, merge: (cur, seen) => cur ?? rec(seen.key, seen.at) }
+  const table: KindTable = c => (c === 't' ? same : undefined)
+  const first = mergeClaims([rec('t:a', 1), rec('t:b', 1)], [claim('t:a', 2)], table, 100, 3)
+  expect(first.touched).toEqual(['t:a']) // turn 3 stamped t:a: a first sighting
+  expect(first.repeats).toEqual([])
+  const next = mergeClaims(
+    first.list,
+    [claim('t:a', 3), claim('t:b', 3), claim('t:b', 4), claim('t:c', 3)],
+    table,
+    100,
+    3,
+  )
+  expect(next.repeats).toEqual(['t:a']) // stamped by turn 3 before this call
+  expect(next.touched).toEqual(['t:b']) // not yet, and named twice: one sighting
+  expect(next.added).toEqual(['t:c'])
+  // The key that a call added is a repeat in the next call of the same turn, and a first sighting in a later turn.
+  expect(mergeClaims(next.list, [claim('t:c', 5)], table, 100, 3).repeats).toEqual(['t:c'])
+  const later = mergeClaims(next.list, [claim('t:c', 6)], table, 100, 4)
+  expect([later.repeats, later.touched]).toEqual([[], ['t:c']])
+  // Late work of an older turn is not a repeat: lastTurn is the larger one.
+  const late = mergeClaims(next.list, [claim('t:a', 7)], table, 100, 2)
+  expect([late.repeats, late.touched]).toEqual([[], ['t:a']])
+  // No turn, no repeat.
+  const plain = mergeClaims(next.list, [claim('t:a', 8)], table, 100)
+  expect([plain.repeats, plain.touched]).toEqual([[], ['t:a']])
+})
+
+test('turns: a stamp that changes nothing is not a change', () => {
+  const same: ItemKind<TRec> = { ...tKind, merge: (cur, seen) => cur ?? rec(seen.key, seen.at) }
+  const table: KindTable = c => (c === 't' ? same : undefined)
+  const list = mergeClaims([], [claim('t:a', 1)], table, 100, 4).list
+  expect(mergeClaims(list, [claim('t:a', 2)], table, 100, 4).changed).toBe(false)
+  expect(mergeClaims(list, [claim('t:a', 2)], table, 100, 5).changed).toBe(true)
+})
+
+test('turns: a record the kind cannot decode is neither touched nor stamped', () => {
+  const odd = { ...rec('t:a', 1), category: 'u' } as unknown as StoredItem
+  const table: KindTable = c => (c === 'u' || c === 't' ? tKind : undefined)
+  const bad: ItemKind<TRec> = { ...tKind, decode: () => null }
+  const r = mergeClaims([odd], [claim('t:a', 2, undefined, 'u')], c => (c === 'u' ? bad : table(c)), 100, 6)
+  expect(r.touched).toEqual([])
+  expect('lastTurn' in r.list[0]!).toBe(false)
+})
+
+test('turns: foldRecords keeps the smallest firstTurn and the largest lastTurn, and a record with none leaves the other', () => {
+  const a = rec('t:a', 1, { firstTurn: 3, lastTurn: 5 })
+  const b = rec('t:a', 2, { firstTurn: 1, lastTurn: 4 })
+  expect(foldRecords(a, b, kinds)).toMatchObject({ firstTurn: 1, lastTurn: 5 })
+  const bare = rec('t:a', 2)
+  expect(foldRecords(a, bare, kinds)).toMatchObject({ firstTurn: 3, lastTurn: 5 })
+  expect(foldRecords(bare, a, kinds)).toMatchObject({ firstTurn: 3, lastTurn: 5 })
+  const none = foldRecords(rec('t:a', 1), bare, kinds)
+  expect('firstTurn' in none).toBe(false)
+  expect('lastTurn' in none).toBe(false)
+})
+
+test('turns: applyRefresh stamps nothing and keeps the turns of the record', () => {
+  const cur = rec('t:a', 1, { firstTurn: 2, lastTurn: 3 })
+  const fresh = rec('t:a', 9, { refreshedAt: 50, firstTurn: 9, lastTurn: 9 })
+  const out = applyRefresh([cur], [fresh], kinds)
+  expect(out[0]).toMatchObject({ refreshedAt: 50, firstTurn: 2, lastTurn: 3 })
+})

@@ -1,7 +1,7 @@
 // The mappers from engine inputs to domain events. Pure. Plan: L3 Task 8 (file named hook-events because
 // tests/events.test.ts already covers the auto tracker's fact parsers).
 import { expect, test } from 'claude-code/testing'
-import { rowEvent, spawnEvent, toolCallEvent, turnEvent } from '../hooks/events'
+import { rowEvent, spawnEvent, toolCallEvent, turnEvent, turnStartEvent } from '../hooks/events'
 
 const text = (t: string) => [{ type: 'text', text: t }]
 
@@ -72,4 +72,11 @@ test('spawnEvent carries the input, the answer and the cwd read before the spawn
 
 test('turnEvent carries the input', () => {
   expect(turnEvent({ reason: 'answer', agentId: 'a1' })).toEqual({ input: { reason: 'answer', agentId: 'a1' } })
+})
+
+test('turnStartEvent keeps the turn id and the text and nothing else of the input', () => {
+  expect(turnStartEvent({ turnId: 't1', text: 'go', agentId: undefined } as never)).toEqual({
+    turnId: 't1',
+    text: 'go',
+  })
 })

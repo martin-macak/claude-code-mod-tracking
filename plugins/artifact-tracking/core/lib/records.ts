@@ -125,8 +125,8 @@ export function enforceCap<R extends StoredItem>(list: R[], cap: number, keep: R
 /**
  * Folds sightings of `b` into `a`: status fields come from the record with the newer `refreshedAt` (a tie keeps `a`),
  * the union of sources (a first), of `via` and of the reasons (`first` from the record seen first, a tie keeps `a`), the
- * sum of seenCount, the min firstSeen, the max lastSeen, the merge of the manual marks. The kind adds its own part last
- * (`ItemKind.fold`).
+ * sum of seenCount, the min firstSeen, the max lastSeen, the min firstTurn and the max lastTurn (a record with none
+ * leaves the other's), the merge of the manual marks. The kind adds its own part last (`ItemKind.fold`).
  */
 export function foldRecords(a: StoredItem, b: StoredItem, kinds: KindTable): StoredItem {
   const winner = (numberOf(b.refreshedAt) ?? -Infinity) > (numberOf(a.refreshedAt) ?? -Infinity) ? b : a
@@ -140,6 +140,14 @@ export function foldRecords(a: StoredItem, b: StoredItem, kinds: KindTable): Sto
   out.seenCount = (numberOf(a.seenCount) ?? 0) + (numberOf(b.seenCount) ?? 0)
   out.firstSeen = Math.min(a.firstSeen, b.firstSeen)
   out.lastSeen = Math.max(a.lastSeen, b.lastSeen)
+  const turns = turnSpan(a, b)
+  if (turns === undefined) {
+    delete out.firstTurn
+    delete out.lastTurn
+  } else {
+    out.firstTurn = turns.first
+    out.lastTurn = turns.last
+  }
   const priority = mergePriority(levelOf(a.priority), levelOf(b.priority))
   if (priority === undefined) delete out.priority
   else out.priority = priority
@@ -149,21 +157,57 @@ export function foldRecords(a: StoredItem, b: StoredItem, kinds: KindTable): Sto
 
 // ---------------------------------------------------------------- merge
 
+/** The first and the last turn over some records, or undefined when none has a turn. */
+function turnSpan(...recs: readonly StoredItem[]): { first: number; last: number } | undefined {
+  const firsts = recs.flatMap(r => (typeof r.firstTurn === 'number' ? [r.firstTurn] : []))
+  const lasts = recs.flatMap(r => (typeof r.lastTurn === 'number' ? [r.lastTurn] : []))
+  if (firsts.length === 0 && lasts.length === 0) return undefined
+  const all = [...firsts, ...lasts]
+  return {
+    first: firsts.length > 0 ? Math.min(...firsts) : Math.min(...all),
+    last: lasts.length > 0 ? Math.max(...lasts) : Math.max(...all),
+  }
+}
+
+/**
+ * The record as a claim of `turn` leaves it: `firstTurn` the smallest and `lastTurn` the largest of the turns the record
+ * had (`prior`: the record in the list before the claim, since a kind's merge may keep no field it does not know) and
+ * `turn`. The same record comes back when the stamps are right already.
+ */
+function stamped<R extends StoredItem>(rec: R, turn: number, prior: StoredItem): R {
+  const { first, last } = turnSpan(prior, { firstTurn: turn, lastTurn: turn } as unknown as StoredItem) as {
+    first: number
+    last: number
+  }
+  if (rec.firstTurn === first && rec.lastTurn === last) return rec
+  return { ...rec, firstTurn: first, lastTurn: last }
+}
+
 /**
  * Offers each claim to the kind of its category. A new key gets `kind.merge(null, claim)` (null adds nothing). A known
  * key gets `kind.merge(cur, claim)`; the kind returns `cur` itself when the claim changes nothing. The cap drops the
  * smallest lastSeen, never a record this call added. Every record of the output is a copy, so it shares nothing with
  * the input. `changed` is false when no claim changed anything (a delete of a page that is gone): the caller skips the write.
+ *
+ * `turn` (issue #69) is the ordinal of the main-loop turn that made the claims. It stamps `firstTurn` and `lastTurn` on
+ * each record a claim reaches, after the kind's merge. `touched` lists the keys that were in the list before the call and
+ * that a claim named: the known items the turn saw again, also where the kind returned `cur`. `repeats` lists those among
+ * them that the same turn had stamped before this call (`lastTurn` is `turn` already): the turn added or saw them earlier,
+ * so a call of it names them again. A key is in one of `added`, `touched` and `repeats`, once.
  */
 export function mergeClaims(
   list: readonly StoredItem[],
   claims: readonly Claim[],
   kinds: KindTable,
   cap: number,
-): { list: StoredItem[]; added: string[]; changed: boolean } {
+  turn?: number,
+): { list: StoredItem[]; added: string[]; touched: string[]; repeats: string[]; changed: boolean } {
   const out: StoredItem[] = list.map(cloneRecord)
   const index = new Map<string, number>(out.map((r, i) => [r.key, i]))
+  const known = new Set(index.keys())
   const added: string[] = []
+  const touched = new Set<string>()
+  const repeats = new Set<string>()
   let changed = false
   for (const claim of claims) {
     const kind = kinds(claim.category)
@@ -173,19 +217,29 @@ export function mergeClaims(
       const rec = kind.merge(null, claim)
       if (rec === null) continue
       index.set(claim.key, out.length)
-      out.push(rec)
+      out.push(turn === undefined ? rec : stamped(rec, turn, rec))
       added.push(claim.key)
       changed = true
       continue
     }
-    const cur = kind.decode(out[at]!)
-    const next = cur === null ? null : kind.merge(cur, claim)
-    if (next && next !== cur) {
+    const held = out[at]!
+    const cur = kind.decode(held)
+    if (cur === null) continue
+    if (known.has(claim.key) && !touched.has(claim.key) && !repeats.has(claim.key))
+      (turn !== undefined && held.lastTurn === turn ? repeats : touched).add(claim.key)
+    const merged = kind.merge(cur, claim)
+    let next: StoredItem | undefined = merged && merged !== cur ? merged : undefined
+    if (turn !== undefined) {
+      const base = next ?? held
+      const marked = stamped(base, turn, held)
+      if (marked !== base) next = marked
+    }
+    if (next) {
       out[at] = next
       changed = true
     }
   }
-  return { list: enforceCap(out, cap, new Set(added)), added, changed }
+  return { list: enforceCap(out, cap, new Set(added)), added, touched: [...touched], repeats: [...repeats], changed }
 }
 
 /** Fold records with the same key (`a` first), then cap. The input records are copied. */

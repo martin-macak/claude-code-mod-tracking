@@ -2,7 +2,13 @@
 // so no tracker ever sees an engine shape. The engine payloads travel as Json and each handler parses them with guards.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.3 and 5.5. Plan: L3 Task 8.
 
-import type { AgentSpawnEvent, RowEvent, ToolCallEvent, TurnCompleteEvent } from '../core/interfaces/events'
+import type {
+  AgentSpawnEvent,
+  RowEvent,
+  ToolCallEvent,
+  TurnCompleteEvent,
+  TurnStartEvent,
+} from '../core/interfaces/events'
 import type { Json } from '../core/interfaces/items'
 import { textOfContent } from '../core/lib/links'
 
@@ -55,6 +61,11 @@ export function spawnEvent(e: unknown, out: unknown, sessionCwd: string | undefi
     answer: (out ?? null) as Json,
     ...(sessionCwd !== undefined ? { sessionCwd } : {}),
   }
+}
+
+/** A main-loop turn began. The hook passes the main loop only: `e.agentId` is absent. */
+export function turnStartEvent(e: { turnId: string; text: string }): TurnStartEvent {
+  return { turnId: e.turnId, text: typeof e.text === 'string' ? e.text : '' }
 }
 
 /** A turn ended. */

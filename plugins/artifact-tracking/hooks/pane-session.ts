@@ -26,8 +26,9 @@ import {
 import { WorkQueue } from './pane-queue'
 import { type Press, Refocus, unlessClosed } from './pane-refocus'
 import { helpOf, type PaneHost, shownOf } from './pane-text'
+import { openTurn, type TurnPaneHost } from './pane-turn'
 
-export { helpOf, helpTextOf, listText, type PaneHost, TEXT_VIEW } from './pane-text'
+export { helpOf, helpTextOf, listText, type PaneHost, TEXT_VIEW, turnLabels } from './pane-text'
 
 /** What the engine gives the pane to draw with (`Pane` props): the body size, and whether the pane has the keys. */
 export type PaneDrawProps = {
@@ -209,6 +210,16 @@ export class PaneSession {
   private async selectedRow(p: Ports): Promise<string | null> {
     const atom = await p.state.selected.get()
     return this.chosen !== undefined && this.chosen.atom === atom ? this.chosen.id : atom
+  }
+
+  /**
+   * The band Button `9: open` (issue #69): opens the pane with the keys and selects the first entry of the newest turn that
+   * tracked anything. It stands outside the work chain: the press does not read `selected` after a write of another press.
+   * Its token is made now, before any wait, and says `keys: false`: the band is drawn while the pane is closed, and `ui.open`
+   * grants the keys itself.
+   */
+  openTurn(p: Ports, m: TurnPaneHost): Promise<void> {
+    return openTurn(p, m, this.refocus, this.pressOf(false))
   }
 
   /** Resolves when every Button press so far has finished. For tests and for a caller that must not race the work. */

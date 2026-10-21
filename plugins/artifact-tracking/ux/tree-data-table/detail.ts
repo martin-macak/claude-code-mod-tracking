@@ -1,6 +1,6 @@
 // The detail lines of an open row. A tracker's `detail()` wins. A leaf with none gets the default: the full text of
 // every cell the row had to clip or drop, then the links, else one dim line. A row with reasons ends with one line that
-// lists them all. Pure.
+// lists them all, and a row an item of which a turn tracked adds one line with its first and last turn. Pure.
 // Decision G13 of plan L6. Spec 5.10 "Rows".
 import type { ColumnDef, DetailLine, TreeRow } from '../../core/interfaces/view'
 import { cellWidth, normaliseCell } from '../text/cell-width'
@@ -11,13 +11,19 @@ import { indentOf, NOTHING_MORE } from './shape'
 const whyOf = (row: TreeRow): readonly DetailLine[] =>
   row.reasons === undefined ? [] : [{ label: 'reasons', cell: { text: row.reasons.all.join(', ') } }]
 
+/** The one line that names the first and the last turn that tracked the row's item (issue #69). None for a row no turn tracked. */
+const turnsOf = (row: TreeRow): readonly DetailLine[] =>
+  row.turns === undefined
+    ? []
+    : [{ label: 'turns', cell: { text: `first ${row.turns.first} · last ${row.turns.last}` } }]
+
 export function detailOf(
   row: TreeRow,
   columns: readonly ColumnDef[],
   solved: Solved,
   depth: number,
 ): readonly DetailLine[] {
-  const why = whyOf(row)
+  const why = [...whyOf(row), ...turnsOf(row)]
   if (row.detail !== undefined) return [...row.detail(), ...why]
   if ((row.children?.length ?? 0) > 0) return why
   // The cells of the columns still drawn have this much room; a dropped column has none.

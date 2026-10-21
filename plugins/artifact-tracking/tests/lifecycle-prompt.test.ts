@@ -449,3 +449,25 @@ test('a file: or mailto: link is no web item: the text lists none', async () => 
   await t.m.turnComplete(t.w.ports, MAIN)
   expect(textOf(t)).not.toMatch(/file:|mailto:|secret/)
 })
+
+// ---------------------------------------------------------------- the turn ledger stays out of the prompt (issue #69)
+
+test('R8: the turn ledger adds nothing to the prompt section: no turn number, no prompt excerpt, no turn of an item', async () => {
+  const t = managerWorld({ config: specs => fakeConfig({ specs, file: WEB_ON }) })
+  await t.m.start(t.w.ports, { fromSessionStart: true })
+  const said = 'SECRET-EXCERPT see https://docs.example/a'
+  await t.m.row(t.w.ports, promptRow(said))
+  await t.m.turnStart(t.w.ports, { turnId: 't1', text: said })
+  await t.m.turnComplete(t.w.ports, { input: { turnId: 't1', reason: 'answer' } })
+  await t.m.row(t.w.ports, promptRow('see https://docs.example/a again'))
+  await t.m.turnStart(t.w.ports, { turnId: 't2', text: 'again' })
+  await t.m.turnComplete(t.w.ports, { input: { turnId: 't2', reason: 'answer' } })
+  const text = textOf(t) ?? ''
+  expect(text).toContain('web: docs.example/a (mentioned)')
+  // The ledger holds the excerpt and both turns of the item, so these checks are not empty.
+  const ledger = JSON.stringify(t.w.state.get('turns'))
+  expect(ledger).toContain('SECRET-EXCERPT')
+  expect(JSON.stringify(t.items())).toContain('"firstTurn":1')
+  for (const word of ['SECRET-EXCERPT', 'firstTurn', 'lastTurn', 'turn', 'Turn', 'seen again'])
+    expect(text).not.toContain(word)
+})

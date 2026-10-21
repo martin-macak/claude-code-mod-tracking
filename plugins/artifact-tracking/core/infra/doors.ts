@@ -10,6 +10,16 @@ import { commandArgs } from '../lib/links'
 /** D3: the person's own text. Never a machine, a notification or a coordinator. */
 export const PERSON: ReadonlySet<string> = new Set(['composer', 'bridge', 'sdk', 'unclassified'])
 
+/**
+ * The person's own prompt row: the door `prompt`, a person origin, no meta flag, the main loop. The turn ledger holds the
+ * items of such a row until its turn opens, because the row comes before `turn.start` (issue #69).
+ */
+export const isPersonPrompt = (ev: RowEvent): boolean =>
+  ev.door === 'prompt' && PERSON.has(ev.origin) && !ev.isMeta && ev.agentId === undefined && ev.hasMessage
+
+/** The row that tells the main loop a background task finished: the next `turn.start` is its wake. */
+export const isTaskNoticeRow = (ev: RowEvent): boolean => ev.door === 'prompt' && ev.origin === 'task-notification'
+
 /** What Capture reads of a row: the text, how to scan it and the source the claims carry. */
 export type Reading = { text: string; mode: ScanMode; source: string }
 

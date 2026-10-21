@@ -8,7 +8,7 @@ import type { ConfigService } from '../../core/interfaces/config'
 import type { ToolCallEvent } from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
 import type { Tracker } from '../../core/interfaces/tracker'
-import { helpTextOf, listText } from '../../hooks/pane-session'
+import { helpTextOf, listText, turnLabels } from '../../hooks/pane-session'
 import { TRACKERS } from '../../trackers'
 import { autoDismiss } from '../../trackers/auto/dismiss-store'
 import { fakeConfig } from './config-fs'
@@ -45,6 +45,7 @@ export function managerWorld(o: ManagerOpts = {}) {
       paneId: 'track',
       listText: p => listText(p, m as LifecycleManager),
       helpText: p => helpTextOf(p, m as LifecycleManager),
+      turnLabels: p => turnLabels(p, m as LifecycleManager),
     },
     w.ports,
   )

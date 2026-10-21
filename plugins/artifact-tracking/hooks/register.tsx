@@ -8,12 +8,13 @@ import { ConfigManager } from '../core/infra/config-manager'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
+import { emptyLedger } from '../core/lib/turns'
 import { DISMISS, parseRemote, TRACKERS } from '../trackers'
-import type { ToolStatus } from '../types'
+import type { ToolStatus, TurnLedger } from '../types'
 import { bandText, renderBand } from '../ux/band'
 import { TreeDataTable } from '../ux/tree-data-table/table'
-import { rowEvent, spawnEvent, toolCallEvent, turnEvent } from './events'
-import { helpTextOf, listText, PaneSession } from './pane-session'
+import { rowEvent, spawnEvent, toolCallEvent, turnEvent, turnStartEvent } from './events'
+import { helpTextOf, listText, PaneSession, turnLabels } from './pane-session'
 
 // Working set in $.state (survives hot reload, reset by /clear). Persistence copies it to $.store, one key per session.
 // The contract (types/index.d.ts): `items` and `tools` are atoms; each tracker's data is one member of the `trackers`
@@ -35,6 +36,9 @@ const expanded = atom({ plugin: 'artifact-tracking', key: 'expanded' } as const,
 const selected = atom({ plugin: 'artifact-tracking', key: 'selected' } as const, null as string | null)
 const help = atom({ plugin: 'artifact-tracking', key: 'help' } as const, false)
 const hidden = atom({ plugin: 'artifact-tracking', key: 'hidden' } as const, { showAll: false })
+// Issue #69: what each main-loop turn tracked. The module that declares the atoms is the only one that may touch the state
+// keys; the empty ledger is the rule's own, so a field added to it cannot drift from this default.
+const turns = atom({ plugin: 'artifact-tracking', key: 'turns' } as const, emptyLedger() as TurnLedger)
 
 /** A tracker fault or a refused write must not change what the engine returns: run the step, ignore a failure. */
 async function soft(step: () => unknown): Promise<void> {
@@ -144,6 +148,7 @@ function portsOf($: EngineInterface): Ports {
       selected: { get: () => read($, selected), update: fn => update($, selected, fn) },
       help: { get: () => read($, help), update: fn => update($, help, fn) },
       hidden: { get: () => read($, hidden), update: fn => update($, hidden, fn) },
+      turns: { get: () => read($, turns), update: fn => update($, turns, fn) },
       shown: {
         get: async id => (await read($, { plugin: 'artifact-tracking', key: 'shown', id } as const)) ?? 0,
         update: (id, fn) => update($, { plugin: 'artifact-tracking', key: 'shown', id } as const, cur => fn(cur ?? 0)),
@@ -190,6 +195,7 @@ function managerOf($: EngineInterface): LifecycleManager {
       // time, the manager is set by then.
       listText: p => listText(p, managerOf($)),
       helpText: p => helpTextOf(p, managerOf($)),
+      turnLabels: p => turnLabels(p, managerOf($)),
     },
     portsOf($),
   )
@@ -265,6 +271,14 @@ export const register: Register = on => {
     return out
   }).catch((_$, e, next) => next(e))
 
+  // A main-loop turn begins (issue #69): the turn ledger opens its record. `next` runs first, and the ledger is awaited, not
+  // started apart: the first row of the turn must find its record. A subagent's own turn.start passes straight through.
+  on('turn.start', async ($, e, next) => {
+    const out = await next(e)
+    if (e.agentId === undefined) await soft(() => managerOf($).turnStart(portsOf($), turnStartEvent(e)))
+    return out
+  }).catch((_$, e, next) => next(e))
+
   on('turn.complete', async ($, e, next) => {
     const out = await next(e)
     await soft(() => managerOf($).turnComplete(portsOf($), turnEvent(e)))
@@ -287,11 +301,26 @@ export const register: Register = on => {
   ).catch(($, e) => TreeDataTable.unavailable($.ui.resolve(e)))
 
   // One line above the prompt, made from the sections that carry a band part. The engine's own band stays inside our Box.
+  // The turn part (issue #69) follows the counts: the newest turn that tracked anything and a Button on the digit 9 that opens
+  // the pane on its first entry. A failed read of the ledger leaves the counts alone, and so does a failed read of the panes.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    const line = bandText(await managerOf($).bandData(portsOf($)))
-    if (line === null) return next(e)
-    return renderBand($.ui.resolve(e), line, await next(e))
+    const [p, m] = [portsOf($), managerOf($)]
+    const line = bandText(await m.bandData(p))
+    const turn = await m.bandTurn().catch(() => undefined)
+    if (line === null && turn === undefined) return next(e)
+    // A band with a Button is a stop of `ctrl+x Tab` before the pane (live check, 2.1.306), so the Button waits while the pane is
+    // open. The engine draws the band again when the pane opens or closes (its width changes).
+    // Only the Button needs to know, so a session with no tracked turn never asks.
+    const open =
+      turn === undefined
+        ? false
+        : await p.ui.panes().then(
+            list => list.some(x => x.id === PANE && x.isShown),
+            () => false,
+          )
+    const part = turn && { ...turn, ...(open ? {} : { press: () => soft(() => pane.openTurn(p, m)) }) }
+    return renderBand($.ui.resolve(e), line, await next(e), part)
   }).catch((_$, e, next) => next(e)) // a failed read leaves the band to the engine
 
   // The ring moved. `next` runs first: a write before a deny would stick (tree-table 3.3). A row handle selects its row. The
