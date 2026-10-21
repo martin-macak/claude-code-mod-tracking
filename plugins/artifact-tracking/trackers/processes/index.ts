@@ -89,6 +89,7 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> & Traceable<J
         cwd: ev.cwdBefore,
         agentId: ev.agentId,
       }),
+      ctx.config.slice(),
     )
   }
 
@@ -97,9 +98,11 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> & Traceable<J
     const taskId = result?.taskId
     if (typeof taskId !== 'string' || taskId === '') return
     const endsWithAgent = ev.agentId !== undefined && (await isWorkflowAgent(ctx, ev.agentId))
-    return addProcessRows(ctx, [
-      monitorRow(taskId, ctx.clock.wall(), { toolUseId: ev.toolUseId, agentId: ev.agentId, endsWithAgent }),
-    ])
+    return addProcessRows(
+      ctx,
+      [monitorRow(taskId, ctx.clock.wall(), { toolUseId: ev.toolUseId, agentId: ev.agentId, endsWithAgent })],
+      ctx.config.slice(),
+    )
   }
 
   const onSpawn: H<AgentSpawnEvent> = (ctx, ev) => {
@@ -142,14 +145,17 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> & Traceable<J
     store: ctx => ctx.config.slice(),
     data: {
       empty: v => !Array.isArray(v) || v.length === 0,
+      // Each merge keeps at most `maxRows` rows, except live rows (#134): the rows past their TTL go first. A row that ends
+      // after a merge stays until the next merge.
       settle: async (ctx, liveRows, stored) =>
-        mergeProcessRows(asRows(stored), asRows(liveRows), ctx.clock.wall()) as unknown as Json,
+        mergeProcessRows(asRows(stored), asRows(liveRows), ctx.clock.wall(), ctx.config.slice()) as unknown as Json,
       restore: async (ctx, value, how) => {
         const rows = asRows(value)
         const now = ctx.clock.wall()
+        const cap = ctx.config.slice()
         if (rows.length > 0)
           await setProcesses(ctx, cur =>
-            how === 'carry' ? mergeProcessRows(rows, cur, now) : mergeProcessRows(cur, rows, now),
+            how === 'carry' ? mergeProcessRows(rows, cur, now, cap) : mergeProcessRows(cur, rows, now, cap),
           )
       },
       clear: ctx => setProcesses(ctx, () => []),
