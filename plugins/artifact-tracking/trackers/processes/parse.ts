@@ -1,5 +1,13 @@
 import { isRecord } from '../../core/lib/json'
-import { resolvePath, scopedDir, scopedVars, splitShell, stripWrappers, unmarkDollars } from '../../core/lib/shell'
+import {
+  resolvePath,
+  scopedDir,
+  scopedVars,
+  splitShell,
+  stripReserved,
+  stripWrappers,
+  unmarkDollars,
+} from '../../core/lib/shell'
 import type { ProcessRecord, ProcessState } from './types'
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined)
@@ -324,21 +332,6 @@ const BUILTINS = new Set([
   'unset',
   'export',
 ])
-
-/**
- * Reserved words that open a command in a compound (`if`, `while`, `until`, `do`, `then`, `else`, `elif`) or end one
- * (`done`, `fi`, `esac`). `for ...; do yes & done` splits into `do yes` and `done`: the words are no command. `done &`
- * backgrounds the whole loop, so its pid is not knowable and it makes no row. `for`, `case` and `select` are not in the
- * set: the word after them is a variable or a value, not a command.
- */
-const RESERVED = new Set(['if', 'while', 'until', 'do', 'then', 'else', 'elif', 'done', 'fi', 'esac'])
-
-/** Drops the reserved words in front of a segment. A segment that is only `done` or `fi` is left empty. */
-function stripReserved(words: readonly string[]): string[] {
-  let i = 0
-  while (i < words.length && RESERVED.has(words[i]!)) i++
-  return words.slice(i)
-}
 
 type Detached = { fingerprint: string; pid?: number; viaShell: boolean }
 

@@ -231,6 +231,24 @@ function dropRedirections(words: readonly string[]): string[] {
 
 const ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/
 
+/**
+ * Reserved words that open a command in a compound (`if`, `while`, `until`, `do`, `then`, `else`, `elif`) or end one
+ * (`done`, `fi`, `esac`). `!` negates the pipeline that follows: `if ! git diff --quiet` runs `git diff`. `for ...; do
+ * git push; done` splits into `do git push` and `done`: the reserved words are no command. `for`, `case` and `select`
+ * are not in the set: the word after them is a variable or a value, not a command.
+ */
+const RESERVED = new Set(['!', 'if', 'while', 'until', 'do', 'then', 'else', 'elif', 'done', 'fi', 'esac'])
+
+/**
+ * Drops the reserved words in front of a simple command. A segment that is only `done` or `fi` is left empty. It does
+ * not see a reserved word behind a wrapper: `time ! git push` has `!` behind `time`. A reader calls `stripLead`.
+ */
+export function stripReserved(words: readonly string[]): string[] {
+  let i = 0
+  while (i < words.length && RESERVED.has(words[i]!)) i++
+  return words.slice(i)
+}
+
 /** Strips `VAR=x`, `sudo`, `env`, `time`, `command`, `exec`, `nice`, `nohup` from the front. Returns the env it set. */
 export function stripWrappers(words: readonly string[]): {
   words: string[]
@@ -269,6 +287,25 @@ export function stripWrappers(words: readonly string[]): {
     break
   }
   return { words: words.slice(i), env, nohup }
+}
+
+/**
+ * Strips the reserved words and the wrappers in front of a simple command, in any order. `time` is a reserved word that
+ * comes before `!`, and `!` comes before `time`: `time ! git push`, `! time git push` and `if time ! git push` are all
+ * valid shell. Each round drops the reserved words, then the wrappers, until nothing more goes. The env of every round
+ * adds up: a later `VAR=x` wins. A program wrapper such as `sudo` before `!` is no valid shell: it reads the same way.
+ */
+export function stripLead(words: readonly string[]): ReturnType<typeof stripWrappers> {
+  const env: Record<string, string> = {}
+  let nohup = false
+  let rest = words
+  for (;;) {
+    const got = stripWrappers(stripReserved(rest))
+    Object.assign(env, got.env)
+    nohup ||= got.nohup
+    if (got.words.length === rest.length) return { words: got.words, env, nohup }
+    rest = got.words
+  }
 }
 
 /**
