@@ -238,6 +238,186 @@ test('a refused or failed ring request leaves the selection written', async () =
   }
 })
 
+// Issue #115. A press on a Button does not give the pane the keys, and `ui.focus` only moves the ring inside a pane that
+// holds them (live: `{"deny":"that site does not hold the keys"}`). So Up and Down went on to the prompt history. The
+// press asks for the keys with the one call that grants them: `ui.open` with `focus: true`. The calls below are named in
+// the order the engine sees them.
+function engineLog(t: ReturnType<typeof setup>) {
+  const calls: string[] = []
+  const ui = t.w.ports.ui as { open: () => Promise<boolean>; focus: (key: string) => Promise<boolean> }
+  ui.open = async () => {
+    calls.push('open')
+    t.w.ui.opened++
+    return true
+  }
+  ui.focus = async key => {
+    calls.push(`focus ${key}`)
+    t.w.ui.focused.push(key)
+    return true
+  }
+  return calls
+}
+
+test('a press while the pane has no keys selects and opens the row, asks for the keys, then for the ring', async () => {
+  const t = setup(webs('a', 'b', 'c'))
+  t.w.state.set('selected', 'a')
+  const calls = engineLog(t)
+  press(buttonOf(await t.draw(80, undefined, false), 'r2')) // a click on c while the prompt has the keys
+  await t.session.idle()
+  expect(calls).toEqual(['open', 'focus r2'])
+  expect(t.selected()).toBe('c')
+  expect(t.w.state.get('expanded')).toEqual(['c'])
+})
+
+test('a press while the pane has the keys, or does not say, asks for no keys', async () => {
+  for (const focused of [true, undefined]) {
+    const t = setup(webs('a', 'b', 'c'))
+    const calls = engineLog(t)
+    press(buttonOf(await t.draw(80, undefined, focused), 'r2'))
+    await t.session.idle()
+    expect(calls).toEqual(['focus r2'])
+    expect(t.selected()).toBe('c')
+  }
+})
+
+test('a press asks again after the keys came: only a drawing that says no keys makes it ask', async () => {
+  const t = setup(webs('a', 'b'))
+  const calls = engineLog(t)
+  press(buttonOf(await t.draw(80, undefined, false), 'r0'))
+  await t.session.idle()
+  press(buttonOf(await t.draw(80, undefined, true), 'r1')) // the engine drew the pane again with the keys
+  await t.session.idle()
+  expect(calls).toEqual(['open', 'focus r0', 'focus r1'])
+})
+
+// One session can be drawn on several surfaces (a terminal and the desktop), and each has its own `Pane.isFocused`. A
+// press belongs to the tree it was drawn in: it asks for the keys when that drawing said `false`, whichever surface drew
+// last (review of PR #121).
+test('a press asks for the keys by the drawing it belongs to, not by the drawing that came last', async () => {
+  const t = setup(webs('a', 'b', 'c'))
+  const calls = engineLog(t)
+  const noKeys = await t.draw(80, undefined, false) // a surface that has no keys
+  const keys = await t.draw(80, undefined, true) // another surface draws later, and it has them
+  press(buttonOf(noKeys, 'r1'))
+  await t.session.idle()
+  expect(calls).toEqual(['open', 'focus r1'])
+  press(buttonOf(keys, 'r2'))
+  await t.session.idle()
+  expect(calls).toEqual(['open', 'focus r1', 'focus r2'])
+  const keysFirst = await t.draw(80, undefined, true)
+  await t.draw(80, undefined, false) // the surface without keys draws last
+  press(buttonOf(keysFirst, 'r0'))
+  await t.session.idle()
+  expect(calls).toEqual(['open', 'focus r1', 'focus r2', 'focus r0'])
+})
+
+// The engine refuses `focus: true` while the composer holds text (issue #108, case C): the pane stays without keys, and
+// the ring request is refused too. The row stays selected and the dim hint stays. Nothing is shown and nothing loops: a
+// later press asks once more.
+test('a refused request for the keys leaves the row selected, shows no error and asks once per press', async () => {
+  const t = setup(webs('a', 'b', 'c'))
+  const calls = engineLog(t)
+  ;(t.w.ports.ui as { focus: unknown }).focus = async (key: string) => {
+    calls.push(`focus ${key}`)
+    return false
+  }
+  press(buttonOf(await t.draw(80, undefined, false), 'r1'))
+  await t.session.idle()
+  expect(calls).toEqual(['open', 'focus r1'])
+  expect(t.selected()).toBe('b')
+  press(buttonOf(await t.draw(80, undefined, false), 'r2'))
+  await t.session.idle()
+  expect(calls).toEqual(['open', 'focus r1', 'open', 'focus r2'])
+  expect(t.selected()).toBe('c')
+  expect(t.w.ui.toasts).toEqual([])
+  expect(t.w.logs).toEqual([])
+  // The refused ring request is forgotten: a later Tab onto r2 selects the row drawn there, as it does after any refusal.
+  await t.session.focused(t.w.ports, 'r0')
+  expect(t.selected()).toBe('a')
+})
+
+test('a call for the keys that throws logs one line, and the press still selects the row and asks for the ring', async () => {
+  const t = setup(webs('a', 'b'))
+  const calls = engineLog(t)
+  ;(t.w.ports.ui as { open: unknown }).open = async () => Promise.reject(new Error('no engine'))
+  press(buttonOf(await t.draw(80, undefined, false), 'r1'))
+  await t.session.idle()
+  expect(calls).toEqual(['focus r1'])
+  expect(t.selected()).toBe('b')
+  expect(t.w.logs).toEqual(['pane: keys request failed: no engine'])
+})
+
+// A press runs detached. When the pane closes before that work reaches its call for the keys, the call must not come:
+// `ui.open` would open the pane the person just closed (review of PR #121). A press after the pane opened again asks.
+test('a press that began before the pane closed asks for no keys after it, and a press after it opened again does', async () => {
+  const t = setup(webs('a', 'b', 'c'))
+  const calls = engineLog(t)
+  press(buttonOf(await t.draw(80, undefined, false), 'r1')) // the work stops at its first write
+  await t.session.closed(t.w.ports)
+  await t.session.idle()
+  expect(calls).not.toContain('open')
+  press(buttonOf(await t.draw(80, undefined, false), 'r2')) // /track again: a new press in a pane that has no keys
+  await t.session.idle()
+  expect(calls.filter(c => c === 'open').length).toBe(1)
+})
+
+// When the pane gets the keys, the engine puts the ring on the autoFocus handle of the frame it has, and that frame may
+// have been read before the press wrote its row (live: the ring landed on the old row and `ui.focus` hook wrote it back
+// into `selected`, while the ring request of the press was skipped as a re-entry of that hook). The row that was pressed
+// must still be the selected one, whenever the hook of that landing runs. The orders pinned: the hook has finished when
+// the ring request returns, it has started but not finished, and it runs in a later turn (live, 1 click in 112: the ring
+// on the pressed row, the selection on the old row, until the next click). The landing has `origin` plugin: the engine's
+// own take of the ring. Only the person's move or a request of the pane selects a row by a landing (next tests).
+for (const landing of ['awaited', 'started', 'later'] as const) {
+  test(`the ring landing of the engine on the old row does not take the selection from the pressed row (hook ${landing} at the return)`, async () => {
+    const t = setup(webs('a', 'b', 'c'))
+    t.w.state.set('selected', 'a')
+    const calls = engineLog(t)
+    const ui = t.w.ports.ui as { focus: (key: string) => Promise<boolean> }
+    const focus = ui.focus
+    ui.focus = async key => {
+      const moved = await focus(key)
+      // The hook of the engine's own landing, on the autoFocus handle of the old row.
+      if (landing === 'awaited') await t.session.focused(t.w.ports, 'r0', 'plugin')
+      else if (landing === 'started') void t.session.focused(t.w.ports, 'r0', 'plugin')
+      return moved
+    }
+    const tree = await t.draw(80, undefined, false)
+    press(buttonOf(tree, 'r2'))
+    await t.session.idle()
+    if (landing === 'later') await t.session.focused(t.w.ports, 'r0', 'plugin') // after the whole press has finished
+    expect(calls).toEqual(['open', 'focus r2'])
+    expect(t.selected()).toBe('c')
+  })
+}
+
+// A move of the ring that the engine makes on its own (origin plugin: `autoFocus` as the pane takes the keys) starts the
+// selection when no row is selected, or when the selected row is not drawn (it was dismissed or closed away). It never
+// replaces a selected row that is drawn: the frame it reads can be older than the selection. The person's Tab, arrows
+// and click (origin person, the default) always select the row under the ring.
+test('a landing of the engine starts the selection and never replaces a drawn selected row', async () => {
+  const t = setup(webs('a', 'b', 'c'))
+  await t.draw(80, undefined, true) // nothing selected
+  await t.session.focused(t.w.ports, 'r1', 'plugin')
+  expect(t.selected()).toBe('b')
+  await t.session.focused(t.w.ports, 'r2', 'plugin') // b is drawn and selected
+  expect(t.selected()).toBe('b')
+  t.w.state.set('selected', 'gone') // a row that is no longer drawn
+  await t.draw(80, undefined, true)
+  await t.session.focused(t.w.ports, 'r0', 'plugin')
+  expect(t.selected()).toBe('a')
+})
+
+test('a move of the person selects the row under the ring, also when a selected row is drawn', async () => {
+  const t = setup(webs('a', 'b', 'c'))
+  t.w.state.set('selected', 'b')
+  await t.draw(80, undefined, true)
+  await t.session.focused(t.w.ports, 'r2', 'person')
+  expect(t.selected()).toBe('c')
+  await t.session.focused(t.w.ports, 'r0') // the origin defaults to the person
+  expect(t.selected()).toBe('a')
+})
+
 test('draw hands Pane.isFocused to the table: no keys draws no background and a hint above the tree', async () => {
   const t = setup(webs('a', 'b'))
   t.w.state.set('selected', 'b')
