@@ -1,13 +1,13 @@
 // The sections of the github tracker: Pull requests (the PRs the PR lane found) and GitHub (the issues and PRs that
-// the conversation named). Pure: it reads the view context and writes nothing. Titles, notes, columns and the band
+// the conversation named). Pure: it reads the view context and writes nothing. Titles, notes and the band
 // keep the text the pane drew before L6; tests/item-sections.test.ts pins them.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 13, L6 A1.
 
 import type { Json } from '../../core/interfaces/items'
 import type { RepoRef } from '../../core/interfaces/ports'
 import type { ToolStatus } from '../../core/interfaces/tracker'
-import type { ColumnDef, SectionSpec, ViewContext } from '../../core/interfaces/view'
-import { content, flex, lastRefreshOf, PRIO_COLUMN, sortedByLevel } from '../../core/lib/rows'
+import type { SectionSpec, ViewContext } from '../../core/interfaces/view'
+import { lastRefreshOf, sortedByLevel } from '../../core/lib/rows'
 import { toolNote } from '../../core/lib/text'
 import type { GithubConfig } from './config'
 import { githubKind } from './kind'
@@ -26,29 +26,6 @@ const FACT_BRANCHES = 'auto.branches'
 
 /** The lane's reasons that draw a note on top of an empty section. The others leave the section out. */
 const SKIPS_WITH_HEADER: ReadonlySet<string> = new Set(['no-gh', 'not-logged-in', 'paused', 'host-not-authed'])
-
-const PR_COLUMNS: readonly ColumnDef[] = [
-  PRIO_COLUMN,
-  { id: 'key', header: 'PR', width: content(4, 10), role: 'tree' },
-  { id: 'title', header: 'Title', width: flex(10) },
-  { id: 'type', header: 'Branch', width: content(undefined, 26), priority: 2, clip: 'middle' },
-  { id: 'status', header: 'State', width: content(undefined, 8) },
-  // The merge chip outlives the branch and the checks in a narrow pane (priority 0 drops last). Both new columns are left
-  // out while no row has a cell for them.
-  { id: 'merge', header: 'Merge', width: content(undefined, 11), priority: 0 },
-  { id: 'extra', header: 'Checks', width: content(undefined, 10), priority: 1 },
-  { id: 'mark', header: '', width: content(undefined, 11), priority: 3 },
-]
-
-const GITHUB_COLUMNS: readonly ColumnDef[] = [
-  PRIO_COLUMN,
-  { id: 'key', header: 'Ref', width: content(4, 24), role: 'tree' },
-  { id: 'title', header: 'Title', width: flex(10) },
-  { id: 'type', header: 'Type', width: content(undefined, 6), priority: 2 },
-  { id: 'status', header: 'State', width: content(undefined, 10) },
-  { id: 'merge', header: 'Merge', width: content(undefined, 11), priority: 0 },
-  { id: 'extra', header: 'Checks', width: content(undefined, 10), priority: 1 },
-]
 
 /** The records of the kind among the items of the view. */
 const records = (ctx: Ctx): GitHubRecord[] =>
@@ -103,7 +80,6 @@ function prsSection(ctx: Ctx): SectionSpec | null {
     note: { text: prsNote(ctx, lane, prs) },
     rank: 12,
     band: bandOf('PRs', open, env, 9),
-    columns: PR_COLUMNS,
     rows: prs.map(rec => prRow(rec, rowEnv, lane.defaultBranch)),
   }
 }
@@ -123,7 +99,6 @@ function githubSection(ctx: Ctx): SectionSpec | null {
     note: { text: `gh · ${toolNote(ctx.tools.gh ?? IDLE, ctx.now, lastRefreshOf(own))}` },
     rank: 30,
     band: bandOf('GitHub', own, env, 2),
-    columns: GITHUB_COLUMNS,
     rows: own.map(rec => githubRow(rec, rowEnv)),
   }
 }

@@ -1,27 +1,13 @@
-// Parts of a pane section that the trackers share: the width words of a column, the prio column, a toned cell, the cells of
-// an item row, the sort of the items of a section and the small texts a row shows. Pure: no `$`, no I/O, no tracker named.
+// Parts of a pane section that the trackers share: a toned cell, the cells and the badges of an item row, the sort of the
+// items of a section and the small texts a row shows. A row writes the columns that every row of the pane table shares
+// (`ColumnId`), so a tracker declares no columns of its own. Pure: no `$`, no I/O, no tracker named.
 // The tones and the cell order keep the text the pane drew before L6, so the /track text stays byte-identical (decision G2).
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 13, L6 A1.
+// Design study of issue #63, section 5.3: the crosswalk of the old cell ids to the shared columns.
 
 import type { Effective, ReasonSet, StoredItem } from '../interfaces/items'
-import type { Cell, ColumnDef, TreeRow } from '../interfaces/view'
+import type { Cell, CellId, TreeRow } from '../interfaces/view'
 import { byLevel, markerOf } from './levels'
-
-type Width = ColumnDef['width']
-
-/** `c(min, max)`: as wide as the content, clamped. A bound left out is not set. */
-export const content = (min?: number, max?: number): Width => ({
-  kind: 'content',
-  ...(min !== undefined ? { min } : {}),
-  ...(max !== undefined ? { max } : {}),
-})
-/** `f(min)`: takes the room that is left. */
-export const flex = (min: number): Width => ({ kind: 'flex', min })
-/** `x(n)`: `n` cells. */
-export const fixed = (cells: number): Width => ({ kind: 'fixed', cells })
-
-/** The mark column of an item section: one cell, no header. */
-export const PRIO_COLUMN: ColumnDef = { id: 'prio', header: '', width: fixed(1) }
 
 export type Tone = 'plain' | 'ok' | 'warn' | 'bad' | 'dim'
 
@@ -38,7 +24,10 @@ export function levelCell(level: Effective): Cell {
   return { text: markerOf(level.level), ...(level.auto ? { dim: true } : {}) }
 }
 
-/** What an item row says, by column id. Only the fields a section shows are set. */
+/**
+ * What an item row says. `key` fills the name column, `title` the description, `type` and `status` their own columns.
+ * `extra` and `mark` are badges of the extras column. Only the fields a section shows are set.
+ */
 export type RowText = {
   key: string
   href?: string
@@ -46,27 +35,38 @@ export type RowText = {
   type?: string
   status?: string
   tone?: Tone
+  /** The first badge of the extras column. */
   extra?: string
   extraTone?: Tone
-  /** A short marker after the other cells. It draws dimmed. */
+  /** The badge after the others. It draws dimmed. */
   mark?: string
+  /** Where a title too long for its column is cut. Default: the clip of the column. `middle` keeps both ends of a branch or a path. */
+  titleClip?: 'end' | 'middle'
+  /** Where a type too long for its column is cut. Default: the clip of the column. */
+  typeClip?: 'end' | 'middle'
 }
 
-/** The cells of the text columns. `href` sits on the key cell, when there is a link. */
-export function textCells(t: RowText): Record<string, Cell> {
+/** The cells of the text columns. `href` sits on the name cell, when there is a link. */
+export function textCells(t: RowText): Partial<Record<CellId, Cell>> {
   return {
-    key: { text: t.key, ...(t.href ? { href: t.href } : {}) },
-    title: { text: t.title },
-    ...(t.type !== undefined ? { type: { text: t.type } } : {}),
+    name: { text: t.key, ...(t.href ? { href: t.href } : {}) },
+    description: { text: t.title, ...(t.titleClip ? { clip: t.titleClip } : {}) },
+    ...(t.type !== undefined ? { type: { text: t.type, ...(t.typeClip ? { clip: t.typeClip } : {}) } } : {}),
     ...(t.status !== undefined ? { status: toned(t.status, t.tone) } : {}),
-    ...(t.extra !== undefined ? { extra: toned(t.extra, t.extraTone) } : {}),
-    ...(t.mark !== undefined ? { mark: { text: t.mark, dim: true } } : {}),
   }
 }
 
+/** The badges of the extras column: the extra, then the mark. A badge with no text is left out. */
+export function extrasOf(t: RowText): readonly Cell[] {
+  return [
+    ...(t.extra ? [toned(t.extra, t.extraTone)] : []),
+    ...(t.mark ? [{ text: t.mark, dim: true } satisfies Cell] : []),
+  ]
+}
+
 /**
- * The row of an item: the mark cell and the text cells. A person can always mark an item row. `dismiss` is false for a
- * row inside an item, e.g. a child node.
+ * The row of an item: the control cell, the text cells and the badges. A person can always mark an item row. `dismiss`
+ * is false for a row inside an item, e.g. a child node.
  */
 export function itemRow(o: {
   id: string
@@ -80,10 +80,12 @@ export function itemRow(o: {
   children?: readonly TreeRow[]
 }): TreeRow {
   const kids = o.children !== undefined && o.children.length > 0 ? o.children : undefined
+  const extras = extrasOf(o.text)
   return {
     id: o.id,
     owner: o.owner,
-    cells: { prio: levelCell(o.level), ...textCells(o.text) },
+    cells: { control: levelCell(o.level), ...textCells(o.text) },
+    ...(extras.length > 0 ? { extras } : {}),
     ...(kids ? { children: kids, expandedByDefault: true } : {}),
     can: { dismiss: o.dismiss, priority: true },
     ...(o.reasons ? { reasons: o.reasons } : {}),

@@ -18,6 +18,7 @@ export function fileRow(item: FileRecord, env: Pick<ViewContext, 'levelOf' | 'ro
     text: {
       key: '',
       title: env.root ? relativeToRoot(item.label, env.root) : item.label,
+      titleClip: 'middle', // a path keeps both ends
       type: item.created ? 'created' : item.mentions > 0 ? 'mentioned' : '',
       status: item.edits > 0 ? `edited ${item.edits}` : '',
       extra: item.views > 0 ? `viewed ${item.views}` : '',

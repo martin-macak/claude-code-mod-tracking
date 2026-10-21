@@ -3,8 +3,8 @@
 // keep the text the pane drew before L6; tests/tracker-sections.test.ts pins them. Both sections are trees: a row holds its children.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 14, L6 A1.
 
-import type { ColumnDef, SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
-import { content, flex, textCells } from '../../core/lib/rows'
+import type { SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
+import { textCells } from '../../core/lib/rows'
 import { ago, compactIds } from '../../core/lib/text'
 import type { AutoConfig } from './config'
 import { FACT_CHECKED_AT } from './facts'
@@ -15,18 +15,6 @@ import type { AgentRow, AutoState, WorktreeRow } from './types'
 type Ctx = ViewContext<AutoConfig, AutoState>
 
 const OWNER = 'auto'
-
-const WORKTREE_COLUMNS: readonly ColumnDef[] = [
-  { id: 'key', header: 'Worktree', width: content(8, 32), role: 'tree' },
-  { id: 'title', header: 'Branch', width: flex(10), clip: 'middle' },
-  { id: 'status', header: 'State', width: content(undefined, 9), priority: 1 },
-]
-
-const AGENT_COLUMNS: readonly ColumnDef[] = [
-  { id: 'key', header: 'Agent', width: content(8, 26), role: 'tree' },
-  { id: 'title', header: 'Branch', width: flex(10), clip: 'middle' },
-  { id: 'type', header: 'Worktree', width: content(undefined, 20), priority: 1, clip: 'middle' },
-]
 
 /** What the person can do with the row. These rows have no level, so `priority` is always off. */
 const can = (dismiss: boolean): TreeRow['can'] => ({ dismiss, priority: false })
@@ -45,6 +33,7 @@ function worktreeRow(auto: AutoState, r: WorktreeRow, children?: readonly TreeRo
     cells: textCells({
       key: compactIds(r.name),
       title: branchText(r),
+      titleClip: 'middle',
       status: removed ? 'removed' : '',
       tone: removed ? 'dim' : 'plain',
     }),
@@ -104,7 +93,6 @@ function worktreesSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
     note: { text: hidden > 0 ? `${note} (${hidden} hidden)` : note },
     rank: 10,
     band: { label: 'Worktrees', count: live, failing: 0, rank: 7 },
-    columns: WORKTREE_COLUMNS,
     rows: root ? [worktreeRow(auto, root, rows)] : rows,
   }
 }
@@ -145,6 +133,8 @@ function agentRow(auto: AutoState, r: AgentRow, children: readonly TreeRow[]): T
       key: compactIds(`${MARKER[r.state]} ${wf}${r.label}`),
       title: compactIds(r.branch ?? ''),
       type: compactIds(r.worktree ?? ''),
+      titleClip: 'middle',
+      typeClip: 'middle',
     }),
     ...(children.length > 0 ? { children } : {}),
     // The master is open until the person closes it.
@@ -337,7 +327,6 @@ function agentsSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
     note: { text: hidden.n > 0 ? `${note} (${hidden.n} hidden)` : note },
     rank: 11,
     band: { label: 'Agents', count: running, failing: 0, rank: 8 },
-    columns: AGENT_COLUMNS,
     rows: items.map(s => shownRow(auto, s, stats)),
   }
 }

@@ -1,10 +1,9 @@
-// The sections of the auto, repos and processes trackers, drawn through a real LifecycleManager over fakePorts: columns,
-// rows, notes, tones, bands and the cases in which a section is left out. The item trackers' half is in
+// The sections of the auto, repos and processes trackers, drawn through a real LifecycleManager over fakePorts: rows, notes, tones, bands and the cases in which a section is left out. The item trackers' half is in
 // item-sections.test.ts. Each row and cell is what the pane drew before L6. Plan: L5 Task 14, L6 A1.
 import { expect, test } from 'claude-code/testing'
 import { NO_VIEW } from '../core/infra/views'
 import type { Json } from '../core/interfaces/items'
-import type { Cell, SectionSpec, TreeRow } from '../core/interfaces/view'
+import type { Cell, CellId, SectionSpec, TreeRow } from '../core/interfaces/view'
 import {
   NOW,
   paneWorld,
@@ -17,9 +16,7 @@ import {
 
 const ids = (sections: readonly SectionSpec[]) => sections.map(s => s.id)
 const section = (sections: readonly SectionSpec[], id: string): SectionSpec => sections.find(s => s.id === id)!
-const cell = (r: TreeRow | undefined, id: string): Cell => r?.cells[id] ?? { text: '<no cell>' }
-const column = (c: SectionSpec['columns'][number]) => [c.id, c.header]
-const widths = (s: SectionSpec) => s.columns.map(c => [c.id, c.width, c.priority, c.role])
+const cell = (r: TreeRow | undefined, id: CellId): Cell => r?.cells[id] ?? { text: '<no cell>' }
 const find = (rows: readonly TreeRow[], id: string): TreeRow | undefined => {
   for (const r of rows) {
     if (r.id === id) return r
@@ -49,78 +46,12 @@ test('every pane section is placed by its rank and band rank: Worktrees, Agents,
   expect(ids(sections)).toHaveLength(10)
 })
 
-test('the worktrees columns are A1’s', async () => {
-  const t = await paneWorld()
-  const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'worktrees')
-  expect(s.columns.map(column)).toEqual([
-    ['key', 'Worktree'],
-    ['title', 'Branch'],
-    ['status', 'State'],
-  ])
-  expect(widths(s)).toEqual([
-    ['key', { kind: 'content', min: 8, max: 32 }, undefined, 'tree'],
-    ['title', { kind: 'flex', min: 10 }, undefined, undefined],
-    ['status', { kind: 'content', max: 9 }, 1, undefined],
-  ])
-})
-
-test('the agents columns are A1’s', async () => {
-  const t = await paneWorld()
-  const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'agents')
-  expect(s.columns.map(column)).toEqual([
-    ['key', 'Agent'],
-    ['title', 'Branch'],
-    ['type', 'Worktree'],
-  ])
-  expect(widths(s)).toEqual([
-    ['key', { kind: 'content', min: 8, max: 26 }, undefined, 'tree'],
-    ['title', { kind: 'flex', min: 10 }, undefined, undefined],
-    ['type', { kind: 'content', max: 20 }, 1, undefined],
-  ])
-})
-
-test('the repos columns are A1’s', async () => {
-  const t = await paneWorld()
-  const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'repos')
-  expect(s.columns.map(column)).toEqual([
-    ['key', 'Repo'],
-    ['title', 'Branch'],
-    ['type', 'Agents'],
-    ['status', 'Mode'],
-  ])
-  expect(widths(s)).toEqual([
-    ['key', { kind: 'content', min: 6, max: 24 }, undefined, 'tree'],
-    ['title', { kind: 'flex', min: 10 }, undefined, undefined],
-    ['type', { kind: 'content', max: 20 }, 1, undefined],
-    ['status', { kind: 'fixed', cells: 4 }, undefined, undefined],
-  ])
-})
-
-test('the processes columns are A1’s', async () => {
-  const t = await paneWorld()
-  const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'processes')
-  expect(s.columns.map(column)).toEqual([
-    ['key', 'Kind'],
-    ['title', 'Name'],
-    ['type', 'Type'],
-    ['status', 'State'],
-  ])
-  expect(widths(s)).toEqual([
-    ['key', { kind: 'content', min: 3, max: 7 }, undefined, 'tree'],
-    ['title', { kind: 'flex', min: 10 }, undefined, undefined],
-    ['type', { kind: 'content', max: 18 }, 1, undefined],
-    ['status', { kind: 'content', max: 10 }, undefined, undefined],
-  ])
-})
-
-test('each of the four has exactly one tree column and no prio column', async () => {
+test('the four sections write no control cell: no mark can be set on a row of them', async () => {
   const t = await paneWorld()
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)
-  for (const id of ['worktrees', 'agents', 'repos', 'processes']) {
-    const s = section(sections, id)
-    expect(s.columns.filter(c => c.role === 'tree').map(c => c.id)).toEqual(['key'])
-    expect(s.columns.some(c => c.id === 'prio')).toBe(false)
-  }
+  const all = (rows: readonly TreeRow[]): TreeRow[] => rows.flatMap(r => [r, ...all(r.children ?? [])])
+  for (const id of ['worktrees', 'agents', 'repos', 'processes'])
+    for (const r of all(section(sections, id).rows)) expect(r.cells.control, `${id} ${r.id}`).toBeUndefined()
 })
 
 test('the worktree root and the master agent are expandedByDefault', async () => {
@@ -178,16 +109,16 @@ test('worktree rows: names, branches, the removed one dimmed, and what can be di
   const t = await paneWorld()
   const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'worktrees')
   const root = find(s.rows, 'wt:/work')
-  expect([cell(root, 'key'), cell(root, 'title'), cell(root, 'status')]).toEqual([
+  expect([cell(root, 'name'), cell(root, 'description'), cell(root, 'status')]).toEqual([
     { text: 'work' },
-    { text: 'main' },
+    { text: 'main', clip: 'middle' }, // a branch keeps both ends
     { text: '' },
   ])
   expect(root?.can).toEqual({ dismiss: false, priority: false })
   const live = find(s.rows, 'wt:/work/feat-x')
-  expect([cell(live, 'key'), cell(live, 'title'), cell(live, 'status')]).toEqual([
+  expect([cell(live, 'name'), cell(live, 'description'), cell(live, 'status')]).toEqual([
     { text: 'feat-x' },
-    { text: 'feat/x' },
+    { text: 'feat/x', clip: 'middle' },
     { text: '' },
   ])
   expect(live?.can).toEqual({ dismiss: true, priority: false })
@@ -195,7 +126,7 @@ test('worktree rows: names, branches, the removed one dimmed, and what can be di
   const gone = find(s.rows, 'wt:/work/old-wt')
   expect(cell(gone, 'status')).toEqual({ text: 'removed', dim: true })
   expect(gone?.dim).toBe(true)
-  expect(cell(find(s.rows, 'wt:/work/detached-wt'), 'title')).toEqual({ text: '(detached)' })
+  expect(cell(find(s.rows, 'wt:/work/detached-wt'), 'description')).toEqual({ text: '(detached)', clip: 'middle' })
 })
 
 test('the worktrees note counts the children and says when git last ran; the band counts the live ones', async () => {
@@ -232,26 +163,26 @@ test('agent rows: the state marker, the workflow index, the worktree, ended and 
   const t = await paneWorld()
   const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'agents')
   const master = find(s.rows, 'ag:master')
-  expect([cell(master, 'key'), cell(master, 'title'), cell(master, 'type')]).toEqual([
+  expect([cell(master, 'name'), cell(master, 'description'), cell(master, 'type')]).toEqual([
     { text: '● this session' },
-    { text: 'feat/x' },
-    { text: 'feat-x' },
+    { text: 'feat/x', clip: 'middle' },
+    { text: 'feat-x', clip: 'middle' },
   ])
   expect(master?.can).toEqual({ dismiss: false, priority: false })
   expect(master?.dim).toBeUndefined()
   const explore = find(s.rows, 'ag:explore')
-  expect(cell(explore, 'key')).toEqual({ text: '● explore' })
-  expect(cell(explore, 'type')).toEqual({ text: 'agent-a94bdd45' }) // compactIds shortens the engine ids
+  expect(cell(explore, 'name')).toEqual({ text: '● explore' })
+  expect(cell(explore, 'type')).toEqual({ text: 'agent-a94bdd45', clip: 'middle' }) // compactIds shortens the engine ids
   expect(explore?.can).toEqual({ dismiss: true, priority: false })
   expect(explore?.dim).toBeUndefined()
   const review = find(s.rows, 'ag:review')
-  expect(cell(review, 'key')).toEqual({ text: '✓ review' })
+  expect(cell(review, 'name')).toEqual({ text: '✓ review' })
   expect(review?.dim).toBe(true)
-  expect(cell(find(s.rows, 'ag:build'), 'key')).toEqual({ text: '● wf_a35565·2 build' }) // waiting counts as running; the label says the run (issue #49)
+  expect(cell(find(s.rows, 'ag:build'), 'name')).toEqual({ text: '● wf_a35565·2 build' }) // waiting counts as running; the label says the run (issue #49)
   expect(find(s.rows, 'ag:build')?.dim).toBeUndefined()
-  expect(cell(find(s.rows, 'ag:lint'), 'key')).toEqual({ text: '✗ lint' })
+  expect(cell(find(s.rows, 'ag:lint'), 'name')).toEqual({ text: '✗ lint' })
   expect(find(s.rows, 'ag:lint')?.dim).toBe(true)
-  expect(cell(find(s.rows, 'ag:lint'), 'title')).toEqual({ text: '' })
+  expect(cell(find(s.rows, 'ag:lint'), 'description')).toEqual({ text: '', clip: 'middle' })
 })
 
 test('the agents note and band: running and waiting are running, ended and failed are ended; the master is not counted', async () => {
@@ -299,14 +230,17 @@ test('repo rows: oldest first, the touched-by list, the mode word and its tone',
   const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'repos')
   expect(s.rows.map(r => r.id)).toEqual(['rp:remote:github.com/acme/web', 'rp:remote:github.com/acme/sdk'])
   const web = s.rows[0]
-  expect([cell(web, 'key'), cell(web, 'title'), cell(web, 'type')]).toEqual([
+  expect([cell(web, 'name'), cell(web, 'description'), cell(web, 'type')]).toEqual([
     { text: 'acme/web' },
-    { text: '' },
-    { text: 'main' },
+    { text: '', clip: 'middle' },
+    { text: 'main', clip: 'middle' },
   ])
   expect(cell(web, 'status')).toEqual({ text: 'read', dim: true })
   const sdk = s.rows[1]
-  expect([cell(sdk, 'title'), cell(sdk, 'type')]).toEqual([{ text: 'dev' }, { text: 'main, planner' }])
+  expect([cell(sdk, 'description'), cell(sdk, 'type')]).toEqual([
+    { text: 'dev', clip: 'middle' },
+    { text: 'main, planner', clip: 'middle' },
+  ])
   expect(cell(sdk, 'status')).toEqual({ text: 'edit', fg: 'success' })
   for (const r of s.rows) {
     expect(r.owner).toBe('repos')
@@ -331,7 +265,12 @@ test('process rows: the short kind word, the name, the kind with a space, the st
   const t = await paneWorld()
   const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'processes')
   expect(s.rows.map(r => r.id)).toEqual(['bg:1', 'docker:db', 'pid:77'])
-  const rows = s.rows.map(r => [cell(r, 'key').text, cell(r, 'title').text, cell(r, 'type').text, cell(r, 'status')])
+  const rows = s.rows.map(r => [
+    cell(r, 'name').text,
+    cell(r, 'description').text,
+    cell(r, 'type').text,
+    cell(r, 'status'),
+  ])
   expect(rows).toEqual([
     ['bg', 'npm run dev', 'background task', { text: 'running', fg: 'success' }],
     ['docker', 'db', 'docker container', { text: 'up', fg: 'success' }],
@@ -385,7 +324,7 @@ test('a process row cannot be dismissed or prioritised', async () => {
   for (const r of s.rows) {
     expect(r.can).toEqual({ dismiss: false, priority: false })
     expect(r.owner).toBe('processes')
-    expect(r.cells.prio).toBeUndefined()
+    expect(r.cells.control).toBeUndefined()
   }
 })
 

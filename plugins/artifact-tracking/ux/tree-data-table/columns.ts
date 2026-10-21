@@ -1,4 +1,5 @@
-// The column solver: the width of each column of one section, from the rows it draws. Pure.
+// The column solver: the width of each column of the one table, from the rows it draws. Pure. Every group of the pane
+// shares the columns of `SHARED_COLUMNS`, so one solution fits all rows.
 // The engine's Box has no maxWidth, so the mod clamps widths itself. Decision G5 of plan L6; spec 5.10 "Columns".
 //
 // Order, as the tests pin it:
@@ -12,7 +13,7 @@
 //   5. under `avail`: the flex columns share the rest evenly, the remainder to the leftmost.
 // A tree or flex column never drops, and a column without `priority` never drops. When nothing is left to drop or
 // shrink, the columns stay wider than `avail`: only a pane of about 20 cells or less gets there.
-import type { ColumnDef, TreeRow } from '../../core/interfaces/view'
+import type { Cell, CellId, ColumnDef, ColumnId, TreeRow } from '../../core/interfaces/view'
 import { cellWidth, normaliseCell } from '../text/cell-width'
 
 /** Cells between two columns. */
@@ -21,6 +22,33 @@ export const GAP = 1
 export const INDENT = 2
 /** The expand glyph and one space. */
 export const GLYPH_BOX = 2
+
+/**
+ * The columns of the one table, in drawing order (design study of issue #63, section 5.3). The level marker leads, the
+ * name carries the tree glyph, the description takes the room that is left. A narrow pane drops the type, then the
+ * extras: control, name, status and description stay. No group has columns of its own.
+ */
+export const SHARED_COLUMNS: readonly (ColumnDef & { readonly id: ColumnId })[] = [
+  { id: 'control', header: '', width: { kind: 'fixed', cells: 2 } },
+  { id: 'name', header: 'Name', width: { kind: 'content', min: 6, max: 24 }, role: 'tree' },
+  { id: 'description', header: 'Description', width: { kind: 'flex', min: 10 } },
+  { id: 'type', header: 'Type', width: { kind: 'content', max: 12 }, priority: 2 },
+  { id: 'status', header: 'Status', width: { kind: 'content', max: 10 } },
+  { id: 'extras', header: '', width: { kind: 'content', max: 14 }, priority: 1 },
+]
+
+/** The id of the column that holds the badges of `TreeRow.extras`. */
+const EXTRAS: ColumnId = 'extras'
+
+/**
+ * What a row has in a column: its cell, or for the extras one cell whose text is the badges joined by a space. Nothing
+ * when the row has none. The join serves the width of the column and the detail; the drawing keeps each badge apart.
+ */
+export function cellOf(row: TreeRow, id: string): Cell | undefined {
+  if (id !== EXTRAS) return row.cells[id as CellId]
+  const badges = (row.extras ?? []).filter(b => b.text !== '')
+  return badges.length === 0 ? undefined : { text: badges.map(b => b.text).join(' ') }
+}
 
 export interface SolvedColumn {
   readonly id: string
@@ -43,7 +71,7 @@ interface Slot {
   width: number
 }
 
-/** The widest width a content or tree column had, by `section/column`. It only grows, so a column holds still when a row
+/** The widest width a content or tree column had, by `table/column`. It only grows, so a column holds still when a row
  * opens or closes. */
 const memo = new Map<string, number>()
 
@@ -54,17 +82,17 @@ export function resetWidths(): void {
 
 const clamp = (value: number, min = 0, max = Number.POSITIVE_INFINITY): number => Math.min(max, Math.max(min, value))
 const isTree = (def: ColumnDef): boolean => def.role === 'tree'
-const textOf = (rows: Laid, id: string): string[] => rows.map(r => normaliseCell(r.row.cells[id]?.text ?? ''))
+const textOf = (rows: Laid, id: string): string[] => rows.map(r => normaliseCell(cellOf(r.row, id)?.text ?? ''))
 const widest = (widths: number[]): number => widths.reduce((a, b) => Math.max(a, b), 0)
 
-function naturalWidth(sectionId: string, def: ColumnDef, rows: Laid): number {
+function naturalWidth(tableId: string, def: ColumnDef, rows: Laid): number {
   const w = def.width
   // Fixed and flex come first, also for the tree column: it never measures its text then. Its floor is the glyph box.
   const floor = isTree(def) ? GLYPH_BOX : 1
   if (w.kind === 'fixed') return Math.max(floor, w.cells)
   if (w.kind === 'flex') return Math.max(floor, w.min)
   const head = cellWidth(def.header)
-  const key = `${sectionId}/${def.id}`
+  const key = `${tableId}/${def.id}`
   if (isTree(def)) {
     const depths = rows.map(r => r.depth)
     const body = widest(textOf(rows, def.id).map((t, i) => INDENT * (depths[i] ?? 0) + cellWidth(t)))
@@ -85,12 +113,12 @@ function floorOf(slot: Slot): number {
 
 const JUSTIFY = { left: 'flex-start', center: 'center', right: 'flex-end' } as const
 
-export function solveColumns(sectionId: string, columns: readonly ColumnDef[], rows: Laid, avail: number): Solved {
+export function solveColumns(tableId: string, columns: readonly ColumnDef[], rows: Laid, avail: number): Solved {
   const hidden = (def: ColumnDef): boolean =>
     def.width.kind === 'content' && !isTree(def) && textOf(rows, def.id).every(t => t.trim() === '')
   const slots: Slot[] = columns
     .filter(def => !hidden(def))
-    .map(def => ({ def, width: naturalWidth(sectionId, def, rows) }))
+    .map(def => ({ def, width: naturalWidth(tableId, def, rows) }))
   const total = (): number => slots.reduce((sum, s) => sum + s.width, 0) + GAP * Math.max(0, slots.length - 1)
 
   const dropped: string[] = []

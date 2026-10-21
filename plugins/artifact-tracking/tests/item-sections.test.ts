@@ -5,7 +5,7 @@ import { expect, test } from 'claude-code/testing'
 import { NO_VIEW, sortSections } from '../core/infra/views'
 import type { Json } from '../core/interfaces/items'
 import type { Tracker } from '../core/interfaces/tracker'
-import type { Cell, SectionSpec, TreeRow } from '../core/interfaces/view'
+import type { Cell, CellId, SectionSpec, TreeRow } from '../core/interfaces/view'
 import { listText } from '../hooks/pane-text'
 import { bandText } from '../ux/band'
 import { fakeConfig } from './fixtures/config-fs'
@@ -15,7 +15,7 @@ import { expectLinear } from './fixtures/scaling'
 
 const ids = (sections: readonly SectionSpec[]) => sections.map(s => s.id)
 const section = (sections: readonly SectionSpec[], id: string): SectionSpec => sections.find(s => s.id === id)!
-const cell = (r: TreeRow | undefined, id: string): Cell => r?.cells[id] ?? { text: '<no cell>' }
+const cell = (r: TreeRow | undefined, id: CellId): Cell => r?.cells[id] ?? { text: '<no cell>' }
 const find = (sections: readonly SectionSpec[], id: string, rowId: string): TreeRow | undefined => {
   const walk = (rows: readonly TreeRow[]): TreeRow | undefined => {
     for (const r of rows) {
@@ -27,7 +27,6 @@ const find = (sections: readonly SectionSpec[], id: string, rowId: string): Tree
   }
   return walk(section(sections, id).rows)
 }
-const column = (c: SectionSpec['columns'][number]) => [c.id, c.header]
 /** The sections of the item trackers: they list items, so each row takes a mark. The other four are in tracker-sections.test.ts. */
 const ITEM_SECTIONS = ['prs', 'jira', 'github', 'artifact', 'web', 'file']
 const itemOnly = (sections: readonly SectionSpec[]) => sections.filter(s => ITEM_SECTIONS.includes(s.id))
@@ -239,103 +238,76 @@ test('paneData leaves out the sections of a tracker that is off', async () => {
   ])
 })
 
-test('the github columns are A1’s, in order', async () => {
+/** Every row of a tree, parents first. */
+const walk = (rows: readonly TreeRow[]): TreeRow[] => rows.flatMap(r => [r, ...walk(r.children ?? [])])
+const SHARED_CELLS: readonly CellId[] = ['control', 'name', 'description', 'type', 'status']
+
+// Design study of issue #63, section 5.3: each section writes the cells of the shared columns. No section has columns of
+// its own: the header words (PR, Branch, Checks, Worktree, Agents, ...) are gone.
+test('every section writes the shared columns: control for the item sections, then name, description, type, status and the badges', async () => {
   const t = await paneWorld()
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)
-  expect(section(sections, 'github').columns.map(column)).toEqual([
-    ['prio', ''],
-    ['key', 'Ref'],
-    ['title', 'Title'],
-    ['type', 'Type'],
-    ['status', 'State'],
-    ['merge', 'Merge'],
-    ['extra', 'Checks'],
-  ])
-  const heads: Record<string, string[][]> = {
-    prs: [
-      ['prio', ''],
-      ['key', 'PR'],
-      ['title', 'Title'],
-      ['type', 'Branch'],
-      ['status', 'State'],
-      ['merge', 'Merge'],
-      ['extra', 'Checks'],
-      ['mark', ''],
-    ],
-    jira: [
-      ['prio', ''],
-      ['key', 'Key'],
-      ['title', 'Summary'],
-      ['type', 'Type'],
-      ['status', 'Status'],
-    ],
-    artifact: [
-      ['prio', ''],
-      ['key', 'Name'],
-      ['title', 'Id'],
-      ['type', 'Origin'],
-      ['status', 'State'],
-    ],
-    web: [
-      ['prio', ''],
-      ['key', 'Label'],
-      ['title', 'URL'],
-    ],
-    file: [
-      ['prio', ''],
-      ['key', ''],
-      ['title', 'File'],
-      ['type', 'Origin'],
-      ['status', 'Edits'],
-      ['extra', 'Views'],
-      ['mark', 'By'],
-    ],
+  const cellsOf = (id: string) => {
+    const rows = walk(section(sections, id).rows)
+    return {
+      cells: SHARED_CELLS.filter(c => rows.some(r => r.cells[c] !== undefined)),
+      extras: rows.some(r => (r.extras?.length ?? 0) > 0),
+    }
   }
-  for (const [id, want] of Object.entries(heads)) expect(section(sections, id).columns.map(column)).toEqual(want)
-  for (const s of sections) expect(s.columns.filter(c => c.role === 'tree').length).toBe(1)
-  for (const s of itemOnly(sections))
-    expect(s.columns[0]).toEqual({ id: 'prio', header: '', width: { kind: 'fixed', cells: 1 } })
-  expect(section(sections, 'github').columns.map(c => c.width)).toEqual([
-    { kind: 'fixed', cells: 1 },
-    { kind: 'content', min: 4, max: 24 },
-    { kind: 'flex', min: 10 },
-    { kind: 'content', max: 6 },
-    { kind: 'content', max: 10 },
-    { kind: 'content', max: 11 },
-    { kind: 'content', max: 10 },
-  ])
-  expect(section(sections, 'file').columns.map(c => c.priority)).toEqual([
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    2,
-    2,
-    1,
-  ])
+  expect(Object.fromEntries(sections.map(s => [s.id, cellsOf(s.id)]))).toEqual({
+    worktrees: { cells: ['name', 'description', 'status'], extras: false },
+    agents: { cells: ['name', 'description', 'type'], extras: false },
+    prs: { cells: ['control', 'name', 'description', 'type', 'status'], extras: true },
+    jira: { cells: ['control', 'name', 'description', 'type', 'status'], extras: false },
+    github: { cells: ['control', 'name', 'description', 'type', 'status'], extras: true },
+    artifact: { cells: ['control', 'name', 'description', 'type', 'status'], extras: false },
+    repos: { cells: ['name', 'description', 'type', 'status'], extras: false },
+    web: { cells: ['control', 'name', 'description'], extras: false },
+    file: { cells: ['control', 'name', 'description', 'type', 'status'], extras: true },
+    processes: { cells: ['name', 'description', 'type', 'status'], extras: false },
+  })
+  // No row writes a cell of the old per-section columns.
+  for (const s of sections)
+    for (const r of walk(s.rows))
+      expect(Object.keys(r.cells).filter(k => !SHARED_CELLS.includes(k as CellId))).toEqual([])
 })
 
-// Main cut these cells in the middle (`truncate-middle`): a branch or a path keeps both ends. Every other column is cut at the end.
-// The Name of a process row joined them in issue #49: its path shows from `./`, and the end of a command matters.
-test('the branch, path and process name columns cut in the middle, every other column at the end', async () => {
+test('the extras of a PR are the checks, and of a file the views and who read it: badges in the order of the old columns', async () => {
   const t = await paneWorld()
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)
-  const middle = sections.flatMap(s => s.columns.filter(c => c.clip === 'middle').map(c => [s.id, c.id, c.header]))
-  expect(middle).toEqual([
-    ['worktrees', 'title', 'Branch'],
-    ['agents', 'title', 'Branch'],
-    ['agents', 'type', 'Worktree'],
-    ['prs', 'type', 'Branch'],
-    ['repos', 'title', 'Branch'],
-    ['repos', 'type', 'Agents'],
-    ['file', 'title', 'File'],
-    ['processes', 'title', 'Name'], // issue #49: a command with a long path keeps both ends
+  expect(find(sections, 'prs', KEYS.head)?.extras?.map(b => b.text)).toEqual(['✗ checks'])
+  expect(find(sections, 'file', KEYS.viewed)?.extras?.map(b => b.text)).toEqual(['viewed 3', 'subagent'])
+  expect(find(sections, 'file', KEYS.edited)?.extras?.map(b => b.text)).toEqual(['viewed 1'])
+})
+
+// Main cut these cells in the middle (`truncate-middle`): a branch or a path keeps both ends. Every other cell is cut at the end.
+// The Name of a process row joined them in issue #49: its path shows from `./`, and the end of a command matters.
+test('the branch, path and process name cells cut in the middle, every other cell at the end', async () => {
+  const t = await paneWorld()
+  const sections = await t.m.paneData(t.w.ports, NO_VIEW)
+  const middle = sections.flatMap(s => [
+    ...new Set(
+      walk(s.rows).flatMap(r =>
+        (['name', 'description', 'type'] as const).filter(c => r.cells[c]?.clip === 'middle').map(c => `${s.id}.${c}`),
+      ),
+    ),
   ])
-  const titles = section(sections, 'github').columns.find(c => c.id === 'title')
-  expect(titles?.clip ?? 'end').toBe('end')
-  expect(section(sections, 'prs').columns.find(c => c.id === 'title')?.clip ?? 'end').toBe('end')
-  for (const id of ['jira', 'web', 'artifact'])
-    expect(section(sections, id).columns.filter(c => c.clip === 'middle')).toEqual([])
+  expect(middle).toEqual([
+    'worktrees.description',
+    'agents.description',
+    'agents.type',
+    'prs.type',
+    'repos.description',
+    'repos.type',
+    'file.description',
+    'processes.description', // issue #49: a command with a long path keeps both ends
+  ])
+  for (const id of ['github', 'jira', 'web', 'artifact'])
+    for (const r of walk(section(sections, id).rows))
+      expect(
+        SHARED_CELLS.filter(c => r.cells[c]?.clip === 'middle'),
+        `${id} ${r.id}`,
+      ).toEqual([])
 })
 
 test('every section is placed by its rank and band rank (K2)', async () => {
@@ -370,12 +342,12 @@ test('a Jira root holds its children with expandedByDefault and child ids parent
   expect(task.children![0]!.expandedByDefault).toBeUndefined() // a leaf has nothing to open
   // PROJ-201 is a tracked issue and a node of ISS-1: it has no root row of its own (#48), and its mark and via show in the tree.
   expect(find(sections, 'jira', KEYS.jiraNested)).toBeUndefined()
-  expect(cell(task, 'prio').text).toBe('▽')
-  expect(cell(task, 'title').text).toBe('↳#22 The task')
+  expect(cell(task, 'control').text).toBe('▽')
+  expect(cell(task, 'description').text).toBe('↳#22 The task')
   // The nodes sort by their own mark: the high one first.
   expect(root.owner).toBe('jira')
-  expect(cell(root, 'title').text).toBe('↳#21 The epic')
-  expect(cell(root, 'key').href).toBe('https://acme.atlassian.net/browse/ISS-1')
+  expect(cell(root, 'description').text).toBe('↳#21 The epic')
+  expect(cell(root, 'name').href).toBe('https://acme.atlassian.net/browse/ISS-1')
 })
 
 test('the Jira status words: track-only on a site that is not active, not found, and the category tones', async () => {
@@ -386,7 +358,7 @@ test('the Jira status words: track-only on a site that is not active, not found,
   expect(cell(find(sections, 'jira', KEYS.jira), 'status')).toEqual({ text: 'In Progress', fg: 'warning' })
   const subtask = find(sections, 'jira', 'jira:acme.atlassian.net/ISS-1/PROJ-201/PROJ-301')
   expect(cell(subtask, 'status')).toEqual({ text: 'Done', fg: 'success' })
-  expect(cell(subtask, 'prio')).toEqual({ text: '▲' })
+  expect(cell(subtask, 'control')).toEqual({ text: '▲' })
   expect(section(sections, 'jira').note).toEqual({ text: 'acli · acme.atlassian.net · refreshed 1m ago' })
   // A site is "not the active one" only when acli names an active one.
   t.w.state.set('tools', {})
@@ -401,24 +373,24 @@ test('cells carry tones as tokens', async () => {
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)
   const head = find(sections, 'prs', KEYS.head)
   expect(cell(head, 'status')).toEqual({ text: 'open', fg: 'success' })
-  expect(cell(head, 'extra')).toEqual({ text: '✗ checks', fg: 'error' })
-  expect(cell(head, 'prio')).toEqual({ text: '★', dim: true }) // a rule gave the level
-  expect(cell(find(sections, 'prs', KEYS.stacked), 'extra')).toEqual({ text: '… checks', fg: 'warning' })
+  expect(head?.extras).toEqual([{ text: '✗ checks', fg: 'error' }])
+  expect(cell(head, 'control')).toEqual({ text: '★', dim: true }) // a rule gave the level
+  expect(find(sections, 'prs', KEYS.stacked)?.extras).toEqual([{ text: '… checks', fg: 'warning' }])
   expect(cell(find(sections, 'prs', KEYS.merged), 'status')).toEqual({ text: 'merged', dim: true })
-  expect(cell(find(sections, 'github', KEYS.viaIssue), 'prio')).toEqual({ text: '▲' }) // the person's mark
+  expect(cell(find(sections, 'github', KEYS.viaIssue), 'control')).toEqual({ text: '▲' }) // the person's mark
   expect(cell(find(sections, 'github', KEYS.draft), 'status')).toEqual({ text: 'draft', dim: true })
-  expect(cell(find(sections, 'file', KEYS.viewed), 'mark')).toEqual({ text: 'subagent', dim: true })
+  expect(find(sections, 'file', KEYS.viewed)?.extras?.at(-1)).toEqual({ text: 'subagent', dim: true })
 })
 
 test('GitHub rows: #N in the session repo, owner/repo#N elsewhere, an unresolved ref, a via marker, and no link for none', async () => {
   const t = await paneWorld()
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)
   const gh = (key: string) => find(sections, 'github', key)
-  expect(cell(gh(KEYS.issue), 'key')).toEqual({ text: '#5', href: 'https://github.com/acme/web/issues/5' })
-  expect(cell(gh(KEYS.other), 'key').text).toBe('cli/cli#14640')
-  expect(cell(gh(KEYS.bare), 'key')).toEqual({ text: '#7' }) // an unresolved ref has no URL
-  expect(cell(gh(KEYS.bare), 'title').text).toBe('unresolved: no repo')
-  expect(cell(gh(KEYS.viaIssue), 'title').text).toBe('↳#21 Name the lane')
+  expect(cell(gh(KEYS.issue), 'name')).toEqual({ text: '#5', href: 'https://github.com/acme/web/issues/5' })
+  expect(cell(gh(KEYS.other), 'name').text).toBe('cli/cli#14640')
+  expect(cell(gh(KEYS.bare), 'name')).toEqual({ text: '#7' }) // an unresolved ref has no URL
+  expect(cell(gh(KEYS.bare), 'description').text).toBe('unresolved: no repo')
+  expect(cell(gh(KEYS.viaIssue), 'description').text).toBe('↳#21 Name the lane')
   expect(cell(gh(KEYS.gone), 'status')).toEqual({ text: 'not found', fg: 'error' })
   expect(cell(gh(KEYS.pr), 'type').text).toBe('PR')
   expect(cell(gh(KEYS.issue), 'type').text).toBe('Issue')
@@ -427,7 +399,7 @@ test('GitHub rows: #N in the session repo, owner/repo#N elsewhere, an unresolved
   const t2 = await paneWorld()
   t2.m.facts.publish('session.repo', undefined)
   const bare = find(await t2.m.paneData(t2.w.ports, NO_VIEW), 'github', KEYS.issue)
-  expect(cell(bare, 'key').text).toBe('acme/web#5')
+  expect(cell(bare, 'name').text).toBe('acme/web#5')
 })
 
 test('the Pull requests rows: the branch, a stacked PR, the title without the via marker, merged dimmed', async () => {
@@ -436,8 +408,8 @@ test('the Pull requests rows: the branch, a stacked PR, the title without the vi
   expect(section(sections, 'prs').rows.map(r => r.id)).toEqual([KEYS.head, KEYS.stacked, KEYS.merged, KEYS.named])
   expect(cell(find(sections, 'prs', KEYS.head), 'type').text).toBe('feat/x')
   expect(cell(find(sections, 'prs', KEYS.stacked), 'type').text).toBe('→feat/x') // stacked on a branch other than main
-  // A head branch takes the middle cut of its column; `→base` is cut at the end, as on main, so the arrow stays.
-  expect(cell(find(sections, 'prs', KEYS.head), 'type').clip).toBeUndefined()
+  // A head branch takes the middle cut; `→base` is cut at the end, as on main, so the arrow stays.
+  expect(cell(find(sections, 'prs', KEYS.head), 'type').clip).toBe('middle')
   expect(cell(find(sections, 'prs', KEYS.stacked), 'type').clip).toBe('end')
   expect(find(sections, 'prs', KEYS.merged)?.dim).toBe(true)
   expect(find(sections, 'prs', KEYS.head)?.dim).toBeUndefined()
@@ -529,32 +501,32 @@ test('artifact, web and file rows', async () => {
   const t = await paneWorld()
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)
   const published = find(sections, 'artifact', KEYS.published)
-  expect(cell(published, 'key')).toEqual({
+  expect(cell(published, 'name')).toEqual({
     text: 'Design notes',
     href: 'https://claude.ai/artifact/11111111-1111-4111-8111-111111111111',
   })
-  expect(cell(published, 'title').text).toBe('11111111-1111-4111-8111-111111111111') // the name is not the id
+  expect(cell(published, 'description').text).toBe('11111111-1111-4111-8111-111111111111') // the name is not the id
   expect(cell(published, 'type').text).toBe('published')
   const deleted = find(sections, 'artifact', KEYS.deleted)
   expect(deleted?.dim).toBe(true)
-  expect(cell(deleted, 'key').href).toBeUndefined() // a deleted page has no link
+  expect(cell(deleted, 'name').href).toBeUndefined() // a deleted page has no link
   expect(cell(deleted, 'status')).toEqual({ text: 'deleted', dim: true })
   const mentioned = find(sections, 'artifact', KEYS.mentioned)
-  expect(cell(mentioned, 'title').text).toBe('') // the name is the id: it shows once
+  expect(cell(mentioned, 'description').text).toBe('') // the name is the id: it shows once
   expect(cell(mentioned, 'type').text).toBe('mentioned')
   expect(section(sections, 'artifact').note).toEqual({ text: '3 artifacts' })
   // A web link shows the host and path of its URL: no scheme, query or trailing slash.
-  expect(cell(find(sections, 'web', KEYS.web), 'title').text).toBe('↳#21 docs.example/a')
-  expect(cell(find(sections, 'web', KEYS.web2), 'title').text).toBe('docs.example/b')
-  expect(cell(find(sections, 'web', KEYS.web2), 'key').text).toBe('The B page')
+  expect(cell(find(sections, 'web', KEYS.web), 'description').text).toBe('↳#21 docs.example/a')
+  expect(cell(find(sections, 'web', KEYS.web2), 'description').text).toBe('docs.example/b')
+  expect(cell(find(sections, 'web', KEYS.web2), 'name').text).toBe('The B page')
   expect(section(sections, 'web').note).toEqual({ text: '2 links' })
   // A file shows its path below the session root, one cell per activity.
   const created = find(sections, 'file', KEYS.created)
-  expect(cell(created, 'key')).toEqual({ text: '' })
-  expect(cell(created, 'title').text).toBe('plan.md')
+  expect(cell(created, 'name')).toEqual({ text: '' })
+  expect(cell(created, 'description').text).toBe('plan.md')
   expect(cell(created, 'type').text).toBe('created')
   const edited = find(sections, 'file', KEYS.edited)
-  expect([cell(edited, 'title').text, cell(edited, 'status').text, cell(edited, 'extra').text]).toEqual([
+  expect([cell(edited, 'description').text, cell(edited, 'status').text, edited?.extras?.[0]?.text]).toEqual([
     'docs/spec.md',
     'edited 2',
     'viewed 1',
@@ -571,10 +543,10 @@ test('artifact, web and file rows', async () => {
   }
   t.w.state.set('items', [{ ...mention, views: 0, bySubagent: undefined }] as unknown as Json)
   const rows = section(await t.m.paneData(t.w.ports, NO_VIEW), 'file').rows
-  expect([cell(rows[0], 'title').text, cell(rows[0], 'type').text, cell(rows[0], 'mark').text]).toEqual([
+  expect([cell(rows[0], 'description').text, cell(rows[0], 'type').text, rows[0]?.extras]).toEqual([
     '/work/m.md',
     'mentioned',
-    '',
+    undefined, // nothing viewed and no subagent: no badge
   ])
 })
 
@@ -594,7 +566,7 @@ test('the web section stays linear on a URL with a long slash run', async () => 
   }
   await expectLinear({ make: items, run: read })
   const sections = await read(items(4))
-  const titles = section(sections, 'web').rows.map(r => cell(r, 'title').text)
+  const titles = section(sections, 'web').rows.map(r => cell(r, 'description').text)
   expect(titles[0]).toBe('example.com')
   expect(titles[1]?.length).toBe('example.com'.length + 60_001 + 1)
 })
@@ -721,7 +693,7 @@ test('a tracker whose sections throw loses them, the others still draw, and one 
 })
 
 test('sortSections: the pane by rank, else the order; the band by band rank, else rank, else the order; ties keep the input order', () => {
-  const s = (id: string, o: Partial<SectionSpec> = {}): SectionSpec => ({ id, title: id, columns: [], rows: [], ...o })
+  const s = (id: string, o: Partial<SectionSpec> = {}): SectionSpec => ({ id, title: id, rows: [], ...o })
   const list = [
     { s: s('a'), order: 30 },
     { s: s('b', { rank: 5 }), order: 90 },
@@ -745,11 +717,11 @@ test('setPriority marks the row and touches persistence once', async () => {
   expect(touched).toBe(1)
   const stored = () => t.w.state.get('items') as unknown as { key: string; priority?: string }[]
   expect(stored().find(i => i.key === KEYS.web)?.priority).toBe('high')
-  expect(cell(find(await t.m.paneData(t.w.ports, NO_VIEW), 'web', KEYS.web), 'prio')).toEqual({ text: '▲' })
+  expect(cell(find(await t.m.paneData(t.w.ports, NO_VIEW), 'web', KEYS.web), 'control')).toEqual({ text: '▲' })
   // A Jira node takes a mark by its row id.
   await t.m.setPriority(t.w.ports, 'jira:acme.atlassian.net/ISS-1/PROJ-202', 'high')
   const marked = find(await t.m.paneData(t.w.ports, NO_VIEW), 'jira', 'jira:acme.atlassian.net/ISS-1/PROJ-202')
-  expect(cell(marked, 'prio').text).toBe('▲')
+  expect(cell(marked, 'control').text).toBe('▲')
   // `undefined` removes the mark. `top` is not settable: it does nothing.
   await t.m.setPriority(t.w.ports, KEYS.web, undefined)
   touched = 0

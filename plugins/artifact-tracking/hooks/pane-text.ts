@@ -1,15 +1,16 @@
 // The host contract of the pane and the text the pane's data makes: the list `/track` prints and the help view as text.
-// Both read the sections the pane draws (`paneData`) with nothing selected, so the text and the pane never differ in
-// content. PaneHost is what the pane session needs of the LifecycleManager; the manager fits it as it is.
+// Both read the groups the pane draws (the sections of `paneData`, by list) with nothing selected, so the text and the
+// pane never differ in content. PaneHost is what the pane session needs of the LifecycleManager; the manager fits it as it is.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.10 and 5.12. Plan: L6 Task 11, G14, G15.
 
 import type { KeyRegistry } from '../core/infra/keys'
 import type { ConfigSource } from '../core/interfaces/config'
 import type { Level } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
-import type { FooterKey, HelpModel, PaneView, RowRef, SectionSpec, TreeRow } from '../core/interfaces/view'
+import type { FooterKey, GroupSpec, HelpModel, PaneView, RowRef, SectionSpec, TreeRow } from '../core/interfaces/view'
+import { listGroups } from '../core/lib/grouping'
 import { helpModel, helpText } from '../ux/tree-data-table/help'
-import { sectionsText } from '../ux/tree-data-table/text'
+import { groupsText } from '../ux/tree-data-table/text'
 
 /** What the pane session calls on the LifecycleManager. */
 export interface PaneHost {
@@ -31,22 +32,38 @@ export interface PaneHost {
   readonly config: Pick<ConfigSource, 'global' | 'path' | 'problems'>
 }
 
-/** `shown` of each section id, read once. */
-export async function shownOf(p: Ports, sections: readonly SectionSpec[]): Promise<ReadonlyMap<string, number>> {
-  return new Map(await Promise.all(sections.map(async s => [s.id, await p.state.shown.get(s.id)] as const)))
+/**
+ * The groups the pane draws: the by-list view, one group for each section of a tracker, in the order of the pane. The
+ * text and the help view read the same groups.
+ */
+export async function paneGroups(
+  p: Ports,
+  m: Pick<PaneHost, 'paneData'>,
+  view: PaneView,
+): Promise<readonly GroupSpec[]> {
+  return listGroups(await m.paneData(p, view))
+}
+
+/** `shown` of each group id (`<view>:<group>`), read once. */
+export async function shownOf(p: Ports, groups: readonly GroupSpec[]): Promise<ReadonlyMap<string, number>> {
+  return new Map(await Promise.all(groups.map(async g => [g.id, await p.state.shown.get(g.id)] as const)))
 }
 
 /** The view the text reads: nothing selected, nothing opened. */
 export const TEXT_VIEW: PaneView = { selected: null, expanded: new Set() }
 
-/** The list as `/track` prints it: the text of the sections. */
+/** The list as `/track` prints it: the text of the groups. */
 export async function listText(p: Ports, m: Pick<PaneHost, 'paneData'>): Promise<string> {
-  return sectionsText(await m.paneData(p, TEXT_VIEW))
+  return groupsText(await paneGroups(p, m, TEXT_VIEW))
 }
 
 /** The words of a row for a line of text: its type, key and title cells, each once. */
 const wordsOf = (row: TreeRow): string =>
-  [...new Set(['type', 'key', 'title'].map(c => (row.cells[c]?.text ?? '').trim()).filter(t => t !== ''))].join(' ')
+  [
+    ...new Set(
+      (['type', 'name', 'description'] as const).map(c => (row.cells[c]?.text ?? '').trim()).filter(t => t !== ''),
+    ),
+  ].join(' ')
 
 /**
  * The words of each row the list shows, by row id (an item's key), for `/track turn` (issue #69). Read from the sections
@@ -68,9 +85,9 @@ export async function turnLabels(p: Ports, m: Pick<PaneHost, 'paneData'>): Promi
 /** The help view's data: every key, the config file, the version, the config problems and the key and tracker problems. */
 export function helpOf(
   m: Pick<PaneHost, 'keys' | 'config' | 'problems' | 'version'>,
-  sections: readonly SectionSpec[],
+  groups: readonly GroupSpec[],
 ): HelpModel {
-  return helpModel(m.keys.all(), sections, m.config.path(), [...m.config.problems(), ...m.problems()], m.version)
+  return helpModel(m.keys.all(), groups, m.config.path(), [...m.config.problems(), ...m.problems()], m.version)
 }
 
 /** The help view as text, for `/track help` (`claude -p` has no pane). */
@@ -78,5 +95,5 @@ export async function helpTextOf(
   p: Ports,
   m: Pick<PaneHost, 'paneData' | 'keys' | 'config' | 'problems' | 'version'>,
 ): Promise<string> {
-  return helpText(helpOf(m, await m.paneData(p, TEXT_VIEW)))
+  return helpText(helpOf(m, await paneGroups(p, m, TEXT_VIEW)))
 }

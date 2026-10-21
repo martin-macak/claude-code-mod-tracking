@@ -1,7 +1,7 @@
 // TreeDataTable caps, the "N more" row, the budget guard and the handle helpers (layout, handleOf, findRow). Pure.
 // Plan: L6 Task 8, decisions G4, G18; Review Focus 2 and 4.
 import { expect, test } from 'claude-code/testing'
-import type { SectionSpec, TreeRow } from '../core/interfaces/view'
+import type { GroupSpec, TreeRow } from '../core/interfaces/view'
 import { BUDGET, fits, measure } from '../ux/tree-data-table/budget'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import { findRow, handleOf, layout, TOO_LARGE, TreeDataTable } from '../ux/tree-data-table/table'
@@ -20,20 +20,19 @@ import {
   view,
 } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
-import { COLS, row, section, webRows } from './fixtures/sections'
+import { group, row, webRows } from './fixtures/sections'
 
-const draw = (sections: readonly SectionSpec[], over: Parameters<typeof view>[0] = {}) => {
+const draw = (sections: readonly GroupSpec[], over: Parameters<typeof view>[0] = {}) => {
   resetWidths()
   const rec = recorder()
   return { ...rec, drawn: TreeDataTable.render(sections, view(over), EL, rec.actions) }
 }
 
-/** `count` sections `s0`, `s1`, … of `rows` rows each, with ids that are unique across the sections. */
-const many = (count: number, rows: number): SectionSpec[] =>
+/** `count` groups `s0`, `s1`, … of `rows` rows each, with ids that are unique across the sections. */
+const many = (count: number, rows: number): GroupSpec[] =>
   Array.from({ length: count }, (_, i) =>
-    section(
+    group(
       `s${i}`,
-      COLS,
       webRows(rows).map(r => ({ ...r, id: `s${i}-${r.id}` })),
     ),
   )
@@ -53,7 +52,7 @@ test('caps: 50 per section, 300 in all, in pane order; N more counts the top-lev
   const last = boxes[6] as Node
   expect(nodes(last, 'Button').map(b => b.props.key)).toEqual(['m6'])
   expect(buttonOf(last, 'm6').props.label).toBe('60 more')
-  expect(leaves(last)).toEqual(['s6'])
+  expect(leaves(last)).toEqual(['s6', '60']) // the title and its count: no row, so no empty text
   expect(drawn.handles.size).toBe(300)
 })
 
@@ -75,28 +74,28 @@ test('the N more Button calls more with the section id', () => {
 test('the N more row is indented under the tree column', () => {
   const { drawn } = draw(many(1, 60))
   const more = nodes(drawn.tree, 'Box').find(b => b.children.some(c => isNode(c) && c.props.key === 'm0')) as Node
-  // The gutter, the prio column (1 cell) and one gap: the tree column starts at 4.
-  expect(more.props.paddingLeft).toBe(4)
+  // The gutter, the control column (2 cells) and one gap: the tree column starts at 5.
+  expect(more.props.paddingLeft).toBe(5)
 })
 
 test('a capped section with no row drawn does not show its empty text', () => {
-  const sections = [...many(1, 300), section('late', COLS, webRows(2), { empty: 'Nothing.' })]
+  const sections = [...many(1, 300), group('late', webRows(2), { empty: 'Nothing.' })]
   const { drawn } = draw(sections, { limits: { sectionRows: 300, maxRows: 300 } })
   const late = sectionBoxes(drawn.tree)[1] as Node
-  expect(leaves(late)).toEqual(['late'])
+  expect(leaves(late)).toEqual(['late', '2'])
   expect(buttonOf(late, 'm1').props.label).toBe('2 more')
 })
 
 test('open children count against the budget, not the caps', () => {
-  const kids = Array.from({ length: 80 }, (_, i) => row(`c${i}`, { key: `child${i}` }))
-  const parent = row('p', { key: 'parent' }, { expandedByDefault: true, children: kids })
-  const { drawn } = draw([section('web', COLS, [parent])])
+  const kids = Array.from({ length: 80 }, (_, i) => row(`c${i}`, { name: `child${i}` }))
+  const parent = row('p', { name: 'parent' }, { expandedByDefault: true, children: kids })
+  const { drawn } = draw([group('web', [parent])])
   expect(rowBoxes(drawn.tree)).toHaveLength(81)
   expect(nodes(drawn.tree, 'Button').some(b => b.props.key === 'm0')).toBe(false)
 })
 
 test('budget at 600 rows: nothing is cut (spec 7)', () => {
-  const sections = [section('web', COLS, webRows(600, longTitle))]
+  const sections = [group('web', webRows(600, longTitle))]
   const { drawn } = draw(sections, { bodyColumns: 96, limits: { sectionRows: 2000, maxRows: 2000 } })
   expect(drawn.handles.size).toBe(600)
   expect(fits(measure(drawn.tree), BUDGET)).toBe(true)
@@ -104,7 +103,7 @@ test('budget at 600 rows: nothing is cut (spec 7)', () => {
 })
 
 test('budget at 1,400 rows: the guard cuts, the footer stays, every drawn row keeps its Button (spec 7)', () => {
-  const sections = [section('web', COLS, webRows(1400, longTitle))]
+  const sections = [group('web', webRows(1400, longTitle))]
   const { drawn } = draw(sections, { bodyColumns: 96, limits: { sectionRows: 2000, maxRows: 2000 } })
   expect(fits(measure(drawn.tree), BUDGET)).toBe(true)
   expect(drawn.handles.size).toBeLessThan(1400)
@@ -119,9 +118,9 @@ test('budget at 1,400 rows: the guard cuts, the footer stays, every drawn row ke
 })
 
 test('budget: detail lines go first', () => {
-  const rows = Array.from({ length: 200 }, (_, i) => row(`a${i}`, { key: `k${i}`, title: 'x'.repeat(2000) }))
+  const rows = Array.from({ length: 200 }, (_, i) => row(`a${i}`, { name: `k${i}`, description: 'x'.repeat(2000) }))
   const open = new Set(rows.map(r => r.id))
-  const { drawn } = draw([section('web', COLS, rows)], { expanded: open, limits: { sectionRows: 300, maxRows: 300 } })
+  const { drawn } = draw([group('web', rows)], { expanded: open, limits: { sectionRows: 300, maxRows: 300 } })
   expect(rowBoxes(drawn.tree)).toHaveLength(200)
   expect(nodes(drawn.tree, 'Box').filter(b => b.children.some(c => isNode(c) && c.props.wrap === 'wrap'))).toHaveLength(
     0,
@@ -130,10 +129,10 @@ test('budget: detail lines go first', () => {
 })
 
 test('budget: a halved drawing keeps no detail lines either', () => {
-  const rows = Array.from({ length: 400 }, (_, i) => row(`a${i}`, { key: `k${i}`, title: 'x'.repeat(2000) }))
+  const rows = Array.from({ length: 400 }, (_, i) => row(`a${i}`, { name: `k${i}`, description: 'x'.repeat(2000) }))
   const budget = { values: 3000, chars: 10_000_000 }
   const limits = { sectionRows: 400, maxRows: 400 }
-  const { drawn } = draw([section('web', COLS, rows)], { expanded: new Set(rows.map(r => r.id)), budget, limits })
+  const { drawn } = draw([group('web', rows)], { expanded: new Set(rows.map(r => r.id)), budget, limits })
   expect(rowBoxes(drawn.tree)).toHaveLength(200)
   expect(nodes(drawn.tree, 'Box').filter(b => b.children.some(c => isNode(c) && c.props.wrap === 'wrap'))).toHaveLength(
     0,
@@ -165,10 +164,10 @@ test('budget: the caps halve step by step until the pane fits', () => {
 })
 
 test('layout: handles run on across sections, open rows add their children, halve cuts the wants', () => {
-  const kid = row('c', { key: 'kid' })
+  const kid = row('c', { name: 'kid' })
   const sections = [
-    section('a', COLS, [row('p', { key: 'p' }, { expandedByDefault: true, children: [kid] }), row('q', { key: 'q' })]),
-    section('b', COLS, webRows(5)),
+    group('a', [row('p', { name: 'p' }, { expandedByDefault: true, children: [kid] }), row('q', { name: 'q' })]),
+    group('b', webRows(5)),
   ]
   const laid = layout(sections, view())
   expect(laid.map(s => s.rows.map(r => `${r.handle}:${r.row.id}:${r.depth}`))).toEqual([
@@ -184,20 +183,20 @@ test('layout: handles run on across sections, open rows add their children, halv
 })
 
 test('handleOf gives the handle a row gets in the next drawing (Review Focus 4)', () => {
-  const rows = [row('a', { key: 'a' }), row('b', { key: 'b' }), row('c', { key: 'c' })]
+  const rows = [row('a', { name: 'a' }), row('b', { name: 'b' }), row('c', { name: 'c' })]
   const v = view()
-  expect(handleOf([section('web', COLS, rows)], v, 'c')).toBe('r2')
-  const next = [section('web', COLS, [rows[2] as TreeRow, rows[0] as TreeRow, rows[1] as TreeRow])]
+  expect(handleOf([group('web', rows)], v, 'c')).toBe('r2')
+  const next = [group('web', [rows[2] as TreeRow, rows[0] as TreeRow, rows[1] as TreeRow])]
   expect(handleOf(next, v, 'c')).toBe('r0')
   expect(handleOf(next, v, 'gone')).toBeUndefined()
   expect(handleOf(next, view({ limits: { sectionRows: 1, maxRows: 1 } }), 'a')).toBeUndefined()
 })
 
 test('findRow finds a hidden child of a closed row, with its section id and can', () => {
-  const kid = row('c1', { key: 'kid' }, { can: { dismiss: true } })
+  const kid = row('c1', { name: 'kid' }, { can: { dismiss: true } })
   const sections = [
-    section('web', COLS, [row('p', { key: 'p' }, { owner: 'web', children: [kid] })]),
-    section('file', COLS, [row('f', { key: 'f' }, { owner: 'file', can: {} })]),
+    group('web', [row('p', { name: 'p' }, { owner: 'web', children: [kid] })]),
+    group('file', [row('f', { name: 'f' }, { owner: 'file', can: {} })]),
   ]
   expect(findRow(sections, 'c1')).toEqual({ id: 'c1', owner: 't', section: 'web', can: { dismiss: true } })
   expect(findRow(sections, 'f')).toEqual({ id: 'f', owner: 'file', section: 'file', can: {} })

@@ -4,20 +4,20 @@
 // pane to its full height, so the footer stays under the last row. Pure.
 import { expect, test } from 'claude-code/testing'
 import { KeyRegistry } from '../core/infra/keys'
-import type { SectionSpec } from '../core/interfaces/view'
+import type { GroupSpec } from '../core/interfaces/view'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import { helpModel } from '../ux/tree-data-table/help'
 import { TreeDataTable } from '../ux/tree-data-table/table'
 import { footerOf, NO_ROW_FOOTER, type Node, recorder, rowBoxes, view } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
-import { COLS, section, webRows } from './fixtures/sections'
+import { group, webRows } from './fixtures/sections'
 
 // The docked pane at 120x37 has a body of 31 rows, 95 cells wide. The inline pane at 100x40 has 11 rows, 96 cells wide.
 const DOCKED = { bodyColumns: 95, bodyRows: 31, placement: 'dock' } as const
 const INLINE = { bodyColumns: 96, bodyRows: 11, placement: 'inline' } as const
 
-const web = (n: number): SectionSpec[] => [section('web', COLS, webRows(n))]
-const draw = (sections: readonly SectionSpec[], over: Parameters<typeof view>[0]) => {
+const web = (n: number): GroupSpec[] => [group('web', webRows(n))]
+const draw = (sections: readonly GroupSpec[], over: Parameters<typeof view>[0]) => {
   resetWidths()
   return TreeDataTable.render(sections, view(over), EL, recorder().actions)
 }

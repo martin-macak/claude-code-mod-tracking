@@ -1,9 +1,11 @@
 // The merge chip, the hint and the file rows of a PR in the Pull requests and GitHub sections, and the PR band part
-// (issue #50). Pure: the rows and `sections` read a view context that the test builds.
+// (issue #50). Pure: the rows and `sections` read a view context that the test builds. The chip, the checks and the hint
+// are the badges of the extras column, in that order (issue #63, L1).
 import { expect, test } from 'claude-code/testing'
 import type { StoredItem } from '../core/interfaces/items'
-import type { ViewContext } from '../core/interfaces/view'
+import type { Cell, ViewContext } from '../core/interfaces/view'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
+import { listGroups } from '../core/lib/grouping'
 import { GITHUB_DEFAULTS } from '../trackers/github/config'
 import { UNKNOWN_SPENT } from '../trackers/github/merge'
 import { HINT } from '../trackers/github/resolve'
@@ -12,8 +14,8 @@ import { sections } from '../trackers/github/sections'
 import type { GitHubRecord, LaneState, MergeNote } from '../trackers/github/types'
 import type { ToolStatus } from '../types'
 import { bandText } from '../ux/band'
-import { solveColumns } from '../ux/tree-data-table/columns'
-import { sectionsText } from '../ux/tree-data-table/text'
+import { SHARED_COLUMNS, solveColumns } from '../ux/tree-data-table/columns'
+import { groupsText } from '../ux/tree-data-table/text'
 import { LANE, named } from './fixtures/reasons'
 
 const NOW = 5_000_000
@@ -63,46 +65,54 @@ function view(items: GitHubRecord[], lane: Partial<LaneState> = {}, gh: ToolStat
 
 const prsSection = (ctx: ReturnType<typeof view>) => sections(ctx).find(s => s.id === 'prs')!
 const rowOf = (ctx: ReturnType<typeof view>, n: number) => prsSection(ctx).rows.find(r => r.id.endsWith(`#${n}`))!
-const merge = (ctx: ReturnType<typeof view>, n: number) => rowOf(ctx, n).cells.merge
+/** The badges of the row of PR `n`, in the order they draw. */
+const badges = (ctx: ReturnType<typeof view>, n: number): readonly Cell[] => rowOf(ctx, n).extras ?? []
+const texts = (ctx: ReturnType<typeof view>, n: number): string[] => badges(ctx, n).map(b => b.text)
+/** The `success` checks that every PR of these tests has: the badge after the chip. */
+const OK: Cell = { text: '✓ checks', fg: 'success' }
 const K = (n: number) => `gh:github.com/acme/web#${n}`
+/** The /track text of the sections of the view. */
+const text = (ctx: ReturnType<typeof view>): string => groupsText(listGroups(sections(ctx)))
 
 // ---------------------------------------------------------------- the chip in the row
 
-test('AC1: a CONFLICTING open PR row has the red ✗ conflicts chip in the merge cell', () => {
+test('AC1: a CONFLICTING open PR row has the red ✗ conflicts chip, the first badge of the extras', () => {
   const ctx = view([pr(7, { mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' })])
-  expect(merge(ctx, 7)).toEqual({ text: '✗ conflicts', fg: 'error' })
+  expect(badges(ctx, 7)).toEqual([{ text: '✗ conflicts', fg: 'error' }, OK])
 })
 
 test('AC2: a MERGEABLE and BEHIND PR row has the yellow ↓ behind chip and no conflict chip', () => {
   const ctx = view([pr(7, { mergeable: 'MERGEABLE', mergeStateStatus: 'BEHIND' })])
-  expect(merge(ctx, 7)).toEqual({ text: '↓ behind', fg: 'warning' })
+  expect(badges(ctx, 7)).toEqual([{ text: '↓ behind', fg: 'warning' }, OK])
 })
 
 test('AC3: a stacked PR keeps →<base> in the type cell and shows the chip on the same row', () => {
   const ctx = view([pr(7, { baseRefName: 'fix/stack-base', mergeable: 'CONFLICTING' })])
   expect(rowOf(ctx, 7).cells.type?.text).toBe('→fix/stack-base')
-  expect(merge(ctx, 7)).toEqual({ text: '✗ conflicts', fg: 'error' })
+  expect(badges(ctx, 7)).toEqual([{ text: '✗ conflicts', fg: 'error' }, OK])
 })
 
-test('the checks cell stays beside the chip: a conflict hides no checks glyph', () => {
+test('the checks badge stays beside the chip: a conflict hides no checks glyph', () => {
   const ctx = view([pr(7, { checks: 'failure', mergeable: 'CONFLICTING' })])
-  expect(rowOf(ctx, 7).cells.extra).toEqual({ text: '✗ checks', fg: 'error' })
-  expect(merge(ctx, 7)?.text).toBe('✗ conflicts')
+  expect(badges(ctx, 7)).toEqual([
+    { text: '✗ conflicts', fg: 'error' },
+    { text: '✗ checks', fg: 'error' },
+  ])
 })
 
 test('AC6: a draft PR with CONFLICTING and DRAFT shows the chip; its state cell still says draft', () => {
   const ctx = view([pr(7, { isDraft: true, mergeable: 'CONFLICTING', mergeStateStatus: 'DRAFT' })])
-  expect(merge(ctx, 7)?.text).toBe('✗ conflicts')
+  expect(texts(ctx, 7)[0]).toBe('✗ conflicts')
   expect(rowOf(ctx, 7).cells.status).toEqual({ text: 'draft', dim: true })
 })
 
 test('AC4: an UNKNOWN PR shows no chip until the retries are spent, then the dim ? merge', () => {
   const unknown = pr(7, { mergeable: 'UNKNOWN' })
-  expect(merge(view([unknown]), 7)).toBeUndefined()
+  expect(badges(view([unknown]), 7)).toEqual([OK])
   const waiting: Record<string, MergeNote> = { [K(7)]: { unknown: UNKNOWN_SPENT - 1 } }
-  expect(merge(view([unknown], { merge: waiting }), 7)).toBeUndefined()
+  expect(badges(view([unknown], { merge: waiting }), 7)).toEqual([OK])
   const spent: Record<string, MergeNote> = { [K(7)]: { unknown: UNKNOWN_SPENT } }
-  expect(merge(view([unknown], { merge: spent }), 7)).toEqual({ text: '? merge', dim: true })
+  expect(badges(view([unknown], { merge: spent }), 7)).toEqual([{ text: '? merge', dim: true }, OK])
 })
 
 test('AC11: with gh logged out, or its breaker open, no merge chip shows and the band counts no conflict', () => {
@@ -112,28 +122,28 @@ test('AC11: with gh logged out, or its breaker open, no merge chip shows and the
     { ...GH_OK, breaker: 'open' as const },
   ]) {
     const ctx = view(items, {}, gh)
-    expect(merge(ctx, 7)).toBeUndefined()
-    expect(merge(ctx, 8)).toBeUndefined()
+    expect(badges(ctx, 7)).toEqual([OK])
+    expect(badges(ctx, 8)).toEqual([OK])
     expect(prsSection(ctx).band?.conflicts).toBeUndefined()
   }
-  expect(merge(view(items, {}, GH_OK), 7)).toBeDefined() // the same rows with a working gh
+  expect(texts(view(items, {}, GH_OK), 7)[0]).toBe('✗ conflicts') // the same rows with a working gh
 })
 
-test('a PR with no merge value, a merged PR and an issue draw no merge cell', () => {
+test('a PR with no merge value, a merged PR and an issue draw no merge chip', () => {
   const ctx = view([pr(7), pr(8, { state: 'merged', mergeable: 'CONFLICTING' })])
-  expect(merge(ctx, 7)).toBeUndefined()
-  expect(merge(ctx, 8)).toBeUndefined()
+  expect(badges(ctx, 7)).toEqual([OK])
+  expect(badges(ctx, 8)).toEqual([OK])
   const issue = githubRow(pr(9, { type: 'issue', mergeable: 'CONFLICTING' }), {
     facts: { read: () => undefined },
     levelOf: () => ({}),
   })
-  expect(issue.cells.merge).toBeUndefined()
+  expect(issue.extras).toEqual([OK])
 })
 
 test('the GitHub section shows the chip of a PR the conversation named, from the same refresh fields', () => {
   const fromChat = named(pr(9, { mergeable: 'CONFLICTING' }))
   const github = sections(view([fromChat])).find(s => s.id === 'github')!
-  expect(github.rows[0]?.cells.merge).toEqual({ text: '✗ conflicts', fg: 'error' })
+  expect(github.rows[0]?.extras?.[0]).toEqual({ text: '✗ conflicts', fg: 'error' })
 })
 
 // ---------------------------------------------------------------- the hint and the resolve state
@@ -141,15 +151,15 @@ test('the GitHub section shows the chip of a PR the conversation named, from the
 test('AC10: a CONFLICTING PR with no local worktree has a dim hint; one with a worktree has none', () => {
   const conflicted = pr(7, { mergeable: 'CONFLICTING' })
   const noTree = view([conflicted], { merge: { [K(7)]: {} } })
-  expect(rowOf(noTree, 7).cells.mark).toEqual({ text: 'no worktree', dim: true })
+  expect(badges(noTree, 7).at(-1)).toEqual({ text: 'no worktree', dim: true })
   const tree = view([conflicted], { merge: { [K(7)]: { worktree: '/w/p7' } } })
-  expect(rowOf(tree, 7).cells.mark).toBeUndefined()
-  expect(rowOf(view([pr(8)]), 8).cells.mark).toBeUndefined() // not conflicting: nothing to say
+  expect(texts(tree, 7)).toEqual(['✗ conflicts', '✓ checks']) // no hint
+  expect(texts(view([pr(8)]), 8)).toEqual(['✓ checks']) // not conflicting: nothing to say
 })
 
 test('m2: the hint says in a word why the resolve key is off: a fork, a name that is not put in a prompt, no default branch', () => {
   const note = { merge: { [K(7)]: { worktree: '/w/p7' } } }
-  const mark = (rec: GitHubRecord, lane: Partial<LaneState> = note) => rowOf(view([rec], lane), 7).cells.mark
+  const mark = (rec: GitHubRecord, lane: Partial<LaneState> = note) => badges(view([rec], lane), 7).at(-1)
   expect(mark(pr(7, { mergeable: 'CONFLICTING', crossRepo: true }))).toEqual({ text: 'fork PR', dim: true })
   expect(mark(pr(7, { mergeable: 'CONFLICTING', headRefName: 'a b' }))).toEqual({ text: 'odd branch', dim: true })
   expect(mark(pr(7, { mergeable: 'CONFLICTING' }), { ...note, defaultBranch: undefined })).toEqual({
@@ -158,20 +168,18 @@ test('m2: the hint says in a word why the resolve key is off: a fork, a name tha
   })
 })
 
-test('m2: every hint word fits the width of the mark column, so none is cut', () => {
-  const mark = prsSection(view([pr(7)])).columns.find(c => c.id === 'mark')!
-  const max = mark.width.kind === 'content' ? (mark.width.max ?? 0) : 0
+test('m2: every hint word fits the width of the extras column, so a hint alone is not cut', () => {
+  const extras = SHARED_COLUMNS.find(c => c.id === 'extras')!
+  const max = extras.width.kind === 'content' ? (extras.width.max ?? 0) : 0
   expect(max).toBeGreaterThan(0)
   for (const word of Object.values(HINT)) expect(word.length, word).toBeLessThanOrEqual(max)
 })
 
 test('the no-worktree hint is off while gh is stale, for a queued PR and for a PR the lane has no note on', () => {
   const conflicted = pr(7, { mergeable: 'CONFLICTING' })
-  expect(
-    rowOf(view([conflicted], { merge: { [K(7)]: {} } }, { ...GH_OK, loggedIn: false }), 7).cells.mark,
-  ).toBeUndefined()
-  expect(rowOf(view([conflicted]), 7).cells.mark).toBeUndefined() // the lane has not looked yet
-  expect(rowOf(view([conflicted], { merge: { [K(7)]: { queuedAt: NOW - 1 } } }), 7).cells.merge?.text).toBe('queued')
+  expect(texts(view([conflicted], { merge: { [K(7)]: {} } }, { ...GH_OK, loggedIn: false }), 7)).toEqual(['✓ checks'])
+  expect(texts(view([conflicted]), 7)).toEqual(['✗ conflicts', '✓ checks']) // the lane has not looked yet: no hint
+  expect(texts(view([conflicted], { merge: { [K(7)]: { queuedAt: NOW - 1 } } }), 7)[0]).toBe('queued')
 })
 
 // ---------------------------------------------------------------- the file rows (P2)
@@ -186,7 +194,11 @@ test('n2: the id of a child row under a PR leads back to the PR; the id of a PR 
 test('m6: /track text shows the conflict chip, the hint and the conflicting files of a PR (issue #50)', () => {
   const files = { at: NOW - 5000, files: ['src/a.ts', 'src/b.ts'] }
   const ctx = view([pr(7, { mergeable: 'CONFLICTING' })], { merge: { [K(7)]: { files } } })
-  const lines = sectionsText(sections(ctx)).split('\n')
+  // Byte for byte, as `main` printed it before the pane drew one table (issue #63, L1): the badges stay in the order merge, checks, hint.
+  expect(text(ctx)).toBe(
+    'Pull requests  gh · ready\n  acme/web#7  PR 7  feat/p7  open  ✗ conflicts  ✓ checks  no worktree\n    src/a.ts\n    src/b.ts',
+  )
+  const lines = text(ctx).split('\n')
   const prLine = lines.find(l => l.includes('#7'))!
   expect(prLine).toContain('✗ conflicts')
   expect(prLine).toContain('no worktree')
@@ -198,7 +210,7 @@ test('files found for a conflicted PR are child rows, open by default, one per f
   const ctx = view([pr(7, { mergeable: 'CONFLICTING' })], { merge: { [K(7)]: { worktree: '/w', files } } })
   const row = rowOf(ctx, 7)
   expect(row.expandedByDefault).toBe(true)
-  expect(row.children?.map(c => c.cells.title?.text)).toEqual(['src/a.ts', 'src/b.ts'])
+  expect(row.children?.map(c => c.cells.description?.text)).toEqual(['src/a.ts', 'src/b.ts'])
   expect(row.children?.every(c => c.owner === 'github' && c.can?.dismiss !== true)).toBe(true)
   expect(new Set(row.children?.map(c => c.id)).size).toBe(2)
 })
@@ -206,7 +218,7 @@ test('files found for a conflicted PR are child rows, open by default, one per f
 test('files: the ones past the cap read +N more, a failed look reads its reason, a pending one says so', () => {
   const at = (files: object) =>
     view([pr(7, { mergeable: 'CONFLICTING' })], { merge: { [K(7)]: { files: { at: 1, ...files } } } })
-  const titles = (ctx: ReturnType<typeof view>) => rowOf(ctx, 7).children?.map(c => c.cells.title?.text)
+  const titles = (ctx: ReturnType<typeof view>) => rowOf(ctx, 7).children?.map(c => c.cells.description?.text)
   expect(titles(at({ files: ['a'], more: 3 }))).toEqual(['a', '+3 more'])
   expect(titles(at({ error: 'git fetch failed: no remote' }))).toEqual(['files unknown: git fetch failed: no remote'])
   expect(titles(at({ pending: true }))).toEqual(['looking for the files…'])
@@ -249,30 +261,27 @@ test('the band of a PR list with no conflict has no conflicts field', () => {
 
 // ---------------------------------------------------------------- the columns
 
-test('the Pull requests columns hold the merge and hint columns, and both hide while no row has a cell for them', () => {
-  const cols = prsSection(view([pr(1)])).columns
-  expect(cols.map(c => c.id)).toEqual(['prio', 'key', 'title', 'type', 'status', 'merge', 'extra', 'mark'])
-  expect(cols.find(c => c.id === 'merge')).toMatchObject({ header: 'Merge', width: { kind: 'content', max: 11 } })
-  const rows = (items: GitHubRecord[]) => prsSection(view(items)).rows.map(row => ({ depth: 0, row }))
-  const quiet = solveColumns('t1', cols, rows([pr(1)]), 120)
-  expect(quiet.columns.map(c => c.id)).not.toContain('merge') // an empty content column is left out
-  const loud = solveColumns('t2', cols, rows([pr(1, { mergeable: 'CONFLICTING' })]), 120)
-  expect(loud.columns.map(c => c.id)).toContain('merge')
+test('the extras column holds the chip, the checks and the hint, and hides while no row has a badge', () => {
+  const extras = (items: GitHubRecord[]) => {
+    const rows = prsSection(view(items)).rows.map(row => ({ depth: 0, row }))
+    return solveColumns('t1', SHARED_COLUMNS, rows, 120).columns.map(c => c.id)
+  }
+  expect(extras([pr(1, { checks: 'none' })])).not.toContain('extras') // no chip, no checks, no hint: an empty column is left out
+  expect(extras([pr(1)])).toContain('extras') // the checks
+  expect(extras([pr(1, { checks: 'none', mergeable: 'CONFLICTING' })])).toContain('extras') // the chip
 })
 
-test('AC1 narrow: the merge column outlives the branch and checks columns, so a conflict stays on the row', () => {
-  const cols = prsSection(view([pr(1)])).columns
+test('AC1 narrow: the extras column outlives the type column, so a conflict stays on the row', () => {
   const items = [pr(1, { mergeable: 'CONFLICTING', checks: 'failure', baseRefName: 'fix/stack-base' })]
   const rows = prsSection(view(items)).rows.map(row => ({ depth: 0, row }))
-  // The widest pane at which a column is already left out. The highest priority number goes first: merge is the last.
+  // The widest pane at which a column is already left out. The highest priority number goes first: the extras are after the type.
   const leftOutAt = (id: string): number => {
     for (let avail = 120; avail >= 10; avail--)
-      if (solveColumns('t3', cols, rows, avail).dropped.includes(id)) return avail
+      if (solveColumns('t3', SHARED_COLUMNS, rows, avail).dropped.includes(id)) return avail
     return 0
   }
-  expect(leftOutAt('type')).toBeGreaterThan(leftOutAt('extra'))
-  expect(leftOutAt('extra')).toBeGreaterThan(leftOutAt('merge'))
-  expect(leftOutAt('merge')).toBeGreaterThan(0) // only a pane too small for the key, the title and the state loses it
+  expect(leftOutAt('type')).toBeGreaterThan(leftOutAt('extras'))
+  expect(leftOutAt('extras')).toBeGreaterThan(0) // only a pane too small for the name, the description and the state loses it
 })
 
 test('prRow of a record with no merge env draws no merge cell and no hint (a caller with no lane state)', () => {
@@ -281,6 +290,5 @@ test('prRow of a record with no merge env draws no merge cell and no hint (a cal
     { facts: { read: () => undefined }, levelOf: () => ({}) },
     'main',
   )
-  expect(row.cells.merge).toBeUndefined()
-  expect(row.cells.mark).toBeUndefined()
+  expect(row.extras).toEqual([OK]) // the checks alone: no chip, no hint
 })

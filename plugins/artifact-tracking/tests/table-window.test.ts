@@ -1,7 +1,7 @@
 // TreeDataTable windows its rows when the body is shorter than the tree (issue #109): the title, the header and the footer
 // stay in view, the rows that do not fit are bare focus stops, and the window follows the selected row. Pure.
 import { expect, test } from 'claude-code/testing'
-import type { SectionSpec } from '../core/interfaces/view'
+import type { GroupSpec } from '../core/interfaces/view'
 import { BUDGET, fits, measure } from '../ux/tree-data-table/budget'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import { footerRows } from '../ux/tree-data-table/footer'
@@ -21,25 +21,24 @@ import {
   view,
 } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
-import { COLS, section, webRows } from './fixtures/sections'
+import { group, webRows } from './fixtures/sections'
 
 // The inline pane at 100x40: a body of 11 rows, 96 cells wide. The docked pane at 120x37: 31 rows, 95 cells.
 const INLINE = { bodyColumns: 96, bodyRows: 11 }
 const DOCKED = { bodyColumns: 95, bodyRows: 31 }
 
-const draw = (sections: readonly SectionSpec[], over: Parameters<typeof view>[0] = {}) => {
+const draw = (sections: readonly GroupSpec[], over: Parameters<typeof view>[0] = {}) => {
   resetWidths()
   const rec = recorder()
   return { ...rec, drawn: TreeDataTable.render(sections, view(over), EL, rec.actions) }
 }
 
-const web = (n: number) => [section('web', COLS, webRows(n))]
-/** `count` sections `s0`, `s1`, … of `rows` rows each, with ids unique across the sections. */
-const many = (count: number, rows: number): SectionSpec[] =>
+const web = (n: number) => [group('web', webRows(n))]
+/** `count` groups `s0`, `s1`, … of `rows` rows each, with ids unique across the sections. */
+const many = (count: number, rows: number): GroupSpec[] =>
   Array.from({ length: count }, (_, i) =>
-    section(
+    group(
       `s${i}`,
-      COLS,
       webRows(rows).map(r => ({ ...r, id: `s${i}-${r.id}` })),
     ),
   )
@@ -70,7 +69,7 @@ test('inline 100x40, 12 rows: the title, the header and the footer show with the
   const tree = drawn.tree
   expect(rowBoxes(tree)).toHaveLength(6) // 11 rows: title, header, 6 rows, a hint, the gap, the footer
   expect(texts(tree).find(([p, s]) => s === 'web' && p.weight === 'bold')).toBeDefined() // the title
-  expect(texts(tree).some(([, s]) => s === 'Label')).toBe(true) // the header
+  expect(texts(tree).some(([, s]) => s === 'Name')).toBe(true) // the header
   expect(footerOf(tree)).toHaveLength(NO_ROW_FOOTER.length)
   expect(hints(tree)).toEqual(['▼ 6 more below'])
   expect(rowBoxes(tree).length + 2 + 1 + 1 + 1).toBe(INLINE.bodyRows) // the tree is as tall as the body, so the engine never scrolls
@@ -161,14 +160,14 @@ test('the selected row draws the gutter mark inside the window', () => {
   expect(rowTexts(drawn.tree)[3]).toContain('s3.example')
 })
 
-test('windowing works across sections: a section with no row in view draws no title or header, only its stops', () => {
-  // 3 sections of 5 rows in a body of 14: the footer and gap take 2, so 12 lines. Section 0 takes 8 with the hint;
-  // one row of section 1 adds a gap, its title and header: 12.
+test('windowing works across groups: a group with no row in view draws no title, only its stops', () => {
+  // 3 groups of 5 rows in a body of 14: the footer, the gap and the one header take 3, so 11 lines. Group 0 takes 6 (its
+  // title and 5 rows); two rows of group 1 add a gap and its title: 10, and the hint below makes 11.
   const { drawn } = draw(many(3, 5), { ...INLINE, bodyRows: 14 })
   const boxes = sectionBoxes(drawn.tree)
-  expect(boxes).toHaveLength(2) // the root keeps only the sections that show a row, then the footer
+  expect(boxes).toHaveLength(2) // the root keeps only the groups that show a row, then the footer
   expect(rowBoxes(boxes[0]).length).toBe(5)
-  expect(rowBoxes(boxes[1]).length).toBe(1)
+  expect(rowBoxes(boxes[1]).length).toBe(2)
   const titles = texts(drawn.tree)
     .filter(([p]) => p.weight === 'bold')
     .map(([, s]) => s)
@@ -176,8 +175,8 @@ test('windowing works across sections: a section with no row in view draws no ti
   expect(titles).toContain('s1')
   expect(titles).not.toContain('s2')
   expect(handlesOf(drawn.tree)).toEqual(keyRange(0, 15)) // s2's stops follow in the last section Box, in order
-  expect(stopKeys(boxes[1])).toEqual(keyRange(6, 15))
-  expect(hints(drawn.tree)).toEqual(['▼ 9 more below'])
+  expect(stopKeys(boxes[1])).toEqual(keyRange(7, 15))
+  expect(hints(drawn.tree)).toEqual(['▼ 8 more below'])
 })
 
 test('the selected row in a later section brings that section into view and drops the first one', () => {
@@ -192,7 +191,7 @@ test('the selected row in a later section brings that section into view and drop
 })
 
 test('the N more Button of a section stays a stop when it is out of the window, and shows when the ring is on it', () => {
-  const sections = [section('web', COLS, webRows(60))]
+  const sections = [group('web', webRows(60))]
   const hidden = draw(sections, INLINE)
   expect(stopKeys(hidden.drawn.tree)).toContain('m0')
   expect(buttonOf(hidden.drawn.tree, 'm0').props.label).toBe('10 more')
@@ -222,7 +221,7 @@ test('the detail lines of an open row count against the body', () => {
       ? { ...r, detail: () => [{ cell: { text: 'one' } }, { cell: { text: 'two' } }, { cell: { text: 'three' } }] }
       : r,
   )
-  const { drawn } = draw([section('web', COLS, rows)], { ...INLINE, expanded: new Set(['w0']) })
+  const { drawn } = draw([group('web', rows)], { ...INLINE, expanded: new Set(['w0']) })
   // 3 detail lines and the row take 4, two more rows 2, the title and header 2 and the hint 1: 9 lines for the budget of 9.
   expect(rowBoxes(drawn.tree)).toHaveLength(3)
   expect(texts(drawn.tree).filter(([, s]) => ['one', 'two', 'three'].includes(s))).toHaveLength(3)
@@ -272,7 +271,7 @@ test('no row in the window at open: the first visible row gets autoFocus', () =>
 })
 
 test('the largest list the caps allow, windowed, stays inside the budget guard', () => {
-  const { drawn } = draw([section('web', COLS, webRows(300))], {
+  const { drawn } = draw([group('web', webRows(300))], {
     ...DOCKED,
     limits: { sectionRows: 300, maxRows: 300 },
   })
@@ -290,11 +289,12 @@ test('a hint is plain dim text, not a Button: the hidden rows are reached by the
 })
 
 test('an empty section next to a long one costs its lines and is not a row', () => {
-  const sections = [section('none', COLS, [], { empty: 'Nothing here' }), section('web', COLS, webRows(30))]
+  const sections = [group('none', [], { empty: 'Nothing here' }), group('web', webRows(30))]
   const { drawn } = draw(sections, INLINE)
   const boxes = sectionBoxes(drawn.tree)
   expect(boxes).toHaveLength(2)
-  expect(texts(boxes[0]).map(([, s]) => s)).toEqual(['none', 'Nothing here'])
+  // The header of the table leads the first Box: a blank for the gutter, then the words of the columns.
+  expect(texts(boxes[0]).map(([, s]) => s)).toEqual([' ', 'Name', 'Description', 'none', '0', 'Nothing here'])
   expect(rowBoxes(drawn.tree).length).toBeGreaterThan(0)
   expect(rowBoxes(drawn.tree).length).toBeLessThan(6)
 })
@@ -302,7 +302,7 @@ test('an empty section next to a long one costs its lines and is not a row', () 
 test('a leading section with no row comes back into view when the selection returns to the first row', () => {
   // The GitHub tracker draws a note-only section before its rows when it is paused or not logged in. The note holds the only
   // hint that PRs are not tracked, and no hint counts it, so the window must not leave it behind for good.
-  const sections = [section('gh', COLS, [], { empty: 'gh not logged in' }), section('web', COLS, webRows(12))]
+  const sections = [group('gh', [], { empty: 'gh not logged in' }), group('web', webRows(12))]
   const open = draw(sections, { ...INLINE, selected: 'w0' })
   expect(texts(open.drawn.tree).map(([, s]) => s)).toContain('gh not logged in')
   let top = open.drawn.top

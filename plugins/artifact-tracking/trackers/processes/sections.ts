@@ -4,8 +4,8 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 14, L6 A1.
 
 import type { Json } from '../../core/interfaces/items'
-import type { ColumnDef, SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
-import { content, flex, type Tone, textCells } from '../../core/lib/rows'
+import type { SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
+import { type Tone, textCells } from '../../core/lib/rows'
 import type { ProcessesConfig } from './config'
 import { fromRoot } from './names'
 import { processReasons } from './reasons'
@@ -13,13 +13,6 @@ import { asRows } from './rows'
 import { ENDED_STATES, FAILED_STATES } from './states'
 import type { ProcessKind, ProcessRecord, ProcessUiState } from './types'
 import { UI_FACT } from './watch'
-
-const COLUMNS: readonly ColumnDef[] = [
-  { id: 'key', header: 'Kind', width: content(3, 7), role: 'tree' },
-  { id: 'title', header: 'Name', width: flex(10), clip: 'middle' },
-  { id: 'type', header: 'Type', width: content(undefined, 18), priority: 1 },
-  { id: 'status', header: 'State', width: content(undefined, 10) },
-]
 
 /** The states that count as a failure: they draw red and the band counts them. */
 const BAD: ReadonlySet<string> = new Set(['failed', 'killed', 'exited', 'unhealthy'])
@@ -45,6 +38,7 @@ function processRow(r: ProcessRecord, root: string | undefined): TreeRow {
     cells: textCells({
       key: KIND_KEY[r.kind],
       title: fromRoot(r.name, root),
+      titleClip: 'middle',
       type: r.kind.replace('-', ' '),
       status: r.state,
       tone: toneOf(r.state),
@@ -95,7 +89,6 @@ export function sections(ctx: ViewContext<ProcessesConfig, Json>): readonly Sect
       note: { text: `${ui?.dockerIssue ?? `${rows.length} tracked`}${hidden > 0 ? ` (${hidden} hidden)` : ''}` },
       rank: 80,
       band: { label: 'Processes', count: rows.length, failing: rows.filter(r => BAD.has(r.state)).length, rank: 10 },
-      columns: COLUMNS,
       rows: rows.map(r => processRow(r, ctx.root)),
     },
   ]

@@ -12,12 +12,12 @@ import { fakeConfig } from './fixtures/config-fs'
 import { buttonOf, handlesOf, nodes, press, rowBoxes } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
 import { fakePorts } from './fixtures/ports'
-import { COLS, row, section } from './fixtures/sections'
+import { group, row, section } from './fixtures/sections'
 
 const LIMITS = { sectionRows: 50, maxRows: 300 }
 const view = (expanded: string[] = []) => ({ expanded: new Set(expanded), shown: () => 0, limits: LIMITS })
 const web = (id: string, extra: Partial<TreeRow> = {}): TreeRow =>
-  row(id, { prio: '', key: id, title: `https://${id}.example/` }, { owner: 'web', ...extra })
+  row(id, { control: '', name: id, description: `https://${id}.example/` }, { owner: 'web', ...extra })
 const webs = (...ids: string[]): TreeRow[] => ids.map(id => web(id))
 const drawnRow = (id: string, depth = 0): DrawnRow => ({
   id,
@@ -32,52 +32,50 @@ const drawnRows = (...ids: string[]): DrawnRow[] => ids.map(id => drawnRow(id))
 // ---------------------------------------------------------------- the rule
 
 test('a selected row that is drawn stays selected, and no selection stays none', () => {
-  const sections = [section('web', COLS, webs('a', 'b', 'c'))]
+  const sections = [group('web', webs('a', 'b', 'c'))]
   expect(shownSelection(sections, view(), 'b', drawnRows('a', 'b', 'c'))).toBe('b')
   expect(shownSelection(sections, view(), null, drawnRows('a', 'b', 'c'))).toBeNull()
 })
 
 test('a row that is gone: the row after it in the last drawing, else the row before it', () => {
   const before = drawnRows('a', 'b', 'c')
-  expect(shownSelection([section('web', COLS, webs('a', 'c'))], view(), 'b', before)).toBe('c')
-  expect(shownSelection([section('web', COLS, webs('a', 'b'))], view(), 'c', before)).toBe('b')
-  expect(shownSelection([section('web', COLS, webs('b', 'c'))], view(), 'a', before)).toBe('b')
+  expect(shownSelection([group('web', webs('a', 'c'))], view(), 'b', before)).toBe('c')
+  expect(shownSelection([group('web', webs('a', 'b'))], view(), 'c', before)).toBe('b')
+  expect(shownSelection([group('web', webs('b', 'c'))], view(), 'a', before)).toBe('b')
 })
 
 test('a row that is gone with rows around it that are gone too: the nearest row that is still drawn', () => {
   const before = drawnRows('a', 'b', 'c', 'd', 'e')
-  expect(shownSelection([section('web', COLS, webs('a', 'e'))], view(), 'c', before)).toBe('e')
-  expect(shownSelection([section('web', COLS, webs('a', 'b'))], view(), 'd', before)).toBe('b')
+  expect(shownSelection([group('web', webs('a', 'e'))], view(), 'c', before)).toBe('e')
+  expect(shownSelection([group('web', webs('a', 'b'))], view(), 'd', before)).toBe('b')
 })
 
 test('the row the last drawing fell to stays while it is drawn, so a redraw does not move the selection', () => {
-  const sections = [section('web', COLS, webs('a', 'c', 'd'))]
+  const sections = [group('web', webs('a', 'c', 'd'))]
   // `b` is gone and the last drawing no longer holds it: without the memory of `c` the selection could not be placed.
   expect(shownSelection(sections, view(), 'b', drawnRows('a', 'c', 'd'), 'c')).toBe('c')
   expect(shownSelection(sections, view(), 'b', drawnRows('a', 'c', 'd'), null)).toBe('b')
   expect(shownSelection(sections, view(), 'a', drawnRows('a', 'c', 'd'), 'c')).toBe('a') // a drawn selection wins
   // `c` went too: the search starts where `c` was in the last drawing.
-  expect(shownSelection([section('web', COLS, webs('a', 'd'))], view(), 'b', drawnRows('a', 'c', 'd'), 'c')).toBe('d')
+  expect(shownSelection([group('web', webs('a', 'd'))], view(), 'b', drawnRows('a', 'c', 'd'), 'c')).toBe('d')
 })
 
 test('every row of the last drawing is gone too: the first row, or none when the pane has no row', () => {
-  const sections = [section('web', COLS, webs('x', 'y'))]
+  const sections = [group('web', webs('x', 'y'))]
   expect(shownSelection(sections, view(), 'a', drawnRows('a', 'b'))).toBe('x')
-  expect(shownSelection([section('web', COLS, [])], view(), 'a', drawnRows('a'))).toBeNull()
+  expect(shownSelection([group('web', [])], view(), 'a', drawnRows('a'))).toBeNull()
   expect(shownSelection([], view(), 'a', drawnRows('a'))).toBeNull()
 })
 
 test('a selection that no drawing held and no row holds is no row that hid: it stays, so its keys stay off', () => {
-  const sections = [section('web', COLS, webs('a', 'b'))]
+  const sections = [group('web', webs('a', 'b'))]
   expect(shownSelection(sections, view(), 'zzz', [])).toBe('zzz')
   expect(shownSelection(sections, view(), 'zzz', drawnRows('x', 'y'))).toBe('zzz')
   expect(shownSelection(sections, view(), 'zzz', drawnRows('x', 'y'), 'gone')).toBe('zzz')
 })
 
 test('a child of a closed row is not drawn: the selection falls to the closest row above it that is', () => {
-  const tree = [
-    section('web', COLS, [web('p', { children: [web('c1', { children: [web('g1')] }), web('c2')] }), web('q')]),
-  ]
+  const tree = [group('web', [web('p', { children: [web('c1', { children: [web('g1')] }), web('c2')] }), web('q')])]
   expect(shownSelection(tree, view(), 'c1', drawnRows('p', 'q'))).toBe('p')
   expect(shownSelection(tree, view(), 'g1', drawnRows('p', 'q'))).toBe('p')
   // With `p` open, `c1` is drawn and `g1` is the child of a closed row.
@@ -87,14 +85,14 @@ test('a child of a closed row is not drawn: the selection falls to the closest r
 })
 
 test('a row over the cap of its section is not drawn either: the selection moves to a row that is', () => {
-  const sections = [section('web', COLS, webs('a', 'b', 'c', 'd'))]
+  const sections = [group('web', webs('a', 'b', 'c', 'd'))]
   const capped = { expanded: new Set<string>(), shown: () => 0, limits: { sectionRows: 2, maxRows: 300 } }
   expect(shownSelection(sections, capped, 'd', drawnRows('a', 'b', 'c', 'd'))).toBe('b') // the row before it that is drawn
   expect(shownSelection(sections, capped, 'a', drawnRows('a', 'b', 'c', 'd'))).toBe('a')
 })
 
 test('the rows are the ones of a full drawing: an "N more" row is not a row', () => {
-  const sections = [section('web', COLS, webs('a', 'b', 'c'))]
+  const sections = [group('web', webs('a', 'b', 'c'))]
   const capped = { expanded: new Set<string>(), shown: () => 0, limits: { sectionRows: 1, maxRows: 300 } }
   expect(handleOf(sections, capped, 'a')).toBe('r0')
   expect(shownSelection(sections, capped, 'c', drawnRows('a', 'b', 'c'))).toBe('a') // `b` and `c` are over the cap now
@@ -107,10 +105,10 @@ function setup(rows: readonly TreeRow[]) {
   const w = fakePorts()
   const reg = new KeyRegistry()
   const host = {
-    sections: [section('web', COLS, rows)] as SectionSpec[],
+    sections: [section('web', rows)] as SectionSpec[],
     calls: [] as string[],
     setRows: (next: readonly TreeRow[]): void => {
-      host.sections = [section('web', COLS, next)]
+      host.sections = [section('web', next)]
     },
     entry: async () => void host.calls.push('entry'),
     paneData: async (_p: unknown, _view: PaneView) => host.sections,

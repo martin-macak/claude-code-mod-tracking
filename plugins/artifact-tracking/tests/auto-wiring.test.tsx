@@ -420,13 +420,14 @@ test('at 62 columns the PR row keeps its columns, and x dismisses it', async ($,
   await withVisiblePr($, w)
   const prHeaders = async (cols: number) => {
     const pane = await mountPane($, cols)
-    const headers = headersOf(await pane.drawn()).find(h => h.includes('PR'))
+    const headers = headersOf(await pane.drawn())
     await pane.unmount()
     return headers
   }
-  // The checks always sit in their own column now. The legacy pane hid it below 70 columns and put a glyph in State.
-  expect(await prHeaders(62)).toEqual(['PR', 'Title', 'Branch', 'State', 'Checks'])
-  expect(await prHeaders(34)).toEqual(['PR', 'Title', 'State']) // Branch (priority 2) and Checks (1) drop on a narrow pane
+  // One header names the columns of the whole table. The checks are a badge of the extras column, which has no header word.
+  expect(await prHeaders(62)).toEqual([['Name', 'Description', 'Type', 'Status']])
+  // Type (priority 2) and the extras (1) drop on a narrow pane. The description keeps its 10 cells, so its header word is cut.
+  expect(await prHeaders(34)).toEqual([['Name', 'Descripti…', 'Status']])
   const pane = await mountPane($, 62)
   await select($, pane, '#7')
   await pane.press({ key: 'dismiss' })

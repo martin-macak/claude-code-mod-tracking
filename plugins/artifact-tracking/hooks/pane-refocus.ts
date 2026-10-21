@@ -10,7 +10,7 @@
 import { reason } from '../core/infra/steps'
 import type { Ports, Timer } from '../core/interfaces/ports'
 import { type Drawn, findRow, handleOf } from '../ux/tree-data-table/table'
-import { type PaneHost, shownOf } from './pane-text'
+import { type PaneHost, paneGroups, shownOf } from './pane-text'
 
 /** How long a press waits for the drawing that follows its write. A drawing takes tens of milliseconds. */
 export const NEXT_DRAWING_MS = 1000
@@ -184,8 +184,8 @@ export class Refocus {
     const at = this.at // the person may have moved the ring while the press waited
     if (at === undefined || !press.still()) return // or the pane closed
     const expanded = new Set(await p.state.expanded.get())
-    const sections = await m.paneData(p, { selected: next.row, expanded })
-    const footer = await m.footer(p, next.help ? undefined : findRow(sections, next.row), next.help)
+    const groups = await paneGroups(p, m, { selected: next.row, expanded })
+    const footer = await m.footer(p, next.help ? undefined : findRow(groups, next.row), next.help)
     if (!press.still()) return // the reads took time: the pane may have closed
     const keys = footer.map(k => k.buttonKey)
     const toRow = !next.help && next.row !== null
@@ -206,9 +206,9 @@ export class Refocus {
   /** Asks for the ring on the handle of `id`, when a drawing holds the row. */
   private async ring(p: Ports, m: PaneHost, id: string, press: Press): Promise<void> {
     const expanded = new Set(await p.state.expanded.get())
-    const sections = await m.paneData(p, { selected: id, expanded })
-    const shown = await shownOf(p, sections)
-    const key = handleOf(sections, { expanded, shown: s => shown.get(s) ?? 0, limits: m.config.global().ui }, id)
+    const groups = await paneGroups(p, m, { selected: id, expanded })
+    const shown = await shownOf(p, groups)
+    const key = handleOf(groups, { expanded, shown: g => shown.get(g) ?? 0, limits: m.config.global().ui }, id)
     if (key === undefined || !press.still()) return // the reads above took time: the pane may have closed
     await this.request(p, key, id, press)
   }

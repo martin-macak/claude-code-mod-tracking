@@ -10,7 +10,7 @@ import type { ItemsHost } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
 import { handleOf } from '../ux/tree-data-table/table'
 import { type Press, type Refocus, unlessClosed } from './pane-refocus'
-import { type PaneHost, shownOf } from './pane-text'
+import { type PaneHost, paneGroups, shownOf } from './pane-text'
 
 /** The pane host, what the band press reads of the ledger and the refresh it runs. The LifecycleManager fits it as it is. */
 export type TurnPaneHost = PaneHost & {
@@ -24,10 +24,10 @@ export type TurnPaneHost = PaneHost & {
  */
 async function firstListed(p: Ports, m: TurnPaneHost, keys: readonly string[]): Promise<string | undefined> {
   const expanded = new Set(await p.state.expanded.get())
-  const sections = await m.paneData(p, { selected: null, expanded })
-  const shown = await shownOf(p, sections)
+  const groups = await paneGroups(p, m, { selected: null, expanded })
+  const shown = await shownOf(p, groups)
   const view = { expanded, shown: (id: string) => shown.get(id) ?? 0, limits: m.config.global().ui }
-  return keys.find(k => handleOf(sections, view, k) !== undefined)
+  return keys.find(k => handleOf(groups, view, k) !== undefined)
 }
 
 /**

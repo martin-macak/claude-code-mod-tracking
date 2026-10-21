@@ -1,6 +1,7 @@
 // View contracts: the data a tracker gives to TreeDataTable. Types only.
-// The /track text and the band derive from the same SectionSpec values.
-// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10.
+// The /track text and the band derive from the same SectionSpec values. The pane draws one table: its columns are the
+// same for every row (`ColumnId`), and a section of a tracker is one group of it (`GroupSpec`).
+// Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Design study of issue #63, section 5.
 
 import type { ToolStatus } from '../../types'
 import type { ConfigView } from './config'
@@ -21,6 +22,16 @@ export interface Cell {
   readonly clip?: 'end' | 'middle'
 }
 
+/**
+ * The columns of the one table. Every row writes the same ones, so the rows of two trackers scan alike. `control` holds the
+ * level marker, `name` the key (it carries the tree glyph), `description` the title, and `extras` the badges of
+ * `TreeRow.extras`. The header has words for `name`, `description`, `type` and `status`.
+ */
+export type ColumnId = 'control' | 'name' | 'description' | 'type' | 'status' | 'extras'
+
+/** The columns that a row fills with one `Cell`: all but `extras`, which holds a list of them. */
+export type CellId = Exclude<ColumnId, 'extras'>
+
 export interface ColumnDef {
   readonly id: string
   readonly header: string
@@ -29,7 +40,7 @@ export interface ColumnDef {
     | { readonly kind: 'content'; readonly min?: number; readonly max?: number }
     | { readonly kind: 'flex'; readonly min: number }
   readonly align?: 'left' | 'center' | 'right'
-  /** Exactly one per section: indent and expand glyph. */
+  /** Exactly one in the column set of the table: indent and expand glyph. */
   readonly role?: 'tree'
   /** Dropped first when the pane is narrow. */
   readonly priority?: number
@@ -48,7 +59,12 @@ export interface TreeRow {
   readonly id: string
   /** The tracker id. */
   readonly owner: string
-  readonly cells: Readonly<Record<string, Cell>>
+  readonly cells: Readonly<Partial<Record<CellId, Cell>>>
+  /**
+   * Badges: one-cell signals that a tracker adds to the `extras` column, e.g. the merge chip and the checks of a PR. Display
+   * only: a badge is no Button and takes no Tab stop. The table joins them with one space and clips them to the column.
+   */
+  readonly extras?: readonly Cell[]
   readonly children?: readonly TreeRow[]
   /** E.g. child trees of an item, as today. */
   readonly expandedByDefault?: boolean
@@ -86,8 +102,27 @@ export interface SectionSpec {
     readonly conflicts?: number
     readonly rank?: number
   }
-  readonly columns: readonly ColumnDef[]
   readonly rows: readonly TreeRow[]
+  readonly empty?: string
+}
+
+/**
+ * What the table draws per group: a title line, then the rows. The by-list view makes one group of each section (`id`
+ * `list:<section id>`). `count` and `failing` ride on the title line of the pane. The `/track` text prints the title
+ * and the note only.
+ */
+export interface GroupSpec {
+  /** `<view>:<group key>`, e.g. `list:prs`. The table keys the rows that "N more" opened by it. */
+  readonly id: string
+  readonly title: string
+  /** The note of the section, in the by-list view. */
+  readonly note?: Cell
+  readonly rows: readonly TreeRow[]
+  /** The top-level rows of the group. The caps of the table do not change it. */
+  readonly count: number
+  /** The rows of the group that failed: the failing count of the band of its section. */
+  readonly failing: number
+  /** Shown when the group has no row. */
   readonly empty?: string
 }
 
@@ -154,6 +189,7 @@ export interface FooterKey extends PaneKey {
 export interface RowRef {
   readonly id: string
   readonly owner: string
+  /** The id of the group the row sits in (`list:prs` in the by-list view). */
   readonly section: string
   readonly can: TreeRow['can']
 }

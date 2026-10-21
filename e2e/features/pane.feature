@@ -11,7 +11,7 @@ Feature: Drive the /track pane with the keys
     When I press "Tab"
     Then the selected row shows "two.example"
     When I press "x"
-    Then the screen matches /Web links 2 links/
+    Then the screen matches /Web links 2 +2 links/
     And the selected row shows "three.example"
 
   Scenario: Enter expands a leaf into its detail, and h shows the help view
@@ -108,14 +108,14 @@ Feature: Drive the /track pane with the keys
     When I type "Note https://a1.io/x, https://a2.io/x, https://a3.io/x, https://a4.io/x, https://a5.io/x, https://a6.io/x, https://a7.io/x, https://a8.io/x, https://a9.io/x, https://a10.io/x, https://a11.io/x, https://a12.io/x, https://a13.io/x, https://a14.io/x, https://a15.io/x, https://a16.io/x, https://a17.io/x, https://a18.io/x, https://a19.io/x, https://a20.io/x, https://a21.io/x, https://a22.io/x, https://a23.io/x, https://a24.io/x, https://a25.io/x, https://a26.io/x, https://a27.io/x, https://a28.io/x, https://a29.io/x, https://a30.io/x, https://a31.io/x, https://a32.io/x, https://a33.io/x, https://a34.io/x, https://a35.io/x, https://a36.io/x, https://a37.io/x, https://a38.io/x, https://a39.io/x, https://a40.io/x for later. Reply ok."
     And Claude finishes
     And I type "/track"
-    Then the screen matches /Web links 40 links/
-    And the screen matches /│ +Label +URL/
+    Then the screen matches /Web links 40 +40 links/
+    And the screen matches /│ +Name +Description/
     And the screen shows "more below"
     And the screen shows "r: refresh"
     And the selected row shows "a1.io/x"
     When I press "Tab" 30 times
     Then the selected row shows "a31.io/x"
-    And the screen matches /Web links 40 links/
+    And the screen matches /Web links 40 +40 links/
     And the screen shows "more above"
     And the screen shows "more below"
     And the screen shows "r: refresh"
@@ -123,7 +123,7 @@ Feature: Drive the /track pane with the keys
     Then the selected row shows "a40.io/x"
     And the screen shows "more above"
     And the screen stops showing "more below"
-    And the screen matches /Web links 40 links/
+    And the screen matches /Web links 40 +40 links/
     And the screen shows "r: refresh"
 
   # Issue #109, the owner's wish: with fewer rows than the body holds, the footer keys sit at the bottom of the pane, not under
@@ -153,7 +153,7 @@ Feature: Drive the /track pane with the keys
     When I type "Note https://a1.io/x, https://a2.io/x, https://a3.io/x, https://a4.io/x, https://a5.io/x, https://a6.io/x, https://a7.io/x, https://a8.io/x, https://a9.io/x, https://a10.io/x, https://a11.io/x, https://a12.io/x, https://a13.io/x, https://a14.io/x, https://a15.io/x, https://a16.io/x, https://a17.io/x, https://a18.io/x, https://a19.io/x, https://a20.io/x, https://a21.io/x, https://a22.io/x, https://a23.io/x, https://a24.io/x, https://a25.io/x, https://a26.io/x, https://a27.io/x, https://a28.io/x, https://a29.io/x, https://a30.io/x, https://a31.io/x, https://a32.io/x, https://a33.io/x, https://a34.io/x, https://a35.io/x, https://a36.io/x, https://a37.io/x, https://a38.io/x, https://a39.io/x, https://a40.io/x for later. Reply ok."
     And Claude finishes
     And I type "/track"
-    Then the screen matches /Web links 40 links/
+    Then the screen matches /Web links 40 +40 links/
     And the screen shows "more below"
     And the selected row shows "a1.io/x"
     When I press "Tab" 29 times
@@ -221,7 +221,7 @@ Feature: Drive the /track pane with the keys
     And I press "Tab"
     Then the screen shows "Keys go to the prompt."
     When I click "x: dismiss" in the pane to give it the keys
-    Then the screen matches /Web links 2 links/
+    Then the screen matches /Web links 2 +2 links/
     And the selected row shows "three.example"
     And the focus ring is on "▸"
     When I press "Up"
@@ -237,12 +237,12 @@ Feature: Drive the /track pane with the keys
     And a Claude Code session with the artifact-tracking mod
     When I wait for 3 seconds
     And I type "/track"
-    Then the screen matches /│Pull requests gh · refreshed \d+s ago/
+    Then the screen matches /│Pull requests \d+ +gh · refreshed \d+s ago/
     When I press "C-x"
     And I press "Tab"
     Then the screen shows "Keys go to the prompt."
     When I click "r: refresh" in the pane to give it the keys
-    Then the screen matches /│Pull requests gh · refreshed just now/
+    Then the screen matches /│Pull requests \d+ +gh · refreshed just now/
     And the screen stops showing "Keys go to the prompt."
     And the fake gh answered no unsupported call
 

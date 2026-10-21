@@ -64,9 +64,9 @@ export function githubRow(item: GitHubRecord, env: GithubEnv): TreeRow {
       ...CHECKS[item.checks ?? 'none'],
     },
   })
-  // The merge chip has a cell of its own, so a conflict hides no checks glyph. No chip: no cell.
+  // The merge chip is a badge of its own, in front of the checks, so a conflict hides no checks glyph. No chip: no badge.
   const chip = mergeChip(item, env.merge)
-  return chip === null ? row : { ...row, cells: { ...row.cells, merge: toned(chip.text, chip.tone) } }
+  return chip === null ? row : { ...row, extras: [toned(chip.text, chip.tone), ...(row.extras ?? [])] }
 }
 
 /** The id of the i-th child row under a conflicted PR. The id of a PR row is its key. */
@@ -79,7 +79,7 @@ export const prKeyOfRow = (id: string): string => id.replace(/#files:\d+$/, '')
 const noteRow = (item: GitHubRecord, i: number, text: string): TreeRow => ({
   id: fileRowId(item.key, i),
   owner: 'github',
-  cells: { title: { text, dim: true } },
+  cells: { description: { text, dim: true } },
 })
 
 /** The rows under a conflicted PR that the `files` key looked into: one per file, or one line that says why not. */
@@ -90,7 +90,7 @@ function fileRows(item: GitHubRecord, found: ConflictFiles): TreeRow[] {
   if (files.length === 0) return [noteRow(item, 0, 'no conflicts found locally: the local refs may be behind GitHub')]
   return [
     ...files.map(
-      (file, i): TreeRow => ({ id: fileRowId(item.key, i), owner: 'github', cells: { title: { text: file } } }),
+      (file, i): TreeRow => ({ id: fileRowId(item.key, i), owner: 'github', cells: { description: { text: file } } }),
     ),
     ...((found.more ?? 0) > 0 ? [noteRow(item, files.length, `+${found.more} more`)] : []),
   ]
@@ -99,8 +99,7 @@ function fileRows(item: GitHubRecord, found: ConflictFiles): TreeRow[] {
 /**
  * A discovered PR in the Pull requests section: the GitHub row with the title without the via marker, the branch
  * (`→base` when stacked on a branch other than the default) in the type cell, and a merged or closed PR dimmed. The
- * checks stay in the `extra` cell: the pane drops that column when it is narrow, where the legacy row joined the glyph
- * to the state.
+ * checks are a badge, and so is the hint that says why a key is off: the pane drops the extras column when it is narrow.
  */
 export function prRow(item: GitHubRecord, env: GithubEnv, defaultBranch: string | undefined): TreeRow {
   const base = githubRow(item, env)
@@ -113,13 +112,13 @@ export function prRow(item: GitHubRecord, env: GithubEnv, defaultBranch: string 
     ...base,
     cells: {
       ...base.cells,
-      title: { text: item.title ?? '' },
-      ...(hint !== undefined ? { mark: toned(hint, 'dim') } : {}),
+      description: { text: item.title ?? '' },
       // A head branch keeps both ends; `→base` is cut at the end, so the arrow and the start of the base stay.
       type: stacked
         ? { text: compactIds(`→${item.baseRefName}`), clip: 'end' }
-        : { text: compactIds(item.headRefName ?? '') },
+        : { text: compactIds(item.headRefName ?? ''), clip: 'middle' },
     },
+    ...(hint !== undefined ? { extras: [...(base.extras ?? []), toned(hint, 'dim')] } : {}),
     ...(files !== undefined ? { children: files, expandedByDefault: true } : {}),
     ...(done ? { dim: true } : {}),
   }

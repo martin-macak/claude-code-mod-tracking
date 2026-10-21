@@ -13,11 +13,11 @@ import { fakeConfig } from './fixtures/config-fs'
 import { buttonOf, footerOf, handlesOf, leaves, nodes, press, rowBoxes, texts } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
 import { fakePorts } from './fixtures/ports'
-import { COLS, row, section } from './fixtures/sections'
+import { row, section } from './fixtures/sections'
 
 /** A web row of the owner `web`, the one item owner of these tests. */
 const web = (id: string, extra: Partial<TreeRow> = {}, key = id): TreeRow =>
-  row(id, { prio: '', key, title: `https://${id}.example/` }, { owner: 'web', ...extra })
+  row(id, { control: '', name: key, description: `https://${id}.example/` }, { owner: 'web', ...extra })
 
 const webs = (...ids: string[]): TreeRow[] => ids.map(id => web(id))
 
@@ -29,7 +29,7 @@ function setup(
   const w = fakePorts()
   const reg = new KeyRegistry()
   const host = {
-    sections: [section('web', COLS, rows)] as SectionSpec[],
+    sections: [section('web', rows)] as SectionSpec[],
     views: [] as PaneView[],
     calls: [] as string[],
     keyProblems: [] as string[],
@@ -38,7 +38,7 @@ function setup(
     /** Every footer key live: the session's own route decides, not the footer's state. */
     allLive: false,
     setRows: (rows: readonly TreeRow[]): void => {
-      host.sections = [section('web', COLS, rows)]
+      host.sections = [section('web', rows)]
     },
     /** What a fake write does to `sections`. */
     onDismiss: (_ids: readonly string[]): void => {},
@@ -92,7 +92,7 @@ async function abc() {
   return t
 }
 
-/** The width of the `type` cell of the first row: the gutter, then prio, key, title, type. */
+/** The width of the `type` cell of the first row: the gutter, then control, name, description, type. */
 const typeWidth = (tree: unknown): unknown => {
   const box = rowBoxes(tree)[0]?.children[4] as { props: { width: unknown } } | undefined
   return box?.props.width
@@ -313,7 +313,7 @@ test('Enter on an "N more" Button puts the ring on the selected row, and the win
   await t.session.focused(t.w.ports, 'm0') // Tab put the ring on the N more Button
   press(buttonOf(first, 'm0'))
   await t.session.idle()
-  expect(await t.w.ports.state.shown.get('web')).toBe(5)
+  expect(await t.w.ports.state.shown.get('list:web')).toBe(5)
   expect(t.w.ui.focused).toEqual(['r4']) // the ring goes back onto the selected row
   expect(t.selected()).toBe('w4')
   // Ten rows and "2 more" now overflow the body. The ring is off the N more Button, so the window shows the selected row
@@ -325,7 +325,7 @@ test('Enter on an "N more" Button with no row selected asks for no ring', async 
   const t = setup(TWELVE, { file: { global: { ui: { sectionRows: 5 } } } })
   press(buttonOf(await t.draw(96, SHORT), 'm0'))
   await t.session.idle()
-  expect(await t.w.ports.state.shown.get('web')).toBe(5)
+  expect(await t.w.ports.state.shown.get('list:web')).toBe(5)
   expect(t.w.ui.focused).toEqual([])
 })
 
@@ -483,12 +483,12 @@ test('Enter on an "N more" Button after the selected row hid puts the ring on th
   const second = await t.draw(96, SHORT)
   press(buttonOf(second, 'm0'))
   await t.session.idle()
-  expect(await t.w.ports.state.shown.get('web')).toBe(5)
+  expect(await t.w.ports.state.shown.get('list:web')).toBe(5)
   expect(t.w.ui.focused).toEqual(['r3'])
   expect(t.selected()).toBe('w3')
 })
 
-test('toggle flips the id in expanded; more adds sectionRows to shown(section)', async () => {
+test('toggle flips the id in expanded; more adds sectionRows to shown(group), keyed by view and group', async () => {
   const t = setup(webs('a', 'b'))
   const tree = await t.draw()
   press(buttonOf(tree, 'r1'))
@@ -497,11 +497,11 @@ test('toggle flips the id in expanded; more adds sectionRows to shown(section)',
   press(buttonOf(tree, 'r1'))
   await t.session.idle()
   expect(t.w.state.get('expanded')).toEqual([])
-  expect(await t.w.ports.state.shown.get('web')).toBe(0)
+  expect(await t.w.ports.state.shown.get('list:web')).toBe(0)
   const over = setup(webs('a', 'b', 'c', 'd', 'e', 'f', 'g'), { file: { global: { ui: { sectionRows: 5 } } } })
   press(buttonOf(await over.draw(), 'm0'))
   await over.session.idle()
-  expect(await over.w.ports.state.shown.get('web')).toBe(5)
+  expect(await over.w.ports.state.shown.get('list:web')).toBe(5)
   expect(handlesOf(await over.draw())).toHaveLength(7)
 })
 
@@ -685,7 +685,7 @@ test('N more while the pane has no keys asks for them and shows the next rows', 
   press(buttonOf(await t.draw(80, undefined, false), 'm0'))
   await t.session.idle()
   expect(calls).toEqual(['open'])
-  expect(await t.w.ports.state.shown.get('web')).toBe(5)
+  expect(await t.w.ports.state.shown.get('list:web')).toBe(5)
 })
 
 test('N more with a row selected asks for the keys once, then for the ring on that row', async () => {
@@ -705,7 +705,7 @@ test('N more while the pane has the keys, or does not say, asks for no keys', as
     press(buttonOf(await t.draw(80, undefined, focused), 'm0'))
     await t.session.idle()
     expect(calls).toEqual([])
-    expect(await t.w.ports.state.shown.get('web')).toBe(5)
+    expect(await t.w.ports.state.shown.get('list:web')).toBe(5)
   }
 })
 
@@ -1050,7 +1050,7 @@ test('Enter, N more, h and r run at once: a press that never finishes holds none
     if (key !== 'refresh') press(buttonOf(tree, 'refresh'))
     await turn() // no idle(): the press above never ends
     expect(t.w.state.get('expanded'), hang).toEqual(['c'])
-    expect(await t.w.ports.state.shown.get('web'), hang).toBe(5)
+    expect(await t.w.ports.state.shown.get('list:web'), hang).toBe(5)
     expect(t.w.state.get('help'), hang).toBe(true)
     if (key !== 'refresh') expect(t.host.calls, hang).toEqual(['refreshManual'])
   }
@@ -1069,16 +1069,15 @@ test('a tracker key whose work never finishes holds no later press', async () =>
 })
 
 test('press refresh resets the width memo and runs refreshManual', async () => {
-  const columns = [...COLS, { id: 'type', header: 'Type', width: { kind: 'content', max: 20 } } as const]
   const withType = (type: string) => [
-    section('web', columns, [web('a', { cells: { key: { text: 'a' }, type: { text: type } } })]),
+    section('web', [web('a', { cells: { name: { text: 'a' }, type: { text: type } } })]),
   ]
   const t = setup([])
-  t.host.sections = withType('abcdefghijklmnop')
+  t.host.sections = withType('abcdefghij')
   const wide = typeWidth(await t.draw())
-  expect(wide).toBe(16)
+  expect(wide).toBe(10)
   t.host.sections = withType('abc')
-  expect(typeWidth(await t.draw())).toBe(16) // the memo only grows
+  expect(typeWidth(await t.draw())).toBe(10) // the memo only grows
   await t.pressKey('refresh')
   expect(t.host.calls).toEqual(['refreshManual'])
   expect(typeWidth(await t.draw())).toBe(4) // the header `Type` is the widest text left
@@ -1156,7 +1155,7 @@ test('a row key with no row selected or a stale one does nothing', async () => {
 test('a key on a row that cannot take it does nothing', async () => {
   // A row of another owner than an item owner takes no priority, though `can` says so. `can` has no `dismiss` here.
   const t = setup([
-    row('p', { key: 'npm run dev', title: 'npm run dev' }, { owner: 'processes', can: { priority: true } }),
+    row('p', { name: 'npm run dev', description: 'npm run dev' }, { owner: 'processes', can: { priority: true } }),
   ])
   t.host.allLive = true
   t.w.state.set('selected', 'p')
