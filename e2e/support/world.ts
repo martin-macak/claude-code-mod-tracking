@@ -14,7 +14,7 @@ import {
 import { CLONE_NAME, type Config, LOCK_DIR, loadConfig, OUT_DIR, PLUGIN_DIR, REPO_ROOT } from './config.ts'
 import type { FakeGhSpec } from './fake-gh.ts'
 import { fakeGhEnv } from './fake-gh-env.ts'
-import { claimRun } from './lock.ts'
+import { makeClaimer } from './lock.ts'
 import { withFocus } from './pane.ts'
 import { Recorder } from './recorder.ts'
 import { countLines, FAKE_ORIGIN_NAME, launchClaude, prepareClone, waitForTurnEnd } from './session.ts'
@@ -24,7 +24,13 @@ import { Tmux } from './tmux.ts'
 import { waitUntil } from './wait.ts'
 
 // Each wait inside a step has its own, shorter timeout from Config.
-setDefaultTimeout(10 * 60 * 1000)
+const STEP_TIMEOUT_MS = 10 * 60 * 1000
+setDefaultTimeout(STEP_TIMEOUT_MS)
+
+// Every scenario takes the lock of the machine in its Before hook, and waits for it while another run holds it
+// (support/lock.ts). After the first timeout the later scenarios do not wait again.
+const { lockWaitMs } = loadConfig()
+const claimRun = makeClaimer({ waitMs: lockWaitMs })
 
 let recordedScenarios = 0
 
@@ -75,7 +81,7 @@ export class DemoWorld extends World {
     const { record, cols, rows, dir } = this.config
     if (record && ++recordedScenarios > 1) throw new Error('demo: only one @demo scenario can be recorded per run')
     this.outDir = join(OUT_DIR, record ? 'demo' : slug(name))
-    this.release = claimRun(LOCK_DIR, this.outDir)
+    this.release = await claimRun(LOCK_DIR, this.outDir)
     this.configDir = mkdtempSync(join(tmpdir(), 'cc-tracker-config-'))
     this.signalFile = join(this.outDir, 'signal')
     this.timeline = new Timeline(join(this.outDir, 'timeline.ndjson'))
@@ -158,7 +164,8 @@ export class DemoWorld extends World {
 
 setWorldConstructor(DemoWorld)
 
-Before(async function (this: DemoWorld, { pickle }: ITestCaseHookParameter) {
+// The hook may wait for the lock as long as Config allows, and then needs the time that the default gives it.
+Before({ timeout: lockWaitMs + STEP_TIMEOUT_MS }, async function (this: DemoWorld, { pickle }: ITestCaseHookParameter) {
   await this.setUp(pickle.name)
 })
 

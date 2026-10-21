@@ -11,6 +11,8 @@ export type Config = {
   typeDelayMs: number
   turnTimeoutMs: number
   screenTimeoutMs: number
+  /** How long a scenario waits for the lock of a run that is still going. 0: fail at once. */
+  lockWaitMs: number
   keep: boolean
 }
 
@@ -32,6 +34,15 @@ function positiveInt(env: Env, name: string, fallback: number): number {
   return value
 }
 
+function nonNegativeInt(env: Env, name: string, fallback: number): number {
+  const raw = env[name]
+  if (raw === undefined || raw === '') return fallback
+  const value = Number(raw)
+  if (!Number.isInteger(value) || value < 0)
+    throw new Error(`config: ${name} must be a non-negative integer, got "${raw}"`)
+  return value
+}
+
 export function loadConfig(env: Env = process.env): Config {
   return {
     record: env.DEMO_RECORD === '1',
@@ -42,6 +53,7 @@ export function loadConfig(env: Env = process.env): Config {
     typeDelayMs: positiveInt(env, 'DEMO_TYPE_DELAY_MS', 35),
     turnTimeoutMs: positiveInt(env, 'DEMO_TURN_TIMEOUT_S', 120) * 1000,
     screenTimeoutMs: positiveInt(env, 'DEMO_SCREEN_TIMEOUT_S', 20) * 1000,
+    lockWaitMs: nonNegativeInt(env, 'DEMO_LOCK_WAIT_S', 30 * 60) * 1000,
     keep: env.DEMO_KEEP === '1',
   }
 }

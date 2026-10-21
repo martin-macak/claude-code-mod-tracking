@@ -3,8 +3,11 @@
 //   parent -> child: "go" to make one attempt at the lock, or "go <ms>" to wait first until the
 //                    time <ms> (ms since the epoch) so that two children attempt together
 //   child -> parent: "won" or "lost"
-// A winner keeps its live pid, and so the lock, until the parent closes stdin. So a second
-// attempt always overlaps the first one.
+//   parent -> child: "release" to let go of a lock the child won, with the child still alive
+//   child -> parent: "released"
+// A winner keeps its live pid, and so the lock, until the parent sends "release" or closes stdin.
+// So a second attempt always overlaps the first one. After "release" the child lives on with a live
+// pid and no lock. After stdin closes it exits and leaves a lock with a dead pid.
 // With the env var LOCK_FAULTS (a fault plan, see lock-faults.ts) the attempt runs slower or ends
 // in a crash at a chosen fs call. A crashed child writes no result line.
 import { createInterface } from 'node:readline'
@@ -16,9 +19,16 @@ const plan = process.env.LOCK_FAULTS
 const faults = plan === undefined ? undefined : installFaults(JSON.parse(plan) as FaultPlan)
 const input = createInterface({ input: process.stdin })
 let attempted = false
+let release: (() => void) | undefined
 
 input.on('line', line => {
   const [word, at] = line.split(' ')
+  if (word === 'release') {
+    release?.()
+    release = undefined
+    process.stdout.write('released\n')
+    return
+  }
   if (word !== 'go' || attempted) return
   attempted = true
   // Spin, not sleep: a timer wakes up late and by a different amount in each child.
@@ -26,7 +36,7 @@ input.on('line', line => {
   faults?.arm()
   let result = 'won'
   try {
-    acquireLock(dir)
+    release = acquireLock(dir)
   } catch {
     result = 'lost'
   }
