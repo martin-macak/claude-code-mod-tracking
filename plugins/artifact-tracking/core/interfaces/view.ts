@@ -48,6 +48,40 @@ export interface ColumnDef {
   readonly clip?: 'end' | 'middle'
 }
 
+/**
+ * Where a row stands, in one closed set, whatever its tracker. A tracker maps its own states to a token (design study of
+ * issue #63, section 5.4). The pane takes the color of the status cell from it (`core/lib/status.ts`), and a view groups
+ * by it, so no view reads the text of a cell.
+ *
+ * `failed`: broke, and needs the person. `waiting`: not broken, but it waits for something. `active`: live and well.
+ * `done`: over, as it should be. `gone`: removed, or not known to exist any more. `none`: no state to speak of.
+ */
+export type StatusToken = 'failed' | 'waiting' | 'active' | 'done' | 'gone' | 'none'
+
+/** A state as the status cell says it: a free word, and the token that sorts it. */
+export interface RowStatus {
+  readonly label: string
+  readonly token: StatusToken
+}
+
+/**
+ * What a view groups, sorts and filters a row by. A view reads these and never the text of a cell. A tracker sets them on
+ * the top-level rows it draws, and a view groups and sorts only those. A row below may carry a `status` too: the
+ * `(n failed)` of a group reads it at every depth (`countFailed`).
+ */
+export interface Facets {
+  readonly status?: RowStatus
+  /**
+   * The level of the row, from `ViewContext.levelOf`: the person's mark, or a rule's. Absent: the row has no level, as the
+   * rows of the slot trackers (processes, agents, worktrees, repos) have none, and it sorts as `normal`.
+   */
+  readonly level?: Effective
+  /** Epoch ms of the first sighting of the thing the row stands for: the record, the process, the agent or the worktree. Absent: not known. */
+  readonly firstSeen?: number
+  /** What kind of thing the row is, in a word that is the same on every surface (`pr`, `issue`, `docker-container`). Absent: no kind. Files get one with issue #57. */
+  readonly kind?: string
+}
+
 /** One line of a row's detail. */
 export interface DetailLine {
   readonly label?: string
@@ -81,6 +115,8 @@ export interface TreeRow {
    * from its record, so a kind draws none. Absent: no turn tracked the item (the PR lane found it, or the record is older).
    */
   readonly turns?: { readonly first: number; readonly last: number }
+  /** What a view groups, sorts and filters by. Set on the top-level rows of every tracker (issue #63, L2). */
+  readonly facets?: Facets
 }
 
 export interface SectionSpec {
@@ -125,7 +161,11 @@ export interface GroupSpec {
   readonly rows: readonly TreeRow[]
   /** The number the title line shows: the `count` of the section, else its top-level rows. The caps of the table do not change it. */
   readonly count: number
-  /** The rows of the group that failed: the failing count of the band of its section. */
+  /**
+   * The failures in the rows of the group, at every depth, read from the status token `failed`. A failure counts once: a
+   * row whose failure comes from a row below it (a folded workflow run) counts those rows and not itself (`countFailed`).
+   * It is not the failing count of the band of the section.
+   */
   readonly failing: number
   /** Shown when the group has no row. */
   readonly empty?: string

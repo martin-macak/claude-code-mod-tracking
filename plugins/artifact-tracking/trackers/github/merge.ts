@@ -62,16 +62,21 @@ export function mergeChip(rec: GitHubRecord, env: MergeEnv | undefined): Chip | 
   }
 }
 
+/**
+ * True for a PR that is open and CONFLICTING while the values are current. No lane state, or a stale one (`gh` cannot be
+ * asked), says nothing about a conflict. The chip, the band and the status token of the row all read this.
+ */
+export const isConflicted = (rec: GitHubRecord, env: MergeEnv | undefined): boolean =>
+  env?.fresh === true && openPr(rec) && rec.mergeable === 'CONFLICTING'
+
 /** The note of a PR whose conflict the row may describe: open, CONFLICTING, and the values current. */
 export function conflictNote(rec: GitHubRecord, env: MergeEnv | undefined): MergeNote | undefined {
-  if (env === undefined || !env.fresh || !openPr(rec) || rec.mergeable !== 'CONFLICTING') return undefined
-  return env.notes[rec.key]
+  return isConflicted(rec, env) ? env?.notes[rec.key] : undefined
 }
 
 /** How many of the PRs are open and CONFLICTING, for the band. None while the values are stale. */
 export function conflictCount(recs: readonly GitHubRecord[], env: MergeEnv | undefined): number {
-  if (env === undefined || !env.fresh) return 0
-  return recs.filter(r => openPr(r) && r.mergeable === 'CONFLICTING').length
+  return recs.filter(r => isConflicted(r, env)).length
 }
 
 /** The UNKNOWN count after one more step that asked about the PR, never past `UNKNOWN_SPENT`. */

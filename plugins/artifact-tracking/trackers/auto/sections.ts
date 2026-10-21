@@ -1,9 +1,10 @@
 // The sections of the auto tracker: Worktrees (the root and the children this run proved) and Agents (the master and the
-// agents of this run). Pure: it reads the view context and writes nothing. Titles, notes, cell texts, tones and bands
-// keep the text the pane drew before L6; tests/tracker-sections.test.ts pins them. Both sections are trees: a row holds its children.
+// agents of this run). Pure: it reads the view context and writes nothing. Titles, notes and bands keep the text the pane
+// drew before L6, and so do the cells but the new Status cell of an agent (issue #63, L2); tests/tracker-sections.test.ts
+// pins them. Both sections are trees: a row holds its children.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 14, L6 A1.
 
-import type { SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
+import type { RowStatus, SectionSpec, StatusToken, TreeRow, ViewContext } from '../../core/interfaces/view'
 import { textCells } from '../../core/lib/rows'
 import { ago, compactIds } from '../../core/lib/text'
 import type { AutoConfig } from './config'
@@ -26,10 +27,16 @@ const can = (dismiss: boolean): TreeRow['can'] => ({ dismiss, priority: false })
 
 const branchText = (r: WorktreeRow): string => compactIds(r.branch ?? (r.detached ? '(detached)' : ''))
 
-function worktreeRow(auto: AutoState, r: WorktreeRow, children?: readonly TreeRow[]): TreeRow {
+/** When this run proved each child worktree, by row id. The root has no proof. */
+type ProvenAt = ReadonlyMap<string, number>
+
+function worktreeRow(auto: AutoState, r: WorktreeRow, provenAt: ProvenAt, children?: readonly TreeRow[]): TreeRow {
   const removed = r.state === 'removed'
   const root = r.depth === 0
   const reasons = autoReasonsOf(auto, r.id)
+  // A live worktree is active and says no word: every live row would say the same. A removed one is gone.
+  const status: RowStatus = removed ? { label: 'removed', token: 'gone' } : { label: '', token: 'active' }
+  const first = provenAt.get(r.id)
   return {
     id: r.id,
     owner: OWNER,
@@ -37,9 +44,9 @@ function worktreeRow(auto: AutoState, r: WorktreeRow, children?: readonly TreeRo
       key: compactIds(r.name),
       title: branchText(r),
       titleClip: 'middle',
-      status: removed ? 'removed' : '',
-      tone: removed ? 'dim' : 'plain',
+      status,
     }),
+    facets: { status, ...(first !== undefined ? { firstSeen: first } : {}) },
     ...(children !== undefined ? { children } : {}),
     // The root is open until the person closes it.
     ...(root ? { expandedByDefault: true } : {}),
@@ -75,7 +82,8 @@ function worktreesSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
   const removedAt = new Map(auto.worktrees.map(p => [worktreeId(p.path), p.removedAt]))
   const hiding = cfg.hideEnded && !ctx.hidden.showAll
   const shown = kids.filter(r => !(hiding && expiredWorktree(r, removedAt, cfg, ctx.now)))
-  const rows = shown.map(r => worktreeRow(auto, r))
+  const provenAt: ProvenAt = new Map(auto.worktrees.map(p => [worktreeId(p.path), p.provenAt]))
+  const rows = shown.map(r => worktreeRow(auto, r, provenAt))
   const live = kids.filter(r => r.state === 'live').length
   const removed = kids.length - live
   const hidden = kids.length - shown.length
@@ -90,7 +98,7 @@ function worktreesSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
         age === 'now' ? 'checked just now' : `checked ${age} ago`,
       ].join(' · ')
     : `git failed: ${snap.git.error ?? 'unknown error'}`
-  const tree = root ? [worktreeRow(auto, root, rows)] : rows
+  const tree = root ? [worktreeRow(auto, root, provenAt, rows)] : rows
   return {
     id: 'worktrees',
     title: 'Worktrees',
@@ -105,6 +113,25 @@ function worktreesSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
 // ---------------------------------------------------------------- Agents
 
 const MARKER: Record<AgentRow['state'], string> = { running: '●', waiting: '●', ended: '✓', failed: '✗' }
+
+/** The token of each agent state (design study of issue #63, section 5.4). The state is the word of the status cell. */
+const AGENT_TOKEN: Record<AgentRow['state'], StatusToken> = {
+  running: 'active',
+  waiting: 'waiting',
+  ended: 'done',
+  failed: 'failed',
+}
+
+/**
+ * The state, with the spawn time of each agent by row id: a row reads its first sighting from it, and the map is made once
+ * for the section, not searched for each row. The master has no proof, nor has an agent that no event named.
+ */
+type Drawn = AutoState & { readonly spawnedAt: ReadonlyMap<string, number> }
+
+const drawnOf = (auto: AutoState): Drawn => ({
+  ...auto,
+  spawnedAt: new Map(auto.agents.map(p => [agentRowId(p.id), p.spawnedAt])),
+})
 
 /** An agent row and the rows below it. */
 type AgentNode = { row: AgentRow; kids: AgentNode[] }
@@ -127,10 +154,12 @@ function nest(list: readonly AgentRow[]): AgentNode[] {
 }
 
 /** The row of one agent, with its children already drawn. A workflow agent says the run it belongs to (issue #49). */
-function agentRow(auto: AutoState, r: AgentRow, children: readonly TreeRow[]): TreeRow {
+function agentRow(auto: Drawn, r: AgentRow, children: readonly TreeRow[]): TreeRow {
   const master = r.kind === 'master'
   const reasons = autoReasonsOf(auto, r.id)
   const wf = r.workflow ? `${shortRunId(r.workflow.runId)}·${r.workflow.agentIndex} ` : ''
+  const status: RowStatus = { label: r.state, token: AGENT_TOKEN[r.state] }
+  const spawnedAt = auto.spawnedAt.get(r.id)
   return {
     id: r.id,
     owner: OWNER,
@@ -138,9 +167,11 @@ function agentRow(auto: AutoState, r: AgentRow, children: readonly TreeRow[]): T
       key: compactIds(`${MARKER[r.state]} ${wf}${r.label}`),
       title: compactIds(r.branch ?? ''),
       type: compactIds(r.worktree ?? ''),
+      status,
       titleClip: 'middle',
       typeClip: 'middle',
     }),
+    facets: { status, kind: r.kind, ...(spawnedAt !== undefined ? { firstSeen: spawnedAt } : {}) },
     ...(children.length > 0 ? { children } : {}),
     // The master is open until the person closes it.
     ...(master ? { expandedByDefault: true } : {}),
@@ -152,7 +183,7 @@ function agentRow(auto: AutoState, r: AgentRow, children: readonly TreeRow[]): T
 
 const isDone = (r: AgentRow): boolean => r.state === 'ended' || r.state === 'failed'
 
-const plainRows = (auto: AutoState, nodes: readonly AgentNode[]): TreeRow[] =>
+const plainRows = (auto: Drawn, nodes: readonly AgentNode[]): TreeRow[] =>
   nodes.map(n => agentRow(auto, n.row, plainRows(auto, n.kids)))
 
 /**
@@ -277,7 +308,10 @@ function runStats(list: readonly AgentRow[]): Map<string, RunStat> {
 }
 
 /** The row of a folded run. It is closed until the person opens it, and it cannot be dismissed as a whole. */
-function runRow(auto: AutoState, run: RunNode, stat: RunStat): TreeRow {
+function runRow(auto: Drawn, run: RunNode, stat: RunStat): TreeRow {
+  // A run that folds is over: it failed when an agent of it failed, else it is done. Its first sighting is the first spawn.
+  const status: RowStatus = stat.failed > 0 ? { label: 'failed', token: 'failed' } : { label: 'ended', token: 'done' }
+  const spawns = run.members.flatMap(m => auto.spawnedAt.get(m.row.id) ?? [])
   return {
     id: workflowRowId(run.runId),
     owner: OWNER,
@@ -285,15 +319,17 @@ function runRow(auto: AutoState, run: RunNode, stat: RunStat): TreeRow {
       key: `${stat.failed > 0 ? '✗' : '✓'} ${shortRunId(run.runId)}`,
       title: `${stat.agents} agents · ${stat.failed} failed`, // a fold has 2 agents or more (issue #146)
       type: '',
+      status,
       titleClip: 'middle',
     }),
+    facets: { status, ...(spawns.length > 0 ? { firstSeen: Math.min(...spawns) } : {}) },
     children: plainRows(auto, run.members),
     can: can(false),
     dim: true,
   }
 }
 
-function shownRow(auto: AutoState, s: Shown, stats: ReadonlyMap<string, RunStat>): TreeRow {
+function shownRow(auto: Drawn, s: Shown, stats: ReadonlyMap<string, RunStat>): TreeRow {
   if ('runId' in s) return runRow(auto, s, stats.get(s.runId) ?? { agents: s.members.length, failed: 0 })
   return agentRow(
     auto,
@@ -331,7 +367,8 @@ function agentsSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
   const parts = [...(running > 0 ? [`${running} running`] : []), ...(ended > 0 ? [`${ended} ended`] : [])]
   if (!snap.agentList.ok) parts.push('agent list failed')
   const note = parts.join(' · ')
-  const rows = items.map(s => shownRow(auto, s, stats))
+  const drawn = drawnOf(auto)
+  const rows = items.map(s => shownRow(drawn, s, stats))
   return {
     id: 'agents',
     title: 'Agents',

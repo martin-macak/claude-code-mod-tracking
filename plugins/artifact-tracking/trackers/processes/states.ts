@@ -1,8 +1,10 @@
 // The end states of a process row: one place that names them. The view hides a row in one of them once it ended longer
 // ago than its TTL (issue #49). `KIND` must name every `ProcessState`, so a state that joins the union (#118) is a
-// compile error here until it says whether it is live, ended or a failure. `rows`, `watch` and `sections` follow.
-// Runtime values, so they live apart from the type modules, which export none.
+// compile error here until it says whether it is live, ended or a failure. `rows`, `watch` and `sections` follow. The
+// status token of each state (issue #63, L2) sits beside them, with the same guard. Runtime values, so they live apart from
+// the type modules, which export none.
 
+import type { StatusToken } from '../../core/interfaces/view'
 import type { ProcessState } from './types'
 
 /** `live`: still going. `ended`: over, hides after `endedTtlMs`. `failed`: over, hides after `failedTtlMs`. */
@@ -26,3 +28,19 @@ const statesOf = (keep: (k: StateKind) => boolean): ReadonlySet<ProcessState> =>
 export const ENDED_STATES: ReadonlySet<ProcessState> = statesOf(k => k !== 'live')
 /** The ended states that are failures: they hide after `failedTtlMs`, the others after `endedTtlMs`. */
 export const FAILED_STATES: ReadonlySet<ProcessState> = statesOf(k => k === 'failed')
+
+/**
+ * The status token of each state (design study of issue #63, section 5.4). `failed`, `killed`, `exited` and `unhealthy` are
+ * the red set of the pane, and the band counts them. `unknown` is gone: the mod could not find the process. `Record` names
+ * every `ProcessState`, so a state that joins the union is a compile error until it has a token.
+ */
+export const STATE_TOKEN: Readonly<Record<ProcessState, StatusToken>> = {
+  running: 'active',
+  up: 'active',
+  completed: 'done',
+  unknown: 'gone',
+  failed: 'failed',
+  killed: 'failed',
+  exited: 'failed',
+  unhealthy: 'failed',
+}

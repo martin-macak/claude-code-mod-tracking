@@ -5,9 +5,9 @@
 
 import type { Effective, Priority, StoredItem } from '../../core/interfaces/items'
 import type { ReasonSet } from '../../core/interfaces/reasons'
-import type { TreeRow, ViewContext } from '../../core/interfaces/view'
+import type { RowStatus, StatusToken, TreeRow, ViewContext } from '../../core/interfaces/view'
 import { byLevel } from '../../core/lib/levels'
-import { itemRow, type Tone, viaPrefix } from '../../core/lib/rows'
+import { itemRow, viaPrefix } from '../../core/lib/rows'
 import { jiraSiteKey } from './nested'
 import { childId } from './nodes'
 import type { JiraNode, JiraRecord } from './types'
@@ -35,10 +35,21 @@ export function jiraRecords(items: readonly StoredItem[]): JiraRecord[] {
   return items.filter((i): i is JiraRecord => i.category === 'jira' && typeof i.issueKey === 'string')
 }
 
-function categoryTone(statusCategory: string | undefined): Tone {
-  if (statusCategory === 'done') return 'ok'
-  if (statusCategory === 'indeterminate') return 'warn'
-  return 'plain'
+/**
+ * The token of a Jira status category (design study of issue #63, section 5.4): `new` waits, `indeterminate` is under way,
+ * `done` is done. No category, or one the map does not know, gives `none`: the mod does not guess from the status word.
+ */
+function categoryToken(statusCategory: string | undefined): StatusToken {
+  switch (statusCategory) {
+    case 'new':
+      return 'waiting'
+    case 'indeterminate':
+      return 'active'
+    case 'done':
+      return 'done'
+    default:
+      return 'none'
+  }
 }
 
 /** The level of a node the person marked, when no tracked record of the issue gives one. */
@@ -62,13 +73,13 @@ function nodeRows(
         dismiss: false,
         ...(t ? { reasons: t.reasons } : {}),
         children: nodeRows(id, n.children, site, tracked),
+        ...(n.issueType ? { kind: n.issueType } : {}),
         text: {
           key: n.key,
           href: `https://${site}/browse/${n.key}`,
           title: viaPrefix(t?.via) + n.summary,
           type: n.issueType,
-          status: n.status,
-          tone: categoryTone(n.statusCategory),
+          status: { label: n.status, token: categoryToken(n.statusCategory) },
         },
       })
     })
@@ -77,17 +88,15 @@ function nodeRows(
 /** An issue and its child tree. A site other than the active one, or a non-Cloud host, reads `track-only`. */
 export function jiraRow(item: JiraRecord, env: JiraEnv, tracked: ReadonlyMap<string, Tracked>): TreeRow {
   const activeSite = env.tools.acli?.site
-  let status: string
-  let tone: Tone
+  let status: RowStatus
   if (item.error?.kind === 'not-found') {
-    status = 'not found'
-    tone = 'bad'
+    // A key that Jira does not know: the person has a wrong reference to fix.
+    status = { label: 'not found', token: 'failed' }
   } else if (item.trackOnly || (activeSite && lower(item.site) !== lower(activeSite))) {
-    status = 'track-only'
-    tone = 'dim'
+    // The mod cannot ask for this issue, so it knows no state.
+    status = { label: 'track-only', token: 'none' }
   } else {
-    status = item.status ?? ''
-    tone = categoryTone(item.statusCategory)
+    status = { label: item.status ?? '', token: categoryToken(item.statusCategory) }
   }
   return itemRow({
     id: item.key,
@@ -95,6 +104,8 @@ export function jiraRow(item: JiraRecord, env: JiraEnv, tracked: ReadonlyMap<str
     level: env.levelOf(item.key),
     dismiss: true,
     reasons: item.reasons,
+    firstSeen: item.firstSeen,
+    ...(item.issueType ? { kind: item.issueType } : {}),
     children: nodeRows(item.key, item.children, item.site, tracked),
     text: {
       key: item.issueKey,
@@ -102,7 +113,6 @@ export function jiraRow(item: JiraRecord, env: JiraEnv, tracked: ReadonlyMap<str
       title: viaPrefix(item.via) + (item.summary ?? item.label),
       type: item.issueType ?? '',
       status,
-      tone,
     },
   })
 }

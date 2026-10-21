@@ -1,8 +1,10 @@
 // The /track text of the whole pane world, byte for byte (issue #63, L1). The pane draws one table with one header now,
 // but the text keeps what it said when every section had its own header: a title line (`title  note`), then one line per
 // row. The literal below was captured on `main` before L1. A change here is a change of what `/track` prints.
+// Issue #63, L2 changed three places, each on purpose: an agent says its state (a new Status cell), a file says its name
+// before its folder, and a process says its name where the short kind word (`bg`, `docker`, `pid`) stood.
 import { expect, test } from 'claude-code/testing'
-import { listText } from '../hooks/pane-text'
+import { listText, turnLabels } from '../hooks/pane-text'
 import { paneWorld } from './fixtures/pane-world'
 
 const GOLDEN = `Worktrees  git · 2 live · 1 removed · checked 30s ago
@@ -12,11 +14,11 @@ const GOLDEN = `Worktrees  git · 2 live · 1 removed · checked 30s ago
     detached-wt  (detached)
 
 Agents  2 running · 2 ended
-  ● this session  feat/x  feat-x
-    ● explore  feat/y  agent-a94bdd45
-      ✓ review  feat/y  agent-a94bdd45
-    ● wf_a35565·2 build
-    ✗ lint
+  ● this session  feat/x  feat-x  running
+    ● explore  feat/y  agent-a94bdd45  running
+      ✓ review  feat/y  agent-a94bdd45  ended
+    ● wf_a35565·2 build  waiting
+    ✗ lint  failed
 
 Pull requests  gh · refreshed 2m ago
   ★ #21  Rework the capture scan  feat/x  open  ✗ checks
@@ -56,15 +58,26 @@ Web links  2 links
 
 Files  3 files
   plan.md  created
-  docs/spec.md  edited 2  viewed 1
+  spec.md  docs  edited 2  viewed 1
   README.md  viewed 3  subagent
 
 Processes  docker: daemon not running
-  bg  npm run dev  background task  running
-  docker  db  docker container  up
-  pid  worker  detached process  failed`
+  npm run dev  background task  running
+  db  docker container  up
+  worker  detached process  failed`
 
 test('/track prints the text of every section as it did before the pane drew one table', async () => {
   const t = await paneWorld()
   expect(await listText(t.w.ports, t.m)).toBe(GOLDEN)
+})
+
+test('/track turn labels: a file reads its type, name and folder, a process its kind and name (issue #63, L2, G9)', async () => {
+  const t = await paneWorld()
+  const labels = await turnLabels(t.w.ports, t.m)
+  // The label joins the type, name and description cells. G9 moved the file name to Name and the folder to Description,
+  // and the process name to Name, so the label no longer holds the path or the `bg`, `docker` and `pid` words.
+  expect(labels.get('file:/work/plan.md')).toBe('created plan.md')
+  expect(labels.get('file:/work/docs/spec.md')).toBe('spec.md docs')
+  expect(labels.get('bg:1')).toBe('background task npm run dev')
+  expect(labels.get('docker:db')).toBe('docker container db')
 })

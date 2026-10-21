@@ -84,7 +84,42 @@ An artifact row shows its name: the page title from the Artifact tool, else the 
 
 The pane is one table. A bold header row names its columns once: `Name`, `Description`, `Type` and `Status`. Two columns have no word: the control column, which holds the priority mark, and the extras column, which holds badges. Every row of every source fills the same columns, so the rows scan alike. A badge is a small signal that a source adds to a row, such as the merge chip and the checks of a PR (see [Merge conflicts](#merge-conflicts)). A badge is text only and takes no Tab stop. The extras column is 14 cells wide at most: it cuts a long list of badges, and Enter on the row shows each one. The type column is 20 cells wide at most and the status column 14. A longer text ends in `…`, or for a branch or a path keeps both ends.
 
-Under the header the rows come in groups, one for each source: Worktrees, Agents, Pull requests, Jira, GitHub, Artifacts, Repos, Web links, Files and Processes. A group with nothing to show is left out. A group starts with a title line: its title, the number of its rows (for Worktrees and Agents every row they hold, not the one root row), `(n failed)` when some failed, then its note. For example `Pull requests 7 (2 failed) gh · refreshed 2m ago`. A narrow terminal drops the type column first, then the extras column. The control, the name, the description and the status stay.
+Under the header the rows come in groups, one for each source: Worktrees, Agents, Pull requests, Jira, GitHub, Artifacts, Repos, Web links, Files and Processes. A group with nothing to show is left out. A group starts with a title line: its title, the number of its rows (for Worktrees and Agents every row they hold, not the one root row), `(n failed)` when some rows have the status `failed` (see [Status](#status)), then its note. For example `Pull requests 7 (2 failed) gh · refreshed 2m ago`. A narrow terminal drops the type column first, then the extras column. The control, the name, the description and the status stay.
+
+### Status
+
+Every row has a status: a word in the Status column, and one of six tokens behind it. The token sets the color of the word, and it is what a view groups by. Each source maps its own states to the tokens:
+
+| Token | Color | Meaning |
+| --- | --- | --- |
+| `failed` | red | It broke and wants you. |
+| `waiting` | yellow | It waits for something. |
+| `active` | green | It is live and well. |
+| `done` | grey | It is over, as it should be. |
+| `gone` | grey | It was removed, or the mod cannot find it any more. |
+| `none` | no color | There is no state to speak of. |
+
+| Source | State | Token |
+| --- | --- | --- |
+| GitHub, Pull requests | open, with failing checks or a merge conflict | `failed` |
+| | open, with pending checks | `waiting` |
+| | open, any other (a draft too, which says `draft`) | `active` |
+| | merged, closed | `done` |
+| | `not found` | `failed` |
+| Jira | status category `new`, `indeterminate`, `done` | `waiting`, `active`, `done` |
+| | no category (not refreshed, no `acli`), `track-only` | `none` |
+| | `not found` | `failed` |
+| Processes | `running`, `up` | `active` |
+| | `failed`, `killed`, `exited`, `unhealthy` | `failed` |
+| | `completed` | `done` |
+| | `unknown` | `gone` |
+| Agents | `running`, `waiting`, `ended`, `failed` | `active`, `waiting`, `done`, `failed` |
+| Worktrees | live, `removed` | `active`, `gone` |
+| Artifacts | `deleted`, any other | `gone`, `none` |
+| Repos | `edit`, `read` | `active`, `none` |
+| Web links, Files | all | `none` |
+
+A repo the session edits is `active` and says `edit` in green. A repo it only reads has no state to speak of, so it is `none` and says `read` in plain text. A Jira status with no category stays `none`: the mod does not guess from the word. A conflict counts only while the values are current: with `gh` logged out, a PR is not `failed` for a conflict the mod cannot see. The band keeps its own counts (`PRs 3 (1 ✗ · 2 conflicts)`): it is not made from the tokens. The `(n failed)` of a group counts each failure once: a folded workflow run is `failed` because an agent of it failed, so the group counts that agent and not the run row.
 
 The pane keeps one selected row. A `>` in the first column and a highlight mark it. The selection follows the row, not its place: a re-sort, a refresh or a new row above it does not move it. A footer lists the keys, then `Tab ↑↓ move` and `Esc close`. The `Tab ↑↓ move` hint shows only where it adds no row to the footer. With the core keys alone that is a body of 92 cells or more. The keys of a tracker (for example `o: open`) make the footer wider and raise that width. A narrower pane leaves the hint out, and the help view (`h`) names the keys at every width. A key that does not fit the selected row draws dim and does nothing.
 
@@ -111,7 +146,7 @@ When the rows are taller than the pane body, the pane draws a window of them, so
 
 A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
 
-A deleted artifact stays in its section, dim and without a link.
+A deleted artifact stays in its section, grey (status `gone`) and without a link.
 
 The band shows `tracking  Jira 6 · GitHub 4 (1 ✗) · Artifacts 3 · Links 2 · Files 3 · Repos 2  turn 7 +3 new · 1 seen again  9: open  /track`. `(n ✗)` counts PRs with failing checks, and `PRs 3 (1 ✗ · 2 conflicts)` adds the PRs that have merge conflicts. `Artifacts n` counts the artifacts that are not deleted. `Repos` and the auto parts (Worktrees, Agents, PRs) come after `Files`. The turn part and its `9: open` Button come last, see [What each turn tracked](#what-each-turn-tracked). The band is empty when nothing is tracked.
 
@@ -121,14 +156,15 @@ The Files section has one row per Markdown file (issue #28):
 
 ```text
 Files  3 files
-  docs/plan.md      created  edited 3  viewed 2
+  plan.md   docs    created  edited 3  viewed 2
   README.md                  edited 1  viewed 5
-  docs/notes.md     mentioned          viewed 1  subagent
+  notes.md  docs    mentioned          viewed 1  subagent
 ```
 
 | Cell | Counts |
 | --- | --- |
-| path | Relative to the session root when the file is below it, else absolute. |
+| name | The name of the file. It keeps its extension when it is cut. |
+| folder | The Description column: the folder of the file, relative to the session root when the file is below it, else absolute. Empty for a file at the root. |
 | `created` | A successful `Write` of type `create` made the file. It stays set. |
 | `mentioned` | Your prompt, your command arguments or Claude's reply named the path, and the file exists. Shown when the file was not created. |
 | `edited N` | Successful `Edit` calls and `Write` calls of type `update`. |
@@ -320,7 +356,7 @@ An ended row does not stay for ever. The pane, the `/track` text and the band hi
 
 **Workflow runs.** Once every agent of a workflow run has ended, and the run has 2 or more agents, the Agents section shows the run as one row, `✓ wf_a35565  15 agents · 1 failed`. The row is closed. Enter opens it to the agent rows. Its mark is `✗` when an agent of the run failed. The minimum is a fixed rule, not a config key. A run of 1 agent is one row already, so it does not fold: its agent row shows like the row of an agent of no run, with the same TTL, selection and `/track` text. A run with one live agent, or with a live agent below one of its agents, does not fold either: its agents show as rows. The agents of a run count together, wherever they sit in the tree. `x` is dim on the run row, and `/track clear` leaves it alone. `x` on an agent row below it works as before. A run hides as a unit: its row and all its agents leave the view when every agent of the run, and every agent below one, is past its own TTL, so a failed agent keeps the whole run for up to 60 min. Every workflow agent label starts with the short run id (`wf_a35565·3 architect`), so `wf·1` of one run is not the `wf·1` of another. `trackers.auto.foldWorkflows` set to `false` turns the fold off. The `/track` text does not fold: it prints the run row and every agent below it.
 
-**Process names.** A word of a process name that starts with the session root shows from `./`: `node /work/app/server.js` shows as `node ./app/server.js`. The stored name and the fingerprint do not change, so the probe still finds the process. A path outside the root keeps its full text. On a Windows root (`C:\work`) a word may use `\` or `/`. The Description column cuts a long name in the middle, so both ends stay.
+**Process names.** A word of a process name that starts with the session root shows from `./`: `node /work/app/server.js` shows as `node ./app/server.js`. The stored name and the fingerprint do not change, so the probe still finds the process. A path outside the root keeps its full text. On a Windows root (`C:\work`) a word may use `\` or `/`. The process name is the Name cell, with the kind (`background task`, `docker container`) in the Type cell and nothing in the Description cell. The Name column cuts a long name in the middle, so both ends stay.
 
 **Process row cap.** The Processes section shows at most `trackers.processes.maxRows` rows (200). Past that, the oldest ended rows leave the view first, by their end time. A live row never leaves, so a list of live rows can pass the cap. The rows over the cap count in the hidden count of the note, and `/track show-all` shows them. The cap is a view: the state keeps every row.
 

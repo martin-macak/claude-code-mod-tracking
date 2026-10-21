@@ -735,7 +735,7 @@ test('the selected process row that the cap takes: the ring falls to the next ro
 
 // ---------------------------------------------------------------- process names
 
-const name = (s: SectionSpec, id: string) => find(s.rows, id)?.cells.description?.text
+const name = (s: SectionSpec, id: string) => find(s.rows, id)?.cells.name?.text
 
 test('a detached row named by a path under the session root shows its Name from ./', async () => {
   const t = await paneWorld()
@@ -753,7 +753,7 @@ test('a detached row named by a path under the session root shows its Name from 
 test('the shortened name is display only: the stored name stays, and the /track text shows the short one', async () => {
   const t = await paneWorld()
   setProcesses(t, [proc('pid:5', 'running', { kind: 'detached-process', pid: 5, name: '/work/scripts/serve.sh' })])
-  expect(((await draw(t, 'processes')).rows[0] as TreeRow).cells.description?.text).toBe('./scripts/serve.sh')
+  expect(((await draw(t, 'processes')).rows[0] as TreeRow).cells.name?.text).toBe('./scripts/serve.sh')
   expect((t.w.state.get('processes') as unknown as ProcessRecord[])[0]?.name).toBe('/work/scripts/serve.sh')
   const text = (await t.m.track(t.w.ports, '')).text
   expect(text).toContain('./scripts/serve.sh')
@@ -771,5 +771,5 @@ test('a long process name is cut in the middle, so both ends of a path stay', as
   const t = await paneWorld()
   const { rows } = await draw(t, 'processes')
   expect(rows.length).toBeGreaterThan(0)
-  expect(rows.every(r => r.cells.description?.clip === 'middle')).toBe(true)
+  expect(rows.every(r => r.cells.name?.clip === 'middle')).toBe(true)
 })

@@ -1,6 +1,6 @@
 // The lexical path helpers of core/lib/paths.ts. Moved from tests/files.test.ts with the helpers (issue #49). Pure.
 import { expect, test } from 'claude-code/testing'
-import { isAbsolutePath, normalizePath, relativeToRoot } from '../core/lib/paths'
+import { baseName, dirName, isAbsolutePath, normalizePath, relativeToRoot } from '../core/lib/paths'
 
 test('normalizePath: folds ., .., // and backslashes; keeps a drive letter', () => {
   expect(normalizePath('/work/docs/../docs/./plan.md')).toBe('/work/docs/plan.md')
@@ -24,4 +24,27 @@ test('isAbsolutePath: a leading slash or a drive letter with a separator', () =>
   expect(isAbsolutePath('C:/work/a.md')).toBe(true)
   expect(isAbsolutePath('work/a.md')).toBe(false)
   expect(isAbsolutePath('C:a.md')).toBe(false)
+})
+
+test('baseName: the last part of a path, folded as normalizePath folds it; a path with no part gives itself', () => {
+  expect(baseName('/work/docs/plan.md')).toBe('plan.md')
+  expect(baseName('docs/plan.md')).toBe('plan.md')
+  expect(baseName('plan.md')).toBe('plan.md')
+  expect(baseName('/work//docs/./x/../plan.md')).toBe('plan.md')
+  expect(baseName('C:\\work\\a.md')).toBe('a.md')
+  expect(baseName('/work/docs/')).toBe('docs')
+  expect(baseName('/')).toBe('/')
+  expect(baseName('')).toBe('')
+})
+
+test('dirName: everything before the last part, folded; empty for a path of one part; the root for a root file', () => {
+  expect(dirName('/work/docs/plan.md')).toBe('/work/docs')
+  expect(dirName('docs/plan.md')).toBe('docs')
+  expect(dirName('docs/a/plan.md')).toBe('docs/a')
+  expect(dirName('plan.md')).toBe('')
+  expect(dirName('')).toBe('')
+  expect(dirName('/work//docs/./x/../plan.md')).toBe('/work/docs')
+  expect(dirName('C:\\work\\a.md')).toBe('C:/work')
+  expect(dirName('/plan.md')).toBe('/')
+  expect(dirName('C:/a.md')).toBe('C:/')
 })

@@ -1,13 +1,14 @@
-// Parts of a pane section that the trackers share: a toned cell, the cells and the badges of an item row, the sort of the
-// items of a section and the small texts a row shows. A row writes the columns that every row of the pane table shares
+// Parts of a pane section that the trackers share: a toned cell, the cells, the badges and the facets of an item row, the
+// sort of the items of a section and the small texts a row shows. A row writes the columns that every row of the pane table shares
 // (`ColumnId`), so a tracker declares no columns of its own. Pure: no `$`, no I/O, no tracker named.
 // The tones and the cell order keep the text the pane drew before L6, so the /track text stays byte-identical (decision G2).
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 13, L6 A1.
 // Design study of issue #63, section 5.3: the crosswalk of the old cell ids to the shared columns.
 
 import type { Effective, ReasonSet, StoredItem } from '../interfaces/items'
-import type { Cell, CellId, TreeRow } from '../interfaces/view'
+import type { Cell, CellId, RowStatus, TreeRow } from '../interfaces/view'
 import { byLevel, markerOf } from './levels'
+import { NO_STATUS, statusCell } from './status'
 
 export type Tone = 'plain' | 'ok' | 'warn' | 'bad' | 'dim'
 
@@ -26,20 +27,22 @@ export function levelCell(level: Effective): Cell {
 
 /**
  * What an item row says. `key` fills the name column, `title` the description, `type` and `status` their own columns.
- * `extra` and `mark` are badges of the extras column. Only the fields a section shows are set.
+ * `status` is a word and its token: the cell takes its color from the token. `extra` and `mark` are badges of the extras
+ * column. Only the fields a section shows are set.
  */
 export type RowText = {
   key: string
   href?: string
   title: string
   type?: string
-  status?: string
-  tone?: Tone
+  status?: RowStatus
   /** The first badge of the extras column. */
   extra?: string
   extraTone?: Tone
   /** The badge after the others. It draws dimmed. */
   mark?: string
+  /** Where a name too long for its column is cut. Default: the clip of the column. `middle` keeps both ends of a file name or a command. */
+  keyClip?: 'end' | 'middle'
   /** Where a title too long for its column is cut. Default: the clip of the column. `middle` keeps both ends of a branch or a path. */
   titleClip?: 'end' | 'middle'
   /** Where a type too long for its column is cut. Default: the clip of the column. */
@@ -49,10 +52,10 @@ export type RowText = {
 /** The cells of the text columns. `href` sits on the name cell, when there is a link. */
 export function textCells(t: RowText): Partial<Record<CellId, Cell>> {
   return {
-    name: { text: t.key, ...(t.href ? { href: t.href } : {}) },
+    name: { text: t.key, ...(t.href ? { href: t.href } : {}), ...(t.keyClip ? { clip: t.keyClip } : {}) },
     description: { text: t.title, ...(t.titleClip ? { clip: t.titleClip } : {}) },
     ...(t.type !== undefined ? { type: { text: t.type, ...(t.typeClip ? { clip: t.typeClip } : {}) } } : {}),
-    ...(t.status !== undefined ? { status: toned(t.status, t.tone) } : {}),
+    ...(t.status !== undefined ? { status: statusCell(t.status) } : {}),
   }
 }
 
@@ -65,14 +68,19 @@ export function extrasOf(t: RowText): readonly Cell[] {
 }
 
 /**
- * The row of an item: the control cell, the text cells and the badges. A person can always mark an item row. `dismiss`
- * is false for a row inside an item, e.g. a child node.
+ * The row of an item: the control cell, the text cells, the badges and the facets. A person can always mark an item row.
+ * `dismiss` is false for a row inside an item, e.g. a child node. The facets hold the status of the text (none when the
+ * row says none), the level, and the first sighting and the kind when the caller knows them.
  */
 export function itemRow(o: {
   id: string
   owner: string
   level: Effective
   text: RowText
+  /** Epoch ms of the first sighting of the item: its record's `firstSeen`. A row inside an item has none. */
+  firstSeen?: number
+  /** What kind of thing the item is, in a word: `pr`, `issue`. */
+  kind?: string
   dismiss: boolean
   /** Why the item is tracked: the `reasons` of its record. */
   reasons?: ReasonSet
@@ -90,6 +98,12 @@ export function itemRow(o: {
     can: { dismiss: o.dismiss, priority: true },
     ...(o.reasons ? { reasons: o.reasons } : {}),
     ...(o.dim ? { dim: true } : {}),
+    facets: {
+      status: o.text.status ?? NO_STATUS,
+      level: o.level,
+      ...(o.firstSeen !== undefined ? { firstSeen: o.firstSeen } : {}),
+      ...(o.kind ? { kind: o.kind } : {}),
+    },
   }
 }
 

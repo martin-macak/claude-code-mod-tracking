@@ -123,26 +123,26 @@ test('a depth that skips nothing nests under the last row above it, also past th
   ])
 })
 
-test('worktree rows: names, branches, the removed one dimmed, and what can be dismissed', async () => {
+test('worktree rows: names, branches, the removed one dimmed and gone, and what can be dismissed', async () => {
   const t = await paneWorld()
   const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'worktrees')
   const root = find(s.rows, 'wt:/work')
   expect([cell(root, 'name'), cell(root, 'description'), cell(root, 'status')]).toEqual([
     { text: 'work' },
     { text: 'main', clip: 'middle' }, // a branch keeps both ends
-    { text: '' },
+    { text: '', fg: 'success' }, // live is active, and says no word
   ])
   expect(root?.can).toEqual({ dismiss: false, priority: false })
   const live = find(s.rows, 'wt:/work/feat-x')
   expect([cell(live, 'name'), cell(live, 'description'), cell(live, 'status')]).toEqual([
     { text: 'feat-x' },
     { text: 'feat/x', clip: 'middle' },
-    { text: '' },
+    { text: '', fg: 'success' },
   ])
   expect(live?.can).toEqual({ dismiss: true, priority: false })
   expect(live?.dim).toBeUndefined()
   const gone = find(s.rows, 'wt:/work/old-wt')
-  expect(cell(gone, 'status')).toEqual({ text: 'removed', dim: true })
+  expect(cell(gone, 'status')).toEqual({ text: 'removed', fg: 'inactive' })
   expect(gone?.dim).toBe(true)
   expect(cell(find(s.rows, 'wt:/work/detached-wt'), 'description')).toEqual({ text: '(detached)', clip: 'middle' })
 })
@@ -243,7 +243,7 @@ test('a slot that was never written draws nothing', async () => {
   expect((await t.m.bandData(t.w.ports)).map(s => s.id)).toEqual(['jira', 'github', 'artifact', 'web', 'file', 'prs'])
 })
 
-test('repo rows: oldest first, the touched-by list, the mode word and its tone', async () => {
+test('repo rows: oldest first, the touched-by list and the mode word (edit is green, read has no color)', async () => {
   const t = await paneWorld()
   const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'repos')
   expect(s.rows.map(r => r.id)).toEqual(['rp:remote:github.com/acme/web', 'rp:remote:github.com/acme/sdk'])
@@ -253,7 +253,7 @@ test('repo rows: oldest first, the touched-by list, the mode word and its tone',
     { text: '', clip: 'middle' },
     { text: 'main', clip: 'middle' },
   ])
-  expect(cell(web, 'status')).toEqual({ text: 'read', dim: true })
+  expect(cell(web, 'status')).toEqual({ text: 'read' })
   const sdk = s.rows[1]
   expect([cell(sdk, 'description'), cell(sdk, 'type')]).toEqual([
     { text: 'dev', clip: 'middle' },
@@ -274,12 +274,12 @@ test('a repo row stored by an older version has no mode and reads as read; a slo
   const old = { ...WORLD_REPOS[1]!, mode: undefined }
   t.w.state.set('repos', [old] as unknown as Json)
   const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'repos')
-  expect(cell(s.rows[0], 'status')).toEqual({ text: 'read', dim: true })
+  expect(cell(s.rows[0], 'status')).toEqual({ text: 'read' })
   t.w.state.set('repos', 'not a list' as unknown as Json)
   expect(ids(await t.m.paneData(t.w.ports, NO_VIEW))).not.toContain('repos')
 })
 
-test('process rows: the short kind word, the name, the kind with a space, the state with its tone', async () => {
+test('process rows: the name in the Name cell, no description, the kind with a space, the state with its token color', async () => {
   const t = await paneWorld()
   const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'processes')
   expect(s.rows.map(r => r.id)).toEqual(['bg:1', 'docker:db', 'pid:77'])
@@ -290,9 +290,9 @@ test('process rows: the short kind word, the name, the kind with a space, the st
     cell(r, 'status'),
   ])
   expect(rows).toEqual([
-    ['bg', 'npm run dev', 'background task', { text: 'running', fg: 'success' }],
-    ['docker', 'db', 'docker container', { text: 'up', fg: 'success' }],
-    ['pid', 'worker', 'detached process', { text: 'failed', fg: 'error' }],
+    ['npm run dev', '', 'background task', { text: 'running', fg: 'success' }],
+    ['db', '', 'docker container', { text: 'up', fg: 'success' }],
+    ['worker', '', 'detached process', { text: 'failed', fg: 'error' }],
   ])
   expect(s.band).toEqual({ label: 'Processes', count: 3, failing: 1, rank: 10 })
 })
@@ -316,7 +316,7 @@ test('the processes section needs a row or a docker issue; with only the issue i
   expect(ids(await t.m.paneData(t.w.ports, NO_VIEW))).not.toContain('processes')
 })
 
-test('every process state has its tone: the bad ones red, running and up green, the rest plain', async () => {
+test('every process state has its token color: the bad ones red, running and up green, the rest muted', async () => {
   const t = await paneWorld()
   // `unknown` (#56): a detached process with a variable the mod cannot read, and no process found. It is no failure.
   const states = ['running', 'up', 'completed', 'failed', 'killed', 'exited', 'unhealthy', 'unknown'] as const
@@ -326,12 +326,12 @@ test('every process state has its tone: the bad ones red, running and up green, 
   expect(s.rows.map(r => cell(r, 'status'))).toEqual([
     { text: 'running', fg: 'success' },
     { text: 'up', fg: 'success' },
-    { text: 'completed' },
+    { text: 'completed', fg: 'inactive' },
     { text: 'failed', fg: 'error' },
     { text: 'killed', fg: 'error' },
     { text: 'exited', fg: 'error' },
     { text: 'unhealthy', fg: 'error' },
-    { text: 'unknown' },
+    { text: 'unknown', fg: 'inactive' },
   ])
   expect(s.band?.failing).toBe(4) // failed, killed, exited and unhealthy; `unknown` is not counted
 })

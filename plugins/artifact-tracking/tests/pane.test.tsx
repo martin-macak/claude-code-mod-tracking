@@ -704,12 +704,13 @@ test('pane: with no window the ui.scroll hook leaves the move to the engine', as
 
 // ---------------------------------------------------------------- colors
 
-test('pane: a status tone draws its theme color', async ($, on) => {
+test('pane: a status token draws its theme color', async ($, on) => {
   const w = world(on)
   await listed($, w, 'https://github.com/cli/cli/pull/14640')
   const ui = await mountPane($)
   const texts = await ui.findAll({ type: 'Text' })
-  expect(texts.find(t => t.text === 'open')?.props.color).toBe('success')
+  // The PR is open and its checks fail: the token is failed, so the word draws in the error color (issue #63, L2).
+  expect(texts.find(t => t.text === 'open')?.props.color).toBe('error')
   expect(texts.find(t => t.text === '✗ checks')?.props.color).toBe('error')
   for (const t of texts) expect(String(t.props.color ?? '')).not.toContain(':')
   await ui.unmount()

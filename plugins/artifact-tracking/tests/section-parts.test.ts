@@ -41,8 +41,7 @@ test('textCells sets a cell for each field that is given, in the shared columns,
       href: 'https://x',
       title: 't',
       type: 'T',
-      status: 's',
-      tone: 'bad',
+      status: { label: 's', token: 'failed' },
       extra: 'e',
       extraTone: 'ok',
       mark: 'm',
@@ -81,6 +80,7 @@ test('itemRow: the control cell, the cells, a mark that anyone can set, and the 
     owner: 'o',
     cells: { control: { text: '' }, name: { text: 'b' }, description: { text: 'B' } },
     can: { dismiss: false, priority: true },
+    facets: { status: { label: '', token: 'none' }, level: {} },
   })
   const root = itemRow({
     id: 'a',

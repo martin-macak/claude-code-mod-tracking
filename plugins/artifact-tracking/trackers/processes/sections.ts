@@ -1,50 +1,44 @@
 // The Processes section: background tasks, Monitor runs, Docker, tmux, screen and detached processes. Pure: it reads the
-// view context and writes nothing. Title, note, cell texts, tones and band keep the text the pane drew before
-// L6; tests/tracker-sections.test.ts pins them. The note reads the probe state, the fact `processes.ui`.
+// view context and writes nothing. Title, note and band keep the text the pane drew before L6, and so does the Type cell;
+// tests/tracker-sections.test.ts pins them. The Name cell holds the name of the process, which the Description cell held
+// (issue #63, L2). The note reads the probe state, the fact `processes.ui`.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 14, L6 A1.
 
 import type { Json } from '../../core/interfaces/items'
 import type { SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
-import { type Tone, textCells } from '../../core/lib/rows'
+import { textCells } from '../../core/lib/rows'
 import type { ProcessesConfig } from './config'
 import { fromRoot } from './names'
 import { processReasons } from './reasons'
 import { asRows } from './rows'
-import { ENDED_STATES, FAILED_STATES } from './states'
-import type { ProcessKind, ProcessRecord, ProcessUiState } from './types'
+import { ENDED_STATES, FAILED_STATES, STATE_TOKEN } from './states'
+import type { ProcessRecord, ProcessUiState } from './types'
 import { UI_FACT } from './watch'
 
 /** The states that count as a failure: they draw red and the band counts them. */
-const BAD: ReadonlySet<string> = new Set(['failed', 'killed', 'exited', 'unhealthy'])
+const failing = (r: ProcessRecord): boolean => STATE_TOKEN[r.state] === 'failed'
 
-const KIND_KEY: Record<ProcessKind, string> = {
-  'background-task': 'bg',
-  monitor: 'monitor',
-  'docker-container': 'docker',
-  'docker-compose': 'compose',
-  tmux: 'tmux',
-  screen: 'screen',
-  'detached-process': 'pid',
-}
-
-const toneOf = (state: string): Tone =>
-  BAD.has(state) ? 'bad' : state === 'up' || state === 'running' ? 'ok' : 'plain'
-
-/** A process row can be neither dismissed nor marked. The Name shows a path under the session root from `./`. */
+/**
+ * A process row can be neither dismissed nor marked. The Name cell is the name of the process, shown from `./` for a path
+ * under the session root, and it keeps both ends when it is cut. The Type cell is the kind. The Description cell is empty:
+ * the kind was once the Name cell too, as a short word (`bg`, `docker`), and the name was the Description (issue #63, L2).
+ * The row has no level, so its facets hold none.
+ */
 function processRow(r: ProcessRecord, root: string | undefined): TreeRow {
+  const status = { label: r.state, token: STATE_TOKEN[r.state] }
   return {
     id: r.id,
     owner: 'processes',
     cells: textCells({
-      key: KIND_KEY[r.kind],
-      title: fromRoot(r.name, root),
-      titleClip: 'middle',
+      key: fromRoot(r.name, root),
+      keyClip: 'middle',
+      title: '',
       type: r.kind.replace('-', ' '),
-      status: r.state,
-      tone: toneOf(r.state),
+      status,
     }),
     can: { dismiss: false, priority: false },
     reasons: processReasons(),
+    facets: { status, firstSeen: r.firstSeen, kind: r.kind },
   }
 }
 
@@ -88,7 +82,7 @@ export function sections(ctx: ViewContext<ProcessesConfig, Json>): readonly Sect
       title: 'Processes',
       note: { text: `${ui?.dockerIssue ?? `${rows.length} tracked`}${hidden > 0 ? ` (${hidden} hidden)` : ''}` },
       rank: 80,
-      band: { label: 'Processes', count: rows.length, failing: rows.filter(r => BAD.has(r.state)).length, rank: 10 },
+      band: { label: 'Processes', count: rows.length, failing: rows.filter(failing).length, rank: 10 },
       rows: rows.map(r => processRow(r, ctx.root)),
     },
   ]

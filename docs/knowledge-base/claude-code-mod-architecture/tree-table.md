@@ -399,7 +399,7 @@ The sections of the trackers have no columns of their own any more. Every row wr
 - **Caps (review of the L1 PR).** The design study planned 12 cells for the type and 10 for the status. That cut a Jira status (`In Progress` read `In Progre…`) and a PR branch, an agent worktree and a repo's agents that the sections showed whole. The sections cut a Jira status at 14, a PR branch at 26, an agent worktree and a repo's agents at 20 and a process kind at 18. The shared caps are 20 and 14, so only a PR branch of 21 to 26 cells reads shorter than before (cut in the middle). With a full row (name 19, type 15, status 11, extras 14) all six columns show from 78 body cells, the type drops under 78 and the extras under 62 (`verified-kit`, `tests/shared-columns.test.ts`).
 - **Badges.** A badge is a `Cell` with no Button, so it takes no Tab stop. A badge that fits is drawn whole. The first one that does not fit is cut to the room left (two cells at least), and the rest are left out. Enter on a row lists each badge that the column cut, one detail line each, with no label: the column has no header word and its id is not for the person (`verified-kit`, `tests/table.test.ts`). A PR row has the merge chip, the checks and the hint, in that order.
 - **One solution.** The width memo is keyed by `table/column`, and the solver reads the rows of every group, drawn or not. A window that moves over the rows never changes a width, and the cells of two groups stand under one header.
-- **Group title.** One line: the title (bold), the number of rows of the group, `(n failed)` in the error color when the band of the section counts failures, then the note. The count is `SectionSpec.count` when the section sets it, else its top-level rows. Worktrees and Agents hang every row under one root row (the root worktree, the master agent), so they set the rows they hold: `Worktrees 4`, `Agents 5` in the pane world (`verified-kit`, `tests/tracker-sections.test.ts`). The caps of the table still count top-level rows. The `/track` text prints `title  note` as before and no count (`verified-kit`, `tests/list-text-golden.test.ts`, byte for byte).
+- **Group title.** One line: the title (bold), the number of rows of the group, `(n failed)` in the error color when some rows of the group have the status token `failed` ([L2, below](#status-tokens-and-facets-issue-63-l2); the band of the section counts on its own terms), then the note. The count is `SectionSpec.count` when the section sets it, else its top-level rows. Worktrees and Agents hang every row under one root row (the root worktree, the master agent), so they set the rows they hold: `Worktrees 4`, `Agents 5` in the pane world (`verified-kit`, `tests/tracker-sections.test.ts`). The caps of the table still count top-level rows. The `/track` text prints `title  note` as before and no count (`verified-kit`, `tests/list-text-golden.test.ts`, byte for byte).
 - **Window budget.** The table header is one line that no group owns. The budget is the body less the footer, the gap above it and that line. A group that shows a row costs its title line, not a title and a header, so a body of 11 rows keeps one more row for each group after the first than before (`verified-kit`, `tests/table-window.test.ts`). The floor does not change: header, group title, one row, two hints, the gap and the footer need 7 rows.
 - **Caps.** The rows opened with "N more" are keyed by the id of the group, `<view>:<group>` (`list:prs` in the by-list view). `RowRef.group` and `DrawnRow.group` hold that id. It is no tracker section id: L3 code that reads it must not treat `status:failed` as a section.
 - **L3 task: the help titles.** `helpOf` titles a tracker by the groups that hold its rows. In L1 the drawn groups are the by-list groups, so the titles are the section titles. L3 adds views, and the drawn groups of the status view would title the GitHub keys "Failed, Active". L3 must pass `listGroups(...)` of the sections to `helpOf` (in `PaneSession.draw` and in `helpTextOf`), whatever the view.
@@ -460,6 +460,71 @@ Live check, Claude Code 2.1.306, tmux, the mod loaded from the branch with `--pl
 ```
 
 The extras column cuts `✗ conflicts ✓ checks` of a conflicted PR at 14 cells, so only the chip and the start of the checks show. The detail lines of the row hold both. In the docked pane (49 cells) the type goes first and the extras go too when a long name takes the room, so the chip and the checks are not on the row there (`verified-kit`, `tests/one-table.test.ts`). The band still counts the conflict. Whether 14 cells is enough, whether the notes keep their counts and whether the selected-row line shows the badges of a docked pane is [Q35](open-questions.md#1-unknowns).
+
+#### Status tokens and facets (issue #63, L2)
+
+Every top-level row carries `TreeRow.facets`: the data that a view groups, sorts and filters by, so no view reads the text of a cell. L3 builds the views on it. This layer only fills the facets and draws the status cell from them (`inference` for the design, `verified-kit` for the code, `verified-live` for the frame below).
+
+| Facet | Holds | Set by |
+| --- | --- | --- |
+| `status` | `{ label, token }`: the word of the status cell, and one of `failed`, `waiting`, `active`, `done`, `gone`, `none`. | Every tracker. |
+| `level` | The `Effective` level of `ViewContext.levelOf`. Absent on the rows of the slot trackers (processes, agents, worktrees, repos): they have no level and sort as `normal`. | Item trackers, through `itemRow`. |
+| `firstSeen` | Epoch ms of the first sighting: the `firstSeen` of an item or a repo or a process, the `spawnedAt` of an agent, the `provenAt` of a worktree. Absent for the root worktree, the master agent and the rows of an item. | Every tracker. |
+| `kind` | One word for the kind of thing: `pr`, `issue`, the Jira issue type, the process kind, the agent kind. Absent for the rest. Files get a kind with issue #57. | github, jira, processes, auto. |
+
+The token comes from the state of the thing, per tracker (`verified-kit`, `tests/status-tokens.test.ts`; one test case per state):
+
+| Tracker | State | Token |
+| --- | --- | --- |
+| github (PR, issue) | open, with checks `failure` or a merge conflict (the lane values current) | `failed` |
+| | open, with checks `pending` | `waiting` |
+| | open, any other; a draft says `draft` and takes the token of an open item | `active` |
+| | merged, closed | `done` |
+| | `not found`; no state yet | `failed`; `none` |
+| jira | `statusCategory` new, indeterminate, done | `waiting`, `active`, `done` |
+| | no category (no `acli`, not refreshed), `track-only` | `none` |
+| | `not found` | `failed` |
+| processes | running, up | `active` |
+| | failed, killed, exited, unhealthy (the red set of the band) | `failed` |
+| | completed; unknown | `done`; `gone` |
+| agents | running, waiting, ended, failed; a folded run | `active`, `waiting`, `done`, `failed`; `failed` when an agent of it failed, else `done` |
+| worktrees | live (no word), removed | `active`, `gone` |
+| artifact | deleted, any other | `gone`, `none` |
+| repos | edit, read | `active`, `none` |
+| web, file | all | `none` |
+
+- **Color.** `core/lib/status.ts` maps the token to a color token: `failed` error, `waiting` warning, `active` success, `done` and `gone` inactive, `none` no color. `statusCell` draws the status cell from it, so no tracker picks a color for a status. A tone (`toned`) is left for the badges of the extras column.
+- **Group count.** The `(n failed)` of a group title counts the failures at every depth, read from the token `failed` (`countFailed`). A failure counts once: a folded workflow run is `failed` because an agent of it failed, so the run row counts the failed agents below it and not itself (`2 agents · 1 failed` is `(1 failed)`, where counting the run row too gave 2). A failed row with a failed row below it counts once. The band keeps its own counts: a conflicted PR with passing checks is `(1 failed)` in the group and `1 conflict` in the band. A failed agent counts in the group and not in the band (`verified-kit`, `tests/status-tokens.test.ts`, "a folded workflow run counts its failed agents…").
+- **L3 task: trees in the status view.** Worktrees and Agents hang every row under one root row, so a failed sub-agent or a removed worktree moves with the token of its root. In the views other than by list, L3 must lift the children of these root rows to the top level, or group a tree by the worst token in it. A test must show that a failed sub-agent lands in the `failed` group.
+- **Cells that changed meaning (G9).** Under the shared header, the Name cell of a process row held the short kind word (`bg`, `docker`) and its Description held the name, and the Name cell of a file row was empty. A process row now has its name in Name (a path under the session root from `./`, cut in the middle), its kind in Type and an empty Description. A file row has its name in Name (cut in the middle, so the extension stays) and its folder below the session root in Description (empty at the root). An agent row has a status cell from its state.
+- **Not decided by the study, decided by the owner.** The owner answered [Q36](open-questions.md#1-unknowns) on 2026-10-21 ([comment](https://github.com/martin-macak/claude-code-mod-tracking/issues/63#issuecomment-6321134636)). A draft PR takes the token of an open item (so it draws green, not dim). `not found` (GitHub, Jira) is `failed` and counts in `(n failed)`: a wrong reference needs the person. The repo mode is `edit` for `active` (green, as on `main`) and `read` for `none` (plain): the study gave both `none`, and the owner changed it (`verified-kit`, `tests/status-tokens.test.ts`, `tests/tracker-sections.test.ts`). A process row keeps its kind in Type, so the 49-cell docked pane, which drops Type, shows the name only. The PM calls: a `track-only` Jira row is `none`, an agent row has a status cell, and a file row shows the folder in Description.
+
+Live check, Claude Code 2.1.306, tmux, the mod loaded from the branch with `--plugin-dir`, model haiku, the fake gh of the e2e harness (PR #7 in conflict, PR #8 stacked and clean, PR #9 merged), a worktree made by Claude (`EnterWorktree`), a file written by Claude and two background commands (`sleep 900`, and one that exits 3). Docked, 120x37 (`verified-live`). The frame comes from `tmux capture-pane -e`, with each color escape written as `{name:text}`: `red` is the error color, `green` success, `grey` inactive or dim.
+
+```text
+                                                   {grey:✕}
+     Name                       Description   Status
+Worktrees 2 {grey:git · 1 live · checked 6s ago}
+>    ▾ claude-code-mod-tracking feat/f…ailing
+       ▸ demo-wt                worktr…emo-wt
+
+Pull requests 3 {red:(1 failed)} {grey:gh · refreshed 35s ago}
+     ▸ #7                       Fix the fake… {red:open}
+     ▸ #8                       Stack on the… {green:open}
+     ▸ {grey:#9}                       {grey:Old merged w…} {grey:merged}
+
+Files 1 {grey:1 files}
+     ▸ live-note.md             .claud…t/docs
+
+Processes 2 {red:(1 failed)} {grey:2 tracked}
+     ▸ sleep 900                              {green:running}
+     ▸ bash -c 'sleep 1; exit …               {red:failed}
+  … blank rows …
+r: refresh  h: help  x: dismiss  1: high  2: normal
+3: low  0: auto  Tab ↑↓ move  Esc close
+```
+
+The failing PR (#7, open and in conflict) and the failed process say their word in red, the clean stacked PR (#8) and the running process in green, and the merged PR (#9) in grey. The title lines say `(1 failed)` for the two groups that hold a failed row. The live worktree and the file have no word. The footer keys keep the colors they had, so the frame shows them plain. The kit tests cover the states that the fake gh cannot give (pending checks, Jira, agents).
 
 ### 5.6 Colors (U4)
 

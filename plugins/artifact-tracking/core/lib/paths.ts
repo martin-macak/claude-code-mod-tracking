@@ -36,3 +36,21 @@ export function relativeToRoot(path: string, root: string): string {
   const prefix = top.endsWith('/') ? top : `${top}/`
   return abs.startsWith(prefix) && abs.length > prefix.length ? abs.slice(prefix.length) : abs
 }
+
+/** The last part of a path, folded as `normalizePath` folds it. A path with no part (the root, an empty one) gives itself. */
+export function baseName(path: string): string {
+  const parts = normalizePath(path).split('/')
+  return parts.filter(p => p !== '' && p !== '.').pop() ?? path
+}
+
+/**
+ * The folder of a path, folded as `normalizePath` folds it: everything before the last part. A path with one part has no
+ * folder, so it gives an empty string. The folder of a root file is the root itself (`/`, `C:/`).
+ */
+export function dirName(path: string): string {
+  const norm = normalizePath(path)
+  const i = norm.lastIndexOf('/')
+  if (i < 0) return ''
+  const folder = norm.slice(0, i)
+  return folder === '' || (DRIVE.test(folder) && folder.length === 2) ? `${folder}/` : folder
+}
