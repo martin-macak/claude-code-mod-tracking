@@ -9,7 +9,7 @@ import type { SectionSpec } from '../../core/interfaces/view'
 import { guard } from './budget'
 import { box, type TableElements, text } from './el'
 import { footerBox, footerRows, moveHintFits } from './footer'
-import { compactHelp, renderHelp } from './help'
+import { compactForm, renderHelp } from './help'
 import { type LaidSection, layout } from './layout'
 import { type Draw, drawSection } from './rows'
 import {
@@ -57,16 +57,19 @@ export const TreeDataTable = {
     // The move hint only where it adds no footer row (issue #108), so it never turns the help view compact by itself.
     const hint = moveHintFits(view.footer, columns)
     const footer = footerBox(el, view.footer, actions, hint)
-    // The help view is one tree, so a short body turns it compact, with no gap, once for every attempt.
+    // The help view is one tree, so a short body turns it compact, with no gap, once for every attempt. The compact form
+    // fits the body: it takes the keys to a line from the width and names only the problems it has rows for (issue #105).
     const compact =
-      view.help !== null && compactHelp(view.help, footerRows(view.footer, columns, hint), columns, view.bodyRows)
+      view.help === null
+        ? undefined
+        : compactForm(view.help, footerRows(view.footer, columns, hint), columns, view.bodyRows)
     const laids: (readonly LaidSection[])[] = []
     const windows: (Windowed | undefined)[] = []
     const attempt = (halve: number, detail: boolean) => (): RenderElement[] => {
       if (view.help !== null) {
         laids.push([])
         windows.push(undefined)
-        return [box(el, { flexDirection: 'column' }, ...renderHelp(el, view.help, compact))]
+        return [box(el, { flexDirection: 'column' }, ...renderHelp(el, view.help, compact ?? false))]
       }
       if (sections.length === 0) {
         laids.push([])
@@ -111,7 +114,7 @@ export const TreeDataTable = {
     const pinned = view.placement === 'dock' && view.bodyRows !== undefined
     const root = {
       flexDirection: 'column',
-      rowGap: compact ? 0 : ROW_GAP,
+      rowGap: compact === undefined ? ROW_GAP : 0,
       ...(pinned ? { minHeight: view.bodyRows } : {}),
     } as const
     const end = { flexDirection: 'column', flexGrow: 1, flexShrink: 0, justifyContent: 'flex-end' } as const

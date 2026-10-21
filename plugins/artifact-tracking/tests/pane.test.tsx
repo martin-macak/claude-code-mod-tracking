@@ -410,7 +410,7 @@ test('pane: a body shorter than the footer plus one line still draws the help vi
   world(on)
   const ui = await mountPane($, { bodyColumns: 96, bodyRows: 1, placement: 'inline' })
   await ui.press({ key: 'help' })
-  expect((await helpTree(ui)).help).toHaveLength(6) // no start: the compact form of the core keys, no version line
+  expect((await helpTree(ui)).help).toHaveLength(5) // no start: nothing fits, so the fewest rows: 2 titles, 2 lines of keys, the config line
   expect(await hotkeysOf(ui)).toEqual(HOTKEYS)
   await ui.unmount()
 })

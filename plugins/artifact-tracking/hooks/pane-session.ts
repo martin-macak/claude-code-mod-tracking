@@ -108,7 +108,9 @@ export class PaneSession {
       expanded: new Set(expanded),
       shown: id => shown.get(id) ?? 0,
       limits,
-      footer: await m.footer(p, findRow(sections, chosen), help),
+      // The help view works only `r` and `h`, so its footer is drawn as with no row selected: a tracker's dim, inert keys
+      // would wrap the footer to a second row and push `Pane keys` out of the body again (issue #105).
+      footer: await m.footer(p, help ? undefined : findRow(sections, chosen), help),
       help: help ? helpOf(m, sections) : null,
     }
     const drawn = TreeDataTable.render(sections, view, el, this.actionsOf(p, m, focused === false))
