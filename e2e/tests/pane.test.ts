@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { arrowOf, focusedTexts, paneTextAt, selectedLine, stripOpenAt, withFocus } from '../support/pane.ts'
+import {
+  arrowOf,
+  focusedTexts,
+  paneTextAt,
+  placementOf,
+  selectedLine,
+  stripOpenAt,
+  withFocus,
+} from '../support/pane.ts'
 
 test('selectedLine finds the row with the > gutter', () => {
   const line = 'abc │> ▲ ▸ two.example/b  two.example/b'
@@ -17,6 +25,78 @@ test('selectedLine returns undefined without one', () => {
 
 test('a > inside the transcript is not a selection', () => {
   assert.equal(selectedLine('see a > b │  ▸ one.example/a'), undefined)
+})
+
+// The frames below have the shape of the live pane (Claude Code 2.1.30x). At 120 columns the pane is docked: the
+// transcript sits left of it, and the gutter ">" follows the border at once. At 100 columns the pane is inline: a box
+// under the transcript, with a space between the border and the gutter (knowledge base, tree-table.md, "Live, L6 pane
+// inline"). A row that is not selected has a space in the gutter.
+const DOCKED = [
+  '❯ /track                     │ Web links 2 links           │',
+  '  ⎿  shown, see a > b        │>   ▸ one.example/a          │',
+  '                             │    ▸ two.example/b          │',
+  '                             │ r: refresh  h: help         │',
+].join('\n')
+
+const INLINE = [
+  '❯ /track',
+  '  ⎿  shown, see a > b',
+  '╭────────────────────────────────────────────────────────✕─╮',
+  '│ Web links 2 links                                         │',
+  '│ >   ▸ one.example/a                                       │',
+  '│     ▸ two.example/b                                       │',
+  '│ r: refresh  h: help                                       │',
+  '╰───────────────────────────────────────────────────────────╯',
+].join('\n')
+
+test('selectedLine finds the selected row of a docked frame, and of an inline frame', () => {
+  assert.match(selectedLine(DOCKED) ?? '', /│> {3}▸ one\.example\/a/)
+  assert.equal(selectedLine(INLINE), '│ >   ▸ one.example/a                                       │')
+})
+
+test('selectedLine finds the selected row of an inline pane, drawn with a space before the > gutter', () => {
+  assert.equal(selectedLine('╭──✕─╮\n│ >   ▸ example.com/alpha\n│     ▸ example.com/beta'), '│ >   ▸ example.com/alpha')
+})
+
+test('selectedLine finds nothing in a frame with no selected row, docked or inline', () => {
+  assert.equal(selectedLine(DOCKED.replace('│>   ▸', '│    ▸')), undefined)
+  assert.equal(selectedLine(INLINE.replace('│ >   ▸', '│     ▸')), undefined)
+})
+
+// A bordered line of the transcript above an inline box can start with `│ >` too, a quote in a table for example.
+// The box starts at its top border, so the search starts there.
+test('selectedLine reads an inline frame from its box down, not the bordered lines of the transcript above', () => {
+  const quote = '│ > a quote in a box'
+  assert.equal(selectedLine(`${quote}\n${INLINE}`), '│ >   ▸ one.example/a                                       │')
+  assert.equal(selectedLine(`${quote}\n${INLINE.replace('│ >   ▸', '│     ▸')}`), undefined)
+})
+
+// The top row of the pane. Docked, the pane draws the close mark on a row of its own, `│` and spaces and `✕` (knowledge
+// base, tree-table.md, "Docked, 120x37"), with the transcript on the same row to the left. Inline, the box has a top
+// border with the mark in it. `✗` of `✗ conflicts` is another character.
+const DOCKED_TOP = [
+  '❯ /track                                          │                                                 ✕',
+  '  ⎿  shown                                        │     Name                       Description   Status',
+].join('\n')
+
+test('placementOf says inline for a box with its top border, and docked for the close mark on a bordered row', () => {
+  assert.equal(placementOf(INLINE), 'inline')
+  assert.equal(placementOf(DOCKED_TOP), 'docked')
+  assert.equal(placementOf(`  ⎿  a quote\n${DOCKED_TOP}`), 'docked')
+})
+
+test('placementOf says nothing without the close mark of a pane', () => {
+  assert.equal(placementOf('❯ /track\n  ⎿  shown'), undefined)
+  assert.equal(placementOf('│ #7 ✗ conflicts ✓ checks'), undefined)
+  assert.equal(placementOf('a ✕ in the transcript'), undefined)
+})
+
+test('a > that is no gutter is not a selection, docked or inline', () => {
+  assert.equal(selectedLine('│  ▸ a > b\n│  ▸ a>b'), undefined)
+  assert.equal(selectedLine('│     ▸ a > b\n│     ▸ a>b'), undefined)
+  assert.equal(selectedLine('❯ say a > b      │     ▸ one.example/a'), undefined)
+  // The transcript above an inline box has no border before its text.
+  assert.equal(selectedLine('  > quoted line\n❯ a > b'), undefined)
 })
 
 // The ANSI lines below are what `tmux capture-pane -e -p` returned for the live pane (Claude Code 2.1.304). The focus

@@ -1,10 +1,29 @@
-// The pane draws a one-cell gutter after its left border: ">" on the selected row, else a space.
-// The transcript beside a docked pane can hold a ">" too, so the marker must follow the border.
-const SELECTED = /│>/
+// The pane draws a one-cell gutter on each row: ">" on the selected row, else a space. A docked pane puts the gutter right
+// after its left border (`│>`). An inline pane, a box under the transcript, has a space of padding between the border and
+// the gutter (`│ >`). The transcript beside a docked pane can hold a ">" too, so the marker must follow the border. The
+// gutter is followed by a blank: the row content starts there.
+const SELECTED = /│ ?>(?=\s)/
 
-// The first screen line that shows the selected row of the pane, or undefined when no row is selected.
+// The top border of an inline pane, with the close mark of Claude Code in it (`╭────✕─╮`).
+const INLINE_TOP = /^╭─+✕─╮$/
+// The row of a docked pane that holds the close mark: its border, blanks and the mark, with the transcript to the left.
+// The mark is `✕` (U+2715). The `✗` of `✗ conflicts` is another character.
+const DOCKED_TOP = /│ *✕(?: *│)? *$/
+
+// Where the pane sits: `inline`, a box under the transcript, or `docked`, a column beside it. Undefined while the screen
+// shows no pane. Claude Code decides by the width of the terminal, so a size that did not take effect shows here.
+export function placementOf(screen: string): 'inline' | 'docked' | undefined {
+  const lines = screen.split('\n')
+  if (lines.some(line => INLINE_TOP.test(line))) return 'inline'
+  return lines.some(line => DOCKED_TOP.test(line)) ? 'docked' : undefined
+}
+
+// The first screen line that shows the selected row of the pane, or undefined when no row is selected. An inline box has
+// a top border: a bordered line of the transcript above it is no row of the pane, so the search starts at the border.
 export function selectedLine(screen: string): string | undefined {
-  return screen.split('\n').find(line => SELECTED.test(line))
+  const lines = screen.split('\n')
+  const top = lines.findIndex(line => INLINE_TOP.test(line))
+  return lines.slice(Math.max(top, 0)).find(line => SELECTED.test(line))
 }
 
 // A hyperlink (OSC 8) wraps text and has no width. The other tokens are an SGR sequence, any other CSI sequence, or text.

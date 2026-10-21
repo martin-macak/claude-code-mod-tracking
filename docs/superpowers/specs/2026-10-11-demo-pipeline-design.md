@@ -138,7 +138,8 @@ docs/assets/demo.gif
 | `DEMO_RECORD` | `0` (`1` in the `demo` profile) | Turns the recorder on. |
 | `DEMO_MODEL` | `haiku` | `--model` value. |
 | `DEMO_DIR` | `/tmp/cc-demo` | Parent of the clone. The clone is `$DEMO_DIR/claude-code-mod-tracking`. |
-| `DEMO_COLS`, `DEMO_ROWS` | `120`, `36` | Pane size. The tmux client is one row taller for the status line. 120 columns keeps the `/track` pane from waiting on a narrow terminal. |
+| `DEMO_COLS`, `DEMO_ROWS` | `120`, `36` | Pane size. The tmux client is one row taller for the status line. 120 columns keeps the `/track` pane from waiting on a narrow terminal. A scenario sets another size with the step `Given a terminal of {int} columns by {int} rows` (section 5). |
+| `DEMO_LOCK_WAIT_S` | `1800` | How long a scenario waits for the run lock of another run (section 4.1). `0` fails at once. |
 | `DEMO_TYPE_DELAY_MS` | `35` | Delay between typed characters. |
 | `DEMO_TURN_TIMEOUT_S` | `120` | Upper bound for one model turn. |
 | `DEMO_SCREEN_TIMEOUT_S` | `20` | Upper bound for one screen assertion. |
@@ -178,7 +179,7 @@ sequenceDiagram
 
 ### 4.1 Before
 
-1. Take the run lock in `<os tmpdir>/cc-demo-lock` (one lock for the fixed tmux socket). Only then wipe and make the scenario folder: `e2e/out/<scenario-slug>/` for `make e2e`, `e2e/out/demo/` when recording. It holds `signal`, `timeline.ndjson`, `session.cast` and failure dumps. A second run fails on the lock and touches no file of the first run.
+1. Take the run lock in `<os tmpdir>/cc-demo-lock` (one lock for the fixed tmux socket). Only then wipe and make the scenario folder: `e2e/out/<scenario-slug>/` for `make e2e`, `e2e/out/demo/` when recording. It holds `signal`, `timeline.ndjson`, `session.cast` and failure dumps. A second run waits for the lock, one try every 5 s for at most `DEMO_LOCK_WAIT_S` (30 minutes by default), and prints which run holds it. After that it fails with a clear message, and the later scenarios of that run fail at once. It never removes the lock of a live run and touches no file of the first run.
 2. `git clone --quiet <repo root> $DEMO_DIR/claude-code-mod-tracking`, after a wipe of the old folder. Set `origin` to the URL of the checkout under test. Check out the current `HEAD` as branch `main`.
 3. Make an empty tracker config folder with `mkdtemp` (`<os tmpdir>/cc-tracker-config-…`). Section 4.2 passes it to `claude`, so no run reads or writes the developer's real `config.json`.
 4. Start the tmux server and session with these options: `status on`, `status-position top`, `status-left ''`, `status-right ''`, `status-format[0] '#[align=centre]#{@caption}'`, `set-titles off`, `allow-rename off`, `allow-set-title off`, `focus-events on` (else Claude Code shows a notice), `default-shell /bin/sh`. The tmux socket is fixed (`cc-demo`). `setUp` kills a server that a crashed run left. Every tmux call uses `-u` for UTF-8. The pane runs `exec env 'PS1=$ ' /bin/sh` in the clone: the non-interactive default shell drops `PS1`, so the command sets it again. No personal shell prompt or rc file shows. Set `TERM=xterm-256color` and `COLORTERM=truecolor`.
@@ -217,6 +218,7 @@ The skill reuses these steps first. It adds a step only when no step fits.
 
 | Step | Phase | Action |
 | --- | --- | --- |
+| `Given a terminal of {int} columns by {int} rows` | cut | Resize the tmux session before the launch. It fails after the launch and in a recorded scenario. |
 | `Given a Claude Code session with the artifact-tracking mod` | cut | Launch as in 4.2. |
 | `Given a Claude Code session with the artifact-tracking mod and the prompt {string}` | cut, then fast | Launch with a first prompt. Wait for turn end. |
 | `When I type {string}` | normal | Type per character, then Enter. |
@@ -229,6 +231,8 @@ The skill reuses these steps first. It adds a step only when no step fits.
 | `Then no permission dialog is open` | normal | Fails when a tool approval dialog shows. |
 | `Given the caption {string}` | none | Set `@caption`. |
 | `Given the tracker config file:` | cut | Write the doc string to `config.json` in the scenario's config folder, before the session starts. |
+| `Given the tracker config file path is {int} cells wide` | cut | Make the config folder again, with a name padded so that the path of `config.json` has that width. Fails after the launch, after the config file is written, and when the temporary folder is wider than that already. |
+| `Then the pane is {word}` | fast, then normal | Poll until the close mark of the pane shows where it sits: `docked` (a row of its own beside the transcript) or `inline` (a top border `╭──✕─╮`). |
 | `Then the tracker config file sets {string} to {string}` | fast, then normal | Poll until the value at the dotted path equals the JSON text. |
 | `When I pause for {float} seconds` | normal | Hold the frame so a viewer can read it. At most 5 s, the agg idle limit. |
 | `When I press {string} until the screen matches {regex}, then Claude finishes` | normal, then fast | Read the signal count, then press the key every second until the screen matches, then wait for the turn it started. For a key that sends a prompt but can do nothing at first (the resolve key needs the PR lane to have looked at the PR). A second press is safe: a queued PR refuses it. |
@@ -380,7 +384,7 @@ The skill text does not get markdownlint, because hooks skip `.agents/` and `.cl
 | `asciinema rec --headless` behaves differently from the docs. | Checked: it works in 3.2.1. |
 | Cucumber cannot load `.ts` with Node type stripping. | Checked: it loads them in 13.3.0. Fallback if that changes: `tsx` as a dev dependency, `--import tsx`. |
 | The banner shows account or org data. | The launch stays in a `cut` phase. The skill checks frames for personal data. |
-| Two runs at once share the tmux socket, `e2e/out` or `$DEMO_DIR`. | One lock in `<os tmpdir>/cc-demo-lock`, taken before any file is touched, stops a second run. A lock of a dead process is taken over. |
+| Two runs at once share the tmux socket, `e2e/out` or `$DEMO_DIR`. | One lock in `<os tmpdir>/cc-demo-lock`, taken before any file is touched, holds a second run back: it waits for the lock up to `DEMO_LOCK_WAIT_S`. A lock of a dead process is taken over. |
 | Claude Code prints new account data. | The render fails closed on `LEAKS`. The frame check in the skill is the second line. Add the pattern to `REDACTIONS`, with a test. |
 
 ## 12. Acceptance criteria

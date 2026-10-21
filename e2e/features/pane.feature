@@ -1,7 +1,8 @@
 Feature: Drive the /track pane with the keys
 
   # Spec section 5.10 and section 7. One focus Button per row: Tab walks the rows, and a letter key acts on the selected row.
-  # The pane draws the selected row with ">" after its border. Anchor on the border: the transcript beside it holds the prompt.
+  # The pane draws the selected row with ">" after its border (docked) or after a space past its border (inline). Anchor on the
+  # border: the transcript beside a docked pane holds the prompt.
   Scenario: Tab moves the selection and x dismisses the selected row
     Given a Claude Code session with the artifact-tracking mod
     When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
@@ -282,13 +283,17 @@ Feature: Drive the /track pane with the keys
   # Issue #140. The ring sits on `c: resolve` of a conflicted PR row. The help view has no `c`, so `h` must put the ring on
   # `h: back`, and the next Tab walks on from there: with no ring the Tab would start from the first Button. The second `h`
   # gives the ring back to the selected row. Tab walks the footer in key order: r, h, x, 1, 2, 3, 0, c, f. A fake gh answers
-  # the calls of the mod: nothing here can reach GitHub.
-  Scenario: h moves the ring from a tracker key to h: back, and the second h gives it back to the selected row
-    Given a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
+  # the calls of the mod: nothing here can reach GitHub. Issue #155: it runs twice. At 120x36 the pane is docked beside the
+  # transcript, at 100x40 it is inline under it, with a space between the border and the ">" gutter of the selected row.
+  # The step `the pane is <placement>` says which one each example expects: a size that did not take effect fails there.
+  Scenario Outline: h moves the ring from a tracker key to h: back, and the second h gives it back to the selected row at <cols>x<rows>
+    Given a terminal of <cols> columns by <rows> rows
+    And a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
     And the fake gh reports PR #7 "Fix the fake conflict" from "feat/fake-conflict" into "main" as CONFLICTING
     And a Claude Code session with the artifact-tracking mod
     When I type "/track"
     Then the selected row shows "#7"
+    And the pane is <placement>
     And the screen matches /│[^\n]*#7[^\n]*✗ conflicts/
     When I press "Tab" until the focus ring is on "c: resolve"
     Then the focus ring is on "c: resolve"
@@ -305,6 +310,39 @@ Feature: Drive the /track pane with the keys
     Then the focus ring is on "h: back"
     When I press "Tab"
     Then the focus ring is on "x: dismiss"
+    And the fake gh answered no unsupported call
+
+    Examples:
+      | cols | rows | placement |
+      | 120  | 36   | docked    |
+      | 100  | 40   | inline    |
+
+  # Issue #105 (PR #137). At 100x40 the pane is inline and its body holds 11 rows. The help view with 3 config problems, the
+  # path of the config file on two rows and the footer fill them, so the compact form lists no problem and counts them:
+  # `3 problems: /track help`. `Pane keys` and the footer `h: back` are in one frame. The help footer has the core keys only:
+  # with a PR row selected it kept the dim `c: resolve  f: files` of that row, wrapped to a second row and pushed `Pane keys`
+  # out of view. The config has 3 problems: a value below its min (breaker threshold), two above their max (sectionRows and
+  # chunkSize). The count line needs the path of the config file to wrap onto two rows. The path is 84 to 96 cells wide for
+  # that (the body is 96 cells and `Config file: ` takes 13). The step sets it to 90 whatever the temporary folder of the
+  # system is, `/var/folders/...` of a Mac or `/tmp`. Run it alone with `--tags @inline-help`.
+  @inline-help
+  Scenario: With 3 config problems the inline help view shows the pane keys, the count and the footer together
+    Given a terminal of 100 columns by 40 rows
+    And the tracker config file path is 90 cells wide
+    And the tracker config file:
+      """
+      { "version": 1, "global": { "tools": { "breaker": { "threshold": 0 } }, "ui": { "sectionRows": 99999 } }, "trackers": { "github": { "chunkSize": 5000 } } }
+      """
+    And a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
+    And the fake gh reports PR #7 "Fix the fake conflict" from "feat/fake-conflict" into "main" as CONFLICTING
+    And a Claude Code session with the artifact-tracking mod
+    When I type "/track"
+    Then the selected row shows "#7"
+    And the pane is inline
+    And the screen shows "c: resolve"
+    When I press "h"
+    Then the screen matches /Pane keys[\s\S]*3 problems: \/track help[\s\S]*h: back/
+    And the screen stops showing "c: resolve"
     And the fake gh answered no unsupported call
 
   # Issue #140. `x` on the only row takes the row and every tracker key out of the footer. The ring sat on `c: resolve`, a
