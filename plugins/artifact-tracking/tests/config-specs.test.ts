@@ -79,7 +79,7 @@ test("the values outside LIMITS equal today's constants", () => {
   expect(PROCESSES_DEFAULTS.probeTimeoutMs).toBe(10000)
   expect(AUTO_DEFAULTS.gitTimeoutMs).toBe(REPOS_DEFAULTS.gitTimeoutMs)
   expect(GLOBAL_DEFAULTS.store.maxBytes).toBe(3000000)
-  expect(GLOBAL_DEFAULTS.ui).toEqual({ maxRows: 300, sectionRows: 50 })
+  expect(GLOBAL_DEFAULTS.ui).toEqual({ maxRows: 300, sectionRows: 50, turnStrip: 'off' })
 })
 
 test('PR_LANE_DEFAULTS is the lane part of GITHUB_DEFAULTS', () => {
@@ -326,4 +326,32 @@ test('TRACKERS uses the specs', () => {
 test('the defaults of every spec are deeply frozen', () => {
   for (const { defaults } of Object.values(SPECS)) expect(Object.isFrozen(defaults)).toBe(true)
   expect(Object.isFrozen(GITHUB_DEFAULTS.shortRefKeywords)).toBe(true)
+})
+
+// ---------------------------------------------------------------- global.ui.turnStrip (issue #69, P2)
+
+test('global.ui.turnStrip takes off, text or interactive, and is off by default', () => {
+  expect(GLOBAL_DEFAULTS.ui.turnStrip).toBe('off')
+  for (const mode of ['off', 'text', 'interactive']) {
+    const out: string[] = []
+    expect(normaliseGlobal({ ui: { turnStrip: mode } }, p => void out.push(p)).ui.turnStrip).toBe(mode)
+    expect(out).toEqual([])
+  }
+})
+
+test('a bad global.ui.turnStrip is a config problem and reads as off', () => {
+  for (const bad of ['loud', 'Text', true, 1, null]) {
+    const out: string[] = []
+    expect(normaliseGlobal({ ui: { turnStrip: bad } }, p => void out.push(p)).ui.turnStrip).toBe('off')
+    expect(out).toEqual([
+      `global.ui.turnStrip: ${JSON.stringify(bad)} is not one of off, text, interactive. Using off.`,
+    ])
+  }
+  // Through the file reader: the problem reaches `/track`, and the view of the config says off.
+  const cfg = fakeConfig({ specs: TRACKERS, file: { global: { ui: { turnStrip: 'loud' } } } })
+  expect(cfg.problems()).toEqual(['global.ui.turnStrip: "loud" is not one of off, text, interactive. Using off.'])
+  expect(cfg.global().ui.turnStrip).toBe('off')
+  expect(fakeConfig({ specs: TRACKERS, file: { global: { ui: { turnStrip: 'text' } } } }).global().ui.turnStrip).toBe(
+    'text',
+  )
 })

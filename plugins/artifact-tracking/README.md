@@ -246,6 +246,33 @@ Which turn gets the work:
 
 The ledger is stored with the session (`v2:s:<id>`), next to the items. It keeps the newest 50 turns, at most 50 entries in each list of a turn, and a count of the entries that did not fit. An item counts once in a turn: a later claim of the same turn that names it again only strengthens its entry when the turn lists it, and adds nothing to the count. `/clear` carries it, the numbers go on, and the turns of the older session read `(earlier session)`. `/resume` loads the stored ledger. `/track clear` empties it. It never reaches the model: it is not in the prompt section. The reply of `/track turn` is a transcript line, as every `/track` reply is, so the model reads it.
 
+### The strip under an answer
+
+The key `global.ui.turnStrip` puts one short line under each answer that says what the turn tracked. It has three values, and the default is `off`:
+
+| Value | What you see |
+| --- | --- |
+| `off` | Nothing. This is the default, and the value that a bad entry reads as: any other word is a config problem (`/track help` lists it) and the mod uses `off`. |
+| `text` | One line of text under the answer of each turn that tracked something: `+3 new · 1 seen again · /track turn 7`. A turn that tracked nothing adds no line. |
+| `interactive` | The duration line of the turn (`✻ Baked for 3s`) gets a row under it with the counts, and on the fullscreen layout an `open` Button too. A click on `open` opens `/track` with the pane focused, runs the same refresh as `/track` and selects the first entry of that turn, as the band key `9` does for the newest turn. On the main screen (`CLAUDE_CODE_NO_FLICKER=0`) the row shows the counts only: the engine delivers no click on a transcript Button there. |
+
+```text
+⏺ Fixed the flaky test, see https://github.com/o/r/pull/12
+✻ Baked for 3s · done 12:31 PM
+⏺ artifact-tracking+cc-plugin-agents-md: +3 new · 1 seen again · /track turn 7        <- text
+  +3 new · 1 seen again open                                                          <- interactive
+```
+
+- **The prefix is the engine's.** The engine puts the names of the plugins that hooked `turn.complete` in front of a text line (`artifact-tracking+cc-plugin-agents-md:`). The mod does not control it. This is why the default is `off`.
+- **The words** are the ones of the band and of `/track turn`: "seen again", never "updated". An item counts once in a turn. A turn that a task notice woke has no line of its own: its work belongs to the turn that started the task, which has its own.
+- **Another plugin's text stays.** When a hook below this mod returns its own `turn.complete` text, the mod keeps it and puts the strip line after it on a new line. The mod returns one text, so both lines are one notice row. Nobody has run the two-line row live.
+- **The text line keeps the counts of the end of the turn.** Work that comes later (a subagent that ends after the answer, a task that wakes the main loop) goes to the turn in the ledger, the band and `/track turn N`, but the line already shown does not change. The `interactive` row draws again with the new counts.
+- **An aborted turn has no duration line**, so `interactive` shows the text line for it. The mod treats `refusal` and `error` like an abort (inference: nobody has run those two). The same text line stands in when an answer's duration row never reached the mod.
+- **Mouse only.** The `open` Button takes a click. A keyboard path to a transcript Button was not tried: with the pane closed, `ctrl+x Tab` stops at the band Button `9: open` and at no strip Button.
+- **The model never sees the strip.** The text line is a notice row of the transcript. No model request carries it, and the prompt section has no strip, no turn number and no lineage. In `interactive`, the older duration lines of a session that you continue with `--continue` draw their strips again once the stored ledger has loaded, a moment after the start. The ledger keeps the id of each duration row for this.
+- **`claude -p`** prints no strip with `--output-format text` or `json`. With `--output-format stream-json` the line comes as a `system` event with subtype `informational`.
+- **The terminal only.** The engine draws the duration line on the terminal. On the desktop or in the VS Code panel `interactive` shows nothing for an answer: use `text` there.
+
 ## Auto tracking
 
 The mod also tracks the work around the session, with no mention:
@@ -423,6 +450,7 @@ Every key. Time values are in milliseconds.
 | `global.store.maxBytes` | 3000000 | 100000 | 4000000 | Size cap of the stored copies. The oldest sessions go first. |
 | `global.ui.maxRows` | 300 | 50 | 1000 | Rows the whole pane shows at most, plus the chunks you opened with `N more`. Open children do not count. |
 | `global.ui.sectionRows` | 50 | 5 | 300 | Rows one section shows at most. Each Enter on its `N more` row adds this many. |
+| `global.ui.turnStrip` | `off` | | | The line under each answer that says what the turn tracked: `off`, `text` or `interactive`. Any other value is a config problem and reads as `off`. See [The strip under an answer](#the-strip-under-an-answer). |
 | `trackers.<id>.enabled` | true | | | Switch of each of `github`, `jira`, `web`, `artifact`, `file`, `repos`, `processes` and `auto`. |
 | `trackers.<id>.prompt.enabled` | false | | | Puts the items of `github`, `jira`, `web`, `artifact` or `file` in the system prompt. See [Prompt sections](#prompt-sections). |
 | `trackers.<id>.prompt.maxItems` | 20 | 5 | 50 | Lines of that tracker in the system prompt, the `and N more not listed` line included. |
@@ -518,7 +546,7 @@ Cost. A block is short: 134 characters for one link, 164 for two (about 34 and 4
 - **GitHub Enterprise.** A GHE issue URL is a web link, unless the host is the host of the session repo and `gh` is logged in to it.
 - **Other github.com URLs** (repo pages, commits, files) are web links.
 - **Bare `#N` without a repo** stays unresolved. It has no link and no status.
-- **Turns.** No lineage across `/rewind` (it raises no event), after a cold load with no stored copy, or past the cap of 50 turns. The band exists on the terminal and the desktop only. Queued prompts, nested agents, workflow agents and teammates were not tried live, and neither were the end words `refusal` and `error`. A background task that no tool call the mod hears started, and whose agent id is unknown, wakes the newest turn. Work that comes late (a subagent or a wake that names an older turn than the item's last turn) still counts an item again that did not fit the 50 entries of its list. The rows of processes, repos and agents have no turn yet.
+- **Turns.** No lineage across `/rewind` (it raises no event), after a cold load with no stored copy, or past the cap of 50 turns. A prompt typed while a turn or a wake runs counts for the running turn. The band exists on the terminal and the desktop only. Queued prompts, nested agents, workflow agents and teammates were not tried live, and neither were the end words `refusal` and `error`. A background task that no tool call the mod hears started, and whose agent id is unknown, wakes the newest turn. Work that comes late (a subagent or a wake that names an older turn than the item's last turn) still counts an item again that did not fit the 50 entries of its list. The rows of processes, repos and agents have no turn yet. The strip has limits of its own (the engine's prefix, the terminal only, mouse only, `refusal` and `error` not run): see [The strip under an answer](#the-strip-under-an-answer).
 - **`/clear`.** The items come back at the next hook, command or 30 s tick, not at the `/clear` itself. The tick runs from session.start. A `/resume` of a session that the store knows restores that session only, not the one you left.
 - **`--resume` backfill.** The transcript has no `isMeta` or origin flags. The backfill skips the wrappers it knows (`<system-reminder>`, `<teammate-message>`, command output, task notifications). Other meta rows, for example a skill body or a coordinator message, may add items that the live session did not track.
 - **`claude -p "/track"`** ends before its background refresh finishes. Use `/track refresh`.

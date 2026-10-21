@@ -19,9 +19,11 @@ function world(file: Record<string, unknown> = {}) {
     await t.m.turnComplete(t.w.ports, { input: { turnId: `t${n}`, reason: 'answer' } })
   }
   const press = () => pane.openTurn(t.w.ports, t.m)
+  /** The press of the open Button of a strip: it names its own turn. */
+  const pressTurn = (ord: number) => pane.openTurn(t.w.ports, t.m, ord)
   const selected = () => t.w.state.get('selected') as unknown as string | null | undefined
   const keyOf = (u: string) => t.items().find(r => r.url === u)!.key
-  return { ...t, pane, turn, press, selected, keyOf }
+  return { ...t, pane, turn, press, pressTurn, selected, keyOf }
 }
 
 test('R11: the press selects the first entry of the newest turn, opens the pane with the keys and asks for the ring', async () => {
@@ -211,4 +213,53 @@ test('R11: a press that finds no turn still runs the refresh of /track', async (
   const seen = kicks(t)
   await t.press()
   expect(seen).toEqual(['open'])
+})
+
+// ---------------------------------------------------------------- the open Button of a strip (issue #69, P2)
+
+test('P2: the open Button of a strip opens the turn it belongs to, not the newest: first listed entry selected, pane focused, refresh run', async () => {
+  const t = world()
+  await t.turn(1, `one ${url('c')}`)
+  await t.turn(2, `two ${url('a')} and ${url('b')}`)
+  const seen = kicks(t)
+  await t.pressTurn(1)
+  expect(t.selected()).toBe(t.keyOf(url('c'))) // turn 1's entry, though turn 2 is the newest
+  expect(t.w.ui.openedWith).toEqual([t.keyOf(url('c'))])
+  expect(t.w.ui.opened).toBe(1)
+  expect(t.w.ui.focused).toHaveLength(1)
+  expect(t.w.ui.toasts).toEqual([])
+  expect(seen).toEqual(['open']) // the refresh of /track, as the band Button runs it
+})
+
+test('P2: the open Button of a turn that the ledger no longer keeps opens the pane and says so in a toast', async () => {
+  const t = world()
+  await t.turn(1, `one ${url('a')}`)
+  t.w.state.set('selected', 'row-before')
+  await t.pressTurn(99)
+  expect(t.w.ui.opened).toBe(1)
+  expect(t.selected()).toBe('row-before') // no entry to select: the person's selection stands
+  expect(t.w.ui.toasts).toEqual(['turn 99 is no longer kept'])
+  expect(t.w.ui.focused).toEqual([])
+})
+
+test('P2: the open Button of a turn whose rows the pane does not list names the turn in its toast', async () => {
+  const t = world()
+  await t.turn(1, `one ${url('a')}`)
+  await t.turn(2, `two ${url('b')}`)
+  await t.m.dismiss(t.w.ports, [t.keyOf(url('a'))]) // turn 1's entry has no row left
+  await t.pressTurn(1)
+  expect(t.w.ui.toasts).toEqual(['turn 1: its rows are not listed'])
+})
+
+test('P2: the open Button of a strip with no room for the pane refreshes nothing and puts the selection back', async () => {
+  const t = world()
+  await t.turn(1, `one ${url('a')}`)
+  await t.turn(2, `two ${url('b')}`)
+  t.w.state.set('selected', 'row-before')
+  t.w.ui.placed = false
+  const seen = kicks(t)
+  await t.pressTurn(1)
+  expect(seen).toEqual([])
+  expect(t.selected()).toBe('row-before')
+  expect(t.w.ui.toasts).toEqual(['Widen the terminal to see the tracking pane'])
 })

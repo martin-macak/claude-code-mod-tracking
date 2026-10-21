@@ -7,6 +7,7 @@ import type { Json } from '../core/interfaces/items'
 import type { TurnLedger, TurnRecord } from '../core/interfaces/turns'
 import { countOf } from '../core/lib/turn-entries'
 import { emptyLedger } from '../core/lib/turns'
+import { fakeConfig } from './fixtures/config-fs'
 import { promptRow, responseRow, toolResultRow } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
 import { BG_START_ASYNC_AGENT, BG_START_MAIN, MONITOR_START } from './fixtures/notices'
@@ -19,8 +20,8 @@ const GH = 'https://github.com/acme/web/issues/9'
 const NOTICE =
   '<task-notification>\n<task-id>afe3f3796716e44ee</task-id>\n<tool-use-id>tu_agent1_main2</tool-use-id>\ndone'
 
-function world() {
-  const t = managerWorld()
+function world(o: Parameters<typeof managerWorld>[0] = {}) {
+  const t = managerWorld(o)
   const { m, w } = t
   const ledger = () => (w.state.get('turns') as unknown as TurnLedger | undefined) ?? emptyLedger()
   const rec = (ord: number): TurnRecord => ledger().turns.find(r => r.ord === ord)!
@@ -379,6 +380,37 @@ test('R7: /resume loads the stored ledger of the session; the stored ordinals go
   expect(t.ledger().open?.ord).toBe(8)
 })
 
+test('P2: a loaded ledger asks for a redraw, so the older duration lines draw their strips again; an ordinary change does not', async () => {
+  const stored: TurnLedger = {
+    ...emptyLedger(),
+    next: 2,
+    turns: [
+      {
+        ord: 1,
+        turnId: 'old-1',
+        session: 'sess-b',
+        startedAt: 5,
+        end: 'answer',
+        durationRow: 'row-old-1',
+        new: [{ k: 'web:docs.example/old', c: 'web', r: 'created' }],
+        seen: [],
+      },
+    ],
+  }
+  const t = world()
+  t.w.store.set('v2:s:sess-b', { items: [], turns: stored as unknown as Json } as unknown as Json)
+  await t.m.entry(t.w.ports)
+  await t.start('turn-live', 'go') // an ordinary change of the ledger
+  const before = t.w.ui.invalidated
+  await t.end('turn-live')
+  expect(t.w.ui.invalidated).toBe(before) // no redraw of its own: the engine redraws what read the state
+  await leave(t, 'sess-b', 'resume')
+  const again = t.w.ui.invalidated
+  await t.m.entry(t.w.ports)
+  expect(t.ledger().turns.some(r => r.durationRow === 'row-old-1')).toBe(true)
+  expect(t.w.ui.invalidated).toBeGreaterThan(again) // the load asked for one
+})
+
 test('R7: a stored ledger that is not well formed loads what is right and no more', async () => {
   const t = world()
   t.w.store.set('v2:s:sess-b', {
@@ -495,6 +527,23 @@ test('R10: bandTurn is the newest turn that tracked anything, live while it runs
   expect(await t.m.bandTurn()).toEqual({ ord: 3, text: '1 seen again', keys: [t.keyOf(A)] })
 })
 
+test('P2: bandTurn(ord) is the turn that the open Button of a strip names, not the newest; a turn the ledger does not hold gives none', async () => {
+  const t = world()
+  await t.row(promptRow(`see ${A}`))
+  await t.start('turn-1', 'see')
+  await t.end('turn-1')
+  await t.row(promptRow(`see ${B}`))
+  await t.start('turn-2', 'see')
+  await t.end('turn-2')
+  await t.start('turn-3', 'nothing here')
+  await t.end('turn-3')
+  expect(await t.m.bandTurn(1)).toEqual({ ord: 1, text: '+1 new', keys: [t.keyOf(A)] })
+  expect(await t.m.bandTurn(2)).toEqual({ ord: 2, text: '+1 new', keys: [t.keyOf(B)] })
+  expect(await t.m.bandTurn(3)).toEqual({ ord: 3, text: '', keys: [] }) // an empty turn has a record and no entry
+  expect(await t.m.bandTurn(99)).toBeUndefined()
+  expect(await t.m.bandTurn()).toMatchObject({ ord: 2 }) // the band keeps the newest turn with entries
+})
+
 test('R6: the rows of the pane carry the first and the last turn of each item; an item no turn tracked has none', async () => {
   const t = world()
   await t.row(promptRow(`see ${A}`))
@@ -528,6 +577,7 @@ function service() {
       },
     },
     persisted: () => void n.persisted++,
+    redraw: () => {},
     sessionId: async () => 'sess-1',
     wall: () => 1,
     log: () => {},
@@ -555,4 +605,99 @@ test('m1: the session copy is rewritten only when a persisted part of the ledger
   await svc.rowTarget(promptRow('again')) // a bucket again: stored state is as it was
   await svc.rowTarget(promptRow('twice'))
   expect(n.persisted).toBe(5)
+})
+
+// ---------------------------------------------------------------- P2: the strip (issue #69, design study S7 to S9)
+
+const DURATION = '05c26614-94d4-4b09-86c3-8ea6738495b2'
+/** A world whose config file sets `global.ui.turnStrip`. */
+const stripWorld = (mode: string) =>
+  world({ config: specs => fakeConfig({ specs, file: { global: { ui: { turnStrip: mode } } } }) })
+
+/**
+ * One TUI turn (L86 to L99): prompt row, turn.start, response, then the end. The `turn_duration` row of an answer comes
+ * inside `turn.complete`; its hook noted the uuid, and the hook of `turn.complete` hands it to the commit.
+ */
+async function answered(t: ReturnType<typeof world>, turnId: string, text: string, reason = 'answer') {
+  await t.row(promptRow(text))
+  await t.start(turnId, text)
+  await t.row(responseRow(`ok ${text}`))
+  await t.m.turnComplete(t.w.ports, {
+    input: { turnId, reason, isAborted: reason === 'aborted', durationMs: 5, answer: '' } as Json,
+    ...(reason === 'answer' ? { durationRow: `row-${turnId}` } : {}),
+  })
+}
+
+test('S9: the commit keeps the uuid of the duration row on the record, and the session copy follows', async () => {
+  const t = world()
+  await t.start('turn-1', 'go')
+  await t.m.turnComplete(t.w.ports, {
+    input: { turnId: 'turn-1', reason: 'answer', durationMs: 5, answer: '' } as Json,
+    durationRow: DURATION,
+  })
+  expect(t.rec(1)).toMatchObject({ end: 'answer', durationRow: DURATION })
+  expect(JSON.stringify(t.ledger())).toContain(DURATION)
+})
+
+test('S9: a turn that ends with no row keeps none, and a subagent end with a row commits nothing', async () => {
+  const t = world()
+  await t.start('turn-1', 'go')
+  await t.m.turnComplete(t.w.ports, {
+    input: { turnId: 'sub-turn', agentId: 'agent-7', reason: 'answer' } as Json,
+    durationRow: 'sub-row',
+  })
+  expect(t.ledger().open).toEqual({ ord: 1, turnId: 'turn-1' })
+  expect(t.rec(1).durationRow).toBeUndefined()
+  await t.end('turn-1', 'aborted')
+  expect(t.rec(1)).toMatchObject({ end: 'aborted' })
+  expect(t.rec(1).durationRow).toBeUndefined()
+})
+
+test('R16: with turnStrip text, a turn that tracked something gets one line, and the line names the turn', async () => {
+  const t = stripWorld('text')
+  await answered(t, 'turn-1', `see ${A} and ${B}`)
+  expect(await t.m.turnStrip('turn-1')).toBe('+2 new · /track turn 1')
+  await answered(t, 'turn-2', `again ${A} and ${C}`)
+  expect(await t.m.turnStrip('turn-2')).toBe('+1 new · 1 seen again · /track turn 2')
+  expect(await t.m.turnStrip('turn-2')).not.toContain('updated')
+})
+
+test('R16: a turn that tracked nothing, an unknown turn id and the wake of a task get no line', async () => {
+  const t = stripWorld('text')
+  await answered(t, 'turn-1', 'nothing to see here')
+  expect(await t.m.turnStrip('turn-1')).toBeUndefined()
+  expect(await t.m.turnStrip('never-heard')).toBeUndefined()
+  await answered(t, 'turn-2', 'spawn one')
+  await t.spawn('afe3f379', 'tu_agent1_main2')
+  const notice = '<task-notification>\n<task-id>afe3f379</task-id>\n<tool-use-id>tu_agent1_main2</tool-use-id>\ndone'
+  await t.row(promptRow(notice, 'task-notification'))
+  await t.start('wake-1', notice)
+  await t.row(responseRow(`spare ${A}`))
+  await t.end('wake-1')
+  expect(await t.m.turnStrip('wake-1')).toBeUndefined() // its work is in turn 2, which has its own line
+})
+
+test('R15: with turnStrip off, and by default, no line is made for any turn', async () => {
+  for (const t of [world(), stripWorld('off'), stripWorld('loud')]) {
+    await answered(t, 'turn-1', `see ${A}`)
+    expect(await t.m.turnStrip('turn-1')).toBeUndefined()
+    expect(await t.m.durationStrip('row-turn-1')).toBeUndefined()
+  }
+})
+
+test('R17: with turnStrip interactive the duration line draws the counts; the text line is left for the turns it cannot carry', async () => {
+  const t = stripWorld('interactive')
+  await answered(t, 'turn-1', `see ${A} and ${B}`)
+  expect(await t.m.durationStrip('row-turn-1')).toEqual({ ord: 1, counts: '+2 new' })
+  expect(await t.m.turnStrip('turn-1')).toBeUndefined() // the duration line carries it
+  expect(await t.m.durationStrip('row-unknown')).toBeUndefined()
+  await answered(t, 'turn-2', `again ${C}`, 'aborted') // an aborted turn has no duration line (L118 to L134)
+  expect(await t.m.turnStrip('turn-2')).toBe('+1 new · /track turn 2')
+  expect(await t.m.durationStrip('row-turn-2')).toBeUndefined()
+})
+
+test('R17: text mode draws nothing on the duration line, even when the turn has a duration row', async () => {
+  const t = stripWorld('text')
+  await answered(t, 'turn-1', `see ${A}`)
+  expect(await t.m.durationStrip('row-turn-1')).toBeUndefined()
 })

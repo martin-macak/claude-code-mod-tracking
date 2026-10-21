@@ -8,10 +8,12 @@ import { ConfigManager } from '../core/infra/config-manager'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
+import { withLine } from '../core/lib/turn-strip'
 import { emptyLedger } from '../core/lib/turns'
 import { DISMISS, parseRemote, TRACKERS } from '../trackers'
 import type { ToolStatus, TurnLedger } from '../types'
 import { bandText, renderBand } from '../ux/band'
+import { renderStrip } from '../ux/strip'
 import { TreeDataTable } from '../ux/tree-data-table/table'
 import { rowEvent, spawnEvent, toolCallEvent, turnEvent, turnStartEvent } from './events'
 import { helpTextOf, listText, PaneSession, turnLabels } from './pane-session'
@@ -174,6 +176,8 @@ const PANE = 'track'
 
 // Module state. A hot reload loses it. Each part is rebuilt on the next use.
 let manager: LifecycleManager | undefined
+/** The uuid of the `turn_duration` row of the main turn that is ending: the row hook notes it, `turn.complete` takes it (issue #69, P2). */
+let durationRow: string | undefined
 /** What the pane keeps outside the engine state: the last drawing and the work behind its Buttons. One per load (E7). */
 const pane = new PaneSession()
 
@@ -244,6 +248,10 @@ export const register: Register = on => {
       ],
     },
     async ($, e, next) => {
+      // The `turn_duration` row of a main turn comes inside its `turn.complete`. This hook enters before the `turn.complete` hook
+      // resumes, but it finishes after it (live check, 2.1.306: 6 ms later), so the uuid is noted here, before the first await,
+      // and the `turn.complete` hook takes it (issue #69, P2).
+      if (e.door === 'notice' && e.message.name === 'turn_duration' && e.agentId === undefined) durationRow = e.uuid
       const stored = await next(e)
       await soft(() => managerOf($).row(portsOf($), rowEvent(e, stored)))
       return stored
@@ -275,14 +283,29 @@ export const register: Register = on => {
   // started apart: the first row of the turn must find its record. A subagent's own turn.start passes straight through.
   on('turn.start', async ($, e, next) => {
     const out = await next(e)
-    if (e.agentId === undefined) await soft(() => managerOf($).turnStart(portsOf($), turnStartEvent(e)))
+    if (e.agentId === undefined) {
+      durationRow = undefined // a row of an earlier turn that no `turn.complete` took must not pair with this one
+      await soft(() => managerOf($).turnStart(portsOf($), turnStartEvent(e)))
+    }
     return out
   }).catch((_$, e, next) => next(e))
 
+  // A main-loop turn ended. `next` runs first: the engine appends the `turn_duration` row inside it, and the row hook noted its
+  // uuid. The ledger commits the turn and keeps that uuid in the same write. The strip (issue #69, P2, `global.ui.turnStrip`):
+  // a returned text that differs from the answer is a notice row under the duration line, kept in the transcript and never in
+  // a request (design study S7, S8). It is the line of `text`, and the line of `interactive` for a turn whose duration line
+  // cannot carry the strip (aborted, refusal, error, or no duration row). A text that a hook beneath returned (another plugin's
+  // notice) stays, and the line follows it. A subagent's end and a fault of the ledger return what `next` gave.
   on('turn.complete', async ($, e, next) => {
     const out = await next(e)
-    await soft(() => managerOf($).turnComplete(portsOf($), turnEvent(e)))
-    return out
+    const row = e.agentId === undefined ? durationRow : undefined
+    if (e.agentId === undefined) durationRow = undefined
+    await soft(() => managerOf($).turnComplete(portsOf($), turnEvent(e, row)))
+    if (e.agentId !== undefined) return out
+    const line = await managerOf($)
+      .turnStrip(e.turnId)
+      .catch(() => undefined)
+    return line === undefined ? out : { ...out, text: withLine(out.text, e.answer, line) }
   }).catch((_$, e, next) => next(e))
 
   on('command.run', { command: 'track' }, ($, e) => managerOf($).track(portsOf($), e.args)).catch(() => ({
@@ -322,6 +345,19 @@ export const register: Register = on => {
     const part = turn && { ...turn, ...(open ? {} : { press: () => soft(() => pane.openTurn(p, m)) }) }
     return renderBand($.ui.resolve(e), line, await next(e), part)
   }).catch((_$, e, next) => next(e)) // a failed read leaves the band to the engine
+
+  // The line that closes a turn (`Baked for 3s`), when `global.ui.turnStrip` is `interactive` (issue #69, P2). Its `requestId`
+  // is the uuid of the turn's `turn_duration` row, which the ledger keeps on the record. The strip is the counts and, on the
+  // fullscreen layout only, an open Button: a click on a transcript Button reaches the mod there and not on the main screen
+  // (design study S10). The press opens the turn of this line. Any other mode, a line no record knows and a read that fails
+  // leave the engine's line alone.
+  on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
+    const [p, m] = [portsOf($), managerOf($)]
+    const strip = await m.durationStrip(e.requestId)
+    if (strip === undefined) return next(e)
+    const press = e.viewport?.isFullscreen === true ? () => soft(() => pane.openTurn(p, m, strip.ord)) : undefined
+    return renderStrip($.ui.resolve(e), await next(e), strip, press)
+  }).catch((_$, e, next) => next(e))
 
   // The ring moved. `next` runs first: a write before a deny would stick (tree-table 3.3). A row handle selects its row. The
   // origin goes along: the engine's own take of the ring (`autoFocus`) only starts a selection (issue #115).

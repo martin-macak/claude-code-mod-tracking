@@ -1,5 +1,5 @@
 // The schema normaliser: one rule set for the `global` block and for every tracker slice of the config file.
-// A schema is data (`int`, `bool`, `words`, `obj`). `normaliseWith` turns a raw value into a valid one: per-field
+// A schema is data (`int`, `bool`, `words`, `oneOf`, `obj`). `normaliseWith` turns a raw value into a valid one: per-field
 // fallback to the default, a min and a max on every number, one problem line per bad value, unknown keys kept.
 // Pure: no I/O, no clock. The functions do not freeze. `specOf` freezes its defaults only; the caller freezes results.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.7. Plan: L4 Task 1 (copy table N1 to N10).
@@ -11,6 +11,7 @@ export type Rule =
   | { readonly kind: 'int'; readonly def: number; readonly min: number; readonly max: number }
   | { readonly kind: 'bool'; readonly def: boolean }
   | { readonly kind: 'words'; readonly def: readonly string[]; readonly max: number }
+  | { readonly kind: 'enum'; readonly def: string; readonly values: readonly string[] }
   | { readonly kind: 'obj'; readonly of: Schema }
 
 export type Schema = { readonly [key: string]: Rule }
@@ -23,9 +24,11 @@ export type ConfigOf<S extends Schema> = {
       ? boolean
       : S[K] extends { readonly kind: 'words' }
         ? readonly string[]
-        : S[K] extends { readonly kind: 'obj'; readonly of: infer O extends Schema }
-          ? ConfigOf<O>
-          : never
+        : S[K] extends { readonly kind: 'enum'; readonly values: readonly (infer V extends string)[] }
+          ? V
+          : S[K] extends { readonly kind: 'obj'; readonly of: infer O extends Schema }
+            ? ConfigOf<O>
+            : never
 }
 
 /** A word of a word list, after lowercasing. */
@@ -39,6 +42,15 @@ export const bool = (def: boolean): Rule & { kind: 'bool' } => ({ kind: 'bool', 
 
 /** A list of at most `max` words (`WORD`). The default list is the fallback for a value that is not a list. */
 export const words = (def: readonly string[], max: number): Rule & { kind: 'words' } => ({ kind: 'words', def, max })
+
+/**
+ * One of a fixed list of words, compared as written (no case folding). The default must be one of them. The result type is
+ * the union of the words, so a reader of the config gets `'off' | 'text'`, not `string`.
+ */
+export const oneOf = <const V extends string>(
+  def: V,
+  values: readonly V[],
+): { readonly kind: 'enum'; readonly def: V; readonly values: readonly V[] } => ({ kind: 'enum', def, values })
 
 /**
  * A nested object with its own schema. The result type is the exact member, not `Rule & {...}`: that intersection would
@@ -106,6 +118,19 @@ function wordsOf(
   return kept
 }
 
+/** One of the listed words, or the fallback when the value is any other. */
+function enumOf(
+  rule: Rule & { kind: 'enum' },
+  v: unknown,
+  fallback: string,
+  p: string,
+  warn: (problem: string) => void,
+): string {
+  if (typeof v === 'string' && rule.values.includes(v)) return v
+  warn(`${p}: ${show(v)} is not one of ${rule.values.join(', ')}. Using ${fallback}.`)
+  return fallback
+}
+
 /** A whole number inside the range, or the nearest bound, or the fallback when it is no whole number. */
 function intOf(
   rule: Rule & { kind: 'int' },
@@ -169,7 +194,8 @@ export function normaliseWith<S extends Schema>(
         warn(`${p}: ${show(v)} is not true or false. Using ${fallback}.`)
         known[key] = fallback
       }
-    } else known[key] = wordsOf(rule, v, fallback as readonly string[], p, warn)
+    } else if (rule.kind === 'enum') known[key] = enumOf(rule, v, fallback as string, p, warn)
+    else known[key] = wordsOf(rule, v, fallback as readonly string[], p, warn)
   }
   for (const key of Object.keys(src))
     if (!Object.hasOwn(s, key)) warn(`${at(key)}: unknown key. The mod keeps it and ignores it.`)

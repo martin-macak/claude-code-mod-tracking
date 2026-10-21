@@ -74,6 +74,12 @@ test('turnEvent carries the input', () => {
   expect(turnEvent({ reason: 'answer', agentId: 'a1' })).toEqual({ input: { reason: 'answer', agentId: 'a1' } })
 })
 
+test('turnEvent carries the uuid of the turn_duration row when the row hook noted one, and no key when it did not (issue #69, P2)', () => {
+  const row = '05c26614-94d4-4b09-86c3-8ea6738495b2'
+  expect(turnEvent({ reason: 'answer' }, row)).toEqual({ input: { reason: 'answer' }, durationRow: row })
+  expect('durationRow' in turnEvent({ reason: 'aborted' }, undefined)).toBe(false)
+})
+
 test('turnStartEvent keeps the turn id and the text and nothing else of the input', () => {
   expect(turnStartEvent({ turnId: 't1', text: 'go', agentId: undefined } as never)).toEqual({
     turnId: 't1',

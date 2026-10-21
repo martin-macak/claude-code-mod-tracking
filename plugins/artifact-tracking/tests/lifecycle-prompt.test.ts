@@ -471,3 +471,17 @@ test('R8: the turn ledger adds nothing to the prompt section: no turn number, no
   for (const word of ['SECRET-EXCERPT', 'firstTurn', 'lastTurn', 'turn', 'Turn', 'seen again'])
     expect(text).not.toContain(word)
 })
+
+test('R8, P2: the strip never reaches the prompt section: the text line and the duration row leave the model text as it was', async () => {
+  const file = { ...WEB_ON, global: { ui: { turnStrip: 'text' } } }
+  const t = managerWorld({ config: specs => fakeConfig({ specs, file }) })
+  await t.m.start(t.w.ports, { fromSessionStart: true })
+  await t.m.row(t.w.ports, promptRow('see https://docs.example/a'))
+  await t.m.turnStart(t.w.ports, { turnId: 't1', text: 'see' })
+  await t.m.turnComplete(t.w.ports, { input: { turnId: 't1', reason: 'answer' }, durationRow: 'row-1' })
+  const line = await t.m.turnStrip('t1')
+  expect(line).toBe('+1 new · /track turn 1') // the line exists, so the check below is not empty
+  const text = textOf(t)
+  expect(text).toContain('web: docs.example/a (mentioned)')
+  for (const word of ['+1 new', '/track turn', 'row-1', 'turn_duration', 'seen again']) expect(text).not.toContain(word)
+})

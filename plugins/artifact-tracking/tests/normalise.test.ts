@@ -9,6 +9,7 @@ import {
   movedKeys,
   normaliseWith,
   obj,
+  oneOf,
   show,
   specOf,
   WORD,
@@ -20,6 +21,7 @@ const S = {
   n: int(50, 1, 100),
   w: words(['issue', 'bug'], 3),
   o: obj({ t: int(3, 1, 10) }),
+  mode: oneOf('off', ['off', 'text', 'full']),
 }
 
 /** Normalises `raw` against `S` and returns the result with the problems it reported. */
@@ -31,7 +33,7 @@ function run(raw: unknown, path?: string) {
 
 test('an empty object gives the defaults and no problem', () => {
   const { value, out } = run({})
-  expect(value).toEqual({ enabled: true, n: 50, w: ['issue', 'bug'], o: { t: 3 } })
+  expect(value).toEqual({ enabled: true, n: 50, w: ['issue', 'bug'], o: { t: 3 }, mode: 'off' })
   expect(out).toEqual([])
 })
 
@@ -113,6 +115,28 @@ test('words: the rule for a word is the WORD pattern', () => {
   expect(WORD.test('a-b-1')).toBe(true)
   expect(WORD.test('Issue')).toBe(false)
   expect(WORD.test('-x')).toBe(false)
+})
+
+test('oneOf: a listed word is kept, and the default is the word of a missing key', () => {
+  expect(run({ mode: 'text' })).toEqual({ value: expect.objectContaining({ mode: 'text' }), out: [] })
+  expect(run({ mode: 'full' }).value.mode).toBe('full')
+  expect(run({}).value.mode).toBe('off')
+  expect(defaultsOf(S).mode).toBe('off')
+})
+
+test('oneOf: a word that is not listed, in any case, falls back to the default and names the choices', () => {
+  for (const bad of ['Text', 'yes', '', 7, null, true, ['text'], {}]) {
+    const { value, out } = run({ mode: bad })
+    expect(value.mode).toBe('off')
+    expect(out).toEqual([`mode: ${show(bad)} is not one of off, text, full. Using off.`])
+  }
+})
+
+test('oneOf: the fallback is the caller default, so the last good value can stand', () => {
+  const out: string[] = []
+  const value = normaliseWith(S, { mode: 'nope' }, { ...defaultsOf(S), mode: 'text' }, w => void out.push(w))
+  expect(value.mode).toBe('text')
+  expect(out).toEqual(['mode: "nope" is not one of off, text, full. Using text.'])
 })
 
 test('obj: nested values carry the path', () => {

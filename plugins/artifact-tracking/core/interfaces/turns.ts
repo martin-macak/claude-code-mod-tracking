@@ -28,3 +28,6 @@ export type TurnTarget = { readonly ord: number; readonly pending?: true; readon
 
 /** Who made an event, as the ledger needs it. `person`: the person's own prompt row. */
 export type TurnSource = { readonly agentId?: string; readonly person?: boolean }
+
+/** What the duration line of a turn draws under the engine's words (issue #69, P2): the turn's ordinal and its counts. */
+export type DurationStrip = { readonly ord: number; readonly counts: string }

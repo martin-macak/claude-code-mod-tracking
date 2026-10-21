@@ -26,6 +26,7 @@ A mod is a Claude Code plugin whose code is a **hooks module**: TypeScript or Ja
 | | [state-and-storage](concepts/state-and-storage.md) | Module variables vs `$.state` vs `$.store`, type contract, state references and the scan, state library |
 | | [lifecycle](concepts/lifecycle.md) | `register`, `session.start`, hot reload, `/clear`, `session.end` and its 1.5 s bound, subagent turns, what survives what |
 | | [ports-and-injection](concepts/ports-and-injection.md) | Passing `on`, `$` and state references into imported files and classes: what `validate` accepts, the ports pattern |
+| | [turn-strip](concepts/turn-strip.md) | A line under each answer: the `turn.complete` text, the `TurnDuration` line and its Button, clicks, `claude -p`, with the probe logs of issue #69 (spikes S7 to S13) |
 | | [glossary](concepts/glossary.md) | Terms, with sources |
 | Reference | [events](reference/events.md) | 46 engine events, 62 API-call events, 33 `classic.*` events, telemetry, `session.append` |
 | | [engine-interface](reference/engine-interface.md) | All 21 `$` nouns and their members, `claude-code` module exports |

@@ -71,6 +71,7 @@ export function turnLedgerOf(w: TurnLedgerWiring): TurnLedgerService {
     persisted: () => {
       if (w.ready()) w.persist()
     },
+    redraw: () => w.ports.ui.invalidate(),
     sessionId: () => w.ports.session.id(),
     wall: () => w.ports.clock.wall(),
     log: w.ports.log,

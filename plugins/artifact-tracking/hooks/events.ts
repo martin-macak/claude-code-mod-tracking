@@ -68,7 +68,7 @@ export function turnStartEvent(e: { turnId: string; text: string }): TurnStartEv
   return { turnId: e.turnId, text: typeof e.text === 'string' ? e.text : '' }
 }
 
-/** A turn ended. */
-export function turnEvent(e: unknown): TurnCompleteEvent {
-  return { input: e as Json }
+/** A turn ended. `durationRow` is the uuid of its `turn_duration` row, when the row hook noted one. */
+export function turnEvent(e: unknown, durationRow?: string): TurnCompleteEvent {
+  return { input: e as Json, ...(durationRow !== undefined ? { durationRow } : {}) }
 }
