@@ -3,6 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import { buttonKeyOf, CORE_KEYS, footerKeys, KeyRegistry } from '../core/infra/keys'
 import type { Cell, ColumnDef, RowRef } from '../core/interfaces/view'
+import { KEYS as GITHUB_ROW_KEYS } from '../trackers/github/actions'
 import { cellWidth } from '../ux/text/cell-width'
 import { GAP, GLYPH_BOX, INDENT, resetWidths } from '../ux/tree-data-table/columns'
 import { footerRows } from '../ux/tree-data-table/footer'
@@ -547,6 +548,9 @@ test('with help the pane draws the help view and the footer, and no row', () => 
 const VERSION = '1.2.3'
 const FULL_ROWS = 13
 const COMPACT_LINES = 7 // 2 titles, 3 lines of keys (three keys to a line), the config line, the version line
+// A body too short for any form takes the fewest rows (issue #105): the widest line of keys the width holds, so the
+// pane keys and the row keys take a line each.
+const TIGHTEST_LINES = 6 // 2 titles, 2 lines of keys, the config line, the version line
 const FULL_LINES = 11
 
 /** The help view of the core keys over `bodyRows` rows: its Box, the footer Box and the gap between them. */
@@ -598,11 +602,52 @@ test('the move hint never turns the help view compact: full at 91 and 92 columns
 test('a body shorter than the footer plus one line still draws the compact help view and the footer', () => {
   for (const rows of [2, 1, 0]) {
     const { tree, help, foot, lines } = helpIn(rows)
-    expect(lines).toBe(COMPACT_LINES)
+    expect(lines).toBe(TIGHTEST_LINES)
+    expect(lines).toBeLessThan(COMPACT_LINES) // nothing fits: the fewest rows, so the least of the top scrolls out
     expect(leaves(help)[0]).toBe(PANE_KEYS)
     expect(footerOf(foot)).toHaveLength(7)
     expect(tree.children).toHaveLength(2)
   }
+})
+
+// Issue #105: the problems of the config. The full form lists every one. A body too short for them draws the compact form,
+// which names the first problems the body has rows for and counts the rest.
+const LIVE_PATH = '/var/folders/sn/0_q8tr7x4vv44d69rbtyckwr0000gn/T/cc-tracker-config-SAq3DF/config.json' // 86 cells
+const problemsOf = (n: number): string[] => Array.from({ length: n }, (_, i) => `Problem ${i + 1}.`)
+
+/** The help view of every real key (the core keys and the github keys) and `n` problems over a body of `bodyRows` rows. */
+function problemsIn(n: number, bodyRows: number | undefined, path = LIVE_PATH) {
+  const reg = new KeyRegistry()
+  reg.add('github', GITHUB_ROW_KEYS)
+  const footer = footerKeys(reg, undefined, () => false, true)
+  const help = helpModel(reg.all(), [], path, problemsOf(n), VERSION)
+  const { drawn } = draw([], { footer, help, bodyColumns: 96, bodyRows })
+  const tree = drawn.tree as unknown as Node
+  const [body, foot] = tree.children as Node[]
+  return { tree, body: body as Node, foot: foot as Node, lines: leaves(body) }
+}
+
+test('at 100x40 inline with 3 or more problems the help view shows Pane keys, the count and the footer in the 11-row body', () => {
+  for (const n of [3, 4, 30]) {
+    const { tree, body, foot, lines } = problemsIn(n, 11)
+    expect(lines[0], `${n} problems`).toBe(PANE_KEYS)
+    expect(lines.at(-1), `${n} problems`).toBe(`${n} problems: /track help`)
+    expect(body.children).toHaveLength(9) // 3 titles, 3 lines of keys, the config line, the version line and the count
+    expect(tree.props.rowGap).toBe(0)
+    expect(footerOf(foot)).toHaveLength(7)
+    // The 86-cell path wraps to a second row: 9 lines, 1 wrapped row and the footer fill the body.
+    expect(body.children.length + 1 + footerRows(NO_ROW_FOOTER, 96, true)).toBeLessThanOrEqual(11)
+  }
+})
+
+test('the help view lists every problem when the body has the rows, and caps them when it has not', () => {
+  const tall = problemsIn(30, 100)
+  expect(tall.lines.filter(l => /^Problem \d+\.$/.test(l))).toEqual(problemsOf(30)) // the full form: no cap, no count
+  expect(tall.lines.join('\n')).not.toContain('/track help')
+  expect(tall.tree.props.rowGap).toBe(1)
+  const room = problemsIn(12, 16, '/c/config.json') // the compact form: 15 rows with the footer, and 5 problems of 12 fit
+  expect(room.lines.filter(l => /^Problem \d+\.$/.test(l))).toHaveLength(4)
+  expect(room.lines.at(-1)).toBe('8 more problems: /track help')
 })
 
 test('the table view never turns compact: the root keeps its gap, and a body that holds the tree changes nothing', () => {

@@ -143,6 +143,18 @@ test('draw hands the body height to the help view: a short body draws it compact
   expect((await help(11)).children[0]?.children).toHaveLength(7)
 })
 
+test('with many problems a short body draws the help view capped with a count, and /track help prints every problem', async () => {
+  const problems = Array.from({ length: 30 }, (_, i) => `Problem ${i + 1}.`)
+  const t = setup(webs('a'), { path: '/p/config.json', problems, version: '1.2.3' })
+  t.w.state.set('help', true)
+  const shown = leaves(await t.draw(96, 11))
+  expect(shown[0]).toBe('Pane keys (Tab, Shift+Tab, Up, Down move between rows)')
+  expect(shown.filter(l => /^Problem \d+\.$/.test(l)).length).toBeLessThan(30)
+  expect(shown.filter(l => /^\d+ (more )?problems: \/track help$/.test(l))).toHaveLength(1)
+  const printed = await helpTextOf(t.w.ports, t.m)
+  expect(printed.split('\n').filter(l => /^ {2}Problem \d+\.$/.test(l))).toEqual(problems.map(p => `  ${p}`))
+})
+
 test('draw with the help on draws the version line after the config line', async () => {
   const t = setup(webs('a'), { path: '/p/config.json', version: '1.2.3' })
   t.w.state.set('help', true)

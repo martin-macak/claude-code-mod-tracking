@@ -2,9 +2,19 @@
 // Plan: L6 Task 7 (G14, G15, G16).
 import { expect, test } from 'claude-code/testing'
 import { CORE_KEYS } from '../core/infra/keys'
-import type { PaneKey } from '../core/interfaces/view'
+import type { HelpModel, PaneKey } from '../core/interfaces/view'
 import { KEYS as GITHUB_ROW_KEYS } from '../trackers/github/actions'
-import { compactHelp, helpModel, helpRows, helpText, renderHelp } from '../ux/tree-data-table/help'
+import { wrapRows } from '../ux/text/wrap'
+import {
+  type CompactForm,
+  compactForm,
+  compactHelp,
+  compactRows,
+  helpModel,
+  helpRows,
+  helpText,
+  renderHelp,
+} from '../ux/tree-data-table/help'
 import { leaves } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
 import { COLS, row, section } from './fixtures/sections'
@@ -137,6 +147,9 @@ test('the drawn help and the printed help list the same lines', () => {
 
 // ---------------------------------------------------------------- the compact form (issue #92)
 
+/** The compact form the first tests draw: three keys to a line and every problem named. */
+const threeKeys = (m: HelpModel): CompactForm => ({ perLine: 3, problems: m.problems.length })
+
 /** One string per drawn line: a Text is one line, a Box is one line of its cells. */
 const linesOf = (list: readonly unknown[]) => nodes(list).map(n => leaves(n).join('  '))
 
@@ -148,7 +161,8 @@ test('renderHelp draws the full form unless the caller asks for the compact one'
 })
 
 test('renderHelp compact puts three keys on a line and keeps every title and the config line', () => {
-  const lines = linesOf(renderHelp(EL, helpModel(CORE_KEYS, [], PATH, []), true))
+  const m = helpModel(CORE_KEYS, [], PATH, [])
+  const lines = linesOf(renderHelp(EL, m, threeKeys(m)))
   expect(lines).toEqual([
     PANE_KEYS,
     'r  refresh  h  help',
@@ -160,9 +174,8 @@ test('renderHelp compact puts three keys on a line and keeps every title and the
 })
 
 test('renderHelp compact lines up the first two keys of every line on their columns', () => {
-  const drawn = nodes(
-    renderHelp(EL, helpModel([...CORE_KEYS, { ...open, label: 'open in the browser' }], [], PATH, []), true),
-  )
+  const m = helpModel([...CORE_KEYS, { ...open, label: 'open in the browser' }], [], PATH, [])
+  const drawn = nodes(renderHelp(EL, m, threeKeys(m)))
   const lines = drawn.filter(n => n.type === 'Box')
   expect(lines[0]?.props).toEqual({ paddingLeft: 2, columnGap: 2 })
   const widest = 'o  open in the browser'.length
@@ -179,7 +192,8 @@ test('renderHelp compact lines up the first two keys of every line on their colu
 })
 
 test('renderHelp compact keeps the problems as wrapped Texts under their bold title', () => {
-  const bad = nodes(renderHelp(EL, helpModel(CORE_KEYS, [], undefined, ['A.', 'B.']), true))
+  const m = helpModel(CORE_KEYS, [], undefined, ['A.', 'B.'])
+  const bad = nodes(renderHelp(EL, m, threeKeys(m)))
   expect(bad.at(-3)).toEqual({ type: 'Text', props: { weight: 'bold' }, children: ['Problems'] })
   expect(bad.slice(-2)).toEqual([
     { type: 'Text', props: { wrap: 'wrap' }, children: ['A.'] },
@@ -189,7 +203,7 @@ test('renderHelp compact keeps the problems as wrapped Texts under their bold ti
 
 test('the compact form lists the same keys in the same order as the printed help', () => {
   const m = helpModel([...CORE_KEYS, open], [], PATH, [])
-  const cells = nodes(renderHelp(EL, m, true))
+  const cells = nodes(renderHelp(EL, m, threeKeys(m)))
     .filter(n => n.type === 'Box')
     .flatMap(pair => pair.children.map(c => leaves(c).join('')))
   expect(cells).toEqual(
@@ -293,7 +307,7 @@ test('helpRows counts the version line as one more row, and the compact form sti
   expect(compactHelp(withVersion, 1, 96, 11)).toBe(true)
   // The compact form draws 7 lines. A line that wraps adds the rows it takes: the live path takes one more.
   const wrapRows = helpRows(withVersion, 96) - helpText(withVersion).split('\n').length
-  const compactRows = renderHelp(EL, withVersion, true).length + wrapRows
+  const compactRows = renderHelp(EL, withVersion, threeKeys(withVersion)).length + wrapRows
   expect(compactRows).toBe(7 + 1)
   expect(compactRows + 1).toBeLessThanOrEqual(11) // with the footer row, the view fits the body
 })
@@ -305,7 +319,7 @@ test('with the github keys, the version and the live config path the compact for
   const live = '/var/folders/sn/0_q8tr7x4vv44d69rbtyckwr0000gn/T/cc-tracker-config-SAq3DF/config.json' // 86 cells
   const m = helpModel([...CORE_KEYS, ...GITHUB_KEYS], [], live, [], '1.2.3')
   expect(compactHelp(m, 1, 96, 11)).toBe(true)
-  const lines = linesOf(renderHelp(EL, m, true))
+  const lines = linesOf(renderHelp(EL, m, threeKeys(m)))
   expect(lines).toEqual([
     PANE_KEYS,
     'r  refresh  h  help',
@@ -321,4 +335,176 @@ test('with the github keys, the version and the live config path the compact for
   expect(wrapRows).toBe(1) // the path takes its own row
   // 9 lines, the wrapped row and the footer: exactly the body. A tenth line or a longer path scrolls `Pane keys` away.
   expect(lines.length + wrapRows + 1).toBeLessThanOrEqual(11)
+})
+
+// ---------------------------------------------------------------- the problems and the fit of the compact form (issue #105)
+
+const LIVE = '/var/folders/sn/0_q8tr7x4vv44d69rbtyckwr0000gn/T/cc-tracker-config-SAq3DF/config.json' // 86 cells
+const MOD_KEYS: readonly PaneKey[] = [...CORE_KEYS, ...GITHUB_KEYS]
+const problems = (n: number): string[] => Array.from({ length: n }, (_, i) => `Problem ${i + 1}.`)
+
+/** The rows a drawn compact form takes in a body `columns` wide: one per line, more for a line that wraps. */
+const drawnRows = (m: Parameters<typeof renderHelp>[1], form: CompactForm, columns: number): number =>
+  linesOf(renderHelp(EL, m, form)).reduce((n, line) => n + wrapRows(line, columns), 0)
+
+test('compactForm is the full form while the full form fits, and while the body gives no height', () => {
+  const m = helpModel(CORE_KEYS, [], PATH, problems(2), '1.2.3')
+  expect(compactForm(m, 1, 96, undefined)).toBeUndefined()
+  expect(compactForm(m, 1, 96, 100)).toBeUndefined()
+  expect(compactForm(m, 1, 96, helpRows(m, 96) + 2)).toBeUndefined() // the lines, the gap and the footer
+  expect(compactForm(m, 1, 96, helpRows(m, 96) + 1)).toBeDefined()
+})
+
+test('compactForm keeps three keys to a line and every problem while that fits the body', () => {
+  const m = helpModel(MOD_KEYS, [], PATH, problems(2), '1.2.3')
+  // 9 lines of keys, the config line and the version, the problems title and 2 problems, and the footer: 13 rows.
+  expect(compactForm(m, 1, 96, 13)).toEqual({ perLine: 3, problems: 2 })
+  const lines = linesOf(renderHelp(EL, m, compactForm(m, 1, 96, 13) as CompactForm))
+  expect(lines.slice(-3)).toEqual(['Problems', 'Problem 1.', 'Problem 2.'])
+  expect(lines.some(l => l.includes('more problem'))).toBe(false)
+})
+
+test('the compact form with 3 problems, the live 86-cell path and every key fits the 100x40 inline body', () => {
+  const m = helpModel(MOD_KEYS, [], LIVE, problems(3), '1.2.3')
+  const form = compactForm(m, 1, 96, 11) as CompactForm
+  expect(form).toBeDefined()
+  const lines = linesOf(renderHelp(EL, m, form))
+  expect(lines[0]).toBe(PANE_KEYS) // the first line of the view is the title of the pane keys
+  expect(drawnRows(m, form, 96) + 1).toBeLessThanOrEqual(11) // with the footer row: the whole view fits the body
+  expect(compactRows(m, 96, form) + 1).toBeLessThanOrEqual(11)
+  expect(lines.at(-1)).toBe('3 problems: /track help')
+})
+
+test('the compact form with many problems is capped: its line count is pinned, the count says where to read the rest', () => {
+  const m = helpModel(MOD_KEYS, [], LIVE, problems(30), '1.2.3')
+  const form = compactForm(m, 1, 96, 11) as CompactForm
+  expect(form).toEqual({ perLine: 5, problems: 0 }) // 3 keys to a line leave no row: the body takes more keys to a line
+  expect(linesOf(renderHelp(EL, m, form))).toEqual([
+    PANE_KEYS,
+    'r  refresh  h  help',
+    'Row keys (act on the selected row)',
+    'x  dismiss  1  high  2  normal  3  low  0  auto',
+    'github',
+    'c  resolve  f  files',
+    `Config file: ${LIVE}`,
+    'Version: 1.2.3',
+    '30 problems: /track help',
+  ])
+  expect(drawnRows(m, form, 96)).toBe(10) // 9 lines and the row the long path wraps to
+  expect(drawnRows(m, form, 96) + 1).toBeLessThanOrEqual(11)
+})
+
+test('a body with rows to spare lists the first problems, then counts the rest and names /track help', () => {
+  const m = helpModel(MOD_KEYS, [], PATH, problems(12), '1.2.3')
+  // 9 lines at three keys to a line and the footer leave 6 of 16 rows: the title, 4 problems and the count.
+  const form = compactForm(m, 1, 96, 16) as CompactForm
+  expect(form).toEqual({ perLine: 3, problems: 4 })
+  const lines = linesOf(renderHelp(EL, m, form))
+  expect(lines.slice(-6)).toEqual(['Problems', ...problems(4), '8 more problems: /track help'])
+  expect(drawnRows(m, form, 96) + 1).toBe(16)
+})
+
+test('the count of hidden problems says problem or problems, and more only after a listed problem', () => {
+  const m = helpModel(CORE_KEYS, [], PATH, ['A.', 'B.'])
+  expect(linesOf(renderHelp(EL, m, { perLine: 3, problems: 1 })).slice(-3)).toEqual([
+    'Problems',
+    'A.',
+    '1 more problem: /track help',
+  ])
+  expect(linesOf(renderHelp(EL, m, { perLine: 3, problems: 0 })).at(-1)).toBe('2 problems: /track help')
+  const one = helpModel(CORE_KEYS, [], PATH, ['A.'])
+  expect(linesOf(renderHelp(EL, one, { perLine: 3, problems: 0 })).at(-1)).toBe('1 problem: /track help')
+  expect(linesOf(renderHelp(EL, one, { perLine: 3, problems: 1 })).slice(-2)).toEqual(['Problems', 'A.'])
+})
+
+test('the compact form with no problem draws no problems line, in any body', () => {
+  const m = helpModel(MOD_KEYS, [], LIVE, [], '1.2.3')
+  const form = compactForm(m, 1, 96, 11) as CompactForm
+  expect(linesOf(renderHelp(EL, m, form)).join('\n')).not.toContain('problem')
+  expect(form.problems).toBe(0)
+})
+
+test('a body too short for any form takes the form with the fewest rows: the widest line of keys and the count line', () => {
+  const m = helpModel(MOD_KEYS, [], LIVE, problems(30), '1.2.3')
+  const form = compactForm(m, 1, 96, 3) as CompactForm
+  expect(form).toEqual({ perLine: 5, problems: 0 }) // the fewest keys to a line that give the fewest rows
+  // More keys to a line take fewer rows, so less of the top scrolls out of the view.
+  expect(compactRows(m, 96, form)).toBeLessThan(compactRows(m, 96, { perLine: 3, problems: 0 }))
+  for (let perLine = 1; perLine <= 8; perLine++) {
+    expect(compactRows(m, 96, form)).toBeLessThanOrEqual(compactRows(m, 96, { perLine, problems: 0 }))
+  }
+})
+
+test('a footer of two rows (a tracker row selected) leaves the compact form the fewest rows when nothing fits', () => {
+  const m = helpModel(MOD_KEYS, [], LIVE, problems(3), '1.2.3')
+  expect(compactForm(m, 2, 96, 11)).toEqual({ perLine: 5, problems: 0 }) // 10 rows and 2 for the footer: 1 over, not 2
+})
+
+test('compactForm raises the keys to a line only as far as the body needs, and no further than the width holds', () => {
+  const m = helpModel(MOD_KEYS, [], LIVE, [], '1.2.3')
+  // 3 keys to a line: 9 lines and a wrapped row, and the footer fill 11 rows exactly (issue #97).
+  expect(compactForm(m, 1, 96, 11)).toEqual({ perLine: 3, problems: 0 })
+  // A body of 10 rows needs the row keys on one line: 5 to a line.
+  expect(compactForm(m, 1, 96, 10)).toEqual({ perLine: 5, problems: 0 })
+})
+
+// A key label wider than 22 cells wrapped the three columns of a narrow pane (the note of issue #105).
+test('the keys to a line follow the body width, so a long label never wraps the columns', () => {
+  const wide: PaneKey = { ...open, label: 'open in the browser' } // `o  open in the browser` is 22 cells
+  const m = helpModel([...CORE_KEYS, wide], [], PATH, [], '1.2.3')
+  const lineWidth = (box: Node): number =>
+    2 +
+    2 * (box.children.length - 1) +
+    box.children.reduce<number>((sum, c) => {
+      const cell = c as Node
+      return sum + (cell.type === 'Box' ? Number(cell.props.width) : String(cell.children[0]).length)
+    }, 0)
+  for (const [columns, perLine] of [
+    [96, 3],
+    [72, 3],
+    [60, 2],
+    [47, 1],
+    [30, 1],
+  ] as const) {
+    const form = compactForm(m, 1, columns, 11) as CompactForm
+    expect(form.perLine).toBe(perLine)
+    const keyLines = nodes(renderHelp(EL, m, form)).filter(n => n.type === 'Box')
+    expect(keyLines.length).toBeGreaterThan(0)
+    for (const line of keyLines) {
+      expect(line.children.length).toBeLessThanOrEqual(perLine)
+      expect(lineWidth(line)).toBeLessThanOrEqual(columns)
+    }
+  }
+})
+
+test('compactRows counts what the compact form draws when nothing wraps, so a new line counts with no edit', () => {
+  const forms: CompactForm[] = [
+    { perLine: 3, problems: 0 },
+    { perLine: 3, problems: 2 },
+    { perLine: 5, problems: 3 },
+    { perLine: 1, problems: 1 },
+  ]
+  for (const m of [
+    helpModel(MOD_KEYS, [], PATH, problems(3), '1.2.3'),
+    helpModel(MOD_KEYS, [], undefined, problems(7)),
+    helpModel(CORE_KEYS, [], PATH, [], '1.2.3'),
+  ]) {
+    for (const form of forms) expect(compactRows(m, 999, form)).toBe(renderHelp(EL, m, form).length)
+  }
+})
+
+test('compactRows counts the rows a path or a problem that wraps takes, and the count line', () => {
+  const m = helpModel(CORE_KEYS, [], LIVE, ['x'.repeat(100), 'y'], '1.2.3')
+  // 2 titles and 3 lines of keys, the config line (`Config file:` and the 86-cell path on its own row), the version line.
+  const base = 5 + 2 + 1
+  expect(compactRows(m, 96, { perLine: 3, problems: 0 })).toBe(base + 1) // the count line
+  expect(compactRows(m, 96, { perLine: 3, problems: 1 })).toBe(base + 4) // a title, 2 rows (100 cells wrap) and the count
+  expect(compactRows(m, 96, { perLine: 3, problems: 2 })).toBe(base + 4) // a title, 2 rows and 1 row: no count
+})
+
+test('the printed help lists every problem, with no cap and no count', () => {
+  const text = helpText(helpModel(MOD_KEYS, [], LIVE, problems(30), '1.2.3'))
+  expect(text.split('\n').filter(l => /^ {2}Problem \d+\.$/.test(l))).toEqual(problems(30).map(p => `  ${p}`))
+  expect(text).not.toContain('more problem')
+  expect(text).not.toContain('/track help')
 })
