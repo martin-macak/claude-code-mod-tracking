@@ -5,6 +5,7 @@
 import { expect, test } from 'claude-code/testing'
 import { CORE_HINT, type CommandHost, Commands, PRIO_WORDS, USAGE } from '../core/infra/commands'
 import { LifecycleManager } from '../core/infra/lifecycle'
+import type { MoreProblems } from '../core/interfaces/config'
 import type { CommandEvent } from '../core/interfaces/events'
 import type { CommandSpec, Tracker } from '../core/interfaces/tracker'
 import { helpOf } from '../hooks/pane-text'
@@ -119,6 +120,8 @@ function fakeHost(
     declared?: readonly Declared[]
     rowId?: (ref: string) => string | undefined
     problems?: readonly string[]
+    /** The problems the config left out of `problems` (issue #144). */
+    more?: MoreProblems
     flush?: () => Promise<void>
     version?: string
     /** The start has not read a manifest (it failed before): the host has no version. */
@@ -154,7 +157,7 @@ function fakeHost(
       note('refreshConfig')
       return false
     },
-    config: { path: () => '/p/config.json', problems: () => o.problems ?? [] },
+    config: { path: () => '/p/config.json', problems: () => o.problems ?? [], moreProblems: () => o.more },
     turnText: async (_p, n) => {
       note(`turnText:${n ?? '-'}`)
       return `TURN ${n ?? 'last'}`

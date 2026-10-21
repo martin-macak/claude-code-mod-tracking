@@ -173,6 +173,13 @@ tail -f ./mod-debug.log | grep first-mod
 
 `claude --debug` writes the log to the default place. `--debug-file <path>` picks the file ([docs: troubleshoot:242-262](../sources/code-claude-com-2026-10-09/mods/troubleshoot.md#L242-L262)).
 
+Seen on Claude Code 2.1.306 (issue #144). The first three points come from a headless `claude -p --debug --plugin-dir <mod>` run, so they are not *verified-live*. The banner comes from an interactive session in tmux (*verified-live*).
+
+- The default place is `<config dir>/debug/<session id>.txt`, and `<config dir>/debug/latest` is a link to the newest file. The config dir is `$CLAUDE_CONFIG_DIR`, else `~/.claude`. The folder was empty before the run.
+- A session that starts with neither `--debug` nor `--debug-file` writes no file there.
+- A mod line from `$.ui.log(text, { to: 'debug' })` is one debug line: `[DEBUG] [artifact-tracking] $.ui.log (to debug): config: global.unknown0: unknown key. The mod keeps it and ignores it.` The mod logs each config problem this way, so a file with 60 unknown keys gave 60 such lines, in the default file and in a `--debug-file` file.
+- A mod cannot read the path of the log. The interactive banner shows it to the person: `Debug mode enabled · logging to <path>`. A mod can compute the default place from `CLAUDE_CONFIG_DIR` and `HOME`, and that place is wrong under `--debug-file`. The artifact-tracking mod names the default place in its count line of the config problems and says in its README that `--debug-file` overrides it.
+
 A mod that loaded has a line that names it and the events it handles. A `--plugin-dir` mod has the `@inline` suffix:
 
 ```text

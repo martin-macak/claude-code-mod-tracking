@@ -118,7 +118,7 @@ Work as usual. Mention issues, PRs, Jira keys and links in your prompts. The ban
 | `/track` | Opens the pane and refreshes the items that are due. |
 | `/track refresh` | Refreshes every item and waits. Use it in `claude -p`. |
 | `/track clear` | Removes all items of this session. |
-| `/track help` | Prints every pane key, the config file path, the version and the problems. Use it in `claude -p`. |
+| `/track help` | Prints every pane key, the config file path, the version and the problems (the first 50, then a count of the rest). Use it in `claude -p`. |
 | `/track version` | Prints the version of the mod. Quote it in a bug report. |
 
 The [mod README](plugins/artifact-tracking/README.md) lists every captured pattern, the auto-tracking rules, persistence and the known limits.

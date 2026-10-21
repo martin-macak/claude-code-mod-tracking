@@ -145,7 +145,7 @@ test('draw hands the body height to the help view: a short body draws it compact
   expect((await help(11)).children[0]?.children).toHaveLength(7)
 })
 
-test('with many problems a short body draws the help view capped with a count, and /track help prints every problem', async () => {
+test('with many problems a short body draws the help view capped with a count, and /track help prints every problem of its model', async () => {
   const problems = Array.from({ length: 30 }, (_, i) => `Problem ${i + 1}.`)
   const t = setup(webs('a'), { path: '/p/config.json', problems, version: '1.2.3' })
   t.w.state.set('help', true)
@@ -1752,7 +1752,7 @@ test('listText is the text of paneData with nothing selected', async () => {
   expect(out).toContain('a  https://a.example/')
 })
 
-test('helpTextOf prints the help view with the config path and every problem', async () => {
+test('helpTextOf prints the help view with the config path and every problem of its model', async () => {
   const t = setup(webs('a'), { path: '/p/config.json', problems: ['X.'] })
   t.host.keyProblems = ['Y.']
   const out = await helpTextOf(t.w.ports, t.m)

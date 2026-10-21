@@ -3,6 +3,8 @@
 // Split from commands.ts (spec 12: the next layer that edits a file over the size limit splits it).
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.12. Plan: L4 Task 6, L6 Task 12, G14.
 
+import type { MoreProblems } from '../interfaces/config'
+import { namedProblems } from '../lib/problems'
 import { UNKNOWN } from './manifest'
 
 /** The toast when the terminal has no room for the pane. */
@@ -32,14 +34,17 @@ const SHOWN_PROBLEMS = 10
 
 /**
  * The config problems as a block: a header with the path, then each problem on its own line, indented two spaces. Over
- * ten, the first ten and a count. Empty text when all is well.
+ * ten, the first ten and a count that points to `/track help`. Empty text when all is well. `problems` is the list of
+ * `ConfigSource.problems()`. The config keeps the first 50 and ends the list with a count line (issue #144). `more` is
+ * what it left out: the block drops the count line and counts those problems with the ones it cuts itself.
  */
-export function problemsText(path: string | undefined, problems: readonly string[]): string {
-  if (problems.length === 0) return ''
-  const rest = problems.length - SHOWN_PROBLEMS
+export function problemsText(path: string | undefined, problems: readonly string[], more?: MoreProblems): string {
+  const named = namedProblems(problems, more)
+  if (named.length === 0) return ''
+  const rest = named.length - SHOWN_PROBLEMS + (more?.count ?? 0)
   return [
     path === undefined ? 'Config problems:' : `Config problems in ${path}:`,
-    ...problems.slice(0, SHOWN_PROBLEMS).map(p => `  ${p}`),
-    ...(rest > 0 ? [`  and ${rest} more ${rest === 1 ? 'problem' : 'problems'}.`] : []),
+    ...named.slice(0, SHOWN_PROBLEMS).map(p => `  ${p}`),
+    ...(rest > 0 ? [`  and ${rest} more ${rest === 1 ? 'problem' : 'problems'}: see /track help.`] : []),
   ].join('\n')
 }

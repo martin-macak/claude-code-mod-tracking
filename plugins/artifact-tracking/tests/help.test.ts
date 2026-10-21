@@ -567,9 +567,96 @@ test('compactRows counts the rows a path or a problem that wraps takes, and the 
   expect(compactRows(m, 96, { perLine: 3, problems: 2 })).toBe(base + 4) // a title, 2 rows and 1 row: no count
 })
 
-test('the printed help lists every problem, with no cap and no count', () => {
+test('the printed help lists every problem of its model, with no cap of its own and no count', () => {
   const text = helpText(helpModel(MOD_KEYS, [], LIVE, problems(30), '1.2.3'))
   expect(text.split('\n').filter(l => /^ {2}Problem \d+\.$/.test(l))).toEqual(problems(30).map(p => `  ${p}`))
   expect(text).not.toContain('more problem')
   expect(text).not.toContain('/track help')
+})
+
+// ---------------------------------------------------------------- the cap on the config problems (issue #144)
+
+// The config keeps the first 50 problems and one count line, and says how many it left out. The model holds the 50 as
+// `problems` and the number as `moreProblems`, so the views that cut the list further count the rest right.
+const COUNT = (n: number): string => `${n} more problems: see the debug log (claude --debug)`
+/** What the config tells the model of the problems it left out: how many, and the count line. */
+const left = (n: number) => ({ count: n, line: COUNT(n) })
+
+test('helpModel keeps the count of the problems the config left out', () => {
+  expect(helpModel(CORE_KEYS, [], PATH, problems(50), '1.2.3', left(4950)).moreProblems).toEqual(left(4950))
+  expect(helpModel(CORE_KEYS, [], PATH, problems(2)).moreProblems).toBeUndefined()
+})
+
+test('helpText prints the 50 problems, then one line that counts the rest and names the log', () => {
+  const lines = helpText(helpModel(MOD_KEYS, [], LIVE, problems(50), '1.2.3', left(4950))).split('\n')
+  const at = lines.indexOf('Problems')
+  expect(lines.slice(at + 1)).toEqual([...problems(50).map(p => `  ${p}`), `  ${COUNT(4950)}`])
+})
+
+test('helpText with 50 problems or fewer prints no count line', () => {
+  const text = helpText(helpModel(MOD_KEYS, [], LIVE, problems(50), '1.2.3'))
+  expect(text).not.toContain('more problem')
+  expect(text.split('\n').at(-1)).toBe('  Problem 50.')
+})
+
+test('the full form draws the count line after the problems, and the printed help lists the same lines', () => {
+  const m = helpModel(CORE_KEYS, [], PATH, ['A.', 'B.'], '0.2.0', left(8))
+  const drawn = nodes(renderHelp(EL, m))
+  expect(drawn.slice(-3)).toEqual([
+    { type: 'Text', props: { wrap: 'wrap' }, children: ['A.'] },
+    { type: 'Text', props: { wrap: 'wrap' }, children: ['B.'] },
+    { type: 'Text', props: { wrap: 'wrap' }, children: [COUNT(8)] },
+  ])
+  expect(helpRows(m, 96)).toBe(helpText(m).split('\n').length) // nothing wraps at 96 cells: the count line is a row
+})
+
+test('the compact form counts the problems it hides with the ones the config left out', () => {
+  const m = helpModel(MOD_KEYS, [], LIVE, problems(50), '1.2.3', left(4950))
+  const form = compactForm(m, 1, 96, 11) as CompactForm
+  expect(form).toEqual({ perLine: 5, problems: 0 }) // no row is left for a problem: all 5000 are counted
+  expect(linesOf(renderHelp(EL, m, form)).at(-1)).toBe('5000 problems: /track help')
+  expect(drawnRows(m, form, 96) + 1).toBeLessThanOrEqual(11)
+})
+
+test('a compact body with rows to spare names the first problems and counts the rest, the left-out ones too', () => {
+  const m = helpModel(MOD_KEYS, [], PATH, problems(12), '1.2.3', left(100))
+  const form = compactForm(m, 1, 96, 16) as CompactForm
+  expect(form).toEqual({ perLine: 3, problems: 4 }) // the same body as the test of 12 problems without a cap
+  expect(linesOf(renderHelp(EL, m, form)).at(-1)).toBe('108 more problems: /track help') // 8 hidden and 100 left out
+})
+
+test('the compact form with every problem named still counts the ones the config left out', () => {
+  const m = helpModel(CORE_KEYS, [], PATH, problems(2), '1.2.3', left(7))
+  expect(linesOf(renderHelp(EL, m, { perLine: 3, problems: 2 })).slice(-4)).toEqual([
+    'Problems',
+    'Problem 1.',
+    'Problem 2.',
+    '7 more problems: /track help',
+  ])
+  const one = helpModel(CORE_KEYS, [], PATH, problems(2), '1.2.3', left(1))
+  expect(linesOf(renderHelp(EL, one, { perLine: 3, problems: 2 })).at(-1)).toBe('1 more problem: /track help')
+})
+
+test('the compact rows of a model with left-out problems count the title, the named ones and the count line', () => {
+  const m = helpModel(CORE_KEYS, [], PATH, problems(2), '1.2.3', left(7))
+  const without = helpModel(CORE_KEYS, [], PATH, problems(2), '1.2.3')
+  expect(compactRows(m, 96, { perLine: 3, problems: 2 })).toBe(
+    compactRows(without, 96, { perLine: 3, problems: 2 }) + 1,
+  )
+  for (const problems of [0, 1, 2]) {
+    expect(compactRows(m, 999, { perLine: 3, problems })).toBe(renderHelp(EL, m, { perLine: 3, problems }).length)
+  }
+})
+
+test('with the cap in place the help view fits every body height from 11 to 40 rows', () => {
+  const over: string[] = []
+  for (const more of [1, 4950]) {
+    const m = helpModel(MOD_KEYS, [], LIVE, problems(50), '1.2.3', left(more))
+    for (let bodyRows = 11; bodyRows <= 40; bodyRows++) {
+      const form = compactForm(m, 1, 96, bodyRows)
+      const used = form === undefined ? helpRows(m, 96) + ROW_GAP + 1 : compactRows(m, 96, form) + 1
+      if (used > bodyRows) over.push(`50 problems and ${more} more in ${bodyRows} rows take ${used}`)
+    }
+  }
+  expect(over).toEqual([])
 })

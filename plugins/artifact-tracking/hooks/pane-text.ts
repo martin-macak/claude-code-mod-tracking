@@ -9,6 +9,7 @@ import type { Level } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
 import type { FooterKey, GroupSpec, HelpModel, PaneView, RowRef, SectionSpec, TreeRow } from '../core/interfaces/view'
 import { listGroups } from '../core/lib/grouping'
+import { namedProblems } from '../core/lib/problems'
 import { helpModel, helpText } from '../ux/tree-data-table/help'
 import { groupsText } from '../ux/tree-data-table/text'
 
@@ -29,7 +30,7 @@ export interface PaneHost {
    */
   readonly version: string | undefined
   readonly keys: KeyRegistry
-  readonly config: Pick<ConfigSource, 'global' | 'path' | 'problems'>
+  readonly config: Pick<ConfigSource, 'global' | 'path' | 'problems' | 'moreProblems'>
 }
 
 /**
@@ -87,12 +88,17 @@ export async function turnLabels(p: Ports, m: Pick<PaneHost, 'paneData'>): Promi
  * The help titles a tracker by the groups that hold its rows, so `groups` must be the by-list groups (the sections of the
  * trackers). L1 draws only that view, so the drawn groups are those. L3 adds views: it must pass `listGroups(...)` here,
  * not the groups of the drawn view, or the keys of a tracker would sit under a title like "Failed, Active".
+ * The config keeps the first 50 of its problems and ends the list with a count line (issue #144). The model takes the
+ * 50 and the count apart, so the compact form counts the left-out problems right and the count line comes last.
  */
 export function helpOf(
   m: Pick<PaneHost, 'keys' | 'config' | 'problems' | 'version'>,
   groups: readonly GroupSpec[],
 ): HelpModel {
-  return helpModel(m.keys.all(), groups, m.config.path(), [...m.config.problems(), ...m.problems()], m.version)
+  const more = m.config.moreProblems()
+  const problems = [...namedProblems(m.config.problems(), more), ...m.problems()]
+  // The config gives the count line with the count: the view prints that line, so every view says the same words.
+  return helpModel(m.keys.all(), groups, m.config.path(), problems, m.version, more)
 }
 
 /** The help view as text, for `/track help` (`claude -p` has no pane). */

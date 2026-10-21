@@ -3,6 +3,7 @@
 // the keys, the version and the problems.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Help view". Plan: L6 Task 7, G14 to G16.
 // Issue #65: the version line. Issue #105: the compact form fits the body (keys to a line from the width, capped problems).
+// Issue #144: the config keeps the first 50 problems and the model counts the rest (`moreProblems`), so every form says how many.
 
 import type { RenderElement } from 'claude-code'
 import type { GroupSpec, HelpGroup, HelpModel, PaneKey, TreeRow } from '../../core/interfaces/view'
@@ -28,13 +29,17 @@ function titleOf(owner: string, groups: readonly Titled[]): string {
   return titles.length > 0 ? titles.join(', ') : owner
 }
 
-/** Groups: the core pane keys, the core row keys, then one group per tracker that has keys, in order of first key. */
+/**
+ * Groups: the core pane keys, the core row keys, then one group per tracker that has keys, in order of first key.
+ * `moreProblems` says how many problems the config left out of `problems`, with the line that counts them (issue #144).
+ */
 export function helpModel(
   keys: readonly PaneKey[],
   drawn: readonly Titled[],
   configPath: string | undefined,
   problems: readonly string[],
   version?: string,
+  moreProblems?: HelpModel['moreProblems'],
 ): HelpModel {
   const owners = [...new Set(keys.filter(k => k.owner !== 'core').map(k => k.owner))]
   const groups: HelpGroup[] = [
@@ -42,21 +47,34 @@ export function helpModel(
     { title: ROW_KEYS, keys: keys.filter(k => k.owner === 'core' && k.scope === 'row') },
     ...owners.map(owner => ({ title: titleOf(owner, drawn), keys: keys.filter(k => k.owner === owner) })),
   ]
-  return { groups: groups.filter(g => g.keys.length > 0), configPath, problems, version }
+  return { groups: groups.filter(g => g.keys.length > 0), configPath, problems, version, moreProblems }
 }
+
+/** How many problems the config left out of the model's list. */
+const leftOut = (m: HelpModel): number => m.moreProblems?.count ?? 0
 
 const configLine = (path: string | undefined) =>
   path === undefined ? 'Config file: none, the defaults apply' : `Config file: ${path}`
 
 const versionLine = (version: string) => `Version: ${version}`
 
-/** The help view as plain text, one line each. */
+/** The lines of the problems: each one, then the count line of the ones the config left out. */
+const problemList = (m: HelpModel): string[] => [
+  ...m.problems,
+  ...(m.moreProblems !== undefined && leftOut(m) > 0 ? [m.moreProblems.line] : []),
+]
+
+/**
+ * The help view as plain text, one line each. It lists the problems of its model: the config keeps the first 50, so a
+ * long list ends in one line that counts the rest and names the debug log (issue #144).
+ */
 export function helpText(m: HelpModel): string {
+  const problems = problemList(m)
   return [
     ...m.groups.flatMap(g => [g.title, ...g.keys.map(k => `  ${k.key}  ${k.label}`)]),
     configLine(m.configPath),
     ...(m.version === undefined ? [] : [versionLine(m.version)]),
-    ...(m.problems.length > 0 ? ['Problems', ...m.problems.map(p => `  ${p}`)] : []),
+    ...(problems.length > 0 ? ['Problems', ...problems.map(p => `  ${p}`)] : []),
   ].join('\n')
 }
 
@@ -94,7 +112,7 @@ export function compactHelp(m: HelpModel, footerRows: number, columns: number, b
 
 /**
  * How the compact form is drawn: the keys to a line and how many problems it names. It names the first `problems` and counts
- * the rest, with the place to read them (`/track help` prints every problem).
+ * the rest, the ones the config left out too, with the place to read them (`/track help` prints the first 50).
  */
 export interface CompactForm {
   readonly perLine: number
@@ -112,10 +130,13 @@ function problemWraps(m: HelpModel, columns: number): readonly number[] {
   return rows
 }
 
+/** The problems the compact form does not name: the unnamed ones of the list and the ones the config left out. */
+const hiddenOf = (m: HelpModel, named: number): number => m.problems.length - named + leftOut(m)
+
 /** The rows the problems take when the compact form names the first `named`: the title and the named ones, then the count. */
 function problemRows(m: HelpModel, columns: number, wraps: readonly number[], named: number): number {
-  if (m.problems.length === 0) return 0
-  const hidden = m.problems.length - named
+  const hidden = hiddenOf(m, named)
+  if (m.problems.length + leftOut(m) === 0) return 0
   const count = hidden > 0 ? wrapRows(hiddenText(hidden, named > 0), columns) : 0
   if (named === 0) return count
   return 1 + (wraps[named] as number) + count
@@ -199,11 +220,16 @@ function keyLines(el: TableElements, keys: readonly PaneKey[], width: number, pe
   return lines
 }
 
-/** The problems: a bold title and every one in the full form. The compact form names the first `form.problems` and counts the rest. */
+/**
+ * The problems: a bold title and every one in the full form, then the count line of the ones the config left out. The
+ * compact form names the first `form.problems` and counts the rest.
+ */
 function problemLines(el: TableElements, m: HelpModel, form: CompactForm | undefined): RenderElement[] {
-  if (m.problems.length === 0) return []
-  const named = form === undefined ? m.problems.length : Math.min(form.problems, m.problems.length)
-  const hidden = m.problems.length - named
+  if (m.problems.length + leftOut(m) === 0) return []
+  if (form === undefined)
+    return [text(el, { weight: 'bold' }, 'Problems'), ...problemList(m).map(p => text(el, { wrap: 'wrap' }, p))]
+  const named = Math.min(form.problems, m.problems.length)
+  const hidden = hiddenOf(m, named)
   return [
     ...(named > 0 ? [text(el, { weight: 'bold' }, 'Problems')] : []),
     ...m.problems.slice(0, named).map(p => text(el, { wrap: 'wrap' }, p)),

@@ -209,6 +209,11 @@ export interface HelpModel {
   readonly groups: readonly HelpGroup[]
   readonly configPath: string | undefined
   readonly problems: readonly string[]
+  /**
+   * The problems the config left out of `problems` (it keeps the first 50, issue #144): how many, and the line that counts
+   * them and names the log. Absent or a count of 0: none were left out.
+   */
+  readonly moreProblems?: { readonly count: number; readonly line: string }
   /** The version of the mod, or `unknown`. Absent: no line (no start has read the manifest yet). */
   readonly version?: string
 }

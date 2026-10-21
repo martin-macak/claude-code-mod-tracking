@@ -1,7 +1,8 @@
-// The path rule of the config file (spec 5.7): the override names the whole folder, else XDG, else HOME. Pure.
+// The path rule of the config file (spec 5.7): the override names the whole folder, else XDG, else HOME. The place of
+// the debug log that the count line of the config problems names (issue #144). Pure.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.7. Plan: L4 Task 3 (decision C9).
 import { expect, test } from 'claude-code/testing'
-import { CONFIG_TAIL, resolveConfigPath } from '../core/infra/config-path'
+import { CONFIG_TAIL, resolveConfigPath, resolveDebugLog } from '../core/infra/config-path'
 import type { EnvName } from '../core/interfaces/ports'
 
 /** An env port over a plain record. A name that is not in the record reads as unset. */
@@ -91,4 +92,47 @@ test('each name is read at most once', async () => {
   }
   await resolveConfigPath(env)
   expect(seen).toEqual(['CLAUDE_TRACKER_CONFIG_DIR', 'XDG_CONFIG_HOME', 'HOME'])
+})
+
+// ---------------------------------------------------------------- the default place of the debug log (issue #144)
+
+test('the debug log is debug/latest in the Claude config folder: CLAUDE_CONFIG_DIR, else ~/.claude', async () => {
+  expect(await resolveDebugLog(envOf({ CLAUDE_CONFIG_DIR: '/c', HOME: '/h' }))).toBe('/c/debug/latest')
+  expect(await resolveDebugLog(envOf({ CLAUDE_CONFIG_DIR: '/c///' }))).toBe('/c/debug/latest')
+  expect(await resolveDebugLog(envOf({ HOME: '/h' }))).toBe('/h/.claude/debug/latest')
+  expect(await resolveDebugLog(envOf({ HOME: '/h/' }))).toBe('/h/.claude/debug/latest')
+})
+
+test('a relative or empty CLAUDE_CONFIG_DIR falls through to HOME', async () => {
+  expect(await resolveDebugLog(envOf({ CLAUDE_CONFIG_DIR: 'rel', HOME: '/h' }))).toBe('/h/.claude/debug/latest')
+  expect(await resolveDebugLog(envOf({ CLAUDE_CONFIG_DIR: '', HOME: '/h' }))).toBe('/h/.claude/debug/latest')
+})
+
+test('the debug log has no place without an absolute folder', async () => {
+  expect(await resolveDebugLog(envOf({}))).toBeUndefined()
+  expect(await resolveDebugLog(envOf({ HOME: 'home/u', CLAUDE_CONFIG_DIR: 'rel' }))).toBeUndefined()
+})
+
+test('an env read that rejects counts as unset for the debug log', async () => {
+  const env = {
+    get: async (name: EnvName): Promise<string | undefined> => {
+      if (name === 'CLAUDE_CONFIG_DIR') throw new Error('denied')
+      return name === 'HOME' ? '/h' : undefined
+    },
+  }
+  expect(await resolveDebugLog(env)).toBe('/h/.claude/debug/latest')
+  const denied = { get: async (): Promise<string | undefined> => Promise.reject(new Error('denied')) }
+  expect(await resolveDebugLog(denied)).toBeUndefined()
+})
+
+test('the debug log reads CLAUDE_CONFIG_DIR and HOME and no other name', async () => {
+  const seen: string[] = []
+  const env = {
+    get: async (name: EnvName): Promise<string | undefined> => {
+      seen.push(name)
+      return undefined
+    },
+  }
+  await resolveDebugLog(env)
+  expect(seen).toEqual(['CLAUDE_CONFIG_DIR', 'HOME'])
 })
