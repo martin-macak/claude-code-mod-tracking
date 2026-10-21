@@ -321,7 +321,7 @@ export const WORLD_SNAPSHOT: AutoSnapshot = {
     }),
     ag('explore', { branch: 'feat/y', worktree: 'agent-a94bdd45b56e2c631' }),
     ag('review', { depth: 2, state: 'ended', branch: 'feat/y', worktree: 'agent-a94bdd45b56e2c631' }),
-    ag('build', { kind: 'workflow', state: 'waiting', workflow: { runId: 'run-1', agentIndex: 2 } }),
+    ag('build', { kind: 'workflow', state: 'waiting', workflow: { runId: 'wf_a35565d1-fd4', agentIndex: 2 } }),
     ag('lint', { state: 'failed', worktreeLive: false }),
   ],
   branches: [...WORLD_BRANCHES],

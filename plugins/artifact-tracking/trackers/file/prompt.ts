@@ -3,8 +3,8 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.11. Plan: L7 Task 5 (S5, S9).
 
 import type { ViewContext } from '../../core/interfaces/view'
+import { relativeToRoot } from '../../core/lib/paths'
 import { promptLine, promptRecords, quoted } from '../../core/lib/prompt-text'
-import { relativeToRoot } from './files'
 import { fileKind } from './kind'
 import type { FileRecord } from './types'
 

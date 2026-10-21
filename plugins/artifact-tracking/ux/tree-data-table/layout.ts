@@ -80,3 +80,62 @@ export function neighbourOf(rows: readonly DrawnRow[], id: string): string | nul
   const depth = rows[at]?.depth ?? 0
   return (rows.slice(at + 1).find(r => r.depth <= depth) ?? rows[at - 1])?.id ?? null
 }
+
+/**
+ * The row the pane treats as selected. A row can leave the pane with no key from the person: its TTL passes, a cap takes
+ * it, or its run folds. The `selected` atom then names a row that no drawing holds, and a render must not write it (E9),
+ * so the drawing and the keys fall back to a row instead (issue #49).
+ *
+ * - A selected row that a full drawing holds stays selected, and no selection stays none.
+ * - The row the last drawing fell to for this same selection, while it is still drawn: so a redraw does not move it.
+ * - A row that sits below a closed row, or past the cap of its section: the closest row above it that is drawn.
+ * - A row that is gone (or the row the last drawing fell to): the row after it in the last drawing that is still drawn,
+ *   else the row before it.
+ * - Every row of the last drawing gone too: the first drawn row, or none when the pane has no row.
+ * - A selection that no drawing ever held and no row holds stays as it is, so its keys stay off. It is no row that hid.
+ */
+export function shownSelection(
+  sections: readonly SectionSpec[],
+  view: LayoutView,
+  selected: string | null,
+  before: readonly DrawnRow[],
+  fellTo: string | null = null,
+): string | null {
+  if (selected === null) return null
+  const laid = layout(sections, view).flatMap(s => s.rows.map(r => r.row.id))
+  const drawn = new Set(laid)
+  if (drawn.has(selected)) return selected
+  if (fellTo !== null && drawn.has(fellTo)) return fellTo
+  const above = ancestorsOf(sections, selected)
+    .reverse()
+    .find(id => drawn.has(id))
+  if (above !== undefined) return above
+  // The row the last drawing fell to may have gone too: then the search starts where that row was.
+  const at = [fellTo, selected].map(id => before.findIndex(r => r.id === id)).find(i => i >= 0) ?? -1
+  if (at >= 0) {
+    const after = before.slice(at + 1).find(r => drawn.has(r.id))
+    const prior = before
+      .slice(0, at)
+      .reverse()
+      .find(r => drawn.has(r.id))
+    return (after ?? prior)?.id ?? laid[0] ?? null
+  }
+  return selected
+}
+
+/** The ids of the rows above `rowId` in its tree, the top row first. Empty for a top row and for an id no row holds. */
+function ancestorsOf(sections: readonly SectionSpec[], rowId: string): string[] {
+  const walk = (rows: readonly TreeRow[], path: readonly string[]): string[] | undefined => {
+    for (const row of rows) {
+      if (row.id === rowId) return [...path]
+      const hit = walk(row.children ?? [], [...path, row.id])
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+  for (const s of sections) {
+    const hit = walk(s.rows, [])
+    if (hit !== undefined) return hit
+  }
+  return []
+}

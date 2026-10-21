@@ -104,7 +104,7 @@ The keys work only while the pane has the keyboard. A letter that is no key of t
 
 A section shows at most `global.ui.sectionRows` rows (50). When rows are left, the section ends in an `N more` row. The whole pane shows at most `global.ui.maxRows` rows (300), plus the chunks you opened. Open children do not count against these caps. If the pane is still too large to draw, it drops the detail lines first, then shows fewer rows, and last shows one line: `The pane is too large to draw. /track prints the list.`
 
-When the rows are taller than the pane body, the pane draws a window of them, so the title line, the header row and the footer keys stay in view. `▲ N more above` and `▼ N more below` count the rows out of view. The window follows the selected row by the least it must move: the selected row always shows. At the end of the list the window fills the body. Open rows and their detail lines count against the body. A row that its TTL hides (see [Known limits](#known-limits)) is not in the list, so it takes no place in the window and no count in the hints.
+When the rows are taller than the pane body, the pane draws a window of them, so the title line, the header row and the footer keys stay in view. `▲ N more above` and `▼ N more below` count the rows out of view. The window follows the selected row by the least it must move: the selected row always shows. At the end of the list the window fills the body. Open rows and their detail lines count against the body. A row that its TTL hides, that the process cap takes or that a closed run row holds (see [Ended rows](#ended-rows)) is not in the list, so it takes no place in the window and no count in the hints. When the selected row hides, the window moves onto the row the selection falls to, and the page keys, the wheel and the `N more` key start from that row.
 
 A 30 s tick runs from the start of the session, with the pane open or closed. An item is stale after 5 minutes, or after 60 s for a PR with pending checks.
 
@@ -220,8 +220,8 @@ The mod also tracks the work around the session, with no mention:
 
 | Section | Content |
 | --- | --- |
-| Worktrees | The root (the cwd at session start, pinned) and the worktrees that this session or its agents made. Only proven children show. A removed one stays, dimmed. |
-| Agents | The main loop, its subagents and its workflow agents, each with branch and worktree. A workflow agent that runs in a worktree of its own shows it as soon as git lists that worktree, and keeps it after the worktree is removed. An ended agent stays, dimmed, until its TTL passes, then it leaves the view (see [Ended rows](#ended-rows)). |
+| Worktrees | The root (the cwd at session start, pinned) and the worktrees that this session or its agents made. Only proven children show. A removed one stays, dimmed, until its TTL passes (see [Ended rows](#ended-rows)). |
+| Agents | The main loop, its subagents and its workflow agents, each with branch and worktree. A workflow agent that runs in a worktree of its own shows it as soon as git lists that worktree, and keeps it after the worktree is removed. An ended agent stays, dimmed, until its TTL passes, then it leaves the view. A workflow run whose agents all ended is one row that opens to them (see [Ended rows](#ended-rows)). |
 | Pull requests | PRs whose head is a tracked branch, or whose base is a tracked branch (stacked PRs). One GraphQL query for each 30 s tick. |
 
 The refs in a PR body become items with a `↳#N` prefix. HTML comments are skipped. The items go when the PR leaves the tracked set. The band adds `Worktrees n · Agents n · PRs n`.
@@ -249,14 +249,23 @@ An ended row does not stay for ever. The pane, the `/track` text and the band hi
 | --- | --- | --- | --- |
 | Agents | ended | 10 min | `trackers.auto.endedTtlMs` |
 | Agents | failed | 60 min | `trackers.auto.failedTtlMs` |
+| Worktrees | removed | 10 min | `trackers.auto.removedTtlMs` |
 | Processes | completed, exited, unknown | 30 min | `trackers.processes.endedTtlMs` |
 | Processes | failed, killed | 60 min | `trackers.processes.failedTtlMs` |
 
 - Each tick (30 s) draws the pane and the band again, with no key and no state write. A row leaves the pane within one tick after its TTL.
-- A row with no end time is never hidden. An ended agent whose child is still shown stays, dimmed, so the tree keeps its shape. The master agent never hides.
-- The Agents note keeps counting every ended agent and ends with the hidden count: `2 running · 29 ended (26 hidden)`. The Processes note counts the rows it shows: `3 tracked (5 hidden)`. The Processes band counts shown rows only, so a hidden row is not in it.
+- A row with no end time is never hidden. An ended agent whose child is still shown stays, dimmed, so the tree keeps its shape. The master agent never hides. A worktree row counts as removed from the first round that finds its directory gone. The root worktree and a live one never hide.
+- The Agents note keeps counting every ended agent and ends with the hidden count: `2 running · 29 ended (26 hidden)`. The Worktrees note does the same with its removed rows: `git · 2 live · 1 removed · checked 5m ago (1 hidden)`. The Processes note counts the rows it shows: `3 tracked (5 hidden)`. The Processes band counts shown rows only, so a hidden row is not in it.
 - `/track show-all` shows every hidden row again, in the pane and in the `/track` text, until you call it again or `/clear`. It is a switch of the session. It is not stored, and it never changes `config.json`.
-- `trackers.auto.hideEnded` or `trackers.processes.hideEnded` set to `false` turns the hiding off for that tracker. Every row shows, and the notes read as before.
+- `trackers.auto.hideEnded` or `trackers.processes.hideEnded` set to `false` turns the hiding off for that tracker. Every row shows, and the notes read as before. A finished workflow run still folds: set `trackers.auto.foldWorkflows` to `false` to show its agents as rows.
+
+**Workflow runs.** Once every agent of a workflow run has ended, the Agents section shows the run as one row, `✓ wf_a35565  15 agents · 1 failed`. The row is closed. Enter opens it to the agent rows. Its mark is `✗` when an agent of the run failed. A run with one live agent, or with a live agent below one of its agents, does not fold: its agents show as rows. `x` is dim on the run row, and `/track clear` leaves it alone. `x` on an agent row below it works as before. A run hides as a unit: its row and all its agents leave the view when every agent of the run, and every agent below one, is past its own TTL, so a failed agent keeps the whole run for up to 60 min. Every workflow agent label starts with the short run id (`wf_a35565·3 architect`), so `wf·1` of one run is not the `wf·1` of another. `trackers.auto.foldWorkflows` set to `false` turns the fold off. The `/track` text does not fold: it prints the run row and every agent below it.
+
+**Process names.** A word of a process name that starts with the session root shows from `./`: `node /work/app/server.js` shows as `node ./app/server.js`. The stored name and the fingerprint do not change, so the probe still finds the process. A path outside the root keeps its full text. On a Windows root (`C:\work`) a word may use `\` or `/`. The Name column cuts a long name in the middle, so both ends stay.
+
+**Process row cap.** The Processes section shows at most `trackers.processes.maxRows` rows (200). Past that, the oldest ended rows leave the view first, by their end time. A live row never leaves, so a list of live rows can pass the cap. The rows over the cap count in the hidden count of the note, and `/track show-all` shows them. The cap is a view: the state keeps every row.
+
+**Selection.** When the row you selected hides (its TTL, the cap or a fold), the selection moves to a shown row: the next row of the last drawing, else the one before it. For a row that a closed run row now holds, it is the run row. The `>`, `x` and the digit keys follow it. On a run row `x` is dim, because a run row cannot be dismissed. The selection is not written until you press a key that selects a row, so a row that comes back (`/track show-all`) is selected again.
 
 ### Merge conflicts
 
@@ -405,6 +414,7 @@ Every key. Time values are in milliseconds.
 | `trackers.processes.hideEnded` | true | | | Hide an ended process row once its TTL has passed. See [Ended rows](#ended-rows). |
 | `trackers.processes.endedTtlMs` | 1800000 | 0 | 86400000 | Time after which a `completed`, `exited` or `unknown` row is hidden. 0 hides it at once. |
 | `trackers.processes.failedTtlMs` | 3600000 | 0 | 86400000 | Time after which a `failed` or `killed` row is hidden. |
+| `trackers.processes.maxRows` | 200 | 20 | 2000 | Rows that the Processes section shows. Past it, the oldest ended rows leave the view first. A live row never does. `hideEnded` false and `/track show-all` show every row. |
 | `trackers.auto.debounceMs` | 750 | 50 | 60000 | Window that groups the events of auto tracking. |
 | `trackers.auto.gitTimeoutMs` | 5000 | 500 | 60000 | Timeout of one `git` call of auto tracking. |
 | `trackers.auto.workflowIdleMs` | 3600000 | 60000 | 86400000 | Time with no sign of life after which a workflow agent ends as stale. |
@@ -414,6 +424,8 @@ Every key. Time values are in milliseconds.
 | `trackers.auto.hideEnded` | true | | | Hide an ended agent row once its TTL has passed. See [Ended rows](#ended-rows). |
 | `trackers.auto.endedTtlMs` | 600000 | 0 | 86400000 | Time after which an ended agent is hidden. 0 hides it at once. |
 | `trackers.auto.failedTtlMs` | 3600000 | 0 | 86400000 | Time after which a failed agent is hidden. |
+| `trackers.auto.removedTtlMs` | 600000 | 0 | 86400000 | Time after which a removed worktree row is hidden. 0 hides it at once. |
+| `trackers.auto.foldWorkflows` | true | | | Show a workflow run whose agents all ended as one row. See [Ended rows](#ended-rows). |
 
 ## Prompt sections
 
@@ -461,8 +473,8 @@ Cost. A block is short: 134 characters for one link, 164 for two (about 34 and 4
 ## Known limits
 
 - **False positives.** `rank #1` counts as issue 1 of the session repo. The scanner cannot tell it from `fixed in #1`.
-- **Hidden rows.** A row leaves the view up to one tick (30 s) after its TTL. A workflow agent that finished can look running for up to `trackers.auto.workflowIdleMs` (60 min), so its TTL starts late. The `/track` text prints every child of a row, so it does not fold. An ended process row that an older version stored has no end time. It gets one when the session is restored, and hides after its TTL from then.
-- **Focus after a background change.** A row that appears or leaves above the focus ring moves the ring onto another row: the ring sits on a position, not on a row. The `>` and the highlight stay on your row, and `x` and the digits act on it, not on the ring. Tab moves the ring again. After `x` or a digit, the ring goes back to the selected row. After a `ctrl+x Tab` chord or a second `/track` gives the keys back to the pane, the ring starts on the selected row (on the first row when none is selected). `r` leaves the ring where it was. When the row you selected is the one that its TTL hides, the `>` leaves with it: the ring falls on the first row, and `x` and the digits are off until you select a row again.
+- **Hidden rows.** A row leaves the view up to one tick (30 s) after its TTL. A workflow agent that finished can look running for up to `trackers.auto.workflowIdleMs` (60 min), so its TTL starts late. The `/track` text prints every child of a row, so it does not fold a workflow run. An ended process row that an older version stored has no end time. It gets one when the session is restored, and hides after its TTL from then. The process row cap hides rows in the view only: the state of a long session still keeps every process row.
+- **Focus after a background change.** A row that appears or leaves above the focus ring moves the ring onto another row: the ring sits on a position, not on a row. The `>` and the highlight stay on your row, and `x` and the digits act on it, not on the ring. Tab moves the ring again. After `x` or a digit, the ring goes back to the selected row. After a `ctrl+x Tab` chord or a second `/track` gives the keys back to the pane, the ring starts on the selected row (on the first row when none is selected). `r` leaves the ring where it was. When the row you selected hides, the selection moves to a shown row (see [Ended rows](#ended-rows)).
 - **Keys in the prompt on the desktop.** The dim `>` and the line `Keys go to the prompt.` were checked in a terminal only. The desktop gives the pane the same `isFocused` flag, but nobody has run it there yet, so a desktop pane may show the hint at times when it has the keys. The click on a row that asks for the keys ([#115](https://github.com/martin-macak/claude-code-mod-tracking/issues/115)) was checked in a terminal only.
 - **Click on a row.** Only the `▸` or `▾` takes a click. A click on the text of a row, or on its gutter, does nothing. A click on the `▸` of a row while the keys are in the prompt asks the engine to give them to the pane. The engine refuses while the prompt box holds text: the row is still selected and opened, the keys stay in the prompt and the hint stays. Clear the prompt box and click again. [#108](https://github.com/martin-macak/claude-code-mod-tracking/issues/108) holds the spikes for a whole-row click and for arrows that walk the rows.
 - **Merge conflicts.** The `c` and `f` keys work for PRs that the PR lane found, not for a PR you only named. `f` fetches `origin`: another remote name gives `files unknown`. There is no `resolve all` for a stack: resolve the bottom PR first, then the next.

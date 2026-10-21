@@ -141,14 +141,14 @@ test('turn.complete with the agent id dims an agent the list does not hold; reas
   expect(text).toContain('✗ second')
 })
 
-test('a workflow agent.spawn lists a wf·3 row', async ($, on) => {
+test('a workflow agent.spawn lists a wf_a35565·3 row', async ($, on) => {
   const w = world(on)
   repo(w)
   await $.session.start(START)
   w.fake.spawnId = 'w1'
   await $.agent.spawn(ev.WORKFLOW_SPAWN_INPUT as never)
   await settle(w, WINDOW)
-  expect(await textOf($)).toContain('● wf·3 architect')
+  expect(await textOf($)).toContain('● wf_a35565·3 architect')
 })
 
 test('a workflow agent row shows the wf worktree it runs in before any commit, and keeps it when it is removed (#120)', async ($, on) => {
@@ -159,11 +159,11 @@ test('a workflow agent row shows the wf worktree it runs in before any commit, a
   // The engine gives a workflow agent no cwd. The agent has run no commit or push, so no branch is known for it.
   await $.agent.spawn({ ...ev.WORKFLOW_SPAWN_INPUT, cwd: undefined } as never)
   await settle(w, WINDOW)
-  expect(await textOf($)).toContain('● wf·3 architect  worktree-wf_a35565-3  wf_a35565-3') // ids compact to 6 hex
+  expect(await textOf($)).toContain('● wf_a35565·3 architect  worktree-wf_a35565-3  wf_a35565-3') // ids compact to 6 hex
   w.fake.porcelain = porcelain()
   await settle(w, TICK) // the worktree is gone from porcelain: the agent keeps it
   const text = await textOf($)
-  expect(text).toContain('● wf·3 architect')
+  expect(text).toContain('● wf_a35565·3 architect')
   expect(text).toContain('wf_a35565-3')
   expect(text).not.toContain('architect  main')
 })

@@ -7,6 +7,7 @@ import type { Json } from '../../core/interfaces/items'
 import type { ColumnDef, SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
 import { content, flex, type Tone, textCells } from '../../core/lib/rows'
 import type { ProcessesConfig } from './config'
+import { fromRoot } from './names'
 import { processReasons } from './reasons'
 import { asRows } from './rows'
 import { ENDED_STATES, FAILED_STATES } from './states'
@@ -15,7 +16,7 @@ import { UI_FACT } from './watch'
 
 const COLUMNS: readonly ColumnDef[] = [
   { id: 'key', header: 'Kind', width: content(3, 7), role: 'tree' },
-  { id: 'title', header: 'Name', width: flex(10) },
+  { id: 'title', header: 'Name', width: flex(10), clip: 'middle' },
   { id: 'type', header: 'Type', width: content(undefined, 18), priority: 1 },
   { id: 'status', header: 'State', width: content(undefined, 10) },
 ]
@@ -36,14 +37,14 @@ const KIND_KEY: Record<ProcessKind, string> = {
 const toneOf = (state: string): Tone =>
   BAD.has(state) ? 'bad' : state === 'up' || state === 'running' ? 'ok' : 'plain'
 
-/** A process row can be neither dismissed nor marked. */
-function processRow(r: ProcessRecord): TreeRow {
+/** A process row can be neither dismissed nor marked. The Name shows a path under the session root from `./`. */
+function processRow(r: ProcessRecord, root: string | undefined): TreeRow {
   return {
     id: r.id,
     owner: 'processes',
     cells: textCells({
       key: KIND_KEY[r.kind],
-      title: r.name,
+      title: fromRoot(r.name, root),
       type: r.kind.replace('-', ' '),
       status: r.state,
       tone: toneOf(r.state),
@@ -62,15 +63,30 @@ function expired(r: ProcessRecord, cfg: ProcessesConfig, now: number): boolean {
   return now - r.endedAt >= (FAILED_STATES.has(r.state) ? cfg.failedTtlMs : cfg.endedTtlMs)
 }
 
+/**
+ * The ids of the rows over `max`. The oldest ended rows go first, by `endedAt` (a row with none, by its first sighting).
+ * A live row never goes, so live rows alone may pass `max`. Rule: issue #49.
+ */
+function overCap(rows: readonly ProcessRecord[], max: number): ReadonlySet<string> {
+  const extra = rows.length - max
+  if (extra <= 0) return new Set()
+  const ended = rows.filter(r => ENDED_STATES.has(r.state))
+  ended.sort((a, b) => (a.endedAt ?? a.firstSeen) - (b.endedAt ?? b.firstSeen))
+  return new Set(ended.slice(0, extra).map(r => r.id))
+}
+
 /** The Processes section. Left out when there is no row and no Docker issue to tell. */
 export function sections(ctx: ViewContext<ProcessesConfig, Json>): readonly SectionSpec[] {
   const all = asRows(ctx.data)
   const ui = ctx.facts.read<Json>(UI_FACT) as unknown as ProcessUiState | undefined
   if (all.length === 0 && !ui?.dockerIssue) return []
   // The note, the band and the rows all read the shown rows. `/track show-all` and `hideEnded: false` show every row.
+  // The TTL hides first. Then the rows over `maxRows` go, oldest ended first. Both count as hidden.
   const cfg = ctx.config.slice()
   const hiding = cfg.hideEnded && !ctx.hidden.showAll
-  const rows = hiding ? all.filter(r => !expired(r, cfg, ctx.now)) : all
+  const fresh = hiding ? all.filter(r => !expired(r, cfg, ctx.now)) : all
+  const capped = hiding ? overCap(fresh, cfg.maxRows) : new Set<string>()
+  const rows = capped.size > 0 ? fresh.filter(r => !capped.has(r.id)) : fresh
   const hidden = all.length - rows.length
   return [
     {
@@ -80,7 +96,7 @@ export function sections(ctx: ViewContext<ProcessesConfig, Json>): readonly Sect
       rank: 80,
       band: { label: 'Processes', count: rows.length, failing: rows.filter(r => BAD.has(r.state)).length, rank: 10 },
       columns: COLUMNS,
-      rows: rows.map(processRow),
+      rows: rows.map(r => processRow(r, ctx.root)),
     },
   ]
 }

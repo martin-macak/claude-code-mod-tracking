@@ -8,7 +8,7 @@ import { content, flex, textCells } from '../../core/lib/rows'
 import { ago, compactIds } from '../../core/lib/text'
 import type { AutoConfig } from './config'
 import { FACT_CHECKED_AT } from './facts'
-import { agentRowId } from './ids'
+import { agentRowId, shortRunId, workflowRowId, worktreeId } from './ids'
 import { autoReasonsOf } from './reasons'
 import type { AgentRow, AutoState, WorktreeRow } from './types'
 
@@ -57,15 +57,36 @@ function worktreeRow(auto: AutoState, r: WorktreeRow, children?: readonly TreeRo
   }
 }
 
+/**
+ * True for a removed child that was removed longer ago than `removedTtlMs`. The time is the `removedAt` of the child's
+ * proof, by row id. A row with no proof or no `removedAt` is never expired, and a live row never is. Rule: issue #49.
+ */
+function expiredWorktree(
+  r: WorktreeRow,
+  removedAt: ReadonlyMap<string, number | undefined>,
+  cfg: AutoConfig,
+  now: number,
+): boolean {
+  if (r.state !== 'removed') return false
+  const at = removedAt.get(r.id)
+  return at !== undefined && now - at >= cfg.removedTtlMs
+}
+
 function worktreesSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
   const snap = auto.snapshot
   if (!snap || typeof auto.root?.top !== 'string') return null
   const kids = snap.worktrees.filter(r => r.depth === 1)
   if (kids.length === 0) return null
   const root = snap.worktrees.find(r => r.depth === 0)
-  const rows = kids.map(r => worktreeRow(auto, r))
+  // The note counts every child, hidden or not. The hidden count, last, says how many removed ones the view leaves out.
+  const cfg = ctx.config.slice()
+  const removedAt = new Map(auto.worktrees.map(p => [worktreeId(p.path), p.removedAt]))
+  const hiding = cfg.hideEnded && !ctx.hidden.showAll
+  const shown = kids.filter(r => !(hiding && expiredWorktree(r, removedAt, cfg, ctx.now)))
+  const rows = shown.map(r => worktreeRow(auto, r))
   const live = kids.filter(r => r.state === 'live').length
   const removed = kids.length - live
+  const hidden = kids.length - shown.length
   // The time of the last round is the fact; a snapshot that no round has stamped yet reads its own age.
   const checkedAt = ctx.facts.read<number>(FACT_CHECKED_AT)
   const age = ago(Math.max(0, ctx.now - (checkedAt ?? snap.at)))
@@ -80,7 +101,7 @@ function worktreesSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
   return {
     id: 'worktrees',
     title: 'Worktrees',
-    note: { text: note },
+    note: { text: hidden > 0 ? `${note} (${hidden} hidden)` : note },
     rank: 10,
     band: { label: 'Worktrees', count: live, failing: 0, rank: 7 },
     columns: WORKTREE_COLUMNS,
@@ -112,12 +133,11 @@ function nest(list: readonly AgentRow[]): AgentNode[] {
   return roots
 }
 
-function agentRow(auto: AutoState, { row: r, kids }: AgentNode): TreeRow {
+/** The row of one agent, with its children already drawn. A workflow agent says the run it belongs to (issue #49). */
+function agentRow(auto: AutoState, r: AgentRow, children: readonly TreeRow[]): TreeRow {
   const master = r.kind === 'master'
-  const children = kids.map(k => agentRow(auto, k))
   const reasons = autoReasonsOf(auto, r.id)
-  const wf = r.workflow ? `wf·${r.workflow.agentIndex} ` : ''
-  const done = r.state === 'ended' || r.state === 'failed'
+  const wf = r.workflow ? `${shortRunId(r.workflow.runId)}·${r.workflow.agentIndex} ` : ''
   return {
     id: r.id,
     owner: OWNER,
@@ -131,9 +151,14 @@ function agentRow(auto: AutoState, { row: r, kids }: AgentNode): TreeRow {
     ...(master ? { expandedByDefault: true } : {}),
     can: can(!master),
     ...(reasons ? { reasons } : {}),
-    ...(done ? { dim: true } : {}),
+    ...(isDone(r) ? { dim: true } : {}),
   }
 }
+
+const isDone = (r: AgentRow): boolean => r.state === 'ended' || r.state === 'failed'
+
+const plainRows = (auto: AutoState, nodes: readonly AgentNode[]): TreeRow[] =>
+  nodes.map(n => agentRow(auto, n.row, plainRows(auto, n.kids)))
 
 /**
  * True for an agent row that is over and ended longer ago than its TTL: `failedTtlMs` for a failure, else `endedTtlMs`.
@@ -146,7 +171,7 @@ function expiredAgent(
   cfg: AutoConfig,
   now: number,
 ): boolean {
-  if (r.kind === 'master' || (r.state !== 'ended' && r.state !== 'failed')) return false
+  if (r.kind === 'master' || !isDone(r)) return false
   const at = endedAt.get(r.id)
   return at !== undefined && now - at >= (r.state === 'failed' ? cfg.failedTtlMs : cfg.endedTtlMs)
 }
@@ -165,6 +190,118 @@ function prune(nodes: readonly AgentNode[], gone: (r: AgentRow) => boolean, hidd
   return kept
 }
 
+/** A finished workflow run drawn as one row. `members` are its agent nodes, from wherever they sit in the tree. */
+type RunNode = { runId: string; members: AgentNode[] }
+/** What the section draws: an agent with what is shown below it, or a finished run. */
+type Shown = { row: AgentRow; kids: Shown[] } | RunNode
+type RunStat = { agents: number; failed: number }
+
+/**
+ * The run ids that fold: every agent of the run is over, and so is every agent below one. A run with one live agent, or
+ * with a live agent below one of its agents, stays as plain rows. Rule: issue #49.
+ */
+function finishedRuns(roots: readonly AgentNode[]): Set<string> {
+  const seen = new Set<string>()
+  const open = new Set<string>()
+  const over = (n: AgentNode): boolean => isDone(n.row) && n.kids.every(over)
+  const walk = (nodes: readonly AgentNode[]): void => {
+    for (const n of nodes) {
+      const id = n.row.workflow?.runId
+      if (id !== undefined) {
+        seen.add(id)
+        if (!over(n)) open.add(id)
+      }
+      walk(n.kids)
+    }
+  }
+  walk(roots)
+  return new Set([...seen].filter(id => !open.has(id)))
+}
+
+/**
+ * Which folded runs go: a run goes when every agent of it, and every agent below one, is past its TTL. A young agent
+ * below a run agent keeps the run whole, so the fold row, its count and its children still agree. Rule: issue #49.
+ */
+function goneRuns(
+  roots: readonly AgentNode[],
+  runs: ReadonlySet<string>,
+  expired: (r: AgentRow) => boolean,
+): Map<string, boolean> {
+  const settled = (n: AgentNode): boolean => expired(n.row) && n.kids.every(settled)
+  const gone = new Map<string, boolean>([...runs].map(id => [id, true]))
+  const walk = (nodes: readonly AgentNode[]): void => {
+    for (const n of nodes) {
+      const id = n.row.workflow?.runId
+      if (id !== undefined && gone.has(id) && !settled(n)) gone.set(id, false)
+      walk(n.kids)
+    }
+  }
+  walk(roots)
+  return gone
+}
+
+/**
+ * The agents of each folded run go into one run node, placed where the run's first agent was. The agents below it are
+ * the members as they are. Other rows keep their place, and their children fold the same way. `open` is shared by the
+ * whole tree, so a run never gets two rows, even when its agents sit below different parents.
+ */
+function fold(nodes: readonly AgentNode[], runs: ReadonlySet<string>, open = new Map<string, RunNode>()): Shown[] {
+  const out: Shown[] = []
+  for (const n of nodes) {
+    const id = n.row.workflow?.runId
+    if (id === undefined || !runs.has(id)) {
+      out.push({ row: n.row, kids: fold(n.kids, runs, open) })
+      continue
+    }
+    let run = open.get(id)
+    if (!run) {
+      run = { runId: id, members: [] }
+      open.set(id, run)
+      out.push(run)
+    }
+    run.members.push(n)
+  }
+  return out
+}
+
+/** The agent count and the failed count of each run, over every agent row of it, hidden or not. */
+function runStats(list: readonly AgentRow[]): Map<string, RunStat> {
+  const stats = new Map<string, RunStat>()
+  for (const r of list) {
+    if (!r.workflow) continue
+    const s = stats.get(r.workflow.runId) ?? { agents: 0, failed: 0 }
+    s.agents++
+    if (r.state === 'failed') s.failed++
+    stats.set(r.workflow.runId, s)
+  }
+  return stats
+}
+
+/** The row of a folded run. It is closed until the person opens it, and it cannot be dismissed as a whole. */
+function runRow(auto: AutoState, run: RunNode, stat: RunStat): TreeRow {
+  return {
+    id: workflowRowId(run.runId),
+    owner: OWNER,
+    cells: textCells({
+      key: `${stat.failed > 0 ? '✗' : '✓'} ${shortRunId(run.runId)}`,
+      title: `${stat.agents} ${stat.agents === 1 ? 'agent' : 'agents'} · ${stat.failed} failed`,
+      type: '',
+    }),
+    children: plainRows(auto, run.members),
+    can: can(false),
+    dim: true,
+  }
+}
+
+function shownRow(auto: AutoState, s: Shown, stats: ReadonlyMap<string, RunStat>): TreeRow {
+  if ('runId' in s) return runRow(auto, s, stats.get(s.runId) ?? { agents: s.members.length, failed: 0 })
+  return agentRow(
+    auto,
+    s.row,
+    s.kids.map(k => shownRow(auto, k, stats)),
+  )
+}
+
 function agentsSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
   const snap = auto.snapshot
   if (!snap || snap.agents.length <= 1) return null
@@ -179,8 +316,18 @@ function agentsSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
   const cfg = ctx.config.slice()
   const endedAt = new Map(auto.agents.map(p => [agentRowId(p.id), p.endedAt]))
   const hiding = cfg.hideEnded && !ctx.hidden.showAll
+  const tree = nest(snap.agents)
+  // A finished run folds as a unit (issue #49): its rows go together, when every agent of it is past its own TTL.
+  const runs = cfg.foldWorkflows ? finishedRuns(tree) : new Set<string>()
+  const runGone = goneRuns(tree, runs, r => expiredAgent(r, endedAt, cfg, ctx.now))
+  const gone = (r: AgentRow): boolean =>
+    hiding &&
+    (r.workflow && runs.has(r.workflow.runId)
+      ? runGone.get(r.workflow.runId) === true
+      : expiredAgent(r, endedAt, cfg, ctx.now))
   const hidden = { n: 0 }
-  const nodes = prune(nest(snap.agents), r => hiding && expiredAgent(r, endedAt, cfg, ctx.now), hidden)
+  const items = fold(prune(tree, gone, hidden), runs)
+  const stats = runStats(snap.agents)
   const parts = [...(running > 0 ? [`${running} running`] : []), ...(ended > 0 ? [`${ended} ended`] : [])]
   if (!snap.agentList.ok) parts.push('agent list failed')
   const note = parts.join(' · ')
@@ -191,7 +338,7 @@ function agentsSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
     rank: 11,
     band: { label: 'Agents', count: running, failing: 0, rank: 8 },
     columns: AGENT_COLUMNS,
-    rows: nodes.map(node => agentRow(auto, node)),
+    rows: items.map(s => shownRow(auto, s, stats)),
   }
 }
 

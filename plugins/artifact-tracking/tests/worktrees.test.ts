@@ -205,7 +205,8 @@ test('a prunable record never renews seenAt: rounds with the same record give th
   const list = [root(), rec(`${DIR}/dead`, 'worktree-dead', { prunable: 'gitdir missing' })]
   let s = base({ worktrees: [proof(`${DIR}/dead`, { seenAt: 2, branch: 'worktree-dead' })] })
   const first = trackWorktrees(s, list, AT)
-  expect(first.state).toBe(s)
+  // The first round that finds the child removed dates it (issue #49). Only `removedAt` is new: `seenAt` stays.
+  expect(first.state.worktrees).toEqual([{ ...s.worktrees[0], removedAt: AT }])
   for (const step of [10, 20, 30]) {
     s = withRows(first.state, first.rows)
     const again = trackWorktrees(s, list, AT + step)
@@ -228,4 +229,41 @@ test('more convention worktrees than maxProofs: the list stays full and a second
   const second = trackWorktrees(first.state, list, AT + 10)
   expect(second.state).toBe(first.state)
   expect(second.rows).toEqual(first.rows)
+})
+
+// Issue #49: a removed child gets `removedAt` once, so the view can hide it after `removedTtlMs`. It is the only write.
+test('a proof with no record gets removedAt at the first round that finds it removed, and the next round keeps it (A22)', () => {
+  const s = base({ worktrees: [proof(`${DIR}/gone`, { seenAt: 2 })] })
+  const first = trackWorktrees(s, [root()], AT)
+  expect(first.rows[1]?.state).toBe('removed')
+  expect(first.state.worktrees[0]).toMatchObject({ seenAt: 2, removedAt: AT })
+  const saved = withRows(first.state, first.rows)
+  const second = trackWorktrees(saved, [root()], AT + 60_000)
+  expect(second.state.worktrees[0]?.removedAt).toBe(AT) // the first time stays
+  expect(second.state).toBe(saved) // and a quiet round changes nothing
+})
+
+test('a prunable record counts as removed: it sets removedAt too', () => {
+  const list = [root(), rec(`${DIR}/dead`, 'worktree-dead', { prunable: 'gitdir missing' })]
+  const v = trackWorktrees(base({ worktrees: [proof(`${DIR}/dead`, { seenAt: 2 })] }), list, AT)
+  expect(v.rows[1]?.state).toBe('removed')
+  expect(v.state.worktrees[0]?.removedAt).toBe(AT)
+})
+
+test('a live child has no removedAt, and a removed child that comes back live loses it', () => {
+  const live = trackWorktrees(base({ worktrees: [proof(`${DIR}/w`)] }), [root(), rec(`${DIR}/w`, 'b')], AT)
+  expect(live.state.worktrees[0]).not.toHaveProperty('removedAt')
+  const gone = trackWorktrees(live.state, [root()], AT + 10)
+  expect(gone.state.worktrees[0]?.removedAt).toBe(AT + 10)
+  const back = trackWorktrees(withRows(gone.state, gone.rows), [root(), rec(`${DIR}/w`, 'b')], AT + 20)
+  expect(back.rows[1]?.state).toBe('live')
+  expect(back.state.worktrees[0]).not.toHaveProperty('removedAt')
+})
+
+test('a dismissed removed child leaves the rows and its proof is dated once as well', () => {
+  const s = base({ worktrees: [proof(`${DIR}/gone`)], dismissed: [`wt:${DIR}/gone`] })
+  const v = trackWorktrees(s, [root()], AT)
+  expect(v.rows).toHaveLength(1)
+  expect(v.state.worktrees[0]?.removedAt).toBe(AT)
+  expect(trackWorktrees(v.state, [root()], AT + 5).state).toBe(v.state)
 })

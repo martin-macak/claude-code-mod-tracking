@@ -18,6 +18,11 @@ export type WorktreeProof = {
   provenAt: number
   /** Set when a round first matches it in porcelain, and again when it is matched after it was `removed`. Absent: never seen live. */
   seenAt?: number
+  /**
+   * When a round first found the child removed (no record, or a prunable one). Absent while it is live. The first time
+   * stays while it remains removed. The view hides the row `removedTtlMs` after it (issue #49).
+   */
+  removedAt?: number
 }
 
 export type AgentKind = 'subagent' | 'workflow'

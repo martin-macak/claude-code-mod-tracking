@@ -316,7 +316,8 @@ test('the github columns are A1’s, in order', async () => {
 })
 
 // Main cut these cells in the middle (`truncate-middle`): a branch or a path keeps both ends. Every other column is cut at the end.
-test('the branch and path columns cut in the middle, every other column at the end', async () => {
+// The Name of a process row joined them in issue #49: its path shows from `./`, and the end of a command matters.
+test('the branch, path and process name columns cut in the middle, every other column at the end', async () => {
   const t = await paneWorld()
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)
   const middle = sections.flatMap(s => s.columns.filter(c => c.clip === 'middle').map(c => [s.id, c.id, c.header]))
@@ -328,11 +329,12 @@ test('the branch and path columns cut in the middle, every other column at the e
     ['repos', 'title', 'Branch'],
     ['repos', 'type', 'Agents'],
     ['file', 'title', 'File'],
+    ['processes', 'title', 'Name'], // issue #49: a command with a long path keeps both ends
   ])
   const titles = section(sections, 'github').columns.find(c => c.id === 'title')
   expect(titles?.clip ?? 'end').toBe('end')
   expect(section(sections, 'prs').columns.find(c => c.id === 'title')?.clip ?? 'end').toBe('end')
-  for (const id of ['jira', 'web', 'artifact', 'processes'])
+  for (const id of ['jira', 'web', 'artifact'])
     expect(section(sections, id).columns.filter(c => c.clip === 'middle')).toEqual([])
 })
 

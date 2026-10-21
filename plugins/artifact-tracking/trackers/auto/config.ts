@@ -16,6 +16,10 @@ export const AUTO_SCHEMA = {
   hideEnded: bool(true),
   endedTtlMs: int(600000, 0, 86400000),
   failedTtlMs: int(3600000, 0, 86400000),
+  // A removed worktree row leaves the view after the TTL, counted from the proof's `removedAt`.
+  removedTtlMs: int(600000, 0, 86400000),
+  // A workflow run whose agents have all ended is one row (`ag:wf:<runId>`) that opens to its agents.
+  foldWorkflows: bool(true),
 } as const satisfies Schema
 
 export type AutoConfig = ConfigOf<typeof AUTO_SCHEMA>

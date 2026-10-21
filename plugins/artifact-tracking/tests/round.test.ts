@@ -203,12 +203,15 @@ test('a prunable record of a proven child: rounds after the first make no auto w
     porcelain(['probe-wt', 'worktree-probe-wt']) + 'prunable gitdir file points to non-existent location\n'
   await t.run('start')
   expect(t.auto().snapshot?.worktrees.map(r => r.state)).toEqual(['live', 'removed'])
+  const removedAt = t.auto().worktrees[0]?.removedAt // the first round dated the removal (issue #49)
+  expect(removedAt).toBeDefined()
   const saves = t.log.saves
   for (let i = 0; i < 3; i++) {
     t.state.now += 30_000
     await t.run('tick')
   }
   expect(t.log.saves).toBe(saves)
+  expect(t.auto().worktrees[0]?.removedAt).toBe(removedAt) // and the clock that moved did not move it
 })
 
 test('a workflow agent keeps the worktree it ran in after a new worktree checks out its branch (#120)', async () => {
