@@ -33,8 +33,11 @@ export interface GlobalConfig {
     readonly maxDismissed: number
     readonly maxBytes: number
   }
-  readonly ui: { readonly maxRows: number; readonly sectionRows: number }
+  readonly ui: { readonly maxRows: number; readonly sectionRows: number; readonly turnStrip: TurnStripMode }
 }
+
+/** What the strip under each answer is (issue #69): nothing, one line of text, or the counts and an open Button on the duration line. */
+export type TurnStripMode = 'off' | 'text' | 'interactive'
 
 /** The live view of the config a tracker gets. A changed file shows on the next call. */
 export interface ConfigView<C> {

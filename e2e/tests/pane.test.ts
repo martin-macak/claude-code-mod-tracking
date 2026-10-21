@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { arrowOf, focusedTexts, paneTextAt, selectedLine, withFocus } from '../support/pane.ts'
+import { arrowOf, focusedTexts, paneTextAt, selectedLine, stripOpenAt, withFocus } from '../support/pane.ts'
 
 test('selectedLine finds the row with the > gutter', () => {
   const line = 'abc │> ▲ ▸ two.example/b  two.example/b'
@@ -99,4 +99,28 @@ test('paneTextAt ignores the transcript left of the border and a line with no bo
   assert.deepEqual(paneTextAt(screen, 'x: dismiss'), { column: 6, row: 3 })
   assert.equal(paneTextAt('❯ 2 more │ none', '2 more'), undefined)
   assert.equal(paneTextAt('', 'x'), undefined)
+})
+
+// Issue #69, P2. The strip of `interactive` is one row under the duration line: two spaces, the counts, `open`. The lines
+// below are what `tmux capture-pane -p` returned for a live fullscreen session (Claude Code 2.1.306).
+test('stripOpenAt gives the 1-based column and row of the word open on the strip row, one cell inside the word', () => {
+  const screen = '⏺ noted https://example.com/alpha\n\n✻ Baked for 1s · done 1:26 PM\n  +2 new open\n\n❯ '
+  assert.deepEqual(stripOpenAt(screen), { column: 11, row: 4 })
+  assert.deepEqual(stripOpenAt('  +1 new · 1 seen again open'), { column: 26, row: 1 })
+  assert.deepEqual(stripOpenAt('  3 seen again open'), { column: 17, row: 1 })
+})
+
+test('stripOpenAt finds the row beside a docked pane too', () => {
+  const screen =
+    '✻ Baked for 1s · done 1:26 PM                                           │\n  +2 new open                                                           │'
+  assert.deepEqual(stripOpenAt(screen), { column: 11, row: 2 })
+})
+
+test('stripOpenAt ignores the band, the main-screen strip with no Button and the text line', () => {
+  const band = 'tracking Links 2 turn 1 +2 new 9: open /track                                  [-]'
+  assert.equal(stripOpenAt(band), undefined)
+  assert.equal(stripOpenAt('  +2 new'), undefined) // the main screen draws the counts only
+  assert.equal(stripOpenAt('⏺ artifact-tracking+cc-plugin-agents-md: +2 new · /track turn 1'), undefined)
+  assert.equal(stripOpenAt('│  +2 new open'), undefined) // a row of the pane is not the transcript
+  assert.equal(stripOpenAt(''), undefined)
 })

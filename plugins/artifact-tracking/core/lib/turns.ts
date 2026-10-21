@@ -70,6 +70,14 @@ const put = (pairs: Pairs, key: string, ord: number): Pairs =>
 /** The record of a turn. */
 export const recordOf = (l: TurnLedger, ord: number): TurnRecord | undefined => l.turns.find(r => r.ord === ord)
 
+/** The record of an engine turn id. A wake's turn id belongs to none: a wake opens the record of the turn it continues. */
+export const recordByTurnId = (l: TurnLedger, turnId: string): TurnRecord | undefined =>
+  l.turns.find(r => r.turnId === turnId)
+
+/** The record whose `turn_duration` row has this uuid: the `TurnDuration` line draws with it as its `requestId`. */
+export const recordByRow = (l: TurnLedger, uuid: string): TurnRecord | undefined =>
+  l.turns.find(r => r.durationRow === uuid)
+
 /** The ordinal of the newest record. */
 const latestOrd = (l: TurnLedger): number | undefined => l.turns.at(-1)?.ord
 
@@ -184,15 +192,24 @@ export function openTurn(l: TurnLedger, e: { turnId: string; text: string; sessi
  * A main-loop `turn.complete`. Commits the running turn with the engine's own word. The end of a wake closes it and
  * leaves the record as it was. A turn that is not the running one (its start was not heard) changes nothing. A word that
  * is not one of the four is not stored.
+ *
+ * `durationRow` is the uuid of the `turn_duration` row that the engine appended inside this `turn.complete` (issue #69, P2).
+ * The `TurnDuration` line is drawn with it as its `requestId`, so the record keeps it, in the same write as the commit: the
+ * row's own hook finishes after the `turn.complete` hook resumes (live, 2.1.306), so only the commit can pair them. A wake
+ * keeps none: it has no record of its own, and the record of the turn it continues has its row already.
  */
-export function commitTurn(l: TurnLedger, e: { turnId: string; reason: unknown; at: number }): TurnLedger {
+export function commitTurn(
+  l: TurnLedger,
+  e: { turnId: string; reason: unknown; at: number; durationRow?: string },
+): TurnLedger {
   const { open, ...rest } = l
   if (open === undefined || open.turnId !== e.turnId) return l
   if (open.wake === true) return rest
+  const row = e.durationRow !== undefined && e.durationRow !== '' ? { durationRow: e.durationRow } : {}
   return {
     ...rest,
     turns: l.turns.map(r =>
-      r.ord === open.ord ? { ...r, endedAt: e.at, ...(isEnd(e.reason) ? { end: e.reason } : {}) } : r,
+      r.ord === open.ord ? { ...r, endedAt: e.at, ...(isEnd(e.reason) ? { end: e.reason } : {}), ...row } : r,
     ),
   }
 }

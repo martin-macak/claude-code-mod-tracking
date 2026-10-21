@@ -5,7 +5,7 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.7. Plan: L4 Task 2.
 
 import type { GlobalConfig } from '../interfaces/config'
-import { deepFreeze, defaultsOf, int, normaliseWith, obj, type Schema } from './normalise'
+import { deepFreeze, defaultsOf, int, normaliseWith, obj, oneOf, type Schema } from './normalise'
 
 export const GLOBAL_SCHEMA = {
   refresh: obj({
@@ -26,7 +26,13 @@ export const GLOBAL_SCHEMA = {
     // Under the 4 MiB limit of one store key (engine constraint E18).
     maxBytes: int(3000000, 100000, 4000000),
   }),
-  ui: obj({ maxRows: int(300, 50, 1000), sectionRows: int(50, 5, 300) }),
+  // `turnStrip` (issue #69): the line under each answer that says what the turn tracked. `text` is a line of text, `interactive`
+  // draws the counts and an open Button on the duration line. Off by default (owner decision of 2026-10-21).
+  ui: obj({
+    maxRows: int(300, 50, 1000),
+    sectionRows: int(50, 5, 300),
+    turnStrip: oneOf('off', ['off', 'text', 'interactive']),
+  }),
 } as const satisfies Schema
 
 /** The block as it reads with no file. Frozen all the way down: a reader that wrote to it would change every other reader. */

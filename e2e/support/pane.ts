@@ -79,3 +79,18 @@ export function paneTextAt(screen: string, text: string): { column: number; row:
   }
   return undefined
 }
+
+// The strip of `ui.turnStrip: interactive` (issue #69, P2): one transcript row under the duration line, two cells in, with
+// the counts and the Button `open` (`  +3 new · 1 seen again open`). A docked pane may follow on the same screen line, after
+// a border. The band says `9: open` and starts with `tracking`, so it never matches.
+const STRIP = /^ {2}(?:\+\d+ new|\d+ seen again)(?: · \d+ seen again)? open(?= *(?:│|$))/
+
+// The 1-based column and row of the Button `open` of the first strip row, one cell inside the word (the click lands on its
+// second letter), or undefined. The main screen draws the counts with no Button, so no row matches there.
+export function stripOpenAt(screen: string): { column: number; row: number } | undefined {
+  for (const [at, line] of screen.split('\n').entries()) {
+    const found = STRIP.exec(line)
+    if (found !== null) return { column: found[0].length - 'open'.length + 2, row: at + 1 }
+  }
+  return undefined
+}

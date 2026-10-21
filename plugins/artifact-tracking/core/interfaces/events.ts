@@ -57,6 +57,11 @@ export interface TurnStartEvent {
 export interface TurnCompleteEvent {
   /** The `turn.complete` input: the reason and the loop. Untrusted. */
   readonly input: Json
+  /**
+   * The uuid of the `turn_duration` row that the engine appended inside this `turn.complete` (issue #69, P2): the
+   * `TurnDuration` line is drawn with it as its `requestId`. Absent when the hook saw none: an aborted turn has no such row.
+   */
+  readonly durationRow?: string
 }
 
 /** The Scheduler beat. */

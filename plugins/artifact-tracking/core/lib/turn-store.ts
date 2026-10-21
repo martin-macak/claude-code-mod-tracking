@@ -55,6 +55,7 @@ function recordFrom(v: unknown): TurnRecord | undefined {
     ...(moreNew !== undefined ? { moreNew } : {}),
     ...(moreSeen !== undefined ? { moreSeen } : {}),
     ...(wakes !== undefined ? { wakes } : {}),
+    ...(str(v.durationRow) && v.durationRow !== '' ? { durationRow: v.durationRow } : {}),
   }
 }
 

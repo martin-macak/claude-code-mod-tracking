@@ -110,6 +110,12 @@ export type TurnRecord = {
   readonly moreSeen?: number
   /** How often a finished task woke the main loop and put work into this turn. */
   readonly wakes?: number
+  /**
+   * The uuid of the `turn_duration` row of this turn (the engine appends it inside `turn.complete`, before the commit). The
+   * `TurnDuration` line is drawn with this uuid as its `requestId`, so it finds its record by it (issue #69, P2). Absent
+   * when no such row reached the mod: an aborted turn has none.
+   */
+  readonly durationRow?: string
 }
 
 /**

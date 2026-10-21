@@ -1,6 +1,6 @@
 import { When } from '@cucumber/cucumber'
 import { clickUntil } from '../support/click.ts'
-import { arrowOf, paneTextAt, selectedLine } from '../support/pane.ts'
+import { arrowOf, paneTextAt, selectedLine, stripOpenAt } from '../support/pane.ts'
 import { sleep } from '../support/wait.ts'
 import type { DemoWorld } from '../support/world.ts'
 
@@ -59,3 +59,24 @@ When('I click {string} in the pane to give it the keys', async function (this: D
     what: `a click on "${text}" did not give the pane the keys`,
   })
 })
+
+// Issue #69, P2. A click on the `open` Button of the strip that `ui.turnStrip: interactive` draws under the duration line.
+// The click is a press: the pane opens with the keys and the first entry of that turn is selected. A click that lands while
+// the line still draws can be lost, so the step clicks again while the row is not selected. It is done when the pane selects
+// the row. The click is a synthetic SGR click, as in the steps above, not a real mouse.
+When(
+  'I click the open Button of the strip until the pane selects the row showing {string}',
+  async function (this: DemoWorld, text: string) {
+    this.tl.phase('normal')
+    await clickUntil({
+      capture: () => this.tmux.capture(),
+      locate: screen => stripOpenAt(screen),
+      click: (column, row) => this.tmux.click(column, row),
+      landed: screen => selectedLine(screen)?.includes(text) === true,
+      tries: TRIES,
+      waitMs: WAIT_MS,
+      settleMs: SETTLE_MS,
+      what: `a click on the open Button of the strip did not make the pane select the row showing "${text}"`,
+    })
+  },
+)

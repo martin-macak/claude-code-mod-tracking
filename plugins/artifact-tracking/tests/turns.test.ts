@@ -28,6 +28,8 @@ import {
   openTurn,
   PROMPT_CHARS,
   personPrompt,
+  recordByRow,
+  recordByTurnId,
   recordOf,
   spawned,
   startsTask,
@@ -640,4 +642,50 @@ test('R7: joinLedgers with agent and call pairs on both sides: the live pair of 
   const capped = joinLedgers({ ...emptyLedger(), agents: full, calls: full }, stored)
   expect(capped.agents).toEqual(full)
   expect(capped.calls).toEqual(full)
+})
+
+// ---------------------------------------------------------------- P2: the duration row (design study S9, L95 to L98)
+
+const ROW = '05c26614-94d4-4b09-86c3-8ea6738495b2'
+
+test('S9: the commit keeps the uuid of the turn_duration row, in the same write as the end word', () => {
+  const l = open(emptyLedger(), '0bd87277', 'interactive turn one')
+  const done = commitTurn(l, { turnId: '0bd87277', reason: 'answer', at: 300, durationRow: ROW })
+  expect(done.turns[0]).toMatchObject({ end: 'answer', endedAt: 300, durationRow: ROW })
+  expect(recordByRow(done, ROW)).toBe(done.turns[0])
+  expect(recordByRow(done, 'another-row')).toBeUndefined()
+})
+
+test('S9: a commit with no row, or an empty one, keeps none; an aborted turn has no row', () => {
+  const l = open(emptyLedger(), 't1')
+  expect(commitTurn(l, { turnId: 't1', reason: 'aborted', at: 1 }).turns[0]!.durationRow).toBeUndefined()
+  expect(
+    commitTurn(l, { turnId: 't1', reason: 'answer', at: 1, durationRow: '' }).turns[0]!.durationRow,
+  ).toBeUndefined()
+})
+
+test('S9: the end of a wake keeps no row: the wake has no record of its own, and the turn it continues has its row already', () => {
+  const answered = commitTurn(open(emptyLedger(), 't1'), { turnId: 't1', reason: 'answer', at: 1, durationRow: ROW })
+  const woken = open(spawned(answered, { agentId: AGENT, toolUseId: 'tu_agent1_main2' }), 'wake-1', NOTICE)
+  expect(woken.open).toMatchObject({ wake: true })
+  const done = commitTurn(woken, { turnId: 'wake-1', reason: 'answer', at: 2, durationRow: 'wake-row' })
+  expect(done.turns[0]!.durationRow).toBe(ROW) // the record is as it was
+  expect(recordByRow(done, 'wake-row')).toBeUndefined()
+})
+
+test('S9: recordByTurnId finds the record of an engine turn id, and a wake id belongs to none', () => {
+  const l = runA()
+  expect(recordByTurnId(l, '1cbb654c')).toBe(l.turns[0])
+  expect(recordByTurnId(l, 'ddb8e262')).toBeUndefined()
+})
+
+test('S9: the stored copy keeps the duration row, so a resumed transcript finds the record of each duration line; a bad one is dropped', () => {
+  const l = commitTurn(open(emptyLedger(), 't1'), { turnId: 't1', reason: 'answer', at: 1, durationRow: ROW })
+  const back = ledgerFrom(JSON.parse(JSON.stringify(persisted(l))))!
+  expect(back.turns[0]!.durationRow).toBe(ROW)
+  const rough = JSON.parse(JSON.stringify(persisted(l))) as { turns: { durationRow?: unknown }[] }
+  rough.turns[0]!.durationRow = 7
+  expect(ledgerFrom(rough)!.turns[0]!.durationRow).toBeUndefined()
+  rough.turns[0]!.durationRow = ''
+  expect(ledgerFrom(rough)!.turns[0]!.durationRow).toBeUndefined()
 })

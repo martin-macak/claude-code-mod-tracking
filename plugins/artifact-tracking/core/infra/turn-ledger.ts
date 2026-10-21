@@ -7,14 +7,16 @@
 // tracker and holds no `$`.
 // Spec: issue #69, the design study "Show what each turn tracked" (section 5) and the owner decisions of 2026-10-21.
 
+import type { TurnStripMode } from '../interfaces/config'
 import type { AgentSpawnEvent, RowEvent, ToolCallEvent, TurnCompleteEvent, TurnStartEvent } from '../interfaces/events'
 import type { Json } from '../interfaces/items'
 import type { AtomPort } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
-import type { Sightings, TurnLedger, TurnTarget } from '../interfaces/turns'
+import type { DurationStrip, Sightings, TurnLedger, TurnTarget } from '../interfaces/turns'
 import { isRecord } from '../lib/json'
 import { isEmpty, keysOf, latestWithEntries } from '../lib/turn-entries'
 import { isBare, joinLedgers, ledgerFrom, persisted, persistedChanged } from '../lib/turn-store'
+import { durationStrip, stripText } from '../lib/turn-strip'
 import { bandCounts, turnText } from '../lib/turn-text'
 import {
   called,
@@ -23,6 +25,8 @@ import {
   noteSightings,
   openTurn,
   personPrompt,
+  recordByTurnId,
+  recordOf,
   spawned,
   startsTask,
   targetOf,
@@ -36,6 +40,12 @@ export interface TurnLedgerDeps {
   atom: AtomPort<TurnLedger>
   /** The ledger changed: Persistence writes the session copy soon. */
   persisted(): void
+  /**
+   * A stored ledger came in (`/resume`, `--continue`, `/clear`): the duration lines that drew before it came have no strip yet,
+   * so ask the engine to draw them again (issue #69, P2). An ordinary change needs no ask: the engine redraws a render that
+   * read the state it wrote.
+   */
+  redraw(): void
   /** The id of the current session. A record keeps it, so a later session can call it "earlier". */
   sessionId(): Promise<string>
   /** Epoch ms, wall clock: the time of a record. */
@@ -75,7 +85,9 @@ export class TurnLedgerService {
       // ordinals go on from the larger counter. The running turn, the pending prompt and the notice are the live one's.
       restore: async value => {
         const loaded = ledgerFrom(value)
-        if (loaded !== undefined) await this.change(cur => joinLedgers(cur, loaded))
+        if (loaded === undefined) return
+        await this.change(cur => joinLedgers(cur, loaded))
+        this.d.redraw()
       },
       clear: async () => void (await d.atom.update(() => emptyLedger())),
     }
@@ -174,7 +186,10 @@ export class TurnLedgerService {
     const turnId = stringOf(input.turnId)
     if (turnId === undefined || input.agentId !== undefined) return
     const at = this.d.wall()
-    await this.change(cur => commitTurn(cur, { turnId, reason: input.reason, at }))
+    const row = stringOf(ev.durationRow)
+    await this.change(cur =>
+      commitTurn(cur, { turnId, reason: input.reason, at, ...(row !== undefined ? { durationRow: row } : {}) }),
+    )
   }
 
   /** What a capture found goes to the turn it belongs to. */
@@ -198,10 +213,28 @@ export class TurnLedgerService {
     return turnText(ledger, n, { session, label: e => words.get(e.k) ?? `${e.c} ${e.k}` })
   }
 
-  /** The newest turn that tracked anything, live while it runs: the band shows it and its key opens it. Absent: none. */
-  async band(): Promise<TurnBand | undefined> {
-    const rec = latestWithEntries(await this.ledger())
+  /**
+   * The newest turn that tracked anything, live while it runs: the band shows it and its key opens it. With `ord`, that turn
+   * (the open Button of a strip names its own), whether or not it has entries. Absent: the ledger holds no such turn.
+   */
+  async band(ord?: number): Promise<TurnBand | undefined> {
+    const l = await this.ledger()
+    const rec = ord === undefined ? latestWithEntries(l) : recordOf(l, ord)
     return rec === undefined ? undefined : { ord: rec.ord, text: bandCounts(rec), keys: keysOf(rec) }
+  }
+
+  /**
+   * The text a `turn.complete` hook returns for the main turn `turnId` that just ended, by the mode of `ui.turnStrip`:
+   * undefined when there is none (the hook returns what `next` gave). The record of a wake is the starter's, found by no
+   * wake's turn id, so a wake gets no line.
+   */
+  async strip(turnId: string, mode: TurnStripMode): Promise<string | undefined> {
+    return mode === 'off' ? undefined : stripText(recordByTurnId(await this.ledger(), turnId), mode)
+  }
+
+  /** The strip of the `TurnDuration` line drawn with this `requestId`, the uuid of its `turn_duration` row. Undefined: none. */
+  async durationStrip(requestId: string): Promise<DurationStrip | undefined> {
+    return durationStrip(await this.ledger(), requestId)
   }
 
   // ---------------------------------------------------------------- the atom

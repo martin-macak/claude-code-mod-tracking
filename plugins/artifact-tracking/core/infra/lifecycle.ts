@@ -24,6 +24,7 @@ import type { ItemsHost, Level } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
+import type { DurationStrip } from '../interfaces/turns'
 import { EventBus } from './bus'
 import type { Commands } from './commands'
 import { Facts } from './facts'
@@ -309,9 +310,25 @@ export class LifecycleManager extends PaneApi {
     return this.turns.text(n, () => this.d.turnLabels?.(ports) ?? Promise.resolve(undefined))
   }
 
-  /** The newest turn that tracked anything: the band shows it and its key opens it (issue #69). */
-  bandTurn(): Promise<TurnBand | undefined> {
-    return this.turns.band()
+  /**
+   * The newest turn that tracked anything: the band shows it and its key opens it (issue #69). With `ord`, that turn: the open
+   * Button of a strip opens its own.
+   */
+  bandTurn(ord?: number): Promise<TurnBand | undefined> {
+    return this.turns.band(ord)
+  }
+
+  /**
+   * The line `turn.complete` returns under the answer of the main turn `turnId`, by `global.ui.turnStrip` (issue #69, P2).
+   * Undefined: no line, the hook returns what `next` gave. Read after the commit, so the record holds the counts.
+   */
+  turnStrip(turnId: string): Promise<string | undefined> {
+    return this.turns.strip(turnId, this.cfg.global().ui.turnStrip)
+  }
+
+  /** The strip of the `TurnDuration` line with this `requestId`: only when `global.ui.turnStrip` is `interactive`. */
+  async durationStrip(requestId: string): Promise<DurationStrip | undefined> {
+    return this.cfg.global().ui.turnStrip === 'interactive' ? this.turns.durationStrip(requestId) : undefined
   }
 
   /** `/track <args>`: the Commands router answers it. A failure rejects. */

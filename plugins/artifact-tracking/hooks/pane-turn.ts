@@ -1,6 +1,7 @@
-// The press of the band Button `9: open` (issue #69): open `/track` with the pane focused and the first entry of the newest turn
-// that tracked anything selected, and run the refresh that `/track` runs on open (`kick('open')`, owner decision of
-// 2026-10-21). The pane lists one selected row, so only the first entry is selected; marking a whole turn waits for #63.
+// The press of the band Button `9: open` and of the open Button of a strip (issue #69): open `/track` with the pane focused and
+// the first entry of a turn selected, and run the refresh that `/track` runs on open (`kick('open')`, owner decision of
+// 2026-10-21). The band names no turn, so it takes the newest turn that tracked anything; the strip names its own (P2). The pane
+// lists one selected row, so only the first entry is selected; marking a whole turn waits for #63.
 // PaneSession calls it with its own Refocus; nothing here touches the engine but the `ui` ports.
 // Spec: issue #69, the design study (section 5, "Band") and the owner decisions of 2026-10-21.
 
@@ -14,7 +15,8 @@ import { type PaneHost, paneGroups, shownOf } from './pane-text'
 
 /** The pane host, what the band press reads of the ledger and the refresh it runs. The LifecycleManager fits it as it is. */
 export type TurnPaneHost = PaneHost & {
-  bandTurn(): Promise<TurnBand | undefined>
+  /** The newest turn that tracked anything, or the turn `ord` when it is named. */
+  bandTurn(ord?: number): Promise<TurnBand | undefined>
   readonly items: Pick<ItemsHost, 'kick'>
 }
 
@@ -31,6 +33,9 @@ async function firstListed(p: Ports, m: TurnPaneHost, keys: readonly string[]): 
 }
 
 /**
+ * `ord` names the turn (the strip of an answer); absent, the press is the band's and takes the newest turn that tracked
+ * anything. A named turn that the ledger no longer keeps (the cap dropped it) opens the pane with a toast that says so.
+ *
  * Selects the entry before the pane opens, so the first drawing of a pane that opens now selects the row and takes the ring
  * (the table marks the selected row `autoFocus`). A pane that is open already gets the ring by a request, as after `x`. With a
  * turn but no entry listed, nothing is selected: an older selection must not stand for a turn whose rows are not there, and
@@ -45,8 +50,14 @@ async function firstListed(p: Ports, m: TurnPaneHost, keys: readonly string[]): 
  * `press` is the token of this press (issue #130, #139): the band is drawn while the pane is closed, so it has no keys to ask
  * for (`ui.open` grants them), and a pane that closed since the press began gets no selection, no restore and no ring.
  */
-export async function openTurn(p: Ports, m: TurnPaneHost, refocus: Pick<Refocus, 'to'>, press: Press): Promise<void> {
-  const turn = await m.bandTurn()
+export async function openTurn(
+  p: Ports,
+  m: TurnPaneHost,
+  refocus: Pick<Refocus, 'to'>,
+  press: Press,
+  ord?: number,
+): Promise<void> {
+  const turn = await m.bandTurn(ord)
   const first = turn === undefined ? undefined : await firstListed(p, m, turn.keys)
   const before = await p.state.selected.get()
   const want = turn === undefined ? before : (first ?? null)
@@ -59,4 +70,5 @@ export async function openTurn(p: Ports, m: TurnPaneHost, refocus: Pick<Refocus,
   m.items.kick('open')
   if (first !== undefined) await refocus.to(p, m, first, press)
   else if (turn !== undefined) p.ui.toast(`turn ${turn.ord}: its rows are not listed`)
+  else if (ord !== undefined) p.ui.toast(`turn ${ord} is no longer kept`)
 }
