@@ -39,6 +39,7 @@ claude --plugin-dir plugins/artifact-tracking
 | Claude's reply, also from subagents | Every pattern below. |
 | Tool output | Explicit GitHub issue and PR URLs and Jira URLs only. No bare `#N`, no web links. |
 | Artifact tool call, also from subagents | A publish, a republish, an Artifact made from a type and an asset upload: the artifact, `published`. A delete marks its row `deleted`. An error, a refusal and the other actions add nothing. |
+| Bash, `acli jira workitem` | The Jira item that the command names on acli's active site: `view KEY`, or `--key KEY` of `comment`, `edit`, `assign`, `transition`, `clone`, `archive` and `unarchive`. `search`, `create`, `delete`, `link` and a list of keys add nothing. A denied call, a call that failed and a run with no active site add nothing. |
 | `Write`, `Edit` and `Read` tool calls | A `.md` path: see [Markdown files](#markdown-files). |
 | File tools, Bash and `agent.spawn` | Other git repos that the session or subagents touch (`Read`, `Edit`, `Write`, `NotebookEdit`, `Grep`, `Glob`, `cd`, `git -C`, `gh -R`, spawn `cwd`). |
 
@@ -278,6 +279,8 @@ Which signal gives which reason:
 | artifact | The URL in text | `mentioned` |
 | github, jira | A URL or a ref in a prompt, a command or a reply | `mentioned` |
 | github, jira | A URL in a tool result | `read` |
+| jira | `acli jira workitem view` or `comment list` | `read` |
+| jira | Another `acli jira workitem` command that names the key | `mentioned` |
 | web | A link in a prompt, a command or a reply | `mentioned` |
 | github | A PR that the PR lane found | `discovered` |
 | github, jira, web | A ref in the body of a PR that the PR lane found | `discovered` |
