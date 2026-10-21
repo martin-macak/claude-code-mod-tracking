@@ -69,7 +69,7 @@ export interface DrawnRow {
   readonly id: string
   readonly owner: string
   /** The id of the group the row sits in. */
-  readonly section: string
+  readonly group: string
   readonly can: TreeRow['can']
   readonly handle: string
   readonly depth: number

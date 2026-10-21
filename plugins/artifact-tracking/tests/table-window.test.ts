@@ -23,7 +23,8 @@ import {
 import { EL } from './fixtures/elements'
 import { group, webRows } from './fixtures/sections'
 
-// The inline pane at 100x40: a body of 11 rows, 96 cells wide. The docked pane at 120x37: 31 rows, 95 cells.
+// The inline pane at 100x40: a body of 11 rows, 96 cells wide. The docked pane at 120x37: 31 rows, drawn here 95 cells wide
+// as in #109 (the live check of issue #63 measured 49 cells: tests/one-table.test.ts holds that width).
 const INLINE = { bodyColumns: 96, bodyRows: 11 }
 const DOCKED = { bodyColumns: 95, bodyRows: 31 }
 

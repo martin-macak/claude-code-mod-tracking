@@ -52,6 +52,13 @@ test('the count is the top-level rows: children and the caps of the table do not
   expect(listGroups([section('none', [])])[0]?.count).toBe(0)
 })
 
+test('the count of a section wins over its top-level rows: a tree section that hangs every row under one root says so', () => {
+  const tree = row('root', [row('a'), row('b', [row('c')])])
+  expect(listGroups([section('wt', [tree], { count: 4 })])[0]?.count).toBe(4)
+  expect(listGroups([section('wt', [tree])])[0]?.count).toBe(1)
+  expect(listGroups([section('wt', [], { count: 0 })])[0]?.count).toBe(0)
+})
+
 test('the failing count is the failing count of the band of the section, 0 when it has none', () => {
   const band = (failing: number) => ({ label: 'PRs', count: 5, failing, rank: 1 })
   expect(listGroups([section('prs', [row('a')], { band: band(2) })])[0]?.failing).toBe(2)

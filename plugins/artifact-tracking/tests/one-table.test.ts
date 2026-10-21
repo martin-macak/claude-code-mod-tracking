@@ -205,6 +205,62 @@ test('a body of 11 rows keeps the header, one title, the rows that fit, a hint a
   expect(drawn.page).toBe(rows)
 })
 
+// The live check of issue #63, L1 measured the docked pane of a 120-column terminal at 49 cells. The window tests of
+// #109 (`DOCKED` in table-window, table-pin and pane) use 95 cells, so this test holds the real width with several groups.
+test('docked at 49 cells with a worktree, many conflicted PRs and a process: one header with no Type, no badge, the footer in view', () => {
+  const DOCKED_49 = { bodyColumns: 49, bodyRows: 31, placement: 'dock' } as const
+  const worktrees = group(
+    'list:worktrees',
+    [
+      row(
+        'wt:root',
+        { name: 'claude-code-mod-tracking', description: 'feat/one-table' },
+        { expandedByDefault: true, children: [row('wt:demo', { name: 'demo-wt', description: 'worktree-demo-wt' })] },
+      ),
+    ],
+    { title: 'Worktrees', count: 2 },
+  )
+  const prs = Array.from({ length: 40 }, (_, i) =>
+    row(
+      `pr${i}`,
+      { control: '', name: `#${i}`, description: 'Draw the fake PR', type: 'kind-of-pr', status: 'open' },
+      {
+        extras: [
+          { text: '✗ conflicts', fg: 'error' },
+          { text: '✓ checks', fg: 'success' },
+        ],
+      },
+    ),
+  )
+  const processes = group('list:processes', [
+    row('bg', { name: 'bg', description: 'sleep 900', type: 'background task', status: 'running' }),
+  ])
+  const { drawn } = draw(
+    [worktrees, group('list:prs', prs, { title: 'Pull requests', failing: 40 }), processes],
+    DOCKED_49,
+  )
+  const shown = texts(drawn.tree).map(([, s]) => s)
+  // One header, and the type and the extras are gone: the row has no type cell, no badge, and the header no `Type`.
+  expect(headerBoxes(drawn.tree)).toHaveLength(1)
+  // The long worktree name takes the room, so the description is at its minimum of 10 cells: its header reads `Descripti…`.
+  expect(bold(drawn.tree).slice(0, 3)).toEqual(['Name', 'Descripti…', 'Status'])
+  expect(shown).not.toContain('Type')
+  expect(shown).not.toContain('kind-of-pr')
+  expect(shown.some(s => s.includes('conflicts') || s.includes('checks'))).toBe(false)
+  expect(shown).toContain('open')
+  // The footer sits on the last rows and the tree is as tall as the body: header 1, Worktrees (title 1, 2 rows), a gap,
+  // Pull requests (title 1, the rows that fit), the hint below, the gap above the footer and the footer.
+  const footer = footerRows(NO_ROW_FOOTER, DOCKED_49.bodyColumns, false)
+  const prRows = DOCKED_49.bodyRows - (1 + 1 + 2 + 1 + 1 + 1 + 1 + footer)
+  expect(rowBoxes(drawn.tree)).toHaveLength(2 + prRows)
+  expect((drawn.tree as Node).props.minHeight).toBe(DOCKED_49.bodyRows)
+  expect(((drawn.tree as Node).children.at(-1) as Node).props).toMatchObject({
+    flexGrow: 1,
+    justifyContent: 'flex-end',
+  })
+  expect(shown).toContain(`▼ ${40 - prRows + 1} more below`) // the rows of the PRs and the process out of view
+})
+
 test('with two groups the header costs one row in all, each title one row and the gap between them one', () => {
   const groups = [group('a', lines(3), { title: 'A' }), group('b', lines(3), { title: 'B' })]
   const { drawn } = draw(groups, { bodyRows: 9, bodyColumns: 96 })

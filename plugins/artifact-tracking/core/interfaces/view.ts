@@ -103,6 +103,11 @@ export interface SectionSpec {
     readonly rank?: number
   }
   readonly rows: readonly TreeRow[]
+  /**
+   * The number the title line shows. Default: the top-level `rows`. A section that hangs every row under one root row (the
+   * worktrees under the root worktree, the agents under the master) sets the rows it holds, or its title would say 1.
+   */
+  readonly count?: number
   readonly empty?: string
 }
 
@@ -118,7 +123,7 @@ export interface GroupSpec {
   /** The note of the section, in the by-list view. */
   readonly note?: Cell
   readonly rows: readonly TreeRow[]
-  /** The top-level rows of the group. The caps of the table do not change it. */
+  /** The number the title line shows: the `count` of the section, else its top-level rows. The caps of the table do not change it. */
   readonly count: number
   /** The rows of the group that failed: the failing count of the band of its section. */
   readonly failing: number
@@ -189,8 +194,8 @@ export interface FooterKey extends PaneKey {
 export interface RowRef {
   readonly id: string
   readonly owner: string
-  /** The id of the group the row sits in (`list:prs` in the by-list view). */
-  readonly section: string
+  /** The id of the group the row sits in (`list:prs` in the by-list view). It is no tracker section id. */
+  readonly group: string
   readonly can: TreeRow['can']
 }
 

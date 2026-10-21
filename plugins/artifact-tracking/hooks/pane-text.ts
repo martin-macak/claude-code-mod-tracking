@@ -82,7 +82,12 @@ export async function turnLabels(p: Ports, m: Pick<PaneHost, 'paneData'>): Promi
   return out
 }
 
-/** The help view's data: every key, the config file, the version, the config problems and the key and tracker problems. */
+/**
+ * The help view's data: every key, the config file, the version, the config problems and the key and tracker problems.
+ * The help titles a tracker by the groups that hold its rows, so `groups` must be the by-list groups (the sections of the
+ * trackers). L1 draws only that view, so the drawn groups are those. L3 adds views: it must pass `listGroups(...)` here,
+ * not the groups of the drawn view, or the keys of a tracker would sit under a title like "Failed, Active".
+ */
 export function helpOf(
   m: Pick<PaneHost, 'keys' | 'config' | 'problems' | 'version'>,
   groups: readonly GroupSpec[],

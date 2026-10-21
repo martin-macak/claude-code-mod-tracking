@@ -22,7 +22,7 @@ const webs = (...ids: string[]): TreeRow[] => ids.map(id => web(id))
 const drawnRow = (id: string, depth = 0): DrawnRow => ({
   id,
   owner: 'web',
-  section: 'web',
+  group: 'web',
   can: { dismiss: true, priority: true },
   handle: id,
   depth,

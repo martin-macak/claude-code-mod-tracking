@@ -425,7 +425,8 @@ test('at 62 columns the PR row keeps its columns, and x dismisses it', async ($,
     return headers
   }
   // One header names the columns of the whole table. The checks are a badge of the extras column, which has no header word.
-  expect(await prHeaders(62)).toEqual([['Name', 'Description', 'Type', 'Status']])
+  // The branch `worktree-probe-wt` (17 cells) shows whole in the Type column, so the description is at its minimum of 10.
+  expect(await prHeaders(62)).toEqual([['Name', 'Descripti…', 'Type', 'Status']])
   // Type (priority 2) and the extras (1) drop on a narrow pane. The description keeps its 10 cells, so its header word is cut.
   expect(await prHeaders(34)).toEqual([['Name', 'Descripti…', 'Status']])
   const pane = await mountPane($, 62)

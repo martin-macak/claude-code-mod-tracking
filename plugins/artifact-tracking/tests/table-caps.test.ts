@@ -198,8 +198,8 @@ test('findRow finds a hidden child of a closed row, with its section id and can'
     group('web', [row('p', { name: 'p' }, { owner: 'web', children: [kid] })]),
     group('file', [row('f', { name: 'f' }, { owner: 'file', can: {} })]),
   ]
-  expect(findRow(sections, 'c1')).toEqual({ id: 'c1', owner: 't', section: 'web', can: { dismiss: true } })
-  expect(findRow(sections, 'f')).toEqual({ id: 'f', owner: 'file', section: 'file', can: {} })
+  expect(findRow(sections, 'c1')).toEqual({ id: 'c1', owner: 't', group: 'web', can: { dismiss: true } })
+  expect(findRow(sections, 'f')).toEqual({ id: 'f', owner: 'file', group: 'file', can: {} })
   expect(findRow(sections, 'p')?.owner).toBe('web')
   expect(findRow(sections, 'gone')).toBeUndefined()
   expect(findRow(sections, null)).toBeUndefined()

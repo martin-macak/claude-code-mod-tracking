@@ -442,7 +442,8 @@ test('pane: a section over its cap ends in an N more row; Enter shows the next c
 
 // The engine scrolls a pane tree as a whole, so rows taller than the body push the title, the header and the footer out of
 // view. The pane draws a window of the rows instead. The inline pane at 100x40 has a body of 11 rows, the docked pane at
-// 120x37 one of 31. The kit does not show paint or the focus ring: the live checks of the PR do.
+// 120x37 one of 31 (drawn here 95 cells wide as in #109; the live check of issue #63 measured 49 cells, which
+// tests/one-table.test.ts holds). The kit does not show paint or the focus ring: the live checks of the PR do.
 const links = (n: number) => Array.from({ length: n }, (_, i) => `https://site${i}.example/page${i}`).join(' ')
 const INLINE = { bodyColumns: 96, bodyRows: 11, placement: 'inline' } as const
 const DOCKED = { bodyColumns: 95, bodyRows: 31, placement: 'dock' } as const

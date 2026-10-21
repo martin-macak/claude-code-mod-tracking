@@ -11,7 +11,7 @@ import { fakePorts } from './fixtures/ports'
 import { fake } from './fixtures/tracker-host'
 
 const OPEN: KeySpec = { id: 'open', key: 'o', label: 'open', scope: 'row' }
-const ROW: RowRef = { id: 'row-1', owner: 't', section: 'web', can: {} }
+const ROW: RowRef = { id: 'row-1', owner: 't', group: 'web', can: {} }
 
 /** An item host that does nothing: the keys do not need the item list. */
 function stubItems(): ItemsHost {

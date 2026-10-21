@@ -223,6 +223,11 @@ test('a run whose agents all ended is one row ag:wf:<runId> with the short run i
   expect((fold.children ?? []).map(c => c.id)).toEqual(['ag:w1', 'ag:w2', 'ag:w3'])
 })
 
+test('the fold row cuts its title in the middle, as every row of the Agents section does', async () => {
+  const fold = foldOf(await draw(await finishedRun(), 'agents')) as TreeRow
+  expect(fold.cells.description).toEqual({ text: '3 agents · 1 failed', clip: 'middle' })
+})
+
 test('the fold row has no failure marker when no agent failed, says 1 agent, and counts 0 failed', async () => {
   const t = await paneWorld()
   setAgents(t, [wfProof('w1', 1, { endedAt: NOW })], [master(), wfRow('w1', 1)])

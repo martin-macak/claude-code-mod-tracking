@@ -1735,7 +1735,7 @@ test('x on a row that has a neighbour asks for the ring on the neighbour only', 
 })
 
 test('neighbourOf: the next row at the same or a lower depth, else the one before, else none', () => {
-  const at = (id: string, depth: number) => ({ id, owner: 't', section: 's', can: {}, handle: `r-${id}`, depth })
+  const at = (id: string, depth: number) => ({ id, owner: 't', group: 's', can: {}, handle: `r-${id}`, depth })
   const rows = [at('a', 0), at('b', 0), at('b1', 1), at('c', 0), at('c1', 1)]
   expect(neighbourOf(rows, 'b')).toBe('c')
   expect(neighbourOf(rows, 'b1')).toBe('c')

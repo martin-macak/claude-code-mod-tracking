@@ -11,8 +11,8 @@ export const LIST_VIEW = 'list'
 export const groupId = (view: string, key: string): string => `${view}:${key}`
 
 /**
- * The by-list view: a group for each section, in the order given. The count is the top-level rows of the section, and
- * the failing count is the one its band carries (a section with no band has none).
+ * The by-list view: a group for each section, in the order given. The count is the one the section sets, else its
+ * top-level rows, and the failing count is the one its band carries (a section with no band has none).
  */
 export function listGroups(sections: readonly SectionSpec[]): readonly GroupSpec[] {
   return sections.map(s => ({
@@ -20,7 +20,7 @@ export function listGroups(sections: readonly SectionSpec[]): readonly GroupSpec
     title: s.title,
     ...(s.note !== undefined ? { note: s.note } : {}),
     rows: s.rows,
-    count: s.rows.length,
+    count: s.count ?? s.rows.length,
     failing: s.band?.failing ?? 0,
     ...(s.empty !== undefined ? { empty: s.empty } : {}),
   }))

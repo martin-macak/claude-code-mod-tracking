@@ -26,14 +26,16 @@ export const GLYPH_BOX = 2
 /**
  * The columns of the one table, in drawing order (design study of issue #63, section 5.3). The level marker leads, the
  * name carries the tree glyph, the description takes the room that is left. A narrow pane drops the type, then the
- * extras: control, name, status and description stay. No group has columns of its own.
+ * extras: control, name, status and description stay. No group has columns of its own. The caps of the type (20) and the
+ * status (14) keep the cuts that the sections made before the one table (a status at 14, an agent worktree and a repo's
+ * agents at 20, a process kind at 18), except for a PR branch: the sections cut it at 26 and the type cuts it at 20.
  */
 export const SHARED_COLUMNS: readonly (ColumnDef & { readonly id: ColumnId })[] = [
   { id: 'control', header: '', width: { kind: 'fixed', cells: 2 } },
   { id: 'name', header: 'Name', width: { kind: 'content', min: 6, max: 24 }, role: 'tree' },
   { id: 'description', header: 'Description', width: { kind: 'flex', min: 10 } },
-  { id: 'type', header: 'Type', width: { kind: 'content', max: 12 }, priority: 2 },
-  { id: 'status', header: 'Status', width: { kind: 'content', max: 10 } },
+  { id: 'type', header: 'Type', width: { kind: 'content', max: 20 }, priority: 2 },
+  { id: 'status', header: 'Status', width: { kind: 'content', max: 14 } },
   { id: 'extras', header: '', width: { kind: 'content', max: 14 }, priority: 1 },
 ]
 

@@ -4,6 +4,7 @@ import { expect, test } from 'claude-code/testing'
 import { NO_VIEW } from '../core/infra/views'
 import type { Json } from '../core/interfaces/items'
 import type { Cell, CellId, SectionSpec, TreeRow } from '../core/interfaces/view'
+import { listGroups } from '../core/lib/grouping'
 import {
   NOW,
   paneWorld,
@@ -69,6 +70,23 @@ test('the worktree root and the master agent are expandedByDefault', async () =>
     },
   )
   expect(folds.filter(r => r.expandedByDefault).map(r => r.id)).toEqual(['wt:/work', 'ag:master'])
+})
+
+test('Worktrees and Agents count every row they hold, not the one root row that holds the rest (issue #63, L1)', async () => {
+  const t = await paneWorld()
+  const sections = await t.m.paneData(t.w.ports, NO_VIEW)
+  // The root worktree and its three children; the master agent and its four.
+  expect(section(sections, 'worktrees').rows).toHaveLength(1)
+  expect(section(sections, 'worktrees').count).toBe(4)
+  expect(section(sections, 'agents').rows).toHaveLength(1)
+  expect(section(sections, 'agents').count).toBe(5)
+  // The flat sections set none: the group counts their top-level rows.
+  expect(section(sections, 'prs').count).toBeUndefined()
+  expect(Object.fromEntries(listGroups(sections).map(g => [g.id, g.count]))).toMatchObject({
+    'list:worktrees': 4,
+    'list:agents': 5,
+    'list:prs': section(sections, 'prs').rows.length,
+  })
 })
 
 test('the agents nest by their depth: the master holds the first level, an agent holds its own children', async () => {

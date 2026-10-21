@@ -45,8 +45,8 @@ test('the shared columns are control, name, description, type, status and extras
     ['control', { kind: 'fixed', cells: 2 }, undefined, undefined],
     ['name', { kind: 'content', min: 6, max: 24 }, undefined, 'tree'],
     ['description', { kind: 'flex', min: 10 }, undefined, undefined],
-    ['type', { kind: 'content', max: 12 }, 2, undefined],
-    ['status', { kind: 'content', max: 10 }, undefined, undefined],
+    ['type', { kind: 'content', max: 20 }, 2, undefined],
+    ['status', { kind: 'content', max: 14 }, undefined, undefined],
     ['extras', { kind: 'content', max: 14 }, 1, undefined],
   ])
 })
@@ -59,11 +59,23 @@ test('at 96 body columns all six shared columns show, and the description takes 
   expect(['control', 'name', 'type', 'status', 'extras'].map(id => widthOf(s, id))).toEqual([
     2,
     19 + GLYPH_BOX,
-    12,
-    10,
+    15, // `background task`, whole
+    11, // `In Progress`, whole
     14,
   ])
   expect(total(s)).toBe(96)
+})
+
+test('the caps keep what each section showed whole before the one table: a status of 14 cells, a type of 20', () => {
+  const widthFor = (cells: TreeRow['cells']) => {
+    resetWidths()
+    const s = solveColumns('pane', SHARED_COLUMNS, [at(0, { id: 'a', owner: 't', cells })], 96)
+    return [widthOf(s, 'type'), widthOf(s, 'status')]
+  }
+  // Jira cut a status at 14 and a PR branch, an agent worktree and a repo's agents at 20 or more; a process kind at 18.
+  expect(widthFor({ type: { text: 'feat/twenty-chars-ab' }, status: { text: 'In Progress' } })).toEqual([20, 11])
+  expect(widthFor({ type: { text: 'x'.repeat(30) }, status: { text: 'Waiting for review' } })).toEqual([20, 14])
+  expect(widthFor({ type: { text: 'background task' }, status: { text: 'Ready for QA' } })).toEqual([15, 12])
 })
 
 test('at 49 and at 40 body columns control, name, status and description stay, and type then extras drop first', () => {
@@ -82,7 +94,10 @@ test('in between, the type goes before the extras, and a pane that holds the ext
     return solveColumns('pane', SHARED_COLUMNS, [full('a')], avail).dropped
   }
   expect(dropAt(80)).toEqual([])
-  expect(dropAt(62)).toEqual(['type']) // 74 cells wanted; without the type 61
+  expect(dropAt(78)).toEqual([]) // 78 cells wanted
+  expect(dropAt(77)).toEqual(['type'])
+  expect(dropAt(62)).toEqual(['type']) // without the type 62
+  expect(dropAt(61)).toEqual(['type', 'extras'])
   expect(dropAt(50)).toEqual(['type', 'extras'])
 })
 

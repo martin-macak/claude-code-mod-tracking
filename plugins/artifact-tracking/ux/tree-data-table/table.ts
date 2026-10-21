@@ -102,7 +102,7 @@ export const TreeDataTable = {
       s.rows.map(r => ({
         id: r.row.id,
         owner: r.row.owner,
-        section: s.spec.id,
+        group: s.spec.id,
         can: r.row.can,
         handle: r.handle,
         depth: r.depth,

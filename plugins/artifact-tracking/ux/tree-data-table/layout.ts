@@ -61,7 +61,7 @@ export function findRow(groups: readonly GroupSpec[], rowId: string | null): Row
   if (rowId === null) return undefined
   const search = (rows: readonly TreeRow[], group: string): RowRef | undefined => {
     for (const row of rows) {
-      if (row.id === rowId) return { id: row.id, owner: row.owner, section: group, can: row.can }
+      if (row.id === rowId) return { id: row.id, owner: row.owner, group, can: row.can }
       const hit = search(row.children ?? [], group)
       if (hit !== undefined) return hit
     }

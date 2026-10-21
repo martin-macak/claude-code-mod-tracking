@@ -16,6 +16,9 @@ type Ctx = ViewContext<AutoConfig, AutoState>
 
 const OWNER = 'auto'
 
+/** The rows of a tree, every level: what a title line counts when one root row holds the rest. */
+const countRows = (rows: readonly TreeRow[]): number => rows.reduce((n, r) => n + 1 + countRows(r.children ?? []), 0)
+
 /** What the person can do with the row. These rows have no level, so `priority` is always off. */
 const can = (dismiss: boolean): TreeRow['can'] => ({ dismiss, priority: false })
 
@@ -87,13 +90,15 @@ function worktreesSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
         age === 'now' ? 'checked just now' : `checked ${age} ago`,
       ].join(' · ')
     : `git failed: ${snap.git.error ?? 'unknown error'}`
+  const tree = root ? [worktreeRow(auto, root, rows)] : rows
   return {
     id: 'worktrees',
     title: 'Worktrees',
     note: { text: hidden > 0 ? `${note} (${hidden} hidden)` : note },
     rank: 10,
     band: { label: 'Worktrees', count: live, failing: 0, rank: 7 },
-    rows: root ? [worktreeRow(auto, root, rows)] : rows,
+    rows: tree,
+    count: countRows(tree),
   }
 }
 
@@ -276,6 +281,7 @@ function runRow(auto: AutoState, run: RunNode, stat: RunStat): TreeRow {
       key: `${stat.failed > 0 ? '✗' : '✓'} ${shortRunId(run.runId)}`,
       title: `${stat.agents} ${stat.agents === 1 ? 'agent' : 'agents'} · ${stat.failed} failed`,
       type: '',
+      titleClip: 'middle',
     }),
     children: plainRows(auto, run.members),
     can: can(false),
@@ -321,13 +327,15 @@ function agentsSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
   const parts = [...(running > 0 ? [`${running} running`] : []), ...(ended > 0 ? [`${ended} ended`] : [])]
   if (!snap.agentList.ok) parts.push('agent list failed')
   const note = parts.join(' · ')
+  const rows = items.map(s => shownRow(auto, s, stats))
   return {
     id: 'agents',
     title: 'Agents',
     note: { text: hidden.n > 0 ? `${note} (${hidden.n} hidden)` : note },
     rank: 11,
     band: { label: 'Agents', count: running, failing: 0, rank: 8 },
-    rows: items.map(s => shownRow(auto, s, stats)),
+    rows,
+    count: countRows(rows),
   }
 }
 

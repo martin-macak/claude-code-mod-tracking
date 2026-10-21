@@ -38,13 +38,13 @@ export function detailOf(
     const have = room.get(def.id)
     if (have !== undefined && cellWidth(text) <= have) continue
     // The links follow below, so a clipped cell leaves its own href out. The badges of the extras column keep their own
-    // color, so each is a line of its own.
-    const label = def.header || def.id
-    if (def.id === 'extras')
+    // color, so each is a line of its own. A badge line has no label: the column has no header word, and its id is not
+    // for the person.
+    if (def.id === 'extras') {
       for (const badge of row.extras ?? []) {
-        if (normaliseCell(badge.text).trim() !== '') lines.push({ label, cell: { ...badge, href: undefined } })
+        if (normaliseCell(badge.text).trim() !== '') lines.push({ cell: { ...badge, href: undefined } })
       }
-    else lines.push({ label, cell: { ...cell, href: undefined } })
+    } else lines.push({ label: def.header || def.id, cell: { ...cell, href: undefined } })
   }
   const links = new Set(
     columns.map(def => cellOf(row, def.id)?.href).filter((h): h is string => h !== undefined && h !== ''),

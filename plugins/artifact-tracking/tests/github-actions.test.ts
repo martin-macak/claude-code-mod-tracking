@@ -52,7 +52,7 @@ const lane = (merge: Record<string, MergeNote> | undefined, over: Partial<LaneSt
 })
 
 const WT = { worktree: '/x/wt-a' }
-const ROW = (id = K7): RowRef => ({ id, owner: 'github', section: 'prs', can: { dismiss: true, priority: true } })
+const ROW = (id = K7): RowRef => ({ id, owner: 'github', group: 'prs', can: { dismiss: true, priority: true } })
 
 type Setup = {
   items?: object[]

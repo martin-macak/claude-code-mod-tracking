@@ -91,7 +91,7 @@ test('handles are r0, r1, … across sections in pane order (U5)', () => {
   expect([...drawn.handles.keys()]).toEqual(['r0', 'r1', 'r2'])
   expect([...drawn.handles.values()]).toEqual(['w0', 'w1', 'only'])
   expect(drawn.rows.map(r => r.handle)).toEqual(['r0', 'r1', 'r2'])
-  expect(drawn.rows.map(r => r.section)).toEqual(['a', 'a', 'b'])
+  expect(drawn.rows.map(r => r.group)).toEqual(['a', 'a', 'b'])
   expect(handlesOf(drawn.tree)).toEqual(['r0', 'r1', 'r2'])
 })
 
@@ -134,8 +134,8 @@ test('a cell with clip middle cuts a long cell as head…tail; a cell with none 
   const cells = { name: 'a', type: { text: long, clip: 'middle' as const }, status: long }
   const { drawn } = draw([group('s', [row('a', cells)])])
   const [, , , type, status] = cellsOf(only(rowBoxes(drawn.tree)))
-  expect(leaves(type)).toEqual(['feat/b…cking']) // the type column is 12 cells wide
-  expect(leaves(status)).toEqual(['feat/band…']) // the status column is 10
+  expect(leaves(type)).toEqual(['feat/band-…-tracking']) // the type column is 20 cells wide
+  expect(leaves(status)).toEqual(['feat/band-aut…']) // the status column is 14
   const short = draw([group('s', [row('a', { name: 'a', type: { text: 'feat/x', clip: 'middle' } })])])
   expect(leaves(cellsOf(only(rowBoxes(short.drawn.tree)))[3])).toEqual(['feat/x'])
 })
@@ -326,7 +326,7 @@ test('the default detail lists clipped and dropped cells and the link; else (not
   expect(dim).toEqual([[{ wrap: 'wrap', dimColor: true }, '(nothing more to show)']])
 })
 
-test('the default detail names a dropped column by its header, else by its id, and lists a link once', () => {
+test('the default detail names a dropped column by its header, gives each badge a line with no label, and lists a link once', () => {
   const href = 'https://a.example/'
   const r = row(
     'a',
@@ -335,17 +335,9 @@ test('the default detail names a dropped column by its header, else by its id, a
   )
   const { drawn } = draw([group('s', [r])], { bodyColumns: 20, expanded: new Set(['a']) })
   expect(cellsOf(only(headerBoxes(drawn.tree)))).toHaveLength(3) // control, name, description: the type and the extras dropped
-  // The extras column has no header word, so its id names it, and each badge is a line of its own, in its own color.
-  expect(detailBoxes(drawn.tree).flatMap(leaves)).toEqual([
-    'Type:',
-    'kind-text',
-    'extras:',
-    '✓ checks',
-    'extras:',
-    'by me',
-    'link:',
-    href,
-  ])
+  // The extras column has no header word and its id is not for the person: each badge is a line of its own, with no
+  // label, in its own color.
+  expect(detailBoxes(drawn.tree).flatMap(leaves)).toEqual(['Type:', 'kind-text', '✓ checks', 'by me', 'link:', href])
   expect(
     detailBoxes(drawn.tree)
       .flatMap(b => texts(b))
@@ -357,14 +349,8 @@ test('the default detail lists the badges that the column clipped, and none when
   const badges = [{ text: '✗ conflicts' }, { text: '✗ checks' }, { text: 'no worktree' }]
   const r = row('a', { name: 'k', description: 'd' }, { extras: badges })
   const clipped = draw([group('s', [r])], { bodyColumns: 96, expanded: new Set(['a']) })
-  expect(detailBoxes(clipped.drawn.tree).flatMap(leaves)).toEqual([
-    'extras:',
-    '✗ conflicts',
-    'extras:',
-    '✗ checks',
-    'extras:',
-    'no worktree',
-  ])
+  // A badge line has no label: the extras column has no header word, and its id is not for the person.
+  expect(detailBoxes(clipped.drawn.tree).flatMap(leaves)).toEqual(['✗ conflicts', '✗ checks', 'no worktree'])
   const fits = row('b', { name: 'k', description: 'd' }, { extras: [{ text: '✓ ok' }, { text: 'two' }] })
   const whole = draw([group('s', [fits])], { bodyColumns: 96, expanded: new Set(['b']) })
   expect(leaves(only(detailBoxes(whole.drawn.tree)))).toEqual(['(nothing more to show)'])
@@ -426,8 +412,8 @@ test('a deeply nested row whose indent fills its column draws the glyph only, in
 test('every core key has one footer Button in every state; disabled ones are dim, do no work and ask for the keys (G16, issue #129)', () => {
   const reg = new KeyRegistry()
   const sections = [group('web', webRows(1))]
-  const process: RowRef = { id: 'w0', owner: 'p', section: 'processes', can: {} }
-  const item: RowRef = { id: 'w0', owner: 'items', section: 'web', can: { dismiss: true, priority: true } }
+  const process: RowRef = { id: 'w0', owner: 'p', group: 'processes', can: {} }
+  const item: RowRef = { id: 'w0', owner: 'items', group: 'web', can: { dismiss: true, priority: true } }
   const cases = [
     { footer: footerKeys(reg, undefined, () => false, false), help: null, on: ['refresh', 'help'] },
     { footer: footerKeys(reg, process, () => false, false), help: null, on: ['refresh', 'help'] },
@@ -494,7 +480,7 @@ test('the footer keeps the move hint where it wraps anyway and the hint fits on 
 test('the footer Button key is the key the registry finds the key by, for a tracker key too', () => {
   const reg = new KeyRegistry()
   reg.add('a', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
-  const mine: RowRef = { id: 'w0', owner: 'a', section: 'web', can: {} }
+  const mine: RowRef = { id: 'w0', owner: 'a', group: 'web', can: {} }
   const footer = footerKeys(reg, mine, () => false, false)
   const { drawn, calls } = draw([group('web', webRows(1))], { footer })
   const keys = footerOf(drawn.tree).map(b => String(b.props.key))
