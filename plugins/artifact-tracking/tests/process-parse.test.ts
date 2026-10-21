@@ -679,6 +679,146 @@ test('parseBashProcesses keeps the session folder after a cd in a loop that runs
   expect(composeProject('if true; then cd /x; fi && docker compose up -d')).toBe('x')
 })
 
+// Bash runs each part of a pipeline in a subshell, the last part too (no `lastpipe`). A `cd` in a part does not move the
+// folder of the commands after the pipeline (issue #147). A `cd` outside a pipeline still moves it.
+test('parseBashProcesses keeps the session folder after a cd in a pipeline part', () => {
+  const project = composeProject
+  expect(project('cd /x | cat; docker compose up -d')).toBe('app')
+  expect(project('cat f | cd /x; docker compose up -d')).toBe('app')
+  expect(project('cd /x |& cat; docker compose up -d')).toBe('app')
+  expect(project('echo a | cd /x | cat; docker compose up -d')).toBe('app')
+  expect(project('! cd /x | cat; docker compose up -d')).toBe('app')
+  expect(project('cd /x |\ncat\ndocker compose up -d')).toBe('app')
+})
+
+// A part is a whole command: a group, a loop or a subshell. The pipeline ends at the closing bracket of a group
+// or a subshell, and the parts run side by side.
+test('parseBashProcesses keeps the session folder after a cd in a group, a loop or a subshell that is a pipeline part', () => {
+  const project = composeProject
+  expect(project('{ cd /x; } | cat; docker compose up -d')).toBe('app')
+  expect(project('for d in a; do cd /x; done | cat; docker compose up -d')).toBe('app')
+  expect(project('cat f | while read l; do cd /x; done; docker compose up -d')).toBe('app')
+  expect(project('( cd /x ) | cat; docker compose up -d')).toBe('app')
+  expect(project('if cd /x | cat; then docker compose up -d; fi')).toBe('app')
+  // Inside a group or a subshell the pipeline ends at the closing bracket.
+  expect(project('(cd /x | cat); docker compose up -d')).toBe('app')
+  expect(project('{ cat | cd /x; docker compose up -d; }')).toBe('app')
+  // The parts run side by side: a cd in one part does not reach the next. In a group part, it does reach the commands
+  // after it in the same part.
+  expect(project('cd /x | docker compose up -d')).toBe('app')
+  expect(project('cat | { cd /x; docker compose up -d; }')).toBe('x')
+})
+
+// A `cd` outside a pipeline still moves the folder, and a part reads the folder it starts in.
+test('parseBashProcesses moves the folder for a cd outside a pipeline', () => {
+  const project = composeProject
+  expect(project('cd /x; docker compose up -d')).toBe('x')
+  expect(project('cd /x && cat | cat; docker compose up -d')).toBe('x')
+  expect(project('cat | cat; cd /x; docker compose up -d')).toBe('x')
+  expect(project('cd /x && docker compose up -d | cat')).toBe('x')
+})
+
+// `>|` is a redirection, no pipe: its `cd` is no pipeline part.
+test('parseBashProcesses reads >| as a redirection, not a pipe', () => {
+  const project = composeProject
+  expect(project('cd /x >| f; docker compose up -d')).toBe('x')
+  expect(project('cd /x 2>| f; docker compose up -d')).toBe('x')
+  expect(project("cd /x; echo '>'| cat; docker compose up -d")).toBe('x')
+  expect(project("echo '>'| cd /x; docker compose up -d")).toBe('app')
+  // An escaped `>` is a word, so the `|` after it is a pipe. After an escaped backslash the `>` is typed again.
+  expect(project('printf x \\>|docker compose up -d')).toBe('app')
+  expect(project('printf x \\>| docker compose up -d')).toBe('app')
+  expect(project('printf x \\\\>| docker compose up -d')).toBeUndefined()
+})
+
+// The `$PWD` of a detached command, and a shell variable, follow the same scope.
+test('parseBashProcesses keeps the scope of $PWD and a shell variable after a pipeline part', () => {
+  expect(detachedOf('cd /x | cat; srv $PWD/app.js &', '/w')[0]?.fingerprint).toBe('srv /w/app.js')
+  expect(detachedOf('D=/x | cat; srv $D/a.js &', '/w')[0]?.fingerprint).toBe('srv $D/a.js')
+  expect(detachedOf('D=/x; cat | srv $D/a.js &', '/w')[0]?.fingerprint).toBe('srv /x/a.js')
+})
+
+// The `)` that ends a `case` pattern is no end of a subshell (issue #148). A `cd` in the arm of a case in a subshell stays
+// in that subshell.
+test('parseBashProcesses keeps the session folder after a cd in a case arm inside a subshell', () => {
+  const project = composeProject
+  expect(project('( case x in x) cd /x ;; esac ); docker compose up -d')).toBe('app')
+  expect(project('( case x in y) :;; x) cd /x ;; esac ); docker compose up -d')).toBe('app')
+  expect(project('( case x in a|x) cd /x ;; esac ); docker compose up -d')).toBe('app')
+  expect(project('( case x in\n x) cd /x ;;\n esac\n ); docker compose up -d')).toBe('app')
+  expect(project('( case x in x) cd /x ;& y) cd /y ;;& z) cd /z ;; esac ); docker compose up -d')).toBe('app')
+  expect(project('( case $(echo x) in x) cd /x ;; esac ); docker compose up -d')).toBe('app')
+  expect(project('( case x in (x) cd /x ;; esac ); docker compose up -d')).toBe('app')
+  expect(project('x=$(case a in a) cd /x ;; esac); docker compose up -d')).toBe('app')
+})
+
+// A `case` in a case, and a subshell or a substitution in an arm: each closes at its own `)`.
+test('parseBashProcesses keeps the session folder after a cd in a case in a case or in a subshell in an arm', () => {
+  const project = composeProject
+  expect(project('( case x in x) case y in y) cd /x ;; esac; cd /z ;; esac ); docker compose up -d')).toBe('app')
+  // A subshell in an arm closes at its own `)`, and so does a substitution in a pattern or in an arm.
+  expect(project('case x in x) (cd /y); docker compose up -d ;; esac')).toBe('app')
+  expect(project('( case x in x) ( cd /y ) ;; esac ); docker compose up -d')).toBe('app')
+  expect(project('( case x in x) echo $(cd /y) ;; esac ); docker compose up -d')).toBe('app')
+  expect(project('( case x in $(echo x)) cd /x ;; esac ); docker compose up -d')).toBe('app')
+})
+
+// `esac` ends the case, so the `)` of a subshell after it closes that subshell. Outside a subshell the arm is no
+// subshell.
+test('parseBashProcesses closes the subshell after esac and moves the folder for a case outside a subshell', () => {
+  const project = composeProject
+  expect(project('case x in x) : ;; esac; ( cd /x ); docker compose up -d')).toBe('app')
+  expect(project('( case x in x) cd /x ;; esac; docker compose up -d )')).toBe('x')
+  // Outside a subshell the arm is no subshell: its cd moves the folder, as before.
+  expect(project('case x in x) cd /x ;; esac; docker compose up -d')).toBe('x')
+  expect(project('case x in y) cd /y ;; x) cd /x ;; esac; docker compose up -d')).toBe('x')
+})
+
+// A `(` in front of a pattern (after `in` or after `;;`) is no subshell. A `(` after a pattern is one.
+test('parseBashProcesses reads a ( in front of a case pattern as no subshell', () => {
+  const project = composeProject
+  expect(project('( case x in (x) cd /x ;; (y|z) cd /y ;; esac ); docker compose up -d')).toBe('app')
+  expect(project('case x in\n (x) cd /x ;;\n (y) : ;;\n esac; docker compose up -d')).toBe('x')
+  expect(project('case x in x) ( cd /y ) ;; (z) ( cd /z ) ;; esac; docker compose up -d')).toBe('app')
+  expect(project('cd /x && case y in (y) sleep 1 & esac; docker compose up -d')).toBe('x')
+})
+
+// The arm after a pattern is a list of its own. A case that ends with `&` or `|` is one background job or
+// pipeline part.
+test('parseBashProcesses keeps the arm after a pattern a list of its own and ends a case at & or |', () => {
+  const project = composeProject
+  expect(project('cd /x && case x in x) sleep 1 & esac; docker compose up -d')).toBe('x')
+  expect(project('{ cd /x && case x in a|x) sleep 1 &\n true ;;& z) : ;; esac; }; docker compose up -d')).toBe('x')
+  expect(project('case x in x) cd /y & ;; esac; docker compose up -d')).toBe('app')
+  // A case that ends with `&` or `|` is one background job or pipeline part.
+  expect(project('( case x in x) cd /x ;; esac & ); docker compose up -d')).toBe('app')
+  expect(project('case x in x) cd /x ;; esac | cat; docker compose up -d')).toBe('app')
+})
+
+// `esac` can stand right after a compound with no `;;`: `a | { b; } esac`, `fi esac`, `done esac`. It still ends the
+// case, and the compound before it still ends its pipeline part.
+test('parseBashProcesses ends the case and the pipeline at an esac that follows a compound', () => {
+  const project = composeProject
+  expect(project('case x in x) echo hi | { cd /x; } esac; docker compose up -d')).toBe('app')
+  expect(project('( case x in x) if :; then cd /x; fi esac ); docker compose up -d')).toBe('app')
+  expect(project('( case x in x) for i in 1; do cd /x; done esac ); docker compose up -d')).toBe('app')
+})
+
+// Only the `in` of the case header makes a `(` a pattern start. A word `in` at the end of a line of an arm does not.
+test('parseBashProcesses reads a ( after a line that ends with the word in as a subshell', () => {
+  expect(composeProject('case x in x) echo logged in\n( cd /y ); docker compose up -d ;; esac')).toBe('app')
+})
+
+// A pipeline part ends where bash ends it: at a background `&`, at the close of a subshell, a substitution or a group.
+test('parseBashProcesses ends a pipeline part at a background &, a subshell, a substitution and a group', () => {
+  const project = composeProject
+  expect(project('cat | cd /x & cd /y; docker compose up -d')).toBe('y')
+  expect(project('cat | ( cd /x; docker compose up -d ); true')).toBe('x')
+  expect(project('cat | ( cd /x; true ); docker compose up -d')).toBe('app')
+  expect(project('cat | cd $(echo /x); docker compose up -d')).toBe('app')
+  expect(project('{ cat | { cd /x; } }; docker compose up -d')).toBe('app')
+})
+
 // The variables follow the scope of the directory: a variable set in a background list does not reach the commands
 // after the `&`, as in bash. `export` keeps the env global.
 test('parseBashProcesses hides a variable set in a background list from the commands after the `&`', () => {

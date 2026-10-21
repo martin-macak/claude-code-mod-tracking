@@ -77,6 +77,49 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   the background", and a differential run against real `bash` (macOS) of
   random `cd`, `pushd`, `&`, `&&`, `;`, newline, group, subshell and loop
   lists, which showed no difference in the folder of the last command.
+- A `cd` in a part of a pipeline runs in a subshell and does not move the folder
+  of the parts after the pipeline: `cd x | cat` and `cat | cd x`, the last part
+  too (bash has no `lastpipe` by default). A part is a whole command, so
+  `{ cd x; } | cat`, `for ...; do cd x; done | cat` and `( cd x ) | cat` are one
+  part each. The parts run side by side: a `cd` in one part does not reach the
+  next, and every part starts in the folder that the pipeline starts in. A `cd`
+  outside a pipeline still moves the folder, and `>|` is a redirection, not a
+  pipe (an escaped `>` before the `|`, as in `\>|`, is a word, so that `|` is a
+  pipe). The `)` that ends a `case` pattern is no end of a subshell, so
+  `( case x in x) cd x ;; esac ); cmd` keeps the folder. A `(` in front of a
+  pattern is no subshell either, and the arm after a pattern is a list of its own
+  (`cd x && case y in y) sleep 1 & esac` keeps the `cd`). `esac` can follow a
+  compound with no `;;` (`a | { b; } esac`, `fi esac`, `done esac`): it ends the
+  case, and the pipeline before it. Only the `in` of the `case` header makes a
+  `(` a pattern start: a word `in` at the end of an arm (`echo logged in`) does
+  not.
+  Code: `splitShell` [shell.ts:74](../../../../plugins/artifact-tracking/core/lib/shell.ts#L74), the pattern end
+  [:124](../../../../plugins/artifact-tracking/core/lib/shell.ts#L124) and start [:129](../../../../plugins/artifact-tracking/core/lib/shell.ts#L129), the part move
+  [:139](../../../../plugins/artifact-tracking/core/lib/shell.ts#L139) and [:149](../../../../plugins/artifact-tracking/core/lib/shell.ts#L149), the close of a compound
+  [:170](../../../../plugins/artifact-tracking/core/lib/shell.ts#L170), the `>|` guard [:264](../../../../plugins/artifact-tracking/core/lib/shell.ts#L264).
+  Evidence (grade: *verified-kit* for the parser): the pipeline part in
+  [repos.test.ts:264](../../../../plugins/artifact-tracking/tests/repos.test.ts#L264), [:276](../../../../plugins/artifact-tracking/tests/repos.test.ts#L276), [:293](../../../../plugins/artifact-tracking/tests/repos.test.ts#L293)
+  and [:304](../../../../plugins/artifact-tracking/tests/repos.test.ts#L304), and in [process-parse.test.ts:684](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L684),
+  [:696](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L696), [:713](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L713), [:722](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L722) and
+  [:735](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L735). The case arm in [repos.test.ts:318](../../../../plugins/artifact-tracking/tests/repos.test.ts#L318),
+  [:336](../../../../plugins/artifact-tracking/tests/repos.test.ts#L336), [:352](../../../../plugins/artifact-tracking/tests/repos.test.ts#L352), [:363](../../../../plugins/artifact-tracking/tests/repos.test.ts#L363) and
+  [:381](../../../../plugins/artifact-tracking/tests/repos.test.ts#L381), and in [process-parse.test.ts:743](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L743),
+  [:756](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L756), [:768](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L768), [:778](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L778) and
+  [:788](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L788). `esac` after a compound, the word `in` and the part
+  bookkeeping in [repos.test.ts:393](../../../../plugins/artifact-tracking/tests/repos.test.ts#L393), [:401](../../../../plugins/artifact-tracking/tests/repos.test.ts#L401),
+  [:407](../../../../plugins/artifact-tracking/tests/repos.test.ts#L407), [process-parse.test.ts:800](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L800),
+  [:808](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L808), [:813](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L813), and the scopes in
+  [shell.test.ts:66](../../../../plugins/artifact-tracking/tests/shell.test.ts#L66) to [:184](../../../../plugins/artifact-tracking/tests/shell.test.ts#L184). A differential run
+  against real `bash` 5.3 (macOS) of random `cd`, `pushd`, `|`, `|&`, `&`, `&&`,
+  `;`, newline, group, subshell, loop and `case` lists (`;;`, `;&`, `;;&`, `(x)`
+  and `a|b` patterns): 21500 random commands, 0 differences in the folder of the
+  last command, and the two readers never disagree. The same commands gave 6756
+  differences before the fix. The fuzz harness is a scratch script and is not in
+  the repo, so only the tests above can be run again.
+  Not covered: a `case` pattern word is read as a command (`cd)` resets the
+  folder), a compound at the start of an `if` condition (`if for ...; then`)
+  does not open a compound of its own, and a `}` right before a closing backtick
+  (`` `{ a; }` ``) is no group end.
 - The container id is a stdout line of exactly 64 hex characters. Other hex
   in the output (`docker info` prints commit ids) is not an id.
 - A foreground `nohup cmd` (no `&`) is not a detached process.
