@@ -586,7 +586,7 @@ test('the override names the whole folder', async () => {
   expect(fake.writes.map(w => w.path)).toEqual(['/t/cfg/config.json'])
 })
 
-test('problems come in the order of the Copy table', async () => {
+test('problems come in the order of the Copy table, with a refused write before the values (issue #144)', async () => {
   const { fake, manager } = make({
     env: { CLAUDE_TRACKER_CONFIG_DIR: 'rel', HOME: '/h' },
     files: { [P]: '{"version":"x","global":{"refresh":{"tickMs":"a"}},"trackers":{"github":{"chunkSize":0},"zz":{}}}' },
@@ -596,11 +596,11 @@ test('problems come in the order of the Copy table', async () => {
   const texts = manager.problems().map(p => p.split(':')[0])
   expect(texts).toEqual([
     'CLAUDE_TRACKER_CONFIG_DIR is not an absolute path',
+    'The mod cannot write the file',
     'version',
     'global.refresh.tickMs',
     'trackers.github.chunkSize',
     'trackers.zz',
-    'The mod cannot write the file',
   ])
 })
 

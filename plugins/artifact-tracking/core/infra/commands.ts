@@ -35,7 +35,7 @@ export interface CommandHost {
   flushNow(): Promise<void>
   /** The config file may have changed since the last check. True when it did. */
   refreshConfig(p: Ports): Promise<boolean>
-  readonly config: Pick<ConfigSource, 'path' | 'problems'>
+  readonly config: Pick<ConfigSource, 'path' | 'problems' | 'moreProblems'>
   /** The text of turn `n` of the turn ledger, the newest when `n` is absent (issue #69). */
   turnText(p: Ports, n: number | undefined): Promise<string>
   /** The version of the mod, read from its manifest by the start. `undefined` when no start has run it. */
@@ -174,7 +174,8 @@ export class Commands {
   private async list(p: Ports): Promise<Reply> {
     await this.host.items.prepare()
     const text = await this.listText(p)
-    const problems = problemsText(this.host.config.path(), this.host.config.problems())
+    const { config } = this.host
+    const problems = problemsText(config.path(), config.problems(), config.moreProblems())
     return { text: problems === '' ? text : `${text}\n\n${problems}` }
   }
 }

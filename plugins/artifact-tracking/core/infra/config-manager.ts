@@ -4,9 +4,10 @@
 // The file format lives in `config-file.ts`, the path rule in `config-path.ts`. Names no tracker: only `{ id, config }`.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.7. Plan: L4 Task 4 (decisions C7, C10, C16, C17).
 
-import type { ConfigFs, ConfigService, GlobalConfig, Migration } from '../interfaces/config'
+import type { ConfigFs, ConfigService, GlobalConfig, Migration, MoreProblems } from '../interfaces/config'
 import type { JsonObject } from '../interfaces/items'
 import type { EnvName, FsStat } from '../interfaces/ports'
+import { capProblems } from '../lib/problems'
 import {
   CONFIG_VERSION,
   type DocSpec,
@@ -18,7 +19,7 @@ import {
   renderConfig,
   signatureOf,
 } from './config-file'
-import { resolveConfigPath } from './config-path'
+import { resolveConfigPath, resolveDebugLog } from './config-path'
 
 /** The upgrades from an older file version. Version 1 has none. */
 export const MIGRATIONS: readonly Migration[] = []
@@ -59,6 +60,8 @@ export class ConfigManager implements ConfigService {
   private doc: NormalisedDoc
   private pathStep?: Promise<string | undefined>
   private where?: string
+  /** The default place of the debug log, named by the count line of the problems. Undefined when the mod has none. */
+  private debugLog?: string
   private pathProblems: readonly string[] = []
   private snap?: Snap
   /** F1 or F2: the mod cannot tell whether the file exists. Re-checked on every refresh. */
@@ -94,10 +97,31 @@ export class ConfigManager implements ConfigService {
     return this.where
   }
 
-  /** The Copy table order: path, file state, the upgrade copy, the values, then a refused write. */
+  /**
+   * What the mod shows: the first `MAX_PROBLEMS` of the file's problems, then one count line when more exist (issue #144).
+   * The log keeps every problem (`report`).
+   */
   problems(): readonly string[] {
-    const own = [this.blocked, this.failed?.text, this.f9].filter((p): p is string => p !== undefined)
-    return [...this.pathProblems, ...own, ...this.doc.problems, ...(this.f4 === undefined ? [] : [this.f4])]
+    return this.capped().list
+  }
+
+  /** What `problems()` leaves out: the count and the count line, which is the last entry of `problems()`. */
+  moreProblems(): MoreProblems | undefined {
+    return this.capped().more
+  }
+
+  private capped(): ReturnType<typeof capProblems> {
+    return capProblems(this.allProblems(), this.debugLog)
+  }
+
+  /**
+   * Every problem, in the Copy table order: path, file state, the upgrade copy, a refused write, then the values. The
+   * problems of the file state and the write are at most one each, so they come before the values, which can number in the
+   * thousands and fill the 50 that the mod shows (issue #144). Only the log sees what the cap cuts.
+   */
+  private allProblems(): readonly string[] {
+    const own = [this.blocked, this.failed?.text, this.f9, this.f4].filter((p): p is string => p !== undefined)
+    return [...this.pathProblems, ...own, ...this.doc.problems]
   }
 
   /** One run at a time: callers that come while it runs share it. */
@@ -167,9 +191,10 @@ export class ConfigManager implements ConfigService {
   }
 
   private locate(): Promise<string | undefined> {
-    this.pathStep ??= resolveConfigPath(this.d.env).then(r => {
+    this.pathStep ??= Promise.all([resolveConfigPath(this.d.env), resolveDebugLog(this.d.env)]).then(([r, log]) => {
       this.pathProblems = r.problems
       this.where = r.path
+      this.debugLog = log
       return r.path
     })
     return this.pathStep
@@ -192,7 +217,7 @@ export class ConfigManager implements ConfigService {
     return this.views() !== before
   }
 
-  /** The values and the problems as text. Two equal texts mean no change for a reader. */
+  /** The values and the problems a reader sees, as text. Two equal texts mean no change for a reader. */
   private views(): string {
     return JSON.stringify([this.doc.global, [...this.doc.slices], this.problems()])
   }
@@ -279,9 +304,9 @@ export class ConfigManager implements ConfigService {
     }
   }
 
-  /** Logs each distinct problem once per load. */
+  /** Logs each distinct problem once per load: all of them, past the cap of what the mod shows. */
   private report(): void {
-    for (const p of this.problems()) {
+    for (const p of this.allProblems()) {
       if (this.logged.has(p)) continue
       this.logged.add(p)
       this.d.log(`config: ${p}`)

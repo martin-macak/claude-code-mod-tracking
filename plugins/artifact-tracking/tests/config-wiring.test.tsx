@@ -146,3 +146,66 @@ test('an edited file reaches the next tick', async ($, on) => {
   expect(graphqlCalls(w.calls).length).toBe(1)
   expect(w.fake.fsWrites.length).toBe(1) // the edit is the user's: the mod never wrote over it
 })
+
+// The cap on the config problems (issue #144), through the real hooks: the mod shows 50 and a count, the log holds all.
+/** A file whose `global` block holds `n` unknown keys: one problem each. */
+const unknownKeys = (n: number) =>
+  JSON.stringify({ version: 1, global: Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}`, i])) })
+const UNKNOWN_KEY = ': unknown key. The mod keeps it and ignores it.'
+
+test('5000 unknown keys: /track lists ten problems and counts the other 4990, and the debug log holds all 5000', async ($, on) => {
+  const w = world(on, { disk: { [C]: unknownKeys(5000) } })
+  mock.env(on, { HOME: '/home/u' })
+  await $.session.start(START)
+  const lines = ((await track($)).text ?? '').split('\n')
+  expect(lines.slice(-12)).toEqual([
+    `Config problems in ${C}:`,
+    ...Array.from({ length: 10 }, (_, i) => `  global.k${i}${UNKNOWN_KEY}`),
+    '  and 4990 more problems: see /track help.',
+  ])
+  const logged = w.fake.logs.filter(l => l.text.startsWith('config: global.k'))
+  expect(logged).toHaveLength(5000)
+  expect(new Set(logged.map(l => l.to))).toEqual(new Set(['debug']))
+  expect(w.fake.logs.some(l => l.text.includes('more problems'))).toBe(false)
+})
+
+test('60 unknown keys and a refused write: /track names the refused write first, inside the 50', async ($, on) => {
+  const w = world(on, { disk: { [C]: unknownKeys(60) }, denyFs: { write: 'EACCES: permission denied' } })
+  mock.env(on, { HOME: '/home/u' })
+  await $.session.start(START)
+  const lines = ((await track($)).text ?? '').split('\n')
+  expect(lines.slice(-12)).toEqual([
+    `Config problems in ${C}:`,
+    '  The mod cannot write the file: EACCES: permission denied. It tries again at the next start.',
+    ...Array.from({ length: 9 }, (_, i) => `  global.k${i}${UNKNOWN_KEY}`),
+    '  and 51 more problems: see /track help.',
+  ])
+  const help = ((await track($, 'help')).text ?? '').split('\n')
+  expect(help.slice(help.indexOf('Problems') + 1).at(-1)).toBe(
+    '  11 more problems: see /home/u/.claude/debug/latest (claude --debug)',
+  )
+  expect(w.fake.logs.filter(l => l.text.startsWith('config: '))).toHaveLength(61)
+})
+
+test('60 unknown keys: /track help prints the first 50 problems, then one line that counts the other 10', async ($, on) => {
+  const w = world(on, { disk: { [C]: unknownKeys(60) } })
+  mock.env(on, { HOME: '/home/u' })
+  await $.session.start(START)
+  const lines = ((await track($, 'help')).text ?? '').split('\n')
+  const problems = lines.slice(lines.indexOf('Problems') + 1)
+  expect(problems).toHaveLength(51)
+  expect(problems[0]).toBe(`  global.k0${UNKNOWN_KEY}`)
+  expect(problems[49]).toBe(`  global.k49${UNKNOWN_KEY}`)
+  expect(problems[50]).toBe('  10 more problems: see /home/u/.claude/debug/latest (claude --debug)')
+  expect(w.fake.logs.filter(l => l.text.startsWith('config: global.k'))).toHaveLength(60)
+})
+
+test('50 unknown keys: /track help prints all 50 and no count line', async ($, on) => {
+  world(on, { disk: { [C]: unknownKeys(50) } })
+  mock.env(on, { HOME: '/home/u' })
+  await $.session.start(START)
+  const lines = ((await track($, 'help')).text ?? '').split('\n')
+  const problems = lines.slice(lines.indexOf('Problems') + 1)
+  expect(problems).toHaveLength(50)
+  expect(problems.some(p => p.includes('more problem'))).toBe(false)
+})

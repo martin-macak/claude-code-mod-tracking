@@ -630,7 +630,7 @@ test('at 100x40 inline with 3 or more problems the help view shows Pane keys, th
   }
 })
 
-test('the help view lists every problem when the body has the rows, and caps them when it has not', () => {
+test('the help view lists every problem of its model when the body has the rows, and caps them when it has not', () => {
   const tall = problemsIn(30, 100)
   expect(tall.lines.filter(l => /^Problem \d+\.$/.test(l))).toEqual(problemsOf(30)) // the full form: no cap, no count
   expect(tall.lines.join('\n')).not.toContain('/track help')

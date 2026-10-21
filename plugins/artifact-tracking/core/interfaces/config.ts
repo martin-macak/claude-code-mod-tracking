@@ -60,6 +60,15 @@ export interface Migration {
   up(raw: JsonObject): JsonObject
 }
 
+/**
+ * The problems the config left out of its list (issue #144): how many, and the count line that says so and names the
+ * place of the log. The same line is the last entry of `ConfigSource.problems()`.
+ */
+export interface MoreProblems {
+  readonly count: number
+  readonly line: string
+}
+
 /** What a consumer reads of the config file. Every view is frozen. A changed file shows on the next call. */
 export interface ConfigSource {
   global(): Readonly<GlobalConfig>
@@ -67,8 +76,16 @@ export interface ConfigSource {
   slice(id: string): Readonly<JsonObject>
   /** False only when the slice says `enabled: false`. */
   enabled(id: string): boolean
-  /** The problems of the file, in the order of the Copy table. Empty when all is well. */
+  /**
+   * The problems of the file, in the order of the Copy table. Empty when all is well. At most 50, then one count line
+   * when more exist (issue #144): a reader that shows this list shows the cap. The log has every problem.
+   */
   problems(): readonly string[]
+  /**
+   * What `problems()` leaves out: the count and the count line. Undefined when all problems show. When set, its `line`
+   * is the last entry of `problems()`, so a reader that lists the named problems drops that entry (`namedProblems`).
+   */
+  moreProblems(): MoreProblems | undefined
   /** Where the file is, or undefined when the mod has no place for it. */
   path(): string | undefined
 }

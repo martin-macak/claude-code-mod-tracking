@@ -404,6 +404,41 @@ test('pane: h in a docked pane keeps the full help view, one key to a line', asy
   await ui.unmount()
 })
 
+// The cap on the config problems (issue #144): a file with 60 unknown keys gives 50 problems and a count of 10. The inline
+// body of 11 rows has no row left for a problem, so the compact form counts all 60. A tall body takes the full form.
+const withUnknownKeys = (n: number) => ({
+  [CONFIG]: JSON.stringify({ global: Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}`, i])) }),
+})
+
+test('pane: h with 60 config problems in a short inline pane counts all 60 and keeps Pane keys and the footer in view', async ($, on) => {
+  world(on, { manifest: MANIFEST, disk: withUnknownKeys(60) })
+  mock.env(on, { HOME: '/home/u' })
+  await track($)
+  const ui = await mountPane($, { bodyColumns: 96, bodyRows: 11, placement: 'inline' })
+  await ui.press({ key: 'help' })
+  const { gap, help, footer } = await helpTree(ui)
+  expect(JSON.stringify(help.at(-1))).toContain('60 problems: /track help') // 50 listed and 10 left out
+  expect(JSON.stringify(help[0])).toContain('Pane keys')
+  expect(JSON.stringify(help)).not.toContain('debug log') // the count line of the config is no problem of the view
+  expect(gap + help.length + 1).toBeLessThanOrEqual(11) // the help lines and the footer fit the body: the path is short
+  expect(footer).toBeDefined()
+  await ui.unmount()
+})
+
+test('pane: h with 60 config problems in a tall pane lists 50, then one line that counts the rest and names the log', async ($, on) => {
+  world(on, { manifest: MANIFEST, disk: withUnknownKeys(60) })
+  mock.env(on, { HOME: '/home/u' })
+  await track($)
+  const ui = await mountPane($, { bodyColumns: 96, bodyRows: 200, placement: 'dock' })
+  await ui.press({ key: 'help' })
+  const { help } = await helpTree(ui)
+  const texts = help.map(n => JSON.stringify(n))
+  expect(texts.filter(t => t.includes('unknown key'))).toHaveLength(50)
+  expect(texts.at(-1)).toContain('10 more problems: see /home/u/.claude/debug/latest (claude --debug)')
+  expect(texts.at(-2)).toContain('global.k49: unknown key')
+  await ui.unmount()
+})
+
 test('pane: a body shorter than the footer plus one line still draws the help view and every footer key', async ($, on) => {
   world(on)
   const ui = await mountPane($, { bodyColumns: 96, bodyRows: 1, placement: 'inline' })

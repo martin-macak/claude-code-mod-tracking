@@ -8,6 +8,7 @@ import { type DocSpec, normaliseDoc } from '../../core/infra/config-file'
 import type { ConfigFs, ConfigService } from '../../core/interfaces/config'
 import type { JsonObject } from '../../core/interfaces/items'
 import type { FsStat } from '../../core/interfaces/ports'
+import { capProblems } from '../../core/lib/problems'
 
 type Op = 'read' | 'write' | 'exists' | 'stat'
 
@@ -124,7 +125,9 @@ export function fakeConfig(
     enabled(id) {
       return this.slice(id).enabled !== false
     },
-    problems: () => [...(o.problems ?? []), ...doc.problems],
+    // The cap of the real manager (issue #144): the first 50 and one count line.
+    problems: () => capProblems([...(o.problems ?? []), ...doc.problems]).list,
+    moreProblems: () => capProblems([...(o.problems ?? []), ...doc.problems]).more,
     path: () => o.path,
     async refresh() {
       calls.push('refresh')
