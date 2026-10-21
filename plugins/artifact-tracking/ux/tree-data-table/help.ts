@@ -102,13 +102,29 @@ export interface CompactForm {
 const hiddenText = (count: number, more: boolean): string =>
   `${count}${more ? ' more' : ''} ${count === 1 ? 'problem' : 'problems'}: /track help`
 
+/** `rows[k]` is the rows the first `k` problems take, each as many as it wraps to. One pass: the search for the cap reads it. */
+function problemWraps(m: HelpModel, columns: number): readonly number[] {
+  const rows = [0]
+  for (const p of m.problems) rows.push((rows.at(-1) as number) + wrapRows(p, columns))
+  return rows
+}
+
 /** The rows the problems take when the compact form names the first `named`: the title and the named ones, then the count. */
-function problemRows(m: HelpModel, columns: number, named: number): number {
+function problemRows(m: HelpModel, columns: number, wraps: readonly number[], named: number): number {
   if (m.problems.length === 0) return 0
   const hidden = m.problems.length - named
   const count = hidden > 0 ? wrapRows(hiddenText(hidden, named > 0), columns) : 0
   if (named === 0) return count
-  return 1 + m.problems.slice(0, named).reduce((n, p) => n + wrapRows(p, columns), 0) + count
+  return 1 + (wraps[named] as number) + count
+}
+
+/** The rows of everything but the problems in the compact form: the titles, the lines of keys, the config and version lines. */
+function listRows(m: HelpModel, columns: number, perLine: number): number {
+  const groups = m.groups.reduce((n, g) => n + wrapRows(g.title, columns) + Math.ceil(g.keys.length / perLine), 0)
+  const lines =
+    wrapRows(configLine(m.configPath), columns) +
+    (m.version === undefined ? 0 : wrapRows(versionLine(m.version), columns))
+  return groups + lines
 }
 
 /**
@@ -117,11 +133,7 @@ function problemRows(m: HelpModel, columns: number, named: number): number {
  */
 export function compactRows(m: HelpModel, columns: number, form: CompactForm): number {
   const named = Math.min(form.problems, m.problems.length)
-  const groups = m.groups.reduce((n, g) => n + wrapRows(g.title, columns) + Math.ceil(g.keys.length / form.perLine), 0)
-  const lines =
-    wrapRows(configLine(m.configPath), columns) +
-    (m.version === undefined ? 0 : wrapRows(versionLine(m.version), columns))
-  return groups + lines + problemRows(m, columns, named)
+  return listRows(m, columns, form.perLine) + problemRows(m, columns, problemWraps(m, columns), named)
 }
 
 /** The widest `key  label` text of the help view: the cells of one column of keys. */
@@ -148,8 +160,12 @@ export function compactForm(
   if (bodyRows === undefined || !compactHelp(m, footerRows, columns, bodyRows)) return undefined
   const most = Math.max(1, Math.floor((columns - KEY_INDENT + KEY_GAP) / (widestKey(m) + KEY_GAP)))
   const first = Math.min(PER_LINE, most)
-  const fits = (perLine: number, problems: number): boolean =>
-    compactRows(m, columns, { perLine, problems }) + footerRows <= bodyRows
+  // The rows of every prefix of the problems are counted once: a malformed config gives one problem per unknown key, with no
+  // limit, and the search below asks for the rows of many candidates (a rescan of the named problems for each is quadratic).
+  const wraps = problemWraps(m, columns)
+  const rowsOf = (perLine: number, problems: number): number =>
+    listRows(m, columns, perLine) + problemRows(m, columns, wraps, problems)
+  const fits = (perLine: number, problems: number): boolean => rowsOf(perLine, problems) + footerRows <= bodyRows
   let tightest = { perLine: first, rows: Number.POSITIVE_INFINITY }
   for (let perLine = first; perLine <= most; perLine++) {
     if (fits(perLine, 0)) {
@@ -157,7 +173,7 @@ export function compactForm(
       while (!fits(perLine, problems)) problems--
       return { perLine, problems }
     }
-    const rows = compactRows(m, columns, { perLine, problems: 0 })
+    const rows = rowsOf(perLine, 0)
     if (rows < tightest.rows) tightest = { perLine, rows }
   }
   return { perLine: tightest.perLine, problems: 0 }

@@ -464,6 +464,65 @@ test('with no tracker row selected the help view fits every body height from 11 
   expect(over).toEqual([])
 })
 
+// A malformed config gives one problem per unknown key, with no limit, and the pane picks the form on every draw. The
+// search for the cap must not rescan every named problem for each candidate: that is quadratic (Codex review of PR #137).
+test('compactForm with thousands of problems stays linear: 8000 short problems pick their form in a blink', () => {
+  const m = helpModel(MOD_KEYS, [], LIVE, problems(8000), '1.2.3')
+  const start = performance.now()
+  const form = compactForm(m, 1, 96, 40) as CompactForm
+  expect(performance.now() - start).toBeLessThan(500)
+  expect(form.problems).toBeGreaterThan(0)
+  expect(form.problems).toBeLessThan(8000)
+})
+
+// The search takes the most problems that fit. This reference asks `compactRows` for each candidate, the slow way, so the
+// fast search must give the same form for every width, body, footer and number of problems.
+test('compactForm names the most problems that fit: it agrees with a plain search over compactRows', () => {
+  const reference = (m: HelpModel, footerRows: number, columns: number, bodyRows: number): CompactForm | undefined => {
+    if (!compactHelp(m, footerRows, columns, bodyRows)) return undefined
+    const most = Math.max(
+      1,
+      Math.floor((columns - 2 + 2) / (Math.max(...MOD_KEYS.map(k => `${k.key}  ${k.label}`.length)) + 2)),
+    )
+    const first = Math.min(3, most)
+    const fits = (perLine: number, n: number): boolean =>
+      compactRows(m, columns, { perLine, problems: n }) + footerRows <= bodyRows
+    for (let perLine = first; perLine <= most; perLine++) {
+      if (!fits(perLine, 0)) continue
+      let n = m.problems.length
+      while (!fits(perLine, n)) n--
+      return { perLine, problems: n }
+    }
+    return undefined
+  }
+  const texts = [
+    'A.',
+    'A problem that is long enough to wrap in a narrow body, with a key name and a limit.',
+    'x'.repeat(130),
+  ]
+  let checked = 0
+  for (const count of [0, 1, 2, 5, 12, 40]) {
+    const list = Array.from({ length: count }, (_, i) => texts[i % texts.length] as string)
+    const m = helpModel(MOD_KEYS, [], LIVE, list, '1.2.3')
+    for (const columns of [60, 96, 130]) {
+      for (const footerRows of [1, 2]) {
+        for (let bodyRows = 6; bodyRows <= 45; bodyRows += 3) {
+          const want = reference(m, footerRows, columns, bodyRows)
+          const got = compactForm(m, footerRows, columns, bodyRows)
+          if (want === undefined) {
+            // Nothing fits: the fewest rows, with no problem named. Only the shape is pinned here.
+            if (got !== undefined) expect(got.problems).toBe(0)
+          } else {
+            expect(got).toEqual(want)
+          }
+          checked++
+        }
+      }
+    }
+  }
+  expect(checked).toBeGreaterThan(300)
+})
+
 // A key label wider than 22 cells wrapped the three columns of a narrow pane (the note of issue #105).
 test('the keys to a line follow the body width, so a long label never wraps the columns', () => {
   const wide: PaneKey = { ...open, label: 'open in the browser' } // `o  open in the browser` is 22 cells
