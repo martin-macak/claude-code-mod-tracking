@@ -59,3 +59,48 @@ test('renderBand draws tracking, the line and /track, then the engine band, in o
   ])
   expect(root.children[1]).toBe(engine)
 })
+
+// ---------------------------------------------------------------- the turn part (issue #69)
+
+const engineBand = { type: 'Text', props: {}, children: ['engine band'] }
+
+test('R10: the band draws the turn part and its Button between the line and /track', () => {
+  const pressed: string[] = []
+  const turn = { ord: 7, text: '+3 new · 1 seen again', press: () => void pressed.push('open') }
+  const root = asNode(renderBand(EL, 'Links 2 · Repos 1', engineBand as never, turn))
+  const band = asNode(root.children[0])
+  const parts = band.children.map(asNode)
+  expect(parts.map(p => p.type)).toEqual(['Text', 'Text', 'Text', 'Button', 'Text'])
+  expect(parts.map(p => p.children[0])).toEqual([
+    'tracking',
+    'Links 2 · Repos 1',
+    'turn 7 +3 new · 1 seen again',
+    undefined,
+    '/track',
+  ])
+  const button = parts[3]!
+  expect(button.props).toMatchObject({ key: 'turn-open', plain: true, hotkey: '9', label: 'open' })
+  ;(button.props.onPress as () => void)()
+  expect(pressed).toEqual(['open'])
+  expect(root.children[1]).toBe(engineBand)
+})
+
+test('R10: with no section part the band still shows the turn part; with neither it is the plain band', () => {
+  const turn = { ord: 2, text: '1 seen again', press: () => {} }
+  const only = asNode(asNode(renderBand(EL, null, engineBand as never, turn)).children[0])
+  expect(only.children.map(asNode).map(p => p.children[0])).toEqual([
+    'tracking',
+    'turn 2 1 seen again',
+    undefined,
+    '/track',
+  ])
+  const plain = asNode(asNode(renderBand(EL, 'Jira 1', engineBand as never)).children[0])
+  expect(plain.children.map(asNode).map(p => p.children[0])).toEqual(['tracking', 'Jira 1', '/track'])
+})
+
+test('R10: a turn part with no press shows its words and draws no Button, so the band is no stop of ctrl+x Tab', () => {
+  const band = asNode(asNode(renderBand(EL, 'Links 1', engineBand as never, { ord: 4, text: '+1 new' })).children[0])
+  const parts = band.children.map(asNode)
+  expect(parts.map(p => p.type)).toEqual(['Text', 'Text', 'Text', 'Text'])
+  expect(parts.map(p => p.children[0])).toEqual(['tracking', 'Links 1', 'turn 4 +1 new', '/track'])
+})

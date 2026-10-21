@@ -65,7 +65,6 @@ function setup(o: { cwd?: string; agents?: AgentInfo[] } = {}) {
       restore: async () => {},
     },
     start: async () => {},
-    capture: async () => {},
     replay: async () => {},
     tick: async () => {},
     sessionChanged: async () => {},

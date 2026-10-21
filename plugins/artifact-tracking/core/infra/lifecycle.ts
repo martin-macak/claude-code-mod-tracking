@@ -7,12 +7,19 @@
 // Without an item host of its own it builds the ItemService after the TrackerHost, whose `live` the service reads.
 // `/track` is routed by Commands (core/infra/commands.ts), `session.end` by SessionEnd, the pane is read by Views
 // and its keys are served by PaneKeys (the manager extends PaneApi, which hands both their calls). The parts the
-// constructor wires are in lifecycle-parts.ts.
+// constructor wires are in lifecycle-parts.ts, the turn ledger (issue #69) included.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.6. Plan: L3 Tasks 5 to 8, D4 to D9, D20.
 // L5 Tasks 9 and 13, K15, K19. L7 Task 6: PromptRebuild keeps the prompt text (S1, S2, S14).
 
 import type { ConfigService, ConfigSource } from '../interfaces/config'
-import type { AgentSpawnEvent, CommandEvent, RowEvent, ToolCallEvent, TurnCompleteEvent } from '../interfaces/events'
+import type {
+  AgentSpawnEvent,
+  CommandEvent,
+  RowEvent,
+  ToolCallEvent,
+  TurnCompleteEvent,
+  TurnStartEvent,
+} from '../interfaces/events'
 import type { ItemsHost, Level } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
@@ -20,7 +27,7 @@ import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
 import { EventBus } from './bus'
 import type { Commands } from './commands'
 import { Facts } from './facts'
-import { commandsOf, configRefresher, itemHostOf, persistenceOf, schedulerOf } from './lifecycle-parts'
+import { commandsOf, configRefresher, itemHostOf, persistenceOf, schedulerOf, turnLedgerOf } from './lifecycle-parts'
 import { PaneApi } from './pane-api'
 import { PaneKeys } from './pane-keys'
 import type { Persistence } from './persistence'
@@ -33,6 +40,7 @@ import { type Launch, StartSequence } from './start-sequence'
 import { guard } from './steps'
 import { SwitchRunner } from './switch-runner'
 import { TrackerHost } from './tracker-host'
+import type { TurnBand, TurnLedgerService } from './turn-ledger'
 import { Views } from './views'
 
 export type { Launch } from './start-sequence'
@@ -53,6 +61,8 @@ export interface LifecycleDeps {
   listText?(ports: Ports): Promise<string>
   /** The help view as text, for `/track help`. Absent: the reply holds no text. */
   helpText?(ports: Ports): Promise<string>
+  /** The words of each row the list shows, by item key, for `/track turn` (issue #69). Absent: the key and category stand. */
+  turnLabels?(ports: Ports): Promise<ReadonlyMap<string, string>>
 }
 
 export class LifecycleManager extends PaneApi {
@@ -64,6 +74,8 @@ export class LifecycleManager extends PaneApi {
   readonly items: ItemsHost
   /** The router of `/track`. The hook asks it for the answer and for the argument hint. */
   readonly commands: Commands
+  /** What each main-loop turn tracked (issue #69). Public for the lifecycle tests; the hooks reach it through the manager only. */
+  readonly turns: TurnLedgerService
   private readonly cfg: ConfigService
   private readonly scheduler: Scheduler
   private readonly bus: EventBus
@@ -100,6 +112,7 @@ export class LifecycleManager extends PaneApi {
     this.refreshConfig = this.prompt.afterRefresh(configRefresher(this.cfg, this.scheduler))
     this.bus = new EventBus({ log: ports.log })
     this.persistence = persistenceOf(ports, this.cfg, this.watch, () => this.slots())
+    this.turns = turnLedgerOf({ ports, ready: () => this.items.ready, persist: () => void this.persistence.touch() })
     const dismiss = d.dismiss(ports, this.cfg)
     this.items = itemHostOf(d.items, {
       trackers: d.trackers,
@@ -254,29 +267,51 @@ export class LifecycleManager extends PaneApi {
     )
   }
 
-  /** A row was appended: capture first (the item host), then the handlers of the declared doors. */
+  /**
+   * A row was appended: capture first (the item host), then the handlers of the declared doors. The turn ledger says which
+   * turn the row belongs to and keeps what the capture found (issue #69).
+   */
   async row(ports: Ports, ev: RowEvent): Promise<void> {
     await this.entry(ports)
-    await this.guard('capture', () => this.items.capture(ev), 'a row')
+    await this.guard('capture', () => this.turns.withRow(ev, turn => this.items.capture(ev, turn)), 'a row')
     await this.bus.emit('row', ev, ports)
   }
 
   /** A finished tool call: the kinds that read the tool (the item host), then the handlers of the trackers. */
   async toolCall(ports: Ports, ev: ToolCallEvent): Promise<void> {
     await this.entry(ports)
-    await this.guard('item toolCall', () => this.items.toolCall(ev, this.host.hostCtx(ports)), 'a tool call')
+    const capture = (turn?: number) => this.items.toolCall(ev, this.host.hostCtx(ports), turn)
+    await this.guard('item toolCall', () => this.turns.withToolCall(ev, capture), 'a tool call')
     await this.bus.emit('toolCall', ev, ports)
   }
 
   async agentSpawn(ports: Ports, ev: AgentSpawnEvent): Promise<void> {
     await this.entry(ports)
+    await this.guard('turn spawn', () => this.turns.spawn(ev), 'a spawn')
     await this.bus.emit('agentSpawn', ev, ports)
+  }
+
+  /** A main-loop turn began (issue #69): the ledger opens its record, or a wake opens the record of the turn that started the task. */
+  async turnStart(ports: Ports, ev: TurnStartEvent): Promise<void> {
+    await this.entry(ports)
+    await this.guard('turn start', () => this.turns.start(ev), 'a turn start')
   }
 
   async turnComplete(ports: Ports, ev: TurnCompleteEvent): Promise<void> {
     await this.entry(ports)
+    await this.guard('turn commit', () => this.turns.complete(ev), 'a turn end')
     await this.bus.emit('turnComplete', ev, ports)
     await this.prompt.afterTurn(ports, ev)
+  }
+
+  /** The reply of `/track turn [n]` (issue #69). The ledger service words it; the pane gives the words of each row. */
+  turnText(ports: Ports, n: number | undefined): Promise<string> {
+    return this.turns.text(n, () => this.d.turnLabels?.(ports) ?? Promise.resolve(undefined))
+  }
+
+  /** The newest turn that tracked anything: the band shows it and its key opens it (issue #69). */
+  bandTurn(): Promise<TurnBand | undefined> {
+    return this.turns.band()
   }
 
   /** `/track <args>`: the Commands router answers it. A failure rejects. */
@@ -347,7 +382,7 @@ export class LifecycleManager extends PaneApi {
   // ---------------------------------------------------------------- slots
 
   private slots(): readonly DataSlot[] {
-    return [this.items.slot, ...(this.d.extraSlots ?? []), ...this.host.slots()]
+    return [this.items.slot, this.turns.slot, ...(this.d.extraSlots ?? []), ...this.host.slots()]
   }
 
   private guard(what: string, step: () => Promise<unknown>, where = 'a switch'): Promise<void> {

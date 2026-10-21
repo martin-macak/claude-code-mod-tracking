@@ -7,8 +7,10 @@
 import type { Claim, StoredItem } from '../interfaces/items'
 import type { AtomPort } from '../interfaces/ports'
 import type { DismissPort } from '../interfaces/tracker'
+import type { Sightings } from '../interfaces/turns'
 import { withReasons } from '../lib/reasons'
 import { mergeClaims, migrateRecords, unionRecords } from '../lib/records'
+import { NO_SIGHTINGS, sightingsOf } from '../lib/turn-entries'
 import type { Kinds } from './kinds'
 
 export type StoreDeps = {
@@ -72,17 +74,31 @@ export class ItemStore {
   /**
    * Merges claims into the list, less the dismissed keys and the claims of a kind that is off. A kind that is off has
    * claimed its spans already, so a URL that a kind of a higher rank claimed never falls to a lower kind (spec 5.7, toggles). The new keys queue for refresh.
+   *
+   * `turn` (issue #69) is the ordinal of the main-loop turn that made the claims: the records they reach get its stamps. The
+   * answer says what the claims did: the items they added, the known items they named, and the items the same turn had
+   * named before (repeats). Only the capture funnel passes a turn, so a tracker's own `items.track` (the PR lane) stamps
+   * nothing and makes no sighting that a turn keeps.
    */
-  async track(claims: readonly Claim[]): Promise<void> {
+  async track(claims: readonly Claim[], turn?: number): Promise<Sightings> {
     let added: string[] = []
+    let touched: string[] = []
+    let repeats: string[] = []
+    let taken: readonly Claim[] = []
     await this.update((list, dismissed) => {
       const keep = claims.filter(c => !dismissed.has(c.key) && this.d.kinds.isLive(c.category))
       if (keep.length === 0) return list
-      const merged = mergeClaims(list, keep, this.d.kinds.table, this.d.cap())
+      const merged = mergeClaims(list, keep, this.d.kinds.table, this.d.cap(), turn)
       added = merged.added
+      touched = merged.touched
+      repeats = merged.repeats
+      taken = keep
       return merged.changed ? merged.list : list
     })
     if (added.length > 0) this.d.kick(added)
+    return added.length + touched.length + repeats.length === 0
+      ? NO_SIGHTINGS
+      : sightingsOf(taken, added, touched, repeats)
   }
 
   /** Marks the keys due and kicks the refresh. Fire and forget. */

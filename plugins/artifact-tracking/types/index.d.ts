@@ -68,9 +68,74 @@ export interface StoredItem {
   readonly reasons: ReasonSet
   readonly firstSeen: number
   readonly lastSeen: number
+  /** Issue #69. The ordinal of the main-loop turn that first, and that last, tracked the item. Absent: no turn did (the PR lane found it, or the record is older than #69). */
+  readonly firstTurn?: number
+  readonly lastTurn?: number
   readonly priority?: Level
   /** Kind-owned fields. */
   readonly [field: string]: Json | undefined
+}
+
+// ---------------------------------------------------------------- turns (issue #69)
+
+/** How a main-loop turn ended: the engine's own word (`TurnCompleteReason`). */
+export type TurnEnd = 'answer' | 'aborted' | 'refusal' | 'error'
+
+/**
+ * One item that a turn tracked. `k` is the item key, `c` its category, `r` the strongest reason of the turn's claims for
+ * it (#62). `late`: a subagent tracked it after the turn had ended. Short names: the ledger is stored once per session.
+ */
+export type TurnEntry = { readonly k: string; readonly c: string; readonly r: CoreReason; readonly late?: true }
+
+/** One main-loop turn of the session, or of the sessions that `/clear` carried. A wake has none of its own. */
+export type TurnRecord = {
+  /** The number the person sees: `/track turn 7`. Counts on across `/clear`. */
+  readonly ord: number
+  /** The engine's id of the turn (`turn.start`). */
+  readonly turnId: string
+  /** The session id the turn ran in: a record of another id than the current one reads "earlier session". */
+  readonly session: string
+  /** Epoch ms, wall clock. */
+  readonly startedAt: number
+  readonly endedAt?: number
+  /** Absent while the turn runs. */
+  readonly end?: TurnEnd
+  /** The first 60 characters of the person's prompt. Never in the prompt section. */
+  readonly prompt?: string
+  /** The items the turn added, and the known items it saw again. At most 50 each. */
+  readonly new: readonly TurnEntry[]
+  readonly seen: readonly TurnEntry[]
+  /** Entries that did not fit the cap of their list. */
+  readonly moreNew?: number
+  readonly moreSeen?: number
+  /** How often a finished task woke the main loop and put work into this turn. */
+  readonly wakes?: number
+}
+
+/**
+ * The turn ledger. `open`: the record that the running main turn writes to. `pending`: what the person's prompt row
+ * tracked before its `turn.start` came (the row comes first); the turn adopts it. `wake`: a task notice seen on a
+ * prompt row, read by the `turn.start` that follows. `agents` and `calls` map a subagent id and a main-loop tool call id
+ * to the ordinal of the turn that started them; the oldest go first (200 each).
+ */
+export type TurnLedger = {
+  /** The next ordinal. */
+  readonly next: number
+  readonly open?: { readonly ord: number; readonly turnId: string; readonly wake?: true }
+  readonly pending?: {
+    readonly ord: number
+    /** The first 60 characters of the person's prompt row. */
+    readonly prompt: string
+    readonly new: readonly TurnEntry[]
+    readonly seen: readonly TurnEntry[]
+    readonly moreNew?: number
+    readonly moreSeen?: number
+  }
+  readonly wake?: { readonly toolUseId?: string; readonly taskId?: string }
+  /** Newest last, at most 50. */
+  readonly turns: readonly TurnRecord[]
+  readonly agents: readonly (readonly [agentId: string, ord: number])[]
+  readonly calls: readonly (readonly [toolUseId: string, ord: number])[]
 }
 
 // ---------------------------------------------------------------- tools
@@ -110,6 +175,8 @@ declare module 'claude-code' {
       shown: StateFamily<number>
       /** L6. The help view is on. */
       help: boolean
+      /** Issue #69. What each main-loop turn tracked. Persisted per session, carried by `/clear`. */
+      turns: TurnLedger
       /** Issue #49. `/track show-all` is on: the rows the TTL hides show again. Session scope, reset by `/clear`. */
       hidden: { showAll: boolean }
     }

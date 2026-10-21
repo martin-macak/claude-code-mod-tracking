@@ -10,7 +10,8 @@ export function storePort(d: { store: ItemStore; capture: Capture }): ItemStoreP
   return {
     list: () => d.store.list(),
     update: (change, opts) => d.store.update(change, opts),
-    track: claims => d.store.track(claims),
+    // A tracker's own claims make no sighting for a turn (issue #69): the answer of the store is dropped.
+    track: async claims => void (await d.store.track(claims)),
     refresh: keys => d.store.refresh(keys),
     scan: (text, o) => d.capture.scan(text, o),
     build: claim => d.store.build(claim),

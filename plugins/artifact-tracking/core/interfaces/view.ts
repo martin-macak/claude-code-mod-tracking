@@ -60,6 +60,11 @@ export interface TreeRow {
    * context, not a find (the root worktree, the master agent), has none.
    */
   readonly reasons?: ReasonSet
+  /**
+   * The first and the last main-loop turn that tracked the item (issue #69), by ordinal. Core puts it on the row of an item
+   * from its record, so a kind draws none. Absent: no turn tracked the item (the PR lane found it, or the record is older).
+   */
+  readonly turns?: { readonly first: number; readonly last: number }
 }
 
 export interface SectionSpec {

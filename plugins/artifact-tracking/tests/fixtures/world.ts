@@ -202,6 +202,8 @@ export function world(on: On, opts: Opts = {}) {
   const state = { ghAuthFails: opts.ghAuthFails ?? 0 }
   const registered: { name: string; argumentHint?: string }[] = []
   const opened: unknown[] = []
+  /** One entry per `ui.panes` read. */
+  const paneReads: true[] = []
 
   on('store.get', (_$, e) => ({ value: store.get(e.key) }))
   on('store.set', (_$, e) => {
@@ -264,9 +266,10 @@ export function world(on: On, opts: Opts = {}) {
   // keeps across a hot reload (none unless a test passes `panes`).
   on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
   on('store.keys', () => ({ value: [...store.keys()] }))
-  on('ui.panes', () => ({
-    value: (opts.panes ?? []).map(id => ({ id, title: id, isShown: true, isFocused: false })) as never,
-  }))
+  on('ui.panes', () => {
+    paneReads.push(true)
+    return { value: (opts.panes ?? []).map(id => ({ id, title: id, isShown: true, isFocused: false })) as never }
+  })
   on('ui.invalidate', () => ({ value: undefined }))
   on('ui.log', (_$, e) => {
     fake.logs.push({ text: e.text, to: String(e.to) })
@@ -287,6 +290,7 @@ export function world(on: On, opts: Opts = {}) {
 
   on('session.cwd', () => ({ value: fake.cwd }))
   on('agent.list', () => ({ value: fake.agents as never }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
   on('agent.spawn', () => ({ model: 'm', agentId: fake.spawnId }))
   on('tool.call', (_$, e) => {
@@ -380,7 +384,7 @@ export function world(on: On, opts: Opts = {}) {
     return { value: res('', 1, 'unexpected call: ' + argv.join(' ')) }
   })
 
-  return { clock, store, calls, state, registered, opened, states, fake }
+  return { clock, store, calls, state, registered, opened, paneReads, states, fake }
 }
 
 export const graphqlCalls = (calls: string[][]) => calls.filter(c => c[0] === 'gh' && c[1] === 'api')

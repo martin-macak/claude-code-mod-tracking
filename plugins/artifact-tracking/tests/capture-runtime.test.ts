@@ -3,7 +3,7 @@
 // what only the transcript may know of an artifact, and the dismissed keys). The cases of the L3 capture and replay
 // tests moved here; each mirrors the kit test of the same subject. Plan: L3 Task 11, D3, D7. L5 Task 8.
 import { expect, test } from 'claude-code/testing'
-import { backfillText, DOORS, NOT_TYPED, PERSON, readingOf } from '../core/infra/doors'
+import { backfillText, DOORS, isPersonPrompt, isTaskNoticeRow, NOT_TYPED, PERSON, readingOf } from '../core/infra/doors'
 import { transcriptItems } from '../core/infra/replay'
 import type { ReplayItem } from '../core/interfaces/events'
 import type { Claim, Json } from '../core/interfaces/items'
@@ -590,4 +590,22 @@ test('artifact replayWins: a publish over a mention, a delete over a live row, n
   expect(wins(rec('published'), rec('published'))).toBe(false)
   expect(wins(rec('mentioned'), rec('published'))).toBe(false)
   expect(wins(rec('published', true), rec('published', true))).toBe(false)
+})
+
+// ---------------------------------------------------------------- the rows the turn ledger reads (issue #69)
+
+test('isPersonPrompt: the person typed it on the prompt door, in the main loop, with a message; nothing else is', () => {
+  for (const origin of PERSON) expect(isPersonPrompt(promptRow('hi', origin))).toBe(true)
+  expect(isPersonPrompt(promptRow('hi', 'task-notification'))).toBe(false)
+  expect(isPersonPrompt(promptRow('hi', 'coordinator'))).toBe(false)
+  expect(isPersonPrompt(promptRow('hi', 'composer', { isMeta: true }))).toBe(false)
+  expect(isPersonPrompt(promptRow('hi', 'composer', { agentId: 'a1' }))).toBe(false)
+  expect(isPersonPrompt(promptRow('hi', 'composer', { hasMessage: false }))).toBe(false)
+  expect(isPersonPrompt(commandRow('/clear', 'composer'))).toBe(false)
+})
+
+test('isTaskNoticeRow: a prompt row of origin task-notification, and no other row', () => {
+  expect(isTaskNoticeRow(promptRow('<task-notification>', 'task-notification'))).toBe(true)
+  expect(isTaskNoticeRow(promptRow('hi', 'composer'))).toBe(false)
+  expect(isTaskNoticeRow(responseRow('<task-notification>'))).toBe(false)
 })

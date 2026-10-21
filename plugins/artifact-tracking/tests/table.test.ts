@@ -709,3 +709,55 @@ test('a row with children lists its reasons when open; a row with no reasons get
   const plain = draw([section('web', COLS, [row('b', { key: 'k', title: 't' })])], { expanded: new Set(['b']) })
   expect(leaves(only(detailBoxes(plain.drawn.tree)))).toEqual([NOTHING_MORE])
 })
+
+// ---------------------------------------------------------------- turns in the detail (issue #69)
+
+test('R6: the detail lists the first and the last turn of an item, one line after the reasons line', () => {
+  const r = row('a', { prio: '', key: 'k', title: 't' }, { reasons: REASONS, turns: { first: 3, last: 7 } })
+  const { drawn } = draw([section('web', COLS, [r])], { expanded: new Set(['a']) })
+  expect(detailBoxes(drawn.tree).flatMap(leaves)).toEqual([
+    'reasons:',
+    'updated, read, mentioned',
+    'turns:',
+    'first 3 · last 7',
+  ])
+})
+
+test('R6: an item that one turn tracked says so with the same turn twice; a row with no turns has no such line', () => {
+  const once = row('a', { key: 'k' }, { reasons: REASONS, turns: { first: 2, last: 2 } })
+  const { drawn } = draw([section('web', COLS, [once])], { expanded: new Set(['a']) })
+  expect(detailBoxes(drawn.tree).flatMap(leaves).slice(-2)).toEqual(['turns:', 'first 2 · last 2'])
+  const none = row('b', { key: 'k' }, { reasons: REASONS })
+  const plain = draw([section('web', COLS, [none])], { expanded: new Set(['b']) })
+  expect(detailBoxes(plain.drawn.tree).flatMap(leaves)).not.toContain('turns:')
+})
+
+test('R6: the turns line follows the detail() of a tracker and the default detail, and a row with children lists it too', () => {
+  const key: Cell = { text: 'one.example/a', href: 'https://one.example/a' }
+  const turns = { first: 1, last: 4 }
+  const long = row('w', { prio: '', key, title: 'x'.repeat(60) }, { reasons: REASONS, turns })
+  const dflt = draw([section('web', COLS, [long])], { bodyColumns: 40, expanded: new Set(['w']) })
+  expect(detailBoxes(dflt.drawn.tree).flatMap(leaves).slice(-4)).toEqual([
+    'reasons:',
+    'updated, read, mentioned',
+    'turns:',
+    'first 1 · last 4',
+  ])
+  const own = row(
+    'b',
+    { key: 'k' },
+    { reasons: REASONS, turns, detail: () => [{ label: 'Body', cell: { text: 'Hello' } }] },
+  )
+  const custom = draw([section('web', COLS, [own])], { expanded: new Set(['b']) })
+  expect(detailBoxes(custom.drawn.tree).flatMap(leaves)).toEqual([
+    'Body:',
+    'Hello',
+    'reasons:',
+    'updated, read, mentioned',
+    'turns:',
+    'first 1 · last 4',
+  ])
+  const parent = row('p', { key: 'parent' }, { reasons: REASONS, turns, children: [row('c', { key: 'child' })] })
+  const open = draw([section('web', COLS, [parent])], { expanded: new Set(['p']) })
+  expect(detailBoxes(open.drawn.tree).flatMap(leaves).slice(-2)).toEqual(['turns:', 'first 1 · last 4'])
+})

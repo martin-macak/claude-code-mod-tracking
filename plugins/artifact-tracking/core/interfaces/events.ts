@@ -45,6 +45,14 @@ export interface AgentSpawnEvent {
   readonly sessionCwd?: string
 }
 
+/** A main-loop turn began (issue #69). A subagent's turn is not passed on. */
+export interface TurnStartEvent {
+  /** The engine's id of the turn: the same one `turn.complete` carries. */
+  readonly turnId: string
+  /** The prompt the turn begins with. The person's text, or the notice of a finished task; empty for a continued turn. */
+  readonly text: string
+}
+
 /** A turn ended. */
 export interface TurnCompleteEvent {
   /** The `turn.complete` input: the reason and the loop. Untrusted. */

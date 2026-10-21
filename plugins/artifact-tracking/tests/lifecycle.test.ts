@@ -7,6 +7,7 @@ import type { ItemsHost, Json, StoredItem } from '../core/interfaces/items'
 import type { DataSlot } from '../core/interfaces/slots'
 import type { Tracker } from '../core/interfaces/tracker'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
+import { NO_SIGHTINGS } from '../core/lib/turn-entries'
 import { fakeConfig } from './fixtures/config-fs'
 import { IDLE_ITEMS } from './fixtures/items-host'
 import { fakePorts } from './fixtures/ports'
@@ -67,6 +68,7 @@ function setup(o: SetupOpts = {}) {
     },
     capture: async ev => {
       captured.push(ev)
+      return NO_SIGHTINGS
     },
     sessionChanged: async ev => {
       log.push(`host:${ev.kind}`)
@@ -1002,7 +1004,10 @@ test('logout and other dispose too; a host that fails to dispose is logged', asy
 test('row runs the capture step before the row handlers; a door nobody declared reaches capture only', async () => {
   const log: string[] = []
   const t = setup({ log, trackers: [rec('a', 10, log)] })
-  t.host.capture = async ev => void log.push(`capture:${ev.door}`)
+  t.host.capture = async ev => {
+    log.push(`capture:${ev.door}`)
+    return NO_SIGHTINGS
+  }
   const ev = { door: 'prompt', origin: 'composer', isMeta: false, hasMessage: true, text: 'hello' }
   await t.m.row(t.w.ports, ev)
   await t.m.row(t.w.ports, { ...ev, door: 'notice', text: 'n' })

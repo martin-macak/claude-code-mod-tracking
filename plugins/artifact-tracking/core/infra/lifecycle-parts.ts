@@ -10,6 +10,7 @@ import type { Ports } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
 import type { EventBus } from './bus'
+import { NO_ROOM } from './command-text'
 import { type CommandHost, Commands } from './commands'
 import { ItemService } from './items'
 import { Persistence } from './persistence'
@@ -17,6 +18,7 @@ import { Scheduler } from './scheduler'
 import type { SessionWatch } from './session'
 import { reason } from './steps'
 import type { TrackerHost } from './tracker-host'
+import { TurnLedgerService } from './turn-ledger'
 
 /** What the item host reads of the parts built after it. */
 export type ItemHostWiring = {
@@ -49,6 +51,32 @@ export function itemHostOf(given: ItemsHost | undefined, w: ItemHostWiring): Ite
   )
 }
 
+/** What the turn ledger reads of the manager and the parts built beside it. */
+export type TurnLedgerWiring = {
+  ports: Ports
+  /** The item host runs: it has loaded the stored copy of the session. */
+  ready(): boolean
+  /** Persistence writes the session copy soon. */
+  persist(): void
+}
+
+/**
+ * The TurnLedgerService over the `turns` atom (issue #69). Like the item list, it asks for no copy before the item host
+ * runs: a write then could replace the stored copy of a session that the start has not loaded yet. The item host and
+ * Persistence are built after it, so `ready` and `persist` read them at call time.
+ */
+export function turnLedgerOf(w: TurnLedgerWiring): TurnLedgerService {
+  return new TurnLedgerService({
+    atom: w.ports.state.turns,
+    persisted: () => {
+      if (w.ready()) w.persist()
+    },
+    sessionId: () => w.ports.session.id(),
+    wall: () => w.ports.clock.wall(),
+    log: w.ports.log,
+  })
+}
+
 /** The calls of the manager that the router makes. */
 export interface CommandOwner {
   entry(p: Ports): Promise<void>
@@ -57,6 +85,8 @@ export interface CommandOwner {
   clear(p: Ports): Promise<void>
   flushNow(): Promise<void>
   refreshConfig(p: Ports): Promise<boolean>
+  /** The reply of `/track turn [n]`. */
+  turnText(p: Ports, n: number | undefined): Promise<string>
   /** The version of the mod. Read per call: the first start sets it, so it is `undefined` before that. */
   readonly version: string | undefined
 }
@@ -76,12 +106,13 @@ export function commandHostOf(
       await w.bus.emit('command', ev, p, owner)
     },
     openPane: async p => {
-      if (!(await p.ui.open())) p.ui.toast('Widen the terminal to see the tracking pane')
+      if (!(await p.ui.open())) p.ui.toast(NO_ROOM)
     },
     setPriority: (p, rowId, level) => m.setPriority(p, rowId, level),
     clear: p => m.clear(p),
     flushNow: () => m.flushNow(),
     refreshConfig: p => m.refreshConfig(p),
+    turnText: (p, n) => m.turnText(p, n),
     config: w.config,
     version: () => m.version,
   }

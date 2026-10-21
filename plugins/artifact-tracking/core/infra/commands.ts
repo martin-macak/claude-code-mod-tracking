@@ -11,6 +11,7 @@ import type { CommandEvent } from '../interfaces/events'
 import type { ItemsHost, Priority } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { CommandSpec } from '../interfaces/tracker'
+import { TURN_USAGE } from '../lib/turn-text'
 import { CORE_HINT, CORE_SUBS, PRIO_WORDS, problemsText, USAGE, versionText } from './command-text'
 
 export { CORE_HINT, PRIO_WORDS, problemsText, USAGE, versionText } from './command-text'
@@ -35,6 +36,8 @@ export interface CommandHost {
   /** The config file may have changed since the last check. True when it did. */
   refreshConfig(p: Ports): Promise<boolean>
   readonly config: Pick<ConfigSource, 'path' | 'problems'>
+  /** The text of turn `n` of the turn ledger, the newest when `n` is absent (issue #69). */
+  turnText(p: Ports, n: number | undefined): Promise<string>
   /** The version of the mod, read from its manifest by the start. `undefined` when no start has run it. */
   version(): string | undefined
 }
@@ -69,6 +72,8 @@ export class Commands {
     if (arg === 'help') return this.help(p)
     if (arg === 'show-all') return this.showAll(p)
     if (arg === 'clear') return this.clear(p)
+    const turn = /^turn(?:\s+(.*))?$/.exec(arg)
+    if (turn) return this.turn(p, turn[1])
     // R11: the pane's keys for `claude -p`. The ref keeps its case: item keys and repo names need it.
     const prio = /^prio\s+(\S+)\s+(\S+)$/i.exec(args.trim())
     const word = prio?.[2]?.toLowerCase()
@@ -124,6 +129,13 @@ export class Commands {
     await p.state.selected.update(() => null)
     await p.state.expanded.update(() => [])
     return { text: 'Tracking list cleared.' }
+  }
+
+  /** `/track turn [n]`: what a turn tracked (issue #69). No pane, no list: the text alone, so every surface and `claude -p` get it. */
+  private async turn(p: Ports, word: string | undefined): Promise<Reply> {
+    if (word === undefined) return { text: await this.host.turnText(p, undefined) }
+    if (!/^[1-9]\d{0,8}$/.test(word)) return { text: TURN_USAGE }
+    return { text: await this.host.turnText(p, Number(word)) }
   }
 
   private async prio(p: Ports, ref: string, word: string): Promise<Reply> {

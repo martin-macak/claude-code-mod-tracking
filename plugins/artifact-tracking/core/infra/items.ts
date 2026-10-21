@@ -11,6 +11,8 @@ import type { Effective, HostContext, ItemStorePort, ItemsHost, Level, StoredIte
 import type { StatePorts } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, ToolPort, Tracker } from '../interfaces/tracker'
+import type { Sightings } from '../interfaces/turns'
+import { joinSightings, NO_SIGHTINGS } from '../lib/turn-entries'
 import { Capture } from './capture-runtime'
 import { ItemLevels } from './item-levels'
 import { ItemLifecycle } from './item-lifecycle'
@@ -129,20 +131,26 @@ export class ItemService implements ItemsHost {
 
   // ---------------------------------------------------------------- capture
 
-  async capture(ev: RowEvent): Promise<void> {
-    await this.store.track(await this.capturer.row(ev))
+  /** The claims of one row, merged. `turn`: the ordinal of the turn the row belongs to (issue #69). Says what they did. */
+  async capture(ev: RowEvent, turn?: number): Promise<Sightings> {
+    return this.store.track(await this.capturer.row(ev), turn)
   }
 
-  /** Each live kind that reads the tool makes its claims; a fault in one kind (or in its write) stops only that kind. */
-  async toolCall(ev: ToolCallEvent, ctx?: HostContext): Promise<void> {
+  /**
+   * Each live kind that reads the tool makes its claims; a fault in one kind (or in its write) stops only that kind.
+   * `turn` as for `capture`. Says what the claims of all the kinds did.
+   */
+  async toolCall(ev: ToolCallEvent, ctx?: HostContext, turn?: number): Promise<Sightings> {
+    let done = NO_SIGHTINGS
     for (const kind of this.kinds.liveKinds()) {
       if (!this.kinds.reader(kind, ev.tool)) continue
       try {
-        await this.store.track(await this.capturer.fromTool(kind, ev, ctx))
+        done = joinSightings(done, await this.store.track(await this.capturer.fromTool(kind, ev, ctx), turn))
       } catch (e) {
         this.d.log(`items: toolCall failed in ${kind.category}: ${reason(e)}`)
       }
     }
+    return done
   }
 
   dispose(): void {

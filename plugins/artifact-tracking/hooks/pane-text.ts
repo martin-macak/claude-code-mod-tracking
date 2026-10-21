@@ -7,7 +7,7 @@ import type { KeyRegistry } from '../core/infra/keys'
 import type { ConfigSource } from '../core/interfaces/config'
 import type { Level } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
-import type { FooterKey, HelpModel, PaneView, RowRef, SectionSpec } from '../core/interfaces/view'
+import type { FooterKey, HelpModel, PaneView, RowRef, SectionSpec, TreeRow } from '../core/interfaces/view'
 import { helpModel, helpText } from '../ux/tree-data-table/help'
 import { sectionsText } from '../ux/tree-data-table/text'
 
@@ -42,6 +42,27 @@ export const TEXT_VIEW: PaneView = { selected: null, expanded: new Set() }
 /** The list as `/track` prints it: the text of the sections. */
 export async function listText(p: Ports, m: Pick<PaneHost, 'paneData'>): Promise<string> {
   return sectionsText(await m.paneData(p, TEXT_VIEW))
+}
+
+/** The words of a row for a line of text: its type, key and title cells, each once. */
+const wordsOf = (row: TreeRow): string =>
+  [...new Set(['type', 'key', 'title'].map(c => (row.cells[c]?.text ?? '').trim()).filter(t => t !== ''))].join(' ')
+
+/**
+ * The words of each row the list shows, by row id (an item's key), for `/track turn` (issue #69). Read from the sections
+ * with nothing selected, like the list text. An item with no row left (dismissed, hidden by its TTL) has none.
+ */
+export async function turnLabels(p: Ports, m: Pick<PaneHost, 'paneData'>): Promise<ReadonlyMap<string, string>> {
+  const out = new Map<string, string>()
+  const visit = (rows: readonly TreeRow[]): void => {
+    for (const row of rows) {
+      const words = wordsOf(row)
+      if (words !== '') out.set(row.id, words)
+      visit(row.children ?? [])
+    }
+  }
+  for (const s of await m.paneData(p, TEXT_VIEW)) visit(s.rows)
+  return out
 }
 
 /** The help view's data: every key, the config file, the version, the config problems and the key and tracker problems. */
