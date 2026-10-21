@@ -44,11 +44,27 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
 - Heredoc bodies and comments are skipped.
 - `VAR=x`, `sudo`, `env`, `nohup`, `time` and `exec` in front are stripped.
 - `!`, `if`, `while`, `until`, `do`, `then`, `else` and `elif` in front are
-  stripped. A part that is only `done`, `fi` or `esac` is no command and makes
-  no row, so `done &` (a backgrounded loop) has no row. `$!` after it is the pid
-  of the loop shell, so no earlier background command takes it. Every detector reads the
+  stripped, in any order with the wrappers above: `time ! git push` and
+  `! time git push` are both valid shell. A part that is only `done`, `fi` or
+  `esac` is no command and makes no row, so `done &` (a backgrounded loop) has
+  no row. `$!` after it is the pid of the loop shell, so no earlier background
+  command takes it. A backgrounded builtin (`echo x &`, `cd d &`) is the same:
+  its shell makes no row, and the pid line that the next `echo $!` prints is
+  dropped, so the job after it gets its own pid. Every detector reads the
   command after these words, not only the detached-process one. A variable set
   in a branch applies in text order: the last write wins, as with `&&` and `||`.
+  Evidence (grade: *verified-kit* for the parser, not *verified-live*): the
+  tests [process-parse.test.ts:587](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L587),
+  [:605](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L605),
+  [:615](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L615) and
+  [:649](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L649)
+  pass under `claude plugin test`, and [shell.test.ts:41](../../../../plugins/artifact-tracking/tests/shell.test.ts#L41)
+  covers `stripLead`. The shell fact under the builtin rule was run in `bash`
+  and `zsh` outside Claude Code (macOS). `bash 3.2.57` with
+  `sleep 3 & S=$!; echo x & B=$!; echo "sleep=$S builtin=$B"` printed
+  `sleep=96411 builtin=96412`. `zsh 5.9` printed `sleep=98712 builtin=98713`.
+  The two pids differ: `$!` after `echo x &` names the echo's shell, not the
+  sleep.
 - `cd` and `export` move the cwd and env for the parts after them. The Bash
   `tool.call` input has no cwd, so the hook reads `$.session.cwd()`.
 - The container id is a stdout line of exactly 64 hex characters. Other hex

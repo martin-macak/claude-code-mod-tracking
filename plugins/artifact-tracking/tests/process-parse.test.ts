@@ -582,6 +582,76 @@ test('loop: echo $! after a foreground loop still gives the pid to the backgroun
   expect(row).toMatchObject({ name: 'sleep 100', pid: 555 })
 })
 
+// A backgrounded builtin runs in a shell of its own, so `$!` after it is that shell's pid, not the job before it (issue
+// #132). Only the next background job gets a pid from `$!`.
+test('builtin: echo $! after a backgrounded builtin does not give its pid to the earlier background command', () => {
+  for (const cmd of ['sleep 100 & echo x & echo $!', 'sleep 100 & printf x & echo $!']) {
+    const [row] = detachedOf(cmd, undefined, '4242\n')
+    expect({ cmd, row: row?.name }).toEqual({ cmd, row: 'sleep 100' })
+    expect({ cmd, pid: row?.pid }).toEqual({ cmd, pid: undefined })
+  }
+})
+
+test('builtin: a background job after a backgrounded builtin still gets the pid from echo $!', () => {
+  const rows = detachedOf('sleep 100 & echo x & sleep 101 & echo $!', undefined, '4242\n')
+  expect(rows.map(r => [r.name, r.pid])).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', 4242],
+  ])
+})
+
+// The `$!` line of a backgrounded builtin is in stdout too. `echo $!` takes it off the list, so the next background job
+// gets its own pid (review of the PR, M1).
+test('builtin: the $! line of a backgrounded builtin is not the pid of the next background job', () => {
+  const rows = detachedOf('sleep 100 & echo x & echo $!; sleep 101 & echo $!', undefined, '4242\n4243\n')
+  expect(rows.map(r => [r.name, r.pid])).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', 4243],
+  ])
+})
+
+// `cd`, `pushd`, `export`, docker, and a tmux or screen session start take their own branch in the parser, before the
+// detached branch. A backgrounded one makes no detached row and has a shell of its own, as `echo x &` has.
+test('builtin: a backgrounded cd, pushd, export, docker, tmux or screen start gives no pid to the earlier background command', () => {
+  for (const bg of [
+    'cd /tmp',
+    'pushd /tmp',
+    'export X=1',
+    'docker ps',
+    'docker run -d nginx',
+    'tmux new -d -s x',
+    'screen -dmS x',
+  ]) {
+    const cmd = `sleep 100 & ${bg} & echo $!`
+    const rows = detachedOf(cmd, undefined, '4242\n')
+    expect({ cmd, rows: rows.map(r => [r.name, r.pid]) }).toEqual({ cmd, rows: [['sleep 100', undefined]] })
+  }
+})
+
+test('loop: the $! line of a backgrounded loop is not the pid of the next background job', () => {
+  const rows = detachedOf(
+    'sleep 100 & for i in 1; do :; done & echo $!; sleep 101 & echo $!',
+    undefined,
+    '4242\n4243\n',
+  )
+  expect(rows.map(r => [r.name, r.pid])).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', 4243],
+  ])
+})
+
+// `echo $! &` prints the pid of the job before it, so it does not clear that job.
+test('builtin: a backgrounded echo $! after a background job still gives it its pid', () => {
+  const [row] = detachedOf('sleep 100 & echo $! & echo $!', undefined, '4242\n4243\n')
+  expect(row).toMatchObject({ name: 'sleep 100', pid: 4242 })
+})
+
+test('if: a background command after ! and time names the command, in either order', () => {
+  expect(names('time ! sleep 10 &')).toEqual(['sleep 10'])
+  expect(names('! time sleep 10 &')).toEqual(['sleep 10'])
+  expect(names('if time ! sleep 10 & then :; fi')).toEqual(['sleep 10'])
+})
+
 test('if: a background command after else names the command', () => {
   expect(names('if false; then true; else sleep 5 & fi')).toEqual(['sleep 5'])
 })

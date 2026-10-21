@@ -4,7 +4,7 @@ import {
   scopedDir,
   scopedVars,
   splitShell,
-  stripReserved,
+  stripLead,
   stripWrappers,
   unmarkDollars,
 } from '../../core/lib/shell'
@@ -336,6 +336,13 @@ const BUILTINS = new Set([
 type Detached = { fingerprint: string; pid?: number; viaShell: boolean }
 
 /**
+ * The last `&` job makes no row: a builtin (`echo x &`), `cd`, a docker call or a backgrounded loop (`done &`). It has
+ * a shell of its own, so `$!` names that shell, not an earlier job. The `echo $!` that prints it eats one pid line of
+ * stdout: the next `echo $!` must not take that line (issue #132).
+ */
+const NO_ROW: Detached = { fingerprint: '', viaShell: true }
+
+/**
  * The Bash call around a command. `at` is the time the call was seen. `cwd` is the session's working directory, read
  * before the call. `agentId` is absent for the main loop.
  */
@@ -390,7 +397,7 @@ export function parseBashProcesses(
 
   for (const seg of splitShell(command)) {
     // The marked words tell `'$F'` and `\$F` (as typed) from `$F` and `"$F"` (expanded). Only the variables read them.
-    const pre = stripWrappers(stripReserved(seg.marked))
+    const pre = stripLead(seg.marked)
     const ss = stripSetsid(pre.words)
     const inner = stripWrappers(ss.words)
     const marked = inner.words
@@ -400,10 +407,13 @@ export function parseBashProcesses(
       // A line of assignments only (`L=/x`) sets shell variables. `L=/x cmd` sets them for `cmd` alone.
       if (pre.words.length === 0) for (const [k, v] of Object.entries(pre.env)) setVar(k, v, seg.scope)
       // `done &` backgrounds the whole loop: `$!` is then the pid of the loop shell, not of an earlier background command.
-      if (seg.bg) lastBg = undefined
+      if (seg.bg) lastBg = NO_ROW
       continue
     }
     const head = words[0]!
+    // `echo $! &` prints the pid of the job before it, so it keeps that job. Any other `&` job is a row (the detached
+    // branch below replaces this) or no row: either way `$!` is no longer the job before it.
+    if (seg.bg && !echoesPid(words)) lastBg = NO_ROW
 
     if (head === 'cd' || head === 'pushd') {
       const target = words.slice(1).find(w => !w.startsWith('-'))
@@ -420,7 +430,8 @@ export function parseBashProcesses(
       continue
     }
     if (echoesPid(words)) {
-      if (lastBg && lastBg.pid === undefined && !lastBg.viaShell) {
+      if (lastBg === NO_ROW) pids.shift()
+      else if (lastBg && lastBg.pid === undefined && !lastBg.viaShell) {
         const pid = pids.shift()
         if (pid !== undefined) lastBg.pid = pid
       }
