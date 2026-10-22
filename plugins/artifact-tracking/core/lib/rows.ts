@@ -146,19 +146,24 @@ export function turnSpans(items: readonly StoredItem[]): ReadonlyMap<string, Non
   return out
 }
 
+/** The turns of a row of a slot tracker, by row id: `Traceable.turnsOf` over the tracker's data (issue #133). */
+export type TurnLookup = (rowId: string) => NonNullable<TreeRow['turns']> | undefined
+
 /**
  * The rows with `turns` set from their item (issue #69): the row id is the item key. A row of no item, or of an item no
- * turn tracked, is left as it is; the same array comes back when no row changes.
+ * turn tracked, is left as it is; the same array comes back when no row changes. A row that no item names asks `own`, the
+ * lookup of the tracker that draws it (issue #133): its slot rows keep their turns themselves.
  */
 export function withTurns(
   rows: readonly TreeRow[],
   spans: ReadonlyMap<string, NonNullable<TreeRow['turns']>>,
+  own?: TurnLookup,
 ): readonly TreeRow[] {
-  if (spans.size === 0) return rows
+  if (spans.size === 0 && own === undefined) return rows
   let changed = false
   const out = rows.map(row => {
-    const turns = spans.get(row.id)
-    const children = row.children === undefined ? undefined : withTurns(row.children, spans)
+    const turns = spans.get(row.id) ?? own?.(row.id)
+    const children = row.children === undefined ? undefined : withTurns(row.children, spans, own)
     if (turns === undefined && children === row.children) return row
     changed = true
     return { ...row, ...(turns !== undefined ? { turns } : {}), ...(children !== undefined ? { children } : {}) }

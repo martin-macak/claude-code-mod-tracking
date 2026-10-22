@@ -31,3 +31,22 @@ export type TurnSource = { readonly agentId?: string; readonly person?: boolean 
 
 /** What the duration line of a turn draws under the engine's words (issue #69, P2): the turn's ordinal and its counts. */
 export type DurationStrip = { readonly ord: number; readonly counts: string }
+
+/** The first and the last turn that named a row (issue #133). The pane row (`TreeRow.turns`) and `Traceable.turnsOf` use it. */
+export type TurnSpan = { readonly first: number; readonly last: number }
+
+/**
+ * The turn of the event a tracker handler runs for, and the way to tell the ledger which of the tracker's own rows that
+ * event named in it (issue #133, P1b of #69). Items need no such call: the capture funnel stamps them. A slot tracker (repos,
+ * processes, auto) keeps its rows itself, so it stamps them with `ord` and reports them here. `TrackerContext.turn` holds
+ * one for the events of a main-loop turn; a tick, a command, a start and a replay have none.
+ */
+export interface TurnPort {
+  /** The ordinal of the turn that the event belongs to. The turn the person's prompt starts counts, though it has not opened yet. */
+  readonly ord: number
+  /**
+   * The rows the event named. The ledger lists them in the turn: the added ones as `new`, the known ones as `seen again`.
+   * Work that comes after the turn ended (a subagent) is marked late. Never rejects: a fault is logged and the tracker goes on.
+   */
+  note(s: Sightings): Promise<void>
+}

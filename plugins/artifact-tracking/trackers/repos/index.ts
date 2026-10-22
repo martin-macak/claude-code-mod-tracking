@@ -17,6 +17,7 @@ import { repoReasonsOf } from './reasons'
 import { asRepoRows, capRepoRows, mergeRepoRows, upsertRepoRows } from './rows'
 import { sections } from './sections'
 import { RepoTracker, type RepoVisit } from './tracker'
+import { repoSightings, repoTurnsOf } from './turns'
 import type { AgentFact, RepoRecord, RootFact } from './types'
 
 export { asRepoRows, type ReposConfig, reposConfig }
@@ -95,7 +96,9 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> & Traceable<R
     const who = touchedBy(ctx, agentId)
     const at = ctx.clock.wall()
     const gen = ctx.generation
-    live.queue.push(`${key}\0${gen}\0${who}\0${items.map(label).join('\0')}`, async () => {
+    const turn = ctx.turn // the job runs after the hook returned: the turn is read now, like the others
+    // The turn is in the key: a burst of one turn is one write, but a visit of a later turn is a sighting that must not be lost.
+    live.queue.push(`${key}\0${gen}\0${who}\0${turn?.ord ?? ''}\0${items.map(label).join('\0')}`, async () => {
       const visits: RepoVisit[] = []
       for (const item of items) {
         try {
@@ -106,15 +109,25 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> & Traceable<R
         }
       }
       if (visits.length === 0) return
+      let held: RepoRecord[] = []
       await setRepos(
         ctx,
         rows => {
+          held = rows // the last run is the one that wrote: a write that missed its version runs again
           let out = rows
-          for (const v of visits) out = upsertRepoRows(out, { ...v, at }, ctx.config.global().refresh.tickMs)
+          for (const v of visits)
+            out = upsertRepoRows(
+              out,
+              { ...v, at, ...(turn !== undefined ? { turn: turn.ord } : {}) },
+              ctx.config.global().refresh.tickMs,
+            )
           return out
         },
         gen,
       )
+      // A job that ends after a session switch or `/track clear` wrote nothing, and tells the ledger nothing.
+      if (turn !== undefined && ctx.generation === gen)
+        await turn.note(repoSightings(turn.ord, visits, held, asRepoRows(await ctx.data.get())))
     })
   }
 
@@ -211,6 +224,7 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> & Traceable<R
     },
     sections,
     reasonsOf: repoReasonsOf,
+    turnsOf: repoTurnsOf,
     events: {
       toolCall: { Bash: onBash, ...Object.fromEntries(PATH_TOOLS.map(tool => [tool, onPathTool])) },
       agentSpawn: onSpawn,

@@ -2,6 +2,7 @@
 // Pure functions over AutoState. A call that changes nothing returns its input object (A22).
 
 import { normPath } from '../../core/lib/porcelain'
+import { turnSpan } from '../../core/lib/turn-span'
 import { AUTO_DEFAULTS } from './config'
 import type {
   AgentProof,
@@ -115,6 +116,8 @@ const indexOfAgent = (s: AutoState, id: string): number => s.agents.findIndex(a 
 /**
  * Records an `agent.spawn`. A second spawn for a known id (a retry) keeps the first record (A5).
  * The proof's cwd is `ev.cwd`, else the parent's recorded cwd for a nested child, else `sessionCwd` (A6).
+ * `turn` (issue #133) is the ordinal of the turn that made the spawn: it stamps `firstTurn` and `lastTurn` of a new proof, and
+ * moves the span of a known one (a resumed agent), the only change a second spawn makes.
  */
 export function recordSpawn(
   s: AutoState,
@@ -122,8 +125,14 @@ export function recordSpawn(
   at: number,
   sessionCwd?: string,
   maxAgents: number = AUTO_DEFAULTS.maxAgents,
+  turn?: number,
 ): AutoState {
-  if (indexOfAgent(s, ev.agentId) >= 0) return s
+  const known = indexOfAgent(s, ev.agentId)
+  if (known >= 0) {
+    if (turn === undefined) return s
+    const span = turnSpan(s.agents[known]!, { firstTurn: turn, lastTurn: turn })!
+    return patchAgent(s, known, { firstTurn: span.first, lastTurn: span.last })
+  }
   const parent = ev.parentAgentId === undefined ? undefined : s.agents.find(a => a.id === ev.parentAgentId)
   const cwd = ev.cwd ?? (ev.parentAgentId === undefined ? sessionCwd : parent?.cwd)
   const a: AgentProof = {
@@ -135,6 +144,10 @@ export function recordSpawn(
   if (ev.parentAgentId !== undefined) a.parentId = ev.parentAgentId
   if (ev.workflow) a.workflow = { runId: ev.workflow.runId, agentIndex: ev.workflow.agentIndex }
   if (cwd !== undefined) a.cwd = cwd
+  if (turn !== undefined) {
+    a.firstTurn = turn
+    a.lastTurn = turn
+  }
   return { ...s, agents: [...s.agents, a].slice(-maxAgents) }
 }
 

@@ -9,7 +9,8 @@ import type { Ports } from '../interfaces/ports'
 import type { DismissPort, FactsPort, ToolStatus, Tracker } from '../interfaces/tracker'
 import type { HiddenState, PaneView, SectionSpec, ViewContext } from '../interfaces/view'
 import { isRecord } from '../lib/json'
-import { turnSpans, withTurns } from '../lib/rows'
+import { hasTurns } from '../lib/reasons'
+import { type TurnLookup, turnSpans, withTurns } from '../lib/rows'
 import { reason } from './steps'
 
 /** The view of a pane nobody touched: nothing selected, nothing opened. */
@@ -165,16 +166,37 @@ export class Views {
       Promise.all(drawing.map(t => ports.state.slot.get(t.id))),
     ])
     const out: { s: SectionSpec; order: number }[] = []
-    // The first and the last turn of each item go on its row (issue #69), so no kind draws them.
+    // The first and the last turn of each item go on its row (issue #69), so no kind draws them. A slot tracker that has
+    // `turnsOf` (issue #133) gives the turns of its own rows; the rest of the trackers have none.
     const spans = turnSpans(read.items)
     drawing.forEach((t, i) => {
       try {
+        const own = this.lookupOf(t, data[i])
         for (const s of t.sections?.(this.contextOf(t, read, view, data[i])) ?? [])
-          out.push({ s: spans.size === 0 ? s : { ...s, rows: withTurns(s.rows, spans) }, order: t.order })
+          out.push({
+            s: spans.size === 0 && own === undefined ? s : { ...s, rows: withTurns(s.rows, spans, own) },
+            order: t.order,
+          })
       } catch (e) {
         this.d.log(`views: sections of ${t.id} failed: ${reason(e)}`)
       }
     })
     return out
+  }
+
+  /**
+   * The turns of the rows of one tracker, from its `turnsOf` over its slot. undefined: the tracker has none. A `turnsOf` that
+   * throws loses the turns of that row and is logged: the section still draws.
+   */
+  private lookupOf(t: Tracker, data: Json | undefined): TurnLookup | undefined {
+    if (!hasTurns(t)) return undefined
+    return rowId => {
+      try {
+        return t.turnsOf(data, rowId)
+      } catch (e) {
+        this.d.log(`views: turnsOf of ${t.id} failed: ${reason(e)}`)
+        return undefined
+      }
+    }
   }
 }

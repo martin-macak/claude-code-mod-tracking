@@ -102,6 +102,10 @@ export function reasonOfSource(source: string): CoreReason {
 export const isTraceable = <T extends object>(tracker: T): tracker is T & Traceable =>
   typeof (tracker as Partial<Traceable>).reasonsOf === 'function'
 
+/** True for a tracker that also says which turns named each row (`Traceable.turnsOf`, issue #133). The method is optional. */
+export const hasTurns = <T extends object>(tracker: T): tracker is T & Required<Pick<Traceable, 'turnsOf'>> =>
+  typeof (tracker as Partial<Traceable>).turnsOf === 'function'
+
 // ---------------------------------------------------------------- the reasons a kind adds
 
 /** What a check of kind reasons leaves: the words that stay on, and one line for each word it dropped. */

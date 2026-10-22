@@ -21,6 +21,7 @@ import type { Traceable } from '../../core/interfaces/reasons'
 import type { FactsPort, Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import { LoadState } from '../../core/lib/load-state'
+import { rowSightings } from '../../core/lib/turn-span'
 import { type AutoConfig, autoConfig } from './config'
 import { autoIds } from './dismiss'
 import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from './events'
@@ -41,7 +42,8 @@ import { autoReasonsOf } from './reasons'
 import { AutoRound } from './round'
 import { AutoScheduler } from './scheduler'
 import { sections } from './sections'
-import type { AutoReason, AutoState, BranchesFact } from './types'
+import { agentVisit, autoTurnsOf } from './turns'
+import type { AgentProof, AutoReason, AutoState, BranchesFact } from './types'
 
 export { autoDismiss } from './dismiss-store'
 export { type AutoConfig, autoConfig }
@@ -215,7 +217,17 @@ const onTouch: H<ToolCallEvent> = soft('touch', (ctx, ev) => touch(ctx, ev.agent
 
 const onSpawn: H<AgentSpawnEvent> = soft('agent.spawn', async (ctx, ev) => {
   const f = fromSpawn(ev.input, ev.answer)
-  if (f) await setAuto(ctx, s => recordSpawn(s, f, ctx.clock.wall(), ev.sessionCwd, ctx.config.slice().maxAgents))
+  if (f) {
+    const turn = ctx.turn
+    let held: AgentProof | undefined
+    await setAuto(ctx, s => {
+      held = s.agents.find(a => a.id === f.agentId) // the last run is the one that wrote
+      return recordSpawn(s, f, ctx.clock.wall(), ev.sessionCwd, ctx.config.slice().maxAgents, turn?.ord)
+    })
+    // A workflow run spawns many agents: each is stamped, but none is an entry, or one run would fill the 50 entries of its turn.
+    if (turn !== undefined && f.workflow === undefined)
+      await turn.note(rowSightings(turn.ord, [agentVisit(f.agentId, held)]))
+  }
   kick(ctx, 'agent')
 })
 
@@ -270,6 +282,7 @@ export const auto: Tracker<AutoConfig, AutoState> & Traceable<AutoState> = {
   },
   sections,
   reasonsOf: autoReasonsOf,
+  turnsOf: autoTurnsOf,
   events: {
     start: onStart,
     toolCall: {

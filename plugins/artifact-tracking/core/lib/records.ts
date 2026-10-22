@@ -6,6 +6,7 @@
 import type { Claim, ItemKind, Json, Priority, StoredItem } from '../interfaces/items'
 import { mergePriority, withPriority } from './levels'
 import { addReason, dropReason, joinReasons } from './reasons'
+import { turnSpan } from './turn-span'
 
 /** `not-found`: the tool says the item does not exist (or no permission). `failed`: the last refresh failed. */
 export type ItemError = { kind: 'not-found' | 'failed'; message: string; at: number }
@@ -156,18 +157,6 @@ export function foldRecords(a: StoredItem, b: StoredItem, kinds: KindTable): Sto
 }
 
 // ---------------------------------------------------------------- merge
-
-/** The first and the last turn over some records, or undefined when none has a turn. */
-function turnSpan(...recs: readonly StoredItem[]): { first: number; last: number } | undefined {
-  const firsts = recs.flatMap(r => (typeof r.firstTurn === 'number' ? [r.firstTurn] : []))
-  const lasts = recs.flatMap(r => (typeof r.lastTurn === 'number' ? [r.lastTurn] : []))
-  if (firsts.length === 0 && lasts.length === 0) return undefined
-  const all = [...firsts, ...lasts]
-  return {
-    first: firsts.length > 0 ? Math.min(...firsts) : Math.min(...all),
-    last: lasts.length > 0 ? Math.max(...lasts) : Math.max(...all),
-  }
-}
 
 /**
  * The record as a claim of `turn` leaves it: `firstTurn` the smallest and `lastTurn` the largest of the turns the record

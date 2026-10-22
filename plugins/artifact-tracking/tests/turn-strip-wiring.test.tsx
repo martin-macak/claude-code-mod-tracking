@@ -107,7 +107,7 @@ test('text: a subagent turn.complete is left alone, and so is the wake of a task
   await $.session.append(prompt(`see ${A}`))
   await start($, 'turn-1', `see ${A}`)
   await $.agent.spawn({ tool_use_id: 'tu_agent', subagentType: 'general-purpose', background: true } as never)
-  expect(await end($, 'turn-1')).toEqual({ text: '+1 new · /track turn 1' })
+  expect(await end($, 'turn-1')).toEqual({ text: '+2 new · /track turn 1' }) // the link, and the agent that the turn spawned
   expect(await end($, 'sub-turn', 'answer', 'agent-7')).toEqual({ text: '' }) // a subagent's end: no strip of its own
   const notice = '<task-notification>\n<task-id>agent-7</task-id>\n<tool-use-id>tu_agent</tool-use-id>\ndone'
   await $.session.append(prompt(notice, 'task-notification'))

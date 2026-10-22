@@ -20,6 +20,7 @@ import type {
 } from './events'
 import type { ItemKind, ItemStorePort, Json, JsonObject } from './items'
 import type { AgentInfo, EnvName, Ports, RepoRemote, RunOpts, RunResult, Timer } from './ports'
+import type { TurnPort } from './turns'
 import type { ActionImpls, SectionSpec, ViewContext } from './view'
 
 export type { BreakerState, ToolStatus } from '../../types'
@@ -176,6 +177,13 @@ export interface TrackerContext<C extends JsonObject = JsonObject, D extends Jso
     update(fn: (cur: D | undefined) => D, opts?: { since?: number }): Promise<D | undefined>
   }
   readonly items: ItemStorePort
+  /**
+   * The turn of the event this handler runs for (issue #133, P1b of #69): a row, a tool call or an agent spawn that a turn of
+   * the main loop owns. A slot tracker stamps its rows with `turn.ord` and tells the ledger which rows the event named with
+   * `turn.note`. Absent for a tick, a command, a start, a replay and an event that no turn owns. A tracker that ignores it
+   * works as before.
+   */
+  readonly turn?: TurnPort
   readonly facts: FactsPort
   readonly dismiss: DismissPort
   readonly session: {

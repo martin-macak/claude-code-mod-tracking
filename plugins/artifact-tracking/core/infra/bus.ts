@@ -4,6 +4,7 @@
 
 import type { Json, JsonObject } from '../interfaces/items'
 import type { TrackerEvents } from '../interfaces/tracker'
+import type { TurnTarget } from '../interfaces/turns'
 
 /**
  * Every event kind a tracker can declare. A tracker declares `fact` handlers under `facts`, one per fact name, and the
@@ -29,7 +30,7 @@ export const MODE: Readonly<Record<BusKind, 'sequential' | 'parallel'>> = Object
   fact: 'parallel',
 })
 
-type Run = (ev: unknown, via: unknown) => void | Promise<void>
+type Run = (ev: unknown, via: unknown, turn?: TurnTarget) => void | Promise<void>
 type Filter = { tools?: readonly string[]; doors?: readonly string[]; names?: readonly string[] }
 type Entry = { owner: string; order: number; run: Run; filter?: Filter }
 
@@ -61,23 +62,24 @@ export class EventBus {
 
   /**
    * Calls the handlers of `kind` that accept `ev`. `via` goes to each as its second argument (the dispatch's ports).
-   * `only` limits the call to the handlers of one owner (a sub-command a tracker declared).
+   * `only` limits the call to the handlers of one owner (a sub-command a tracker declared). `turn` is the turn the event
+   * belongs to (issue #133): it goes to each as its third argument, and TrackerHost makes it `ctx.turn`. The bus reads none of it.
    * Never rejects. In a parallel kind every handler has started when `emit` returns its promise.
    */
-  async emit(kind: BusKind, ev: unknown, via: unknown, only?: string): Promise<void> {
+  async emit(kind: BusKind, ev: unknown, via: unknown, only?: string, turn?: TurnTarget): Promise<void> {
     const list = (this.entries.get(kind) ?? []).filter(
       e => (only === undefined || e.owner === only) && accepts(kind, e.filter, ev),
     )
     if (MODE[kind] === 'sequential') {
-      for (const e of list) await this.call(kind, e, ev, via)
+      for (const e of list) await this.call(kind, e, ev, via, turn)
       return
     }
-    await Promise.all(list.map(e => this.call(kind, e, ev, via)))
+    await Promise.all(list.map(e => this.call(kind, e, ev, via, turn)))
   }
 
-  private async call(kind: BusKind, e: Entry, ev: unknown, via: unknown): Promise<void> {
+  private async call(kind: BusKind, e: Entry, ev: unknown, via: unknown, turn?: TurnTarget): Promise<void> {
     try {
-      await e.run(ev, via)
+      await e.run(ev, via, turn)
     } catch (err) {
       this.d.log(`bus: ${kind} failed in ${e.owner}: ${err instanceof Error ? err.message : String(err)}`)
     }

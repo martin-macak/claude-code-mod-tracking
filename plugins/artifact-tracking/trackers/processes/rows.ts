@@ -4,8 +4,11 @@
 
 import type { Json, JsonObject } from '../../core/interfaces/items'
 import type { TrackerContext } from '../../core/interfaces/tracker'
+import type { TurnPort } from '../../core/interfaces/turns'
+import { stampedTurn, withSpan } from '../../core/lib/turn-span'
 import type { ProcessesConfig } from './config'
 import { ENDED_STATES, FAILED_STATES } from './states'
+import { processSightings } from './turns'
 import type { ProcessRecord, ProcessState } from './types'
 
 /** What the writes need of a context: the data slot only. */
@@ -100,7 +103,7 @@ export function mergeProcessRows(
     byId.set(
       row.id,
       old
-        ? endedBy({ ...old, ...row, firstSeen: old.firstSeen, lastSeen: now }, [old, row], now)
+        ? withSpan(endedBy({ ...old, ...row, firstSeen: old.firstSeen, lastSeen: now }, [old, row], now), old, row)
         : endedBy(row, [row], now),
     )
   }
@@ -122,10 +125,26 @@ export async function setProcesses(ctx: RowsCtx, change: (rows: ProcessRecord[])
   await ctx.data.update(cur => change(asRows(cur)) as unknown as Json)
 }
 
-/** Adds rows to the slot. `cap` is the config of the tracker: the slot keeps no more rows than `maxRows` (see `mergeProcessRows`). */
-export async function addProcessRows(ctx: RowsCtx, rows: ProcessRecord[], cap: ProcessCap): Promise<void> {
+/**
+ * Adds rows a Bash or Monitor call found. `cap` is the config of the tracker: the slot keeps no more rows than `maxRows` (see
+ * `mergeProcessRows`). With `turn` (issue #133) the rows are stamped with its ordinal, and the ledger hears which rows the
+ * call added and which it named again.
+ */
+export async function addProcessRows(
+  ctx: RowsCtx,
+  rows: ProcessRecord[],
+  cap: ProcessCap,
+  turn?: TurnPort,
+): Promise<void> {
   if (rows.length === 0) return
-  await setProcesses(ctx, cur => mergeProcessRows(cur, rows, undefined, cap))
+  if (turn === undefined) return setProcesses(ctx, cur => mergeProcessRows(cur, rows, undefined, cap))
+  const marked = rows.map(r => stampedTurn(r, turn.ord))
+  let held: ProcessRecord[] = []
+  await setProcesses(ctx, cur => {
+    held = cur // the last run is the one that wrote: a write that missed its version runs again
+    return mergeProcessRows(cur, marked, undefined, cap)
+  })
+  await turn.note(processSightings(turn.ord, marked, held))
 }
 
 /**
