@@ -62,4 +62,5 @@ Feature: The questions that Claude asks are listed with their answers
     And the screen matches /for \d+s · done/
     When I type "/track qa"
     Then the screen shows "Q1 · turn 1 · declined"
-    And the screen shows "Declined: The user"
+    # The words are the structured error of the result, which keeps the engine's own "Error:" mark.
+    And the screen shows "Declined: Error: The user"
