@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { formatRefs, parseRefs, pickNext, plan } from '../scripts/core.mjs'
+import { formatRefs, parseRefs, pickNext, plan, readDifferences, readProblems } from '../scripts/core.mjs'
 import { NONE, OPTIONS, project, REPO } from './helpers.mjs'
 
 const run = (p, extra = {}) => plan({ ...p.build(), options: OPTIONS, repo: REPO, ...extra })
@@ -430,4 +430,136 @@ test('next uses the Status that sync would write', () => {
     .issue(2, { status: 'Blocked', wave: 'Wave 1', order: 2, blockedBy: [1], text: '#1' })
     .issue(3, { status: 'Blocked', wave: 'Wave 1', order: 3, text: '#9' })
   assert.equal(pickNext(run(p).effective).next.number, 3)
+})
+
+// --- A read that is complete (issue #228) ---
+
+// A read of n items. counts: the totalCount that each page gave (one number per page).
+const listed = (n, counts = [n], from = 0) => ({
+  items: Array.from({ length: n }, (_, i) => ({ id: `PVTI_${from + i}` })),
+  totalCounts: counts,
+})
+
+test('readProblems: a read whose items match totalCount has no problem', () => {
+  assert.deepEqual(readProblems(listed(109)), [])
+  assert.deepEqual(readProblems(listed(109, [109, 109])), [])
+})
+
+test('readProblems: fewer items than totalCount names both counts (a short page, a cut-off list)', () => {
+  const problems = readProblems(listed(100, [109]))
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /listed 100 items, but GitHub counts 109/)
+})
+
+test('readProblems: more items than totalCount disagree too', () => {
+  const problems = readProblems(listed(110, [109]))
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /listed 110 items, but GitHub counts 109/)
+})
+
+test('readProblems: an empty project is a problem, also when totalCount says 0 too', () => {
+  for (const read of [listed(0, [0]), listed(0, [])]) {
+    const problems = readProblems(read)
+    assert.equal(problems.length > 0, true, JSON.stringify(read))
+    assert.match(problems.join('\n'), /no item/)
+  }
+  // One message for an empty list that totalCount contradicts: the counts say it already.
+  assert.deepEqual(readProblems(listed(0, [109])).length, 1)
+  assert.match(readProblems(listed(0, [109]))[0], /listed 0 items, but GitHub counts 109/)
+})
+
+test('readProblems: a page without a totalCount cannot be checked', () => {
+  const problems = readProblems(listed(23, [null]))
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /no item count \(totalCount\)/)
+})
+
+test('readProblems: a totalCount that changes between the pages names both values', () => {
+  const problems = readProblems(listed(109, [109, 110]))
+  assert.equal(problems.length > 0, true)
+  assert.match(problems.join('\n'), /changed while the pages were read: 109, then 110/)
+})
+
+test('readProblems: an item that is listed twice is a problem, although the counts agree', () => {
+  const read = listed(3, [3])
+  read.items[2].id = read.items[0].id
+  const problems = readProblems(read)
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /1 item is listed more than once/)
+})
+
+test('readProblems: expectIds names how many of the items that an earlier read listed are missing', () => {
+  const before = new Set(listed(109).items.map(i => i.id))
+  assert.deepEqual(readProblems(listed(109), { expectIds: before }), [])
+  // Two more items than before is fine: someone added items.
+  assert.deepEqual(readProblems(listed(111), { expectIds: before }), [])
+  const problems = readProblems(listed(105, [105]), { expectIds: before })
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /lacks 4 of the 109 items that the read before it listed/)
+})
+
+test('readDifferences: the same items in another order are no difference', () => {
+  const a = listed(5)
+  const b = { ...listed(5), items: [...a.items].reverse() }
+  assert.deepEqual(readDifferences(a, b), [])
+})
+
+// A read of three items with what the plan sees of each: kind, key, state, milestone, fields, and
+// the blockers in the graph.
+const withValues = () => ({
+  items: [1, 2, 3].map(n => ({
+    id: `PVTI_${n}`,
+    kind: 'issue',
+    key: `o/r#${n}`,
+    state: 'OPEN',
+    milestone: { title: 'm' },
+    fields: { Status: 'In progress', Wave: 'Wave 0', Order: n },
+  })),
+  graph: { 'o/r#1': { blockedBy: [] }, 'o/r#2': { blockedBy: ['o/r#1', 'o/r#3'] }, 'o/r#3': { blockedBy: ['o/r#1'] } },
+  totalCounts: [3],
+})
+
+test('readDifferences: the same ids with other field values, state, milestone or blockers are a difference', () => {
+  const changed = {
+    'a field value': r => {
+      r.items[0].fields.Status = 'Ready'
+    },
+    'an emptied field': r => {
+      r.items[1].fields = { Status: null, Wave: null, Order: null }
+    },
+    'the state': r => {
+      r.items[2].state = 'CLOSED'
+    },
+    'the milestone': r => {
+      r.items[0].milestone = null
+    },
+    'a blocker': r => {
+      r.graph['o/r#3'].blockedBy = []
+    },
+  }
+  for (const [what, change] of Object.entries(changed)) {
+    const b = withValues()
+    change(b)
+    const diff = readDifferences(withValues(), b)
+    assert.equal(diff.length, 1, what)
+    assert.match(diff[0], /3 and 3 items, 0 only in the first, 0 only in the second, 1 with other field values or blockers/, what)
+  }
+})
+
+test('readDifferences: the blockers of an item in another order, and an item with no key, are no difference', () => {
+  const a = withValues()
+  const b = withValues()
+  b.graph['o/r#2'].blockedBy.reverse()
+  a.items.push({ id: 'PVTI_draft', kind: 'draft', key: null, state: null, milestone: null, fields: {} })
+  b.items.push({ id: 'PVTI_draft', kind: 'draft', key: null, state: null, milestone: null, fields: {} })
+  assert.deepEqual(readDifferences(a, b), [])
+})
+
+test('readDifferences: names the counts of both reads and of the items that only one read has', () => {
+  const diff = readDifferences(listed(109), listed(105, [105], 4))
+  assert.equal(diff.length, 1)
+  assert.match(diff[0], /two reads list different items: 109 and 105 items, 4 only in the first, 0 only in the second/i)
+  // Same size, other items.
+  const swapped = readDifferences(listed(3), listed(3, [3], 1))
+  assert.match(swapped[0], /3 and 3 items, 1 only in the first, 1 only in the second/)
 })

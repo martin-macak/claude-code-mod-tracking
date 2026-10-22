@@ -5,7 +5,15 @@
 // The tests pass a fake runner. The CLI passes spawnRunner.
 
 import { spawnSync } from 'node:child_process'
-import { issueKey, mergeIssueNodes, normalizeProject, PlanError, unloadedOpenIds } from './core.mjs'
+import {
+  issueKey,
+  mergeIssueNodes,
+  normalizeProject,
+  PlanError,
+  readDifferences,
+  readProblems,
+  unloadedOpenIds,
+} from './core.mjs'
 
 // A failed gh call. kind: 'auth' (login, token or scope), 'missing' (no gh) or 'other'.
 export class GhError extends Error {
@@ -73,8 +81,8 @@ export function makeGh(runner = spawnRunner) {
 
 // --- Reads ---
 
-// One page of the project: fields and 100 items, in the order of their manual position.
-// owner is a user or an organization.
+// One page of the project: fields and 100 items, in the order of their manual position, and the
+// number of items that GitHub counts (totalCount). owner is a user or an organization.
 const PROJECT_QUERY = `query ProjectItems($owner: String!, $number: Int!, $cursor: String) {
   repositoryOwner(login: $owner) {
     ... on ProjectV2Owner {
@@ -90,6 +98,7 @@ const PROJECT_QUERY = `query ProjectItems($owner: String!, $number: Int!, $curso
           }
         }
         items(first: 100, after: $cursor, orderBy: { field: POSITION, direction: ASC }) {
+          totalCount
           pageInfo { hasNextPage endCursor }
           nodes {
             id
@@ -170,10 +179,15 @@ const MILESTONE_ISSUES_QUERY = `query MilestoneIssues($owner: String!, $name: St
   }
 }`
 
-// Reads every page of the project. Returns normalizeProject()'s result.
+// Reads every page of the project. Returns normalizeProject()'s result and `totalCounts`: the item
+// count that each page gave (null for a page that gave none). The read does not say whether it is
+// complete: GitHub can answer with part of the items (issue #228). readProblems() in core.mjs
+// judges that, and readComplete() below applies it. A null node of a partial answer is dropped, so
+// the count shows it missing.
 export function readProject(gh, { owner, number }) {
   let first = null
   const nodes = []
+  const totalCounts = []
   let cursor = null
   do {
     const data = gh.graphql(PROJECT_QUERY, { owner, number, cursor })
@@ -185,10 +199,49 @@ export function readProject(gh, { owner, number }) {
       )
     }
     first ??= project
-    nodes.push(...project.items.nodes)
-    cursor = project.items.pageInfo.hasNextPage ? project.items.pageInfo.endCursor : null
+    const items = project.items ?? {}
+    nodes.push(...(items.nodes ?? []).filter(Boolean))
+    totalCounts.push(Number.isInteger(items.totalCount) ? items.totalCount : null)
+    cursor = items.pageInfo?.hasNextPage ? items.pageInfo.endCursor : null
   } while (cursor)
-  return normalizeProject({ ...first, items: { nodes } })
+  return { ...normalizeProject({ ...first, items: { nodes } }), totalCounts }
+}
+
+// A bad read is tried again until READ_ATTEMPTS tries are used, with a pause before each new try.
+// The pauses are short, and the last try has none after it: GitHub answers with part of the items
+// for seconds at a time. The failure is the safe outcome, and the message tells to run it again.
+export const READ_ATTEMPTS = 4
+export const READ_BACKOFF_MS = [500, 1000, 2000]
+
+// A pause that blocks, for the CLI. The tests pass their own sleep.
+export const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+
+// Reads the project and checks that the read is complete (readProblems). A bad read is tried
+// again, after a pause, up to `attempts` times. It returns the last read with `problems`: [] when
+// the read is good, else what was wrong with the last try. It never throws for a bad read: the
+// caller decides to stop (a write) or to warn (a dry run). A failed gh call is no bad read and is
+// not tried again.
+//   twice      read twice in every try, and require the same items, with the same values, both
+//              times (readDifferences). For a run that writes: one read can look complete and
+//              still be a cut of the list.
+//   expectIds  ids of an earlier read. The read must list them all (the check after a write).
+//   sleep      (ms) => void, the pause between two tries.
+export function readComplete(
+  gh,
+  target,
+  { twice = false, expectIds = null, sleep = sleepSync, attempts = READ_ATTEMPTS, backoff = READ_BACKOFF_MS } = {},
+) {
+  for (let attempt = 1; ; attempt += 1) {
+    let read = readProject(gh, target)
+    let problems = readProblems(read, { expectIds })
+    if (twice && problems.length === 0) {
+      const again = readProject(gh, target)
+      problems = [...readProblems(again, { expectIds }), ...readDifferences(read, again)]
+      read = again
+    }
+    if (problems.length === 0 || attempt >= attempts) return { ...read, problems, attempts: attempt }
+    sleep(backoff[Math.min(attempt, backoff.length) - 1])
+  }
 }
 
 // JSON in a failed reply may be missing or cut off. Null then.

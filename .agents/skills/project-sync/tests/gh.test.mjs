@@ -14,11 +14,15 @@ import {
   itemEditArgs,
   loadBlockers,
   makeGh,
+  READ_ATTEMPTS,
+  READ_BACKOFF_MS,
+  readComplete,
   readMilestoneIssues,
   readProject,
   resolveContent,
+  sleepSync,
 } from '../scripts/gh.mjs'
-import { issueNode, keyOf as key, live, REPO, snapshot, stubNode } from './helpers.mjs'
+import { issueNode, keyOf as key, live, livePages, REPO, snapshot, stubNode } from './helpers.mjs'
 
 // A runner that records the calls and answers with canned replies.
 function fakeRunner(answer) {
@@ -164,23 +168,28 @@ test('rest reads JSON from gh api', () => {
   assert.deepEqual(runner.calls[0].args, ['api', 'repos/o/r/issues/1'])
 })
 
-test('readProject reads every page and merges the items', () => {
-  const [first, second] = [
-    snapshot.data.repositoryOwner.projectV2.items.nodes.slice(0, 10),
-    snapshot.data.repositoryOwner.projectV2.items.nodes.slice(10),
-  ]
-  const page = (nodes, hasNextPage, endCursor) => ({
-    data: {
-      repositoryOwner: {
-        projectV2: {
-          ...snapshot.data.repositoryOwner.projectV2,
-          items: { pageInfo: { hasNextPage, endCursor }, nodes },
-        },
+// One reply of the project query: the nodes of one page, as the items connection gives them.
+// totalCount: what GitHub counts, as many as the nodes unless a test says otherwise.
+const ALL_NODES = snapshot.data.repositoryOwner.projectV2.items.nodes
+const projectPage = (nodes, { more = false, cursor = null, total = nodes.length } = {}) => ({
+  data: {
+    repositoryOwner: {
+      projectV2: {
+        ...snapshot.data.repositoryOwner.projectV2,
+        items: { totalCount: total, pageInfo: { hasNextPage: more, endCursor: cursor }, nodes },
       },
     },
-  })
+  },
+})
+
+test('readProject reads every page and merges the items', () => {
+  const [first, second] = [ALL_NODES.slice(0, 10), ALL_NODES.slice(10)]
   const runner = fakeRunner((_args, body) =>
-    ok(body.variables.cursor ? page(second, false, null) : page(first, true, 'C1')),
+    ok(
+      body.variables.cursor
+        ? projectPage(second, { total: 23 })
+        : projectPage(first, { more: true, cursor: 'C1', total: 23 }),
+    ),
   )
   const read = readProject(makeGh(runner), { owner: 'martin-macak', number: 3 })
   assert.equal(read.items.length, 23)
@@ -194,6 +203,26 @@ test('readProject reads every page and merges the items', () => {
   )
   assert.match(runner.calls[0].body.query, /first: 100/)
   assert.deepEqual(read.project, live.project)
+  // Each page gives its totalCount. readProblems compares them with the items that were listed.
+  assert.deepEqual(read.totalCounts, [23, 23])
+})
+
+test('the project query asks for the item count, and readProject keeps a page that gives none', () => {
+  const runner = fakeRunner(() => {
+    const reply = projectPage(ALL_NODES)
+    delete reply.data.repositoryOwner.projectV2.items.totalCount
+    return ok(reply)
+  })
+  const read = readProject(makeGh(runner), { owner: 'martin-macak', number: 3 })
+  assert.match(runner.calls[0].body.query, /items\(first: 100[^)]*\) \{\s+totalCount\s+pageInfo/)
+  assert.deepEqual(read.totalCounts, [null])
+})
+
+test('readProject drops the null nodes of a partial answer, so the count shows them missing', () => {
+  const runner = fakeRunner(() => ok(projectPage([ALL_NODES[0], null, ALL_NODES[1]], { total: 3 })))
+  const read = readProject(makeGh(runner), { owner: 'martin-macak', number: 3 })
+  assert.equal(read.items.length, 2)
+  assert.deepEqual(read.totalCounts, [3])
 })
 
 test('readProject: an owner that GitHub does not return is an auth failure with a clear message', () => {
@@ -568,4 +597,177 @@ test('resolveContent gives the name of the repo in the letter case that GraphQL 
   const gh = makeGh(runner)
   assert.equal(resolveContent(gh, { repo: 'MARTIN-MACAK/CLAUDE-CODE-MOD-TRACKING', number: 66 }).repo, REPO)
   assert.deepEqual(runner.calls[0].args, ['api', 'repos/MARTIN-MACAK/CLAUDE-CODE-MOD-TRACKING/issues/66'])
+})
+
+// --- readComplete: a read that is checked, read again before a write, and retried (issue #228) ---
+
+// A runner that answers the n-th project read with replies[n-1]. The last reply repeats.
+const readsRunner = replies => fakeRunner((_args, _body, n) => ok(replies[Math.min(n, replies.length) - 1]))
+// A sleep that records the pauses, so that a test checks the order and the delays, not the wall time.
+const fakeSleep = () => {
+  const sleep = ms => sleep.pauses.push(ms)
+  sleep.pauses = []
+  return sleep
+}
+const TARGET = { owner: 'martin-macak', number: 3 }
+const good = () => projectPage(ALL_NODES)
+const shortPage = () => projectPage(ALL_NODES.slice(0, 10), { total: 23 }) // hasNextPage false, 13 items cut off
+const emptyProject = () => projectPage([], { total: 0 })
+
+test('readComplete: a good read comes back at once, with no problem, no pause and one call', () => {
+  const runner = readsRunner([good()])
+  const sleep = fakeSleep()
+  const read = readComplete(makeGh(runner), TARGET, { sleep })
+  assert.deepEqual(read.problems, [])
+  assert.equal(read.items.length, 23)
+  assert.deepEqual(read.project, live.project)
+  assert.equal(runner.calls.length, 1)
+  assert.deepEqual(sleep.pauses, [])
+})
+
+test('readComplete with twice reads two times, and a good pair comes back with no pause', () => {
+  const runner = readsRunner([good()])
+  const sleep = fakeSleep()
+  const read = readComplete(makeGh(runner), TARGET, { twice: true, sleep })
+  assert.deepEqual(read.problems, [])
+  assert.equal(runner.calls.length, 2)
+  assert.deepEqual(sleep.pauses, [])
+})
+
+test('readComplete: a short page with hasNextPage false is retried with a backoff, and the problem names the counts', () => {
+  const runner = readsRunner([shortPage()])
+  const sleep = fakeSleep()
+  const read = readComplete(makeGh(runner), TARGET, { sleep })
+  assert.equal(read.problems.length, 1)
+  assert.match(read.problems[0], /listed 10 items, but GitHub counts 23/)
+  assert.equal(runner.calls.length, READ_ATTEMPTS)
+  assert.equal(read.attempts, READ_ATTEMPTS)
+  assert.deepEqual(sleep.pauses, READ_BACKOFF_MS)
+  assert.equal(READ_ATTEMPTS, READ_BACKOFF_MS.length + 1) // no pause after the last attempt
+  assert.equal(
+    READ_BACKOFF_MS.every((ms, i) => ms > 0 && (i === 0 || ms >= READ_BACKOFF_MS[i - 1])),
+    true,
+  )
+})
+
+test('readComplete: an empty project is a bad read, retried and then reported', () => {
+  const runner = readsRunner([emptyProject()])
+  const sleep = fakeSleep()
+  const read = readComplete(makeGh(runner), TARGET, { sleep })
+  assert.match(read.problems.join('\n'), /no item/)
+  assert.equal(runner.calls.length, READ_ATTEMPTS)
+  assert.equal(sleep.pauses.length, READ_ATTEMPTS - 1)
+})
+
+test('readComplete: a totalCount that disagrees with the items is a bad read', () => {
+  const tooHigh = projectPage(ALL_NODES, { total: 24 })
+  const tooLow = projectPage(ALL_NODES, { total: 22 })
+  for (const reply of [tooHigh, tooLow]) {
+    const read = readComplete(makeGh(readsRunner([reply])), TARGET, { sleep: fakeSleep() })
+    assert.match(read.problems.join('\n'), /listed 23 items, but GitHub counts 2[24]/)
+  }
+})
+
+test('readComplete: a totalCount that changes between two pages is a bad read', () => {
+  const runner = fakeRunner((_args, body) =>
+    ok(
+      body.variables.cursor
+        ? projectPage(ALL_NODES.slice(10), { total: 24 })
+        : projectPage(ALL_NODES.slice(0, 10), { more: true, cursor: 'C1', total: 23 }),
+    ),
+  )
+  const read = readComplete(makeGh(runner), TARGET, { sleep: fakeSleep() })
+  assert.match(read.problems.join('\n'), /changed while the pages were read: 23, then 24/)
+})
+
+// The real answer of GitHub on 2026-10-22: 105 items in two pages, and the count on both.
+const realPages = () => fakeRunner((_args, body) => ok(livePages[body.variables.cursor ? 1 : 0]))
+
+test('readComplete: a real read of 2026-10-22 (105 of 105 in two pages) is complete, twice, with no pause', () => {
+  const runner = realPages()
+  const sleep = fakeSleep()
+  const read = readComplete(makeGh(runner), TARGET, { twice: true, sleep })
+  assert.deepEqual(read.problems, [])
+  assert.deepEqual(read.totalCounts, [105, 105])
+  assert.equal(read.items.length, 105)
+  assert.equal(read.attempts, 1)
+  assert.deepEqual(sleep.pauses, [])
+  // Two reads of two pages each, the second page by the cursor of the first.
+  assert.equal(runner.calls.length, 4)
+  assert.equal(runner.calls[1].body.variables.cursor, livePages[0].data.repositoryOwner.projectV2.items.pageInfo.endCursor)
+})
+
+test('readComplete: the real first page alone (100 of 105, as the glitch gave) is a bad read', () => {
+  // The same reply with hasNextPage false: the list ends early, and totalCount still says 105.
+  const cut = structuredClone(livePages[0])
+  cut.data.repositoryOwner.projectV2.items.pageInfo.hasNextPage = false
+  const read = readComplete(makeGh(fakeRunner(() => ok(cut))), TARGET, { sleep: fakeSleep() })
+  assert.equal(read.problems.length, 1)
+  assert.match(read.problems[0], /listed 100 items, but GitHub counts 105/)
+})
+
+test('readComplete: a bad read that is good on the second try comes back clean after one pause', () => {
+  const runner = readsRunner([emptyProject(), good()])
+  const sleep = fakeSleep()
+  const read = readComplete(makeGh(runner), TARGET, { sleep })
+  assert.deepEqual(read.problems, [])
+  assert.equal(read.items.length, 23)
+  assert.equal(read.attempts, 2)
+  assert.deepEqual(sleep.pauses, [READ_BACKOFF_MS[0]])
+})
+
+test('readComplete with twice: two reads that list different items are retried, and the problem names the counts', () => {
+  // Each read is complete on its own: 23 of 23, then 22 of 22. Only the pair disagrees.
+  const runner = fakeRunner((_args, _body, n) => ok(projectPage(n % 2 === 1 ? ALL_NODES : ALL_NODES.slice(1))))
+  const sleep = fakeSleep()
+  const read = readComplete(makeGh(runner), TARGET, { twice: true, sleep })
+  assert.equal(read.problems.length, 1)
+  assert.match(
+    read.problems[0],
+    /two reads list different items: 23 and 22 items, 1 only in the first, 0 only in the second/i,
+  )
+  assert.equal(runner.calls.length, 2 * READ_ATTEMPTS)
+  assert.deepEqual(sleep.pauses, READ_BACKOFF_MS)
+})
+
+test('readComplete with twice: the second pair is good after a pair that disagreed', () => {
+  const replies = [good(), projectPage(ALL_NODES.slice(1)), good(), good()]
+  const sleep = fakeSleep()
+  const read = readComplete(makeGh(readsRunner(replies)), TARGET, { twice: true, sleep })
+  assert.deepEqual(read.problems, [])
+  assert.equal(read.items.length, 23)
+  assert.deepEqual(sleep.pauses, [READ_BACKOFF_MS[0]])
+})
+
+test('readComplete with twice: a bad first read is retried without a second read in the same try', () => {
+  const runner = readsRunner([emptyProject(), good(), good()])
+  const read = readComplete(makeGh(runner), TARGET, { twice: true, sleep: fakeSleep() })
+  assert.deepEqual(read.problems, [])
+  assert.equal(runner.calls.length, 3) // empty, then a good pair
+})
+
+test('readComplete with expectIds: a read that lacks items of an earlier read is retried and then reported', () => {
+  const expectIds = new Set(ALL_NODES.map(n => n.id))
+  const runner = readsRunner([projectPage(ALL_NODES.slice(0, 20))])
+  const read = readComplete(makeGh(runner), TARGET, { expectIds, sleep: fakeSleep() })
+  assert.match(read.problems.join('\n'), /lacks 3 of the 23 items that the read before it listed/)
+  assert.equal(runner.calls.length, READ_ATTEMPTS)
+})
+
+// The pause of the CLI. Every other test passes a fake, so this one checks the real wait once.
+test('sleepSync blocks for the time asked', () => {
+  const start = performance.now()
+  sleepSync(30)
+  assert.ok(performance.now() - start >= 25)
+})
+
+test('readComplete does not retry a failed gh call: an auth failure stops at once', () => {
+  const runner = fakeRunner(() => fail(1, 'gh: Bad credentials (HTTP 401)'))
+  const sleep = fakeSleep()
+  assert.throws(
+    () => readComplete(makeGh(runner), TARGET, { sleep }),
+    err => err instanceof GhError && err.kind === 'auth',
+  )
+  assert.equal(runner.calls.length, 1)
+  assert.deepEqual(sleep.pauses, [])
 })

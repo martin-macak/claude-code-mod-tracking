@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { GhError } from '../scripts/gh.mjs'
+import { GhError, READ_ATTEMPTS, READ_BACKOFF_MS } from '../scripts/gh.mjs'
 import { main } from '../scripts/sync.mjs'
 import { issueNode, moveAfter, REPO, snapshot } from './helpers.mjs'
 
@@ -57,7 +57,9 @@ function applyEdit(data, args) {
 // that the next read returns, as GitHub does. issues: the answer of IssuesByIds, by node id.
 // The add answers with the id of the new item (addedId, else the last item of afterAdd). Without
 // afterAdd the list never shows the item: GitHub lists a new item late. addedId null: no item id.
-// addFail: the error of the add.
+// addFail: the error of the add. A read of the project answers with the count of its nodes as
+// totalCount, as GitHub does. onRead(items, n) may spoil the n-th read (1 for the first): items is
+// the connection of that reply (totalCount, pageInfo, nodes), and the test changes it in place.
 function fakeGh({
   project = fresh(),
   afterAdd = null,
@@ -69,6 +71,7 @@ function fakeGh({
   execFail = null,
   moveFail = null,
   moveNoop = false,
+  onRead = null,
 } = {}) {
   const calls = []
   let added = false
@@ -78,7 +81,13 @@ function fakeGh({
     graphql(query, variables) {
       const op = /(?:query|mutation) (\w+)/.exec(query)[1]
       calls.push({ type: 'graphql', op, variables })
-      if (op === 'ProjectItems') return current().data
+      if (op === 'ProjectItems') {
+        const data = structuredClone(current().data)
+        const items = data.repositoryOwner.projectV2.items
+        items.totalCount = items.nodes.length
+        onRead?.(items, calls.filter(c => c.op === 'ProjectItems').length)
+        return data
+      }
       if (op === 'AddItem') {
         if (addFail) throw addFail
         added = true
@@ -157,11 +166,13 @@ function inOrder(data) {
   return data
 }
 
+// slept: the pauses between two tries of a bad read. The tests never wait for them.
 function run(args, gh = fakeGh()) {
   const out = []
   const err = []
-  const code = main(args, { gh, stdout: s => out.push(s), stderr: s => err.push(s) })
-  return { code, out: out.join('\n'), err: err.join('\n'), gh }
+  const slept = []
+  const code = main(args, { gh, stdout: s => out.push(s), stderr: s => err.push(s), sleep: ms => slept.push(ms) })
+  return { code, out: out.join('\n'), err: err.join('\n'), gh, slept }
 }
 
 const editArgs = (itemId, field, ...value) => [
@@ -269,6 +280,7 @@ test('item positions: a dry run reports how many items move, and moves none', ()
   assert.equal(doc.positions.moves.length, 11)
   assert.deepEqual(doc.moved, [])
   assert.equal(doc.positionsLeft, null)
+  assert.equal(doc.positionsUnverified, null)
 })
 
 test('--apply moves the items that are out of place with updateProjectV2ItemPosition, then checks the result', () => {
@@ -306,7 +318,8 @@ test('sync --apply that writes no move does not read the list again, and positio
   const doc = JSON.parse(run(['sync', '--apply', '--json'], gh).out)
   assert.deepEqual([doc.applied, doc.moved], [[], []])
   assert.equal(doc.positionsLeft, null)
-  assert.equal(gh.calls.filter(c => c.op === 'ProjectItems').length, 1)
+  // Two reads before the write (issue #228), and none after it: no move was written.
+  assert.equal(gh.calls.filter(c => c.op === 'ProjectItems').length, 2)
 })
 
 test('--json with --apply lists what was written', () => {
@@ -316,6 +329,7 @@ test('--json with --apply lists what was written', () => {
   assert.equal(doc.applied.length, 1)
   assert.equal(doc.moved.length, 11)
   assert.equal(doc.positionsLeft, 0)
+  assert.equal(doc.positionsUnverified, null) // the places were checked
 })
 
 test('sync --apply gives an open issue without a Status one, and then does not list it as having none', () => {
@@ -621,13 +635,14 @@ test('status never sets Done, whatever the item or the letter case: GitHub sets 
   }
 })
 
-test('status reads the project and writes one field, and makes no other call', () => {
+test('status reads the project twice and writes one field, and makes no other call', () => {
   const r = run(['status', '64', 'In progress'])
   assert.equal(r.code, 0)
   assert.deepEqual(
     r.gh.calls.map(c => c.op ?? c.type),
-    ['ProjectItems', 'exec'],
+    ['ProjectItems', 'ProjectItems', 'exec'],
   )
+  assert.deepEqual(r.slept, [])
 })
 
 // #66 is out of the project before the add, and in it, with no values, after it: last, as GitHub
@@ -874,8 +889,8 @@ test('add --apply sets the fields with the id of the add when GitHub does not li
     [{ projectId: PROJECT_ID, itemId: 'PVTI_late66', afterId: nodeOf(fresh(), 53).id }],
   )
   assert.match(r.out, /^Added #66 /)
-  // One read before the add, one after the moves. The run does not wait for the item.
-  assert.equal(gh.calls.filter(c => c.op === 'ProjectItems').length, 2)
+  // Two reads before the add (issue #228), one after the moves. The run does not wait for the item.
+  assert.equal(gh.calls.filter(c => c.op === 'ProjectItems').length, 3)
 })
 
 test('add --apply says that it cannot check the place of a new item that the list does not show yet', () => {
@@ -914,8 +929,8 @@ test('add --apply of a new item that needs no move reads the list once after the
   assert.equal(r.code, 0)
   assert.deepEqual(moves(gh), [])
   assert.doesNotMatch(r.err, /not in the project list yet/)
-  // One read before the add, one after it: the check of the places runs although no move was written.
-  assert.equal(gh.calls.filter(c => c.op === 'ProjectItems').length, 2)
+  // Two reads before the add (issue #228), one after it: the check of the places runs although no move was written.
+  assert.equal(gh.calls.filter(c => c.op === 'ProjectItems').length, 3)
   const json = JSON.parse(run([...lastArgs, '--json'], fakeGh(around66())).out)
   assert.equal(json.added.unlisted, false)
   assert.equal(json.positionsLeft, 0) // the check ran, so it is a number and not null
@@ -1116,6 +1131,269 @@ test('status --json says what it wrote, and that nothing was written when the va
 test('--repo sets the repo of the JSON document, and the default is this repo', () => {
   assert.equal(JSON.parse(run(['sync', '--json']).out).repo, REPO)
   assert.equal(JSON.parse(run(['sync', '--json', '--repo', 'acme/lib']).out).repo, 'acme/lib')
+})
+
+// --- A project read that is not complete (issue #228) ---
+//
+// On 2026-10-22 GitHub gave 0, 100 and 105 items of about 109, and once a totalCount of 0. A run
+// must not plan or write from such a read. Each glitch spoils every read of the run.
+const glitches = {
+  'a short page': {
+    // hasNextPage stays false: the list ends early, and totalCount knows more.
+    spoil: items => {
+      items.nodes.length = 20
+      items.totalCount = 23
+    },
+    message: /listed 20 items, but GitHub counts 23/,
+    pair: false,
+  },
+  'an empty project': {
+    spoil: items => {
+      items.nodes.length = 0
+      items.totalCount = 0
+    },
+    message: /listed no item/,
+    pair: false,
+  },
+  'a totalCount that disagrees': {
+    spoil: items => {
+      items.totalCount = items.nodes.length + 2
+    },
+    message: /listed 23 items, but GitHub counts 25/,
+    pair: false,
+  },
+  'two reads that list different items': {
+    // Every read is complete on its own (22 of 22, 23 of 23). Only the pair disagrees.
+    spoil: (items, n) => {
+      if (n % 2 === 0) {
+        items.nodes.shift()
+        items.totalCount = items.nodes.length
+      }
+    },
+    message: /two reads list different items: 23 and 22 items, 1 only in the first, 0 only in the second/i,
+    pair: true,
+  },
+  'two reads that list the same items with other field values': {
+    // Every id is there both times, and #55 (In progress) lost its field values in the second read:
+    // a plan from it would move the Status of #55 to Ready. Only the digest of the items shows it.
+    spoil: (items, n) => {
+      if (n % 2 === 0) items.nodes.find(x => x.content?.number === 55).fieldValues.nodes = []
+    },
+    message: /23 and 23 items, 0 only in the first, 0 only in the second, 1 with other field values or blockers/i,
+    pair: true,
+  },
+}
+const writers = {
+  'sync --apply': ['sync', '--apply'],
+  'next --apply': ['next', '--apply'],
+  'add --apply': [...addArgs, '--apply'],
+  status: ['status', '64', 'In progress'],
+}
+const spoilEvery = spoil => ({ onRead: spoil })
+const reads = gh => gh.calls.filter(c => c.op === 'ProjectItems').length
+
+for (const [glitch, { spoil, message, pair }] of Object.entries(glitches)) {
+  for (const [name, args] of Object.entries(writers)) {
+    test(`${name} refuses to write from a read with ${glitch}: exit 1, nothing written, the counts named`, () => {
+      const gh = fakeGh({ project: drift(), ...spoilEvery(spoil) })
+      const r = run(args, gh)
+      assert.equal(r.code, 1)
+      assert.deepEqual(changes(gh), [])
+      assert.equal(r.out, '') // it made no plan
+      assert.match(r.err, /^project-sync: .*not complete after 4 tries/)
+      assert.match(r.err, message)
+      assert.match(r.err, /Nothing was written\./)
+      // It stopped at the read: no blocker, milestone or REST call, and no write.
+      assert.deepEqual([...new Set(gh.calls.map(c => c.op ?? c.type))], ['ProjectItems'])
+      assert.equal(reads(gh), pair ? 8 : 4)
+      assert.deepEqual(r.slept, READ_BACKOFF_MS)
+    })
+  }
+
+  test(`sync --apply --json refuses a read with ${glitch} and prints no JSON`, () => {
+    const gh = fakeGh({ project: drift(), ...spoilEvery(spoil) })
+    const r = run(['sync', '--apply', '--json'], gh)
+    assert.equal(r.code, 1)
+    assert.equal(r.out, '')
+    assert.deepEqual(changes(gh), [])
+  })
+}
+
+test('a read is tried READ_ATTEMPTS times, with the pauses of READ_BACKOFF_MS between the tries', () => {
+  assert.equal(READ_ATTEMPTS, 4)
+  assert.deepEqual(READ_BACKOFF_MS, [500, 1000, 2000])
+})
+
+for (const [glitch, { spoil, message, pair }] of Object.entries(glitches).filter(([, g]) => !g.pair)) {
+  test(`a dry run with ${glitch} still prints the plan, and warns loudly with the counts`, () => {
+    const gh = fakeGh({ project: drift(), ...spoilEvery(spoil) })
+    const r = run(['sync'], gh)
+    assert.equal(r.code, 0)
+    assert.deepEqual(changes(gh), [])
+    assert.match(r.err, /^warning: the read of project 3 of martin-macak looks incomplete after 4 tries/)
+    assert.match(r.err, message)
+    assert.match(r.err, /--apply refuses/)
+    assert.match(r.out, /^Project "artifact-tracking 0\.2\.0"/) // the report is there
+    assert.match(r.out, /Warning: the read was incomplete\. Do not trust the report above\./)
+    assert.doesNotMatch(r.out, /Pass --apply/) // --apply would refuse
+    assert.equal(reads(gh), 4) // a dry run reads once in every try
+    assert.deepEqual(r.slept, READ_BACKOFF_MS)
+    const doc = JSON.parse(run(['sync', '--json'], fakeGh({ project: drift(), ...spoilEvery(spoil) })).out)
+    assert.equal(doc.warnings.length, 1)
+    assert.match(doc.warnings[0], /looks incomplete after 4 tries/)
+    assert.match(doc.warnings[0], message)
+  })
+}
+
+test('next and add without --apply warn about an incomplete read too, and write nothing', () => {
+  const empty = glitches['an empty project'].spoil
+  for (const args of [['next'], addArgs]) {
+    const gh = fakeGh({ ...around66(), onRead: empty })
+    const r = run(args, gh)
+    assert.equal(r.code, 0, args.join(' '))
+    assert.deepEqual(changes(gh), [], args.join(' '))
+    assert.match(r.err, /looks incomplete after 4 tries/, args.join(' '))
+    assert.match(r.err, /listed no item/, args.join(' '))
+  }
+})
+
+test('a dry next on an incomplete read names no item to pick: no "Next:" line, and next and ready are null in --json', () => {
+  // The read may lack the Ready item with the lowest Order, so any pick could be the wrong one.
+  const spoil = glitches['a short page'].spoil
+  const r = run(['next'], fakeGh({ project: drift(), onRead: spoil }))
+  assert.equal(r.code, 0)
+  assert.doesNotMatch(r.out, /^Next:/m)
+  assert.doesNotMatch(r.out, /no Ready item/i) // an unknown pick is not "nothing is Ready"
+  assert.match(r.out, /No pick: the read was incomplete\. Run next again in a minute\./)
+  const doc = JSON.parse(run(['next', '--json'], fakeGh({ project: drift(), onRead: spoil })).out)
+  assert.equal(doc.next, null)
+  assert.equal(doc.ready, null)
+  assert.equal(doc.warnings.length, 1)
+  // A good read still names the pick, in text and in --json.
+  const good = run(['next'], fakeGh({ project: drift() }))
+  assert.match(good.out, /^Next:/m)
+  const goodDoc = JSON.parse(run(['next', '--json'], fakeGh({ project: drift() })).out)
+  assert.equal(Array.isArray(goodDoc.ready), true)
+})
+
+test('a dry run on a good read prints no warning, and reads once', () => {
+  const r = run(['sync'], fakeGh({ project: drift() }))
+  assert.equal(r.err, '')
+  assert.doesNotMatch(r.out, /Warning: the read was incomplete/)
+  assert.equal(reads(r.gh), 1)
+  assert.deepEqual(r.slept, [])
+})
+
+// One change and eleven position moves, as in the test of the write order above.
+function driftAndMoves() {
+  const project = fresh()
+  setValue(project, 64, 'Status', 'Blocked')
+  return project
+}
+
+test('a bad read that is good on the next try writes as before, after one pause', () => {
+  const gh = fakeGh({
+    project: driftAndMoves(),
+    onRead: (items, n) => {
+      if (n === 1) glitches['an empty project'].spoil(items)
+    },
+  })
+  const r = run(['sync', '--apply'], gh)
+  assert.equal(r.code, 0)
+  assert.deepEqual(writes(gh), [editArgs(nodeOf(fresh(), 64).id, 'Status', '--single-select-option-id', 'f75ad846')])
+  assert.equal(moves(gh).length, 11)
+  assert.deepEqual(r.slept, [READ_BACKOFF_MS[0]])
+  assert.equal(r.err, '')
+})
+
+test('two reads that disagree once and agree after the pause write as before', () => {
+  const gh = fakeGh({
+    project: drift(),
+    onRead: (items, n) => {
+      if (n === 2) {
+        items.nodes.shift()
+        items.totalCount = items.nodes.length
+      }
+    },
+  })
+  const r = run(['sync', '--apply'], gh)
+  assert.equal(r.code, 0)
+  assert.equal(writes(gh).length, 1)
+  assert.deepEqual(r.slept, [READ_BACKOFF_MS[0]])
+})
+
+test('a good read writes as before: two reads, no pause, the same writes, the same report', () => {
+  const gh = fakeGh({ project: driftAndMoves() })
+  const r = run(['sync', '--apply'], gh)
+  assert.equal(r.code, 0)
+  assert.deepEqual(writes(gh), [editArgs(nodeOf(fresh(), 64).id, 'Status', '--single-select-option-id', 'f75ad846')])
+  assert.equal(moves(gh).length, 11)
+  assert.match(r.out, /Applied 1 change and 11 position moves\./)
+  assert.match(r.out, /Positions checked: the manual order follows Order\./)
+  assert.equal(r.err, '')
+  assert.deepEqual(r.slept, [])
+  // The reads come in this order: two before the first write, one after the last move.
+  assert.deepEqual(
+    gh.calls.filter(c => c.op === 'ProjectItems' || c.type === 'exec' || c.op === 'MoveItem').map(c => c.op ?? c.type),
+    ['ProjectItems', 'ProjectItems', 'exec', ...Array(11).fill('MoveItem'), 'ProjectItems'],
+  )
+})
+
+// After the moves, the check reads the project again. An empty or cut list has no move to plan, so
+// it used to pass the check. Now it must hold every item that the read before the write held.
+for (const [what, spoil] of Object.entries({
+  'empty list': glitches['an empty project'].spoil,
+  'cut list': items => {
+    items.nodes.length = 20
+    items.totalCount = 20 // the list agrees with itself: only the items of the read before are missing
+  },
+})) {
+  test(`the check after the moves rejects a ${what}: exit 1, the report of the writes, and the reason`, () => {
+    const gh = fakeGh({ onRead: (items, n) => n >= 3 && spoil(items) })
+    const r = run(['sync', '--apply'], gh)
+    assert.equal(r.code, 1)
+    assert.equal(moves(gh).length, 11) // the writes landed
+    assert.match(r.out, /Applied 11 position moves\./)
+    assert.doesNotMatch(r.out, /Positions checked/)
+    assert.match(r.err, /the writes are done, but the read after them is not complete after 4 tries/)
+    assert.match(r.err, /item positions were not checked/)
+    assert.equal(reads(gh), 2 + READ_ATTEMPTS)
+    assert.deepEqual(r.slept, READ_BACKOFF_MS)
+    const json = JSON.parse(
+      run(['sync', '--apply', '--json'], fakeGh({ onRead: (items, n) => n >= 3 && spoil(items) })).out,
+    )
+    assert.equal(json.positionsLeft, null)
+    assert.equal(json.moved.length, 11)
+    // null alone also means "no check ran" (a dry run, or no move). The problems say that a check
+    // ran and could not be trusted, for a reader of --json who does not look at the exit code.
+    assert.equal(Array.isArray(json.positionsUnverified), true)
+    assert.equal(json.positionsUnverified.length > 0, true)
+    assert.match(json.positionsUnverified.join('\n'), /listed|lacks|no item/)
+  })
+}
+
+test('the check after the moves tries again: a bad read and then a good one still checks the places', () => {
+  const gh = fakeGh({ onRead: (items, n) => n === 3 && glitches['an empty project'].spoil(items) })
+  const r = run(['sync', '--apply'], gh)
+  assert.equal(r.code, 0)
+  assert.match(r.out, /Positions checked: the manual order follows Order\./)
+  assert.deepEqual(r.slept, [READ_BACKOFF_MS[0]])
+})
+
+test('the check after the add accepts a list that lacks the new item (issue #107), but not one that lacks other items', () => {
+  const { afterAdd, ...opts } = around66()
+  const late = run([...addArgs, '--apply'], fakeGh({ ...opts, addedId: 'PVTI_late66' }))
+  assert.equal(late.code, 0) // the list never shows #66, and every other item is there
+  const cut = fakeGh({
+    ...around66(),
+    onRead: (items, n) => {
+      if (n >= 3) items.nodes.length = 20
+    },
+  })
+  const r = run([...addArgs, '--apply'], cut)
+  assert.equal(r.code, 1)
+  assert.equal(adds(cut).length, 1)
+  assert.match(r.err, /the writes are done, but the read after them is not complete/)
 })
 
 // The real process: exit codes and the output streams.
