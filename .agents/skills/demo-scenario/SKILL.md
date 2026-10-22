@@ -88,7 +88,8 @@ Make the README demo GIF from a Gherkin scenario that also runs as an E2E test.
 | The band and the pane can show the same words. | Anchor a pane assertion on the pane border `│`. |
 | The band reads like `tracking GitHub 1 (1 ✗) /track`. | `(n ✗)` counts failing checks. Allow it in regexes. |
 | A bare `#N` of a closed issue is gated out. | Use full GitHub URLs. |
-| A prompt that invites a tool ("look at", "fetch") may open a dialog. | "Note X for later. Reply ok." |
+| The session has no tool (`--tools ''` and `--strict-mcp-config`), so a prompt that asks for a command gets words, not a run. | A scenario that needs a tool uses the step with `and the tools "…"`, and plans for every call the tool makes (the fake gh answers few). |
+| A prompt that invites a tool ("look at", "fetch") may open a dialog, in a session that has tools. | "Note X for later. Reply ok." |
 | A `gh` first on the `PATH` of claude also answers claude. Claude Code itself runs `gh auth token` at start. | The fake gives no token. `e2e/fake-gh` and spec section 14 hold the rest. |
 
 ## Red flags

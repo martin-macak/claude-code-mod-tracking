@@ -9,6 +9,7 @@ import {
   countLines,
   DEMO_SYSTEM_PROMPT,
   fakeGithubClone,
+  type LaunchSpec,
   listRefs,
   prepareClone,
   READY_MARKERS,
@@ -20,6 +21,22 @@ import {
 } from '../support/session.ts'
 
 const tempDir = (prefix: string) => mkdtempSync(join(tmpdir(), prefix))
+
+// The argv that claudeCommand hands to claude, one word per element: the shell prints it instead of running claude.
+const argvOf = (spec: Partial<LaunchSpec>) =>
+  execFileSync(
+    '/bin/sh',
+    [
+      '-c',
+      claudeCommand({ pluginDir: '/p', model: 'haiku', signalFile: '/s', ...spec }).replace(
+        /^'claude'/,
+        "printf '%s\\n'",
+      ),
+    ],
+    { encoding: 'utf8' },
+  )
+    .trimEnd()
+    .split('\n')
 
 test('READY_MARKERS match the idle prompt line, which uses a no-break space, but not dialog options', () => {
   const ready = (screen: string) => READY_MARKERS.some(re => re.test(screen))
@@ -42,11 +59,11 @@ test('shellQuote survives single quotes', () => {
 })
 
 test('claudeCommand gives claude the exact argv, prompt last', () => {
-  const spec = { pluginDir: '/p q/mod', model: 'haiku', signalFile: '/s t/signal', prompt: "Say 'hi'; then stop" }
-  const printed = execFileSync('/bin/sh', ['-c', claudeCommand(spec).replace(/^'claude'/, "printf '%s\\n'")], {
-    encoding: 'utf8',
+  const argv = argvOf({
+    pluginDir: '/p q/mod',
+    signalFile: '/s t/signal',
+    prompt: "Say 'hi'; then stop",
   })
-  const argv = printed.trimEnd().split('\n')
   assert.deepEqual(argv.slice(0, 6), ['--setting-sources', 'project', '--plugin-dir', '/p q/mod', '--model', 'haiku'])
   assert.equal(argv.at(-1), "Say 'hi'; then stop")
   assert.ok(argv.includes('--settings'))
@@ -54,11 +71,7 @@ test('claudeCommand gives claude the exact argv, prompt last', () => {
 })
 
 test('claudeCommand with tools: the tools system prompt and an allow list, prompt still last', () => {
-  const spec = { pluginDir: '/p', model: 'haiku', signalFile: '/s', prompt: 'go', tools: ['Read', 'Artifact'] }
-  const printed = execFileSync('/bin/sh', ['-c', claudeCommand(spec).replace(/^'claude'/, "printf '%s\\n'")], {
-    encoding: 'utf8',
-  })
-  const argv = printed.trimEnd().split('\n')
+  const argv = argvOf({ prompt: 'go', tools: ['Read', 'Artifact'] })
   assert.equal(argv[argv.indexOf('--append-system-prompt') + 1], TOOLS_SYSTEM_PROMPT)
   assert.equal(argv[argv.indexOf('--allowedTools') + 1], 'Read,Artifact')
   assert.ok(argv[argv.indexOf('--allowedTools') + 2]?.startsWith('--')) // a variadic flag must not take the prompt
@@ -66,6 +79,23 @@ test('claudeCommand with tools: the tools system prompt and an allow list, promp
   const demo = claudeCommand({ pluginDir: '/p', model: 'haiku', signalFile: '/s' })
   assert.ok(demo.includes(shellQuote(DEMO_SYSTEM_PROMPT)))
   assert.ok(!demo.includes('--allowedTools'))
+})
+
+// Issue #215. The demo session is tool-free by the flags, not by a sentence of the system prompt: a prompt that asks
+// for git or gh work (the resolve key) wins over that sentence now and then, and a session that auto-approves
+// commands (the permission mode of the developer's own config) runs them with no dialog. `--tools ''` drops the
+// built-in tools; `--strict-mcp-config` drops the MCP servers of the account, which the first flag leaves on.
+test('claudeCommand without tools turns every built-in tool and MCP server off, and with tools it does not', () => {
+  const demo = argvOf({ prompt: 'go' })
+  const at = demo.indexOf('--tools')
+  assert.notEqual(at, -1, 'the demo session passes --tools')
+  assert.equal(demo[at + 1], '') // the empty list: no tool at all
+  assert.ok(demo[at + 2]?.startsWith('--')) // a variadic flag must not take the prompt
+  assert.equal(demo.at(-1), 'go')
+  assert.ok(demo.includes('--strict-mcp-config'), 'the demo session passes --strict-mcp-config')
+  const withTools = argvOf({ tools: ['Read'] })
+  assert.ok(!withTools.includes('--tools')) // a scenario that gives tools keeps the default set
+  assert.ok(!withTools.includes('--strict-mcp-config')) // and the MCP servers of the account
 })
 
 test('claudeCommand with env runs claude through env, variables first', () => {

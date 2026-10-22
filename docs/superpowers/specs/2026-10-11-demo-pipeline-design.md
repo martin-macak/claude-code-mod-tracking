@@ -196,10 +196,12 @@ env CLAUDE_TRACKER_CONFIG_DIR=<config folder> \
   --plugin-dir <repo>/plugins/artifact-tracking \
   --model "$DEMO_MODEL" \
   --append-system-prompt '<one short sentence, no tools>' \
+  --tools '' \
+  --strict-mcp-config \
   --settings '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo stop >> <signal>"}]}]}}'
 ```
 
-The `env` prefix is there only when the launch has variables, and the step always has one. A variant step adds a first prompt as the positional argument. The appended system prompt keeps each turn short and tool-free, so no permission dialog opens. The step waits until the prompt box shows (a line that starts with `❯` and white space). If the workspace trust dialog shows, the step presses Down until "Yes, I trust this folder" is selected, then Enter. The whole launch stays in the `cut` phase.
+The `env` prefix is there only when the launch has variables, and the step always has one. A variant step adds a first prompt as the positional argument. The appended system prompt keeps each turn short. `--tools ''` (built-in tools) and `--strict-mcp-config` (MCP servers of the account) keep it tool-free, so no permission dialog opens: the sentence alone did not hold (issue #215). A step that gives tools passes `--allowedTools` in its place. The step waits until the prompt box shows (a line that starts with `❯` and white space). If the workspace trust dialog shows, the step presses Down until "Yes, I trust this folder" is selected, then Enter. The whole launch stays in the `cut` phase.
 
 ### 4.3 Turn end and slash commands
 
@@ -380,7 +382,7 @@ The skill text does not get markdownlint, because hooks skip `.agents/` and `.cl
 | --- | --- |
 | Live repo data changes, so a step or the GIF goes stale. | Assert on stable text (state words, counts). Re-run the skill when the README GIF looks wrong. |
 | A Claude Code release changes the trust dialog, the prompt box or banner text. | The launch step waits on a small set of markers, kept in one place in `session.ts`. |
-| The model calls a tool and a permission dialog opens mid-GIF. | Prompts need no tools. `Then no permission dialog is open` fails E2E early. |
+| The model calls a tool and a permission dialog opens mid-GIF. | The demo session has no tool (`--tools ''`, `--strict-mcp-config`). A scenario that gives tools must use prompts that need no approval. `Then no permission dialog is open` fails E2E early. |
 | `asciinema rec --headless` behaves differently from the docs. | Checked: it works in 3.2.1. |
 | Cucumber cannot load `.ts` with Node type stripping. | Checked: it loads them in 13.3.0. Fallback if that changes: `tsx` as a dev dependency, `--import tsx`. |
 | The banner shows account or org data. | The launch stays in a `cut` phase. The skill checks frames for personal data. |
@@ -418,7 +420,7 @@ Question of the spike: can a fake `gh` drive the merge conflict chip and the res
 | The PR lane draws the chip from the fake's reply. | Step `the screen matches /│[^\n]*#7[^\n]*✗ conflicts/` passes. The row reads `★ ▸ #7  Fix the fake conflict  feat/fake-conflict  open  ✗ conflicts  ✓ checks`. |
 | The chip comes from the reply, not from the harness. | The same two scenarios fail at the chip step with `as MERGEABLE` in place of `as CONFLICTING` (run once by hand, 2026-10-20). |
 | The resolve key works on the fake PR. | After `c`, the row reads `queued`. The session ran a model turn (the Stop hook signal), so the prompt reached the engine. The model said it could not run tools. |
-| The session ran no tool. | `no permission dialog is open` and `the fake origin got no push` pass: no ref of the local copy of the origin changed. This is a tripwire for a scenario that gives tools. The session has no tools here, so the steps cannot fail today. The rewrite that keeps a push off GitHub is proved by the unit test of `fakeGithubClone`. |
+| The session ran no tool. | `no permission dialog is open` and `the fake origin got no push` pass: no ref of the local copy of the origin changed. This is a tripwire for a scenario that gives tools. The session has no tool here (`--tools ''`, `--strict-mcp-config`), so the steps cannot fail today. The rewrite that keeps a push off GitHub is proved by the unit test of `fakeGithubClone`. |
 
 Log of the chip scenario (long query cut):
 
@@ -476,7 +478,7 @@ The formats come from `buildDiscoveryQuery` (`trackers/github/pr-discovery.ts`) 
 4. `origin` keeps the URL `https://github.com/e2e-owner/e2e-repo.git` in its config, which is where the mod reads the repo. `url.<copy>.insteadOf` sends every fetch and push to a bare copy of the clone (`$DEMO_DIR/fake-origin.git`). The step `the fake origin got no push` compares the refs of the copy with the start. The unit test of `fakeGithubClone` proves the rewrite: a push lands in the copy, and the source repo does not see it.
 
    The design leans on one fact about the engine. The PR lane gets the repo from the engine (`session.repo()`), which reads the URL in the config of the clone (*verified-live*, 2.1.304). `git remote get-url origin` returns the copy, and the repos tracker reads the remote that way (`trackers/repos/tracker.ts`). If a Claude Code release reads the remote with `get-url`, discovery stops and the chip scenario fails at the chip step. Check this first.
-5. The resolve key sends a real prompt (a model turn). The session has the demo system prompt (no tools) and no allow list. A tool call would open a permission dialog that nobody approves. The turn would stall, so `waitForTurnEnd` would time out first, after 120 s, with the last screen in the message. `no permission dialog is open` and `the fake origin got no push` guard a later scenario that gives tools. They cannot fail in these two scenarios. The model's words change from run to run, so no step reads them.
+5. The resolve key sends a real prompt (a model turn). The session has the demo system prompt and no tool (`--tools ''` and `--strict-mcp-config`, issue #215). The system prompt alone did not hold: a model ran `gh pr view`, which the fake gh does not answer, and a machine in auto mode ran it with no dialog. Without the flag, a tool call that needs approval would open a permission dialog that nobody approves. The turn would stall, so `waitForTurnEnd` would time out first, after 120 s, with the last screen in the message. `no permission dialog is open` and `the fake origin got no push` guard a later scenario that gives tools. They cannot fail in these two scenarios. The model's words change from run to run, so no step reads them.
 6. The mod never rebases, merges or pushes. It only asks Claude to.
 
 ### 14.5 Limits

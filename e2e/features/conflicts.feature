@@ -15,9 +15,11 @@ Feature: Show a merge conflict on a tracked PR
 
   # The press sends a real prompt to the model, so the scenario waits for the turn to end: the Stop line is the only sign
   # that the engine took the prompt. The key does nothing until the PR lane has saved its look at the PR, so it is pressed
-  # until the row says "queued". The session has the demo system prompt (no tools) and no allow list, so it runs nothing,
-  # and the last step is a tripwire for a scenario that gives tools. The rewrite that keeps a push off GitHub is proved by
-  # the unit test of fakeGithubClone.
+  # until the row says "queued". The session has no tool at all (`--tools ''` and `--strict-mcp-config`), so the model
+  # cannot run git or gh, whatever the prompt asks and whatever permission mode the machine has (issue #215: the demo
+  # system prompt alone did not stop it, and `gh pr view` made the fake gh fail the scenario). So the last two steps guard
+  # the gh calls of the mod and of Claude Code, and the push step stays a tripwire for a scenario that gives tools. The
+  # rewrite that keeps a push off GitHub is proved by the unit test of fakeGithubClone.
   Scenario: The resolve key sends its prompt and marks the row queued
     Given a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
     And the fake gh reports PR #7 "Fix the fake conflict" from "feat/fake-conflict" into "main" as CONFLICTING
