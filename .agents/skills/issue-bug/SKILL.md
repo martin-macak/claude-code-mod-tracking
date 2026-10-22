@@ -43,7 +43,7 @@ File a bug issue with reproduction steps the user confirmed and a short root cau
    node .agents/skills/project-sync/scripts/sync.mjs add <number from the URL> --order <order> --area <area> --release <release> --apply
    ```
 
-   Pass `--label bug` by hand; `gh` does not apply the issue form. Pass `--milestone` and `--blocked-by` only when the user chose them. Get `Release` by the rule in `AGENTS.md`, "Planning and delivery", "Fields". When `add` cannot write (exit 3), say so and give the user the command to run later. Give the user the issue URL as a link.
+   Pass `--label bug` by hand; `gh` does not apply the issue form. Pass `--milestone` and `--blocked-by` only when the user chose them. Get `Release` by the rule in `AGENTS.md`, "Planning and delivery", "Fields". When `add` cannot write (exit 3), say so and give the user the command to run later. When `add` exits 1 with "refusing to write", the read of the project was incomplete and nothing was written. Wait a minute and run the same `add` again: it is safe to repeat. If it refuses again, give the user the command to run later. Give the user the issue URL as a link.
 
 ## Title
 
