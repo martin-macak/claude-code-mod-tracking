@@ -357,6 +357,31 @@ test('planCall: a rejection is declined, and keeps the plan from the input and t
   expect(call?.refusal?.endsWith('the user said:\nUse fewer steps')).toBe(true)
 })
 
+test('planCall: an approved plan is the plan of the result when it has one (an edited plan), else the plan of the input', () => {
+  const EDITED = '# Plan\n\n1. Add the questions tracker.\n2. Add the tests.\n3. The person added this step.\n'
+  const EDITED_FILE = '<SPIKES>/cfg-plan2/plans/edited.md'
+  const edited = planCall({
+    ...LIVE_PLAN_APPROVED,
+    result: { result: { plan: EDITED, isAgent: false, filePath: EDITED_FILE } } as unknown as Json,
+  })
+  expect(edited).toMatchObject({ state: 'answered', plan: EDITED, planFile: EDITED_FILE })
+  // A result that carries no plan (`plan: null`, or none) leaves the plan of the input, and so does a result with no file.
+  const bare = planCall({
+    ...LIVE_PLAN_APPROVED,
+    result: { result: { plan: null, isAgent: false } } as unknown as Json,
+  })
+  expect(bare).toMatchObject({ plan: PLAN, planFile: PLAN_FILE })
+  // A refused call has no plan in its result: the input plan stays, whatever else the result says.
+  const refused = planCall({
+    ...LIVE_PLAN_REJECTED,
+    result: {
+      ...(LIVE_PLAN_REJECTED.result as object),
+      result: { plan: EDITED, filePath: EDITED_FILE },
+    } as unknown as Json,
+  })
+  expect(refused).toMatchObject({ state: 'declined', plan: PLAN, planFile: PLAN_FILE })
+})
+
 test('planCall: a plan that a hook denied is declined with the text of the hook', () => {
   const call = planCall({ ...LIVE_PLAN_APPROVED, result: { deny: 'no plans today' } as unknown as Json })
   expect(call).toMatchObject({ state: 'declined', refusal: 'no plans today', plan: PLAN })

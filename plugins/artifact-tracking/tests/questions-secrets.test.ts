@@ -88,6 +88,37 @@ test('a quoted value runs to its real closing quote: an escaped quote inside it 
   expect(maskSecrets('token="abc\\\\" and more')).toBe(`token=${MASKED} and more`)
 })
 
+// Owner decision of 2026-10-22: a value in double quotes may span lines (a JSON string, a shell value) up to 4 KB, and a value
+// in single quotes stays on its line, so an apostrophe in prose cannot mask the text after it.
+test('a double-quoted value may span lines: it is masked to its closing quote', () => {
+  expect(maskSecrets('password: "first line\nsecond line" after')).toBe(`password: ${MASKED} after`)
+  expect(maskSecrets('secret: "one\ntwo\nthree"\nnext line')).toBe(`secret: ${MASKED}\nnext line`)
+  // An escaped quote and an escaped newline are part of the value, across lines too.
+  expect(maskSecrets('token="a\\"\nb\\\nc" tail')).toBe(`token=${MASKED} tail`)
+})
+
+test('a value in single quotes stays on its line, and a prose apostrophe masks nothing past it', () => {
+  expect(maskSecrets("secret='one\ntwo' after")).toBe(`secret=${MASKED}\ntwo' after`)
+  const prose = "the token: 'tis fine\nand the next line has a 'quote' in it"
+  const out = maskSecrets(prose)
+  expect(out).toBe(`the token: ${MASKED} fine\nand the next line has a 'quote' in it`)
+  expect(maskSecrets("token: 'closed on its line' after")).toBe(`token: ${MASKED} after`)
+})
+
+test('a double-quoted value is read up to about 4 KB: a longer one reads as an unquoted value, a shorter one is masked whole', () => {
+  const within = `${'x '.repeat(1900)}end` // 3.8 KB
+  expect(maskSecrets(`password: "${within}" after`)).toBe(`password: ${MASKED} after`)
+  const beyond = `${'x '.repeat(6000)}end` // 12 KB: no closing quote within the cap
+  const out = maskSecrets(`password: "${beyond}" after`)
+  expect(out.startsWith(`password: ${MASKED} `)).toBe(true) // the unquoted value ends at the first space
+  expect(out.endsWith('" after')).toBe(true)
+  expect(out.length).toBeGreaterThan(12_000) // the rest of the text is not swallowed
+})
+
+test('a double quote that never closes does not mask the rest of the text: it reads as an unquoted value', () => {
+  expect(maskSecrets('password: "abc and the rest\nof the text')).toBe(`password: ${MASKED} and the rest\nof the text`)
+})
+
 test('text that is no secret is left as it is', () => {
   for (const text of [
     'Use the main branch',
@@ -116,6 +147,10 @@ test('masking a long value, and a long text of unclosed quotes, is linear', asyn
   await expectLinear({ make: k => `secret="${'x '.repeat(25_000 * k)}`, run: t => void maskSecrets(t) })
   await expectLinear({ make: k => 'token="a '.repeat(10_000 * k), run: t => void maskSecrets(t) })
   await expectLinear({ make: k => `token="${'a\\"'.repeat(25_000 * k)}`, run: t => void maskSecrets(t) })
+  // A double quote that never closes reads on across lines up to the cap, and many of them cost the same each.
+  await expectLinear({ make: k => `token="${'x\n'.repeat(50_000 * k)}`, run: t => void maskSecrets(t) })
+  await expectLinear({ make: k => 'token="a\nb '.repeat(10_000 * k), run: t => void maskSecrets(t) })
+  await expectLinear({ make: k => `token: '${'it\n'.repeat(50_000 * k)}`, run: t => void maskSecrets(t) })
   await expectLinear({ make: k => `token='${'\\\\'.repeat(25_000 * k)}`, run: t => void maskSecrets(t) })
   await expectLinear({ make: k => `https://ada:${'p'.repeat(50_000 * k)}`, run: t => void maskSecrets(t) })
 })

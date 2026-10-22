@@ -141,7 +141,8 @@ export function askCall(ev: ToolCallEvent): CallBody | undefined {
 
 /**
  * An ExitPlanMode call. The hook sees the plan and its file in the input before the dialog, and in the result after an
- * approval. The outcome is `isError`: a rejection (with the words of the person in the text) or a hook's `deny` is declined.
+ * approval. The result has the plan that the person approved, which an edit may have changed, so an approval takes the
+ * plan of the result first and the input is the fallback. The outcome is `isError`: a rejection (with the words of the person in the text) or a hook's `deny` is declined.
  * A teammate that waits for its leader has no outcome yet, and neither has a transcript use that stored none: those are no
  * call. After a `--resume` the transcript keeps the arguments of the model, so the plan comes from the stored record of an
  * approval only.
@@ -153,9 +154,14 @@ export function planCall(ev: ToolCallEvent): CallBody | undefined {
   if (isRecord(structured) && structured.awaitingLeaderApproval === true) return undefined
   const input = isRecord(ev.input) ? ev.input : {}
   const kept = isRecord(structured) ? structured : {}
-  const plan = str(input.plan) ?? str(kept.plan)
-  const planFile = str(input.planFilePath) ?? str(kept.filePath)
   const refusal = refusalOf(ev.result)
+  // The input holds the plan before the dialog. An approval returns the plan that the person approved, which an edit may
+  // have changed, so the result comes first and the input is the fallback. A refused call has no plan in its result.
+  const [firstPlan, thenPlan] = refusal === undefined ? [kept.plan, input.plan] : [input.plan, kept.plan]
+  const [firstFile, thenFile] =
+    refusal === undefined ? [kept.filePath, input.planFilePath] : [input.planFilePath, kept.filePath]
+  const plan = str(firstPlan) ?? str(thenPlan)
+  const planFile = str(firstFile) ?? str(thenFile)
   return {
     ...head,
     kind: 'plan',

@@ -19,6 +19,11 @@ type Rule = {
 // credential as it was. It is the last part of a pattern and runs over a class that does not repeat across the match, so a long
 // text still costs a linear scan (the tests check it). A quoted value reads a backslash and the character after it as one unit,
 // so an escaped quote does not close it. The two branches of that group cannot match the same character: no backtracking blow-up.
+// A value in double quotes may span lines (a JSON string, a shell value), up to about 4 KB, so a scan that finds no closing quote
+// is bounded. A longer value, or a quote that never closes, reads as an unquoted value: to the first space. A value in single
+// quotes stays on its line, so an apostrophe in prose (`the token: 'tis fine`) cannot mask the lines after it (owner decision of
+// 2026-10-22).
+const DOUBLE_QUOTED_MAX = 4096
 const NAME = String.raw`[\w-]{0,40}`
 const SECRET_NAMES = '(?:password|passwd|pwd|passphrase|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)'
 
@@ -75,7 +80,7 @@ export const SECRET_PATTERNS: readonly Rule[] = [
     label:
       'value after a name that holds `password`, `passwd`, `pwd`, `passphrase`, `secret`, `token`, `api_key`, `access_key` or `private_key`',
     pattern: new RegExp(
-      String.raw`(\b${NAME}${SECRET_NAMES}${NAME}["']?\s{0,4}[:=]\s{0,4})("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|[^\s,;]+)`,
+      String.raw`(\b${NAME}${SECRET_NAMES}${NAME}["']?\s{0,4}[:=]\s{0,4})("(?:[^"\\]|\\[\s\S]){0,${DOUBLE_QUOTED_MAX}}"|'(?:[^'\\\n]|\\.)*'|[^\s,;]+)`,
       'gi',
     ),
     replace: `$1${MASKED}`,

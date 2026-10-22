@@ -576,6 +576,10 @@ test('/track holds no question, answer or note in any view the person chose: the
     const text = (await t.m.track(t.w.ports, `view ${view}`)).text
     for (const word of ['Where should', 'State only', 'Lint', 'keep it simple', 'Storage', 'Ship it', 'Declined'])
       expect(text, `${view}: ${word}`).not.toContain(word)
+    // The text still says that Q&A exists and where to read it, once, at the end: the title line of the group, as by list.
+    const line = 'Questions  2 calls · /track qa prints them'
+    expect(text.endsWith(line), view).toBe(true)
+    expect(text.split(line).length, view).toBe(2)
   }
   // The rows are still in the pane: only the text keeps them out.
   const rows = (await t.m.paneData(t.w.ports, NO_VIEW)).find(s => s.id === 'questions')?.rows ?? []

@@ -1,7 +1,7 @@
 // The groups of the by-list view (issue #63, L1): today's sections as the groups the one table draws. Pure.
 import { expect, test } from 'claude-code/testing'
 import type { SectionSpec, TreeRow } from '../core/interfaces/view'
-import { groupId, LIST_VIEW, listGroups } from '../core/lib/grouping'
+import { groupId, LIST_VIEW, listGroups, VIEW_IDS, viewGroups } from '../core/lib/grouping'
 
 const row = (id: string, children?: TreeRow[]): TreeRow => ({
   id,
@@ -90,4 +90,49 @@ test('the text mode of a section rides on its group; a section with none leaves 
   const [quiet, loud] = listGroups([section('q', [row('a')], { text: 'title' }), section('p', [row('b')])])
   expect(quiet?.text).toBe('title')
   expect(loud).not.toHaveProperty('text')
+})
+
+// A view other than by list puts the rows of several sections in one group, so the text mode of a section cannot ride on a
+// group. `viewGroups` marks each row of such a section `quiet` instead, in every view (issue #71, the Questions section).
+test('viewGroups marks the rows of a section with text title quiet, in every view, and no other row', () => {
+  const qa = section('qa', [row('q1', [row('q1:0')]), row('q2')], { text: 'title', note: { text: '2 calls' } })
+  const plain = section('web', [row('w1'), row('w2', [row('w2:0')])])
+  const loud = section('prs', [row('p1')], { text: 'rows' })
+  for (const view of VIEW_IDS) {
+    const rows = viewGroups([qa, plain, loud], view, { touchedOnly: false }).groups.flatMap(g => g.rows)
+    expect(
+      rows
+        .filter(r => r.quiet === true)
+        .map(r => r.id)
+        .sort(),
+      view,
+    ).toEqual(['q1', 'q2'])
+    expect(
+      rows
+        .filter(r => r.quiet === undefined)
+        .map(r => r.id)
+        .sort(),
+      view,
+    ).toEqual(['p1', 'w1', 'w2'])
+    // The children of a quiet row are not marked: the text skips the whole tree at its root.
+    expect(rows.find(r => r.id === 'q1')?.children?.[0]).not.toHaveProperty('quiet')
+  }
+})
+
+test('viewGroups leaves the rows of the section as they were: the mark is on a copy', () => {
+  const rows = [row('q1'), row('q2')]
+  const qa = section('qa', rows, { text: 'title' })
+  const { groups } = viewGroups([qa], 'flat', { touchedOnly: false })
+  expect(groups[0]?.rows.every(r => r.quiet === true)).toBe(true)
+  expect(rows.some(r => 'quiet' in r)).toBe(false)
+  expect(qa.rows).toBe(rows)
+})
+
+test('a section with no text mode, or with text rows, gets no mark, and a view keeps its rows and counts as before', () => {
+  const rows = [row('a'), row('b')]
+  const { groups } = viewGroups([section('web', rows), section('prs', [row('c')], { text: 'rows' })], 'flat', {
+    touchedOnly: false,
+  })
+  expect(groups.flatMap(g => g.rows).some(r => 'quiet' in r)).toBe(false)
+  expect(groups[0]?.count).toBe(3)
 })

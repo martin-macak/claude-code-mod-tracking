@@ -20,7 +20,7 @@ import type {
 import { LIST_VIEW, listGroups, resolveView, viewGroups, viewSummary } from '../core/lib/grouping'
 import { namedProblems } from '../core/lib/problems'
 import { helpModel, helpText } from '../ux/tree-data-table/help'
-import { groupsText } from '../ux/tree-data-table/text'
+import { groupsText, quietTitles } from '../ux/tree-data-table/text'
 
 /** What the pane session calls on the LifecycleManager. */
 export interface PaneHost {
@@ -98,10 +98,15 @@ export const TEXT_VIEW: PaneView = { selected: null, expanded: new Set() }
 /**
  * The list as `/track` prints it: the text of the groups of the active view. A view other than by list, or a filter, puts the
  * line of the view first (`View: status`), so the text says what it shows. The default reply has no such line.
+ * A section that keeps its rows out of the text (`text: 'title'`, the Questions) has its title line in the by-list view,
+ * where it is a group. In another view its rows sit in mixed groups and print nothing, so its title line comes once at the
+ * end: the person and the model learn that the section exists and where to read it, and never see a row of it.
  */
 export async function listText(p: Ports, m: Pick<PaneHost, 'paneData' | 'config'>): Promise<string> {
   const model = await paneModel(p, m, TEXT_VIEW)
-  const text = groupsText(model.groups)
+  const body = groupsText(model.groups)
+  const tail = model.view === LIST_VIEW ? [] : quietTitles(model.sections)
+  const text = [body, ...tail].filter(part => part !== '').join('\n\n')
   return model.view === LIST_VIEW && !model.touchedOnly ? text : `${viewSummary(model)}\n\n${text}`
 }
 

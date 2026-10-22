@@ -1,7 +1,7 @@
 // The /track text of a list of groups (plan L6 Task 9, decision G2). Pure. One line of text per row, whatever the columns
 // of the pane: the badges of the extras column are cells of their own (issue #63, L1).
 import { expect, test } from 'claude-code/testing'
-import { EMPTY_TEXT, groupsText } from '../ux/tree-data-table/text'
+import { EMPTY_TEXT, groupsText, quietTitles, titleLine } from '../ux/tree-data-table/text'
 import { group, row, webRows } from './fixtures/sections'
 
 test('no sections gives No tracked items yet.', () => {
@@ -92,6 +92,57 @@ test('each badge is a cell of its own after the status, two spaces apart; an emp
 test('the counts of a group are for the pane: the text prints the title and the note only', () => {
   const g = group('prs', webRows(3), { title: 'Pull requests', failing: 2, note: { text: 'gh · ok' } })
   expect(groupsText([g]).split('\n')[0]).toBe('Pull requests  gh · ok')
+})
+
+// A view other than by list mixes the rows of several sections in one group. The view marks the rows of a quiet section
+// (`quiet`), and the text prints nothing for such a row, with its children, wherever the row sits.
+const quietRow = (id: string) =>
+  row(
+    id,
+    { name: `Q-${id}`, description: 'typed: hunter2' },
+    { quiet: true, children: [row(`${id}:0`, { name: 'Storage' })] },
+  )
+
+test('a quiet row prints nothing, with its children, and the other rows of its group print as ever', () => {
+  const mixed = group('status:done', [row('a', { name: 'PR 1', description: 'Fix it' }), quietRow('q1')], {
+    title: 'Done',
+  })
+  expect(groupsText([mixed])).toBe('Done\n  PR 1  Fix it')
+  // Only the flag counts: the same row with no mark prints.
+  const loud = group('status:done', [{ ...quietRow('q1'), quiet: undefined }], { title: 'Done' })
+  expect(groupsText([loud])).toContain('hunter2')
+})
+
+test('a group that holds only quiet rows prints no title line either: the end of the text names them', () => {
+  const only = group('status:gone', [quietRow('q1'), quietRow('q2')], { title: 'Gone' })
+  const other = group('status:done', [row('a', { name: 'PR 1' })], { title: 'Done' })
+  expect(groupsText([only, other])).toBe('Done\n  PR 1')
+  expect(groupsText([only])).toBe('')
+  // An empty group still prints its title (it has no rows to be quiet), and a group with text title keeps its line.
+  expect(groupsText([group('x', [], { title: 'Empty' })])).toBe('Empty')
+  const titled = group('questions', [quietRow('q1')], { title: 'Questions', note: { text: '1 call' }, text: 'title' })
+  expect(groupsText([titled])).toBe('Questions  1 call')
+})
+
+test('quietTitles gives the title line of each section with text title and a row: the title and the note, never a row', () => {
+  const qa = {
+    title: 'Questions',
+    note: { text: '2 calls · /track qa prints them' },
+    text: 'title' as const,
+    rows: [quietRow('q1')],
+  }
+  const empty = { title: 'Notes', text: 'title' as const, rows: [] }
+  const loud = { title: 'PRs', note: { text: 'gh' }, rows: [row('a', { name: 'PR 1' })] }
+  const bare = { title: 'Plans', text: 'title' as const, rows: [quietRow('p1')] }
+  expect(quietTitles([loud, qa, empty, bare])).toEqual(['Questions  2 calls · /track qa prints them', 'Plans'])
+  expect(quietTitles([])).toEqual([])
+})
+
+test('titleLine is the title, and two spaces and the note when the group has one', () => {
+  expect(titleLine({ title: 'Questions', note: { text: '2 calls · /track qa prints them' } })).toBe(
+    'Questions  2 calls · /track qa prints them',
+  )
+  expect(titleLine({ title: 'Done' })).toBe('Done')
 })
 
 test('a group with text title prints its title line and no row: the model reads every /track reply', () => {
