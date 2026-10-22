@@ -1,0 +1,17 @@
+{
+  "tool": "ExitPlanMode",
+  "startedAt": 1792611485258,
+  "endedAt": 1792611502364,
+  "input": {
+    "plan": "# Plan\n\n1. Add the questions tracker.\n2. Add the tests.\n",
+    "planFilePath": "<SPIKES>/cfg-plan3/plans/make-a-plan-synthetic-crab.md",
+    "tool": "ExitPlanMode",
+    "tool_use_id": "toolu_plan_reject"
+  },
+  "ran": {
+    "ref": 1,
+    "result": "Error: The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nUse fewer steps",
+    "text": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nUse fewer steps",
+    "isError": true
+  }
+}

@@ -79,6 +79,7 @@ export function listGroups(sections: readonly SectionSpec[]): readonly GroupSpec
     count: s.count ?? s.rows.length,
     failing: countFailed(s.rows),
     ...(s.empty !== undefined ? { empty: s.empty } : {}),
+    ...(s.text !== undefined ? { text: s.text } : {}),
   }))
 }
 

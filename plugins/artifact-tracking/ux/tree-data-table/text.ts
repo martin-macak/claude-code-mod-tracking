@@ -18,7 +18,8 @@ function textsOf(r: TreeRow, from: number, to?: number): string[] {
  * A title line (the title, two spaces, the note), then one line per row, indented two spaces a level from the first.
  * The lead is the non-empty cells of the columns up to and including the tree column (the control and the name), joined
  * by one space. The other non-empty cells follow, joined by two spaces: the description, the type, the status, then
- * each badge as a cell of its own. Groups are separated by one empty line. The counts of a group are not printed.
+ * each badge as a cell of its own. Groups are separated by one empty line. The counts of a group are not printed. A group
+ * with `text: 'title'` prints its title line only: the model reads every `/track` reply.
  */
 export function groupsText(groups: readonly GroupSpec[]): string {
   if (groups.length === 0) return EMPTY_TEXT
@@ -28,6 +29,7 @@ export function groupsText(groups: readonly GroupSpec[]): string {
     if (lines.length > 0) lines.push('')
     // A group of a view other than by list has no note: its title line ends at the title, with no trailing space.
     lines.push(g.note === undefined ? g.title : `${g.title}  ${g.note.text}`)
+    if (g.text === 'title') continue
     const walk = (rows: readonly TreeRow[], depth: number): void => {
       for (const r of rows) {
         const lead = textsOf(r, 0, treeAt + 1).join(' ')

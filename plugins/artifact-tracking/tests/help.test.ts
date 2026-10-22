@@ -467,9 +467,14 @@ test('a body too short for any form takes the form with the fewest rows: the wid
   }
 })
 
-test('a footer of two rows (a tracker row selected) leaves the compact form the fewest rows when nothing fits', () => {
+test('a footer of two rows (a tracker row selected) fits the 11-row body once the group of the tracker shares a row with its title', () => {
   const m = helpModel(MOD_KEYS, [], LIVE, problems(3), '1.2.3')
-  expect(compactForm(m, 2, 96, 11)).toEqual({ perLine: 5, problems: 0 }) // 10 rows and 2 for the footer: 1 over, not 2
+  // With every group on rows of its own the form takes 10 rows and the footer 2: 1 over (issue #97). The github group
+  // then draws on one row (issue #71): 9 rows and 2 for the footer fit exactly, and the 3 problems are counted.
+  const form = compactForm(m, 2, 96, 11) as CompactForm
+  expect(form).toEqual({ perLine: 5, problems: 0, merge: 96 })
+  expect(compactRows(m, 96, form) + 2).toBe(11)
+  expect(compactRows(m, 96, { perLine: 5, problems: 0 }) + 2).toBe(12) // the form of before: 1 over
 })
 
 test('compactForm raises the keys to a line only as far as the body needs, and no further than the width holds', () => {
@@ -697,6 +702,105 @@ test('with the cap in place the help view fits every body height from 11 to 40 r
       const form = compactForm(m, 1, 96, bodyRows)
       const used = form === undefined ? helpRows(m, 96) + ROW_GAP + 1 : compactRows(m, 96, form) + 1
       if (used > bodyRows) over.push(`50 problems and ${more} more in ${bodyRows} rows take ${used}`)
+    }
+  }
+  expect(over).toEqual([])
+})
+
+// ---------------------------------------------------------------- a fourth group of keys (issue #71)
+
+// The questions tracker adds the key `y`, so the help view of a started mod has four groups. The 11-row body of an inline
+// pane held three (issue #92). A group of a tracker whose title and keys fit one row then shares that row.
+const COPY_KEY: PaneKey = { id: 'copy', key: 'y', label: 'copy', scope: 'row', owner: 'questions' }
+const FOUR_GROUPS: readonly PaneKey[] = [...MOD_KEYS, COPY_KEY]
+
+test('four groups of keys with the live path do not fit the 11-row body of an inline pane in any form that gives every group its own rows', () => {
+  const m = helpModel(FOUR_GROUPS, [], LIVE, [], '1.2.3')
+  for (let perLine = 3; perLine <= 8; perLine++)
+    expect(compactRows(m, 96, { perLine, problems: 0 }) + 1, `${perLine} keys to a line`).toBeGreaterThan(11)
+})
+
+test('when no form fits, the compact form lets each group of a tracker share a row with its title, and then fits', () => {
+  const m = helpModel(FOUR_GROUPS, [], LIVE, [], '1.2.3')
+  const form = compactForm(m, 1, 96, 11)
+  expect(form).toMatchObject({ problems: 0, merge: 96 })
+  expect(compactRows(m, 96, form as CompactForm) + 1).toBeLessThanOrEqual(11)
+})
+
+test('a form that fits with every group on its own rows never shares: the three groups of before keep their look', () => {
+  const m = helpModel(MOD_KEYS, [], LIVE, [], '1.2.3')
+  const form = compactForm(m, 1, 96, 11)
+  expect(form).toEqual({ perLine: 3, problems: 0 })
+  expect(form).not.toHaveProperty('merge')
+})
+
+test('renderHelp with the shared form draws a tracker group on one row, and keeps the titles of the core groups on their own', () => {
+  const m = helpModel(FOUR_GROUPS, [], LIVE, [], '1.2.3')
+  const lines = linesOf(renderHelp(EL, m, { perLine: 5, problems: 0, merge: 96 }))
+  expect(lines).toEqual([
+    PANE_KEYS,
+    'r  refresh  h  help',
+    'Row keys (act on the selected row)',
+    'x  dismiss  1  high  2  normal  3  low  0  auto',
+    'github  c  resolve  f  files',
+    'questions  y  copy',
+    `Config file: ${LIVE}`,
+    'Version: 1.2.3',
+  ])
+})
+
+test('the shared form lists the same keys in the same order as the printed help', () => {
+  const m = helpModel(FOUR_GROUPS, [], LIVE, [], '1.2.3')
+  const shared = linesOf(renderHelp(EL, m, { perLine: 5, problems: 0, merge: 96 })).join(' ')
+  const keys = [
+    ...shared.matchAll(/\b(?:[a-z0-9]) {2}(?:refresh|help|dismiss|high|normal|low|auto|resolve|files|copy)\b/g),
+  ].map(x => x[0])
+  expect(keys).toEqual(
+    helpText(m)
+      .split('\n')
+      .filter(l => /^ {2}\S {2}\S/.test(l))
+      .map(l => l.trim()),
+  )
+})
+
+test('a group whose title and keys do not fit one row keeps its own rows, also in the shared form', () => {
+  const long: PaneKey = { ...COPY_KEY, owner: 'long' }
+  const drawn = [
+    section('x', [row('r', {}, { owner: 'long' })], {
+      title: 'A title that is far too long to share a row with any key '.repeat(2),
+    }),
+  ]
+  const m = helpModel([...CORE_KEYS, long], drawn, PATH, [])
+  const lines = linesOf(renderHelp(EL, m, { perLine: 5, problems: 0, merge: 96 }))
+  expect(lines.some(l => l.startsWith('A title') && !l.includes('y  copy'))).toBe(true)
+  expect(lines).toContain('y  copy')
+})
+
+test('compactRows counts the shared form as it is drawn, when nothing wraps', () => {
+  for (const m of [helpModel(FOUR_GROUPS, [], PATH, problems(2), '1.2.3'), helpModel(FOUR_GROUPS, [], undefined, [])]) {
+    for (const form of [
+      { perLine: 3, problems: 0, merge: 999 },
+      { perLine: 5, problems: 2, merge: 999 },
+    ] as const)
+      expect(compactRows(m, 999, form)).toBe(renderHelp(EL, m, form).length)
+  }
+})
+
+test('with four groups of keys the help view fits every body height from 11 to 40 rows', () => {
+  const over: string[] = []
+  for (const more of [0, 1, 4950]) {
+    const m = helpModel(
+      FOUR_GROUPS,
+      [],
+      LIVE,
+      problems(more === 0 ? 0 : 50),
+      '1.2.3',
+      more === 0 ? undefined : left(more),
+    )
+    for (let bodyRows = 11; bodyRows <= 40; bodyRows++) {
+      const form = compactForm(m, 1, 96, bodyRows)
+      const used = form === undefined ? helpRows(m, 96) + ROW_GAP + 1 : compactRows(m, 96, form) + 1
+      if (used > bodyRows) over.push(`${more} more in ${bodyRows} rows take ${used}`)
     }
   }
   expect(over).toEqual([])

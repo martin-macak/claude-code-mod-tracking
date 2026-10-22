@@ -85,3 +85,9 @@ test('a group has the rows of its section, as the same array', () => {
 test('no section gives no group', () => {
   expect(listGroups([])).toEqual([])
 })
+
+test('the text mode of a section rides on its group; a section with none leaves the group without it', () => {
+  const [quiet, loud] = listGroups([section('q', [row('a')], { text: 'title' }), section('p', [row('b')])])
+  expect(quiet?.text).toBe('title')
+  expect(loud).not.toHaveProperty('text')
+})

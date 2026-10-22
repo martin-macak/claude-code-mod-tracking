@@ -1,11 +1,12 @@
-// Which trackers define prompt(): the five that list items, and only those. Their config carries the prompt keys.
+// Which trackers define prompt(): the five that list items, the questions tracker (issue #71), and only those. Their config
+// carries the prompt keys.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.7 and 5.11. Plan: L7 Task 5 (S3).
 import { expect, test } from 'claude-code/testing'
 import { TRACKERS } from '../trackers'
 
-const ITEM_TRACKERS = ['artifact', 'file', 'github', 'jira', 'web']
+const ITEM_TRACKERS = ['artifact', 'file', 'github', 'jira', 'questions', 'web']
 
-test('exactly github, jira, web, artifact and file define prompt', () => {
+test('exactly github, jira, web, artifact, file and questions define prompt', () => {
   const ids = TRACKERS.filter(t => t.prompt).map(t => t.id)
   expect(ids.sort()).toEqual(ITEM_TRACKERS)
 })

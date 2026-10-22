@@ -150,6 +150,10 @@ function fakeHost(
     broadcast: async (_p, ev: CommandEvent) => note(`broadcast:${ev.sub || '-'}:${ev.args}:${ev.wait}`),
     declared: () => o.declared ?? [],
     runDeclared: async (_p, owner, ev) => note(`run:${owner}:${ev.sub}:${ev.args}:${ev.wait}`),
+    textOf: async (_p, owner, spec, args) => {
+      note(`textOf:${owner}:${spec.sub}:${args}`)
+      return `TEXT ${owner}:${spec.sub}:${args}`
+    },
     openPane: async () => note('openPane'),
     clear: async () => note('clear'),
     flushNow: async () => {
@@ -455,8 +459,9 @@ function noter(id: string, order: number, log: string[]): Tracker {
 test('a declared command of a live tracker runs through the manager: its first owner only, no broadcast', async () => {
   const log: string[] = []
   const t = managerWorld({ extra: [noter('second', 7, log), noter('first', 6, log)] })
+  // The questions tracker declares `qa [n]` (issue #71); it sits last, at order 90.
   expect(t.m.commands.hint()).toBe(
-    '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>|notes <id>]',
+    '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>|notes <id>|qa [n]]',
   )
   expect((await t.m.track(t.w.ports, 'notes 7')).text).toBe('No tracked items yet.')
   expect(log).toEqual(['first:notes:7:true'])
@@ -469,7 +474,7 @@ test('a tracker the config turned off declares no command', async () => {
     config: specs => fakeConfig({ specs, file: { trackers: { first: { enabled: false } } } }),
   })
   await t.m.entry(t.w.ports) // the start reads the toggles
-  expect(t.m.commands.hint()).toBe(CORE_HINT)
+  expect(t.m.commands.hint()).toBe(`${CORE_HINT.slice(0, -1)}|qa [n]]`) // the questions tracker is on
   expect((await t.m.track(t.w.ports, 'notes 7')).text).toBe(USAGE)
   expect(log).toEqual([])
 })
@@ -558,4 +563,35 @@ test('a tracker cannot declare the sub turn: core owns it', async () => {
   const t = fakeHost({ declared: [mine] })
   expect((await t.commands.run(t.ports, 'turn')).text).toBe('TURN last')
   expect(t.calls.some(c => c.startsWith('run:'))).toBe(false)
+})
+
+// ---------------------------------------------------------------- a declared command with a text of its own (issue #71)
+
+test('a declared command that has a text answers with it: the router runs no command event and prints no list', async () => {
+  const say: Declared = { owner: 'a', spec: { sub: 'qa', hint: '[n]', text: () => 'not called by the fake host' } }
+  const t = fakeHost({ declared: [say] })
+  expect((await t.commands.run(t.ports, 'QA 3')).text).toBe('TEXT a:qa:3')
+  expect((await t.commands.run(t.ports, 'qa')).text).toBe('TEXT a:qa:')
+  expect(t.calls).toEqual(['entry', 'textOf:a:qa:3', 'entry', 'textOf:a:qa:'])
+})
+
+test('a declared command with a text prints that text through the manager, built from the context of its tracker', async () => {
+  const sayer: Tracker = {
+    ...noter('first', 6, []),
+    commands: [{ sub: 'say', hint: '[word]', text: async (ctx, args) => `${ctx.id} says ${args || 'nothing'}` }],
+  }
+  const t = managerWorld({ extra: [sayer] })
+  expect(t.m.commands.hint()).toContain('say [word]')
+  expect((await t.m.track(t.w.ports, 'say hello there')).text).toBe('first says hello there')
+  expect((await t.m.track(t.w.ports, 'SAY')).text).toBe('first says nothing')
+  expect(t.w.ui.opened).toBe(0)
+})
+
+test('a text that throws rejects, as any failure of a command does, and prints no list', async () => {
+  const sayer: Tracker = {
+    ...noter('first', 6, []),
+    commands: [{ sub: 'say', hint: '', text: () => Promise.reject(new Error('no words')) }],
+  }
+  const t = managerWorld({ extra: [sayer] })
+  await expect(t.m.track(t.w.ports, 'say')).rejects.toThrow('no words')
 })

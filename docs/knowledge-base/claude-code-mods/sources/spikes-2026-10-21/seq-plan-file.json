@@ -1,0 +1,5 @@
+[
+  [{ "type": "text", "text": "Writing the plan." }, { "type": "tool_use", "id": "toolu_write_plan", "name": "Write", "input": { "file_path": "{{PLAN_PATH}}", "content": "# Plan\n\n1. Add the questions tracker.\n2. Add the tests.\n" } }],
+  [{ "type": "text", "text": "Asking to exit plan mode." }, { "type": "tool_use", "id": "toolu_plan_2", "name": "ExitPlanMode", "input": {} }],
+  [{ "type": "text", "text": "Plan step finished." }]
+]

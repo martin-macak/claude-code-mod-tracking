@@ -87,6 +87,13 @@ export interface AgentInfo {
   readonly status: string
 }
 
+/**
+ * What a copy to the clipboard of a surface came to, as the engine says it (`UiCopyResult`). `isCopied: false` carries the
+ * engine's closed reason: `no-surface`, `no-clipboard` or `refused`. The terminal writes by OSC 52, which gives no answer
+ * back: a terminal that drops it still reads `isCopied: true`.
+ */
+export type CopyResult = { readonly isCopied: true } | { readonly isCopied: false; readonly reason: string }
+
 /** One open pane as the engine's pane list gives it. */
 export interface PaneInfo {
   readonly id: string
@@ -232,6 +239,11 @@ export interface Ports {
     /** Call from event handlers and the tick only, never from a render. */
     invalidate(): void
     toast(text: string): void
+    /**
+     * Puts `text` on the clipboard of the surface the session draws on (the engine's `ui.copy`). The text is verbatim: newlines
+     * and all. It rejects when the engine refuses the call. Call it from a press, never from a render.
+     */
+    copy(text: string): Promise<CopyResult>
   }
   readonly log: (line: string) => void
 }

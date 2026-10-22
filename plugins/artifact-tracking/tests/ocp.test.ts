@@ -211,9 +211,9 @@ test('ocp: a tracker added only through a test-local list is captured, refreshed
   // The router: the sub-command reaches the tracker's handler with its arguments, and the hint names it.
   await t.m.track(p, 'notes 7')
   expect(t.heard).toEqual(['7'])
-  expect(t.m.commands.hint().endsWith('|notes <id>]')).toBe(true)
+  expect(t.m.commands.hint()).toContain('|notes <id>')
 
-  expect(TRACKERS.length).toBe(8) // the shipped list did not change
+  expect(TRACKERS.length).toBe(9) // the shipped list did not change
   expect(TRACKERS.some(x => x.id === 'notes')).toBe(false)
 })
 

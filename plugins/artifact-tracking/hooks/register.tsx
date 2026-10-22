@@ -186,6 +186,11 @@ function portsOf($: EngineInterface): Ports {
       panes: () => $.ui.panes(),
       invalidate: () => void soft(() => $.ui.invalidate('ui.render')), // a refused redraw: the next one fixes it
       toast: text => $.ui.toast(text),
+      // The surface is left out: the engine takes the first one the session draws on. The engine's closed reason passes on.
+      copy: async text => {
+        const out = await $.ui.copy({ text })
+        return out.isCopied ? { isCopied: true } : { isCopied: false, reason: out.reason }
+      },
     },
     log: line => void soft(() => $.ui.log(line, { to: 'debug' })), // a log line must never fail a hook
   }

@@ -11,6 +11,7 @@ import { fileTracker } from './file'
 import { githubTracker } from './github'
 import { jiraTracker } from './jira'
 import { processesTracker } from './processes'
+import { questionsTracker } from './questions'
 import { reposTracker } from './repos'
 import { webTracker } from './web'
 
@@ -23,6 +24,7 @@ export const TRACKERS: readonly Tracker[] = [
   fileTracker(),
   reposTracker(),
   processesTracker(),
+  questionsTracker(),
   auto,
 ]
 

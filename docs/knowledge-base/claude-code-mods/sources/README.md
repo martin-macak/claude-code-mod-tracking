@@ -56,6 +56,19 @@ Captured on 2026-10-17 and 2026-10-18 from the throwaway spike mods of [issue #5
 
 Absolute scratch paths in the files are replaced with `<SPIKES>` and `<SCRATCH>`, as the 2.1.295 snapshot did with `<SKILL_DIR>`. The folder holds 518 files and about 445 KB. Do not edit it. To add more evidence, make a new dated folder.
 
+## `spikes-2026-10-21/`
+
+Captured on 2026-10-21 from one throwaway probe mod of [issue #71](https://github.com/martin-macak/claude-code-mod-tracking/issues/71), Claude Code 2.1.306 (macOS), against a fake Messages API in tmux. Not a primary source: it is the evidence behind the page [questions-and-plans](../concepts/questions-and-plans.md).
+
+| Content | Origin |
+| --- | --- |
+| `questions-probe/` | The probe mod: one `tool.call` hook that writes the input and the answer of `AskUserQuestion` and `ExitPlanMode`. |
+| `fake-api.mjs`, `seq-*.json`, `drive/` | The fake Messages API, the turns of each run and the tmux drivers. |
+| `captures/*.json` | What the hook wrote in each run (7 files). |
+| `README.md` | The runs, the keys that answered each dialog and how to redo them. |
+
+Absolute scratch paths are replaced with `<SPIKES>`. Do not edit it. To add more evidence, make a new dated folder.
+
 ## `code-claude-com-2026-10-09/`
 
 Raw Markdown of the public docs, fetched on 2026-10-09 from `https://code.claude.com/docs/en/<page>.md` (page list from `https://code.claude.com/docs/llms.txt`).

@@ -48,6 +48,22 @@ A checkout from before the wait fails at once while another run holds the lock, 
 
 Do not remove the lock by hand and do not kill a process you did not start. To see who holds it: `ps -p "$(cat "$TMPDIR/cc-demo-lock/.lock")" -o pid,etime,command`.
 
+## A fake model
+
+A turn that the real model would not give twice, such as a question with the `AskUserQuestion` tool, needs a model that is a script. `support/fake-api.ts` is a fake Messages API on `127.0.0.1`. It plays the turns of a list, one for each request that carries tools, and streams each as the real API does. A request with no tools (the engine names the session with one) gets a fixed answer and takes no turn. The script must end in a turn of text.
+
+A scenario starts it with a `Given` step, before the step that starts the session (`features/questions.feature`). The session then runs against the fake:
+
+- `ANTHROPIC_BASE_URL` is the fake and `ANTHROPIC_AUTH_TOKEN` is `fake`. No account and no network are used.
+- `CLAUDE_CONFIG_DIR` is an empty folder of the scenario, so no login or setting of the person reaches the run. The harness removes the folder at the end.
+- The variables of a Claude Code session that runs the harness (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, the messaging socket and the bridge) are removed for claude only, so claude does not join its parent. `support/fake-api-env.ts` lists them.
+
+The dialog, the key, the hook and the mod are real: only the model is a script. `Then the fake model was told "…"` reads what the engine told the model about its tools. An Esc aborts the turn and the Stop hook does not run for it, so a scenario that presses Esc waits for the screen and not for `Claude finishes`.
+
+## A probe for the copy key
+
+The copy key of the questions tracker hands its text to the engine (`$.ui.copy`), and the engine then writes the clipboard of the machine. `Given a plugin that answers ui.copy and logs the text` adds a second plugin to the session (`support/copy-probe.ts`, an extra `--plugin-dir`). It hears the `ui.copy` event, writes the text to a log beside its folder and answers `{ isCopied: true }` without `next`, so the engine writes nothing. `Then the copy log holds "…"` reads the log. Put the step before the step that starts the session. The folder of a plugin is watched, so the log never lies inside it.
+
 ## Run one scenario
 
 `make e2e` runs every scenario. Pick fewer with a tag, a name or a file position:

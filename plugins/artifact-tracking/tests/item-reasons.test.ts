@@ -161,8 +161,8 @@ test('file: edited, then made, then named: the order of the sightings changes ne
 
 // ---------------------------------------------------------------- Traceable: repos, processes, auto
 
-test('repos, processes and auto implement Traceable, and no other tracker does', () => {
-  expect(TRACKERS.filter(isTraceable).map(t => t.id)).toEqual(['repos', 'processes', 'auto'])
+test('repos, processes, questions and auto implement Traceable, and no other tracker does', () => {
+  expect(TRACKERS.filter(isTraceable).map(t => t.id)).toEqual(['repos', 'processes', 'questions', 'auto'])
   expect(TRACKERS.filter(t => !isTraceable(t)).map(t => t.id)).toEqual(['github', 'jira', 'web', 'artifact', 'file'])
 })
 

@@ -44,7 +44,7 @@ test('the usage line and the argument hint name version', async ($, on) => {
   const w = world(on, { manifest: MANIFEST })
   await $.session.start(START)
   expect(w.registered.at(-1)?.argumentHint).toBe(
-    '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>]',
+    '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>|qa [n]]',
   )
   expect(await text($, 'bogus')).toContain(
     'help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio',

@@ -34,6 +34,8 @@ export function stopHookSettings(signalFile: string): string {
 
 export type LaunchSpec = {
   pluginDir: string
+  /** More plugins, each with a `--plugin-dir` of its own after the mod: a probe of a scenario. */
+  extraPluginDirs?: readonly string[]
   model: string
   signalFile: string
   prompt?: string
@@ -45,6 +47,8 @@ export type LaunchSpec = {
   tools?: readonly string[]
   /** Variables for claude only, set through env(1) so they win over the tmux server's own. */
   env?: Readonly<Record<string, string>>
+  /** Variables claude must not inherit: env(1) `-u` removes them before it sets `env`. */
+  unset?: readonly string[]
 }
 
 export function claudeCommand(spec: LaunchSpec): string {
@@ -54,6 +58,7 @@ export function claudeCommand(spec: LaunchSpec): string {
     'project',
     '--plugin-dir',
     spec.pluginDir,
+    ...(spec.extraPluginDirs ?? []).flatMap(dir => ['--plugin-dir', dir]),
     '--model',
     spec.model,
     '--append-system-prompt',
@@ -71,7 +76,8 @@ export function claudeCommand(spec: LaunchSpec): string {
     args.push(spec.prompt)
   }
   const vars = Object.entries(spec.env ?? {}).map(([name, value]) => `${name}=${value}`)
-  return (vars.length > 0 ? ['env', ...vars, ...args] : args).map(shellQuote).join(' ')
+  const unset = (spec.unset ?? []).flatMap(name => ['-u', name])
+  return (vars.length > 0 || unset.length > 0 ? ['env', ...unset, ...vars, ...args] : args).map(shellQuote).join(' ')
 }
 
 export function countLines(file: string): number {
@@ -149,19 +155,30 @@ export type LaunchContext = {
   tmux: Tmux
   signalFile: string
   pluginDir: string
+  extraPluginDirs?: readonly string[]
   model: string
   timeoutMs: number
   tools?: readonly string[]
   env?: Readonly<Record<string, string>>
+  unset?: readonly string[]
 }
 
 // Starts claude in the pane. In the trust dialog it moves to "Yes" before Enter. Ends when the
 // prompt box is idle, or, with a first prompt, when that turn ends.
 export async function launchClaude(ctx: LaunchContext, prompt?: string): Promise<void> {
   const before = countLines(ctx.signalFile)
-  const { pluginDir, model, signalFile, tools, env } = ctx
+  const { pluginDir, extraPluginDirs, model, signalFile, tools, env, unset } = ctx
   ctx.tmux.respawn(
-    claudeCommand({ pluginDir, model, signalFile, prompt, ...(tools ? { tools } : {}), ...(env ? { env } : {}) }),
+    claudeCommand({
+      pluginDir,
+      ...(extraPluginDirs ? { extraPluginDirs } : {}),
+      model,
+      signalFile,
+      prompt,
+      ...(tools ? { tools } : {}),
+      ...(env ? { env } : {}),
+      ...(unset ? { unset } : {}),
+    }),
   )
   await waitUntil(
     () => {

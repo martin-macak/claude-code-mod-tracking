@@ -53,6 +53,12 @@ export interface CommandSpec {
   readonly sub: string
   /** The argument hint. */
   readonly hint: string
+  /**
+   * Present: the sub-command answers with this text, in place of the tracking list (issue #71, `/track qa`). `args` is what
+   * follows the sub, as typed. The router runs no `command` event for it and opens no pane. A throw rejects, as any failure
+   * of a command does. Absent: the first tracker's `command` handler runs, and the reply is the list.
+   */
+  text?(ctx: TrackerContext, args: string): string | Promise<string>
 }
 
 /**
@@ -198,8 +204,8 @@ export interface TrackerContext<C extends JsonObject = JsonObject, D extends Jso
   readonly tasks?: TasksPort
   /** A turn the mod asks for. See `Ports['prompt']`: a press only, never awaited. */
   readonly prompt: Ports['prompt']
-  /** A short message over the pane. */
-  readonly ui: Pick<Ports['ui'], 'toast'>
+  /** A short message over the pane, and the clipboard of the surface (a press only, never a render). */
+  readonly ui: Pick<Ports['ui'], 'toast' | 'copy'>
   readonly fs: Pick<Ports['fs'], 'stat' | 'exists'>
   readonly env: {
     get(name: EnvName): Promise<string | undefined>

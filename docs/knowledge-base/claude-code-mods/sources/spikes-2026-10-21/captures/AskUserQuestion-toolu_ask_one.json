@@ -1,0 +1,54 @@
+{
+  "tool": "AskUserQuestion",
+  "startedAt": 1792611754587,
+  "endedAt": 1792611760569,
+  "input": {
+    "questions": [
+      {
+        "question": "Ship it?",
+        "header": "Ship",
+        "multiSelect": false,
+        "options": [
+          {
+            "label": "Yes",
+            "description": "Go."
+          },
+          {
+            "label": "No",
+            "description": "Stop."
+          }
+        ]
+      }
+    ],
+    "tool": "AskUserQuestion",
+    "tool_use_id": "toolu_ask_one"
+  },
+  "ran": {
+    "ref": 1,
+    "result": {
+      "questions": [
+        {
+          "question": "Ship it?",
+          "header": "Ship",
+          "options": [
+            {
+              "label": "Yes",
+              "description": "Go."
+            },
+            {
+              "label": "No",
+              "description": "Stop."
+            }
+          ],
+          "multiSelect": false
+        }
+      ],
+      "answers": {
+        "Ship it?": "Yes"
+      },
+      "annotations": {}
+    },
+    "text": "Your questions have been answered: \"Ship it?\"=\"Yes\". You can now continue with these answers in mind.",
+    "isReadOnly": true
+  }
+}

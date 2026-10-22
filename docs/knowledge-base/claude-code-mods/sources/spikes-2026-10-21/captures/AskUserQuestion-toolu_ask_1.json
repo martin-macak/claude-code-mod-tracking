@@ -1,0 +1,99 @@
+{
+  "tool": "AskUserQuestion",
+  "startedAt": 1792611600902,
+  "endedAt": 1792611663118,
+  "input": {
+    "questions": [
+      {
+        "question": "Where should the records live?",
+        "header": "Storage",
+        "multiSelect": false,
+        "options": [
+          {
+            "label": "State only",
+            "description": "Keep them in the plugin state.",
+            "preview": "state.set(records)"
+          },
+          {
+            "label": "State and store",
+            "description": "Also write them to the plugin store."
+          }
+        ]
+      },
+      {
+        "question": "Which checks should run?",
+        "header": "Checks",
+        "multiSelect": true,
+        "options": [
+          {
+            "label": "Lint",
+            "description": "Biome and markdownlint."
+          },
+          {
+            "label": "Tests, all",
+            "description": "claude plugin test."
+          },
+          {
+            "label": "E2E",
+            "description": "cucumber against a real claude."
+          }
+        ]
+      }
+    ],
+    "tool": "AskUserQuestion",
+    "tool_use_id": "toolu_ask_1"
+  },
+  "ran": {
+    "ref": 1,
+    "result": {
+      "questions": [
+        {
+          "question": "Where should the records live?",
+          "header": "Storage",
+          "options": [
+            {
+              "label": "State only",
+              "description": "Keep them in the plugin state.",
+              "preview": "state.set(records)"
+            },
+            {
+              "label": "State and store",
+              "description": "Also write them to the plugin store."
+            }
+          ],
+          "multiSelect": false
+        },
+        {
+          "question": "Which checks should run?",
+          "header": "Checks",
+          "options": [
+            {
+              "label": "Lint",
+              "description": "Biome and markdownlint."
+            },
+            {
+              "label": "Tests, all",
+              "description": "claude plugin test."
+            },
+            {
+              "label": "E2E",
+              "description": "cucumber against a real claude."
+            }
+          ],
+          "multiSelect": true
+        }
+      ],
+      "answers": {
+        "Where should the records live?": "(notes only)",
+        "Which checks should run?": "Lint, \"Tests, all\", \"typed, with comma\""
+      },
+      "annotations": {
+        "Where should the records live?": {
+          "notes": "keep it simple"
+        }
+      }
+    },
+    "text": "The user answered: \"Where should the records live?\"=(no option selected) notes: keep it simple, \"Which checks should run?\"=\"Lint, \"Tests, all\", \"typed, with comma\"\". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+    "isReadOnly": true
+  }
+}

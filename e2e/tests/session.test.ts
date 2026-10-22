@@ -98,6 +98,28 @@ test('claudeCommand without tools turns every built-in tool and MCP server off, 
   assert.ok(!withTools.includes('--strict-mcp-config')) // and the MCP servers of the account
 })
 
+test('claudeCommand gives each extra plugin its own --plugin-dir after the mod', () => {
+  const spec = { pluginDir: '/p', model: 'haiku', signalFile: '/s', extraPluginDirs: ['/probe a', '/probe b'] }
+  const printed = execFileSync('/bin/sh', ['-c', claudeCommand(spec).replace(/^'claude'/, "printf '%s\\n'")], {
+    encoding: 'utf8',
+  })
+  const argv = printed.trimEnd().split('\n')
+  assert.deepEqual(argv.slice(0, 8), [
+    '--setting-sources',
+    'project',
+    '--plugin-dir',
+    '/p',
+    '--plugin-dir',
+    '/probe a',
+    '--plugin-dir',
+    '/probe b',
+  ])
+  assert.equal(
+    claudeCommand({ ...spec, extraPluginDirs: [] }),
+    claudeCommand({ pluginDir: '/p', model: 'haiku', signalFile: '/s' }),
+  )
+})
+
 test('claudeCommand with env runs claude through env, variables first', () => {
   const spec = { pluginDir: '/p', model: 'haiku', signalFile: '/s', env: { CLAUDE_TRACKER_CONFIG_DIR: '/t d/cfg' } }
   const command = claudeCommand(spec)
@@ -106,6 +128,33 @@ test('claudeCommand with env runs claude through env, variables first', () => {
   const argv = printed.trimEnd().split('\n')
   assert.deepEqual(argv.slice(0, 2), ['CLAUDE_TRACKER_CONFIG_DIR=/t d/cfg', 'claude'])
   assert.ok(argv.includes('--plugin-dir'))
+})
+
+test('claudeCommand with unset removes the variables for claude only, before it sets the others', () => {
+  const spec = {
+    pluginDir: '/p',
+    model: 'haiku',
+    signalFile: '/s',
+    env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:1' },
+    unset: ['CLAUDECODE', 'CLAUDE_CODE_SESSION_ID'],
+  }
+  const command = claudeCommand(spec)
+  assert.ok(
+    command.startsWith(
+      "'env' '-u' 'CLAUDECODE' '-u' 'CLAUDE_CODE_SESSION_ID' 'ANTHROPIC_BASE_URL=http://127.0.0.1:1' 'claude' ",
+    ),
+  )
+  const printed = execFileSync('/bin/sh', ['-c', command.replace(/^'env'/, "printf '%s\\n'")], { encoding: 'utf8' })
+  assert.deepEqual(printed.trimEnd().split('\n').slice(0, 6), [
+    '-u',
+    'CLAUDECODE',
+    '-u',
+    'CLAUDE_CODE_SESSION_ID',
+    'ANTHROPIC_BASE_URL=http://127.0.0.1:1',
+    'claude',
+  ])
+  const onlyUnset = claudeCommand({ pluginDir: '/p', model: 'haiku', signalFile: '/s', unset: ['CLAUDECODE'] })
+  assert.ok(onlyUnset.startsWith("'env' '-u' 'CLAUDECODE' 'claude' "))
 })
 
 test('claudeCommand with an empty env is the plain command', () => {

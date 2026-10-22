@@ -93,3 +93,16 @@ test('the counts of a group are for the pane: the text prints the title and the 
   const g = group('prs', webRows(3), { title: 'Pull requests', failing: 2, note: { text: 'gh · ok' } })
   expect(groupsText([g]).split('\n')[0]).toBe('Pull requests  gh · ok')
 })
+
+test('a group with text title prints its title line and no row: the model reads every /track reply', () => {
+  const secret = row(
+    'q',
+    { name: 'Q1', description: 'typed: hunter2' },
+    { children: [row('q:0', { name: 'Storage' })] },
+  )
+  const quiet = group('questions', [secret], { title: 'Questions', note: { text: '1 call' }, text: 'title' })
+  const plain = group('prs', [row('a', { name: 'PR 1', description: 'Fix it' })], { title: 'PRs' })
+  expect(groupsText([quiet])).toBe('Questions  1 call')
+  expect(groupsText([quiet, plain])).toBe('Questions  1 call\n\nPRs  \n  PR 1  Fix it')
+  expect(groupsText([{ ...quiet, text: 'rows' }])).toContain('hunter2')
+})

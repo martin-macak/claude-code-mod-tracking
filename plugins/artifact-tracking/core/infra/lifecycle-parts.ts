@@ -107,6 +107,10 @@ export function commandHostOf(
       await m.entry(p)
       await w.bus.emit('command', ev, p, owner)
     },
+    textOf: async (p, owner, spec, args) => {
+      await m.entry(p)
+      return (await spec.text?.(w.host.ctx(owner, p), args)) ?? ''
+    },
     openPane: async p => {
       if (!(await p.ui.open())) p.ui.toast(NO_ROOM)
     },
