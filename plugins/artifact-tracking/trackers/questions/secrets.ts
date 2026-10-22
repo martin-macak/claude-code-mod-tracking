@@ -15,7 +15,9 @@ type Rule = {
   readonly replace?: string
 }
 
-// Every quantifier is bounded or runs over a class that does not repeat across the match, so a long text costs a linear scan.
+// Every quantifier before the value is bounded. The value runs to its end, however long: a cap would leave the tail of a long
+// credential as it was. It is the last part of a pattern and runs over a class that does not repeat across the match, so a long
+// text still costs a linear scan (the tests check it).
 const NAME = String.raw`[\w-]{0,40}`
 const SECRET_NAMES = '(?:password|passwd|pwd|passphrase|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)'
 
@@ -64,7 +66,7 @@ export const SECRET_PATTERNS: readonly Rule[] = [
   {
     id: 'url-password',
     label: 'password in a URL (`scheme://user:password@host`)',
-    pattern: /(\b[a-z][a-z0-9+.-]{0,20}:\/\/[^\s:/@]{1,100}:)[^\s@/]{1,200}(@)/gi,
+    pattern: /(\b[a-z][a-z0-9+.-]{0,20}:\/\/[^\s:/@]{1,100}:)[^\s@/]+(@)/gi,
     replace: `$1${MASKED}$2`,
   },
   {
@@ -72,7 +74,7 @@ export const SECRET_PATTERNS: readonly Rule[] = [
     label:
       'value after a name that holds `password`, `passwd`, `pwd`, `passphrase`, `secret`, `token`, `api_key`, `access_key` or `private_key`',
     pattern: new RegExp(
-      String.raw`(\b${NAME}${SECRET_NAMES}${NAME}["']?\s{0,4}[:=]\s{0,4})("[^"\n]{0,500}"|'[^'\n]{0,500}'|[^\s,;]{1,500})`,
+      String.raw`(\b${NAME}${SECRET_NAMES}${NAME}["']?\s{0,4}[:=]\s{0,4})("[^"\n]*"|'[^'\n]*'|[^\s,;]+)`,
       'gi',
     ),
     replace: `$1${MASKED}`,

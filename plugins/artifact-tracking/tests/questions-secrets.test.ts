@@ -68,6 +68,18 @@ test('a value after password, token, secret or key names keeps its name and lose
   expect(maskSecrets('AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG')).toBe(`AWS_SECRET_ACCESS_KEY=${MASKED}`)
 })
 
+test('a value is masked to its end, however long: no tail of a long credential stays', () => {
+  const long = hex(3000)
+  expect(maskSecrets(`PASSWORD=${long} and more`)).toBe(`PASSWORD=${MASKED} and more`)
+  expect(maskSecrets(`token: ${long}`)).toBe(`token: ${MASKED}`)
+  const spaced = `${'word '.repeat(400)}end`
+  expect(maskSecrets(`api_key = "${spaced}" after`)).toBe(`api_key = ${MASKED} after`)
+  expect(maskSecrets(`secret: '${spaced}'`)).toBe(`secret: ${MASKED}`)
+  expect(maskSecrets(`clone https://ada:${long}@example.com/repo.git`)).toBe(
+    `clone https://ada:${MASKED}@example.com/repo.git`,
+  )
+})
+
 test('text that is no secret is left as it is', () => {
   for (const text of [
     'Use the main branch',
@@ -89,6 +101,13 @@ test('masking twice gives what masking once gives', () => {
 test('masking a long text with many boundaries is linear', async () => {
   await expectLinear({ make: k => 'a-'.repeat(20_000 * k) + 'password=x', run: t => void maskSecrets(t) })
   await expectLinear({ make: k => 'token '.repeat(20_000 * k), run: t => void maskSecrets(t) })
+})
+
+test('masking a long value, and a long text of unclosed quotes, is linear', async () => {
+  await expectLinear({ make: k => `password=${'x'.repeat(50_000 * k)}`, run: t => void maskSecrets(t) })
+  await expectLinear({ make: k => `secret="${'x '.repeat(25_000 * k)}`, run: t => void maskSecrets(t) })
+  await expectLinear({ make: k => 'token="a '.repeat(10_000 * k), run: t => void maskSecrets(t) })
+  await expectLinear({ make: k => `https://ada:${'p'.repeat(50_000 * k)}`, run: t => void maskSecrets(t) })
 })
 
 test('isSensitive: a question that asks for a password, a token, a key or a secret', () => {
