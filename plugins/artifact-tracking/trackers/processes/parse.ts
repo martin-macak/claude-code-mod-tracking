@@ -399,7 +399,7 @@ export function parseBashProcesses(
 
   for (const seg of splitShell(command)) {
     // The marked words tell `'$F'` and `\$F` (as typed) from `$F` and `"$F"` (expanded). Only the variables read them.
-    const pre = stripLead(seg.marked)
+    const pre = stripLead({ words: seg.marked, whole: seg.whole })
     const ss = stripSetsid(pre.words)
     const inner = stripWrappers(ss.words)
     const marked = inner.words

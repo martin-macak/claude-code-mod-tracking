@@ -1035,3 +1035,62 @@ test('parseBashProcesses keeps a compound open at a quoted done, fi or esac', ()
   expect(project("case x in x) 'esac' y; cd /x ;; esac | cat; docker compose up -d")).toBe('app')
   expect(project("a; for i in 1; do cd /x; 'done' y; cd /y; done & docker compose up -d")).toBe('app')
 })
+
+// A heredoc with an escaped tag or a file descriptor (issue #194). Bash skips the body, so the `cd /y` in it never runs.
+test('parseBashProcesses skips the body of a heredoc with an escaped tag or a file descriptor', () => {
+  const project = composeProject
+  expect(project('cat <<\\EOF\ncd /y\nEOF\ndocker compose up -d')).toBe('app')
+  expect(project('cat <<\\EOF\ncd /y\nEOF\ncd /x\ndocker compose up -d')).toBe('x')
+  expect(project('cat <<E\\OF\ncd /y\nEOF\ndocker compose up -d')).toBe('app')
+  // A substitution in the tag is part of the tag as typed: the body ends at the same text, and the lines after it run.
+  expect(project('cat <<$(echo EOF)\ncd /y\n$(echo EOF)\ndocker compose up -d')).toBe('app')
+  expect(project('cat <<$((1+1))\ncd /y\n$((1+1))\ncd /x\ndocker compose up -d')).toBe('x')
+  // `3<<EOF` is a redirection: the word `3` is no folder of the `cd`, and no argument of a process.
+  expect(project('cd 3<<EOF /x\nhi\nEOF\ndocker compose up -d')).toBe('x')
+  expect(project('cat 3<<EOF\ncd /y\nEOF\ndocker compose up -d')).toBe('app')
+  expect(project('cd {fd}<<EOF /x\nhi\nEOF\ndocker compose up -d')).toBe('x')
+  expect(detachedOf('nohup node srv.js 3<<EOF &\nhi\nEOF')[0]?.name).toBe('node srv.js')
+})
+
+// `{name}` before a redirection operator is a variable file descriptor (issue #194): neither it nor its target is a word of
+// the command.
+test('parseBashProcesses drops a variable file descriptor redirection', () => {
+  expect(composeProject('cd {fd}>f /x; docker compose up -d')).toBe('x')
+  expect(composeProject('cd {fd}<> lock /x; docker compose up -d')).toBe('x')
+  expect(composeProject('cd /x {fd}> f; docker compose up -d')).toBe('x')
+  expect(detachedOf('nohup node srv.js {fd}<> io.sock &')[0]?.name).toBe('node srv.js')
+  expect(detachedOf('nohup node srv.js {fd}>log -v &')[0]?.name).toBe('node srv.js -v')
+  // A `{name}` with a space before the operator is a word.
+  expect(detachedOf('nohup node srv.js {fd} >log &')[0]?.name).toBe('node srv.js {fd}')
+})
+
+// A quoted or escaped reserved word is a command, not a reserved word (issue #194). `'done' docker compose up -d` runs a
+// command named `done`: it starts no compose project.
+test('parseBashProcesses reads a quoted or escaped reserved word as a command', () => {
+  const project = composeProject
+  expect(project("'done' docker compose up -d")).toBeUndefined()
+  expect(project('\\done docker compose up -d')).toBeUndefined()
+  expect(project('"fi" docker compose up -d')).toBeUndefined()
+  expect(project("'!' docker compose up -d")).toBeUndefined()
+  expect(project("for i in 1; do 'done' docker compose up -d; done")).toBeUndefined()
+  expect(project("if 'then' docker compose up -d; then :; fi")).toBeUndefined()
+  // The job is the command `done` with the words after it as arguments, not the `node` server.
+  expect(detachedOf("'done' nohup node srv.js &").map(r => r.name)).toEqual(['done nohup node srv.js'])
+  // The controls: a typed reserved word in front of the command is still dropped.
+  expect(project('for i in 1; do docker compose up -d; done')).toBe('app')
+  expect(project('if ! docker compose up -d; then :; fi')).toBe('app')
+  expect(project('time ! docker compose up -d')).toBe('app')
+  expect(detachedOf('do nohup node srv.js &').map(r => r.name)).toEqual(['node srv.js'])
+})
+
+// A `<<` in arithmetic is a shift (issue #194). The lines after it run, so the `cd` and the command after `x=$((1<<2))` count.
+test('parseBashProcesses reads the lines after an arithmetic shift', () => {
+  const project = composeProject
+  expect(project('x=$((1<<2))\ncd /x\ndocker compose up -d')).toBe('x')
+  expect(project('(( x << 2 ))\ncd /x\ndocker compose up -d')).toBe('x')
+  expect(project('cat <<< $((1<<2))\ncd /x\ndocker compose up -d')).toBe('x')
+  expect(project('for ((i=1<<2; i<5; i++)); do :; done\ncd /x\ndocker compose up -d')).toBe('x')
+  expect(detachedOf('x=$((1<<2))\nnohup node srv.js &').map(r => r.name)).toEqual(['node srv.js'])
+  // A heredoc next to it still hides its body.
+  expect(project('x=$((1<<2))\ncat <<EOF\ncd /y\nEOF\ncd /x\ndocker compose up -d')).toBe('x')
+})

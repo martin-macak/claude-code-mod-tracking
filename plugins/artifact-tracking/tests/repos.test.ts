@@ -1347,3 +1347,58 @@ test('parseRepoHintsFromBash keeps a compound open at a quoted done, fi or esac'
     '/session/proj',
   ])
 })
+
+// A heredoc with an escaped tag or a file descriptor (issue #194). Bash skips the body, so the `cd /y` in it never runs.
+test('parseRepoHintsFromBash skips the body of a heredoc with an escaped tag or a file descriptor', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('cat <<\\EOF\ncd /y\nEOF\ngit -C . status')).toEqual(['/session/proj'])
+  expect(paths('cat <<\\EOF\ncd /y\nEOF\ncd /x\ngit -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cat <<E\\OF\ncd /y\nEOF\ngit -C . status')).toEqual(['/session/proj'])
+  // A substitution in the tag is part of the tag as typed: the body ends at the same text, and the lines after it run.
+  expect(paths('cat <<$(echo EOF)\ncd /y\n$(echo EOF)\ngit -C . status')).toEqual(['/session/proj'])
+  expect(paths('cat <<$((1+1))\ncd /y\n$((1+1))\ncd /x\ngit -C . status')).toEqual(['/x', '/x'])
+  // `3<<EOF` is a redirection: the word `3` is no folder of the `cd`.
+  expect(paths('cd 3<<EOF /x\nhi\nEOF\ngit -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cat 3<<EOF\ncd /y\nEOF\ngit -C . status')).toEqual(['/session/proj'])
+  expect(paths('cd {fd}<<EOF /x\nhi\nEOF\ngit -C . status')).toEqual(['/x', '/x'])
+})
+
+// `{name}` before a redirection operator is a variable file descriptor (issue #194): neither it nor its target is a folder.
+test('parseRepoHintsFromBash drops a variable file descriptor redirection', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('cd {fd}>f /x; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cd {fd}<> lock /x; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cd {fd}> f /x; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cd /x {fd}>f; git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('exec {fd}<> lock; git -C /y status')).toEqual(['/y'])
+  // A `{name}` with a space before the operator is a word: `cd {fd}` goes to a folder of that name.
+  expect(paths('cd {fd} >f; git -C . status')).toEqual(['/session/proj/{fd}', '/session/proj/{fd}'])
+})
+
+// A quoted or escaped reserved word is a command, not a reserved word (issue #194). `'done' git -C /x status` runs a command
+// named `done`, so no `git` runs and no folder is read. The typed `if` and `do` still lead a command.
+test('parseRepoHintsFromBash reads a quoted or escaped reserved word as a command', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths("'done' git -C /x status")).toEqual([])
+  expect(paths('\\done git -C /x status')).toEqual([])
+  expect(paths('"fi" git -C /x status')).toEqual([])
+  expect(paths("'!' git -C /x status")).toEqual([])
+  expect(paths("for i in 1; do 'done' git -C /x status; done")).toEqual([])
+  expect(paths("if 'then' git -C /x status; then :; fi")).toEqual([])
+  expect(paths("'done' cd /x; git -C . status")).toEqual(['/session/proj'])
+  // The controls: a typed reserved word in front of the command is still dropped.
+  expect(paths('for i in 1; do git -C /x status; done')).toEqual(['/x'])
+  expect(paths('if ! git -C /x status; then :; fi')).toEqual(['/x'])
+  expect(paths('time ! git -C /x status')).toEqual(['/x'])
+})
+
+// A `<<` in arithmetic is a shift (issue #194). The lines after it run, so the `cd` and the `git` after `x=$((1<<2))` count.
+test('parseRepoHintsFromBash reads the lines after an arithmetic shift', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('x=$((1<<2))\ncd /x\ngit -C . status')).toEqual(['/x', '/x'])
+  expect(paths('(( x << 2 ))\ncd /x\ngit -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cat <<< $((1<<2))\ncd /x\ngit -C . status')).toEqual(['/x', '/x'])
+  expect(paths('for ((i=1<<2; i<5; i++)); do :; done\ncd /x\ngit -C . status')).toEqual(['/x', '/x'])
+  // A heredoc next to it still hides its body.
+  expect(paths('x=$((1<<2))\ncat <<EOF\ncd /y\nEOF\ncd /x\ngit -C . status')).toEqual(['/x', '/x'])
+})
