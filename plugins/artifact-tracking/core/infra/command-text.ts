@@ -12,9 +12,10 @@ import { UNKNOWN } from './manifest'
 export const NO_ROOM = 'Widen the terminal to see the tracking pane'
 
 export const USAGE =
-  'Usage: /track [refresh|clear|help|version|show-all|view <name>|turn [n]|prio <ref> <high|normal|low|auto>]'
+  'Usage: /track [refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <high|normal|low|auto>]'
 /** The argument hint while no tracker declares a sub-command. */
-export const CORE_HINT = '[refresh|clear|help|version|show-all|view <name>|turn [n]|prio <ref> <level>]'
+export const CORE_HINT =
+  '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>]'
 /** `/track prio` levels: `auto` removes the person's mark. */
 export const PRIO_WORDS: ReadonlySet<string> = new Set(['high', 'normal', 'low', 'auto'])
 /** The subs core answers. A tracker cannot take one of them. */
@@ -25,6 +26,7 @@ export const CORE_SUBS: ReadonlySet<string> = new Set([
   'version',
   'show-all',
   'view',
+  'clean',
   'turn',
   'prio',
 ])

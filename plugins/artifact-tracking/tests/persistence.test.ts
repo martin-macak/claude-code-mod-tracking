@@ -1,7 +1,8 @@
 // Persistence on fakePorts: the v2 layout, the debounce, the size bound, the end write and the legacy sweep.
 // The slots are small fakes. Spec 5.6 and 5.13. Plan: L3 Task 4.
 import { expect, test } from 'claude-code/testing'
-import { KEYS, MIN_END_BUDGET_MS, Persistence } from '../core/infra/persistence'
+import { KEYS, LOG_KEEP, MIN_END_BUDGET_MS, Persistence } from '../core/infra/persistence'
+import type { LogEntry } from '../core/interfaces/clean'
 import type { Json } from '../core/interfaces/items'
 import type { StorePort } from '../core/interfaces/ports'
 import type { DataSlot, PendingEnd } from '../core/interfaces/slots'
@@ -527,8 +528,152 @@ test('dropRun leaves a v2:run that another process wrote after the start read it
   expect(w.store.has('v2:run')).toBe(false)
 })
 
-test('KEYS names the three v2 keys', () => {
+test('KEYS names the four v2 keys', () => {
   expect(KEYS.session('abc')).toBe('v2:s:abc')
   expect(KEYS.index).toBe('v2:index')
   expect(KEYS.run).toBe('v2:run')
+  expect(KEYS.log).toBe('v2:log')
+})
+
+// ---------------------------------------------------------------- the audit log (issue #122)
+
+const entry = (n: number, f: Partial<LogEntry> = {}): LogEntry => ({
+  at: n,
+  by: 'manual',
+  kind: 'tasks',
+  id: `task:t${n}`,
+  action: 'stop',
+  outcome: 'done',
+  ...f,
+})
+
+test('the log is empty until something is appended', async () => {
+  const { w, p } = setup()
+  expect(await p.readLog()).toEqual([])
+  expect(w.store.has('v2:log')).toBe(false)
+})
+
+test('appendLog stores v2:log with the newest entry first, across two appends', async () => {
+  const { w, p } = setup()
+  await p.appendLog([entry(1), entry(2)])
+  await p.appendLog([entry(3)])
+  expect((w.store.get('v2:log') as LogEntry[]).map(e => e.at)).toEqual([3, 2, 1])
+  expect((await p.readLog()).map(e => e.at)).toEqual([3, 2, 1])
+})
+
+test('the log keeps the newest 200 entries', async () => {
+  const { w, p } = setup()
+  expect(LOG_KEEP).toBe(200)
+  await p.appendLog(Array.from({ length: 150 }, (_, i) => entry(i)))
+  await p.appendLog(Array.from({ length: 100 }, (_, i) => entry(1000 + i)))
+  const log = w.store.get('v2:log') as LogEntry[]
+  expect(log).toHaveLength(200)
+  expect(log[0]?.at).toBe(1099) // the newest
+  expect(log[99]?.at).toBe(1000)
+  expect(log[100]?.at).toBe(149) // the oldest 50 of the first batch fell out
+  expect(log[199]?.at).toBe(50)
+})
+
+test('an empty append writes nothing', async () => {
+  const { w, p } = setup()
+  await p.appendLog([])
+  expect(w.storeSets).toBe(0)
+})
+
+test('a refused log write is logged and never rejects', async () => {
+  const { w, p } = setup({
+    store: real => ({
+      ...real,
+      set: async () => {
+        throw new Error('full')
+      },
+    }),
+  })
+  await p.appendLog([entry(1)])
+  expect(w.logs).toEqual(['store: write of v2:log failed: full'])
+})
+
+test('a refused log read counts as an empty log, and an append then writes nothing: it must not replace a log it cannot read', async () => {
+  const { w, p } = setup({
+    fake: { store: { 'v2:log': [entry(1)] } },
+    store: real => ({
+      ...real,
+      get: async () => {
+        throw new Error('timeout')
+      },
+    }),
+  })
+  expect(await p.readLog()).toEqual([])
+  await p.appendLog([entry(2)])
+  expect(w.storeSets).toBe(0)
+  expect(w.store.get('v2:log')).toEqual([entry(1)])
+  expect(w.logs).toEqual(['store: read of v2:log failed: timeout', 'store: read of v2:log failed: timeout'])
+})
+
+test('a stored log entry that is not an entry is left out when the log is read, and the next append drops it', async () => {
+  const bad = [
+    { ...entry(2), at: 'x' },
+    { ...entry(2), at: 1e100 }, // finite, but no Date: toISOString() throws
+    { ...entry(2), at: 8.64e15 + 1 }, // one ms past the last Date
+    { ...entry(2), id: 7 },
+    { ...entry(2), outcome: undefined },
+    'junk',
+    null,
+    5,
+  ]
+  const { w, p } = setup({ fake: { store: { 'v2:log': [entry(4), ...bad, entry(1)] as never } } })
+  expect((await p.readLog()).map(e => e.at)).toEqual([4, 1])
+  await p.appendLog([entry(5)])
+  expect((w.store.get('v2:log') as LogEntry[]).map(e => e.at)).toEqual([5, 4, 1])
+})
+
+test('the log never takes more than half of maxBytes: the oldest entries go first, the newest stay', async () => {
+  const { w, p } = setup({ limits: { maxBytes: 2000 } })
+  const big = (n: number) => entry(n, { outcome: `skipped: ${'x'.repeat(150)}` }) // about 250 characters each
+  await p.appendLog(Array.from({ length: 10 }, (_, i) => big(i + 1)))
+  const log = w.store.get('v2:log') as LogEntry[]
+  expect(JSON.stringify(log).length).toBeLessThanOrEqual(1000)
+  expect(log.length).toBeGreaterThan(0)
+  expect(log[0]?.at).toBe(10) // the newest stays first
+  expect(log.map(e => e.at)).toEqual(Array.from({ length: log.length }, (_, i) => 10 - i)) // no gap: only the oldest went
+  await p.appendLog([big(11)])
+  expect((w.store.get('v2:log') as LogEntry[])[0]?.at).toBe(11)
+  expect(JSON.stringify(w.store.get('v2:log')).length).toBeLessThanOrEqual(1000)
+})
+
+test('one entry that is bigger than the bound is still kept: the newest try is never dropped', async () => {
+  const { w, p } = setup({ limits: { maxBytes: 100 } })
+  await p.appendLog([entry(1, { outcome: `skipped: ${'x'.repeat(150)}` })])
+  expect((w.store.get('v2:log') as LogEntry[]).map(e => e.at)).toEqual([1])
+})
+
+test('forget, flush and end leave v2:log alone', async () => {
+  const { w, p } = setup()
+  await p.appendLog([entry(1)])
+  await p.flushNow()
+  await p.forget('sess-1')
+  await p.end('sess-1', 1000, PENDING)
+  expect((w.store.get('v2:log') as LogEntry[]).map(e => e.at)).toEqual([1])
+})
+
+test('the size of v2:log counts against maxBytes', async () => {
+  const { w, p } = setup({
+    fake: { store: { 'v2:index': ['old1'], 'v2:s:old1': copyOf(150) } },
+    limits: { maxBytes: 400 },
+    slots: [slot('items', ['x'.repeat(86)])],
+  })
+  await p.appendLog([entry(1, { outcome: `skipped: ${'x'.repeat(150)}` })]) // about 250 characters
+  await p.flushNow()
+  expect(w.store.get('v2:index')).toEqual(['sess-1']) // 100 + 150 + the log is over 400: the old copy goes
+  expect(w.store.has('v2:log')).toBe(true) // the log itself stays
+})
+
+test('a v2:log that the store already holds counts too, before this load appended to it', async () => {
+  const { w, p } = setup({
+    fake: { store: { 'v2:index': ['old1'], 'v2:s:old1': copyOf(150), 'v2:log': [entry(1, { id: 'x'.repeat(250) })] } },
+    limits: { maxBytes: 400 },
+    slots: [slot('items', ['x'.repeat(86)])],
+  })
+  await p.flushNow()
+  expect(w.store.get('v2:index')).toEqual(['sess-1'])
 })

@@ -1,18 +1,20 @@
 // Commands: the router of `/track <args>`. Core answers the empty command, `refresh`, `clear`, `help`, `version`,
-// `show-all`, `view`, `turn` and `prio`; then the first sub-command a live tracker declared runs; any other word prints the usage
+// `show-all`, `view`, `clean`, `turn` and `prio`; then the first sub-command a live tracker declared runs; any other word prints the usage
 // line. The host does the work and this holds only the order of the calls and the text of the answer. The list text and
 // the help text come in as functions (the draw path is not core). A reply that prints the list ends with the problems
 // of the config file, when there are any. The help text lists them itself. The fixed words sit in command-text.ts.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.3, 5.7 and 5.12.
-// Plan: L3 Task 12, D12. L4 Task 6, C6. L5 Task 9, K15, K19. L6 Task 12, G14. Issue #65: `version`.
+// Plan: L3 Task 12, D12. L4 Task 6, C6. L5 Task 9, K15, K19. L6 Task 12, G14. Issue #65: `version`. Issue #122: `clean`.
 
 import type { ConfigSource } from '../interfaces/config'
 import type { CommandEvent } from '../interfaces/events'
 import type { ItemsHost, Priority } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { CommandSpec } from '../interfaces/tracker'
+import { CLEAN_USAGE, logText, parseClean, planText, resultText } from '../lib/clean-text'
 import { flipShowAll, isViewId } from '../lib/grouping'
 import { TURN_USAGE } from '../lib/turn-text'
+import type { Cleaner } from './clean'
 import { CORE_HINT, CORE_SUBS, PRIO_WORDS, problemsText, USAGE, VIEW_USAGE, versionText } from './command-text'
 
 export { CORE_HINT, PRIO_WORDS, problemsText, USAGE, VIEW_USAGE, versionText } from './command-text'
@@ -41,6 +43,8 @@ export interface CommandHost {
   turnText(p: Ports, n: number | undefined): Promise<string>
   /** The version of the mod, read from its manifest by the start. `undefined` when no start has run it. */
   version(): string | undefined
+  /** `/track clean` (issue #122): the plan, the apply and the audit log. */
+  readonly cleanup: Pick<Cleaner, 'plan' | 'apply' | 'history'>
 }
 
 type Reply = { text: string }
@@ -75,6 +79,8 @@ export class Commands {
     const view = /^view(?:\s+(.*))?$/.exec(arg)
     if (view) return this.view(p, view[1])
     if (arg === 'clear') return this.clear(p)
+    const clean = /^clean(?:\s+(.*))?$/.exec(arg)
+    if (clean) return this.clean(p, clean[1] ?? '')
     const turn = /^turn(?:\s+(.*))?$/.exec(arg)
     if (turn) return this.turn(p, turn[1])
     // R11: the pane's keys for `claude -p`. The ref keeps its case: item keys and repo names need it.
@@ -137,6 +143,44 @@ export class Commands {
     const { text } = await this.list(p)
     // The text of a view other than by list says the view first. By list does not, so the reply says it, or it would not tell.
     return { text: text.startsWith('View: ') ? text : `View: ${word}\n\n${text}` }
+  }
+
+  /**
+   * `/track clean` (issue #122). With no argument it is a dry run: the plan by kind, and no slot write, no store write and no
+   * process. `--hide` hides every ended row now (`hidden.before`, a session atom, undone by `show-all`). `--yes <kind>...`
+   * applies the steps of those kinds, and the audit log keeps what it tried. `--log` prints that log, newest first. It does
+   * not check the config file: a plan needs no setting that a file edit changes.
+   */
+  private async clean(p: Ports, rest: string): Promise<Reply> {
+    const mode = parseClean(rest)
+    if (mode === undefined) return { text: CLEAN_USAGE }
+    const { cleanup } = this.host
+    switch (mode.mode) {
+      case 'plan': {
+        const { lines, failed } = await cleanup.plan(p)
+        return { text: planText(lines, failed) }
+      }
+      case 'log':
+        return { text: logText(await cleanup.history()) }
+      case 'hide': {
+        // Clears `showAll` too: `--hide` after `show-all` hides the ended rows, as the person asked.
+        await p.state.hidden.update(() => ({ showAll: false, before: p.clock.wall() }))
+        p.ui.invalidate()
+        const { text } = await this.list(p)
+        return { text: `Ended rows hidden. /track show-all shows them again.\n\n${text}` }
+      }
+      case 'yes': {
+        const { lines, failed } = await cleanup.apply(p, mode.kinds)
+        try {
+          await this.host.flushNow() // `claude -p` can exit right after the reply: save now, not after flushMs
+        } catch {
+          // The next change saves it.
+        }
+        p.ui.invalidate()
+        const { text } = await this.list(p)
+        return { text: `${resultText(mode.kinds, lines, failed)}\n\n${text}` }
+      }
+    }
   }
 
   private async clear(p: Ports): Promise<Reply> {

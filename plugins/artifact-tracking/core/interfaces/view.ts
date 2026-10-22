@@ -199,11 +199,14 @@ export interface PaneView {
 }
 
 /**
- * What `/track show-all` toggles, for the session. `showAll`: every tracker that hides a row by time shows it again.
- * A session atom: `/clear` resets it, and it is never written to the config file.
+ * What `/track show-all` and `/track clean --hide` set, for the session. `showAll`: every tracker that hides a row by time
+ * shows it again. `before`: the time of the last `--hide`, epoch ms. A row that is over and ended at or before it is hidden,
+ * whatever its TTL or `hideEnded`. `showAll` wins over both. A session atom: `/clear` resets it, and it is never written to
+ * the config file.
  */
 export interface HiddenState {
   readonly showAll: boolean
+  readonly before?: number
 }
 
 /**

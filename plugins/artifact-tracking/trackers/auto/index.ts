@@ -22,6 +22,7 @@ import type { FactsPort, Handler, Tracker, TrackerContext } from '../../core/int
 import { isRecord } from '../../core/lib/json'
 import { LoadState } from '../../core/lib/load-state'
 import { rowSightings } from '../../core/lib/turn-span'
+import { autoCleanup } from './clean'
 import { type AutoConfig, autoConfig } from './config'
 import { autoIds } from './dismiss'
 import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from './events'
@@ -281,6 +282,7 @@ export const auto: Tracker<AutoConfig, AutoState> & Traceable<AutoState> = {
     },
   },
   sections,
+  cleanup: autoCleanup,
   reasonsOf: autoReasonsOf,
   turnsOf: autoTurnsOf,
   events: {

@@ -75,6 +75,11 @@ export type WorktreeRow = {
   branch?: string
   detached: boolean
   state: WorktreeRowState
+  /**
+   * A removed child whose record git still lists as prunable. A removed child with no record at all has none: `git worktree
+   * remove` took it away, so `/track clean` has nothing left to remove (issue #122).
+   */
+  prunable?: true
   depth: 0 | 1
 }
 

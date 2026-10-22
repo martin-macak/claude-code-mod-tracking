@@ -15,6 +15,7 @@ import type {
   RunOpts,
   RunResult,
   SessionRow,
+  StopResult,
   Timer,
 } from '../../core/interfaces/ports'
 import type { FilterState, HiddenState } from '../../core/interfaces/view'
@@ -75,6 +76,10 @@ export type FakeWorld = {
   promptRefusal?: string | Promise<string>
   /** Answers a `run` call. undefined falls through to the default: exit 1, "unexpected call". */
   run?: (argv: string[]) => RunResult | undefined | Promise<RunResult | undefined>
+  /** The task id of every `tasks.stop` call, in order. */
+  stops: string[]
+  /** Answers a `tasks.stop` call. undefined falls through to the default: the task stopped. */
+  stop?: (taskId: string) => StopResult | Promise<StopResult>
   files: Record<string, string>
   /** The path of every `fs.read`, in order. */
   reads: string[]
@@ -205,6 +210,12 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       messages: async () => world.session.messages,
     },
     agents: { list: async () => world.agents },
+    tasks: {
+      stop: async taskId => {
+        world.stops.push(taskId)
+        return (await world.stop?.(taskId)) ?? { stopped: true }
+      },
+    },
     prompt: {
       submit(text, onRefused) {
         world.prompts.push(text)
@@ -299,6 +310,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
     stateSets: {},
     calls: [],
     callOpts: [],
+    stops: [],
     prompts: [],
     files: { ...(o.files ?? {}) },
     reads: [],

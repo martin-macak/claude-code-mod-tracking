@@ -10,6 +10,7 @@ import type { Ports } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
 import type { EventBus } from './bus'
+import type { Cleaner } from './clean'
 import { NO_ROOM } from './command-text'
 import { type CommandHost, Commands } from './commands'
 import { ItemService } from './items'
@@ -95,7 +96,7 @@ export interface CommandOwner {
 /** The host of the `/track` router: the manager's calls, the declared sub-commands of the live trackers, and the pane. */
 export function commandHostOf(
   m: CommandOwner,
-  w: { items: ItemsHost; host: TrackerHost; bus: EventBus; config: ConfigSource },
+  w: { items: ItemsHost; host: TrackerHost; bus: EventBus; config: ConfigSource; cleanup: Cleaner },
 ): CommandHost {
   return {
     entry: p => m.entry(p),
@@ -116,6 +117,7 @@ export function commandHostOf(
     turnText: (p, n) => m.turnText(p, n),
     config: w.config,
     version: () => m.version,
+    cleanup: w.cleanup,
   }
 }
 

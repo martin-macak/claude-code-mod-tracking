@@ -4,6 +4,7 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.8, 5.5 and 5.12.
 
 import type { BreakerState, ToolStatus } from '../../types'
+import type { Cleanup } from './clean'
 import type { ConfigSpec, ConfigView, GlobalConfig } from './config'
 import type {
   AgentSpawnEvent,
@@ -19,7 +20,7 @@ import type {
   TurnCompleteEvent,
 } from './events'
 import type { ItemKind, ItemStorePort, Json, JsonObject } from './items'
-import type { AgentInfo, EnvName, Ports, RepoRemote, RunOpts, RunResult, Timer } from './ports'
+import type { AgentInfo, EnvName, Ports, RepoRemote, RunOpts, RunResult, TasksPort, Timer } from './ports'
 import type { TurnPort } from './turns'
 import type { ActionImpls, SectionSpec, ViewContext } from './view'
 
@@ -193,6 +194,8 @@ export interface TrackerContext<C extends JsonObject = JsonObject, D extends Jso
     root(): string | undefined
   }
   readonly tools: ToolPort
+  /** Stops a background task. Present only for a tracker that declares `stopsTasks`. */
+  readonly tasks?: TasksPort
   /** A turn the mod asks for. See `Ports['prompt']`: a press only, never awaited. */
   readonly prompt: Ports['prompt']
   /** A short message over the pane. */
@@ -244,6 +247,10 @@ export interface Tracker<C extends JsonObject = JsonObject, D extends Json = Jso
   readonly keys?: readonly KeySpec[]
   /** `/track` sub-commands: sub, hint. */
   readonly commands?: readonly CommandSpec[]
+  /** What `/track clean` plans and applies for this tracker (issue #122). Absent: nothing to clean. */
+  readonly cleanup?: Cleanup<C, D>
+  /** True: the context of this tracker has `tasks`, so `cleanup.apply` can stop a background task. No other tracker gets it. */
+  readonly stopsTasks?: true
   /** Handlers as data: `(ctx, event) => ...`. */
   readonly events?: TrackerEvents<C, D>
   /** How core stores, carries and clears this tracker's slot. */

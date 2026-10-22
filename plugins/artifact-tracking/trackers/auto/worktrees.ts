@@ -42,6 +42,53 @@ function newProofs(
   return added
 }
 
+/**
+ * Whether `a` and `b` can be one directory that is reached through a symlink. An alias changes the start of a path and never
+ * its last segments (`.claude/worktrees/<name>`), so the last three segments, or all of the shorter path, must be equal, and
+ * a bare folder name never decides. A record of the same branch somewhere else is another worktree.
+ */
+function sameTail(a: string, b: string): boolean {
+  const x = normPath(a).split('/').filter(Boolean)
+  const y = normPath(b).split('/').filter(Boolean)
+  const n = Math.min(3, x.length, y.length)
+  if (n < 2) return false
+  for (let i = 1; i <= n; i++) if (x[x.length - i] !== y[y.length - i]) return false
+  return true
+}
+
+/**
+ * Matches each proof to the record that git lists for it, keyed by the path of the proof: by path first, then by branch
+ * for a path that is a symlink alias (git lists the canonical path), as long as both paths end the same (`sameTail`). The main
+ * tree and the record that holds the root `top` are never matched, and a record that one proof took is not taken again. This
+ * is the one lookup of the round and of the `/track clean` recheck (issue #122): the recheck must find the record that the
+ * round marked prunable, and must never take the record of a worktree that this run does not own.
+ */
+export function matchProofs(
+  proofs: readonly WorktreeProof[],
+  list: readonly GitWorktree[],
+  top: string,
+): Map<string, GitWorktree> {
+  const rootRec = locate(list, top)
+  const taken = new Set<GitWorktree>([...(list[0] ? [list[0]] : []), ...(rootRec ? [rootRec] : [])])
+  const matched = new Map<string, GitWorktree>()
+  for (const p of proofs) {
+    const r = findByPath(list, p.path, taken)
+    if (r) {
+      matched.set(p.path, r)
+      taken.add(r)
+    }
+  }
+  for (const p of proofs) {
+    if (matched.has(p.path) || p.branch === undefined) continue
+    const r = list.find(x => !taken.has(x) && x.branch === p.branch && sameTail(x.path, p.path))
+    if (r) {
+      matched.set(p.path, r)
+      taken.add(r)
+    }
+  }
+  return matched
+}
+
 /** `caps` are `maxProofs` (room for new proofs) and `maxBranches` (the branches the PR lane polls). */
 export function trackWorktrees(
   s: AutoState,
@@ -63,23 +110,7 @@ export function trackWorktrees(
   const all = added.length > 0 ? [...s.worktrees, ...added] : s.worktrees
 
   // 2. Match each proof to a record: by path, then by branch for a symlinked path. Never the root or the main tree.
-  const taken = new Set<GitWorktree>([mainRec, ...(rootRec ? [rootRec] : [])])
-  const matched = new Map<string, GitWorktree>()
-  for (const p of all) {
-    const r = findByPath(list, p.path, taken)
-    if (r) {
-      matched.set(p.path, r)
-      taken.add(r)
-    }
-  }
-  for (const p of all) {
-    if (matched.has(p.path) || p.branch === undefined) continue
-    const r = list.find(x => !taken.has(x) && x.branch === p.branch)
-    if (r) {
-      matched.set(p.path, r)
-      taken.add(r)
-    }
-  }
+  const matched = matchProofs(all, list, top)
 
   // 3. Update the proofs: the branch of a matched record, `seenAt` on a first or renewed match, and `removedAt` the
   //    first time the child is removed (issue #49). A proof with no record is removed too. A live child drops it.
@@ -131,6 +162,7 @@ export function trackWorktrees(
       ...(branch !== undefined ? { branch } : {}),
       detached: r?.detached ?? false,
       state: r && r.prunable === undefined ? 'live' : 'removed',
+      ...(r?.prunable !== undefined ? { prunable: true as const } : {}),
       depth: 1,
     })
   }

@@ -16,6 +16,7 @@ import type { Handler, Tracker, TrackerContext } from '../../core/interfaces/tra
 import { CircuitBreaker } from '../../core/lib/circuit-breaker'
 import { isRecord } from '../../core/lib/json'
 import { type LoadKey, LoadState } from '../../core/lib/load-state'
+import { processesCleanup } from './clean'
 import { type ProcessesConfig, processesConfig } from './config'
 import {
   monitorRow,
@@ -164,6 +165,8 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> & Traceable<J
       clear: ctx => setProcesses(ctx, () => []),
     },
     sections,
+    cleanup: processesCleanup,
+    stopsTasks: true,
     reasonsOf: processReasonsOf,
     turnsOf: processTurnsOf,
     events: {

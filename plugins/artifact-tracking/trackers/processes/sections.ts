@@ -6,12 +6,13 @@
 
 import type { Json } from '../../core/interfaces/items'
 import type { SectionSpec, TreeRow, ViewContext } from '../../core/interfaces/view'
+import { sweptAway } from '../../core/lib/hidden'
 import { textCells } from '../../core/lib/rows'
 import type { ProcessesConfig } from './config'
 import { displayName } from './names'
 import { processReasons } from './reasons'
 import { asRows, expired, overCap } from './rows'
-import { STATE_TOKEN } from './states'
+import { ENDED_STATES, STATE_TOKEN } from './states'
 import type { ProcessRecord, ProcessUiState } from './types'
 import { UI_FACT } from './watch'
 
@@ -53,7 +54,10 @@ export function sections(ctx: ViewContext<ProcessesConfig, Json>): readonly Sect
   // lower `maxRows`, or rows that ended after the last merge, left over it.
   const cfg = ctx.config.slice()
   const hiding = cfg.hideEnded && !ctx.hidden.showAll
-  const fresh = hiding ? all.filter(r => !expired(r, cfg, ctx.now)) : all
+  // `/track clean --hide` hides every ended row now, whatever the TTL (issue #122).
+  const gone = (r: ProcessRecord) =>
+    (hiding && expired(r, cfg, ctx.now)) || (ENDED_STATES.has(r.state) && sweptAway(ctx.hidden, r.endedAt))
+  const fresh = all.filter(r => !gone(r))
   const capped = hiding ? overCap(fresh, cfg, ctx.now) : new Set<string>()
   const rows = capped.size > 0 ? fresh.filter(r => !capped.has(r.id)) : fresh
   const hidden = all.length - rows.length

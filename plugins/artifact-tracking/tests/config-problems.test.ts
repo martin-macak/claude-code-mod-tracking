@@ -9,7 +9,7 @@ import { managerWorld } from './fixtures/manager'
 
 const PATH = '/p/config.json'
 const USAGE =
-  'Usage: /track [refresh|clear|help|version|show-all|view <name>|turn [n]|prio <ref> <high|normal|low|auto>]'
+  'Usage: /track [refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <high|normal|low|auto>]'
 
 test('problemsText is empty with no problem', () => {
   expect(problemsText(PATH, [])).toBe('')
