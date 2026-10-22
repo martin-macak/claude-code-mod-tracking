@@ -467,8 +467,12 @@ export function readProblems({ items, totalCounts }, { expectIds = null } = {}) 
 }
 
 // What an item looks like to the plan: the whole normalized item (its title breaks the Order ties
-// of the positions, its fields and state feed Wave and Status), and the blockers of its issue.
-const itemShape = (read, i) => JSON.stringify([i, [...(read.graph?.[i.key]?.blockedBy ?? [])].sort()])
+// of the positions, its fields and state feed Wave and Status), and the blockers of its issue,
+// each with its state: the plan skips a CLOSED blocker, also one that is outside the project.
+const itemShape = (read, i) => {
+  const blockers = [...(read.graph?.[i.key]?.blockedBy ?? [])].sort()
+  return JSON.stringify([i, blockers.map(key => [key, read.graph?.[key]?.state ?? null])])
+}
 
 // What differs between two reads that came one after the other: [] when they list the same items
 // with the same values. The ids are not enough: a read can list every item and still lose the

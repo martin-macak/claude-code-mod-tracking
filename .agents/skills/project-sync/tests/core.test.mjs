@@ -550,6 +550,21 @@ test('readDifferences: the same ids with another title, field value, state, mile
   }
 })
 
+test('readDifferences: the state of a blocker outside the project is a difference too', () => {
+  // The plan skips a blocker that is CLOSED, so a read that gives the other state of a blocker
+  // outside the project would write another Wave, Status and Blocked by.
+  const withBlocker = state => {
+    const r = withValues()
+    r.graph['o/r#3'].blockedBy = ['o/r#1', 'x/y#9']
+    r.graph['x/y#9'] = { key: 'x/y#9', state, blockedBy: null }
+    return r
+  }
+  assert.deepEqual(readDifferences(withBlocker('OPEN'), withBlocker('OPEN')), [])
+  const diff = readDifferences(withBlocker('OPEN'), withBlocker('CLOSED'))
+  assert.equal(diff.length, 1)
+  assert.match(diff[0], /3 and 3 items, 0 only in the first, 0 only in the second, 1 with other values or blockers/)
+})
+
 test('readDifferences: the blockers of an item in another order, and an item with no key, are no difference', () => {
   const a = withValues()
   const b = withValues()

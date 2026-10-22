@@ -1191,6 +1191,16 @@ const glitches = {
     message: /23 and 23 items, 0 only in the first, 0 only in the second, 1 with other values or blockers/i,
     pair: true,
   },
+  'two reads that list the same items with another state of a blocker outside the project': {
+    // #56 waits for #70, which is not in the project. The plan skips a CLOSED blocker, so a read that
+    // gives another state for it would write another Wave, Status and Blocked by.
+    spoil: (items, n) => {
+      const blockers = items.nodes.find(x => x.content?.number === 56).content.blockedBy.nodes
+      blockers.push({ id: 'I_70', number: 70, state: n % 2 === 0 ? 'CLOSED' : 'OPEN', repository: { nameWithOwner: REPO } })
+    },
+    message: /23 and 23 items, 0 only in the first, 0 only in the second, 1 with other values or blockers/i,
+    pair: true,
+  },
 }
 const writers = {
   'sync --apply': ['sync', '--apply'],
