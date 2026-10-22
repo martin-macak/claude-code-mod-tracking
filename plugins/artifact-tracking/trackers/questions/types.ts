@@ -23,6 +23,14 @@ export type QuestionItem = {
   kind?: string
   /** The helper line under the question. */
   description?: string
+  /** `text` questions: the placeholder of the empty text box, as the engine gave it. */
+  placeholder?: string
+  /** `number` questions: the lowest value, the highest, the increment, the value the control starts at and its unit. */
+  min?: number
+  max?: number
+  step?: number
+  defaultValue?: number
+  unit?: string
   options: QuestionOption[]
   /**
    * The answer as the engine gave it, word for word. Absent: the question was left blank. A multi-select answer joins the

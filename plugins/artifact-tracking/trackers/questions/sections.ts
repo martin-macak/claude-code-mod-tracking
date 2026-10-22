@@ -4,7 +4,7 @@
 import type { Json } from '../../core/interfaces/items'
 import type { SectionSpec, ViewContext } from '../../core/interfaces/view'
 import type { QuestionsConfig } from './config'
-import { asCalls } from './log'
+import { callsWithin } from './log'
 import { masker } from './present'
 import { callRow } from './rows'
 
@@ -12,9 +12,10 @@ import { callRow } from './rows'
 const RANK = 90
 
 export function sections(ctx: ViewContext<QuestionsConfig, Json>): readonly SectionSpec[] {
-  const calls = asCalls(ctx.data)
+  const config = ctx.config.slice()
+  const calls = callsWithin(ctx.data, config)
   if (calls.length === 0) return []
-  const m = masker(ctx.config.slice().mask)
+  const m = masker(config.mask)
   return [
     {
       id: 'questions',

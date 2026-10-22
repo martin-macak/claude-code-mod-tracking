@@ -53,6 +53,8 @@ function itemStatus(call: QuestionCall, s: ShownItem): RowStatus {
 function itemDetail(s: ShownItem): DetailLine[] {
   const out = textLines('question', s.question)
   if (s.description !== undefined && s.description !== '') out.push(...textLines('about', s.description))
+  if (s.placeholder !== undefined) out.push(...textLines('placeholder', s.placeholder))
+  for (const l of s.limits) out.push(...textLines(l.name, l.value))
   for (const o of s.options) {
     out.push(
       ...textLines(
@@ -96,7 +98,7 @@ function callDetail(call: QuestionCall, m: Masker): DetailLine[] {
         ? textLines('plan', '(the engine gave no plan text)', { dim: true })
         : textLines('plan', m(call.plan.trimEnd()))),
     )
-    if (call.planFile !== undefined) out.push(...textLines('file', call.planFile))
+    if (call.planFile !== undefined) out.push(...textLines('file', m(call.planFile)))
     if (call.refusal !== undefined) out.push(...textLines('rejected', m(call.refusal)))
     return out
   }

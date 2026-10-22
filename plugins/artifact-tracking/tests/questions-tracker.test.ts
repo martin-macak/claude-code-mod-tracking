@@ -249,6 +249,59 @@ test('a call cut to fit the byte cap keeps its sign of a question that asked for
   expect(text).toContain('Other (typed): [masked]')
 })
 
+// A limit that the person lowers applies when the config changes, not at the next question: the reads cap the list by the
+// config they see, and the next beat writes the cut list back.
+test('a lowered maxCalls applies at once: /track qa and the pane show the new bound, and the next tick writes the list back', async () => {
+  let cfg: ReturnType<typeof lagging> | undefined
+  const t = setup({ config: specs => (cfg = lagging(specs, { trackers: { questions: { maxCalls: 5 } } })) })
+  for (const id of ['a', 'b', 'c', 'd']) await t.hear(askOf(id))
+  expect(t.calls().map(c => c.n)).toEqual([1, 2, 3, 4])
+  cfg?.edit({ trackers: { questions: { maxCalls: 2 } } })
+  expect(await t.qa('1')).toBe('No call 1. Calls kept: 3, 4.')
+  const rows = (await t.m.paneData(t.w.ports, NO_VIEW)).find(s => s.id === 'questions')?.rows ?? []
+  expect(rows.map(r => r.id)).toEqual(['d', 'c'])
+  expect(t.calls()).toHaveLength(4) // the slot itself still holds them
+  await t.m.tick()
+  expect(t.calls().map(c => [c.id, c.n])).toEqual([
+    ['c', 3],
+    ['d', 4],
+  ])
+  expect(t.calls()[0]?.watermark).toBe('b') // a resume still knows what the cap dropped
+})
+
+test('a lowered maxBytes applies at once in the same way', async () => {
+  let cfg: ReturnType<typeof lagging> | undefined
+  const t = setup({ config: specs => (cfg = lagging(specs, { trackers: { questions: { maxBytes: 262144 } } })) })
+  const big = (id: string): ToolCallEvent => ({
+    ...ANSWERED_ASK,
+    toolUseId: id,
+    result: {
+      result: {
+        questions: LIVE_QUESTIONS,
+        answers: { 'Where should the records live?': 'State only', 'Which checks should run?': 'Lint' },
+        annotations: { 'Where should the records live?': { notes: 'n'.repeat(3000) } },
+      },
+    } as unknown as Json,
+  })
+  for (const id of ['a', 'b', 'c', 'd']) await t.hear(big(id))
+  expect(t.calls()).toHaveLength(4)
+  cfg?.edit({ trackers: { questions: { maxBytes: 8192 } } })
+  const shown = await t.qa()
+  expect(shown).not.toContain('## Q1 ')
+  expect(shown).toContain('## Q4 ')
+  await t.m.tick()
+  expect(JSON.stringify(t.calls()).length).toBeLessThanOrEqual(8192)
+  expect(t.calls().at(-1)?.id).toBe('d')
+})
+
+test('a tick that has nothing to cut writes nothing', async () => {
+  const t = setup()
+  await t.hear(ANSWERED_ASK)
+  const sets = t.w.stateSets
+  await t.m.tick()
+  expect(t.w.stateSets).toEqual(sets)
+})
+
 test('the defaults are 100 calls and 256 KiB', () => {
   const tracker = questionsTracker()
   expect(tracker.config.defaults).toMatchObject({ maxCalls: 100, maxBytes: 262144, mask: true, enabled: true })
@@ -584,6 +637,19 @@ test('a press copies the masked text, and the unmasked text when the config says
   await open.hear(secretCall())
   await open.m.runAction(open.w.ports, 'questions', 'copy', 'toolu_ask_2')
   expect(open.w.ui.copied[0]).toContain(KEY)
+})
+
+test('a press of the copy key checks the config file first: a mask switched on a moment ago masks the copy', async () => {
+  let cfg: ReturnType<typeof lagging> | undefined
+  const t = setup({ config: specs => (cfg = lagging(specs, { trackers: { questions: { mask: false } } })) })
+  await t.begin()
+  await t.hear(secretCall())
+  await t.m.runAction(t.w.ports, 'questions', 'copy', 'toolu_ask_2')
+  expect(t.w.ui.copied[0]).toContain(KEY) // masking is off in the file
+  cfg?.edit({ trackers: { questions: { mask: true } } }) // no tick has run since
+  await t.m.runAction(t.w.ports, 'questions', 'copy', 'toolu_ask_2')
+  expect(t.w.ui.copied[1]).not.toContain(KEY)
+  expect(t.w.ui.copied[1]).toContain('[masked]')
 })
 
 test('a copy that the surface refuses says why, and a copy call that throws says so too', async () => {

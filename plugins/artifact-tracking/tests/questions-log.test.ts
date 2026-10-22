@@ -76,6 +76,20 @@ test('mergeCalls never gives two calls one number, also when a live copy joins a
   expect(mergeCalls([call('x', 1, { replayed: true })], [call('x', 3, { turn: 4 })]).map(c => c.n)).toEqual([3]) // a free number is taken
 })
 
+test('mergeCalls never reuses a number of the older list, whether it is held or dropped: the numbers only grow', () => {
+  // A restored list that the caps cut (Q5 to Q10) and a call that a fresh process counted from 1.
+  const restored = [5, 6, 7, 8, 9, 10].map(n => call(`r${n}`, n))
+  const merged = mergeCalls(restored, [call('live1', 1), call('live2', 2)])
+  expect(merged.slice(6).map(c => [c.id, c.n])).toEqual([
+    ['live1', 11],
+    ['live2', 12],
+  ])
+  expect(new Set(merged.map(c => c.n)).size).toBe(merged.length)
+  // A number above the older list stays, and the call after a restore goes on from the highest.
+  expect(mergeCalls(restored, [call('ahead', 12)]).at(-1)?.n).toBe(12)
+  expect(nextNumber(merged)).toBe(13)
+})
+
 test('mergeCalls of a list with an empty one is that list', () => {
   const list = [call('a', 1)]
   expect(mergeCalls(list, [])).toBe(list)
@@ -197,6 +211,49 @@ test('a cut keeps the sign of a question that asked for a secret, also when the 
   expect(byHeader?.items?.[0]?.header).not.toMatch(/key/)
   expect(byHeader?.items?.[0]?.sensitive).toBe(true)
   expect(sizeOf(byQuestion!)).toBeLessThanOrEqual(TIGHT.maxBytes)
+})
+
+test('a cut keeps the sign of a question whose helper text asked for a secret, when the words are gone', () => {
+  const ask = longAsk('Enter the value?', 'Value')
+  const withHelp: QuestionCall = {
+    ...ask,
+    items: [{ ...ask.items![0]!, description: `${'x'.repeat(400)} Production password` }],
+  }
+  const [kept] = capCalls([withHelp], TIGHT)
+  expect(kept?.cut).toBe(true)
+  expect(kept?.items?.[0]?.description).not.toMatch(/password/)
+  expect(kept?.items?.[0]?.sensitive).toBe(true)
+})
+
+test('the byte cap counts the characters of the list around a call and the cut mark: no call sits over the cap', () => {
+  const body = (extra: number) =>
+    call('only', 1, {
+      items: [
+        {
+          question: 'Q?',
+          header: 'H',
+          multiSelect: false,
+          options: [{ label: 'A' }],
+          answer: 'A',
+          notes: 'n'.repeat(extra),
+        },
+      ],
+    })
+  const fits = body(2000)
+  const size = sizeOf(fits)
+  // Around the size of the call itself: the list is two characters longer, and a cut call has the mark `"cut":true`.
+  for (const maxBytes of [size - 3, size - 2, size - 1, size, size + 1, size + 2, size + 3, size + 11, size + 12]) {
+    const [kept] = capCalls([fits], { maxCalls: 100, maxBytes })
+    expect(sizeOf([kept!]), `maxBytes ${maxBytes}`).toBeLessThanOrEqual(maxBytes)
+  }
+  // A list of the call alone that fits is the same list, and the call is not marked.
+  const roomy = capCalls([fits], { maxCalls: 100, maxBytes: size + 2 })
+  expect(roomy[0]).toBe(fits)
+  expect(roomy[0]).not.toHaveProperty('cut')
+  // A call that was cut before has the mark already: it adds no more.
+  const [again] = capCalls([{ ...body(5000), cut: true }], { maxCalls: 100, maxBytes: 3000 })
+  expect(sizeOf([again!])).toBeLessThanOrEqual(3000)
+  expect(again?.cut).toBe(true)
 })
 
 test('a plan that is cut has no questions to mark: its text is cut and the record says so', () => {

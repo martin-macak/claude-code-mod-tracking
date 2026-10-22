@@ -56,7 +56,7 @@ The mod keeps its caps (100 calls, 256 KiB) across a resume, so the replay must 
 ## Not tested
 
 - "Chat about this" (`followUp`, `response`) and the answer of an away dialog (`afkTimeoutMs`).
-- A `text` or `number` question (`kind`).
+- A `text` or `number` question (`kind`). The mod keeps `placeholder`, `min`, `max`, `step`, `defaultValue` and `unit` of such a question as the output schema names them ([d.ts:21116](../sources/claude-code-2.1.302/types/claude-code.d.ts#L21116)) `[primary source]`. No run has shown them, and the shape of the answer to such a question is not seen either ([issue #208](https://github.com/martin-macak/claude-code-mod-tracking/issues/208)).
 - A `$.ui.ask` of a real second plugin, and which field would name it.
 - An edit of a plan with `Ctrl+G`, and a teammate plan that awaits its leader.
 - The copy of a call to the clipboard: the mod calls `ui.copy` ([d.ts:2593](../sources/claude-code-2.1.302/types/claude-code.d.ts#L2593)). The kit checks the call and the text. A live run (2.1.307) heard the event in a probe plugin that answered it without `next`, so the text of the key is proven and the clipboard stayed as it was `[observed]`. No run let the engine write the clipboard, because that would overwrite it (open question 49).

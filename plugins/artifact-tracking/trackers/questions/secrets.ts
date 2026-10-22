@@ -97,3 +97,15 @@ const SENSITIVE = /pass(?:word|phrase|code)|secret|token|api[ _-]?key|credential
 export function isSensitive(...texts: readonly string[]): boolean {
   return texts.some(t => SENSITIVE.test(t))
 }
+
+/** The words of a question that can say it asks for a secret: the question, its header, its helper text and the placeholder of its text box. */
+export type QuestionWords = {
+  readonly question: string
+  readonly header: string
+  readonly description?: string
+  readonly placeholder?: string
+}
+
+/** True when the words of a question ask for a secret (`isSensitive` over all of them). The pane, the exports and the byte cut share it. */
+export const wordsAskForSecret = (q: QuestionWords): boolean =>
+  isSensitive(q.question, q.header, q.description ?? '', q.placeholder ?? '')

@@ -7,7 +7,7 @@
 import type { Json } from '../../core/interfaces/items'
 import { isRecord } from '../../core/lib/json'
 import { clip } from '../../core/lib/prompt-text'
-import { isSensitive } from './secrets'
+import { wordsAskForSecret } from './secrets'
 import type { QuestionCall } from './types'
 
 /** The most calls a session keeps, and the most bytes (JSON characters) of its list. */
@@ -19,6 +19,13 @@ const SMALLEST_CUT = 16
 /** The slot value as calls. The slot stores Json, so a value that is not a list of records reads as none. */
 export const asCalls = (v: Json | undefined): QuestionCall[] =>
   Array.isArray(v) ? (v as unknown[]).filter(isCall) : []
+
+/**
+ * The calls of the slot within the caps that the config names now. A limit that the person lowered since the last write
+ * applies in every read (the pane, `/track qa`, the copy key) at once; the beat writes the cut list back. The same array
+ * comes back from `capCalls` when the list fits.
+ */
+export const callsWithin = (v: Json | undefined, caps: Caps): QuestionCall[] => capCalls(asCalls(v), caps)
 
 const isCall = (v: unknown): v is QuestionCall => isRecord(v) && typeof v.id === 'string' && typeof v.n === 'number'
 
@@ -42,9 +49,10 @@ export function joinCall(a: QuestionCall, b: QuestionCall): QuestionCall {
 
 /**
  * `older` and `newer` in one list: the older calls first, then the newer ones that the older list lacks. A call that both
- * hold is joined (`joinCall`), and keeps the number of the live copy only when no other call has it. A call of `newer` whose
- * number another call has takes the next free number: two sessions may both have a call 1. `older` itself comes back when
- * `newer` adds nothing.
+ * hold is joined (`joinCall`), and keeps the number of the live copy only when no other call has it. A call of `newer` that
+ * the older list lacks keeps its number only when it is above every number so far, and else takes the next one: two sessions
+ * may both have a call 1, and a restored list that the caps cut (Q5 to Q10) must not give Q1 again to a call that a fresh
+ * process counted from 1. The numbers only grow. `older` itself comes back when `newer` adds nothing.
  */
 export function mergeCalls(older: readonly QuestionCall[], newer: readonly QuestionCall[]): QuestionCall[] {
   if (newer.length === 0) return older as QuestionCall[]
@@ -64,8 +72,10 @@ export function mergeCalls(older: readonly QuestionCall[], newer: readonly Quest
       out[known] = n === joined.n ? joined : { ...joined, n }
       continue
     }
+    // A number is used once, and the numbers only grow: a new call keeps its own only when it is above every number so far.
+    // A number below the highest may belong to a call that the caps dropped (a fresh process counts from 1), so it is not free.
     let n = c.n
-    if (used.has(n)) n = ++top
+    if (n <= top) n = ++top
     top = Math.max(top, n)
     used.add(n)
     at.set(c.id, out.length)
@@ -125,21 +135,26 @@ function markSensitive(call: QuestionCall): QuestionCall {
   if (call.items === undefined) return call
   return {
     ...call,
-    items: call.items.map(i => (isSensitive(i.question, i.header) ? { ...i, sensitive: true as const } : i)),
+    items: call.items.map(i => (wordsAskForSecret(i) ? { ...i, sensitive: true as const } : i)),
   }
 }
+
+/** What the mark `cut` adds to a call that has none: `,"cut":true`. */
+const CUT_MARK_BYTES = ',"cut":true'.length
 
 /**
  * A call cut to fit `maxBytes`: the longest texts shrink first (the limit halves until the call fits), so a long preview or
  * plan goes before a short answer does. The record says it was cut, and a question that asked for a secret says so before
- * its words are cut. The same call comes back when it fits.
+ * its words are cut. The mark `cut` comes after the fit, so its bytes are kept out of the texts' budget: the call with its
+ * marks is within `maxBytes`. The same call comes back when it fits.
  */
 export function fitCall(call: QuestionCall, maxBytes: number): QuestionCall {
   if (sizeOf(call) <= maxBytes) return call
   const marked = markSensitive(call)
+  const budget = maxBytes - (call.cut === true ? 0 : CUT_MARK_BYTES)
   let limit = longest(marked)
   let out = marked
-  while (sizeOf(out) > maxBytes && limit > SMALLEST_CUT) {
+  while (sizeOf(out) > budget && limit > SMALLEST_CUT) {
     limit = Math.max(SMALLEST_CUT, Math.floor(limit / 2))
     out = cutStrings(marked, limit) as QuestionCall
   }
@@ -196,7 +211,8 @@ export function capCalls(calls: QuestionCall[], caps: Caps): QuestionCall[] {
   }
   const last = out.at(-1)
   if (last !== undefined && sizeOf(out) > caps.maxBytes) {
-    const fit = fitCall(last, caps.maxBytes)
+    // The list is the call inside `[` and `]` (and the commas of any other call): the call gets the bytes that are left.
+    const fit = fitCall(last, caps.maxBytes - (sizeOf(out) - sizeOf(last)))
     if (fit !== last) out = [...out.slice(0, -1), fit]
   }
   return out

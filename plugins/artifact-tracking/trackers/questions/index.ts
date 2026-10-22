@@ -6,13 +6,13 @@
 // (`secrets.ts`) unless the config turns that off. The prompt lines carry headers and chosen labels only.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Issue #71.
 
-import type { ReplayItem, ToolCallEvent } from '../../core/interfaces/events'
-import type { Json } from '../../core/interfaces/items'
+import type { ReplayItem, TickEvent, ToolCallEvent } from '../../core/interfaces/events'
+import type { Json, JsonObject } from '../../core/interfaces/items'
 import type { Traceable } from '../../core/interfaces/reasons'
 import type { Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { QUESTION_KEYS, questionActions } from './actions'
-import { type QuestionsConfig, questionsConfig } from './config'
-import { addCall, asCalls, capCalls, mergeCalls, type Stamp } from './log'
+import { QUESTIONS_DEFAULTS, type QuestionsConfig, questionsConfig } from './config'
+import { addCall, asCalls, type Caps, callsWithin, capCalls, mergeCalls, type Stamp } from './log'
 import { qaText } from './markdown'
 import { askCall, type CallBody, planCall } from './parse'
 import { questionsPrompt } from './prompt'
@@ -38,6 +38,12 @@ const capsOf = (ctx: Pick<Ctx, 'config'>) => {
   const { maxCalls, maxBytes } = ctx.config.slice()
   return { maxCalls, maxBytes }
 }
+
+/** The caps of a context whose config has no type, as a command has: a number in the slice, else the default. */
+const capsOfSlice = (slice: Readonly<JsonObject>): Caps => ({
+  maxCalls: typeof slice.maxCalls === 'number' ? slice.maxCalls : QUESTIONS_DEFAULTS.maxCalls,
+  maxBytes: typeof slice.maxBytes === 'number' ? slice.maxBytes : QUESTIONS_DEFAULTS.maxBytes,
+})
 
 /** Changes the calls in the slot and applies the caps in the same write. */
 async function setCalls(ctx: Ctx, change: (calls: QuestionCall[]) => QuestionCall[]): Promise<void> {
@@ -84,6 +90,13 @@ export function questionsTracker(): Tracker<QuestionsConfig, Json> & Traceable<J
     })
   }
 
+  // A limit that the person lowered applies in every read at once (`callsWithin`). The beat writes the cut list back, so the
+  // slot, its stored copy and the prompt lines follow too. A list that fits is left alone: no write.
+  const onTick: H<TickEvent> = async ctx => {
+    const cur = asCalls(await ctx.data.get())
+    if (capCalls(cur, capsOf(ctx)) !== cur) await setCalls(ctx, calls => calls)
+  }
+
   return {
     id: 'questions',
     order: 90,
@@ -108,12 +121,17 @@ export function questionsTracker(): Tracker<QuestionsConfig, Json> & Traceable<J
         sub: 'qa',
         hint: '[n]',
         // The slice of a context with no config type is a plain object: masking is on unless the file says `false`.
-        text: async (ctx, args) => qaText(asCalls(await ctx.data.get()), args, ctx.config.slice().mask !== false),
+        // The caps of the config as it is now: a limit lowered since the last write applies to this reply too.
+        text: async (ctx, args) => {
+          const slice = ctx.config.slice()
+          return qaText(callsWithin(await ctx.data.get(), capsOfSlice(slice)), args, slice.mask !== false)
+        },
       },
     ],
     events: {
       toolCall: { AskUserQuestion: onTool('AskUserQuestion'), ExitPlanMode: onTool('ExitPlanMode') },
       replay: onReplay,
+      tick: { run: onTick },
     },
     sections,
     actions: questionActions,

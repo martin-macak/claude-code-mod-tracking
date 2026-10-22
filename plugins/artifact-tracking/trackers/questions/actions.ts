@@ -6,7 +6,7 @@ import type { Json } from '../../core/interfaces/items'
 import type { KeySpec, TrackerContext } from '../../core/interfaces/tracker'
 import type { ActionImpls, ViewContext } from '../../core/interfaces/view'
 import type { QuestionsConfig } from './config'
-import { asCalls } from './log'
+import { callsWithin } from './log'
 import { callMarkdown } from './markdown'
 import type { QuestionCall } from './types'
 
@@ -23,10 +23,11 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : String
 
 /** Copies the call of the selected row. A toast says what came of it. */
 async function copyRun(ctx: TrackerContext<QuestionsConfig, Json>, rowId: string | null): Promise<void> {
-  const call = callOfRow(asCalls(await ctx.data.get()), rowId)
+  const config = ctx.config.slice()
+  const call = callOfRow(callsWithin(await ctx.data.get(), config), rowId)
   if (call === undefined) return void ctx.ui.toast('Select a question to copy it')
   try {
-    const out = await ctx.ui.copy(callMarkdown(call, ctx.config.slice().mask))
+    const out = await ctx.ui.copy(callMarkdown(call, config.mask))
     ctx.ui.toast(out.isCopied ? `Copied Q${call.n} as Markdown` : `Copy failed: ${out.reason}`)
   } catch (e) {
     ctx.ui.toast(`Copy failed: ${message(e)}`)
@@ -35,7 +36,7 @@ async function copyRun(ctx: TrackerContext<QuestionsConfig, Json>, rowId: string
 
 /** `Tracker.actions`: the key is on when the selected row belongs to a call. Reads only. */
 export function questionActions(ctx: ViewContext<QuestionsConfig, Json>): ActionImpls<QuestionsConfig, Json> {
-  const calls = asCalls(ctx.data)
+  const calls = callsWithin(ctx.data, ctx.config.slice())
   return {
     copy: { run: copyRun, state: rowId => (callOfRow(calls, rowId) === undefined ? 'disabled' : 'enabled') },
   }

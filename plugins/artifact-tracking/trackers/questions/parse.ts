@@ -21,6 +21,9 @@ const PLUGIN_ID = 'toolu_plugin_'
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 
+/** A number that JSON can hold: the other things a field may be (a string, null, NaN) are left out. */
+const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+
 function optionOf(v: unknown): QuestionOption | undefined {
   if (!isRecord(v) || typeof v.label !== 'string') return undefined
   const { description, preview } = v
@@ -34,13 +37,20 @@ function optionOf(v: unknown): QuestionOption | undefined {
 /** One question as the engine gave it. An entry with no question text is not a question. */
 function itemOf(v: unknown): QuestionItem | undefined {
   if (!isRecord(v) || typeof v.question !== 'string') return undefined
-  const { kind, description } = v
+  const { kind, description, placeholder, unit } = v
   return {
     question: v.question,
     header: str(v.header) ?? '',
     multiSelect: v.multiSelect === true,
     ...(typeof kind === 'string' ? { kind } : {}),
     ...(typeof description === 'string' ? { description } : {}),
+    // What a text and a number question say of their control (the output schema of the tool): kept as given, or left out.
+    ...(typeof placeholder === 'string' ? { placeholder } : {}),
+    ...(isNumber(v.min) ? { min: v.min } : {}),
+    ...(isNumber(v.max) ? { max: v.max } : {}),
+    ...(isNumber(v.step) ? { step: v.step } : {}),
+    ...(isNumber(v.defaultValue) ? { defaultValue: v.defaultValue } : {}),
+    ...(typeof unit === 'string' ? { unit } : {}),
     options: Array.isArray(v.options) ? v.options.flatMap(o => optionOf(o) ?? []) : [],
   }
 }

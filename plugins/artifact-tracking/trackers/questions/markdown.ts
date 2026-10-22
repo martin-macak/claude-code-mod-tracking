@@ -48,6 +48,11 @@ function itemLines(s: ShownItem, i: number, declined: boolean): string[] {
     '',
     ...lines(s.question, ''),
     ...(s.description ? [`_${s.description}_`] : []),
+    // What a text and a number question say of their control, as the engine gave it.
+    ...(s.placeholder !== undefined ? lines(s.placeholder, '', 'Placeholder: ') : []),
+    ...(s.limits.length > 0
+      ? [s.limits.map(l => `${l.name.charAt(0).toUpperCase()}${l.name.slice(1)}: ${l.value}`).join(' · ')]
+      : []),
   ]
   if (s.options.length > 0 || s.typed.length > 0) out.push('')
   for (const o of s.options) {

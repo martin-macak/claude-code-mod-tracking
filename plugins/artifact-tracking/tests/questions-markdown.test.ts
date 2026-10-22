@@ -189,6 +189,47 @@ test('the freeform response of a call with a question that asks for a secret is 
   expect(empty).not.toContain(MASKED)
 })
 
+test('a text question and a number question tell their control: the placeholder and the range, as the engine gave them', () => {
+  const text = item({ kind: 'text', options: [], answer: 'Ada', placeholder: 'e.g. Ada' })
+  const number = item({
+    kind: 'number',
+    options: [],
+    answer: '4',
+    min: 1,
+    max: 10,
+    step: 0.5,
+    defaultValue: 0,
+    unit: 'px',
+  })
+  const md = callMarkdown(callOf([text, number]), true)
+  expect(md).toContain('Placeholder: e.g. Ada')
+  expect(md).toContain('Min: 1 · Max: 10 · Step: 0.5 · Default: 0 · Unit: px')
+  // A question with none of them says nothing of it, and a part that is absent is left out.
+  expect(callMarkdown(callOf([item()]), true)).not.toMatch(/Placeholder|Min:|Unit:/)
+  expect(callMarkdown(callOf([item({ kind: 'number', options: [], answer: '3', max: 5 })]), true)).toContain('Max: 5\n')
+})
+
+test('the placeholder goes through the mask like the question: a secret in it never shows by default', () => {
+  const q = item({ kind: 'text', options: [], answer: 'x', placeholder: `token ${KEY}` })
+  expect(callMarkdown(callOf([q]), true)).not.toContain(KEY)
+  expect(callMarkdown(callOf([q]), false)).toContain(KEY)
+})
+
+test('the helper text of a question counts when it asks for a secret: the typed answer and the notes are masked whole', () => {
+  const q = item({
+    question: 'Enter the value?',
+    header: 'Value',
+    description: 'Production password',
+    options: [],
+    answer: 'hunter2',
+    notes: 'it is hunter2',
+  })
+  const md = callMarkdown(callOf([q]), true)
+  expect(md).not.toContain('hunter2')
+  expect(md).toContain(`- [x] Other (typed): ${MASKED}`)
+  expect(callMarkdown(callOf([{ ...q, description: 'The value' }]), true)).toContain('hunter2')
+})
+
 test('an item that the byte cut marked sensitive masks its typed answer and its notes whole, whatever its words say now', () => {
   const q = item({
     question: 'Which one?',

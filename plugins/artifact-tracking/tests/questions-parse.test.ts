@@ -71,6 +71,55 @@ test('askCall keeps the kind and the helper line of a question, and drops an ite
   expect(call?.items?.[1]?.options).toEqual([{ label: 'x' }])
 })
 
+test('askCall keeps what a text and a number question say of their control: the placeholder, the range, the step, the default and the unit', () => {
+  const questions = [
+    { question: 'Name?', header: 'Name', kind: 'text', placeholder: 'e.g. Ada', multiSelect: false, options: [] },
+    {
+      question: 'How wide?',
+      header: 'Width',
+      kind: 'number',
+      min: 1,
+      max: 10,
+      step: 0.5,
+      defaultValue: 0,
+      unit: 'px',
+      multiSelect: false,
+      options: [],
+    },
+    // Nothing that is not a string or a finite number is kept, and an empty string is a string.
+    {
+      question: 'Odd?',
+      header: 'Odd',
+      kind: 'number',
+      min: '1',
+      max: null,
+      step: Number.NaN,
+      unit: 7,
+      placeholder: '',
+      options: [],
+    },
+  ]
+  const ev: ToolCallEvent = {
+    tool: 'AskUserQuestion',
+    toolUseId: 't1',
+    input: { questions } as unknown as Json,
+    result: { result: { questions, answers: { 'Name?': 'Ada', 'How wide?': '4' } } } as unknown as Json,
+  }
+  const [name, width, odd] = askCall(ev)?.items ?? []
+  expect(name).toMatchObject({ kind: 'text', placeholder: 'e.g. Ada', answer: 'Ada' })
+  expect(name).not.toHaveProperty('min')
+  expect(width).toMatchObject({ kind: 'number', min: 1, max: 10, step: 0.5, defaultValue: 0, unit: 'px', answer: '4' })
+  expect(width).not.toHaveProperty('placeholder')
+  expect(odd).toEqual({
+    question: 'Odd?',
+    header: 'Odd',
+    multiSelect: false,
+    kind: 'number',
+    placeholder: '',
+    options: [],
+  })
+})
+
 test('a call with no outcome is not a call: a transcript use that stored no result and no error says nothing of the answers', () => {
   // `$.session.messages()` leaves `result` out while a call is in flight or when nothing was stored.
   const inflight = (tool: string): ToolCallEvent => ({

@@ -5,7 +5,7 @@
 import type { StatusToken } from '../../core/interfaces/view'
 import { stripControl } from '../../core/lib/prompt-text'
 import { answerParts } from './parse'
-import { isSensitive, MASKED, maskSecrets } from './secrets'
+import { MASKED, maskSecrets, wordsAskForSecret } from './secrets'
 import type { QuestionCall, QuestionItem, QuestionState } from './types'
 
 export type ShownOption = {
@@ -16,6 +16,16 @@ export type ShownOption = {
   chosen: boolean
 }
 
+/** One thing that a number question says of its control: `min`, `max`, `step`, `default` or `unit`, and its value. */
+export type ShownLimit = { name: 'min' | 'max' | 'step' | 'default' | 'unit'; value: string }
+
+const LIMIT_NUMBERS = [
+  ['min', 'min'],
+  ['max', 'max'],
+  ['step', 'step'],
+  ['defaultValue', 'default'],
+] as const
+
 export type ShownItem = {
   question: string
   header: string
@@ -25,6 +35,10 @@ export type ShownItem = {
   /** The text the person typed, one entry for each piece. */
   typed: string[]
   notes?: string
+  /** The placeholder of the text box of a `text` question. */
+  placeholder?: string
+  /** What a `number` question says of its control, in the order min, max, step, default, unit. The numbers as the engine gave them. */
+  limits: ShownLimit[]
   /** The preview of the option the person picked, as the engine reported it. */
   preview?: string
   /** The answer is the engine's word for notes with no option. */
@@ -42,11 +56,10 @@ export const masker =
     !on ? text : whole && text !== '' ? MASKED : maskSecrets(text)
 
 /**
- * True when the question asks for a secret. The words say it, or, after a cut to the byte cap that may have taken them, the
- * mark `sensitive` of the record.
+ * True when the question asks for a secret. The words say it (the question, its header, its helper text and its
+ * placeholder), or, after a cut to the byte cap that may have taken them, the mark `sensitive` of the record.
  */
-export const asksForSecret = (item: QuestionItem): boolean =>
-  item.sensitive === true || isSensitive(item.question, item.header)
+export const asksForSecret = (item: QuestionItem): boolean => item.sensitive === true || wordsAskForSecret(item)
 
 /**
  * The text that the person typed beside the questions of a call (`response`), ready to show. It answers no question in
@@ -65,6 +78,13 @@ export function shownItem(item: QuestionItem, mask: Masker): ShownItem {
     question: mask(item.question),
     header: mask(item.header),
     ...(item.description !== undefined ? { description: mask(item.description) } : {}),
+    ...(item.placeholder !== undefined ? { placeholder: mask(item.placeholder) } : {}),
+    limits: [
+      ...LIMIT_NUMBERS.flatMap(([key, name]) =>
+        item[key] === undefined ? [] : [{ name, value: String(item[key]) } satisfies ShownLimit],
+      ),
+      ...(item.unit !== undefined ? [{ name: 'unit', value: mask(item.unit) } satisfies ShownLimit] : []),
+    ],
     multiSelect: item.multiSelect,
     options: item.options.map(o => ({
       label: mask(o.label),

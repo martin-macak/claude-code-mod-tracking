@@ -358,6 +358,52 @@ test('the answer to an item that the byte cut marked sensitive is masked whole o
   expect(open?.cells.description?.text).toBe('Pick → typed: hunter2')
 })
 
+test('the detail of a text and of a number question tells its control, word for word', () => {
+  const [row] = rowsOf([
+    call('a', 1, {
+      items: [
+        item({ kind: 'text', options: [], answer: 'Ada', placeholder: 'e.g. Ada' }),
+        item({ kind: 'number', options: [], answer: '4', min: 1, max: 10, step: 0.5, defaultValue: 0, unit: 'px' }),
+      ],
+    }),
+  ])
+  expect(detail(row?.children?.[0])).toContain('placeholder|e.g. Ada')
+  const number = detail(row?.children?.[1])
+  expect(number).toEqual(expect.arrayContaining(['min|1', 'max|10', 'step|0.5', 'default|0', 'unit|px']))
+  expect(detail(rowsOf([call('b', 2, { items: [item()] })])[0]?.children?.[0]).join('\n')).not.toMatch(
+    /placeholder|^min\|/,
+  )
+})
+
+test('the placeholder is masked like the other words of a question', () => {
+  const [row] = rowsOf([
+    call('a', 1, { items: [item({ kind: 'text', options: [], answer: 'x', placeholder: `token ${KEY}` })] }),
+  ])
+  expect(JSON.stringify(detail(row?.children?.[0]))).not.toContain(KEY)
+})
+
+test('the file of a plan is masked in the detail like the other words of the plan, and shows when masking is off', () => {
+  const file = '/plans/password=hunter2/plan.md'
+  const [row] = rowsOf([plan({ planFile: file })])
+  expect(detail(row)).toContain(`file|/plans/password=${MASKED}`)
+  expect(JSON.stringify(detail(row))).not.toContain('hunter2')
+  expect(detail(rowsOf([plan({ planFile: file })], { mask: false })[0])).toContain(`file|${file}`)
+})
+
+test('the helper text of a question counts: Production password makes the typed answer secret, in the row and the detail', () => {
+  const q = item({
+    question: 'Enter the value?',
+    header: 'Value',
+    description: 'Production password',
+    options: [],
+    answer: 'hunter2',
+    notes: 'it is hunter2',
+  })
+  const [row] = rowsOf([call('a', 1, { items: [q] })])
+  expect(row?.cells.description?.text).toBe(`Value → typed: ${MASKED}`)
+  expect(JSON.stringify([row, ...(row?.children ?? []).map(c => detail(c))])).not.toContain('hunter2')
+})
+
 test('the freeform response of a call with a question that asks for a secret is masked whole in the detail', () => {
   const asks = item({ question: 'What is the password?', header: 'Login', options: [], answer: 'x' })
   const [secret] = rowsOf([call('a', 1, { items: [asks], response: 'it is hunter2' })])
