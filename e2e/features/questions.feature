@@ -2,14 +2,15 @@ Feature: The questions that Claude asks are listed with their answers
 
   # Issue #71. The model is a script (support/fake-api.ts): it asks one question with the AskUserQuestion tool and then says
   # "Noted.". The dialog, the answer, the hook and the mod are real, and the session runs in a config folder of its own against
-  # a fake Messages API, so it needs no login. The kit tests (questions-*.test.ts, questions-wiring.test.tsx) hold every
+  # a fake Messages API, so it needs no login. The session gets the AskUserQuestion tool: a session with no tool (the demo
+  # default since #215) could not run the call that the script makes. The kit tests (questions-*.test.ts, questions-wiring.test.tsx) hold every
   # rule. These scenarios prove one round trip on a real session: the dialog opens, the key answers it, the model is told the
   # answer, and the mod keeps it. The engine draws the reply of a command as Markdown: the `##` of the heading, the `**` of a
   # label and the `>` of a quote are not on the screen, the list marks and the words are.
 
   Scenario: A question and my answer are listed by /track qa, word for word
     Given a fake model that asks "Where should the records live?" under the header "Storage" with the options "State only" and "State and store"
-    And a Claude Code session with the artifact-tracking mod
+    And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
     When I type "Ask me where"
     Then the screen shows "Where should the records live?"
     When I press "Enter"
@@ -22,7 +23,7 @@ Feature: The questions that Claude asks are listed with their answers
 
   Scenario: The pane lists the call as one summary row
     Given a fake model that asks "Where should the records live?" under the header "Storage" with the options "State only" and "State and store"
-    And a Claude Code session with the artifact-tracking mod
+    And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
     When I type "Ask me where"
     Then the screen shows "Where should the records live?"
     When I press "Enter"
@@ -39,7 +40,7 @@ Feature: The questions that Claude asks are listed with their answers
   Scenario: The copy key hands the selected call to the engine as Markdown
     Given a plugin that answers ui.copy and logs the text
     And a fake model that asks "Where should the records live?" under the header "Storage" with the options "State only" and "State and store"
-    And a Claude Code session with the artifact-tracking mod
+    And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
     When I type "Ask me where"
     Then the screen shows "Where should the records live?"
     When I press "Enter"
@@ -53,7 +54,7 @@ Feature: The questions that Claude asks are listed with their answers
 
   Scenario: Esc on the dialog is a declined call
     Given a fake model that asks "Where should the records live?" under the header "Storage" with the options "State only" and "State and store"
-    And a Claude Code session with the artifact-tracking mod
+    And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
     When I type "Ask me where"
     Then the screen shows "Where should the records live?"
     When I press "Escape"
