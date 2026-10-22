@@ -61,8 +61,8 @@ export class ItemLifecycle {
   /**
    * The transcript of a cold load or a cold resume, after the stored copy. A stored key wins over the transcript, except
    * for what only the transcript may know (a kind's `replayWins`). It runs inside a switch, which holds the session
-   * check: nothing here may wait for that check, nor for a CLI. The lookups of the kinds start first, so they have a head
-   * start, and the capture waits for their quick part only.
+   * check: nothing here may wait for that check, nor for a CLI (one exception: `Capture.replay`). The lookups of the
+   * kinds start first, so they have a head start, and the capture waits for their quick part only.
    */
   async replay(batch: readonly ReplayItem[]): Promise<void> {
     void this.d.kinds.prepare({ wait: false })

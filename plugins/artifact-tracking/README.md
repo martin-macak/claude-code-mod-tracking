@@ -39,6 +39,7 @@ claude --plugin-dir plugins/artifact-tracking
 | Claude's reply, also from subagents | Every pattern below. |
 | Tool output | Explicit GitHub issue and PR URLs and Jira URLs only. No bare `#N`, no web links. |
 | Artifact tool call, also from subagents | A publish, a republish, an Artifact made from a type and an asset upload: the artifact, `published`. A delete marks its row `deleted`. An error, a refusal and the other actions add nothing. |
+| Bash, `acli jira workitem` | The Jira item that the command names on acli's active site: `view KEY`, or `--key KEY` of `comment`, `edit`, `assign`, `transition`, `clone`, `archive` and `unarchive`. A reserved word or a wrapper in front of `acli` (`if`, `!`, `time`, `sudo`, `VAR=x`) does not hide the call. `search`, `create`, `delete`, `link`, a list of keys, two different `--key` values and a `view` that names two keys add nothing. A denied call, a call that failed and a run with no active site add nothing. |
 | `Write`, `Edit` and `Read` tool calls | A `.md` path: see [Markdown files](#markdown-files). |
 | File tools, Bash and `agent.spawn` | Other git repos that the session or subagents touch (`Read`, `Edit`, `Write`, `NotebookEdit`, `Grep`, `Glob`, `cd`, `git -C`, `gh -R`, spawn `cwd`). |
 
@@ -257,7 +258,7 @@ An open row says why the mod tracks it. A reason is one word of a closed list. A
 | --- | --- |
 | `deleted` | Claude deleted it (an artifact). |
 | `created` | Claude made it: a file, or a process, worktree or agent that this session started. |
-| `updated` | Claude changed it: a file, or a repo that Claude edited. |
+| `updated` | Claude changed it: a file, a repo that Claude edited, or a Jira item that an `acli` command changed. |
 | `published` | Claude published it with the Artifact tool. |
 | `read` | Claude read it: a file, a tool result that named it, a repo that Claude read. |
 | `discovered` | The PR lane found it: a PR on a tracked branch, or a ref in the body of such a PR. |
@@ -278,6 +279,9 @@ Which signal gives which reason:
 | artifact | The URL in text | `mentioned` |
 | github, jira | A URL or a ref in a prompt, a command or a reply | `mentioned` |
 | github, jira | A URL in a tool result | `read` |
+| jira | `acli jira workitem view` or `comment list` | `read` |
+| jira | `acli jira workitem edit`, `assign`, `transition`, `comment` (other than `list`), `archive` or `unarchive` | `updated` |
+| jira | `acli jira workitem clone`: the source item stays as it was | `mentioned` |
 | web | A link in a prompt, a command or a reply | `mentioned` |
 | github | A PR that the PR lane found | `discovered` |
 | github, jira, web | A ref in the body of a PR that the PR lane found | `discovered` |
@@ -752,6 +756,7 @@ Cost. A block is short: 134 characters for one link, 164 for two (about 34 and 4
 - **Engine notices after `c`.** After a resolve turn the engine prints two notices that say a hook of this mod was skipped: `its prompt.compose hook was skipped` and `its session.append hook was skipped`. They are harmless. The first comes from the order of the guard plugin (see [#91](https://github.com/martin-macak/claude-code-mod-tracking/issues/91)). The second is the engine's rule for a plugin's own prompt: it skips the hooks of the plugin that made the call, so the mod does not capture its own prompt.
 - **Closing references.** An issue takes a PR's level only from the first closing references that GitHub lists for the PR (10 by default).
 - **Jira sites.** `acli` works on one site at a time. A work item on any other site is `track-only`. The mod never runs `acli jira auth switch`. A host that is not `*.atlassian.net` is also `track-only`.
+- **Jira keys from `acli` commands.** A key that an `acli jira workitem` command names has no site in the command. The mod files it under the site that `acli jira auth status` reports, and keeps that answer until the next start (`/track refresh` forgets a "not logged in" answer only): after you switch the site in the middle of a session, a new key is filed under the old site. A Jira URL in a tool result has the same limit. The first `acli` call of a session waits for that lookup, as a Jira URL in a tool result does. The wait is bounded (`global.tools.timeoutMs`, the breaker) and shared by the calls that ask at once. A site or a "not logged in" answer is kept. A lookup that fails for another reason (a timeout, a crash of `acli`) is asked again by the next `acli` call, until the breaker opens. The mod sees one exit status for the whole Bash command, so an `acli` call that fails behind a pipe, a `;` or `|| true` (`acli jira workitem view NOPE-1 | head`) still tracks its key, and that row shows `not found`. A key is read only from the words of the command (`view KEY`, `--key KEY`). A key that comes from a shell variable or a command substitution is not tracked.
 - **GitHub Enterprise.** A GHE issue URL is a web link, unless the host is the host of the session repo and `gh` is logged in to it.
 - **Other github.com URLs** (repo pages, commits, files) are web links.
 - **Bare `#N` without a repo** stays unresolved. It has no link and no status.

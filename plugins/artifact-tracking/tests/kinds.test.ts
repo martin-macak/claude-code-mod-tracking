@@ -387,9 +387,9 @@ test('artifact: a delete claim marks a known row once, and adds no row for an un
   expect(artifactKind.merge(marked, del)).toBe(marked) // already marked: the kind gives cur back
 })
 
-test('kinds: only the file kind reads Write, Edit and Read; only artifact reads Artifact', () => {
+test('kinds: the file kind reads Write, Edit and Read; artifact reads Artifact; jira reads Bash', () => {
   const reads = (k: ItemKind) => Object.keys(k.fromTool ?? {}).sort()
-  expect(SHIPPED.map(reads)).toEqual([[], [], ['Artifact'], ['Edit', 'Read', 'Write'], []])
+  expect(SHIPPED.map(reads)).toEqual([[], ['Bash'], ['Artifact'], ['Edit', 'Read', 'Write'], []])
 })
 
 test('file: a lookup scan names no file; a conversation scan does', () => {
