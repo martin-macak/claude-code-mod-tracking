@@ -93,10 +93,10 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   case, and the pipeline before it. Only the `in` of the `case` header makes a
   `(` a pattern start: a word `in` at the end of an arm (`echo logged in`) does
   not.
-  Code: `splitShell` [shell.ts:105](../../../../plugins/artifact-tracking/core/lib/shell.ts#L105), the case state
-  `theCase` [:166](../../../../plugins/artifact-tracking/core/lib/shell.ts#L166) and the header end [:178](../../../../plugins/artifact-tracking/core/lib/shell.ts#L178), the part move
-  [:189](../../../../plugins/artifact-tracking/core/lib/shell.ts#L189) and [:199](../../../../plugins/artifact-tracking/core/lib/shell.ts#L199), the close of a compound
-  [:259](../../../../plugins/artifact-tracking/core/lib/shell.ts#L259), the `>|` guard [:359](../../../../plugins/artifact-tracking/core/lib/shell.ts#L359).
+  Code: `splitShell` [shell.ts:115](../../../../plugins/artifact-tracking/core/lib/shell.ts#L115), the case state
+  `theCase` [:176](../../../../plugins/artifact-tracking/core/lib/shell.ts#L176) and the header end [:188](../../../../plugins/artifact-tracking/core/lib/shell.ts#L188), the part move
+  [:199](../../../../plugins/artifact-tracking/core/lib/shell.ts#L199) and [:209](../../../../plugins/artifact-tracking/core/lib/shell.ts#L209), the close of a compound
+  [:272](../../../../plugins/artifact-tracking/core/lib/shell.ts#L272), the `>|` guard [:371](../../../../plugins/artifact-tracking/core/lib/shell.ts#L371).
   Evidence (grade: *verified-kit* for the parser): the pipeline part in
   [repos.test.ts:264](../../../../plugins/artifact-tracking/tests/repos.test.ts#L264), [:276](../../../../plugins/artifact-tracking/tests/repos.test.ts#L276), [:293](../../../../plugins/artifact-tracking/tests/repos.test.ts#L293)
   and [:304](../../../../plugins/artifact-tracking/tests/repos.test.ts#L304), and in [process-parse.test.ts:684](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L684),
@@ -140,11 +140,11 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   open a compound: the segment `if for i in 1; do :; done; then` opens an `if`
   and a `for`, and `elif` takes one too. So the `done` closes the `for`, the `fi`
   closes the `if`, and the `&` after the `fi` backgrounds the whole `if`.
-  Code: the word end before a backtick [shell.ts:367](../../../../plugins/artifact-tracking/core/lib/shell.ts#L367), the typed head
-  [:233](../../../../plugins/artifact-tracking/core/lib/shell.ts#L233) and its use [:500](../../../../plugins/artifact-tracking/core/lib/shell.ts#L500), the `&` guard
-  [:352](../../../../plugins/artifact-tracking/core/lib/shell.ts#L352), the compounds of a segment [:57](../../../../plugins/artifact-tracking/core/lib/shell.ts#L57) and [:252](../../../../plugins/artifact-tracking/core/lib/shell.ts#L252), the
-  pattern words [:238](../../../../plugins/artifact-tracking/core/lib/shell.ts#L238) and [:379](../../../../plugins/artifact-tracking/core/lib/shell.ts#L379), the end of an arm
-  [:435](../../../../plugins/artifact-tracking/core/lib/shell.ts#L435), the `in` and `esac` of a header and a pattern list [:205](../../../../plugins/artifact-tracking/core/lib/shell.ts#L205).
+  Code: the word end before a backtick [shell.ts:379](../../../../plugins/artifact-tracking/core/lib/shell.ts#L379), the typed head
+  [:243](../../../../plugins/artifact-tracking/core/lib/shell.ts#L243) and its use [:513](../../../../plugins/artifact-tracking/core/lib/shell.ts#L513), the `&` guard
+  [:364](../../../../plugins/artifact-tracking/core/lib/shell.ts#L364), the compounds of a segment [:57](../../../../plugins/artifact-tracking/core/lib/shell.ts#L57) and [:262](../../../../plugins/artifact-tracking/core/lib/shell.ts#L262), the
+  pattern words [:248](../../../../plugins/artifact-tracking/core/lib/shell.ts#L248) and [:391](../../../../plugins/artifact-tracking/core/lib/shell.ts#L391), the end of an arm
+  [:447](../../../../plugins/artifact-tracking/core/lib/shell.ts#L447), the `in` and `esac` of a header and a pattern list [:215](../../../../plugins/artifact-tracking/core/lib/shell.ts#L215).
   Evidence (grade: *verified-kit* for the parser): a `}` before a backtick in
   [shell.test.ts:200](../../../../plugins/artifact-tracking/tests/shell.test.ts#L200) and [:212](../../../../plugins/artifact-tracking/tests/shell.test.ts#L212), [repos.test.ts:1231](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1231) and
   [process-parse.test.ts:927](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L927). Quoted and escaped redirections in
@@ -172,20 +172,64 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   only an extended glob can show (not covered, see below).
   The fuzz harnesses are scratch scripts and are not in the repo, so only the
   tests above can be run again.
-  Not covered, all as before the fix: a typed `>` or `<` glued to the text before
-  it (`echo hi>f`) stays in its word, where `bash` splits the word at the
-  operator. A typed `>&` with a space before its target (`cmd >& f`) keeps the
+  A here-string (`<<<`) is a redirection that takes one word, glued or spaced,
+  quoted or not. It is no heredoc, so the next line is a command: `cat <<<hi`
+  newline `cd /x` reads both. The heredoc test skips a `<<` that stands right
+  after a typed `<`, and it still starts a heredoc after a quoted or escaped `<`
+  (`echo \<<<EOF` is the word `<` and a heredoc). `<>` and `n<>` are redirections
+  too: their target leaves the words, so `cmd <> f` reads as `cmd`, and
+  `cd <> lock /x` goes to `/x`. Only a `done`, `fi` or `esac` that was typed whole
+  closes a compound, as `compoundLead` reads the other reserved words. `'done' y`,
+  `\fi y`, `"esac" y` and `done'' y` are commands, as in `bash` (checked with
+  commands of those names on the PATH). So the loop stays open, and it stays one
+  part of its pipeline, and a `cd` in it does not reach the commands after it.
+  Code: the heredoc test [shell.ts:347](../../../../plugins/artifact-tracking/core/lib/shell.ts#L347), the close of a compound
+  [:86](../../../../plugins/artifact-tracking/core/lib/shell.ts#L86) and [:272](../../../../plugins/artifact-tracking/core/lib/shell.ts#L272), the redirection pattern
+  [:506](../../../../plugins/artifact-tracking/core/lib/shell.ts#L506).
+  Evidence (grade: *verified-kit* for the parser): here-strings in
+  [shell.test.ts:416](../../../../plugins/artifact-tracking/tests/shell.test.ts#L416), [repos.test.ts:1310](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1310) and
+  [process-parse.test.ts:1000](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L1000). Every heredoc form that the splitter knows still hides its
+  body, also next to a here-string, in [shell.test.ts:445](../../../../plugins/artifact-tracking/tests/shell.test.ts#L445) and [:461](../../../../plugins/artifact-tracking/tests/shell.test.ts#L461). `<>` in
+  [shell.test.ts:472](../../../../plugins/artifact-tracking/tests/shell.test.ts#L472), [repos.test.ts:1323](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1323) and
+  [process-parse.test.ts:1016](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L1016). Quoted closers in
+  [shell.test.ts:496](../../../../plugins/artifact-tracking/tests/shell.test.ts#L496), [repos.test.ts:1336](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1336) and
+  [process-parse.test.ts:1028](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L1028). A differential run against real `bash` 5.3
+  (macOS) of random lists with here-strings (glued, spaced, quoted, with a
+  substitution, with a file descriptor, joined by newlines), heredocs (`<<EOF`,
+  `<< EOF`, `<<'EOF'`, `<<"EOF"`, `<<-EOF`, two on a line, a command or a pipe on
+  the line of the tag, bodies that look like commands), `<>` redirections and
+  quoted or escaped `done`, `fi` and `esac` inside loops, branches, arms, groups
+  and pipelines. Each probe wrote its own folder, as in the run above. 15,966
+  commands ran in `bash` and in the readers on the old splitter, and 15,973 on the
+  new one (nine runs of 3000 generated commands, two seeds, seven grammars): the
+  old splitter gave 1,370 differences (461 with here-strings, 150 with `<>`, 28
+  with quoted closers, 731 in the mixed runs), the new one gives 0, and the two
+  readers never disagree. The heredoc-only run (1,943 commands) gave 0 before and
+  after, and the grammar of the run above (2,308 and 2,312 commands) gave 0 before
+  and after. A second run compared the words of 9,000 random argument lists with
+  here-strings and `<>` redirections, joined by newlines too, against the
+  arguments that `bash` passes: 0 differences after the fix, 3,931 before. A
+  mutation run broke one line of the new code at a time: the tests killed 6 of 9
+  mutants. One of the 3 that lived changed a check that the loop right after it
+  repeated, and the review removed that check. The 2 others differ only for a
+  second close word in one segment (`fi 'esac'`, a syntax error in `bash`).
+  Not covered: a typed `>` or `<` glued to the text before
+  it (`echo hi>f`, `cat<<<hi`) stays in its word, where `bash` splits the word at
+  the operator. A typed `>&` with a space before its target (`cmd >& f`) keeps the
   target as a word. An extended glob in a pattern (`+(a|b))`) reads its words as
   commands in a subshell. The readers still apply every `cd` in text order, so a
   `cd` in an arm that does not match, or after a short-circuit `||`, counts.
-  A quoted or escaped `done`, `fi` or `esac` at the start of a segment still
-  closes a compound, where `bash` reads a command of that name. A here-string is
-  read as a heredoc: in `cat <<<hi` followed by a newline, the splitter takes
-  `<<hi` as a heredoc tag and skips the lines after it, so
-  `cat <<<hi\ncd /x\ngit -C . status` gives the one segment `cat`, where `bash`
-  runs both later commands. `cat <<<hi; cd /x; git -C . status` is read right.
-  `<>` (open for reading and writing) is no redirection: `cmd <> f` keeps the
-  word `f`.
+  A heredoc with an escaped tag (`cat <<\EOF`) is no heredoc to the splitter, so
+  its body lines read as commands, where `bash` skips them. A file descriptor
+  before `<<` (`cat 3<<EOF`) leaves the word `3` in the command. A variable file
+  descriptor (`exec {fd}<> lock`, `cd {fd}>f /x`) stays a word. `stripReserved`
+  in the readers reads the cleaned word, so `'done' git -C /x status` reads as
+  `git -C /x status`, where `bash` runs a command named `done`. An arithmetic
+  shift (`$((1<<2))`, `(( x << 2 ))`) reads `<<2` as a heredoc tag, so the lines
+  after it are lost, also after a here-string (`cat <<< $((1<<2))`). A glued
+  `done<f` is one word, so its loop stays open and a `cd` in it reaches the
+  commands after the loop (`while read l; do cd /x; done<f | cat; git -C . status`
+  puts `cd /x` at the top level).
 - The container id is a stdout line of exactly 64 hex characters. Other hex
   in the output (`docker info` prints commit ids) is not an id.
 - A foreground `nohup cmd` (no `&`) is not a detached process.
