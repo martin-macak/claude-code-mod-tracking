@@ -49,7 +49,7 @@ export class GitHubItem extends TrackedItem implements GitHubTarget {
   /** Needs a resolved repo, a tool that may be called, and an authed host. GHE needs a known yes. */
   canRefresh(now: number): boolean {
     if (!this.owner || !this.repo) return false
-    if (!this.tool.canCall(now)) return false
+    if (!this.tool.canCallHost(this.host, now)) return false
     const authed = this.tool.isHostAuthed(this.host)
     return this.host.toLowerCase() === 'github.com' ? authed !== false : authed === true
   }

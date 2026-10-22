@@ -284,7 +284,8 @@ test('the extras of a PR are the checks, and of a file the views and who read it
 
 // Main cut these cells in the middle (`truncate-middle`): a branch or a path keeps both ends. Every other cell is cut at the end.
 // The name of a process row joined them in issue #49: its path shows from `./`, and the end of a command matters. Since
-// issue #63, L2, that name is the Name cell, and so is the file name, which keeps its extension.
+// issue #63, L2, that name is the Name cell, and so is the file name, which keeps its extension. The name of a GitHub or
+// PR row of another repo, `owner/repo#N`, joined them in issue #158: the number at the end stays.
 test('the branch, path and process name cells cut in the middle, every other cell at the end', async () => {
   const t = await paneWorld()
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)
@@ -300,6 +301,7 @@ test('the branch, path and process name cells cut in the middle, every other cel
     'agents.description',
     'agents.type',
     'prs.type',
+    'github.name', // issue #158: owner/repo#N of another repo keeps its number
     'repos.description',
     'repos.type',
     'file.name',
@@ -307,11 +309,13 @@ test('the branch, path and process name cells cut in the middle, every other cel
     'processes.name', // issue #49: a command with a long path keeps both ends
   ])
   for (const id of ['github', 'jira', 'web', 'artifact'])
-    for (const r of walk(section(sections, id).rows))
+    for (const r of walk(section(sections, id).rows)) {
+      const otherRepo = id === 'github' && /^[^#/]+\/[^#/]+#\d+$/.test(r.cells.name?.text ?? '')
       expect(
         SHARED_CELLS.filter(c => r.cells[c]?.clip === 'middle'),
         `${id} ${r.id}`,
-      ).toEqual([])
+      ).toEqual(otherRepo ? ['name'] : [])
+    }
 })
 
 test('every section is placed by its rank and band rank (K2)', async () => {
@@ -460,6 +464,22 @@ test('the Pull requests note names the host of the session repo: a GHE host, git
   }
 })
 
+test('the Pull requests note names the host the lane could not use, not the host of the session repo', async () => {
+  const t = await paneWorld()
+  const note = async () => section(await t.m.paneData(t.w.ports, NO_VIEW), 'prs').note?.text
+  t.m.facts.publish('session.repo', { host: 'github.com', owner: 'acme', repo: 'web' })
+  // A created-only session on a foreign GHES host: no branch, a created PR, and gh is not logged in to that host.
+  setBranches(t.m, { branches: [] })
+  t.m.facts.publish('auto.prs', [{ host: 'ghe.corp', owner: 'team', repo: 'svc', number: 3 }])
+  for (const skipped of ['not-logged-in', 'host-not-authed'] as const) {
+    t.w.state.set('github', { prs: { ok: false, skipped, host: 'ghe.corp' } })
+    expect(await note(), skipped).toBe('gh not logged in to ghe.corp')
+  }
+  // A skip with no host of its own keeps the host of the session repo.
+  t.w.state.set('github', { prs: { ok: false, skipped: 'not-logged-in' } })
+  expect(await note()).toBe('gh not logged in to github.com')
+})
+
 test('Pull requests the lane found on the same first sighting sort by number', async () => {
   const t = await paneWorld()
   const base = paneItems().find(i => i.key === KEYS.stacked) as unknown as Record<string, Json>
@@ -499,6 +519,29 @@ test('the Pull requests section: with no PR it shows only for a skip that needs 
   t.m.facts.publish('auto.branches', 'not the fact' as unknown as Json)
   expect(await has()).toBe(false)
   expect((await t.m.bandData(t.w.ports)).map(s => s.id)).not.toContain('prs')
+})
+
+test('the Pull requests section: a created PR counts like a tracked branch, so a skip or an error shows for a created-only session', async () => {
+  const t = await paneWorld()
+  const items = (t.w.state.get('items') as unknown as { lane?: true }[]).filter(i => i.lane !== true)
+  t.w.state.set('items', items as unknown as Json)
+  const has = async () => ids(await t.m.paneData(t.w.ports, NO_VIEW)).includes('prs')
+  setBranches(t.m, { branches: [] }) // no tracked branch
+  t.w.state.set('github', { prs: { ok: false, skipped: 'not-logged-in' } })
+  expect(await has()).toBe(false) // nothing was asked, so nothing failed
+  // The session created a PR: the lane asked for it, so a failed step says why it is not listed (issue #158).
+  t.m.facts.publish('auto.prs', [{ host: 'github.com', owner: 'VerticeOne', repo: 'vertice-iam', number: 657 }])
+  expect(await has()).toBe(true)
+  t.w.state.set('github', { prs: { ok: false, error: 'boom' } })
+  expect(await has()).toBe(true)
+  t.w.state.set('github', { prs: { ok: false, skipped: 'no-repo' } })
+  expect(await has()).toBe(false) // a skip with no word of its own, as with branches
+  // A fact that is no list of PRs, or an empty one, counts for nothing.
+  t.w.state.set('github', { prs: { ok: false, skipped: 'not-logged-in' } })
+  t.m.facts.publish('auto.prs', 'not the fact' as unknown as Json)
+  expect(await has()).toBe(false)
+  t.m.facts.publish('auto.prs', [])
+  expect(await has()).toBe(false)
 })
 
 test('artifact, web and file rows', async () => {

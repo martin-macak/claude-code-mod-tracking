@@ -84,6 +84,7 @@ function fakeTools(opts: ToolOpts = {}) {
     name: 'gh',
     isAvailable: true,
     canCall: () => opts.ghCan !== false,
+    canCallHost: () => opts.ghCan !== false,
     refreshItems: async (items: GitHubTarget[]) => {
       calls.gh.push(items.map(i => i.key))
       if (opts.throwGh) throw new Error('boom')
@@ -352,6 +353,26 @@ test('a tool that cannot be called gets no items, and onRun still runs', async (
   expect(r2).toEqual({ refreshed: 0, skipped: false })
   expect(none.saved).toEqual([])
   expect(none.runs()).toBe(1)
+})
+
+test('a lane that answers per item gates each item on its own: one host at rest holds back its items only', async () => {
+  const seen: string[] = []
+  const t = fakeTools()
+  const perItem: RefreshLane = {
+    category: 'github',
+    // The tool as a whole cannot be called (the home host), but an item of another host can (issue #158).
+    canCall: (_now, item) => {
+      seen.push(item?.key ?? 'none')
+      return item?.key === gh(2).key
+    },
+    reset: () => t.tools.gh.reset(),
+    hydrate,
+    refreshItems: xs => t.tools.gh.refreshItems(xs as never),
+  }
+  const s = setup([gh(1), gh(2)], {}, { lanes: [perItem] })
+  await s.c.runDue()
+  expect(seen).toEqual([gh(1).key, gh(2).key])
+  expect(t.calls.gh).toEqual([[gh(2).key]])
 })
 
 test('a throwing refreshItems goes to onError; runDue resolves and busy ends false', async () => {

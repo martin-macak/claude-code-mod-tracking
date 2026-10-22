@@ -8,6 +8,7 @@ import {
   recordAgentBranch,
   recordAgentResult,
   recordEnter,
+  recordPr,
   recordSpawn,
   recordTurnEnd,
   setRootTop,
@@ -177,6 +178,39 @@ test('recordAgentBranch sets the branch once; unknown id and the same branch are
   expect(t.agents[0]?.branch).toBe('feat/x')
   expect(recordAgentBranch(t, 'a1', 'feat/x')).toBe(t)
   expect(recordAgentBranch(s, 'nope', 'feat/x')).toBe(s)
+})
+
+// Issue #158: a PR the run created is a proof, kept like a worktree proof.
+const PR = { host: 'github.com', owner: 'VerticeOne', repo: 'vertice-iam', number: 657 }
+
+test('recordPr adds the PR with the case it came with; the same PR in any case is the same object', () => {
+  const a = recordPr(rooted(), PR)
+  expect(a.prs).toEqual([PR])
+  expect(recordPr(a, { ...PR, owner: 'verticeone', repo: 'VERTICE-IAM', host: 'GitHub.com' })).toBe(a)
+  const b = recordPr(a, { ...PR, number: 658 })
+  expect(b.prs?.map(p => p.number)).toEqual([657, 658])
+  // The same number in another repo, or on another host, is another PR.
+  expect(recordPr(b, { ...PR, repo: 'other' }).prs).toHaveLength(3)
+  expect(recordPr(b, { ...PR, host: 'ghe.example' }).prs).toHaveLength(3)
+})
+
+test('recordPr keeps the newest maxProofs, and the root is not needed', () => {
+  let s = emptyAuto()
+  for (let n = 1; n <= 5; n++) s = recordPr(s, { ...PR, number: n }, 3)
+  expect(s.prs?.map(p => p.number)).toEqual([3, 4, 5])
+  expect(s.root).toBeNull()
+})
+
+test('recordPr starts the list of a slot from before #158, which has no prs', () => {
+  const old = rooted()
+  expect('prs' in old).toBe(false)
+  expect(recordPr(old, PR).prs).toHaveLength(1)
+})
+
+test('carryAuto keeps the PR proofs over /clear, with the other proofs', () => {
+  const held = recordPr(pinRoot(emptyAuto(), '/held', 1), PR)
+  expect(carryAuto(held, emptyAuto()).prs).toEqual([PR])
+  expect(carryAuto(held, undefined).prs).toHaveLength(1)
 })
 
 test('carryAuto: cur with a root wins, even over a held copy with a root', () => {

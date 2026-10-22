@@ -9,7 +9,7 @@ import type { Json, StoredItem } from '../core/interfaces/items'
 import { ghOf } from '../trackers/github/client'
 import { fakeConfig } from './fixtures/config-fs'
 import type { GitHubRef, ItemRecord, Ref, WebRef } from './fixtures/contracts'
-import { GHE_AUTH_STATUS_STDERR } from './fixtures/gh'
+import { AUTH_STATUS_JSON_NO_LOGIN, AUTH_STATUS_NO_LOGIN_NOTICE } from './fixtures/gh'
 import { claimOf, fakeItems, graphqlCalls, promptRow, res, sleep, until } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
 import { DISCOVERED, reasonsOfSources } from './fixtures/reasons'
@@ -438,7 +438,10 @@ test('refreshAll waits for a run in flight, then runs once more', async () => {
 
 test('refreshAll resets every tool, forces a run and waits for it', async () => {
   const t = fakeItems({
-    run: argv => (argv[1] === 'auth' && argv.includes('ghe.corp') ? res('', 1, 'not logged in') : undefined),
+    run: argv =>
+      argv[1] === 'auth' && argv.includes('ghe.corp')
+        ? res(AUTH_STATUS_JSON_NO_LOGIN, 0, AUTH_STATUS_NO_LOGIN_NOTICE)
+        : undefined,
   })
   const items = await t.started()
   await items.capture(promptRow('see https://github.com/acme/web/issues/9'))
@@ -453,7 +456,10 @@ test('refreshAll resets every tool, forces a run and waits for it', async () => 
 
 test('a manual refresh resets the tool class of each lane, not only its handle', async () => {
   const t = fakeItems({
-    run: argv => (argv[1] === 'auth' && argv.includes('ghe.corp') ? res('', 1, 'not logged in') : undefined),
+    run: argv =>
+      argv[1] === 'auth' && argv.includes('ghe.corp')
+        ? res(AUTH_STATUS_JSON_NO_LOGIN, 0, AUTH_STATUS_NO_LOGIN_NOTICE)
+        : undefined,
   })
   const items = await t.started()
   const client = ghOf(items.tools('github')!, { slice: () => ({}), global: () => t.cfg.global() }, () => 0)!
@@ -461,6 +467,21 @@ test('a manual refresh resets the tool class of each lane, not only its handle',
   expect(client.isHostAuthed('ghe.corp')).toBe(false) // the denial is cached
   items.kick('manual')
   expect(client.isHostAuthed('ghe.corp')).toBeUndefined() // the lane called GhTool.reset, which forgets denied hosts
+})
+
+test('an item of another host refreshes while the host of the session repo is logged out (issue #158)', async () => {
+  // The session repo is on a GHES host, so github.com is another host. The home host refuses its login: the tool as a
+  // whole is logged out, and an item of github.com is still due and still asked for.
+  const t = fakeItems({ remote: { host: 'ghe.example', owner: 'o', repo: 'r' } })
+  const items = await t.started()
+  await items.prepare() // finds the session repo: ghe.example is the home host
+  const handle = items.tools('github')!.handle('gh')!
+  handle.record('auth')
+  expect(handle.canCall(0)).toBe(false)
+  await items.track([claimOf(gh(5))])
+  await t.w.clock.advance(1010)
+  await until(() => graphqlCalls(t.w.calls).length > 0, 'the refresh')
+  expect(graphqlCalls(t.w.calls).map(c => c[4])).toEqual(['github.com'])
 })
 
 test('a refresh that finds an item gone drops it and keeps it in the dismiss list', async () => {
@@ -547,7 +568,10 @@ test('a session with no repo has no fact, and a lookup that fails has none too',
 test('an ssh alias is not kept as the session repo; gh repo view resolves it', async () => {
   const t = fakeItems({
     remote: { host: 'github-work', owner: 'o', repo: 'r' },
-    run: argv => (argv[1] === 'auth' && argv.includes('github-work') ? res('', 1, GHE_AUTH_STATUS_STDERR) : undefined),
+    run: argv =>
+      argv[1] === 'auth' && argv.includes('github-work')
+        ? res(AUTH_STATUS_JSON_NO_LOGIN, 0, AUTH_STATUS_NO_LOGIN_NOTICE)
+        : undefined,
   })
   const items = await t.started()
   await items.prepare()

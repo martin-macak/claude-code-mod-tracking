@@ -1,7 +1,8 @@
 // Tool base class: probe cache, exec rejection, outcome bookkeeping. Pure, fake Runner.
 import { expect, test } from 'claude-code/testing'
+import { CircuitBreaker } from '../core/lib/circuit-breaker'
 import type { Outcome } from '../core/lib/tool'
-import { Tool } from '../core/lib/tool'
+import { CliTool, Tool } from '../core/lib/tool'
 import type { Runner, RunResult } from './fixtures/contracts'
 
 const ok = (stdout = '', exitCode = 0, stderr = ''): RunResult => ({ exitCode, stdout, stderr })
@@ -98,4 +99,28 @@ test('item-error is a success for the breaker', async () => {
   t.next = 'item-error'
   for (let i = 0; i < 5; i++) await t.refreshItems(['x'])
   expect(t.status()).toMatchObject({ breaker: 'closed', loggedIn: true })
+})
+
+test('spare: a new breaker each time, with the default numbers or the ones the factory builds, and never the breaker of the tool', () => {
+  const spec = { id: 'x', probe: ['x'], timeoutMs: () => 1, probeTimeoutMs: () => 1 }
+  const run: Runner = async () => ok()
+  const plain = new CliTool(spec, run, () => 0)
+  const first = plain.spare()
+  expect(plain.spare()).not.toBe(first)
+  first.failure(0)
+  first.failure(0)
+  expect(first.state).toBe('closed') // the default threshold is three
+  first.failure(0)
+  expect(first.state).toBe('open')
+  expect(plain.status().breaker).toBe('closed') // the breaker of the tool did not count them
+  const made = new CircuitBreaker(1, 50)
+  expect(
+    new CliTool(
+      spec,
+      run,
+      () => 0,
+      undefined,
+      () => made,
+    ).spare(),
+  ).toBe(made)
 })

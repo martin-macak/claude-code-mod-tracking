@@ -154,6 +154,40 @@ test('the breaker reads global.tools.breaker; a spec override wins', () => {
   expect(x.status().openUntil).toBe(1000) // the spec left openMs to the global value
 })
 
+test('a handle hands out spare breakers with the numbers of its tool: the breaker of a host that is not the home host', () => {
+  const { runner } = rig({ global: withBreaker({ threshold: 1, openMs: 1000 }) })
+  const gh = runner.port('github').handle('gh')!
+  const spare = gh.spare()
+  expect(gh.spare()).not.toBe(spare) // a new one each time
+  spare.failure(10)
+  expect(spare.state).toBe('open') // threshold 1
+  expect(spare.openUntil).toBe(1010) // openMs 1000
+  expect(gh.status().breaker).toBe('closed') // the tool breaker is not the spare
+  runner.build([{ owner: 'xs', spec: { id: 'x', probe: ['x'], breaker: { threshold: 2 } } }])
+  const other = runner.port('xs').handle('x')!.spare()
+  other.failure(0)
+  expect(other.state).toBe('closed') // the spec override reaches the spare too
+  other.failure(0)
+  expect(other.state).toBe('open')
+})
+
+test('a GhTool reads the configured breaker numbers for a host that is not the home host', async () => {
+  const { runner, w } = rig({ global: withBreaker({ threshold: 1, openMs: 1000 }) })
+  const handle = runner.port('github').handle('gh')!
+  await handle.probe()
+  w.run = argv => {
+    if (argv[1] === 'api') throw new Error('timeout')
+    return res('gh version 2.80.0\n')
+  }
+  const gh = ghClient(handle, {
+    now: () => w.clock.now,
+    limits: () => ({ chunkSize: 50, closingRefsPerPr: 10, discoveryTimeoutMs: 30000 }),
+  })
+  expect(await gh.graphql('ghe.corp', 'query {}')).toMatchObject({ ok: false, kind: 'transport' })
+  expect(await gh.graphql('ghe.corp', 'query {}')).toEqual({ ok: false, kind: 'blocked' }) // threshold 1: one failure opens it
+  expect(handle.status().breaker).toBe('closed') // and the breaker of the tool is not touched
+})
+
 test('a breaker factory in the deps builds the breaker of each handle from the merged numbers', () => {
   const made: { threshold: number; openMs: number }[] = []
   const seen: string[] = []

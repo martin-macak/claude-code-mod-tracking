@@ -379,7 +379,12 @@ export function world(on: On, opts: Opts = {}) {
     if (tool === 'git' && a1 === 'worktree') return { value: res(fake.porcelain) }
     if (tool === 'gh' && a1 === 'auth') {
       if (fake.authHold) await fake.authHold
-      return { value: opts.badHosts?.includes(a4!) ? res('', 1, ghFx.GHE_AUTH_STATUS_STDERR) : res('Logged in') }
+      // `gh auth status --hostname <h> --json hosts`, as gh 2.102.0 answers: exit 0, the account of the host, or none.
+      return {
+        value: opts.badHosts?.includes(a4!)
+          ? res(ghFx.AUTH_STATUS_JSON_NO_LOGIN, 0, ghFx.AUTH_STATUS_NO_LOGIN_NOTICE)
+          : res(ghFx.authStatusJson(a4!)),
+      }
     }
     if (tool === 'gh' && a1 === 'repo') return { value: res(opts.repoView ?? ghFx.REPO_RESOLUTION_STDOUT) }
     if (tool === 'acli' && a2 === 'auth') return { value: res(ACLI_AUTH) }

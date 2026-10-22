@@ -163,6 +163,7 @@ test('m2: the hint says in a word why the resolve key is off: a fork, a name tha
   const note = { merge: { [K(7)]: { worktree: '/w/p7' } } }
   const mark = (rec: GitHubRecord, lane: Partial<LaneState> = note) => badges(view([rec], lane), 7).at(-1)
   expect(mark(pr(7, { mergeable: 'CONFLICTING', crossRepo: true }))).toEqual({ text: 'fork PR', dim: true })
+  expect(mark(pr(7, { mergeable: 'CONFLICTING', otherRepo: true }))).toEqual({ text: 'other repo', dim: true })
   expect(mark(pr(7, { mergeable: 'CONFLICTING', headRefName: 'a b' }))).toEqual({ text: 'odd branch', dim: true })
   expect(mark(pr(7, { mergeable: 'CONFLICTING' }), { ...note, defaultBranch: undefined })).toEqual({
     text: 'no default',

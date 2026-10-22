@@ -15,7 +15,7 @@ import { actions, KEYS } from './actions'
 import { GH_TOOL, ghOf } from './client'
 import { GITHUB_DEFAULTS, type GithubConfig, githubConfig } from './config'
 import { githubKind } from './kind'
-import { branchesOf, EMPTY_LANE, PrLane, wantsStep } from './lane'
+import { branchesOf, createdOf, EMPTY_LANE, PrLane, wantsStep } from './lane'
 import { githubPrompt } from './prompt'
 import { parseRemote } from './remote'
 import { foundRepo } from './repo'
@@ -27,8 +27,9 @@ export { GH_TOOL, type GithubConfig, githubConfig, githubKind, parseRemote }
 type Ctx = TrackerContext<GithubConfig, LaneState>
 type H<E> = Handler<GithubConfig, LaneState, E>
 
-/** The fact the auto tracker publishes after each round. This tracker reads it and imports nothing of auto. */
+/** The facts the auto tracker publishes: the branches after each round, and the PRs the run created. This tracker reads them and imports nothing of auto. */
 const FACT_BRANCHES = 'auto.branches'
+const FACT_PRS = 'auto.prs'
 
 /**
  * Changes the lane state. Every write goes through here. It reads first and stops when the change returns its input
@@ -54,6 +55,7 @@ function discoveryOf(ctx: Ctx): DiscoveryTool {
     },
     canCall: now => need().canCall(now),
     status: () => need().status(),
+    checkHost: host => need().checkHost(host),
     isHostAuthed: host => need().isHostAuthed(host),
     graphql: (host, query) => need().graphql(host, query),
   }
@@ -76,6 +78,7 @@ function laneOf(ctx: Ctx): PrLane {
     load: async () => (await ctx.data.get()) ?? EMPTY_LANE,
     save: change => setLane(ctx, change),
     branches: () => branchesOf(ctx.facts.read<Json>(FACT_BRANCHES)),
+    created: () => createdOf(ctx.facts.read<Json>(FACT_PRS)),
     gh,
     ghReady: async () => {
       const tool = ghOf(ctx.tools, config, () => ctx.clock.wall())
@@ -86,8 +89,17 @@ function laneOf(ctx: Ctx): PrLane {
     // The lookup the kind's `prepare` runs: the same one per session, so this waits for it and re-keys nothing.
     repo: () => foundRepo(repoCtx),
     // A bare `#N` in a PR body is an issue of the repo of that PR, so the fact `session.repo` is the PR's repo for the scan.
-    scanBody: (text, repo) =>
-      ctx.items.scan(text, { mode: 'full', purpose: 'lookup', facts: { 'session.repo': repo as unknown as Json } }),
+    // A full URL of the PR's own host names an issue or PR of it: the lane asked that host, and `gh` is logged in there,
+    // so the scan lists the host with `github.hosts`, which the session alone may not (issue #158).
+    scanBody: (text, repo) => {
+      const known = ctx.facts.read<Json>('github.hosts') as unknown as readonly string[] | undefined
+      const hosts = new Set([...(known ?? []), repo.host].map(h => h.toLowerCase()))
+      return ctx.items.scan(text, {
+        mode: 'full',
+        purpose: 'lookup',
+        facts: { 'session.repo': repo as unknown as Json, 'github.hosts': [...hosts] },
+      })
+    },
     build: claim => ctx.items.build(claim),
     // The store runs the session check and reads the dismiss list, then calls `change` (maybe twice). The result of the
     // last call is what the lane reports.

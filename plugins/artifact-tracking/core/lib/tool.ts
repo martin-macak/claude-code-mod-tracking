@@ -41,7 +41,13 @@ export class CliTool implements ToolHandle {
     private readonly run: Runner,
     private readonly now: Now,
     private readonly breaker: Breaker = new CircuitBreaker(),
+    /** Builds a spare breaker with the numbers of this tool. Default: the numbers of `GLOBAL_DEFAULTS`. */
+    private readonly spareBreaker: () => Breaker = () => new CircuitBreaker(),
   ) {}
+
+  spare(): Breaker {
+    return this.spareBreaker()
+  }
 
   get id(): string {
     return this.spec.id

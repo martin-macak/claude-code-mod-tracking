@@ -10,8 +10,11 @@ import { GLOBAL_DEFAULTS } from '../lib/global-config'
 /** How the items of one category refresh: which tool may be called, and how to fetch their status. */
 export interface RefreshLane {
   readonly category: string
-  /** The tool of the lane lets a call through now: it is available, not logged out, and its breaker allows. */
-  canCall(now: number): boolean
+  /**
+   * The tool of the lane lets a call through now: it is available, not logged out, and its breaker allows. `item`: the
+   * item the call is for, when the lane keeps that state per part of the tool (a host). Without it, the tool as a whole.
+   */
+  canCall(now: number, item?: Refreshable): boolean
   /** Manual refresh: the tool forgets its failures. */
   reset(): void
   /** The item of a stored record. Called only for a record of this category. */
@@ -154,7 +157,7 @@ export class RefreshCoordinator {
         // A forced run tries a not-found item again. The error is a field of the item, not of the `Refreshable` contract.
         if (opts.force) delete (item as { error?: unknown }).error
         const ok = opts.force ? item.canRefresh(at) : item.isDue(at) && item.canRefresh(at)
-        if (!ok || !lane.canCall(at)) continue
+        if (!ok || !lane.canCall(at, item)) continue
         selected.push(item)
         const batch = batches.get(lane)
         if (batch) batch.push(item)

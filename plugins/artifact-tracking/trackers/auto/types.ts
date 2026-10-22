@@ -62,6 +62,13 @@ export type AgentProof = {
   lastTurn?: number
 }
 
+/**
+ * A pull request of any repo that this run made (issue #158): the `gitOperation.pr` of a Bash result with the action
+ * `created`. It is a proof like a worktree proof, and the PR lane reads the PR by number, whatever its branch or repo.
+ * Owner and repo keep the case of the URL; a comparison lowers it.
+ */
+export type PrFacts = { host: string; owner: string; repo: string; number: number }
+
 export type Health = { ok: boolean; at: number; error?: string }
 
 /** A prunable record (directory gone) is `removed` too (A23). */
@@ -122,6 +129,8 @@ export type AutoState = {
   root: { cwd: string; at: number; top?: string | null } | null
   worktrees: WorktreeProof[]
   agents: AgentProof[]
+  /** The PRs this run created, oldest first (issue #158). Absent: none yet, or a slot from a build before #158. */
+  prs?: PrFacts[]
   /** A14: row ids (`wt:`, `ag:`) and item keys. */
   dismissed: string[]
   snapshot: AutoSnapshot | null
@@ -148,7 +157,7 @@ export type BranchesFact = {
 
 export type EnterFacts = { path: string; branch?: string; agentId?: string }
 export type AgentResultFacts = { agentId: string; worktreePath?: string; worktreeBranch?: string }
-export type BashFacts = { agentId?: string; branch?: string; kick?: 'pr-event' | 'git' }
+export type BashFacts = { agentId?: string; branch?: string; pr?: PrFacts; kick?: 'pr-event' | 'git' }
 /** Copied from the `agent.spawn` input and its `next(e)` answer. */
 export type SpawnFacts = {
   agentId: string

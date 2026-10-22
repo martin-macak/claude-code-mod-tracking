@@ -78,7 +78,8 @@ export function ghAcliRun(o: ItemsOpts = {}): (argv: string[]) => Promise<RunRes
       const query = argv.find(x => x.startsWith('query='))?.slice('query='.length) ?? ''
       return graphql(query)
     }
-    if (tool === 'gh' && a1 === 'auth') return res('Logged in')
+    if (tool === 'gh' && a1 === 'auth')
+      return res(ghFx.authStatusJson(argv[argv.indexOf('--hostname') + 1] ?? 'github.com'))
     if (tool === 'gh' && a1 === 'repo') return res('{"nameWithOwner":"acme/web"}')
     if (tool === 'acli' && a2 === 'auth') return res(ACLI_AUTH)
     if (tool === 'acli' && a3 === 'view') return res(withKey(acliFx.TASK_VIEW_JSON, a4!))

@@ -13,6 +13,7 @@ function ghTool(over: Partial<GitHubToolApi> = {}) {
     name: 'gh',
     isAvailable: true,
     canCall: () => true,
+    canCallHost: () => true,
     reset() {},
     status: () => status('gh'),
     async refreshItems(items) {
@@ -89,7 +90,22 @@ test('GitHubItem.canRefresh: unresolved, host auth, breaker', () => {
   expect(new GitHubItem(gh(), ghTool({ isHostAuthed: () => false }).t).canRefresh(0)).toBe(false)
   expect(new GitHubItem(gh({ host: 'ghe.corp' }), ghTool().t).canRefresh(0)).toBe(false) // GHE needs a known yes
   expect(new GitHubItem(gh({ host: 'ghe.corp' }), ghTool({ isHostAuthed: () => true }).t).canRefresh(0)).toBe(true)
-  expect(new GitHubItem(gh(), ghTool({ canCall: () => false }).t).canRefresh(0)).toBe(false)
+  expect(new GitHubItem(gh(), ghTool({ canCallHost: () => false }).t).canRefresh(0)).toBe(false)
+})
+
+test('GitHubItem.canRefresh asks the tool about the host of the item, not the tool as a whole (issue #158)', () => {
+  const asked: string[] = []
+  const t = ghTool({
+    canCall: () => false, // the home host is logged out or at rest
+    canCallHost: host => {
+      asked.push(host)
+      return host === 'ghe.corp'
+    },
+    isHostAuthed: () => true,
+  }).t
+  expect(new GitHubItem(gh({ host: 'ghe.corp' }), t).canRefresh(0)).toBe(true)
+  expect(new GitHubItem(gh(), t).canRefresh(0)).toBe(false)
+  expect(asked).toEqual(['ghe.corp', 'github.com'])
 })
 
 test('isDue: new, stale, pending PR, not-found', () => {

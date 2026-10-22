@@ -100,6 +100,41 @@ test('the tool reads a PR number and a repo that the fake does not know as not f
   assert.equal(tool.status().breaker, 'closed')
 })
 
+test('the fake gh answers the pullRequest(number:) alias of a created PR, and a missing number as gone (issue #158)', async () => {
+  const { tool, kinds } = rig()
+  await tool.probe()
+  const out = await discoverPrs(tool, REPO, [], NOW, undefined, undefined, [
+    { ...REPO, number: 7 },
+    { ...REPO, number: 99 },
+  ])
+  assert.equal(out.ok, true)
+  assert.deepEqual(
+    out.prs.map(p => [p.number, p.by, p.created, p.mergeable]),
+    [[7, 'created', true, 'CONFLICTING']],
+  )
+  // The number that is not there is gone, not unsure: the reply stays complete, and nothing is held.
+  assert.equal(out.complete, true)
+  assert.equal('held' in out, false)
+  assert.deepEqual(kinds, ['--version', 'graphql discovery'])
+})
+
+test('the fake gh answers a created PR of another repo as not found, so the lane holds it and the rest stays complete', async () => {
+  const { tool } = rig()
+  await tool.probe()
+  const other = { ...REPO, owner: 'martin-macak', repo: 'claude-code-mod-tracking' }
+  const out = await discoverPrs(tool, REPO, [], NOW, undefined, undefined, [
+    { ...REPO, number: 7 },
+    { ...other, number: 7 },
+  ])
+  assert.equal(out.ok, true)
+  assert.deepEqual(
+    out.prs.map(p => p.number),
+    [7],
+  )
+  assert.equal(out.complete, true)
+  assert.deepEqual(out.held, ['gh:github.com/martin-macak/claude-code-mod-tracking#7'])
+})
+
 test('the fake gh answers a discovery query for another repo as not found, so the lane never sees a PR of it', async () => {
   const { tool } = rig()
   await tool.probe()

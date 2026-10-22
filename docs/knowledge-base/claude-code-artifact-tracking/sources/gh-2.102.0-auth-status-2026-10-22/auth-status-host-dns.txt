@@ -1,0 +1,8 @@
+$ GH_CONFIG_DIR=<dir with a hosts.yml holding a dummy token> gh auth status --hostname ghe.example.invalid
+ghe.example.invalid
+  X Failed to log in to ghe.example.invalid account someone (<config-dir>/hosts.yml)
+  - Active account: true
+  - The token in <config-dir>/hosts.yml is invalid.
+  - To re-authenticate, run: gh auth login -h ghe.example.invalid
+  - To forget about this account, run: gh auth logout -h ghe.example.invalid -u someone
+exit=1

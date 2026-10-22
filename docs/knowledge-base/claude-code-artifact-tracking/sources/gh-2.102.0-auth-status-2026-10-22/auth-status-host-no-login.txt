@@ -1,0 +1,3 @@
+$ gh auth status --hostname ghe.example.invalid
+You are not logged into any accounts on ghe.example.invalid
+exit=1

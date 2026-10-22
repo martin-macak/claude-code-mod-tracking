@@ -124,7 +124,7 @@ export class ItemRefresh {
         return [
           {
             category: kind.category,
-            canCall: now => handle.canCall(now),
+            canCall: (now, item) => (item && refresh.canCall ? refresh.canCall(item, ctx, now) : handle.canCall(now)),
             // The tool class forgets more than its handle does (denied hosts, a missing site).
             reset: () => (refresh.reset ? refresh.reset(ctx) : handle.reset()),
             // A stored record of a malformed shape is never due: one bad record must not stop the run for the others.

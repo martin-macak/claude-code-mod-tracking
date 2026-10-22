@@ -108,6 +108,7 @@ function fakeGh() {
   const gh = {
     isAvailable: true,
     canCall: () => true,
+    canCallHost: () => true,
     status: () => ({ name: 'gh', available: true, loggedIn: true, breaker: 'closed' }),
     isHostAuthed: () => true,
     graphql: async (_host: string, q: string) => {

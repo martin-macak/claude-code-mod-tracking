@@ -38,6 +38,12 @@ export type GitHubFields = {
    * repo, so the mod looks up no worktree for it and offers no key that acts on it (issue #50). Absent: not a fork.
    */
   crossRepo?: true
+  /**
+   * True when the PR is in another repo than the session repo (issue #158): a PR the session created there. Set by
+   * discovery only. Its branches are not branches of the session repo, so the mod looks up no worktree for it and offers
+   * no key that acts on it, as for a fork PR. Absent: the PR is in the session repo.
+   */
+  otherRepo?: true
   /** Issue keys the PR's closing references name. Set by discovery only, like the branches. Absent when none. */
   closes?: string[]
   /**
@@ -72,6 +78,11 @@ export interface GitHubTarget extends GitHubFields {
 }
 
 export interface GitHubToolApi extends RefreshTool<GitHubTarget> {
+  /**
+   * `canCall` for a call to `host`: the session host asks the tool, another host its own denial and breaker, so the session
+   * host being logged out or at rest does not hold it up (issue #158).
+   */
+  canCallHost(host: string, now: number): boolean
   /** Cached answer of `gh auth status --hostname <host>`. undefined: not asked yet. */
   isHostAuthed(host: string): boolean | undefined
   /** Asks gh once per host and caches the answer. */
@@ -83,6 +94,9 @@ export interface GitHubToolApi extends RefreshTool<GitHubTarget> {
 // ---------------------------------------------------------------- PR discovery (spec 5.9, the PR lane)
 
 export type PrSkip = 'no-repo' | 'no-gh' | 'not-logged-in' | 'paused' | 'host-not-authed' | 'no-branches'
+
+/** A PR by repo and number: one the session created (issue #158). Owner and repo keep their case. */
+export type PrRef = { host: string; owner: string; repo: string; number: number }
 
 export type DiscoveredPr = {
   host: string
@@ -101,10 +115,14 @@ export type DiscoveredPr = {
   baseRefName: string
   /** The head branch is in a fork. A base alias keeps such a PR, so the record must remember it. */
   crossRepo?: true
+  /** The PR is in another repo than the session repo (issue #158). Set by `discoverPrs`, not by the parse. */
+  otherRepo?: true
+  /** The session created this PR: it is one of the PRs the lane was asked for by number (issue #158). Set by `discoverPrs`. */
+  created?: true
   body: string
   closing: { host: string; owner: string; repo: string; number: number; url: string }[]
-  /** Which alias found it. A PR found by both keeps `head`. */
-  by: 'head' | 'base'
+  /** Which alias found it. A PR found by two keeps the first of `head`, `base`, `created`. */
+  by: 'head' | 'base' | 'created'
 }
 
 export type GraphqlReply = { data: Record<string, unknown>; errors: unknown[] }
@@ -119,9 +137,16 @@ export type ReplyClass =
   | { kind: 'data'; data: Record<string, unknown>; errors: unknown[] }
   | { kind: 'auth' | 'truncated' | 'query-error' | 'unparsable'; detail?: string }
 
+/**
+ * `held` (absent when empty): the keys of the created PRs of another repo that got no sure answer: all of a repo with a
+ * failed query, a host `gh` is not logged in to or `repository: null`, and in a repo that did answer only the PRs with
+ * no verdict. The reply stays `complete` for the rest, and a prune leaves these alone. A PR that parsed is never held.
+ * `host` (a failed outcome): the host that said no, for the skips `host-not-authed` and `not-logged-in` of a query. The
+ * note of the lane names it: the session repo may be on another host (issue #158).
+ */
 export type DiscoveryOutcome =
-  | { ok: true; prs: DiscoveredPr[]; complete: boolean; defaultBranch?: string }
-  | { ok: false; skipped?: PrSkip; error?: string }
+  | { ok: true; prs: DiscoveredPr[]; complete: boolean; held?: string[]; defaultBranch?: string }
+  | { ok: false; skipped?: PrSkip; error?: string; host?: string }
 
 /** What `applyDiscovery` returns. `list` is the input list itself when nothing changed (A22). */
 export type DiscoveryApplied<R extends StoredItem = StoredItem> = { list: R[]; added: string[]; untracked: number }
@@ -132,8 +157,15 @@ export interface GitHubDiscoveryApi extends GitHubToolApi {
   graphql(host: string, query: string): Promise<GraphqlOutcome>
 }
 
-/** What the PR lane asks of `gh`: whether it can be called, who is logged in, and the one discovery query. */
-export type DiscoveryTool = Pick<GitHubDiscoveryApi, 'isAvailable' | 'canCall' | 'status' | 'isHostAuthed' | 'graphql'>
+/**
+ * What the PR lane asks of `gh`: whether it can be called, who is logged in, whether a host is authed (`checkHost` asks
+ * once per host and caches it, so a host that only a created PR names is checked too; `isHostAuthed` tells a denial from a
+ * check that could not run), and the one discovery query.
+ */
+export type DiscoveryTool = Pick<
+  GitHubDiscoveryApi,
+  'isAvailable' | 'canCall' | 'status' | 'checkHost' | 'isHostAuthed' | 'graphql'
+>
 
 /**
  * What the `files` key found for a conflicted PR: the files `git merge-tree` named, or why it could not. `pending` is
@@ -166,6 +198,8 @@ export type LaneState = {
     ok: boolean
     skipped?: PrSkip
     error?: string
+    /** The host that `gh` is not logged in to, when the step knows it (`host-not-authed`, or `not-logged-in` of a query). */
+    host?: string
     /** Auto-only items not added over `maxAutoItems` (A11). */
     untracked?: number
   }

@@ -31,9 +31,13 @@ export interface Draw {
   readonly focus: string | undefined
 }
 
+/** How a cell is cut when it is too wide: the cell's own `clip` first, then the column's. Default: at the end. */
+const clipFor = (cell: Cell, col: SolvedColumn) => ((cell.clip ?? col.clip) === 'middle' ? clipMiddle : clipTo)
+
 function treeCell(d: Draw, col: SolvedColumn, cell: Cell, r: LaidRow, dim: boolean): RenderElement {
   const indent = indentOf(col.width, r.depth)
-  const label = clipTo(normaliseCell(cell.text), col.width - indent - GLYPH_BOX)
+  const room = col.width - indent - GLYPH_BOX
+  const label = clipFor(cell, col)(normaliseCell(cell.text), room)
   const handle = button(d.el, {
     key: r.handle,
     plain: true,
@@ -81,12 +85,7 @@ function rowLine(d: Draw, solved: Solved, r: LaidRow): RenderElement {
     return box(
       d.el,
       { width: col.width, flexShrink: 0, justifyContent: col.justify, ...cellBox(cell) },
-      cellNode(
-        d.el,
-        cell,
-        ((cell.clip ?? col.clip) === 'middle' ? clipMiddle : clipTo)(normaliseCell(cell.text), col.width),
-        dim,
-      ),
+      cellNode(d.el, cell, clipFor(cell, col)(normaliseCell(cell.text), col.width), dim),
     )
   })
   return box(

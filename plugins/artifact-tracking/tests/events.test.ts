@@ -60,7 +60,50 @@ test('fromSpawn: an answer without an agentId, or an unknown shape, gives null',
 })
 
 test('fromBash: gitOperation.pr kicks pr-event', () => {
-  expect(fromBash('gh pr create --draft', fx.BASH_PR_RAN)).toEqual({ kick: 'pr-event' })
+  expect(fromBash('gh pr create --draft', fx.BASH_PR_RAN).kick).toBe('pr-event')
+})
+
+// Issue #158: the one signal that says the session made this PR is a proof, in any repo.
+test('fromBash: a created gitOperation.pr is a proof: host, owner, repo and number, with the case of the URL', () => {
+  expect(fromBash('gh pr create --draft', fx.BASH_PR_RAN)).toEqual({
+    kick: 'pr-event',
+    pr: { host: 'github.com', owner: 'octo', repo: 'demo', number: 7 },
+  })
+  const other = fx.createdPr('https://github.com/VerticeOne/vertice-iam/pull/657', 657)
+  expect(fromBash('gh pr create --repo VerticeOne/vertice-iam', other).pr).toEqual({
+    host: 'github.com',
+    owner: 'VerticeOne',
+    repo: 'vertice-iam',
+    number: 657,
+  })
+})
+
+test('fromBash: the proof of a PR of another host reads the host from the URL, lower-cased', () => {
+  const ghe = fx.createdPr('https://GHE.Acme.example/team/svc/pull/12', 12)
+  expect(fromBash('gh pr create', ghe).pr).toEqual({ host: 'ghe.acme.example', owner: 'team', repo: 'svc', number: 12 })
+  const www = fx.createdPr('https://www.github.com/a/b/pull/3', 3)
+  expect(fromBash('gh pr create', www).pr?.host).toBe('github.com')
+})
+
+test('fromBash: a PR operation that is not a creation kicks pr-event and is no proof', () => {
+  for (const action of ['merged', 'closed', 'commented', 'edited', null]) {
+    const ran = fx.createdPr('https://github.com/octo/demo/pull/7', 7, action)
+    expect(fromBash('gh pr merge 7', ran)).toEqual({ kick: 'pr-event' })
+  }
+})
+
+test('fromBash: a created PR with no readable URL, or a number that the URL does not carry, is no proof', () => {
+  for (const [url, number] of [
+    ['', 7],
+    ['not a url', 7],
+    ['ftp://github.com/octo/demo/pull/7', 7],
+    ['https://github.com/octo/demo/issues/7', 7],
+    ['https://github.com/octo/demo/pull/seven', 7],
+    ['https://github.com/octo/demo/pull/7', 8],
+  ] as const)
+    expect(fromBash('gh pr create', fx.createdPr(url, number))).toEqual({ kick: 'pr-event' })
+  const noUrl = { result: { gitOperation: { pr: { number: 7, action: 'created' } } } }
+  expect(fromBash('gh pr create', noUrl)).toEqual({ kick: 'pr-event' })
 })
 
 test('fromBash: an agent commit or push gives its branch and kicks git', () => {

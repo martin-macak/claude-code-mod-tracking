@@ -12,17 +12,20 @@ import { AutoRound, type RoundDeps } from '../trackers/auto/round'
 import { githubTracker } from '../trackers/github'
 import { PR_LANE_DEFAULTS } from '../trackers/github/config'
 import { dropAuto } from '../trackers/github/discovered'
-import { branchesOf, EMPTY_LANE, type LaneDeps, PrLane, wantsStep } from '../trackers/github/lane'
-import type { BranchesFact, LaneState } from '../trackers/github/types'
+import { branchesOf, createdOf, EMPTY_LANE, type LaneDeps, PrLane, wantsStep } from '../trackers/github/lane'
+import { isLanePr } from '../trackers/github/lane-pr'
+import type { BranchesFact, LaneState, PrRef } from '../trackers/github/types'
 import { type FakeConfig, fakeConfig } from './fixtures/config-fs'
 import type {
   AutoReason,
   AutoState,
   GitHubDiscoveryApi,
+  GitHubRecord,
   GraphqlOutcome,
   ItemRecord,
   LiveAgent,
 } from './fixtures/contracts'
+import { createdPr } from './fixtures/events'
 import { discoveryData, prNode } from './fixtures/gh-discovery'
 import { porcelain as gitPorcelain } from './fixtures/git'
 import { res, until } from './fixtures/items'
@@ -48,12 +51,26 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 200; i++) await Promise.resolve()
 }
 
-/** The reply for a discovery query: nodes by `head:<branch>` or `base:<branch>`. */
-function replyFor(q: string, nodes: Record<string, unknown[]>, defaultBranch: string | null = 'main'): GraphqlOutcome {
+/**
+ * The reply for a discovery query: nodes by `head:<branch>` or `base:<branch>`, and for each `pullRequest(number:)` alias
+ * (a PR the session created, issue #158) the node of `created[owner/repo][number]`, null when there is none. The repo
+ * is read from the query, in lower case.
+ */
+function replyFor(
+  q: string,
+  nodes: Record<string, unknown[]>,
+  defaultBranch: string | null = 'main',
+  created: Record<string, Record<number, unknown>> = {},
+): GraphqlOutcome {
   const data: Record<string, unknown[]> = {}
   for (const m of q.matchAll(/(([hb])\d+): pullRequests\((head|base)RefName: ("(?:[^"\\]|\\.)*")/g))
     data[m[1]!] = nodes[`${m[3]}:${JSON.parse(m[4]!) as string}`] ?? []
-  return { ok: true, reply: { data: discoveryData(data, defaultBranch), errors: [] } }
+  const reply = discoveryData(data, defaultBranch)
+  const target = /repository\(owner: "([^"]+)", name: "([^"]+)"\)/.exec(q)
+  const known = created[`${target?.[1]}/${target?.[2]}`.toLowerCase()]
+  for (const m of q.matchAll(/(p\d+): pullRequest\(number: (\d+)\)/g))
+    (reply.repository as Record<string, unknown>)[m[1]!] = known?.[Number(m[2])] ?? null
+  return { ok: true, reply: { data: reply, errors: [] } }
 }
 
 /** A gh that can be called, logged in, and answers every discovery query from `nodes`. */
@@ -63,16 +80,19 @@ function fakeGh(o: {
   outcome?: () => GraphqlOutcome | undefined
   gate?: () => Promise<void> | undefined
   defaultBranch?: string | null
+  /** The PRs the session created, by lower-case `owner/repo` and number. */
+  created?: Record<string, Record<number, unknown>>
 }): GitHubDiscoveryApi {
   return {
     isAvailable: true,
     canCall: () => true,
     status: () => ({ name: 'gh', available: true, loggedIn: true, breaker: 'closed', lastError: 'timeout' }),
+    checkHost: async () => true,
     isHostAuthed: () => true,
     graphql: async (_host: string, q: string): Promise<GraphqlOutcome> => {
       o.queries.push(q)
       await o.gate?.()
-      return o.outcome?.() ?? replyFor(q, o.nodes, o.defaultBranch)
+      return o.outcome?.() ?? replyFor(q, o.nodes, o.defaultBranch, o.created)
     },
   } as unknown as GitHubDiscoveryApi
 }
@@ -447,12 +467,16 @@ test('a throw in the PR step after discovery lands in the Pull requests note and
 // ================================================================ the lane alone
 
 /** A lane over plain closures: the fact is set by the test. */
-function laneRig(o: { defaultBranch?: string | null; items?: StoredItem[] } = {}) {
-  const log = { gh: [] as string[], saves: 0 }
+function laneRig(
+  o: { defaultBranch?: string | null; items?: StoredItem[]; created?: PrRef[]; dismissed?: string[] } = {},
+) {
+  const log = { gh: [] as string[], saves: 0, worktrees: 0 }
   let items: StoredItem[] = o.items ?? []
   let state: LaneState = EMPTY_LANE
   let fact: BranchesFact | undefined = { seq: 1, reasons: ['start'], branches: ['main', 'feat/x'], overflow: 0 }
+  let created: readonly PrRef[] = o.created ?? []
   const nodes: Record<string, unknown[]> = {}
+  const createdNodes: Record<string, Record<number, unknown>> = {}
   const gate: { gh?: Promise<void> } = {}
   const deps: LaneDeps = {
     now: () => 5_000_000,
@@ -471,13 +495,19 @@ function laneRig(o: { defaultBranch?: string | null; items?: StoredItem[] } = {}
       queries: log.gh,
       gate: () => gate.gh,
       defaultBranch: o.defaultBranch === undefined ? 'main' : o.defaultBranch,
+      created: createdNodes,
     }),
     ghReady: async () => true,
     repo: async () => REPO,
+    created: () => created,
+    worktrees: async () => {
+      log.worktrees++
+      return [{ path: '/x/repo/wt', branch: 'feat/x', head: 'abc', detached: false, bare: false }]
+    },
     scanBody,
     build: buildRecord,
     applyItems: async change => {
-      const r = change(items, new Set())
+      const r = change(items, new Set(o.dismissed))
       items = r.list
       return r
     },
@@ -498,11 +528,15 @@ function laneRig(o: { defaultBranch?: string | null; items?: StoredItem[] } = {}
     lane,
     log,
     nodes,
+    createdNodes,
     hold,
     items: () => items,
     state: () => state,
     setFact: (f: BranchesFact | undefined) => {
       fact = f
+    },
+    setCreated: (list: readonly PrRef[]) => {
+      created = list
     },
   }
 }
@@ -701,11 +735,15 @@ const BRANCH = 'worktree-probe-wt'
 const WINDOW = LIMITS.autoDebounceMs + 10
 
 /** A manager over the shipped trackers. git answers one child worktree; gh answers the discovery queries from `nodes`. */
-function shipped(o: { off?: boolean; file?: JsonObject; defaultBranch?: string | null } = {}) {
+function shipped(
+  o: { off?: boolean; file?: JsonObject; defaultBranch?: string | null; refuse?: readonly string[] } = {},
+) {
   const queries: string[] = []
   /** The issue and PR numbers that the item refresh asked about, in order. */
   const refreshed: string[] = []
   const nodes: Record<string, unknown[]> = {}
+  /** The PRs the session created, by lower-case `owner/repo` and number (issue #158). */
+  const created: Record<string, Record<number, unknown>> = {}
   const gate: { gh?: Promise<void> } = {}
   const t = managerWorld({
     fake: { now: START_AT, session: { cwd: ROOT } },
@@ -715,22 +753,34 @@ function shipped(o: { off?: boolean; file?: JsonObject; defaultBranch?: string |
         if (argv[1] === 'worktree') return res(gitPorcelain(ROOT, ['probe-wt', BRANCH]))
         return undefined
       }
+      // `gh auth status --hostname <host>`: gh is logged in to every host a test names.
+      if (argv[0] === 'gh' && argv[1] === 'auth') return res('')
       if (argv[0] === 'gh' && argv[1] === 'api' && argv[2] === 'graphql') {
         const q = argv.find(x => x.startsWith('query='))?.slice('query='.length) ?? ''
-        if (!q.includes('pullRequests(')) {
+        // A host whose login gh refuses: exit 4 and the login hint, as `gh api` answers when it has no token for it.
+        if (o.refuse?.includes(argv[argv.indexOf('--hostname') + 1] ?? ''))
+          return res('', 4, 'please run: gh auth login')
+        if (!q.includes('pullRequests(') && !q.includes('pullRequest(number:')) {
           // The refresh of the tracked items: #7 is the open PR the lane found, any other number is an open issue.
           const data: Record<string, unknown> = {}
           for (const m of q.matchAll(
             /(a\d+): repository\(owner: "([^"]+)", name: "([^"]+)"\) \{\s*issueOrPullRequest\(number: (\d+)\)/g,
           )) {
             refreshed.push(m[4]!)
-            data[m[1]!] = { issueOrPullRequest: m[4] === '7' ? PR7 : issueNode(Number(m[4])) }
+            // A PR the session created answers as that PR (issue #158); #7 as the PR the lane found.
+            const made = created[`${m[2]}/${m[3]}`.toLowerCase()]?.[Number(m[4])]
+            const node = made
+              ? { ...(made as object), __typename: 'PullRequest' }
+              : m[4] === '7'
+                ? PR7
+                : issueNode(Number(m[4]))
+            data[m[1]!] = { issueOrPullRequest: node }
           }
           return res(JSON.stringify({ data }))
         }
         queries.push(q)
         await gate.gh
-        const outcome = replyFor(q, nodes, o.defaultBranch === undefined ? 'main' : o.defaultBranch)
+        const outcome = replyFor(q, nodes, o.defaultBranch === undefined ? 'main' : o.defaultBranch, created)
         return res(JSON.stringify({ data: outcome.ok ? outcome.reply.data : {} }))
       }
       return undefined
@@ -753,7 +803,7 @@ function shipped(o: { off?: boolean; file?: JsonObject; defaultBranch?: string |
   const start = () => t.m.start(t.w.ports, { cwd: ROOT, fromSessionStart: true })
   const refresh = () => t.m.command(t.w.ports, { sub: 'refresh', args: '', wait: true })
   const branches = () => t.m.facts.read<BranchesFact>('auto.branches')
-  return { ...t, queries, refreshed, nodes, hold, enter, start, refresh, branches }
+  return { ...t, queries, refreshed, nodes, created, hold, enter, start, refresh, branches }
 }
 
 test('lane: with github off auto still publishes branches and no gh call runs', async () => {
@@ -1107,4 +1157,400 @@ test('lane: a PR that GitHub calls UNKNOWN is asked again by the host clock afte
   await t.w.clock.advance(3000)
   await until(() => t.queries.length > before, 'the retry')
   await until(() => (t.w.state.get('github') as unknown as LaneState).merge === undefined, 'the note to go')
+})
+
+// ================================================================ the PRs the session created (issue #158)
+
+const IAM = { host: 'github.com', owner: 'VerticeOne', repo: 'vertice-iam' }
+const KIAM = 'gh:github.com/verticeone/vertice-iam#657'
+const K12 = 'gh:github.com/acme/web#12'
+/** #657 of another repo, as the pr fragment returns it: its URL is that repo's. */
+const iamNode = (over: Parameters<typeof prNode>[0] = {}) => ({
+  ...prNode({ number: 657, headRefName: 'feat/brown-2901', title: 'Emit the principal scope verdict', ...over }),
+  url: 'https://github.com/VerticeOne/vertice-iam/pull/657',
+})
+
+test('createdOf reads the fact auto.prs: whole entries only, whatever else the proof holds', () => {
+  const ok = { host: 'github.com', owner: 'o', repo: 'r', number: 4, provenAt: 9 } // a stored proof may hold more
+  expect(createdOf([ok, { ...ok, number: 5 }] as unknown as Json)).toEqual([
+    { host: 'github.com', owner: 'o', repo: 'r', number: 4 },
+    { host: 'github.com', owner: 'o', repo: 'r', number: 5 },
+  ])
+  expect(createdOf(undefined)).toEqual([])
+  expect(createdOf('x' as unknown as Json)).toEqual([])
+  expect(
+    createdOf([{ ...ok, number: '4' }, { ...ok, owner: '' }, { ...ok, number: 0 }, null, 7] as unknown as Json),
+  ).toEqual([])
+})
+
+test('lane: a PR the session created in a second repo lists with the lane marker, the case of its repo and the reason created', async () => {
+  const t = laneRig({ created: [{ ...IAM, number: 657 }] })
+  t.createdNodes['verticeone/vertice-iam'] = { 657: iamNode() }
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.log.gh).toHaveLength(2) // the session repo, then the second one
+  expect(t.log.gh[1]).toContain('repository(owner: "VerticeOne", name: "vertice-iam")')
+  const [rec] = t.items() as unknown as GitHubRecord[]
+  expect(rec).toMatchObject({
+    key: KIAM,
+    owner: 'VerticeOne',
+    repo: 'vertice-iam',
+    label: 'VerticeOne/vertice-iam#657',
+    url: 'https://github.com/VerticeOne/vertice-iam/pull/657',
+    otherRepo: true,
+    lane: true,
+    headRefName: 'feat/brown-2901',
+  })
+  expect(rec?.reasons).toEqual({ first: 'created', all: ['created', 'discovered'], strongest: 'created' })
+  expect(isLanePr(rec as GitHubRecord)).toBe(true)
+  expect(t.state().prs).toMatchObject({ ok: true })
+})
+
+test('lane: a PR the session created in the session repo on a branch no proof names lists, also once closed, and stays', async () => {
+  const t = laneRig({ created: [{ host: 'github.com', owner: 'acme', repo: 'web', number: 12 }] })
+  const closed = prNode({ number: 12, state: 'CLOSED', headRefName: 'feat/untracked-p2', baseRefName: 'main' })
+  t.createdNodes['acme/web'] = { 12: closed }
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.log.gh).toHaveLength(1) // the same query as the branches
+  const [rec] = t.items() as unknown as GitHubRecord[]
+  expect(rec).toMatchObject({ key: K12, state: 'closed', lane: true, headRefName: 'feat/untracked-p2' })
+  expect('otherRepo' in rec!).toBe(false)
+  expect(isLanePr(rec as GitHubRecord)).toBe(true)
+  // Later steps keep it, with the same list while nothing changes (A22).
+  const list = t.items()
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.items()).toBe(list)
+})
+
+test('lane: a closed or merged created PR stays in Pull requests as a lane PR, and a created PR GitHub says is gone leaves it', async () => {
+  const t = laneRig({ created: [{ ...IAM, number: 657 }] })
+  t.createdNodes['verticeone/vertice-iam'] = { 657: iamNode({ state: 'OPEN' }) }
+  t.lane.request()
+  await t.lane.idle()
+  t.createdNodes['verticeone/vertice-iam'] = { 657: iamNode({ state: 'MERGED' }) }
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.items()[0]).toMatchObject({ key: KIAM, state: 'merged', lane: true })
+  // The reply stays complete on a NOT_FOUND of the alias, so the prune runs: the PR keeps `created` and leaves the lane.
+  Object.assign(t.deps, {
+    gh: {
+      ...t.deps.gh,
+      graphql: async (_host: string, q: string): Promise<GraphqlOutcome> => {
+        const gone = { type: 'NOT_FOUND', path: ['repository', 'p0'], message: 'Could not resolve to a PullRequest' }
+        const sessionRepo = q.includes('owner: "acme"')
+        return {
+          ok: true,
+          reply: {
+            data: sessionRepo
+              ? discoveryData({ h0: [], b0: [], h1: [], b1: [] })
+              : { repository: { defaultBranchRef: { name: 'main' }, p0: null } },
+            errors: sessionRepo ? [] : [gone],
+          },
+        }
+      },
+    },
+  })
+  t.lane.request()
+  await t.lane.idle()
+  const rec = t.items()[0] as unknown as GitHubRecord
+  expect(rec.reasons.all).toEqual(['created'])
+  expect(isLanePr(rec)).toBe(false)
+})
+
+test('lane: a repo of a created PR that never answers keeps that PR, and the prune of the session repo still runs', async () => {
+  const t = laneRig({ created: [{ ...IAM, number: 657 }] })
+  t.nodes['head:feat/x'] = [prNode({ number: 7, headRefName: 'feat/x' })]
+  t.createdNodes['verticeone/vertice-iam'] = { 657: iamNode({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' }) }
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.items().map(i => [i.key, i.lane])).toEqual([
+    [K7, true],
+    [KIAM, true],
+  ])
+  expect(t.state().merge).toEqual({ [KIAM]: {} })
+  // The repo is deleted, or the token loses access to it: `repository: null`, step after step. #7 is gone from the
+  // session repo, and its prune is not held back by the repo that never answers.
+  delete t.nodes['head:feat/x']
+  const real = t.deps.gh.graphql.bind(t.deps.gh)
+  Object.assign(t.deps.gh, {
+    graphql: async (host: string, q: string): Promise<GraphqlOutcome> =>
+      q.includes('owner: "VerticeOne"')
+        ? { ok: true, reply: { data: { repository: null }, errors: [{ type: 'NOT_FOUND', path: ['repository'] }] } }
+        : real(host, q),
+  })
+  for (let step = 0; step < 2; step++) {
+    t.lane.request()
+    await t.lane.idle()
+    expect(t.items().map(i => [i.key, i.lane, (i as unknown as GitHubRecord).reasons.all])).toEqual([
+      [KIAM, true, ['created', 'discovered']], // held: still in Pull requests
+    ])
+    expect(t.state().prs).toMatchObject({ ok: true })
+    expect(t.state().merge).toEqual({ [KIAM]: {} }) // its merge note stays too, so the conflict chip does not vanish
+  }
+})
+
+test('lane: one unsure created PR of a repo does not keep the stale refs of its sure sibling', async () => {
+  const K658 = 'gh:github.com/verticeone/vertice-iam#658'
+  const REF1 = 'gh:github.com/verticeone/vertice-iam#901'
+  const REF2 = 'gh:github.com/verticeone/vertice-iam#902'
+  const iam658 = (body: string) => ({
+    ...iamNode({ number: 658, headRefName: 'feat/brown-2902', body }),
+    url: 'https://github.com/VerticeOne/vertice-iam/pull/658',
+  })
+  const t = laneRig({
+    created: [
+      { ...IAM, number: 657 },
+      { ...IAM, number: 658 },
+    ],
+  })
+  t.createdNodes['verticeone/vertice-iam'] = {
+    657: iamNode({ body: 'Part of #901' }),
+    658: iam658('Part of #902'),
+  }
+  t.lane.request()
+  await t.lane.idle()
+  const via = () => Object.fromEntries(t.items().map(i => [i.key, (i as unknown as { via?: string[] }).via]))
+  expect(via()).toEqual({ [KIAM]: undefined, [K658]: undefined, [REF1]: [KIAM], [REF2]: [K658] })
+  // The body of 657 no longer names #901. 658 gives no verdict (null, no NOT_FOUND): its body was not read, so #902
+  // keeps its entry. 657 answered, so #901 loses it, and the lane drops the ref.
+  t.createdNodes['verticeone/vertice-iam'] = { 657: iamNode({ body: 'Done' }) }
+  t.lane.request()
+  await t.lane.idle()
+  expect(via()).toEqual({ [KIAM]: undefined, [K658]: undefined, [REF2]: [K658] })
+  expect(t.state().prs).toMatchObject({ ok: true })
+})
+
+test('lane: the note of a host that gh is not logged in to keeps that host, and a quiet step does not rewrite it', async () => {
+  const ghe = { host: 'ghe.corp', owner: 'team', repo: 'svc' }
+  const t = laneRig({ created: [{ ...ghe, number: 3 }] })
+  Object.assign(t.deps.gh, { checkHost: async () => false, isHostAuthed: () => false })
+  t.setFact({ seq: 1, reasons: ['start'], branches: [], overflow: 0 })
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.state().prs).toMatchObject({ ok: false, skipped: 'host-not-authed', host: 'ghe.corp' })
+  const saves = t.log.saves
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.log.saves).toBe(saves) // the same note: no write
+  // Another host says no: that is a new note, and it is written.
+  t.setCreated([{ host: 'ghe.other', owner: 'team', repo: 'svc', number: 3 }])
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.state().prs).toMatchObject({ skipped: 'host-not-authed', host: 'ghe.other' })
+})
+
+test('lane: a created PR that is held and then dismissed leaves no merge note and no stale refs', async () => {
+  const opts = { created: [{ ...IAM, number: 657 }], dismissed: [] as string[] }
+  const t = laneRig(opts)
+  t.createdNodes['verticeone/vertice-iam'] = {
+    657: iamNode({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY', body: 'Part of #901' }),
+  }
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.state().merge).toEqual({ [KIAM]: {} })
+  expect(t.items().map(i => i.key)).toEqual([KIAM, 'gh:github.com/verticeone/vertice-iam#901'])
+  // The repo gives no verdict on the PR (it is held), and the person dismisses it: a held PR that is dismissed keeps
+  // neither its merge note (a retry timer would run on it) nor the refs of its body (Codex review of #186).
+  delete t.createdNodes['verticeone/vertice-iam']
+  opts.dismissed.push(KIAM)
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.state().merge).toBeUndefined()
+  expect(t.items().map(i => i.key)).toEqual([KIAM])
+})
+
+test('lane: a created PR on a host that refuses its login does not stop the session repo, now or on the next step', async () => {
+  const GHE_PR = 'https://ghe.corp/team/svc/pull/3'
+  const t = shipped({ refuse: ['ghe.corp'] })
+  t.nodes[`head:${BRANCH}`] = [prNode({ number: 7, headRefName: BRANCH })]
+  t.created['team/svc'] = { 3: { ...prNode({ number: 3, headRefName: 'feat/ghe' }), url: GHE_PR } }
+  await t.start()
+  await t.enter()
+  await t.w.clock.advance(WINDOW)
+  await t.call('Bash', { command: 'gh pr create' }, createdPr(GHE_PR, 3))
+  await t.w.clock.advance(WINDOW)
+  await t.refresh()
+  // Not logged in to ghe.corp (a token that expired after the host check): its PR is held, and #7 of the session repo shows.
+  expect(t.keys()).toEqual([K7])
+  const after = t.queries.length
+  await t.w.clock.advance(WINDOW)
+  await t.refresh()
+  // The refusal logged out that host alone: gh is not logged out for github.com, so the next step asks again.
+  expect(t.queries.length).toBeGreaterThan(after)
+  expect(t.keys()).toEqual([K7])
+  expect(t.w.state.get('github')).toMatchObject({ prs: { ok: true } })
+})
+
+test('lane: an in-process /resume into a session with no repo keeps its lane PRs: the carried default branch speaks for nothing', async () => {
+  const REF1 = 'gh:github.com/acme/web#1'
+  const t = laneRig({ created: [{ ...IAM, number: 657 }] })
+  t.nodes['head:feat/x'] = [prNode({ number: 7, headRefName: 'feat/x', body: 'Part of #1' })]
+  t.createdNodes['verticeone/vertice-iam'] = { 657: iamNode() }
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.items().map(i => i.key)).toEqual([K7, KIAM, REF1])
+  expect(t.state().defaultBranch).toBe('main') // the lane state carries it over the resume
+  // The resumed session has no repo, and tracks `main` only. Its stored lane PR and the refs of its body are not asked:
+  // the reply cannot say they are gone (Codex review of #186).
+  Object.assign(t.deps, { repo: async () => null })
+  t.setFact({ seq: 2, reasons: ['resume'], branches: ['main'], overflow: 0 })
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.items().map(i => [i.key, i.lane])).toEqual([
+    [K7, true],
+    [KIAM, true],
+    [REF1, undefined],
+  ])
+})
+
+test('lane: created PRs are polled with no tracked branch, and without the note no-branches', async () => {
+  const t = laneRig({ created: [{ ...IAM, number: 657 }] })
+  t.createdNodes['verticeone/vertice-iam'] = { 657: iamNode() }
+  t.setFact({ seq: 1, reasons: ['start'], branches: [], overflow: 0 })
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.log.gh).toHaveLength(1)
+  expect(t.state().prs).toMatchObject({ ok: true })
+  expect(t.items().map(i => i.key)).toEqual([KIAM])
+  // No created PR, no branch: the note of before.
+  const bare = laneRig()
+  bare.setFact({ seq: 1, reasons: ['start'], branches: [], overflow: 0 })
+  bare.lane.request()
+  await bare.lane.idle()
+  expect(bare.state().prs).toMatchObject({ ok: false, skipped: 'no-branches' })
+})
+
+test('lane: a conflicted created PR of another repo gets no worktree lookup; one of the session repo does', async () => {
+  const t = laneRig({ created: [{ ...IAM, number: 657 }] })
+  t.createdNodes['verticeone/vertice-iam'] = { 657: iamNode({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' }) }
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.log.worktrees).toBe(0) // its head name is a branch of that repo, not of the session repo
+  expect(t.state().merge).toEqual({ [KIAM]: {} })
+  const own = laneRig({ created: [{ host: 'github.com', owner: 'acme', repo: 'web', number: 12 }] })
+  own.createdNodes['acme/web'] = { 12: prNode({ number: 12, headRefName: 'feat/x', mergeable: 'CONFLICTING' }) }
+  own.lane.request()
+  await own.lane.idle()
+  expect(own.log.worktrees).toBe(1)
+  expect(own.state().merge).toEqual({ [K12]: { worktree: '/x/repo/wt' } })
+})
+
+test('lane: a dismissed created PR is not added again; another case of the session repo is the session repo', async () => {
+  const t = laneRig({ created: [{ ...IAM, number: 657 }], dismissed: [KIAM] })
+  t.createdNodes['verticeone/vertice-iam'] = { 657: iamNode() }
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.items()).toEqual([])
+  const sessionOnly = laneRig({ created: [{ host: 'github.com', owner: 'ACME', repo: 'Web', number: 12 }] })
+  sessionOnly.createdNodes['acme/web'] = { 12: prNode({ number: 12 }) }
+  sessionOnly.lane.request()
+  await sessionOnly.lane.idle()
+  expect(sessionOnly.log.gh).toHaveLength(1)
+  expect(sessionOnly.items().map(i => i.key)).toEqual([K12])
+})
+
+// Through the shipped trackers: the Bash result that created the PR is the proof, the lane asks for it, the pane lists it.
+
+/** The lines of a section of the `/track` text, from its title to the next blank line. */
+const sectionOf = (text: string, title: string): string[] =>
+  text
+    .split('\n\n')
+    .find(block => block.startsWith(title))
+    ?.split('\n') ?? []
+
+test('lane: a gh pr create in another repo, and one in the session repo on an untracked branch, list in Pull requests', async () => {
+  const t = shipped()
+  t.created['verticeone/vertice-iam'] = { 657: iamNode() }
+  t.created['acme/web'] = { 12: prNode({ number: 12, state: 'CLOSED', headRefName: 'feat/untracked-p2' }) }
+  await t.start()
+  await t.w.clock.advance(WINDOW)
+  const make = (url: string, number: number) => createdPr(url, number)
+  await t.call('Bash', { command: 'gh pr create --repo VerticeOne/vertice-iam' }, make(iamNode().url, 657))
+  await t.call('Bash', { command: 'gh pr create --base main' }, make('https://github.com/acme/web/pull/12', 12))
+  await t.w.clock.advance(WINDOW)
+  await t.refresh()
+  expect(t.keys().sort()).toEqual([K12, KIAM].sort())
+  const text = (await t.m.track(t.w.ports, '')).text
+  const prs = sectionOf(text, 'Pull requests')
+  expect(prs.some(l => l.includes('VerticeOne/vertice-iam#657') && l.includes('feat/brown-2901'))).toBe(true)
+  expect(prs.some(l => /^\s+#12\s/.test(l) && l.includes('feat/untracked-p2') && l.includes('closed'))).toBe(true)
+  expect(sectionOf(text, 'GitHub')).toEqual([]) // neither is only a conversation item
+  // The facts a later reader (a prompt, a priority rule) sees: the strongest reason is that the session created them.
+  expect(t.items().map(i => i.reasons.strongest)).toEqual(['created', 'created'])
+})
+
+test('lane: a created PR on another GitHub Enterprise host reads the full URLs of its body that name that host', async () => {
+  // The session is on github.com, so `github.hosts` does not list ghe.corp. The lane asked ghe.corp for the PR (gh is
+  // logged in there), so a URL of that host in the body is an issue of it, not a web link (Codex review of #186).
+  const GHE_PR = 'https://ghe.corp/team/svc/pull/3'
+  const t = shipped()
+  t.created['team/svc'] = {
+    3: {
+      ...prNode({ number: 3, headRefName: 'feat/ghe', body: 'Closes https://ghe.corp/team/svc/issues/5' }),
+      url: GHE_PR,
+    },
+  }
+  await t.start()
+  await t.w.clock.advance(WINDOW)
+  await t.call('Bash', { command: 'gh pr create' }, createdPr(GHE_PR, 3))
+  await t.w.clock.advance(WINDOW)
+  await t.refresh()
+  expect(t.keys().sort()).toEqual(['gh:ghe.corp/team/svc#3', 'gh:ghe.corp/team/svc#5'])
+})
+
+test('lane: a created PR survives /clear: the proof is carried, so the next step still asks for it', async () => {
+  const t = shipped()
+  t.created['verticeone/vertice-iam'] = { 657: iamNode() }
+  await t.start()
+  await t.w.clock.advance(WINDOW)
+  await t.call('Bash', { command: 'gh pr create' }, createdPr(iamNode().url, 657))
+  await t.w.clock.advance(WINDOW)
+  await t.refresh()
+  expect(t.keys()).toEqual([KIAM])
+  await t.m.end(t.w.ports, 'clear', 1500)
+  const run = t.w.store.get('v2:run') as unknown as { pendingEnd: PendingEnd; run: { auto: AutoState } }
+  expect(run.run.auto.prs?.map(p => p.number)).toEqual([657])
+  t.m.watch.resumeFrom(run.pendingEnd)
+  t.w.session.id = 'sess-2'
+  t.w.state.delete('auto')
+  t.w.state.delete('github')
+  t.w.state.delete('items')
+  const before = t.queries.length
+  await t.m.entry(t.w.ports)
+  await t.refresh()
+  expect(t.queries.slice(before).some(q => q.includes('pullRequest(number: 657)'))).toBe(true)
+  expect(t.keys()).toEqual([KIAM])
+})
+
+test('lane: a created PR survives an in-process /resume into a stored session: the proof is carried, so the PR stays in Pull requests', async () => {
+  const t = shipped()
+  t.created['verticeone/vertice-iam'] = { 657: iamNode() }
+  await t.start()
+  await t.w.clock.advance(WINDOW)
+  await t.call('Bash', { command: 'gh pr create' }, createdPr(iamNode().url, 657))
+  await t.w.clock.advance(WINDOW)
+  await t.refresh()
+  expect(t.keys()).toEqual([KIAM])
+  await t.m.end(t.w.ports, 'resume', 1500)
+  // The resumed session has a stored copy: the one this session left, so the PR comes back as a record that has `created`
+  // and no `discovered`, and no step has found it yet.
+  const stored = t.w.store.get('v2:s:sess-1')
+  expect(stored).toBeDefined()
+  t.w.store.set('v2:s:sess-2', stored as never)
+  t.w.session.id = 'sess-2'
+  t.w.state.delete('auto') // the engine resets the state of a resumed session
+  t.w.state.delete('github')
+  t.w.state.delete('items')
+  const before = t.queries.length
+  await t.m.entry(t.w.ports)
+  expect((t.items() as unknown as GitHubRecord[]).map(r => isLanePr(r))).toEqual([false])
+  await t.refresh()
+  // The `auto` slot was carried with its proof: the next step asks for the PR by number and the lane marker is back.
+  expect(t.queries.slice(before).some(q => q.includes('pullRequest(number: 657)'))).toBe(true)
+  expect((t.items() as unknown as GitHubRecord[]).map(r => [r.key, isLanePr(r)])).toEqual([[KIAM, true]])
+  const text = (await t.m.track(t.w.ports, '')).text
+  expect(sectionOf(text, 'Pull requests').some(l => l.includes('VerticeOne/vertice-iam#657'))).toBe(true)
+  expect(sectionOf(text, 'GitHub')).toEqual([])
 })

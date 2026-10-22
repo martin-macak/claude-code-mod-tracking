@@ -188,6 +188,17 @@ test('mergeNotes: after an incomplete reply the notes of the PRs it left out sta
   })
 })
 
+test('mergeNotes: in a complete reply the notes of the held keys stay, and the others go (issue #158)', () => {
+  const prev = { a: { worktree: '/w/a' }, b: { unknown: 2 }, c: {} }
+  const held = new Set(['b', 'c'])
+  // `b` and `c` are PRs of a repo that gave no answer: the reply does not name them, and their notes stay. An UNKNOWN note
+  // counts the look as a PR in the reply would. `a` left a complete reply: no note.
+  expect(mergeNotes(prev, [], { keep: held })).toEqual({ b: { unknown: 3 }, c: {} })
+  expect(mergeNotes(prev, [{ key: 'b', mergeable: 'MERGEABLE' as const }], { keep: held })).toEqual({ c: {} })
+  expect(mergeNotes(prev, [], { keep: new Set() })).toBeUndefined()
+  expect(mergeNotes({ c: {} }, [], { keep: new Set(['c']) })).toEqual({ c: {} })
+})
+
 test('AC4: a kept UNKNOWN note counts every step that asked, so a PR that stays out of the replies runs out of retries', () => {
   let notes = mergeNotes(undefined, [{ key: 'a', mergeable: 'UNKNOWN' }])
   expect(retryDelay(notes)).toBe(RETRY_MS[0])

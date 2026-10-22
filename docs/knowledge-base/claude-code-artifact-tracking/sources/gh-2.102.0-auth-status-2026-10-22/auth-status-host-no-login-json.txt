@@ -1,0 +1,4 @@
+$ gh auth status --hostname ghe.example.invalid --json hosts
+You are not logged into any accounts on ghe.example.invalid
+{"hosts":{}}
+exit=0

@@ -2,8 +2,9 @@
 // (git porcelain, then the engine's agent list) writes the `auto` member of the state family. The slot is run-scoped
 // (`persist: false`): the root, the proofs and the dismiss list go to `v2:run`, and a session switch carries them first
 // (plan decisions D2, D9).
-// It publishes four facts for the readers that cannot wait: `auto.root`, `auto.agents`, `auto.checkedAt` and, after each
-// round, `auto.branches`. The github tracker starts the PR lane from that fact, so auto never calls `gh` (plan L5, Task 12).
+// It publishes five facts for the readers that cannot wait: `auto.root`, `auto.agents`, `auto.prs`, `auto.checkedAt` and,
+// after each round, `auto.branches`. The github tracker starts the PR lane from the last, and reads the PRs the run
+// created from `auto.prs`, so auto never calls `gh` (plan L5, Task 12; issue #158).
 // The tracker is a module constant. What it builds once per load (the round, the scheduler, the count of rounds) is kept
 // per load, by the facts of the context.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 10.
@@ -26,7 +27,7 @@ import { autoCleanup } from './clean'
 import { type AutoConfig, autoConfig } from './config'
 import { autoIds } from './dismiss'
 import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from './events'
-import { FACT_AGENTS, FACT_BRANCHES, FACT_CHECKED_AT, FACT_ROOT } from './facts'
+import { FACT_AGENTS, FACT_BRANCHES, FACT_CHECKED_AT, FACT_PRS, FACT_ROOT } from './facts'
 import { MASTER_ID } from './ids'
 import {
   carryAuto,
@@ -36,6 +37,7 @@ import {
   recordAgentBranch,
   recordAgentResult,
   recordEnter,
+  recordPr,
   recordSpawn,
   recordTurnEnd,
 } from './ledger'
@@ -54,15 +56,19 @@ type H<E> = Handler<AutoConfig, AutoState, E>
 /** What the slot writes need of a context. */
 type SlotCtx = Pick<Ctx, 'data' | 'facts'>
 
-export { FACT_AGENTS, FACT_BRANCHES, FACT_CHECKED_AT, FACT_ROOT }
+export { FACT_AGENTS, FACT_BRANCHES, FACT_CHECKED_AT, FACT_PRS, FACT_ROOT }
 
 /** The run: root, proofs, agents, dismiss list and the last snapshot. A slot never written reads as a fresh empty one. */
 const readAuto = async (ctx: Pick<Ctx, 'data'>): Promise<AutoState> => (await ctx.data.get()) ?? emptyAuto()
 
-/** The root and the agent ledger as facts, for the readers that cannot wait: the repos tracker and the file ignore rule. */
+/**
+ * The root, the agent ledger and the PRs the run created as facts, for the readers that cannot wait: the repos tracker,
+ * the file ignore rule and the PR lane.
+ */
 function publishAuto(facts: FactsPort, s: AutoState): void {
   facts.publish(FACT_ROOT, (s.root ?? undefined) as unknown as Json | undefined)
   facts.publish(FACT_AGENTS, s.agents as unknown as Json)
+  facts.publish(FACT_PRS, (s.prs ?? []) as unknown as Json)
 }
 
 /**
@@ -207,8 +213,11 @@ const onAgent: H<ToolCallEvent> = soft('Agent', async (ctx, ev) => {
 const onBash: H<ToolCallEvent> = soft('Bash', async (ctx, ev) => {
   const command = String(isRecord(ev.input) ? (ev.input.command ?? '') : '')
   const f = fromBash(command, ev.result, ev.agentId)
-  const { agentId, branch } = f
+  const { agentId, branch, pr } = f
   if (agentId !== undefined && branch !== undefined) await setAuto(ctx, s => recordAgentBranch(s, agentId, branch))
+  // A PR the run created is a proof, written before the kick: the round that `pr-event` starts opens the PR step, and
+  // the fact `auto.prs` already holds it (issue #158).
+  if (pr !== undefined) await setAuto(ctx, s => recordPr(s, pr, ctx.config.slice().maxProofs))
   await touch(ctx, ev.agentId)
   if (f.kick) kick(ctx, f.kick)
 })
