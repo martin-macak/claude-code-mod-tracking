@@ -24,6 +24,11 @@ export type Segment = {
    * it passes on as typed (`'$NAME'`, `\$NAME`). Same length and order as `words`.
    */
   marked: string[]
+  /**
+   * For each word, `Typed.whole`: it holds no quote and no escape at all. A reserved word is one only then, so `stripLead`
+   * and `stripReserved` read this to keep `'done'` as a command (issue #194). Same length and order as `words`.
+   */
+  whole: boolean[]
   /** The segment ended with a single `&`: the shell runs it in the background. */
   bg: boolean
   /**
@@ -111,6 +116,9 @@ type Place = {
  * Only a `>` or `<` that was typed (no quote, no backslash) is a redirection (issue #162). A here-string (`<<<`) is one
  * too, with one word: it is no heredoc, so the next line is a command (issue #182). So are `<>` and `n<>` (issue #183).
  * Only a `done`, `fi` or `esac` that was typed whole closes a compound: `'done' y` is a command (issue #184).
+ * A heredoc tag is the next word with its quotes and backslashes removed, so `<<\EOF` hides its body as `<<'EOF'` does. A
+ * file descriptor right before `<<` (`3<<EOF`, `{fd}<<EOF`) is part of the redirection, and so is `{name}` before `<`, `>`
+ * or `<>` (issue #194). A `<<` inside `$(( ))` or `(( ))` is a shift, not a heredoc: the scope of that text says so.
  */
 export function splitShell(command: string): Segment[] {
   const out: Segment[] = []
@@ -126,8 +134,9 @@ export function splitShell(command: string): Segment[] {
   let i = 0
   const s = command
   // Open subshells, innermost last. The segment ends before a scope opens or closes, so it keeps the scope it ran in.
-  // `saved` is the `Place` of the scope that opened it. `compounds` is how many compounds were open then.
-  const stack: { id: string; tick: boolean; saved: Place; compounds: number }[] = []
+  // `saved` is the `Place` of the scope that opened it. `compounds` is how many compounds were open then. `arith`: the text
+  // in it is an arithmetic expression (`$(( ))`, `(( ))`), where `<<` is a shift (issue #194).
+  const stack: { id: string; tick: boolean; saved: Place; compounds: number; arith: boolean }[] = []
   let scopes = 0
   const scope = () => stack.at(-1)?.id ?? ''
   // The first segment of the and-or list that the next `&`, `;` or newline ends. `&&` and `||` keep it, and a newline
@@ -161,10 +170,102 @@ export function splitShell(command: string): Segment[] {
   // redirection only after such a character: after a quoted or escaped one, the `|` is a pipe and the `&` a background.
   let typedRedir = -2
   // A scope opens a list and a pipeline part of its own. Its close gives back the place it sat in.
-  const openScope = (tick: boolean) => {
-    stack.push({ id: `${scope()}.${++scopes}`, tick, saved: here(), compounds: compounds.length })
+  const openScope = (tick: boolean, arith = false) => {
+    stack.push({ id: `${scope()}.${++scopes}`, tick, saved: here(), compounds: compounds.length, arith })
     listFrom = partFrom = out.length
     piped = false
+  }
+  // The innermost scope holds arithmetic text. A `(` in it is a grouping parenthesis, so it holds arithmetic text too; a
+  // `$(` in it is a command substitution, and what is in that is a command again.
+  const inArith = () => stack.at(-1)?.arith === true
+  // The text from `from`, just behind an opening `((`, is an arithmetic expression: a `)` that no inner `(` holds is right
+  // behind by a second `)` (`((1<<2))`). Any other `)` closes a subshell in a subshell (`((cd /x); y)`), the form that bash
+  // falls back to. Quotes and escapes hide their parentheses. The scan is local, so a quote or a comment earlier in the
+  // command cannot throw it off. An arithmetic expression is short: past `MAX_ARITH` characters the scan gives up and the
+  // text is no arithmetic (as before issue #194), so a run of unterminated or nested `((` costs O(n), not O(n^2). The
+  // character behind the `)` that ends the scan is read all the same.
+  const MAX_ARITH = 256
+  // The index of the quote that closes the one at `k`, or `end` or more when none does before `end`. A backslash hides a
+  // character in double quotes, and nothing hides one in single quotes.
+  const skipQuote = (k: number, end: number): number => {
+    const q = s[k]
+    let j = k + 1
+    while (j < end && s[j] !== q) j += q === '"' && s[j] === '\\' ? 2 : 1
+    return j
+  }
+  const arithFollows = (from: number): boolean => {
+    let depth = 0
+    const end = Math.min(s.length, from + MAX_ARITH)
+    for (let k = from; k < end; k++) {
+      const ch = s[k]!
+      if (ch === '\\') k++
+      else if (ch === "'" || ch === '"') k = skipQuote(k, end)
+      else if (ch === '(') depth++
+      else if (ch === ')') {
+        if (depth === 0) return s[k + 1] === ')'
+        depth--
+      }
+    }
+    return false
+  }
+  // The `)` that closes the `(` at `open`, or -1: a command or arithmetic substitution in the tag of a heredoc
+  // (`<<$(echo EOF)`, `<<$((1+1))`). Quotes and escapes hide their parentheses. A tag is short, so the scan stops after
+  // `MAX_SUB` characters, and a run of `<<$(` that never closes costs O(n), not O(n^2).
+  const MAX_SUB = 256
+  const subEnd = (open: number): number => {
+    let depth = 0
+    const end = Math.min(s.length, open + MAX_SUB)
+    for (let k = open; k < end; k++) {
+      const ch = s[k]!
+      if (ch === '\\') k++
+      else if (ch === "'" || ch === '"') k = skipQuote(k, end)
+      else if (ch === '(') depth++
+      else if (ch === ')' && --depth === 0) return k
+    }
+    return -1
+  }
+  // The word after `<<`, with its quotes and backslashes removed, up to a blank or an operator that was not quoted: the tag
+  // of a heredoc. `\EOF`, `'EOF'`, `$'EOF'` and `E"O"F` all name `EOF`. A `$(` or `$((` is part of the tag up to its closing
+  // `)`, as typed. No word, a quote that never closes and a substitution that never closes give none.
+  // A backslash escape inside `$'...'` (`\n`, `\x41`) is not read: the text keeps it, as the KB page says.
+  const readTag = (from: number): { text: string; end: number } | undefined => {
+    let text = ''
+    let k = from
+    while (k < s.length && !/[\s;&|<>()`]/.test(s[k]!)) {
+      const ch = s[k]!
+      if (ch === '\\') {
+        if (s[k + 1] !== '\n') text += s[k + 1] ?? ''
+        k += 2
+      } else if (ch === '$' && (s[k + 1] === "'" || s[k + 1] === '"')) {
+        k++ // `$'EOF'` and `$"EOF"` quote the tag as `'EOF'` and `"EOF"` do: the `$` goes and the next round reads the quote
+      } else if (ch === '$' && s[k + 1] === '(') {
+        // `$(echo EOF)` and `$((1+1))`: bash does not expand the tag, so the text of the substitution is part of it, as typed.
+        const end = subEnd(k + 1)
+        if (end === -1) return undefined
+        text += s.slice(k, end + 1)
+        k = end + 1
+      } else if (ch === "'") {
+        const end = s.indexOf("'", k + 1)
+        if (end === -1) return undefined
+        text += s.slice(k + 1, end)
+        k = end + 1
+      } else if (ch === '"') {
+        let j = k + 1
+        while (j < s.length && s[j] !== '"') {
+          // In double quotes a backslash escapes only `$`, a backtick, a quote, a backslash and a newline.
+          if (s[j] === '\\' && '$`"\\\n'.includes(s[j + 1] ?? 'x')) {
+            if (s[j + 1] !== '\n') text += s[j + 1]
+            j += 2
+          } else text += s[j++]
+        }
+        if (j >= s.length) return undefined
+        k = j + 1
+      } else {
+        text += ch
+        k++
+      }
+    }
+    return k === from ? undefined : { text, end: k }
   }
   const closeScope = () => {
     const top = stack.pop()
@@ -255,7 +356,13 @@ export function splitShell(command: string): Segment[] {
     }
     const { words: clean, heads: cleanHeads } = dropRedirections(words, heads)
     if (clean.length > 0) {
-      out.push({ words: clean.map(unmarkDollars), marked: clean, bg, scope: scope() })
+      out.push({
+        words: clean.map(unmarkDollars),
+        marked: clean,
+        whole: cleanHeads.map(h => h.whole),
+        bg,
+        scope: scope(),
+      })
       const lead = compoundLead(clean, cleanHeads)
       if (lead.opens.length > 0) {
         // `if for i in 1; do ...; done; then` opens an `if` and a `for` in one segment: each gets its own level.
@@ -341,19 +448,26 @@ export function splitShell(command: string): Segment[] {
       i++
       continue
     }
-    // Heredoc: `<<TAG`, `<<-TAG`, `<<'TAG'`. The body starts after the next newline. The `<<` inside a here-string (`<<<`)
-    // is none: the first `<` of `<<<` is rejected by the third `<`, and the second one by the typed `<` just before it. A
-    // quoted or escaped `<` before the pair (`\<<<EOF`) is a word, so the heredoc stays.
-    if (c === '<' && s[i + 1] === '<' && s[i + 2] !== '<' && typedRedir !== i - 1) {
-      endWord()
+    // Heredoc: `<<TAG`, `<<-TAG`, `<<'TAG'`, `<<\TAG`. The body starts after the next newline. The `<<` inside a here-string
+    // (`<<<`) is none: the first `<` of `<<<` is rejected by the third `<`, and the second one by the typed `<` just before
+    // it. A quoted or escaped `<` before the pair (`\<<<EOF`) is a word, so the heredoc stays. In arithmetic text `<<` is a
+    // shift (`$((1<<2))`), and that is no heredoc either.
+    if (c === '<' && s[i + 1] === '<' && s[i + 2] !== '<' && typedRedir !== i - 1 && !inArith()) {
+      // A file descriptor glued to the `<<` (`3<<EOF`, `{fd}<<EOF`) is part of the redirection, no word of the command. Only
+      // a typed one counts: `a3<<EOF` and `'3'<<EOF` keep their word.
+      if (inWord && headOpen && FD_WORD.test(word)) {
+        word = ''
+        inWord = false
+        typedHead = 0
+      } else endWord()
       let j = i + 2
       const strip = s[j] === '-'
       if (strip) j++
       while (s[j] === ' ' || s[j] === '\t') j++
-      const m = /^(['"]?)([A-Za-z0-9_.-]+)\1/.exec(s.slice(j))
-      if (m) {
-        heredocs.push({ tag: m[2]!, strip })
-        i = j + m[0].length
+      const tag = readTag(j)
+      if (tag) {
+        heredocs.push({ tag: tag.text, strip })
+        i = tag.end
         continue
       }
       i += 2
@@ -410,9 +524,9 @@ export function splitShell(command: string): Segment[] {
         // ended the header just now (`case x in(x)`), so the case is read again.
         const c = theCase()
         if (c?.arm === 'pattern' && c.fresh && !c.paren) c.paren = true
-        else openScope(false)
+        else openScope(false, inArith() || (s[i + 1] === '(' && !/[<>]/.test(s[i - 1] ?? '') && arithFollows(i + 2)))
       } else if (op === '$(') {
-        openScope(false)
+        openScope(false, s[i + 2] === '(' && arithFollows(i + 3))
       } else if (op === ')') {
         endPipe()
         // A `)` in a `case` closes no scope: the pattern ends there. The arm after it is a list of its own.
@@ -502,13 +616,17 @@ export function scopedVars(): {
   }
 }
 
+// The file descriptor in front of a redirection operator: a number (`2>f`) or a variable (`{fd}>f`, issue #194). Bash
+// stores the descriptor that it opens in `$fd`. A name that is no identifier (`{1x}`, `{a b}`) is a word.
+const FD = String.raw`(?:\d+|\{[A-Za-z_][A-Za-z0-9_]*\})`
+const FD_WORD = new RegExp(`^${FD}$`)
 // `<>` stands before `<<?<?`: that branch matches the lone `<` of `<>` and leaves the `>` in the target (issue #183).
-const REDIRECT = /^(?:\d*|&)(?:>\||>>?|<>|<<?<?|>&|<&)(.*)$/
+const REDIRECT = new RegExp(String.raw`^(?:${FD}?|&)(?:>\||>>?|<>|<<?<?|>&|<&)(.*)$`)
 
 /**
- * Drops redirections (`> f`, `2>&1`, `&>f`, `<f`, `<> f`, `<<< word`) and their targets. `typed[i].head` is how many of
- * the first characters of `words[i]` were typed. Only that head can hold the redirection: a quoted or escaped `>` is a
- * word (`\>`, `'>'`, `2\>&1`), and so is the word after it (issue #162). Returns the kept words and their `Typed`.
+ * Drops redirections (`> f`, `2>&1`, `&>f`, `<f`, `<> f`, `<<< word`, `{fd}>f`) and their targets. `typed[i].head` is how
+ * many of the first characters of `words[i]` were typed. Only that head can hold the redirection: a quoted or escaped `>`
+ * is a word (`\>`, `'>'`, `2\>&1`), and so is the word after it (issue #162). Returns the kept words and their `Typed`.
  */
 function dropRedirections(words: readonly string[], typed: readonly Typed[]): { words: string[]; heads: Typed[] } {
   const out: { words: string[]; heads: Typed[] } = { words: [], heads: [] }
@@ -541,10 +659,12 @@ const RESERVED = new Set(['!', 'if', 'while', 'until', 'do', 'then', 'else', 'el
 /**
  * Drops the reserved words in front of a simple command. A segment that is only `done` or `fi` is left empty. It does
  * not see a reserved word behind a wrapper: `time ! git push` has `!` behind `time`. A reader calls `stripLead`.
+ * `whole` says for each word that it was typed whole (`Segment.whole`). Only such a word is reserved: `'done' y` runs a
+ * command named `done` (issue #194). Without `whole`, every word counts as typed.
  */
-export function stripReserved(words: readonly string[]): string[] {
+export function stripReserved(words: readonly string[], whole?: readonly boolean[]): string[] {
   let i = 0
-  while (i < words.length && RESERVED.has(words[i]!)) i++
+  while (i < words.length && RESERVED.has(words[i]!) && whole?.[i] !== false) i++
   return words.slice(i)
 }
 
@@ -593,13 +713,20 @@ export function stripWrappers(words: readonly string[]): {
  * comes before `!`, and `!` comes before `time`: `time ! git push`, `! time git push` and `if time ! git push` are all
  * valid shell. Each round drops the reserved words, then the wrappers, until nothing more goes. The env of every round
  * adds up: a later `VAR=x` wins. A program wrapper such as `sudo` before `!` is no valid shell: it reads the same way.
+ * It takes the words with their typed flags (`Segment.whole`, as for `stripReserved`), and has no fallback for a caller that
+ * has none: a reader that leaves them out does not compile, so it cannot bring issue #194 back unseen. A `Segment` fits.
  */
-export function stripLead(words: readonly string[]): ReturnType<typeof stripWrappers> {
+export function stripLead(seg: {
+  words: readonly string[]
+  whole: readonly boolean[]
+}): ReturnType<typeof stripWrappers> {
+  const { words, whole } = seg
   const env: Record<string, string> = {}
   let nohup = false
   let rest = words
   for (;;) {
-    const got = stripWrappers(stripReserved(rest))
+    // Both helpers only drop words from the front, so `rest` is always the end of `words`: its flags are the end of `whole`.
+    const got = stripWrappers(stripReserved(rest, whole.slice(words.length - rest.length)))
     Object.assign(env, got.env)
     nohup ||= got.nohup
     if (got.words.length === rest.length) return { words: got.words, env, nohup }

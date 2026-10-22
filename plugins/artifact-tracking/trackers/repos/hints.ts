@@ -194,7 +194,7 @@ export function parseRepoHintsFromBash(command: string, cwd?: string): { paths: 
   // A cd moves only its own subshell and the ones inside it.
   const dirs = scopedDir(cwd)
   for (const seg of splitShell(command)) {
-    const words = stripLead(seg.words).words
+    const words = stripLead(seg).words
     if (words.length === 0) continue
     const head = words[0]!
     let dir = dirs.get(seg.scope)

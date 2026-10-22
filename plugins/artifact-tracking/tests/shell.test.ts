@@ -1,5 +1,9 @@
 import { expect, test } from 'claude-code/testing'
 import { splitShell, stripLead, stripReserved } from '../core/lib/shell'
+import { expectLinear } from './fixtures/scaling'
+
+/** The words of a command that was typed whole: `stripLead` takes the typed flags of its words (issue #194). */
+const typed = (words: string[]) => ({ words, whole: words.map(() => true) })
 
 test('stripReserved drops the reserved words in front of a command', () => {
   expect(stripReserved(['do', 'git', '-C', '/tmp/r', 'push'])).toEqual(['git', '-C', '/tmp/r', 'push'])
@@ -40,22 +44,22 @@ test('stripReserved leaves a command without a reserved word as it is', () => {
 // and a reserved word can follow each other, so one pass of each helper is not enough (Codex review of the PR).
 test('stripLead drops reserved words and wrappers in any order', () => {
   const cmd = ['git', '-C', '/tmp/r', 'push']
-  expect(stripLead(['time', '!', ...cmd]).words).toEqual(cmd)
-  expect(stripLead(['!', 'time', ...cmd]).words).toEqual(cmd)
-  expect(stripLead(['if', 'time', '!', 'sudo', ...cmd]).words).toEqual(cmd)
-  expect(stripLead(['do', 'time', 'nohup', '!', ...cmd]).words).toEqual(cmd)
+  expect(stripLead(typed(['time', '!', ...cmd])).words).toEqual(cmd)
+  expect(stripLead(typed(['!', 'time', ...cmd])).words).toEqual(cmd)
+  expect(stripLead(typed(['if', 'time', '!', 'sudo', ...cmd])).words).toEqual(cmd)
+  expect(stripLead(typed(['do', 'time', 'nohup', '!', ...cmd])).words).toEqual(cmd)
 })
 
 test('stripLead adds up the env and the nohup flag of every round', () => {
-  const got = stripLead(['A=1', 'time', '!', 'B=2', 'A=3', 'nohup', 'sleep', '9'])
+  const got = stripLead(typed(['A=1', 'time', '!', 'B=2', 'A=3', 'nohup', 'sleep', '9']))
   expect(got).toEqual({ words: ['sleep', '9'], env: { A: '3', B: '2' }, nohup: true })
 })
 
 test('stripLead leaves a command with nothing in front as it is, and an assignment line empty', () => {
-  expect(stripLead(['git', 'status'])).toEqual({ words: ['git', 'status'], env: {}, nohup: false })
-  expect(stripLead(['L=/x'])).toEqual({ words: [], env: { L: '/x' }, nohup: false })
-  expect(stripLead(['time', 'done'])).toEqual({ words: [], env: {}, nohup: false })
-  expect(stripLead([])).toEqual({ words: [], env: {}, nohup: false })
+  expect(stripLead(typed(['git', 'status']))).toEqual({ words: ['git', 'status'], env: {}, nohup: false })
+  expect(stripLead(typed(['L=/x']))).toEqual({ words: [], env: { L: '/x' }, nohup: false })
+  expect(stripLead(typed(['time', 'done']))).toEqual({ words: [], env: {}, nohup: false })
+  expect(stripLead(typed([]))).toEqual({ words: [], env: {}, nohup: false })
 })
 
 // The scope of a segment is the subshell it runs in. Segments with the same scope run in the same shell.
@@ -219,7 +223,7 @@ test('splitShell keeps a quoted or escaped redirection word and the word after i
   const words = (cmd: string) => splitShell(cmd)[0]?.words
   expect(words('printf x \\> git -C /repo status')).toEqual(['printf', 'x', '>', 'git', '-C', '/repo', 'status'])
   // The detached form of the issue: the name of the process is what stands after the wrappers.
-  expect(stripLead(words('nohup printf x \\> out.txt &')!).words).toEqual(['printf', 'x', '>', 'out.txt'])
+  expect(stripLead(splitShell('nohup printf x \\> out.txt &')[0]!).words).toEqual(['printf', 'x', '>', 'out.txt'])
   expect(words("echo '>' a")).toEqual(['echo', '>', 'a'])
   expect(words('echo ">" a')).toEqual(['echo', '>', 'a'])
   expect(words("echo '>>' a")).toEqual(['echo', '>>', 'a'])
@@ -441,7 +445,7 @@ test('splitShell reads a here-string as a redirection with one word, so the next
 
 // A heredoc has the same first characters as a here-string. Each form that the splitter knows still hides its body, and the
 // command after the tag line is read. An escaped `<` in front is a word, so the `<<` after it is a heredoc. An escaped tag
-// (`<<\EOF`) and a file descriptor in front (`3<<EOF`) are KB limits, not forms of this test.
+// (`<<\EOF`) and a file descriptor in front (`3<<EOF`) have their own test below (issue #194).
 test('splitShell still skips the body of every form of heredoc that it knows', () => {
   const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
   const body = 'cd /y\nEOF\ncd /x'
@@ -520,4 +524,279 @@ test('splitShell reads a quoted or escaped done, fi or esac as a command, not as
     z: '',
   })
   expect(at('for i in 1; do cd /x; doner; done | cat; z').doner).toBe('.1')
+})
+
+// A heredoc with an escaped, quoted or split tag is a heredoc (issue #194). The tag is the next word with its quotes and
+// backslashes removed, so `<<\EOF` is the same as `<<'EOF'`: bash skips the body, and the word `EOF` is no command.
+test('splitShell skips the body of a heredoc with an escaped or mixed-quote tag', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  const body = 'cd /y\nEOF\ngit -C . status'
+  const after = ['cat', 'git -C . status']
+  expect(words(`cat <<\\EOF\n${body}`)).toEqual(after)
+  expect(words(`cat << \\EOF\n${body}`)).toEqual(after)
+  expect(words(`cat <<E\\OF\n${body}`)).toEqual(after)
+  expect(words(`cat <<E"O"F\n${body}`)).toEqual(after)
+  expect(words(`cat <<"E"'O'F\n${body}`)).toEqual(after)
+  expect(words('cat <<-\\EOF\n\tcd /y\n\tEOF\ngit -C . status')).toEqual(after)
+  // A tag with a blank or a slash in it.
+  expect(words("cat <<'E O F'\ncd /y\nE O F\ngit -C . status")).toEqual(after)
+  expect(words('cat <<a/b\ncd /y\na/b\ngit -C . status')).toEqual(after)
+  // A command, a redirection or a pipe on the line of the heredoc.
+  expect(words(`cat <<\\EOF; echo a\n${body}`)).toEqual(['cat', 'echo a', 'git -C . status'])
+  expect(words(`cat <<\\EOF > f\n${body}`)).toEqual(after)
+  expect(words(`cat <<\\EOF | wc\n${body}`)).toEqual(['cat', 'wc', 'git -C . status'])
+  // The escaped tag is still the tag: a line that only starts like it does not end the body.
+  expect(words('cat <<\\EOF\ncd /y\nEOFX\ncd /z\nEOF\ngit -C . status')).toEqual(after)
+  // Two heredocs, one of them escaped. An empty tag ends at an empty line.
+  expect(words('cat <<\\A <<B\ncd /y\nA\ncd /z\nB\ngit -C . status')).toEqual(after)
+  expect(words("cat <<''\ncd /y\n\ngit -C . status")).toEqual(after)
+})
+
+// The tag follows the quoting rules of bash. In double quotes a backslash escapes only `$`, a backtick, a quote, a backslash
+// and a newline, so `"E\xF"` is the tag `E\xF`. A backslash and a newline in the word vanish. A quote that never closes
+// gives no tag: bash reports an error for that, and the splitter reads the text as before.
+test('splitShell reads the tag of a heredoc by the quoting rules of bash', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  const after = ['cat', 'cd /x']
+  expect(words('cat <<"E\\"F"\ncd /y\nE"F\ncd /x')).toEqual(after)
+  expect(words('cat <<"E\\$F"\ncd /y\nE$F\ncd /x')).toEqual(after)
+  expect(words('cat <<"E\\xF"\ncd /y\nE\\xF\ncd /x')).toEqual(after)
+  expect(words('cat <<"E\\\\F"\ncd /y\nE\\F\ncd /x')).toEqual(after)
+  expect(words('cat <<E\\\nOF\ncd /y\nEOF\ncd /x')).toEqual(after)
+  // `$'EOF'` and `$"EOF"` quote the tag as `'EOF'` and `"EOF"` do: bash drops the `$`. A `$` that no quote follows is part of
+  // the tag (`<<$EOF` has the tag `$EOF`). A backslash escape inside `$'...'` (`\n`, `\x41`) stays unread: a limit of the KB.
+  expect(words("cat <<$'EOF'\ncd /y\nEOF\ncd /x")).toEqual(after)
+  expect(words('cat <<$"EOF"\ncd /y\nEOF\ncd /x')).toEqual(after)
+  expect(words("cat <<-$'EOF'\n\tcd /y\n\tEOF\ncd /x")).toEqual(after)
+  expect(words("cat <<E$'O'F\ncd /y\nEOF\ncd /x")).toEqual(after)
+  expect(words("cat << $'E O F'\ncd /y\nE O F\ncd /x")).toEqual(after)
+  expect(words('cat <<$EOF\ncd /y\n$EOF\ncd /x')).toEqual(after)
+  // An unclosed quote, and a `<<` with no word after it, start no heredoc.
+  expect(words("cat <<'EOF\ncd /x")).toEqual(['cat EOF\ncd /x'])
+  expect(words('cat <<"EOF\ncd /x')).toEqual(['cat EOF\ncd /x'])
+  expect(words('cat <<\ncd /x')).toEqual(['cat', 'cd /x'])
+  expect(words('cat <<')).toEqual(['cat'])
+  expect(words('cat <<\\')).toEqual(['cat'])
+})
+
+// A command or arithmetic substitution in the tag is part of the tag, as typed: bash does not expand the delimiter, and its
+// closing line is that same text (Codex review of the PR). The `(` and the `)` of the substitution do not end the tag,
+// and neither does a blank, a quote or a `)` inside it. A substitution that never closes gives no tag.
+test('splitShell reads a command substitution in a heredoc tag as a part of the tag', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  const after = ['cat', 'cd /x']
+  expect(words('cat <<$(echo EOF)\ncd /y\n$(echo EOF)\ncd /x')).toEqual(after)
+  expect(words('cat <<$((1+1))\ncd /y\n$((1+1))\ncd /x')).toEqual(after)
+  expect(words("cat <<$(echo 'a b')\ncd /y\n$(echo 'a b')\ncd /x")).toEqual(after)
+  expect(words('cat <<$(echo "a b")\ncd /y\n$(echo "a b")\ncd /x')).toEqual(after)
+  expect(words('cat <<$(echo ")")\ncd /y\n$(echo ")")\ncd /x')).toEqual(after)
+  expect(words('cat <<$(echo \\))\ncd /y\n$(echo \\))\ncd /x')).toEqual(after)
+  expect(words('cat <<$(echo $(echo EOF))\ncd /y\n$(echo $(echo EOF))\ncd /x')).toEqual(after)
+  expect(words('cat <<a$(echo x)b\ncd /y\na$(echo x)b\ncd /x')).toEqual(after)
+  expect(words('cat <<-$(echo EOF)\n\tcd /y\n\t$(echo EOF)\ncd /x')).toEqual(after)
+  expect(words('cat << $(echo EOF)\ncd /y\n$(echo EOF)\ncd /x')).toEqual(after)
+  // The text after the tag on the same line is read as usual, and a line with only the command inside ends nothing.
+  expect(words('cat <<$(echo EOF); echo a\ncd /y\n$(echo EOF)\ncd /x')).toEqual(['cat', 'echo a', 'cd /x'])
+  expect(words('cat <<$(echo EOF)\ncd /y\nEOF\ncd /z\n$(echo EOF)\ncd /x')).toEqual(after)
+  // A substitution that never closes starts no heredoc: the text is read as before. It costs a bounded scan.
+  expect(words('cat <<$(echo EOF\ncd /x')).toEqual(['cat', 'echo EOF', 'cd /x'])
+})
+
+// A file descriptor in front of `<<` belongs to the redirection (issue #194): `cat 3<<EOF` runs `cat`. Only digits or a
+// `{name}` that are typed, glued to the `<<` and a word of their own count. `a3<<EOF`, `3 <<EOF` and `'3'<<EOF` keep the word.
+test('splitShell drops the file descriptor in front of a heredoc', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  const body = 'hi\nEOF\ngit -C . status'
+  const after = ['cat', 'git -C . status']
+  expect(words(`cat 3<<EOF\n${body}`)).toEqual(after)
+  expect(words(`cat 3<< EOF\n${body}`)).toEqual(after)
+  expect(words('cat 12<<-EOF\n\thi\n\tEOF\ngit -C . status')).toEqual(after)
+  expect(words(`cat 3<<'EOF'\n${body}`)).toEqual(after)
+  expect(words(`cat 3<<\\EOF\n${body}`)).toEqual(after)
+  expect(words(`cat {fd}<<EOF\n${body}`)).toEqual(after)
+  expect(words(`cat a 3<<EOF b\n${body}`)).toEqual(['cat a b', 'git -C . status'])
+  expect(words(`cat 3<<EOF; echo a\n${body}`)).toEqual(['cat', 'echo a', 'git -C . status'])
+  // The control: a word that only ends in digits, a spaced `3`, a quoted or escaped `3`, and a here-string.
+  expect(words(`cat a3<<EOF\n${body}`)).toEqual(['cat a3', 'git -C . status'])
+  expect(words(`cat 3 <<EOF\n${body}`)).toEqual(['cat 3', 'git -C . status'])
+  expect(words(`cat '3'<<EOF\n${body}`)).toEqual(['cat 3', 'git -C . status'])
+  expect(words(`cat \\3<<EOF\n${body}`)).toEqual(['cat 3', 'git -C . status'])
+  expect(words(`cat x{fd}<<EOF\n${body}`)).toEqual(['cat x{fd}', 'git -C . status'])
+  expect(words('cat 3<<<hi\ngit -C . status')).toEqual(after)
+})
+
+// `{name}` in front of `<`, `>` or `<>` is a variable file descriptor (issue #194): bash opens the target and stores the
+// number in `$name`. It is a redirection, so the `{name}` word and its target are no words of the command.
+test('splitShell drops a variable file descriptor redirection with its target', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  expect(words('cd {fd}>f /x; git -C . status')).toEqual(['cd /x', 'git -C . status'])
+  expect(words('exec {fd}<> lock; git -C /y status')).toEqual(['exec', 'git -C /y status'])
+  // The target glued or spaced, the other operators, and the words around it.
+  expect(words('cmd a {fd}> f b')).toEqual(['cmd a b'])
+  expect(words('cmd a {fd}>>f b')).toEqual(['cmd a b'])
+  expect(words('cmd a {fd}<f b')).toEqual(['cmd a b'])
+  expect(words('cmd a {fd}< f b')).toEqual(['cmd a b'])
+  expect(words('cmd a {fd}<>f b')).toEqual(['cmd a b'])
+  expect(words('cmd a {fd}>|f b')).toEqual(['cmd a b'])
+  expect(words('cmd a {fd}<<<hi b')).toEqual(['cmd a b'])
+  expect(words('cmd a {fd}>&2 b')).toEqual(['cmd a b'])
+  expect(words('cmd a {fd}<&- b')).toEqual(['cmd a b'])
+  expect(words("cmd a {fd}> 'f g' b")).toEqual(['cmd a b'])
+  expect(words('cmd {_a1}>f {b2}<> g c')).toEqual(['cmd c'])
+  // Operators after the target work as usual.
+  expect(words('cmd {fd}>f && a\nb | c')).toEqual(['cmd', 'a', 'b', 'c'])
+  // Only a typed `{name}` right in front of the operator counts. A spaced one, a bad name and a quoted one are words.
+  expect(words('echo {fd} >f')).toEqual(['echo {fd}'])
+  expect(words('echo {fd}')).toEqual(['echo {fd}'])
+  expect(words('echo {1x} c')).toEqual(['echo {1x} c'])
+  expect(words('echo "{fd}>f" c')).toEqual(['echo {fd}>f c'])
+  expect(words("echo '{fd}>f' c")).toEqual(['echo {fd}>f c'])
+  // A name that is no identifier, or a name glued to a word, is no variable file descriptor. Bash splits the word at the `>`
+  // there, and the splitter keeps the text in one word (the glued-`>` limit of the KB), so these stay as they were.
+  expect(words('echo {1x}>f c')).toEqual(['echo {1x}>f c'])
+  expect(words('echo x{fd}>f c')).toEqual(['echo x{fd}>f c'])
+})
+
+// Only a reserved word that was typed whole is one (issue #194): `'done' git -C /x status` runs a command named `done`.
+// The splitter keeps the word, and `stripLead` reads `Segment.whole` as `compoundLead` and `closesAt` read `Typed.whole`.
+test('stripLead keeps a quoted or escaped reserved word, which is a command', () => {
+  const lead = (cmd: string) => splitShell(cmd).map(s => stripLead(s).words.join(' '))
+  expect(lead("'done' git -C /x status")).toEqual(['done git -C /x status'])
+  for (const q of ["'done'", '"done"', '\\done', "d'on'e", 'd\\one', "done''", 'done""', "''done"])
+    expect(lead(`${q} git -C /x status`)).toEqual(['done git -C /x status'])
+  expect(lead("'fi' git -C /x status")).toEqual(['fi git -C /x status'])
+  expect(lead("'esac' git -C /x status")).toEqual(['esac git -C /x status'])
+  expect(lead("'!' git -C /x status")).toEqual(['! git -C /x status'])
+  expect(lead("'if' git -C /x status")).toEqual(['if git -C /x status'])
+  // A quoted word behind a typed one, and behind a wrapper: the scan stops at the first command word.
+  expect(lead("for i in 1; do 'done' y; done")).toEqual(['for i in 1', 'done y', ''])
+  expect(lead("if ! 'done' y; then z; fi")).toEqual(['done y', 'z', ''])
+  expect(lead("time ! 'fi' y")).toEqual(['fi y'])
+  // The typed words still go: the control.
+  expect(lead('for i in 1; do git -C /x status; done')).toEqual(['for i in 1', 'git -C /x status', ''])
+  expect(lead('if ! git -C /x status; then :; fi')).toEqual(['git -C /x status', ':', ''])
+})
+
+// `stripReserved` keeps the typed flags optional: no flags means every word counts as typed. `stripLead` has no such
+// fallback. It takes the words with their flags (a `Segment` fits), so a reader that leaves `whole` out does not compile and
+// cannot bring issue #194 back without a sign.
+test('stripReserved reads the optional typed flags of the words, and stripLead the flags of its segment', () => {
+  expect(stripReserved(['done', 'git'], [false, true])).toEqual(['done', 'git'])
+  expect(stripReserved(['do', 'done', 'git'], [true, false, true])).toEqual(['done', 'git'])
+  expect(stripReserved(['do', 'done', 'git'], [true, true, true])).toEqual(['git'])
+  expect(stripLead({ words: ['time', '!', 'fi', 'git'], whole: [true, true, false, true] }).words).toEqual([
+    'fi',
+    'git',
+  ])
+  expect(
+    stripLead({ words: ['!', 'time', 'sudo', 'if', 'git'], whole: [true, true, true, false, true] }).words,
+  ).toEqual(['if', 'git'])
+  // Every word typed: the reserved words go.
+  expect(stripReserved(['done', 'git'])).toEqual(['git'])
+  expect(stripLead(typed(['time', '!', 'fi', 'git'])).words).toEqual(['git'])
+})
+
+// A `<<` inside `$(( ))` or `(( ))` is a shift, not a heredoc (issue #194). Bash evaluates it, and the lines after it run.
+test('splitShell reads << inside an arithmetic expression as a shift, so the next lines are commands', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  const rest = ['cd /x', 'git -C . status']
+  expect(words('x=$((1<<2))\ncd /x\ngit -C . status')).toEqual(['x=', ...rest])
+  expect(words('x=$(( 1 << 2 ))\ncd /x\ngit -C . status')).toEqual(['x=', '1', ...rest])
+  expect(words('(( x << 2 ))\ncd /x\ngit -C . status')).toEqual(['x', ...rest])
+  expect(words('(( x<<2 ))\ncd /x\ngit -C . status')).toEqual(['x<<2', ...rest])
+  expect(words('((x<<=2))\ncd /x\ngit -C . status')).toEqual(['x<<=2', ...rest])
+  expect(words('(( y = 1 << 3 ))\ncd /x\ngit -C . status')).toEqual(['y = 1', ...rest])
+  // After a here-string, in a command, in a loop header, a condition and a grouping parenthesis.
+  expect(words('cat <<< $((1<<2))\ncd /x\ngit -C . status')).toEqual(['cat', ...rest])
+  expect(words('cat <<<$((1<<2))\ncd /x\ngit -C . status')).toEqual(['cat', ...rest])
+  expect(words('echo $((1<<2))\ncd /x\ngit -C . status')).toEqual(['echo', ...rest])
+  expect(words('for ((i=1<<2; i<5; i++)); do :; done\ncd /x\ngit -C . status').slice(-2)).toEqual(rest)
+  expect(words('if (( x << 2 )); then :; fi\ncd /x\ngit -C . status').slice(-2)).toEqual(rest)
+  expect(words('while (( x << 2 )); do :; done\ncd /x\ngit -C . status').slice(-2)).toEqual(rest)
+  expect(words('x=$(( (1<<2) + (3<<1) ))\ncd /x\ngit -C . status').slice(-2)).toEqual(rest)
+  expect(words('x=$((1<<2)) y=$((3<<4))\ncd /x\ngit -C . status').slice(-2)).toEqual(rest)
+  expect(words('x=$(( $((1<<2)) << 1 ))\ncd /x\ngit -C . status').slice(-2)).toEqual(rest)
+  // In a case arm and in a pipeline, and after a here-string on the same line.
+  expect(words('case x in x) (( 1<<2 )) ;; esac\ncd /x\ngit -C . status').slice(-2)).toEqual(rest)
+  expect(words('echo $((1<<2)) | wc\ncd /x\ngit -C . status').slice(-2)).toEqual(rest)
+  expect(words('cat <<< hi; (( 1<<2 ))\ncd /x\ngit -C . status').slice(-2)).toEqual(rest)
+})
+
+// The shift guard reaches only the arithmetic text. A heredoc in a command substitution inside it is a heredoc, and so is
+// one in `$((cd /x); y)`, which bash reads as a subshell in `$( )` when no `))` closes it.
+test('splitShell still reads a heredoc next to arithmetic, in a substitution and after one', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  const inside = words('x=$(( $(cat <<EOF\ncd /y\nEOF\n) + 1 ))\ncd /x')
+  expect(inside).not.toContain('cd /y')
+  expect(inside).toContain('cd /x')
+  const sub = words('x=$((cat <<EOF\ncd /y\nEOF\n); cd /z)\ncd /x')
+  expect(sub).not.toContain('cd /y')
+  expect(sub.slice(-2)).toEqual(['cd /z', 'cd /x'])
+  // A heredoc after the arithmetic still hides its body, also on the line of the arithmetic.
+  expect(words('x=$((1<<2))\ncat <<EOF\ncd /y\nEOF\ncd /x')).toEqual(['x=', 'cat', 'cd /x'])
+  expect(words('cat <<EOF; x=$((1<<2))\ncd /y\nEOF\ncd /x')).toEqual(['cat', 'x=', 'cd /x'])
+  // A `<<` after the arithmetic has closed is a heredoc again.
+  expect(words('echo $((1+2)) <<EOF\ncd /y\nEOF\ncd /x')).toEqual(['echo', '1+2', 'cd /x'])
+  expect(words('(( 1 )) && cat <<EOF\ncd /y\nEOF\ncd /x')).toEqual(['1', 'cat', 'cd /x'])
+  // A process substitution that starts with `((` is no arithmetic: `<((echo a))` is `<(` and a subshell.
+  const proc = words('cat <((cat <<EOF\ncd /y\nEOF\n))\ncd /x')
+  expect(proc).not.toContain('cd /y')
+  expect(proc).toContain('cd /x')
+})
+
+// The scan for the end of the arithmetic text hides a `)` in quotes and after a backslash, as bash does. An expression with
+// no `))` is none: its `<<` stays a heredoc, as before.
+test('splitShell finds the end of arithmetic text past quoted parentheses, and none when it never ends', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  expect(words('(( x = ")" << 2 ))\ncd /x')).toContain('cd /x')
+  expect(words("(( x = ')' << 2 ))\ncd /x")).toContain('cd /x')
+  expect(words('(( x = \\) << 2 ))\ncd /x')).toContain('cd /x')
+  expect(words('(( x = "a\\"(" << 2 ))\ncd /x')).toContain('cd /x')
+  expect(words('(( x = ( 1 << 2 ) ))\ncd /x')).toContain('cd /x')
+  // Never closed: the unclosed quote, the missing `))` and the single `)` give no arithmetic.
+  expect(words('(( x << 2\ncd /x\n2\ngit -C . status')).not.toContain('cd /x')
+  expect(words("(( x = ' << 2 ))\ncd /x")).not.toContain('cd /x')
+  expect(words('(( x << 2 )\ncd /x\n2\ngit -C . status')).not.toContain('cd /x')
+})
+
+// The check for arithmetic text scans ahead from each `((` and `$((`. It stops after `MAX_ARITH` characters, so a run of
+// unterminated or nested openers costs a bounded scan each and `splitShell` stays linear on text that a model wrote
+// (issue #194). Without the cap each opener reads to the end of the text, and 4 times the input costs 16 times as much.
+const SCAN_FAMILIES: Record<string, (k: number) => string> = {
+  'unterminated ((': k => '(('.repeat(1_250 * k),
+  'unterminated $((': k => '$(('.repeat(2_500 * k),
+  'nested $((': k => '$(('.repeat(2_500 * k) + '1' + '))'.repeat(2_500 * k),
+  // The tag of a heredoc that opens a substitution never closes: each `<<` then scans ahead, up to the cap.
+  'unterminated <<$(': k => '<<$('.repeat(2_500 * k),
+  'unterminated <<$( with a quote': k => "<<$(echo '".repeat(1_500 * k),
+}
+for (const [family, make] of Object.entries(SCAN_FAMILIES)) {
+  test(`splitShell stays linear on ${family}`, async () => {
+    await expectLinear({ label: family, make, run: text => splitShell(text) })
+  })
+}
+
+// The cap is far above any real expression. Past it the text counts as no arithmetic, which is how it read before issue
+// #194: the shift is a heredoc tag again, and the lines after it are lost. The scan covers 256 characters after the `((`.
+test('splitShell reads arithmetic text up to the cap, and none past it', () => {
+  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  const sum = (n: number) => '1+'.repeat(n)
+  expect(words(`x=$(( ${sum(100)}1<<2 ))\ncd /x`)).toContain('cd /x')
+  expect(words(`x=$(( ${sum(200)}1<<2 ))\ncd /x`)).not.toContain('cd /x')
+  // The edge: the `)` at the end of the scan still reads the character behind it, so only the scan is bounded. The text
+  // between `((` and `))` is `n` ones and `<<2`: with 252 ones the first `)` is the last character that the scan reads.
+  const at = (n: number) => words(`x=$((${'1'.repeat(n)}<<2))\ncd /x`).includes('cd /x')
+  expect(at(252)).toBe(true)
+  expect(at(253)).toBe(false)
+})
+
+// The scan for the end of a substitution in a heredoc tag has a cap too (`MAX_SUB`, 256 characters from the `(`). A tag with
+// more is no tag: the `<<` starts no heredoc, and the lines after it are read as commands, as before.
+test('splitShell reads a substitution in a heredoc tag up to the cap, and none past it', () => {
+  const hides = (n: number) => {
+    const tag = `$(${'x'.repeat(n)})`
+    return !splitShell(`cat <<${tag}\ncd /y\n${tag}\ncd /x`).some(s => s.words.join(' ') === 'cd /y')
+  }
+  expect(hides(254)).toBe(true)
+  expect(hides(255)).toBe(false)
 })
