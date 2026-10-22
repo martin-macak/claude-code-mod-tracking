@@ -185,6 +185,10 @@ declare module 'claude-code' {
       turns: TurnLedger
       /** Issue #49. `/track show-all` is on: the rows the TTL hides show again. Session scope, reset by `/clear`. */
       hidden: { showAll: boolean }
+      /** Issue #63, L3. The view the person chose (`g`, `/track view`), or `null` for `global.ui.view`. Session scope, reset by `/clear`. */
+      view: string | null
+      /** Issue #63, L3. The filters of the pane: `t` hides the rows nobody touched. Session scope, reset by `/clear`. */
+      filters: { touchedOnly: boolean }
     }
   }
 }

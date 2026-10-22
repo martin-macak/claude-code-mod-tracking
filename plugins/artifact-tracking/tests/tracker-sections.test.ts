@@ -4,7 +4,7 @@ import { expect, test } from 'claude-code/testing'
 import { NO_VIEW } from '../core/infra/views'
 import type { Json } from '../core/interfaces/items'
 import type { Cell, CellId, SectionSpec, TreeRow } from '../core/interfaces/view'
-import { listGroups } from '../core/lib/grouping'
+import { listGroups, viewGroups } from '../core/lib/grouping'
 import {
   NOW,
   paneWorld,
@@ -377,4 +377,48 @@ test('the sections of a tracker that is off are gone; the others stay', async ()
     'Repos',
     'PRs',
   ])
+})
+
+// ---------------------------------------------------------------- the views (issue #63, L3)
+
+test('the worktree root, the master and every agent say lift: the rows below them are rows of their own', async () => {
+  const t = await paneWorld()
+  const sections = await t.m.paneData(t.w.ports, NO_VIEW)
+  const all = (id: string): TreeRow[] =>
+    flat(section(sections, id).rows).map(([rowId]) => find(section(sections, id).rows, rowId) as TreeRow)
+  expect(
+    all('worktrees')
+      .filter(r => r.lift)
+      .map(r => r.id),
+  ).toEqual(['wt:/work'])
+  expect(
+    all('agents')
+      .filter(r => r.lift)
+      .map(r => r.id),
+  ).toEqual(['ag:master', 'ag:explore', 'ag:review', 'ag:build', 'ag:lint'])
+})
+
+test('by status a failed sub-agent lands in the failed group and a removed worktree in the gone group', async () => {
+  const t = await paneWorld()
+  const sections = await t.m.paneData(t.w.ports, NO_VIEW)
+  const { groups } = viewGroups(sections, 'status', { touchedOnly: false })
+  const group = (key: string): string[] => (groups.find(g => g.id === `status:${key}`)?.rows ?? []).map(r => r.id)
+  // The master is active and holds a failed agent, yet the failed agent is a row of the failed group.
+  expect(group('failed')).toContain('ag:lint')
+  expect(group('failed')).not.toContain('ag:master')
+  expect(group('active')).toEqual(expect.arrayContaining(['ag:master', 'ag:explore', 'wt:/work']))
+  expect(group('waiting')).toContain('ag:build')
+  expect(group('done')).toContain('ag:review')
+  expect(group('gone')).toContain('wt:/work/old-wt')
+  // The nested agent is no child of its parent any more: no row of the auto tracker holds a child.
+  const mine = groups.flatMap(g => g.rows).filter(r => r.owner === 'auto')
+  expect(mine.every(r => r.children === undefined)).toBe(true)
+})
+
+test('by list the agents stay one tree under the master', async () => {
+  const t = await paneWorld()
+  const sections = await t.m.paneData(t.w.ports, NO_VIEW)
+  const [agents] = viewGroups(sections, 'list', { touchedOnly: false }).groups.filter(g => g.id === 'list:agents')
+  expect(agents?.rows.map(r => r.id)).toEqual(['ag:master'])
+  expect(agents?.count).toBe(5)
 })

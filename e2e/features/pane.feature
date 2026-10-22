@@ -137,10 +137,10 @@ Feature: Drive the /track pane with the keys
     And Claude finishes
     And I type "/track"
     Then the selected row shows "one.example"
-    And the screen matches /│.*three\.example\/c.*\n(.*│ *\n){10,}.*│r: refresh/
+    And the screen matches /│.*three\.example\/c.*\n(.*│ *\n){10,}.*│View: list[^\n]*\n(.*│[^\n]*\n)?.*│r: refresh/
     When I press "Tab"
     Then the selected row shows "two.example"
-    And the screen matches /│.*three\.example\/c.*\n(.*│ *\n){10,}.*│r: refresh/
+    And the screen matches /│.*three\.example\/c.*\n(.*│ *\n){10,}.*│View: list[^\n]*\n(.*│[^\n]*\n)?.*│r: refresh/
 
   # Issue #109, review finding m2. The ring sits on a position among the Buttons. Enter on an N more row puts the new rows in
   # before it, so its position holds the stop of a row that the window hides, and no row would show the ring. The pane asks for
@@ -367,3 +367,36 @@ Feature: Drive the /track pane with the keys
     Then the pane stops showing "#7"
     And the focus ring is on "r: refresh"
     And the fake gh answered no unsupported call
+
+  # Issue #63, L3. The pane opens in the view of `global.ui.view`, by list. `g` takes the next view of `global.ui.views`: by
+  # status. The group titles change with the view (a web link has no state, so by status it is the group "No status"), the view
+  # line names the view, the row that was selected stays selected, and the ring goes with it to the new handle. A second `g`
+  # goes to flat, one group of every row. The keys sit on the view line: the footer keeps its keys.
+  Scenario: g moves the pane from by list to by status, and the group titles change
+    Given a Claude Code session with the artifact-tracking mod
+    When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "one.example"
+    And the screen matches /Web links 3 +3 links/
+    And the screen shows "View: list"
+    And the screen shows "g: view"
+    When I press "Tab"
+    Then the selected row shows "two.example"
+    When I press "g"
+    # The transcript still holds the text of /track, so the old title is not a sign: the border `│` of the pane is.
+    Then the screen matches /│No status +3/
+    And the screen shows "View: status"
+    And the selected row shows "two.example"
+    And the focus ring is on "▸"
+    # Every row Button draws "▸", so the step above passes with the ring on any row. By status the order is one, three, two.
+    # The ring is on two, the last row: Up goes to three. A ring left at the old place (the second Button, now three) would go
+    # to one.
+    When I press "Up"
+    Then the selected row shows "three.example"
+    When I press "Down"
+    Then the selected row shows "two.example"
+    When I press "g"
+    Then the screen shows "View: flat"
+    And the screen matches /│All +3/
+    And the selected row shows "two.example"

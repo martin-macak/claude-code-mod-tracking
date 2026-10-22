@@ -10,7 +10,7 @@ import { KEYS as GITHUB_ROW_KEYS } from '../trackers/github/actions'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import { neighbourOf } from '../ux/tree-data-table/table'
 import { fakeConfig } from './fixtures/config-fs'
-import { buttonOf, footerOf, handlesOf, leaves, nodes, press, rowBoxes, texts } from './fixtures/drawn'
+import { buttonOf, footerOf, handlesOf, leaves, nodes, press, rowBoxes, texts, viewLineOf } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
 import { fakePorts } from './fixtures/ports'
 import { row, section } from './fixtures/sections'
@@ -139,10 +139,11 @@ test('draw hands the body height to the help view: a short body draws it compact
   const t = setup(webs('a'), { path: '/p/config.json', version: '1.2.3' })
   t.w.state.set('help', true)
   const help = async (rows?: number) => (await t.draw(96, rows)) as unknown as { children: { children: unknown[] }[] }
-  // The full view is 2 titles, 7 keys, the config line and the version line. The compact view is 7 lines: three keys to a line.
-  expect((await help(undefined)).children[0]?.children).toHaveLength(11)
-  expect((await help(28)).children[0]?.children).toHaveLength(11)
-  expect((await help(11)).children[0]?.children).toHaveLength(7)
+  // The full view is 2 titles, 10 keys (g, a and t are pane keys, issue #63, L3), the config line and the version line. The compact
+  // view is 8 lines: three keys to a line.
+  expect((await help(undefined)).children[0]?.children).toHaveLength(14)
+  expect((await help(28)).children[0]?.children).toHaveLength(14)
+  expect((await help(11)).children[0]?.children).toHaveLength(8)
 })
 
 test('with many problems a short body draws the help view capped with a count, and /track help prints every problem of its model', async () => {
@@ -229,8 +230,11 @@ test('a pending refocus wins over the last drawn map for its key, once', async (
 // ---------------------------------------------------------------- the window (issue #109)
 
 const TWELVE = webs(...Array.from({ length: 12 }, (_, i) => `w${i}`))
-/** A body of 11 rows, 96 cells wide: the inline pane at 100x40. It shows 6 of 12 rows. */
-const SHORT = 11
+/**
+ * A body of 12 rows, 96 cells wide: the 11 rows of the inline pane at 100x40 and the row of the view line (issue #63, L3). It
+ * shows 6 of 12 rows, as the 11 rows showed before the view line.
+ */
+const SHORT = 12
 const shownIds = (tree: unknown): string[] => rowBoxes(tree).map(b => leaves(b).join(' ').match(/w\d+/)?.[0] ?? '?')
 
 test('draw hands the window its place back: a selection inside the window does not move it', async () => {
@@ -1727,6 +1731,25 @@ test('x on the last row while the ring is on x or r asks for the ring on that Bu
   }
 })
 
+// `g`, `a` and `t` sit on the view line, not in the footer. A ring on one of them is a ring on a Button that the next drawing
+// still holds, so the press that took the last row asks for that Button again (issue #63, L3, review m1).
+test('x on the only row while the ring sits on g keeps the ring on g: a view line Button is still drawn', async () => {
+  for (const at of ['view', 'show-all', 'touched']) {
+    const t = await ringOn(at, ['a'])
+    t.host.onDismiss = () => t.host.setRows([])
+    await pressDraw(t, 'dismiss')
+    expect(t.selected(), at).toBeNull()
+    expect(t.calls, at).toEqual([`focus ${at}`])
+  }
+})
+
+test('h opens the help view while the ring sits on g: the help view has no view line, so the ring goes to h: back', async () => {
+  const t = await ringOn('view')
+  await pressDraw(t, 'help')
+  expect(t.w.state.get('help')).toBe(true)
+  expect(t.calls).toEqual(['focus help'])
+})
+
 test('x on a row that has a neighbour asks for the ring on the neighbour only', async () => {
   const t = await ringOn('r1', ['a', 'b', 'c'], 'b')
   t.host.onDismiss = () => t.host.setRows(webs('a', 'c'))
@@ -1765,4 +1788,219 @@ test('helpTextOf prints the version of the host after the config line', async ()
   const t = setup(webs('a'), { path: '/p/config.json', problems: ['X.'], version: 'unknown' })
   const out = await helpTextOf(t.w.ports, t.m)
   expect(out.endsWith('Config file: /p/config.json\nVersion: unknown\nProblems\n  X.')).toBe(true)
+})
+
+// ---------------------------------------------------------------- the views and their keys (issue #63, L3)
+
+/** A web row with a status token: the views group by it. */
+const failing = (id: string): TreeRow => web(id, { facets: { status: { label: 'failed', token: 'failed' } } })
+const reasoned = (id: string, strongest: 'discovered' | 'created'): TreeRow =>
+  web(id, { reasons: { first: strongest, all: [strongest], strongest } })
+
+/** `a`, `b`, `c` with `c` failing and `b` selected: by list `b` is r1, by status the failed `c` is r0 and `b` is r2. */
+async function views(o: Parameters<typeof setup>[1] = {}) {
+  const t = setup([web('a'), web('b'), failing('c')], o)
+  t.w.state.set('selected', 'b')
+  await t.draw()
+  t.w.stateSets = {}
+  return t
+}
+
+test('draw puts the view line above the footer: the view, then g, a and t; the footer keeps its keys', async () => {
+  const t = await views()
+  const tree = await t.draw()
+  expect(texts(tree).some(([, s]) => s === 'View: list')).toBe(true)
+  expect(viewLineOf(tree).map(b => [b.props.hotkey, b.props.label])).toEqual([
+    ['g', 'view'],
+    ['a', 'show all'],
+    ['t', 'touched only'],
+  ])
+  expect(footerOf(tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
+})
+
+test('the view line says the view, the filter with its hidden rows and the show-all toggle', async () => {
+  const t = await views()
+  await t.w.ports.state.view.update(() => 'status')
+  await t.w.ports.state.filters.update(() => ({ touchedOnly: true }))
+  await t.w.ports.state.hidden.update(() => ({ showAll: true }))
+  const line = texts(await t.draw()).find(([, s]) => s.startsWith('View:'))?.[1]
+  expect(line).toBe('View: status · touched only · showing all') // no row says discovered or mentioned: none hidden
+})
+
+// Only the by-list view draws the notes of the sections, where the TTL count sits as text. The sections carry it as data
+// (`hiddenRows`), so the line of every view says how many rows `a` would bring back (issue #63, L3, review M1).
+test('the view line counts the rows that the sections leave out until a shows them, in the view that has no notes', async () => {
+  const t = await views()
+  t.host.sections = [section('web', [web('a'), web('b'), failing('c')], { hiddenRows: 2 })]
+  await t.w.ports.state.view.update(() => 'status')
+  const line = async () => texts(await t.draw()).find(([, s]) => s.startsWith('View:'))?.[1]
+  expect(await line()).toBe('View: status · 2 ended hidden')
+  await t.pressKey('show-all')
+  expect(await line()).toBe('View: status · showing all') // the toggle is on: the line says it, not a count
+  await t.pressKey('show-all')
+  expect(await line()).toBe('View: status · 2 ended hidden')
+})
+
+// Owner decision of 2026-10-22 (Q37): the by-list view draws the notes of the sections, which say `(N hidden)`, so its view line
+// does not count the ended rows a second time.
+test('the view line of the by-list view leaves out the ended count that the section notes say', async () => {
+  const t = await views()
+  t.host.sections = [section('web', [web('a'), web('b')], { hiddenRows: 2 })]
+  const line = async () => texts(await t.draw()).find(([, s]) => s.startsWith('View:'))?.[1]
+  expect(await line()).toBe('View: list')
+  await t.pressKey('touched')
+  expect(await line()).toBe('View: list · touched only')
+  await t.pressKey('touched')
+  await t.pressKey('view') // the next view of the default cycle: status, which has no notes
+  expect(await line()).toBe('View: status · 2 ended hidden')
+})
+
+test('the help view has no view line, and the help keys name g, a and t', async () => {
+  const t = await views()
+  t.w.state.set('help', true)
+  const tree = await t.draw()
+  expect(viewLineOf(tree)).toEqual([])
+  expect(texts(tree).some(([, s]) => s.startsWith('View:'))).toBe(false)
+  const out = leaves(tree)
+  expect(out).toContain('view')
+  expect(out).toContain('show all')
+  expect(out).toContain('touched only')
+})
+
+test('help titles a tracker by its sections, whatever the view draws: never by Failed or No status', async () => {
+  const t = await views()
+  t.host.keys.add('web', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+  t.w.state.set('help', true)
+  const byList = leaves(await t.draw())
+  expect(byList).toContain('web') // the section of the tracker, as the by-list view titles it
+  for (const view of ['status', 'tracker', 'reason', 'flat']) {
+    await t.w.ports.state.view.update(() => view)
+    expect(leaves(await t.draw()), view).toEqual(byList)
+    expect(await helpTextOf(t.w.ports, t.m), view).toContain('\nweb\n  o  open')
+  }
+  const text = await helpTextOf(t.w.ports, t.m)
+  expect(text).not.toMatch(/Failed|No status|Pinned/)
+})
+
+test('g takes the next view of global.ui.views, keeps the row selected and asks for the ring on its new handle', async () => {
+  const t = await views()
+  expect(handlesOf(await t.draw())).toEqual(['r0', 'r1', 'r2']) // by list: a, b, c
+  await t.pressKey('view')
+  expect(t.w.state.get('view')).toBe('status')
+  expect(t.selected()).toBe('b')
+  // By status the failed row `c` is first: `b` is the third row now.
+  expect(t.w.ui.focused).toEqual(['r2'])
+  await t.pressKey('view')
+  expect(t.w.state.get('view')).toBe('flat')
+  await t.pressKey('view')
+  expect(t.w.state.get('view')).toBe('list')
+  expect(t.selected()).toBe('b')
+  expect(t.w.ui.focused.at(-1)).toBe('r1')
+})
+
+test('g, a and t redraw the pane once and write no config file and no store key', async () => {
+  for (const key of ['view', 'show-all', 'touched']) {
+    const t = await views()
+    await t.w.clock.advance(5000) // the opening of the pane may write the store: let it happen first
+    const drawn = t.w.ui.invalidated
+    const files = { ...t.w.files }
+    const sets = t.w.storeSets
+    await t.pressKey(key)
+    await t.w.clock.advance(5000) // past the flush delay of the stored copy, as in view-state.test.ts
+    expect(t.w.ui.invalidated - drawn, key).toBe(1)
+    expect(t.w.files, key).toEqual(files)
+    expect(t.w.storeSets, key).toBe(sets)
+    expect(t.w.stateSets.selected, key).toBeDefined() // the selection is written again, to the same row
+  }
+})
+
+test('g cycles the views the config lists, and starts the cycle when the live view is not in the list', async () => {
+  const t = await views({ file: { global: { ui: { views: ['reason', 'tracker'] } } } })
+  await t.pressKey('view')
+  expect(t.w.state.get('view')).toBe('reason') // by list is not in the list: the first of it
+  await t.pressKey('view')
+  expect(t.w.state.get('view')).toBe('tracker')
+  await t.pressKey('view')
+  expect(t.w.state.get('view')).toBe('reason')
+})
+
+test('g starts from global.ui.view when no view was chosen', async () => {
+  const t = await views({ file: { global: { ui: { view: 'status', views: ['list', 'status', 'flat'] } } } })
+  await t.pressKey('view')
+  expect(t.w.state.get('view')).toBe('flat') // the pane was by status, so the next is flat
+})
+
+test('a toggles the show-all state of /track show-all, keeps the selection and asks for the ring', async () => {
+  const t = await views()
+  await t.pressKey('show-all')
+  expect(t.w.state.get('hidden')).toEqual({ showAll: true })
+  expect(t.selected()).toBe('b')
+  expect(t.w.ui.focused.at(-1)).toBe('r1')
+  await t.pressKey('show-all')
+  expect(t.w.state.get('hidden')).toEqual({ showAll: false })
+})
+
+test('t hides the rows that were only discovered or mentioned, and a selected row that goes falls to the next shown row', async () => {
+  const t = setup([web('a'), reasoned('b', 'discovered'), reasoned('c', 'created')])
+  t.w.state.set('selected', 'b')
+  await t.draw()
+  await t.pressKey('touched')
+  expect(t.w.state.get('filters')).toEqual({ touchedOnly: true })
+  expect(handlesOf(await t.draw())).toEqual(['r0', 'r1']) // a and c: b is hidden
+  expect(t.selected()).toBe('c') // the row after `b` in the last drawing that is still drawn
+  expect(t.w.ui.focused.at(-1)).toBe('r1')
+  await t.pressKey('touched')
+  expect(t.w.state.get('filters')).toEqual({ touchedOnly: false })
+  expect(handlesOf(await t.draw())).toEqual(['r0', 'r1', 'r2'])
+})
+
+test('g, a and t with no row selected change the view and ask for no ring', async () => {
+  const t = setup([web('a'), failing('b')])
+  await t.draw()
+  for (const key of ['view', 'show-all', 'touched']) await t.pressKey(key)
+  expect(t.w.state.get('view')).toBe('status')
+  expect(t.w.state.get('hidden')).toEqual({ showAll: true })
+  expect(t.w.state.get('filters')).toEqual({ touchedOnly: true })
+  expect(t.selected()).toBeNull()
+  expect(t.w.ui.focused).toEqual([])
+})
+
+test('a press of g, a or t whose write is in flight when the pane closes changes nothing after it', async () => {
+  for (const [key, atom, rest] of [
+    ['view', 'view', null],
+    ['show-all', 'hidden', { showAll: false }],
+    ['touched', 'filters', { touchedOnly: false }],
+  ] as const) {
+    const t = await views()
+    const calls = engineLog(t)
+    const release = holdFirst(t.w.ports.state[atom], 'update')
+    press(buttonOf(await t.draw(), key))
+    await turn()
+    await t.session.closed(t.w.ports)
+    release()
+    await t.session.idle()
+    expect(await t.w.ports.state[atom].get(), key).toEqual(rest)
+    expect(calls, key).toEqual([]) // no ask for the keys, no ring request
+  }
+})
+
+test('g forgets the "N more" stop the ring sat on: its group index means another group in the next view', async () => {
+  const t = setup(TWELVE, { file: { global: { ui: { sectionRows: 8 } } } })
+  t.w.state.set('selected', 'w0')
+  await t.draw(96, SHORT)
+  await t.session.focused(t.w.ports, 'm0') // the ring is on the N more Button: the window follows it
+  expect(shownIds(await t.draw(96, SHORT))).not.toContain('w0')
+  await t.pressKey('view')
+  expect(t.w.state.get('view')).toBe('status')
+  expect(shownIds(await t.draw(96, SHORT))).toContain('w0') // the window follows the selected row again
+})
+
+test('g in a pane that has no keys asks for them once, before the write', async () => {
+  const t = await views()
+  const tree = await t.draw(80, undefined, false)
+  const opened = t.w.ui.opened
+  press(buttonOf(tree, 'view'))
+  await t.session.idle()
+  expect(t.w.ui.opened - opened).toBe(1)
+  expect(t.w.state.get('view')).toBe('status')
 })

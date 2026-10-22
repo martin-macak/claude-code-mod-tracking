@@ -1,6 +1,7 @@
 // The lifecycle manager serves the pane keys: the registry built at each start, the footer states, the tracker actions and
 // the problems of the help view. Fake trackers on fakePorts. Plan: L6 Task 10 (G6, G7, G15).
 import { expect, test } from 'claude-code/testing'
+import { CORE_KEYS } from '../core/infra/keys'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { ItemKind, ItemsHost, JsonObject } from '../core/interfaces/items'
 import type { KeySpec, Tracker } from '../core/interfaces/tracker'
@@ -62,7 +63,7 @@ const keysOf = (m: LifecycleManager) => m.keys.all().map(k => `${k.owner}.${k.id
 
 test('before any start the registry holds the core keys', () => {
   const { m } = setup([fake('t', 10, { keys: [OPEN] })])
-  expect(m.keys.all()).toHaveLength(7)
+  expect(m.keys.all()).toHaveLength(CORE_KEYS.length)
   expect(m.keys.all().every(k => k.owner === 'core')).toBe(true)
   expect(m.problems()).toEqual([])
 })
@@ -73,17 +74,17 @@ test('start builds the key registry from the live trackers', async () => {
   expect(
     m.keys
       .all()
-      .slice(0, 7)
+      .slice(0, CORE_KEYS.length)
       .map(k => k.key),
-  ).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
+  ).toEqual(['r', 'h', 'g', 'a', 't', 'x', '1', '2', '3', '0'])
   expect(keysOf(m).at(-1)).toBe('t.open')
 })
 
 test('the tracker keys follow the order of the trackers, not the order of the list', async () => {
-  const late = fake('late', 20, { keys: [{ ...OPEN, id: 'a', key: 'a' }] })
+  const late = fake('late', 20, { keys: [{ ...OPEN, id: 'a', key: 'p' }] })
   const early = fake('early', 10, { keys: [{ ...OPEN, id: 'b', key: 'b' }] })
   const { m } = await started([late, early])
-  expect(keysOf(m).slice(7)).toEqual(['early.b', 'late.a'])
+  expect(keysOf(m).slice(CORE_KEYS.length)).toEqual(['early.b', 'late.a'])
 })
 
 test('a tracker that is off adds no key', async () => {
@@ -92,7 +93,7 @@ test('a tracker that is off adds no key', async () => {
   const t = fake('t', 10, { keys: [OPEN], config })
   const { m } = await started([t], { trackers: { t: { enabled: false } } })
   expect(m.keys.get('t.open')).toBeUndefined()
-  expect(m.keys.all()).toHaveLength(7)
+  expect(m.keys.all()).toHaveLength(CORE_KEYS.length)
 })
 
 test('a second start rebuilds the registry with no duplicate problem', async () => {

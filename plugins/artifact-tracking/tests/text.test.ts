@@ -9,10 +9,12 @@ test('no sections gives No tracked items yet.', () => {
   expect(EMPTY_TEXT).toBe('No tracked items yet.')
 })
 
+// Issue #63, L3: a group of a view (Pinned, Failed, All) has no note, and its title line ends at the title with no trailing
+// space. A section of the by-list view always has a note in the pane, so its line is the one it was.
 test('the title line is the title, two spaces and the note', () => {
   const web = group('web', [], { title: 'Web links', note: { text: '2 links' } })
   expect(groupsText([web])).toBe('Web links  2 links')
-  expect(groupsText([group('agents', [], { title: 'Agents' })])).toBe('Agents  ')
+  expect(groupsText([group('agents', [], { title: 'Agents' })])).toBe('Agents')
 })
 
 test('the marker and the tree cell join with one space, the rest with two, empty cells are left out', () => {
@@ -25,7 +27,7 @@ test('the marker and the tree cell join with one space, the rest with two, empty
 test('children are indented two spaces per level and nothing is folded', () => {
   const child = row('PROJ-201', { name: 'PROJ-201', description: 'Child' }, { expandedByDefault: true })
   const root = row('ISS-1', { name: 'ISS-1', description: 'Root' }, { expandedByDefault: true, children: [child] })
-  expect(groupsText([group('jira', [root])])).toBe('jira  \n  ISS-1  Root\n    PROJ-201  Child')
+  expect(groupsText([group('jira', [root])])).toBe('jira\n  ISS-1  Root\n    PROJ-201  Child')
 })
 
 test('a closed-by-default parent still lists its children', () => {
@@ -44,18 +46,18 @@ test('a file row with an empty tree cell keeps two spaces after the marker', () 
 })
 
 test('a row with no cell at all is an empty indented line', () => {
-  expect(groupsText([group('web', [row('a', {})])]).split('\n')).toEqual(['web  ', '  '])
+  expect(groupsText([group('web', [row('a', {})])]).split('\n')).toEqual(['web', '  '])
 })
 
 test('sections are separated by one empty line', () => {
   const a = group('a', [row('1', { name: 'one' })], { note: { text: 'n' } })
   const b = group('b', [row('2', { name: 'two' })])
-  expect(groupsText([a, b])).toBe('a  n\n  one\n\nb  \n  two')
+  expect(groupsText([a, b])).toBe('a  n\n  one\n\nb\n  two')
 })
 
 test('detail, caps and N more never show', () => {
   const detailed = row('d', { name: 'd' }, { detail: () => [{ label: 'Body', cell: { text: 'Hello' } }] })
-  expect(groupsText([group('web', [detailed])])).toBe('web  \n  d')
+  expect(groupsText([group('web', [detailed])])).toBe('web\n  d')
   const long = groupsText([group('web', webRows(400))])
   expect(long.split('\n')).toHaveLength(401)
   expect(long).not.toContain('more')

@@ -5,7 +5,8 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.7. Plan: L4 Task 2.
 
 import type { GlobalConfig } from '../interfaces/config'
-import { deepFreeze, defaultsOf, int, normaliseWith, obj, oneOf, type Schema } from './normalise'
+import { LIST_VIEW, VIEW_IDS } from './grouping'
+import { deepFreeze, defaultsOf, enums, int, normaliseWith, obj, oneOf, type Schema } from './normalise'
 
 export const GLOBAL_SCHEMA = {
   refresh: obj({
@@ -28,10 +29,14 @@ export const GLOBAL_SCHEMA = {
   }),
   // `turnStrip` (issue #69): the line under each answer that says what the turn tracked. `text` is a line of text, `interactive`
   // draws the counts and an open Button on the duration line. Off by default (owner decision of 2026-10-21).
+  // `view` and `views` (issue #63, L3): the view the pane opens in, and the views that `g` cycles. The live choice is a session
+  // atom, so no key press writes this file. By tracker and by reason are reachable with `/track view` and this list.
   ui: obj({
     maxRows: int(300, 50, 1000),
     sectionRows: int(50, 5, 300),
     turnStrip: oneOf('off', ['off', 'text', 'interactive']),
+    view: oneOf(LIST_VIEW, VIEW_IDS),
+    views: enums(['list', 'status', 'flat'], VIEW_IDS),
   }),
 } as const satisfies Schema
 

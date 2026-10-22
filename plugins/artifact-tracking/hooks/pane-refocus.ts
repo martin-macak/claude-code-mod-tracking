@@ -7,6 +7,7 @@
 // PaneSession owns one; nothing here touches the engine but the `ui.focus` and `ui.open` ports.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Selection". Plan: L6 Task 11, G8.
 
+import { viewKeys } from '../core/infra/keys'
 import { reason } from '../core/infra/steps'
 import type { Ports, Timer } from '../core/interfaces/ports'
 import { type Drawn, findRow, handleOf } from '../ux/tree-data-table/table'
@@ -187,7 +188,8 @@ export class Refocus {
     const groups = await paneGroups(p, m, { selected: next.row, expanded })
     const footer = await m.footer(p, next.help ? undefined : findRow(groups, next.row), next.help)
     if (!press.still()) return // the reads took time: the pane may have closed
-    const keys = footer.map(k => k.buttonKey)
+    // The view line holds `g`, `a` and `t` outside the footer, and a ring on one of them stays on it (not in the help view).
+    const keys = [...footer, ...(next.help ? [] : viewKeys(m.keys))].map(k => k.buttonKey)
     const toRow = !next.help && next.row !== null
     const home = this.displaced !== undefined && toRow
     this.displaced = undefined

@@ -17,7 +17,7 @@ import type {
   SessionRow,
   Timer,
 } from '../../core/interfaces/ports'
-import type { HiddenState } from '../../core/interfaces/view'
+import type { FilterState, HiddenState } from '../../core/interfaces/view'
 import { emptyLedger } from '../../core/lib/turns'
 import type { ToolStatus, TurnLedger } from '../../types'
 
@@ -219,6 +219,8 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       selected: atom<string | null>('selected', () => null),
       help: atom<boolean>('help', () => false),
       hidden: atom<HiddenState>('hidden', () => ({ showAll: false })),
+      view: atom<string | null>('view', () => null),
+      filters: atom<FilterState>('filters', () => ({ touchedOnly: false })),
       turns: atom<TurnLedger>('turns', emptyLedger),
       // A family member sits under `shown:<id>`: a bare section id would collide with a tracker slot of the same id.
       shown: {

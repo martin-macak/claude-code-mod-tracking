@@ -14,8 +14,11 @@ Feature: Set the priority of a tracked item with the keys
     When I press "Tab"
     And I press "Tab"
     Then the selected row shows "three.example"
+    # Issue #63, L3. The high of the person pins the row: it leaves Web links for the group Pinned, at the top of the pane, and the
+    # selection follows it. A low sends it back to its group.
     When I press "1"
-    Then the screen matches /│ +Name[^\n]*\n[^\n]*Web links 3 +3 links[^\n]*\n[^\n]*│> ▲ +▸ three\.example/
+    Then the screen matches /│ +Name[^\n]*\n[^\n]*Pinned 1[^\n]*\n[^\n]*│> ▲ +▸ three\.example/
+    And the screen matches /Web links 2 /
     When I press "3"
     Then the screen matches /│ +▸ +two\.example\/b[^\n]*\n[^\n]*│> ▽ +▸ three\.example/
     When I press "0"
@@ -23,7 +26,7 @@ Feature: Set the priority of a tracked item with the keys
     And the selected row shows "three.example"
     # three moves to the top again. x drops the selected row, and the next row (one) takes the selection.
     When I press "1"
-    Then the screen matches /│ +Name[^\n]*\n[^\n]*Web links 3 +3 links[^\n]*\n[^\n]*│> ▲ +▸ three\.example/
+    Then the screen matches /│ +Name[^\n]*\n[^\n]*Pinned 1[^\n]*\n[^\n]*│> ▲ +▸ three\.example/
     When I press "x"
     Then the screen stops showing "▲"
     And the screen matches /│ +Name[^\n]*\n[^\n]*Web links 2 +2 links[^\n]*\n[^\n]*│> +▸ +one\.example\/a[^\n]*\n[^\n]*│ +▸ +two\.example\/b/

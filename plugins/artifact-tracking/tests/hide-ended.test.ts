@@ -3,8 +3,8 @@
 // /clear. All of it is a view: no slot, no store and no config write. The clock is the world's: NOW.
 import { expect, test } from 'claude-code/testing'
 import { ConfigManager } from '../core/infra/config-manager'
-import { listGroups } from '../core/lib/grouping'
 import { type PaneHost, PaneSession } from '../hooks/pane-session'
+import { paneGroups } from '../hooks/pane-text'
 import { TRACKERS } from '../trackers'
 import { AUTO_DEFAULTS } from '../trackers/auto/config'
 import type { AgentRow } from '../trackers/auto/types'
@@ -26,6 +26,7 @@ test('an agent that ended 11 min ago is absent and the Agents note ends with (1 
   const s = await draw(t, 'agents')
   expect(flat(s.rows)).toEqual(['ag:master', 'ag:explore', 'ag:build', 'ag:lint'])
   expect(s.note?.text).toBe('2 running · 2 ended (1 hidden)')
+  expect(s.hiddenRows).toBe(1) // the count as data: the view line adds it up in every view
 })
 
 test('an agent that ended 9 min ago shows, dimmed, and the note has no hidden count', async () => {
@@ -34,6 +35,7 @@ test('an agent that ended 9 min ago shows, dimmed, and the note has no hidden co
   const s = await draw(t, 'agents')
   expect(find(s.rows, 'ag:review')?.dim).toBe(true)
   expect(s.note?.text).toBe('2 running · 2 ended')
+  expect(s.hiddenRows).toBeUndefined() // nothing hidden: no count, not a 0
 })
 
 test('the TTL counts from the end: an agent that ended exactly endedTtlMs ago is hidden', async () => {
@@ -169,6 +171,7 @@ test('the note reads N tracked (k hidden) over the shown rows, and the band does
   const s = await draw(t, 'processes')
   expect(ids(s)).toEqual(['bg:1', 'docker:db', 'pid:77'])
   expect(s.note?.text).toBe('3 tracked (2 hidden)')
+  expect(s.hiddenRows).toBe(2)
   expect(s.band).toEqual({ label: 'Processes', count: 3, failing: 1, rank: 10 })
 })
 
@@ -249,6 +252,31 @@ test('/track show-all shows the hidden rows in the pane and in the text; a secon
   expect(off.text).not.toContain('old-build')
   expect(ids(await draw(t, 'processes'))).toEqual(['bg:live'])
   expect((await draw(t, 'processes')).note?.text).toBe('1 tracked (2 hidden)')
+})
+
+// Issue #63, L3 review M1: only the by-list view draws the section notes, so the count of the rows that the TTL hides rides
+// as data (`SectionSpec.hiddenRows`) and the view line of every view says it, while `a` is off.
+test('outside the by-list view the line of the view counts the rows that the TTL hides, until show-all brings them back', async () => {
+  const t = await hiddenWorld() // one agent and two process rows are hidden
+  const first = async () => (await t.m.track(t.w.ports, '')).text.split('\n')[0]
+  expect(await first()).not.toMatch(/^View:/) // by list, no filter: the reply is the list as it was, notes and all
+  await t.m.track(t.w.ports, 'view status')
+  expect(await first()).toBe('View: status · 3 ended hidden')
+  await t.m.track(t.w.ports, 'view flat')
+  expect(await first()).toBe('View: flat · 3 ended hidden')
+  await t.m.track(t.w.ports, 'show-all')
+  expect(await first()).toBe('View: flat · showing all') // nothing is hidden now: the count is gone, the toggle says so
+  await t.m.track(t.w.ports, 'show-all')
+  expect(await first()).toBe('View: flat · 3 ended hidden')
+})
+
+// Owner decision of 2026-10-22 (Q37): the by-list view draws the notes (`(2 hidden)`), so its `View:` line leaves the count out.
+test('in the by-list view the View line of /track does not repeat the ended count that the notes say', async () => {
+  const t = await hiddenWorld()
+  const first = async () => (await t.m.track(t.w.ports, '')).text.split('\n')[0]
+  await t.w.ports.state.filters.update(() => ({ touchedOnly: true }))
+  expect(await first()).toMatch(/^View: list · touched only · \d+ hidden$/) // the `t` count stays, the ended rows are not repeated
+  expect((await t.m.track(t.w.ports, '')).text).toContain('(2 hidden)') // the note of the processes still says it
 })
 
 test('show-all also brings the hidden rows into the band count', async () => {
@@ -355,7 +383,7 @@ test('the selected row hides: the ring and the keys fall to the next row, and th
   t.w.stateSets = {}
   const after = await drawPane()
   const open = new Set(['ag:explore'])
-  const groups = listGroups(await t.m.paneData(t.w.ports, { selected: null, expanded: open }))
+  const groups = await paneGroups(t.w.ports, t.m, { selected: null, expanded: open })
   const build = handleOf(groups, { expanded: open, shown: () => 0, limits: t.m.config.global().ui }, 'ag:build')
   expect(build).toBeDefined()
   expect(ring(after)).toEqual([build]) // `ag:build` followed `ag:review` in the last drawing

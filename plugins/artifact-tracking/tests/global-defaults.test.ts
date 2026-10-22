@@ -22,7 +22,13 @@ test('GLOBAL_DEFAULTS agrees with LIMITS where both hold a value', () => {
 
 test('GLOBAL_DEFAULTS holds the values of spec 5.7 that LIMITS has no twin for', () => {
   expect(GLOBAL_DEFAULTS.tools.probeTimeoutMs).toBe(10000)
-  expect(GLOBAL_DEFAULTS.ui).toEqual({ maxRows: 300, sectionRows: 50, turnStrip: 'off' })
+  expect(GLOBAL_DEFAULTS.ui).toEqual({
+    maxRows: 300,
+    sectionRows: 50,
+    turnStrip: 'off',
+    view: 'list',
+    views: ['list', 'status', 'flat'],
+  })
 })
 
 test('GLOBAL_DEFAULTS is frozen, also in its nested blocks', () => {

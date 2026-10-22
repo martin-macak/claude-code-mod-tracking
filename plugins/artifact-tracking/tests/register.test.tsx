@@ -871,7 +871,7 @@ test('session.start registers /track with its hint', async ($, on) => {
   const { registered } = world(on)
   await $.session.start(START)
   expect(registered).toEqual([
-    { name: 'track', argumentHint: '[refresh|clear|help|version|show-all|turn [n]|prio <ref> <level>]' },
+    { name: 'track', argumentHint: '[refresh|clear|help|version|show-all|view <name>|turn [n]|prio <ref> <level>]' },
   ])
 })
 
@@ -1423,7 +1423,7 @@ test('/track prio: an untracked ref says so; a bad level or a missing part print
   await quiet(calls)
   expect((await track($, 'prio #99 high')).text).toBe('Not tracked: #99')
   expect((await track($, 'prio #5 urgent')).text).toContain(
-    'Usage: /track [refresh|clear|help|version|show-all|turn [n]|prio <ref> <high|normal|low|auto>]',
+    'Usage: /track [refresh|clear|help|version|show-all|view <name>|turn [n]|prio <ref> <high|normal|low|auto>]',
   )
   expect((await track($, 'prio #5')).text).toContain('Usage: /track')
   expect((await track($)).text).not.toContain('▲')
