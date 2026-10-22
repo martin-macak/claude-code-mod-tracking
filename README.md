@@ -182,7 +182,7 @@ Run `make help` for every target.
 | [`test`](.github/workflows/test.yml) | `make test` and `make e2e-unit` on every PR and push to `main`. |
 | [`lint`](.github/workflows/lint.yml) | The pre-commit hooks, the PR title check and the branch name check. |
 | [`release`](.github/workflows/release.yml) | On a tag `<plugin>--v<version>`: validates, tests, builds the zip and publishes the GitHub release. |
-| [`claude`](.github/workflows/claude.yml), [`claude-code-review`](.github/workflows/claude-code-review.yml) | Claude answers `@claude` mentions and reviews pull requests. |
+| [`claude`](.github/workflows/claude.yml) | Claude answers `@claude` mentions. |
 
 Release steps: [`plugins/artifact-tracking/README.md`](plugins/artifact-tracking/README.md#release).
 
