@@ -25,7 +25,7 @@ import {
   TreeDataTable,
 } from '../ux/tree-data-table/table'
 import { WorkQueue } from './pane-queue'
-import { type Press, Refocus, unlessClosed } from './pane-refocus'
+import { frameFromState, type Press, Refocus, unlessClosed } from './pane-refocus'
 import { helpOf, type PaneHost, paneGroups, paneModel, shownOf } from './pane-text'
 import { openTurn, type TurnPaneHost } from './pane-turn'
 
@@ -126,7 +126,15 @@ export class PaneSession {
     if (drawn.rows.length > 0) this.rows = drawn.rows
     this.groups = groups
     // The help view fills the body of a short pane to the row (issue #92): no line is added to it.
-    this.refocus.frame({ help, ids: new Set(drawn.rows.map(r => r.id)) }) // a press that waits for a frame like this one goes on
+    // A press that waits for a frame like this one goes on. The frame names the Buttons the engine got: the press asks for
+    // one of them (`Refocus.keep`).
+    this.refocus.frame({
+      help,
+      rows: new Map(drawn.rows.map(r => [r.id, r.handle])),
+      // The footer, then the view line: the view line is drawn outside the help view only, and its keys stay Buttons.
+      keys: [...view.footer, ...(view.viewLine?.keys ?? [])].map(k => k.buttonKey),
+      stops: drawn.stops,
+    })
     return hinted ? withKeysHint(el, drawn.tree) : drawn.tree
   }
 
@@ -346,7 +354,7 @@ export class PaneSession {
         const open = await p.state.help.update(unlessClosed(afterAsk, v => !v))
         if (!afterAsk.still()) return
         const next = { help: open, row: open ? null : await this.selectedRow(p) }
-        await this.refocus.keep(p, m, next, afterAsk, drawn)
+        await this.refocus.keep(p, next, afterAsk, drawn, () => frameFromState(p, m, next))
         return
       }
       case 'dismiss': {
@@ -354,11 +362,14 @@ export class PaneSession {
         // Armed before the write that takes the row. A drawing that still holds the row is not the frame the ring waits for.
         // Rows that were hidden behind an "N more" can take its place, so the frame need not be empty.
         const drawn =
-          next === null ? this.refocus.awaitFrame(p, frame => !frame.help && !frame.ids.has(to.rowId)) : undefined
+          next === null ? this.refocus.awaitFrame(p, frame => !frame.help && !frame.rows.has(to.rowId)) : undefined
         await m.dismiss(p, [to.rowId])
         await this.refocus.to(p, m, next, afterAsk)
         // The last row went: no row is left to take the ring, and the tracker keys left the footer with it (issue #140).
-        if (drawn !== undefined) await this.refocus.keep(p, m, { help: false, row: null }, afterAsk, drawn)
+        if (drawn !== undefined) {
+          const none = { help: false, row: null }
+          await this.refocus.keep(p, none, afterAsk, drawn, () => frameFromState(p, m, none))
+        }
         return
       }
       case 'priority':

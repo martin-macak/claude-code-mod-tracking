@@ -95,6 +95,12 @@ export interface Drawn {
   readonly tree: RenderElement
   readonly handles: ReadonlyMap<string, string>
   readonly rows: readonly DrawnRow[]
+  /**
+   * The key of every focus stop of the body, in drawing order: the row handles, and `m<n>` after the rows of a section that
+   * has more rows (windowed or not, as the Buttons keep their order). A press compares two drawings by it (`Refocus.keep`):
+   * the ring sits on a position among the Buttons, and an `m<n>` that appears or goes shifts every Button after it.
+   */
+  readonly stops: readonly string[]
   /** The first unit drawn in full: give it back as `TableView.top`. 0 when the whole tree fits. */
   readonly top: number
   /** The rows drawn in full when the window cuts the tree, else undefined. A page key moves the selection by about this many. */
