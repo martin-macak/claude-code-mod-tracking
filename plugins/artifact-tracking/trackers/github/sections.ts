@@ -11,7 +11,7 @@ import { lastRefreshOf, sortedByLevel } from '../../core/lib/rows'
 import { toolNote } from '../../core/lib/text'
 import type { GithubConfig } from './config'
 import { githubKind } from './kind'
-import { branchesOf, EMPTY_LANE } from './lane'
+import { branchesOf, createdOf, EMPTY_LANE } from './lane'
 import { isLanePr } from './lane-pr'
 import { conflictCount, type MergeEnv, mergeEnvOf } from './merge'
 import { githubRow, prRow } from './rows'
@@ -23,6 +23,7 @@ type Ctx = ViewContext<GithubConfig, LaneState>
 const IDLE: ToolStatus = { name: 'gh', available: null, loggedIn: null, breaker: 'closed' }
 
 const FACT_BRANCHES = 'auto.branches'
+const FACT_PRS = 'auto.prs'
 
 /** The lane's reasons that draw a note on top of an empty section. The others leave the section out. */
 const SKIPS_WITH_HEADER: ReadonlySet<string> = new Set(['no-gh', 'not-logged-in', 'paused', 'host-not-authed'])
@@ -49,7 +50,8 @@ function prsNote(ctx: Ctx, lane: LaneState, prs: readonly GitHubRecord[]): strin
   const p = lane.prs
   const overflow = branchesOf(ctx.facts.read<Json>(FACT_BRANCHES))?.overflow ?? 0
   const repo = ctx.facts.read<Json>('session.repo') as unknown as RepoRef | null | undefined
-  const host = repo?.host ?? 'github.com'
+  // The host that said no, when the step knows it: a created PR may be on another host than the session repo.
+  const host = p.host ?? repo?.host ?? 'github.com'
   let head: string
   if (p.error) head = `gh · discovery failed: ${p.error}`
   else if (p.skipped === 'no-repo') head = 'no GitHub repo'
@@ -67,9 +69,12 @@ function prsNote(ctx: Ctx, lane: LaneState, prs: readonly GitHubRecord[]): strin
 function prsSection(ctx: Ctx): SectionSpec | null {
   const lane = ctx.data ?? EMPTY_LANE
   const prs = sortedByLevel(records(ctx).filter(isDiscoveredPr), ctx.levelOf, (a, b) => a.number - b.number)
-  const hasBranches = (branchesOf(ctx.facts.read<Json>(FACT_BRANCHES))?.branches.length ?? 0) > 0
+  // The lane asks for a tracked branch or for a PR the session created (issue #158): with neither, nothing failed.
+  const hasAsked =
+    (branchesOf(ctx.facts.read<Json>(FACT_BRANCHES))?.branches.length ?? 0) > 0 ||
+    createdOf(ctx.facts.read<Json>(FACT_PRS)).length > 0
   const showHeader =
-    hasBranches && ((lane.prs.skipped !== undefined && SKIPS_WITH_HEADER.has(lane.prs.skipped)) || !!lane.prs.error)
+    hasAsked && ((lane.prs.skipped !== undefined && SKIPS_WITH_HEADER.has(lane.prs.skipped)) || !!lane.prs.error)
   if (prs.length === 0 && !showHeader) return null
   const open = prs.filter(i => i.state === 'open')
   const env = mergeEnvOf(ctx)

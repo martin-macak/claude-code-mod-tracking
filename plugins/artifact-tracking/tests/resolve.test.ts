@@ -197,6 +197,28 @@ test('M3: the fork is refused only once the lane looked at the PR, like every ot
   expect(blockedHint(fork, env(undefined), 'main')).toBeUndefined()
 })
 
+// ---------------------------------------------------------------- a PR of another repo (issue #158)
+
+test('#158: a PR of another repo is refused by both keys, also when a worktree has a branch of the same name', () => {
+  // Its head is a branch of that repo. A local branch of the same name in the session repo is another branch, and git
+  // runs in the session repo.
+  for (const head of ['main', 'feat/a']) {
+    const other = pr({ headRefName: head, otherRepo: true })
+    const e = env({ worktree: '/x/wt-a' })
+    const gone = {
+      ok: false,
+      why: 'the PR is in another repo, so its branches are not branches of this one',
+      hint: 'other repo',
+    }
+    expect(resolveCheck(other, e, 'main'), head).toEqual(gone)
+    expect(filesCheck(other, e), head).toEqual(gone)
+  }
+  expect(blockedHint(pr({ otherRepo: true }), env({}), 'main')).toBe('other repo')
+  expect(resolveCheck(pr({ otherRepo: true }), env(undefined), 'main')).toMatchObject({
+    why: 'the PR lane has not looked at it yet', // like the fork: stated only once the lane looked
+  })
+})
+
 // ---------------------------------------------------------------- the hint of a resolve key that is off (review m2)
 
 test('m2: a conflicted PR that the lane looked at says in a word why the resolve key is off', () => {

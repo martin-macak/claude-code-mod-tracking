@@ -448,13 +448,14 @@ test('resolveBareRefs: re-keys an unresolved record', () => {
   const list = mergeRefs([], [unresolved(5)], s(3)).list
   const out = resolveBareRefs(list, { host: 'GitHub.com', owner: 'Acme', repo: 'Web' })
   expect(out.length).toBe(1)
+  // The key and the host are lower case; owner and repo keep the case of the session repo (issue #158).
   expect(out[0]).toMatchObject({
     key: 'gh:github.com/acme/web#5',
     host: 'github.com',
-    owner: 'acme',
-    repo: 'web',
-    label: 'acme/web#5',
-    url: 'https://github.com/acme/web/issues/5',
+    owner: 'Acme',
+    repo: 'Web',
+    label: 'Acme/Web#5',
+    url: 'https://github.com/Acme/Web/issues/5',
   })
 })
 test('resolveBareRefs: uses pull in the URL for a pr', () => {
@@ -631,6 +632,7 @@ const tools = {
     name: 'gh',
     isAvailable: true,
     canCall: () => true,
+    canCallHost: () => true,
     reset() {},
     status: () => status('gh'),
     async refreshItems() {},

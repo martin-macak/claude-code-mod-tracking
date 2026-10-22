@@ -2,6 +2,8 @@
 // branches, and the lane writes them, and the refs in their bodies, into the item list with the reason `discovered`. It moved here
 // from the auto round in plan L5, Task 12 (spec 5.9, the PR lane): auto publishes the fact `auto.branches`, core tells
 // this tracker when it changes, and the lane starts a step. Auto never calls `gh`.
+// The PRs the session created (the fact `auto.prs`, issue #158) are asked for by number in any repo, and also get the
+// reason `created`.
 // One step at a time. A request during a step queues as one more and runs after it. Every step catches its own failure.
 // No `$`: it gets plain closures (`LaneDeps`).
 
@@ -14,7 +16,7 @@ import { applyDiscovery } from './discovered'
 import { mergeNotes, retryDelay, type Seen } from './merge'
 import { type BodyScan, prBodyRefs } from './pr-body'
 import { discoverPrs } from './pr-discovery'
-import type { BranchesFact, DiscoveredPr, DiscoveryApplied, DiscoveryTool, LaneState, MergeNote } from './types'
+import type { BranchesFact, DiscoveredPr, DiscoveryApplied, DiscoveryTool, LaneState, MergeNote, PrRef } from './types'
 import { prKey } from './urls'
 
 /** The state of a lane that has not run: a good outcome, which draws nothing. */
@@ -38,6 +40,31 @@ export function branchesOf(v: Json | undefined): BranchesFact | undefined {
 }
 
 /**
+ * The fact `auto.prs` as the lane reads it: the PRs the session created, each as host, owner, repo and number (issue
+ * #158). An entry that is not whole is left out. A value of another shape is not the fact: no PRs.
+ */
+export function createdOf(v: Json | undefined): PrRef[] {
+  if (!Array.isArray(v)) return []
+  const out: PrRef[] = []
+  for (const e of v) {
+    if (!isRecord(e)) continue
+    const { host, owner, repo, number } = e
+    if (typeof host !== 'string' || typeof owner !== 'string' || typeof repo !== 'string') continue
+    if (
+      host === '' ||
+      owner === '' ||
+      repo === '' ||
+      typeof number !== 'number' ||
+      !Number.isSafeInteger(number) ||
+      number < 1
+    )
+      continue
+    out.push({ host, owner, repo, number })
+  }
+  return out
+}
+
+/**
  * Whether a new `auto.branches` starts a step: it is a new round, and either its reasons name one that opens the lane
  * (`start`, `tick`, `manual`, `pr-event`) or the tracked branches changed since the last value. A fact published at
  * init has no reasons and no previous value, so it starts nothing.
@@ -56,6 +83,11 @@ export interface LaneDeps {
   save(change: (cur: LaneState) => LaneState): Promise<LaneState>
   /** The last `auto.branches`. */
   branches(): BranchesFact | undefined
+  /**
+   * The PRs the session created, from the fact `auto.prs` (issue #158). The lane asks for them by number, in any repo.
+   * Absent: none.
+   */
+  created?(): readonly PrRef[]
   gh: DiscoveryTool
   /** Waits for the cached `gh --version` probe. */
   ghReady(): Promise<boolean>
@@ -92,7 +124,8 @@ type Prs = LaneState['prs']
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
 /** A note without its time, so a quiet step compares equal (A22). */
-const prsSig = (p: Prs): string => JSON.stringify([p.ok, p.skipped ?? null, p.error ?? null, p.untracked ?? 0])
+const prsSig = (p: Prs): string =>
+  JSON.stringify([p.ok, p.skipped ?? null, p.error ?? null, p.host ?? null, p.untracked ?? 0])
 
 /**
  * The lane state after a step: the note, the default branch the reply named, and the merge notes. `notes` holds the new
@@ -171,7 +204,7 @@ export class PrLane {
     const repo = await d.repo()
     const at = d.now()
     const lane = d.lane()
-    const out = await discoverPrs(d.gh, repo, branches, at, defaultBranch, lane)
+    const out = await discoverPrs(d.gh, repo, branches, at, defaultBranch, lane, d.created?.() ?? [])
     if (!out.ok) {
       await d.save(cur =>
         withPrs(cur, {
@@ -179,6 +212,7 @@ export class PrLane {
           ok: false,
           ...(out.skipped ? { skipped: out.skipped } : {}),
           ...(out.error ? { error: out.error } : {}),
+          ...(out.host ? { host: out.host } : {}),
         }),
       )
       return
@@ -187,12 +221,14 @@ export class PrLane {
     for (const pr of out.prs) refsByPr.set(prKey(pr), prBodyRefs(pr, d.scanBody, lane.maxBodyRefs))
     const { staleMs, maxItems } = d.caps()
     let hidden: ReadonlySet<string> = new Set()
+    const held: ReadonlySet<string> = new Set(out.held)
     const r = await d.applyItems((list, dismissed) => {
       hidden = dismissed
       return applyDiscovery(list, {
         prs: out.prs,
         refsByPr,
         complete: out.complete,
+        held,
         dismissed,
         at,
         build: claim => d.build(claim),
@@ -201,9 +237,11 @@ export class PrLane {
     })
     d.onAdded(r.added)
     const seen = await this.seen(out.prs, hidden)
+    // A held PR that the person dismissed is no PR of the lane: it keeps no note (a retry would run on it).
+    const kept = new Set([...held].filter(k => !hidden.has(k)))
     const saved = await d.save(cur =>
       withPrs(cur, { at, ok: true, ...(r.untracked > 0 ? { untracked: r.untracked } : {}) }, out.defaultBranch, {
-        merge: mergeNotes(cur.merge, seen, { keepMissing: !out.complete }),
+        merge: mergeNotes(cur.merge, seen, { keepMissing: !out.complete, keep: kept }),
       }),
     )
     this.rearm(saved.merge)
@@ -215,8 +253,9 @@ export class PrLane {
    */
   private async seen(prs: readonly DiscoveredPr[], dismissed: ReadonlySet<string>): Promise<Seen[]> {
     const open = prs.filter(p => p.state === 'open' && !dismissed.has(prKey(p)))
-    // A fork PR gets no lookup: its head name is a branch of the fork, and a local branch of that name is another one.
-    const wantsTree = (p: DiscoveredPr): boolean => p.mergeable === 'CONFLICTING' && !p.crossRepo
+    // A fork PR gets no lookup: its head name is a branch of the fork, and a local branch of that name is another one. A
+    // PR of another repo gets none either: its head name is a branch of that repo, not of the session repo (issue #158).
+    const wantsTree = (p: DiscoveredPr): boolean => p.mergeable === 'CONFLICTING' && !p.crossRepo && !p.otherRepo
     const trees = open.some(wantsTree) ? await this.worktreeList() : []
     return open.map(p => {
       const path = wantsTree(p) ? worktreeOfBranch(trees, p.headRefName)?.path : undefined

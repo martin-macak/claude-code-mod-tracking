@@ -2,7 +2,7 @@
 // An unknown shape gives null or an empty object, so the hooks in register.tsx hold no parsing of their own.
 
 import { isRecord, type Json } from '../../core/lib/json'
-import type { AgentResultFacts, BashFacts, EnterFacts, SpawnFacts, TurnCompleteReason } from './types'
+import type { AgentResultFacts, BashFacts, EnterFacts, PrFacts, SpawnFacts, TurnCompleteReason } from './types'
 
 /** A shell command that can change worktrees or branches. `echo git` does not match. */
 export const GIT_CMD = /\bgit\s+(?:-C\s+\S+\s+)?(?:worktree|checkout|switch|branch)\b/
@@ -61,9 +61,39 @@ export function fromSpawn(input: unknown, answer: unknown): SpawnFacts | null {
 }
 
 /**
- * Bash: the branch of an agent's own commit or push, and the kick reason.
- * `gitOperation.pr` kicks `pr-event`. Another operation, or a worktree or branch command, kicks `git`.
- * No result gives nothing.
+ * The path of a pull request URL, with its tail: `/<owner>/<repo>/pull/<n>`, then nothing, or a `/`, `?` or `#` and more.
+ * It is the pull half of `GH_PATH` in `trackers/github/urls.ts` and must read the same URLs: a tracker imports no other
+ * tracker, and `core` may not name one, so there is no shared home for the pattern. `tests/pr-url-parity.test.ts` fails
+ * when the two drift apart.
+ */
+const PR_PATH = /^\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/pull\/(\d+)(?:[/?#].*)?$/
+
+/**
+ * The PR that a `gitOperation.pr` made: its host, owner, repo and number, read from the URL. The case of owner and repo
+ * stays as written. Only the action `created` counts, and the number of the operation must be the one in the URL. The host
+ * is any host: the proof says the session made the PR, and the lane decides whether `gh` can ask for it.
+ */
+function createdPr(pr: Json): PrFacts | undefined {
+  if (pr.action !== 'created' || typeof pr.url !== 'string') return undefined
+  let u: URL
+  try {
+    u = new URL(pr.url.trim())
+  } catch {
+    return undefined
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return undefined
+  const m = PR_PATH.exec(u.pathname + u.search + u.hash)
+  if (!m) return undefined
+  const number = Number(m[3])
+  if (!Number.isSafeInteger(number) || (typeof pr.number === 'number' && pr.number !== number)) return undefined
+  const host = u.hostname.toLowerCase()
+  return { host: host === 'www.github.com' ? 'github.com' : host, owner: m[1]!, repo: m[2]!, number }
+}
+
+/**
+ * Bash: the branch of an agent's own commit or push, the PR the command created, and the kick reason.
+ * `gitOperation.pr` kicks `pr-event`; a created one is also a proof (`pr`). Another operation, or a worktree or branch
+ * command, kicks `git`. No result gives nothing.
  */
 export function fromBash(command: string, ran: unknown, agentId?: string): BashFacts {
   const r = resultOf(ran)
@@ -79,8 +109,11 @@ export function fromBash(command: string, ran: unknown, agentId?: string): BashF
       out.branch = branch
     }
   }
-  if (op && isRecord(op.pr)) out.kick = 'pr-event'
-  else if ((op && Object.keys(op).length > 0) || GIT_CMD.test(command)) out.kick = 'git'
+  if (op && isRecord(op.pr)) {
+    out.kick = 'pr-event'
+    const pr = createdPr(op.pr)
+    if (pr) out.pr = pr
+  } else if ((op && Object.keys(op).length > 0) || GIT_CMD.test(command)) out.kick = 'git'
   return out
 }
 

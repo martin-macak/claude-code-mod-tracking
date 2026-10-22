@@ -2,8 +2,9 @@
 // It answers only the calls that the github tracker makes, from a spec file, and it never reaches the network.
 // Any other call is refused and logged as unsupported, so a scenario that needs more fails loud (the step
 // "the fake gh answered no unsupported call").
-// The query formats come from `buildDiscoveryQuery` (trackers/github/pr-discovery.ts) and `buildQuery`
-// (trackers/github/gh-tool.ts). The plugin test `tests/fake-gh-contract.test.ts` runs the real tool of the mod against
+// The query formats come from `buildDiscoveryQuery` (trackers/github/pr-discovery.ts: the branch aliases `h`/`b` and the
+// `pullRequest(number:)` alias `p` of a PR the session created) and `buildQuery` (trackers/github/gh-tool.ts).
+// The contract test `scripts/contracts/fake-gh-contract.test.mjs` runs the real tool of the mod against
 // `answer()`, so a change there shows in `make verify`, not only in a local `make e2e`.
 // This file imports nothing, so the plugin tests can import it. `fake-gh-env.ts` holds what needs node.
 
@@ -84,6 +85,8 @@ const STRING = String.raw`"(?:[^"\\]|\\.)*"`
 const REPOSITORY = new RegExp(String.raw`repository\(owner: (${STRING}), name: (${STRING})\)`)
 const HEAD_ALIAS = new RegExp(String.raw`(h\d+): pullRequests\(headRefName: (${STRING})`, 'g')
 const BASE_ALIAS = new RegExp(String.raw`(b\d+): pullRequests\(baseRefName: (${STRING})`, 'g')
+/** A PR the session created, asked by number: `p0: pullRequest(number: 12) { ...pr }` (issue #158). */
+const CREATED_ALIAS = /(p\d+): pullRequest\(number: (\d+)\)/g
 const ITEM_ALIAS = new RegExp(
   String.raw`(a\d+): repository\(owner: (${STRING}), name: (${STRING})\) \{\s*issueOrPullRequest\(number: (\d+)\)`,
   'g',
@@ -127,7 +130,15 @@ function discovery(query: string, spec: FakeGhSpec): FakeGhResult {
       nodes: spec.prs.filter(p => p.baseRefName === branch && (p.state ?? 'OPEN') === 'OPEN').map(p => node(spec, p)),
     }
   }
-  return reply('graphql discovery', { repository }, [])
+  // A created PR is asked by number, of any state. A number that is not there is `null` with a NOT_FOUND on its alias,
+  // which the lane reads as a PR that is gone.
+  const errors: unknown[] = []
+  for (const [, alias = '', number] of query.matchAll(CREATED_ALIAS)) {
+    const pr = spec.prs.find(p => p.number === Number(number))
+    repository[alias] = pr ? node(spec, pr) : null
+    if (!pr) errors.push(notFound(['repository', alias], `a PullRequest with the number of ${number}`))
+  }
+  return reply('graphql discovery', { repository }, errors)
 }
 
 function refresh(query: string, spec: FakeGhSpec): FakeGhResult {

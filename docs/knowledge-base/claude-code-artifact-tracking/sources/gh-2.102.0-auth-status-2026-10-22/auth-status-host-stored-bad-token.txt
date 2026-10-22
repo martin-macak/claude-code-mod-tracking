@@ -1,0 +1,8 @@
+$ GH_CONFIG_DIR=<dir with a hosts.yml holding a dummy stored token> gh auth status --hostname github.com
+github.com
+  X Failed to log in to github.com account someone (<config-dir>/hosts.yml)
+  - Active account: true
+  - The token in <config-dir>/hosts.yml is invalid.
+  - To re-authenticate, run: gh auth login -h github.com
+  - To forget about this account, run: gh auth logout -h github.com -u someone
+exit=1

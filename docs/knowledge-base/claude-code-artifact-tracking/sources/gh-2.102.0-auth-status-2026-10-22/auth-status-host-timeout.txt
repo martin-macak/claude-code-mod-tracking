@@ -1,0 +1,5 @@
+$ GH_CONFIG_DIR=<dir with a hosts.yml holding a dummy token> gh auth status --hostname 192.0.2.1
+192.0.2.1
+  X Timeout trying to log in to 192.0.2.1 account someone (<config-dir>/hosts.yml)
+  - Active account: true
+exit=1

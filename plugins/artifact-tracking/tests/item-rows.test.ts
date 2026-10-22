@@ -5,7 +5,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Effective } from '../core/interfaces/items'
 import type { Cell, CellId, TreeRow } from '../core/interfaces/view'
 import { addReason } from '../core/lib/reasons'
-import { githubRow } from '../trackers/github/rows'
+import { githubRow, prRow } from '../trackers/github/rows'
 import { jiraSiteKey, nestedJira } from '../trackers/jira/nested'
 import { type JiraEnv, jiraRow, trackedOf } from '../trackers/jira/rows'
 import type { GitHubRecord, JiraNode, JiraRecord, ToolStatus } from './fixtures/contracts'
@@ -296,4 +296,41 @@ test('github checks: failure red, pending yellow, success green; none and absent
   expect(extras('success')).toEqual([{ text: '✓ checks', fg: 'success' }])
   expect(extras('none')).toBeUndefined()
   expect(extras(undefined)).toBeUndefined()
+})
+
+// ---------------------------------------------------------------- the repo of a row (issue #158)
+
+const SESSION_REPO = { host: 'github.com', owner: 'acme', repo: 'web' }
+const sessionEnv = {
+  facts: { read: (name: string) => (name === 'session.repo' ? SESSION_REPO : undefined) },
+  levelOf: () => ({}),
+} as unknown as Parameters<typeof githubRow>[1]
+const iam = (over: Partial<GitHubRecord> = {}): GitHubRecord =>
+  gh({
+    key: 'gh:github.com/verticeone/vertice-iam#657',
+    owner: 'VerticeOne',
+    repo: 'vertice-iam',
+    number: 657,
+    label: 'VerticeOne/vertice-iam#657',
+    state: 'open',
+    headRefName: 'feat/brown-2901',
+    baseRefName: 'main',
+    ...over,
+  })
+
+test('#158: a row of another repo reads owner/repo#N in the case GitHub spells it, cut in the middle so #N stays', () => {
+  const row = githubRow(iam(), sessionEnv)
+  expect(row.cells.name).toMatchObject({ text: 'VerticeOne/vertice-iam#657', clip: 'middle' })
+  // A row of the session repo reads #N, however the record spells the repo, and has no clip of its own.
+  const own = githubRow(gh({ owner: 'ACME', repo: 'Web', number: 12 }), sessionEnv)
+  expect(own.cells.name).toEqual({ text: '#12', href: 'https://github.com/o/r/pull/1' })
+  expect(row.cells.name?.href).toBe('https://github.com/o/r/pull/1') // the record's own url rides on the cell
+})
+
+test("#158: a PR row of another repo shows its head branch, never →base: the default branch is the session repo's", () => {
+  const stacked = iam({ baseRefName: 'release/1.2', otherRepo: true })
+  expect(text(prRow(stacked, sessionEnv, 'main'), 'type')).toBe('feat/brown-2901')
+  // The same base in the session repo is a stack: the arrow stays.
+  const own = gh({ owner: 'acme', repo: 'web', headRefName: 'feat/x', baseRefName: 'feat/base', state: 'open' })
+  expect(text(prRow(own, sessionEnv, 'main'), 'type')).toBe('→feat/base')
 })

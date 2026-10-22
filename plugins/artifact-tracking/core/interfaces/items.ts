@@ -136,6 +136,11 @@ export interface RefreshSpec<T extends StoredItem> {
   apply?(out: T, fresh: T): T
   /** A manual refresh: forget more than the tool handle does (denied hosts, a missing site). Default: the handle only. */
   reset?(ctx: RefreshContext): void
+  /**
+   * Whether the tool may be called for this item now. Default: the handle of the tool (`ToolHandle.canCall`). A tool that
+   * keeps its login and its breaker per part of itself (one per host, say) answers for the part the item is in.
+   */
+  canCall?(item: Refreshable, ctx: RefreshContext, now: number): boolean
 }
 
 /** What a priority rule reads: the facts, the whole list, and the levels the earlier stages gave. */

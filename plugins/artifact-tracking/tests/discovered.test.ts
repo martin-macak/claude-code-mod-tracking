@@ -510,3 +510,133 @@ test('sources keep channels only: a body ref has no pr-body in sources, keeps di
   expect(rec.via).toEqual([K7])
   expect('lane' in rec).toBe(false)
 })
+
+// ---------------------------------------------------------------- the PRs the session created (issue #158)
+
+test('a created PR gets the reasons created and discovered: created is the strongest, and it reads as a lane PR', () => {
+  const r = applyDiscovery([], input({ prs: [discovered({ number: 7, created: true })] }))
+  const rec = r.list[0] as GitHubRecord
+  expect(rec.reasons).toEqual({ first: 'created', all: ['created', 'discovered'], strongest: 'created' })
+  expect(rec).toMatchObject({ lane: true, sources: [], seenCount: 0 })
+  expect(isLanePr(rec)).toBe(true)
+  expect(r.added).toEqual([])
+  // A PR that only a branch found keeps the one reason it had.
+  const plain = applyDiscovery([], input()).list[0] as GitHubRecord
+  expect(plain.reasons).toEqual({ first: 'discovered', all: ['discovered'], strongest: 'discovered' })
+})
+
+test('a created PR is no auto-only item: it needs none of the maxAutoItems budget, and the budget does not stop it', () => {
+  const caps = { staleMs: LIMITS.staleMs, maxAutoItems: 1, maxItems: LIMITS.maxItems }
+  const full = [autoWeb(1)] // the one auto-only item the budget allows
+  const created = applyDiscovery(
+    full,
+    input({ prs: [discovered({ number: 7, created: true })], caps, complete: false }),
+  )
+  expect(created.list.map(x => x.key)).toEqual([autoWeb(1).key, K7])
+  expect(created.untracked).toBe(0)
+  const branch = applyDiscovery(full, input({ prs: [discovered({ number: 7 })], caps, complete: false }))
+  expect(branch.list.map(x => x.key)).toEqual([autoWeb(1).key]) // a PR that only a branch found is over the budget
+  expect(branch.untracked).toBe(1)
+  // A created PR takes no budget from the PRs found by a branch.
+  const both = applyDiscovery(
+    [],
+    input({ prs: [discovered({ number: 7, created: true }), discovered({ number: 9 })], caps }),
+  )
+  expect(both.list.map(x => x.key)).toEqual([K7, K9])
+  expect(both.untracked).toBe(0)
+})
+
+test('a record that a branch found gains created when the session creates the PR; the same reply keeps the list (A22)', () => {
+  const first = applyDiscovery([], input())
+  const created = applyDiscovery(first.list, input({ prs: [discovered({ created: true })], at: AT + 30_000 }))
+  expect(created.list).not.toBe(first.list)
+  expect((created.list[0] as GitHubRecord).reasons).toEqual({
+    first: 'discovered',
+    all: ['created', 'discovered'],
+    strongest: 'created',
+  })
+  const quiet = applyDiscovery(created.list, input({ prs: [discovered({ created: true })], at: AT + 60_000 }))
+  expect(quiet.list).toBe(created.list)
+  // A mention that the lane finds as a created PR keeps its channel and first reason.
+  const named7 = applyDiscovery([mentioned(7)], input({ prs: [discovered({ created: true })] }))
+  expect((named7.list[0] as GitHubRecord).reasons).toEqual({
+    first: 'mentioned',
+    all: ['created', 'discovered', 'mentioned'],
+    strongest: 'created',
+  })
+})
+
+test('a created PR the lane stops finding keeps created alone and leaves the lane: its record stays in GitHub', () => {
+  const first = applyDiscovery([], input({ prs: [discovered({ created: true })] }))
+  const gone = applyDiscovery(first.list, input({ prs: [], at: AT + 30_000 }))
+  const rec = gone.list[0] as GitHubRecord
+  expect(rec.reasons).toEqual({ first: 'created', all: ['created'], strongest: 'created' })
+  expect(isLanePr(rec)).toBe(false)
+  expect('lane' in rec).toBe(false)
+})
+
+test('a resume load takes discovered from a created PR, so the leftover lane marker is inert until a step finds it', () => {
+  const first = applyDiscovery([], input({ prs: [discovered({ created: true })] }))
+  const [loaded] = dropAuto(first.list as GitHubRecord[], new Set([K7]))
+  expect(loaded?.reasons.all).toEqual(['created'])
+  expect(isLanePr(loaded as GitHubRecord)).toBe(false)
+})
+
+test('a PR of another repo keeps the case of owner and repo, and the flag otherRepo; a change of the flag is written', () => {
+  const pr = discovered({ number: 657, owner: 'VerticeOne', repo: 'vertice-iam', created: true, otherRepo: true })
+  const first = applyDiscovery([], input({ prs: [pr] }))
+  expect(first.list[0]).toMatchObject({
+    key: 'gh:github.com/verticeone/vertice-iam#657',
+    owner: 'VerticeOne',
+    repo: 'vertice-iam',
+    label: 'VerticeOne/vertice-iam#657',
+    otherRepo: true,
+  })
+  const same = applyDiscovery(first.list, input({ prs: [pr], at: AT + 30_000 }))
+  expect(same.list).toBe(first.list)
+  const { otherRepo: _gone, ...inSession } = pr // the session moved into that repo: the PR is no longer another repo's
+  const cleared = applyDiscovery(first.list, input({ prs: [inSession], at: AT + 30_000 }))
+  expect(cleared.list).not.toBe(first.list)
+  expect('otherRepo' in cleared.list[0]!).toBe(false)
+  const flagged = applyDiscovery(cleared.list, input({ prs: [pr], at: AT + 60_000 }))
+  expect(flagged.list[0]).toMatchObject({ otherRepo: true })
+})
+
+test('a dismissed PR is not held: the refs of its body go in a complete reply, as for any dismissed PR', () => {
+  const K657 = 'gh:github.com/verticeone/vertice-iam#657'
+  const foreign = discovered({ number: 657, owner: 'VerticeOne', repo: 'vertice-iam', created: true, otherRepo: true })
+  const refsByPr = new Map<string, readonly Claim[]>([[K657, claimsOf([ghRef(1)], 'pr-body', AT)]])
+  const first = applyDiscovery([], input({ prs: [foreign], refsByPr }))
+  const K1 = keyOf(ghRef(1))
+  expect(first.list.map(x => x.key)).toEqual([K657, K1])
+  // The PR becomes unreadable (held), then the user dismisses it: its record goes, the ref of its body stays until a prune.
+  const dismissed = new Set([K657])
+  const rest = first.list.filter(x => x.key !== K657)
+  const held = applyDiscovery(rest, input({ prs: [], held: new Set([K657]), dismissed, at: AT + 30_000 }))
+  expect(held.list).toEqual([])
+  // Not dismissed, the same PR keeps the ref of its body, as before.
+  const kept = applyDiscovery(first.list, input({ prs: [], held: new Set([K657]), at: AT + 30_000 }))
+  expect(kept.list.map(x => x.key)).toEqual([K657, K1])
+})
+
+test('a held PR keeps its lane marker, its reasons and the refs of its body over a complete reply; the rest is pruned', () => {
+  const K657 = 'gh:github.com/verticeone/vertice-iam#657'
+  const foreign = discovered({ number: 657, owner: 'VerticeOne', repo: 'vertice-iam', created: true, otherRepo: true })
+  const refsByPr = new Map<string, readonly Claim[]>([
+    [K7, claimsOf([ghRef(2)], 'pr-body', AT)],
+    [K657, claimsOf([ghRef(1)], 'pr-body', AT)],
+  ])
+  const first = applyDiscovery([], input({ prs: [discovered({ number: 7 }), foreign], refsByPr }))
+  const K1 = keyOf(ghRef(1))
+  expect(first.list.map(x => x.key)).toEqual([K7, K657, keyOf(ghRef(2)), K1])
+  // Next step: the reply is complete for the session repo and says nothing of the other repo, which holds #657.
+  const held = applyDiscovery(first.list, input({ prs: [], held: new Set([K657]), at: AT + 30_000 }))
+  expect(held.list.map(x => x.key)).toEqual([K657, K1]) // #7 and the ref of its body go
+  expect(held.list[0]).toMatchObject({ lane: true, reasons: { all: ['created', 'discovered'] } })
+  expect(isLanePr(held.list[0] as GitHubRecord)).toBe(true)
+  expect(held.list[1]).toMatchObject({ via: [K657], reasons: DISCOVERED })
+  // The same reply with nothing held: #657 leaves the lane and its ref is pruned, as any PR the lane stopped finding.
+  const unheld = applyDiscovery(first.list, input({ prs: [], at: AT + 30_000 }))
+  expect(unheld.list.map(x => x.key)).toEqual([K657])
+  expect(isLanePr(unheld.list[0] as GitHubRecord)).toBe(false)
+})

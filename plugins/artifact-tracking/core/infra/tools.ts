@@ -48,7 +48,12 @@ export class ToolRunner {
         timeoutMs: () => spec.timeoutMs ?? this.d.global().tools.timeoutMs,
         probeTimeoutMs: () => this.d.global().tools.probeTimeoutMs,
       }
-      this.handles.set(spec.id, new CliTool(cli, (argv, init) => this.d.run(argv, init ?? {}), this.d.now, breaker))
+      const spare = () =>
+        this.d.breaker ? this.d.breaker(limits) : new CircuitBreaker(limits.threshold, limits.openMs)
+      this.handles.set(
+        spec.id,
+        new CliTool(cli, (argv, init) => this.d.run(argv, init ?? {}), this.d.now, breaker, spare),
+      )
       this.owners.set(spec.id, owner)
     }
   }

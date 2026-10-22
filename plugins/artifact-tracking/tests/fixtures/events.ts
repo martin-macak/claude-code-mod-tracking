@@ -85,6 +85,16 @@ export const BASH_PR_RAN = {
   },
   text: 'https://github.com/octo/demo/pull/7',
 }
+/** A Bash result whose `gitOperation.pr` is `{number, url, action}`: `action` defaults to `created`, `null` leaves it out. */
+export const createdPr = (url: string, number: number, action: string | null = 'created') => ({
+  result: {
+    stdout: url,
+    stderr: '',
+    interrupted: false,
+    gitOperation: { pr: { number, url, ...(action !== null ? { action } : {}) } },
+  },
+  text: url,
+})
 export const BASH_COMMIT_RAN = {
   result: {
     stdout: '[feat/x abc1234] msg',

@@ -1175,7 +1175,7 @@ test('session.start does not wait for the check of a non-github host', async ($,
     release()
   }
   await quiet(calls)
-  expect(calls).toContainEqual(['gh', 'auth', 'status', '--hostname', 'ghe.corp']) // the check ran, after the start
+  expect(calls).toContainEqual(['gh', 'auth', 'status', '--hostname', 'ghe.corp', '--json', 'hosts']) // the check ran, after the start
   await $.session.append(prompt('check issue #5')) // the late answer made ghe.corp the host: #5 now has a repo
   await clock.advance(LIMITS.captureDebounceMs + 10)
   await quiet(calls)

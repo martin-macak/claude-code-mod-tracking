@@ -46,6 +46,7 @@ export type FilesTarget = { head: string; base: string; path?: string }
 /** The words a row shows when the resolve key is off. The `mark` column that draws them is 11 columns wide at most. */
 export const HINT = {
   fork: 'fork PR',
+  otherRepo: 'other repo',
   branch: 'odd branch',
   noWorktree: 'no worktree',
   noDefault: 'no default',
@@ -65,6 +66,9 @@ function conflicted(rec: GitHubRecord | undefined, env: MergeEnv) {
   if (note === undefined) return no('the PR lane has not looked at it yet')
   // A fork PR has a head branch of the fork: a local branch of that name, if any, is another branch.
   if (rec.crossRepo) return no('the head branch is in a fork, not in this repo', HINT.fork)
+  // A PR the session created in another repo (issue #158): its branches are that repo's, and git runs in the session repo.
+  if (rec.otherRepo)
+    return no('the PR is in another repo, so its branches are not branches of this one', HINT.otherRepo)
   if (!SAFE_REF.test(rec.headRefName) || !SAFE_REF.test(rec.baseRefName))
     return no('the branch name has a character that is not put in a prompt', HINT.branch)
   return { ok: true as const, rec, head: rec.headRefName, base: rec.baseRefName, note }

@@ -257,7 +257,7 @@ An open row says why the mod tracks it. A reason is one word of a closed list. A
 | Reason | Claude or you did this |
 | --- | --- |
 | `deleted` | Claude deleted it (an artifact). |
-| `created` | Claude made it: a file, or a process, worktree or agent that this session started. |
+| `created` | Claude made it: a file, a pull request that this session opened, or a process, worktree or agent that this session started. |
 | `updated` | Claude changed it: a file, a repo that Claude edited, or a Jira item that an `acli` command changed. |
 | `published` | Claude published it with the Artifact tool. |
 | `read` | Claude read it: a file, a tool result that named it, a repo that Claude read. |
@@ -284,6 +284,7 @@ Which signal gives which reason:
 | jira | `acli jira workitem clone`: the source item stays as it was | `mentioned` |
 | web | A link in a prompt, a command or a reply | `mentioned` |
 | github | A PR that the PR lane found | `discovered` |
+| github | A PR that a Bash result says this session created (`gh pr create`), in any repo | `created`, and `discovered` while the PR lane finds it |
 | github, jira, web | A ref in the body of a PR that the PR lane found | `discovered` |
 | repos | Mode `read`, mode `edit` | `read`, `updated` |
 | processes | Any row: a Bash or Monitor call of this session started it | `created` |
@@ -443,9 +444,11 @@ The mod also tracks the work around the session, with no mention:
 | --- | --- |
 | Worktrees | The root (the cwd at session start, pinned) and the worktrees that this session or its agents made. Only proven children show. A removed one stays, dimmed, until its TTL passes (see [Ended rows](#ended-rows)). |
 | Agents | The main loop, its subagents and its workflow agents, each with branch and worktree. A workflow agent that runs in a worktree of its own shows it as soon as git lists that worktree, and keeps it after the worktree is removed. An ended agent stays, dimmed, until its TTL passes, then it leaves the view. A workflow run of 2 agents or more, whose agents all ended, is one row that opens to them (see [Ended rows](#ended-rows)). |
-| Pull requests | PRs whose head is a tracked branch, or whose base is a tracked branch (stacked PRs). One GraphQL query for each 30 s tick. |
+| Pull requests | PRs whose head is a tracked branch, or whose base is a tracked branch (stacked PRs), and every PR that this session created with `gh pr create`, in any repo and on any branch. A created PR stays when it closes or merges, dimmed, and stays over `/clear` and `/resume`. A new process (`claude --resume`) has no proof: a created PR then moves to the GitHub section. One GraphQL query for each 30 s tick, and one more for each other repo that holds a created PR. A PR of another repo reads `owner/repo#N`, in the case GitHub spells it, with no resolve or files key. |
 
 The refs in a PR body become items with a `↳#N` prefix. HTML comments are skipped. The items go when the PR leaves the tracked set. The band adds `Worktrees n · Agents n · PRs n`.
+
+The PR lane polls the branches of the session repo only. A branch of another repo is not polled: a PR you make there is found by its number, and only when the `gh pr create` ran in this session (the Bash result says it created the PR). A repo that gives no answer (it is deleted, or your `gh` login has no access to it) leaves its created PRs as they are, and does not stop the clean-up of the rest. A repo that answers for one created PR and not for another leaves only the second as it is.
 
 ```mermaid
 flowchart LR
@@ -689,7 +692,7 @@ Every key. Time values are in milliseconds.
 | `trackers.auto.gitTimeoutMs` | 5000 | 500 | 60000 | Timeout of one `git` call of auto tracking. |
 | `trackers.auto.workflowIdleMs` | 3600000 | 60000 | 86400000 | Time with no sign of life after which a workflow agent ends as stale. |
 | `trackers.auto.maxBranches` | 12 | 1 | 50 | Branches that the PR lane polls. |
-| `trackers.auto.maxProofs` | 100 | 10 | 1000 | Worktree proofs kept. |
+| `trackers.auto.maxProofs` | 100 | 10 | 1000 | Worktree proofs kept, and, in a list of its own, the PRs this run created. |
 | `trackers.auto.maxAgents` | 200 | 10 | 2000 | Agents kept. |
 | `trackers.auto.hideEnded` | true | | | Hide an ended agent row once its TTL has passed. See [Ended rows](#ended-rows). |
 | `trackers.auto.endedTtlMs` | 600000 | 0 | 86400000 | Time after which an ended agent is hidden. 0 hides it at once. |

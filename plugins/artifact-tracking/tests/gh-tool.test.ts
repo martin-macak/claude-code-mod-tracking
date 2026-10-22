@@ -1,5 +1,7 @@
 // GhTool: batched GraphQL refresh, outcome classification, host and repo probes. Pure, fake Runner.
 import { expect, test } from 'claude-code/testing'
+import type { Breaker } from '../core/interfaces/tracker'
+import { CliTool } from '../core/lib/tool'
 import { buildQuery, classifyReply, GhTool, rollupToChecks } from '../trackers/github/gh-tool'
 import type { GitHubTarget, RunInit, Runner, RunResult } from './fixtures/contracts'
 import * as fx from './fixtures/gh'
@@ -62,6 +64,12 @@ test('fixtures: every JSON fixture parses', () => {
     fx.BATCH_50_PROBE_OUTPUT,
     fx.AUTH_BAD_TOKEN_STDOUT,
     fx.REPO_RESOLUTION_STDOUT,
+    fx.AUTH_STATUS_JSON_LOGGED_IN,
+    fx.AUTH_STATUS_JSON_NO_LOGIN,
+    fx.AUTH_STATUS_JSON_BAD_TOKEN,
+    fx.AUTH_STATUS_JSON_STORED_BAD_TOKEN,
+    fx.AUTH_STATUS_JSON_DNS,
+    fx.AUTH_STATUS_JSON_TIMEOUT,
   ]) {
     expect(() => JSON.parse(json)).not.toThrow()
   }
@@ -175,6 +183,7 @@ test('HTTP 401 without data is a plain failure, not "logged out": the breaker co
 test('an unreachable host is a tool failure, not an auth failure', async () => {
   const { run } = rig(() => ok('', 1, fx.GHE_HOST_PROBE_STDERR))
   const tool = new GhTool(run, () => NOW)
+  tool.setHome('ghe.example.invalid') // the session host: a failure of it is the tool's
   await tool.probe()
   await tool.refreshItems([item('o', 'r', 1, 'ghe.example.invalid')])
   expect(tool.status().loggedIn).toBe(null)
@@ -482,8 +491,8 @@ test('checkHost: exit 0 is true, cached per host', async () => {
     argv =>
       argv[1] === 'auth'
         ? argv.includes('ghe.corp')
-          ? ok('Logged in')
-          : ok('', 1, fx.GHE_AUTH_STATUS_STDERR)
+          ? ok(fx.authStatusJson('ghe.corp'))
+          : ok(fx.AUTH_STATUS_JSON_NO_LOGIN, 0, fx.AUTH_STATUS_NO_LOGIN_NOTICE)
         : undefined,
   )
   const tool = new GhTool(run, () => NOW)
@@ -495,8 +504,8 @@ test('checkHost: exit 0 is true, cached per host', async () => {
   expect(tool.isHostAuthed('ghe.corp')).toBe(true)
   expect(tool.isHostAuthed('other.corp')).toBe(false)
   expect(calls.filter(c => c[1] === 'auth')).toEqual([
-    ['gh', 'auth', 'status', '--hostname', 'ghe.corp'],
-    ['gh', 'auth', 'status', '--hostname', 'other.corp'],
+    ['gh', 'auth', 'status', '--hostname', 'ghe.corp', '--json', 'hosts'],
+    ['gh', 'auth', 'status', '--hostname', 'other.corp', '--json', 'hosts'],
   ])
 })
 
@@ -504,7 +513,7 @@ test('checkHost: a runner rejection answers false and is not cached', async () =
   let fail = true
   const { run } = rig(
     () => ok(),
-    argv => (argv[1] === 'auth' ? (fail ? new Error('timeout') : ok('ok')) : undefined),
+    argv => (argv[1] === 'auth' ? (fail ? new Error('timeout') : ok(fx.authStatusJson('ghe.corp'))) : undefined),
   )
   const tool = new GhTool(run, () => NOW)
   expect(await tool.checkHost('ghe.corp')).toBe(false)
@@ -517,7 +526,12 @@ test('reset forgets a cached host denial, so a manual refresh can see a new logi
   let loggedIn = false
   const { run } = rig(
     () => ok(),
-    argv => (argv[1] === 'auth' ? (loggedIn ? ok('ok') : ok('', 1, 'no')) : undefined),
+    argv =>
+      argv[1] === 'auth'
+        ? loggedIn
+          ? ok(fx.authStatusJson('ghe.corp'))
+          : ok(fx.AUTH_STATUS_JSON_NO_LOGIN, 0, fx.AUTH_STATUS_NO_LOGIN_NOTICE)
+        : undefined,
   )
   const tool = new GhTool(run, () => NOW)
   expect(await tool.checkHost('ghe.corp')).toBe(false)
@@ -569,6 +583,7 @@ test('graphql: ok returns the reply; the argv is fixed and the run gets the disc
     return ok(DATA)
   }
   const tool = new GhTool(run, () => NOW)
+  tool.setHome('ghe.corp') // the session host: its calls move the tool-wide flag
   await tool.probe()
   expect(await tool.graphql('ghe.corp', DQ)).toEqual({ ok: true, reply: { data: { repository: {} }, errors: [] } })
   expect(argvs[0]).toEqual(['gh', 'api', 'graphql', '--hostname', 'ghe.corp', '-f', 'query=' + DQ])
@@ -621,4 +636,371 @@ test('graphql: a query-level error and a cut reply leave the breaker closed afte
   await b.probe()
   for (let i = 0; i < 3; i++) expect(await b.graphql('github.com', DQ)).toMatchObject({ ok: false, kind: 'truncated' })
   expect(b.status().breaker).toBe('closed')
+})
+
+// ---------------------------------------------------------------- one host never poisons the others (issue #158)
+// The tool-wide login flag and breaker stand for the home host: the session repo's host, else github.com. A call to any
+// other host (a PR the session created there, an item of it) keeps its login and its failures to that host.
+
+const GHE = (argv: readonly string[]): boolean => argv.includes('ghe.corp')
+const REFUSED = (): RunResult => ok('', 4, fx.AUTH_UNAUTH_STDERR)
+
+test('graphql: another host that refuses login is denied alone; the tool stays logged in and the home host goes on', async () => {
+  const { run } = rig((_q, argv) => (GHE(argv) ? REFUSED() : ok(DATA)))
+  const tool = new GhTool(run, () => NOW)
+  await tool.probe()
+  expect(await tool.graphql('ghe.corp', DQ)).toMatchObject({ ok: false, kind: 'auth' })
+  expect(tool.status().loggedIn).not.toBe(false)
+  expect(tool.status().breaker).toBe('closed')
+  expect(tool.canCall(NOW)).toBe(true)
+  expect(tool.isHostAuthed('ghe.corp')).toBe(false) // the host is denied: items of it do not refresh, and checkHost says no
+  expect(await tool.graphql('github.com', DQ)).toMatchObject({ ok: true })
+  // The manual refresh forgets the denial, as for a host that gh auth status denied.
+  tool.reset()
+  expect(tool.isHostAuthed('ghe.corp')).toBeUndefined()
+})
+
+test('graphql: three failures of another host open the breaker of that host alone, until a manual refresh', async () => {
+  const { run, graphqlCalls } = rig((_q, argv) => (GHE(argv) ? new Error('timeout') : ok(DATA)))
+  const tool = new GhTool(run, () => NOW)
+  await tool.probe()
+  for (let i = 0; i < 3; i++)
+    expect(await tool.graphql('ghe.corp', DQ)).toMatchObject({ ok: false, kind: 'transport', error: 'timeout' })
+  expect(tool.status().breaker).toBe('closed') // the tool-wide breaker did not count them
+  expect(tool.canCall(NOW)).toBe(true)
+  expect(await tool.graphql('ghe.corp', DQ)).toEqual({ ok: false, kind: 'blocked' }) // that host rests, with no call
+  expect(graphqlCalls().filter(GHE)).toHaveLength(3)
+  expect(await tool.graphql('github.com', DQ)).toMatchObject({ ok: true }) // the home host is not held up
+  tool.reset() // /track refresh: that host gets one more try
+  expect(await tool.graphql('ghe.corp', DQ)).toMatchObject({ ok: false, kind: 'transport' })
+  expect(graphqlCalls().filter(GHE)).toHaveLength(4)
+})
+
+test('graphql: a cut reply or a query error of another host touches no state, and a good reply proves nothing of the home host', async () => {
+  let body: RunResult = { ...ok('{"data":', 0), isStdoutTruncated: true }
+  const { run } = rig(() => body)
+  const tool = new GhTool(run, () => NOW)
+  await tool.probe()
+  for (let i = 0; i < 4; i++) expect(await tool.graphql('ghe.corp', DQ)).toMatchObject({ ok: false, kind: 'truncated' })
+  body = ok(JSON.stringify({ errors: [{ message: 'Field x' }] }), 1)
+  expect(await tool.graphql('ghe.corp', DQ)).toEqual({ ok: false, kind: 'query-error', error: 'Field x' })
+  expect(tool.status()).toMatchObject({ breaker: 'closed', loggedIn: null }) // no flag moved
+  body = ok(DATA)
+  expect(await tool.graphql('ghe.corp', DQ)).toMatchObject({ ok: true })
+  expect(tool.status().loggedIn).toBe(null)
+})
+
+test('setHome: the session host is the one the tool-wide flag stands for, and then github.com is another host', async () => {
+  const { run } = rig(() => REFUSED())
+  const tool = new GhTool(run, () => NOW)
+  await tool.probe()
+  tool.setHome('GHE.corp') // case does not matter
+  expect(await tool.graphql('github.com', DQ)).toMatchObject({ ok: false, kind: 'auth' })
+  expect(tool.status().loggedIn).not.toBe(false)
+  expect(await tool.graphql('ghe.corp', DQ)).toMatchObject({ ok: false, kind: 'auth' })
+  expect(tool.status().loggedIn).toBe(false) // the home host refused: the whole tool is logged out, as before
+  const bare = new GhTool(run, () => NOW)
+  await bare.probe()
+  bare.setHome(undefined) // no session repo: github.com
+  expect(await bare.graphql('github.com', DQ)).toMatchObject({ ok: false, kind: 'auth' })
+  expect(bare.status().loggedIn).toBe(false)
+})
+
+test('setHome: a new home host starts with a clean tool: the login flag and the breaker of the old one are forgotten', async () => {
+  const { run } = rig(() => new Error('timeout'))
+  const tool = new GhTool(run, () => NOW)
+  await tool.probe()
+  for (let i = 0; i < 3; i++) await tool.graphql('github.com', DQ)
+  expect(tool.status().breaker).toBe('open') // the old home host
+  tool.setHome('github.com') // the same host: nothing changes
+  expect(tool.status().breaker).toBe('open')
+  tool.setHome('ghe.corp') // a session on another host (an in-process /resume)
+  expect(tool.status().breaker).toBe('half-open') // as a manual refresh leaves it
+  const refused = rig(() => REFUSED())
+  const other = new GhTool(refused.run, () => NOW)
+  await other.probe()
+  await other.graphql('github.com', DQ)
+  expect(other.status().loggedIn).toBe(false)
+  other.setHome('github.com') // no change
+  expect(other.status().loggedIn).toBe(false)
+  other.setHome('ghe.corp')
+  expect(other.status().loggedIn).toBe(null)
+  expect(other.canCall(NOW)).toBe(true)
+})
+
+test('refreshItems: another host that refuses login is denied alone: the items of the home host refresh, the tool stays logged in', async () => {
+  const { run } = rig((q, argv) => (GHE(argv) ? REFUSED() : ok(remap(fx.BATCH_SAMPLE_OUTPUT, q))))
+  const tool = new GhTool(run, () => NOW)
+  await tool.probe()
+  const foreign = item('team', 'svc', 5, 'ghe.corp')
+  const [issue, pr, merged] = [item('cli', 'cli', 14622), item('cli', 'cli', 14640), item('other', 'repo', 14633)]
+  await tool.refreshItems([foreign, issue!, pr!, merged!]) // the other host comes first
+  expect(issue).toMatchObject({ type: 'issue', state: 'closed', refreshedAt: NOW })
+  expect(pr).toMatchObject({ type: 'pr', state: 'open' })
+  expect(tool.status().loggedIn).toBe(true)
+  expect(tool.isHostAuthed('ghe.corp')).toBe(false)
+  expect(tool.canCall(NOW)).toBe(true)
+})
+
+test('refreshItems: a failed chunk of the home host ends that host only: the hosts after it are still refreshed', async () => {
+  const { run, graphqlCalls } = rig((q, argv) =>
+    argv.includes('github.com') ? REFUSED() : ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)),
+  )
+  const tool = new GhTool(run, () => NOW)
+  await tool.probe()
+  const home = item('cli', 'cli', 1) // first in the batch, and refused: the home host logs the tool out
+  const [issue, pr, merged] = [
+    item('cli', 'cli', 14622, 'ghe.corp'),
+    item('cli', 'cli', 14640, 'ghe.corp'),
+    item('other', 'repo', 14633, 'ghe.corp'),
+  ]
+  await tool.refreshItems([home, issue!, pr!, merged!])
+  expect(tool.status().loggedIn).toBe(false) // the home host refused, as before
+  expect(home.refreshedAt).toBeUndefined()
+  expect(issue).toMatchObject({ type: 'issue', state: 'closed', refreshedAt: NOW }) // the other host went on
+  expect(pr).toMatchObject({ type: 'pr', state: 'open' })
+  expect(graphqlCalls().map(c => c[4])).toEqual(['github.com', 'ghe.corp'])
+})
+
+test('refreshItems: failures of another host never open the tool breaker, and the home host is still refreshed', async () => {
+  const { run, graphqlCalls } = rig((q, argv) =>
+    GHE(argv) ? new Error('timeout') : ok(remap(fx.BATCH_SAMPLE_OUTPUT, q)),
+  )
+  const tool = new GhTool(run, () => NOW)
+  await tool.probe()
+  for (let i = 0; i < 4; i++) await tool.refreshItems([item('team', 'svc', 5, 'ghe.corp')])
+  expect(graphqlCalls().filter(GHE)).toHaveLength(3) // the fourth finds that host at rest
+  expect(tool.status().breaker).toBe('closed')
+  const [issue, pr, merged] = [item('cli', 'cli', 14622), item('cli', 'cli', 14640), item('other', 'repo', 14633)]
+  await tool.refreshItems([issue!, pr!, merged!])
+  expect(issue!.refreshedAt).toBe(NOW)
+})
+
+// ---------------------------------------------------------------- the reviewer's findings on the per-host state (issue #158)
+
+test('canCallHost: the home host asks the tool; another host asks its own denial and breaker', async () => {
+  const { run } = rig((_q, argv) => (GHE(argv) ? new Error('timeout') : REFUSED()))
+  const tool = new GhTool(run, () => NOW)
+  expect(tool.canCallHost('github.com', NOW)).toBe(false) // not probed: not available
+  expect(tool.canCallHost('ghe.corp', NOW)).toBe(false)
+  await tool.probe()
+  expect(tool.canCallHost('github.com', NOW)).toBe(true)
+  expect(tool.canCallHost('ghe.corp', NOW)).toBe(true)
+  await tool.graphql('github.com', DQ) // the home host refuses: the tool is logged out
+  expect(tool.canCall(NOW)).toBe(false)
+  expect(tool.canCallHost('github.com', NOW)).toBe(false)
+  expect(tool.canCallHost('ghe.corp', NOW)).toBe(true) // another host does not wait for it
+  for (let i = 0; i < 3; i++) await tool.graphql('ghe.corp', DQ)
+  expect(tool.canCallHost('GHE.corp', NOW)).toBe(false) // its own breaker rests, whatever the case
+  expect(tool.canCallHost('other.corp', NOW)).toBe(true)
+  tool.reset()
+  expect(tool.canCallHost('github.com', NOW)).toBe(true)
+  expect(tool.canCallHost('ghe.corp', NOW)).toBe(true) // half open
+  // A host that refused its login is denied until the manual refresh.
+  const denied = rig(() => REFUSED())
+  const other = new GhTool(denied.run, () => NOW)
+  await other.probe()
+  await other.graphql('ghe.corp', DQ)
+  expect(other.canCallHost('ghe.corp', NOW)).toBe(false)
+  other.reset()
+  expect(other.canCallHost('ghe.corp', NOW)).toBe(true)
+})
+
+/** A runner that answers `gh auth status` from `answer(argv)`, and counts the calls. */
+function authRig(answer: (argv: readonly string[]) => RunResult | Error) {
+  const r = rig(
+    () => ok(),
+    argv => (argv[1] === 'auth' ? answer(argv) : undefined),
+  )
+  const asked = () => r.calls.filter(c => c[1] === 'auth')
+  return { ...r, asked }
+}
+const JSON_NO_LOGIN = (): RunResult => ok(fx.AUTH_STATUS_JSON_NO_LOGIN, 0, fx.AUTH_STATUS_NO_LOGIN_NOTICE)
+
+test('checkHost reads gh auth status --json hosts: a login is a yes, no login and a bad token are a denial, cached', async () => {
+  const answers: Record<string, RunResult> = {
+    'github.com': ok(fx.AUTH_STATUS_JSON_LOGGED_IN),
+    'ghe.example.invalid': JSON_NO_LOGIN(),
+  }
+  const { run, asked } = authRig(argv => answers[argv[4]!]!)
+  const tool = new GhTool(run, () => NOW)
+  expect(await tool.checkHost('github.com')).toBe(true)
+  expect(await tool.checkHost('ghe.example.invalid')).toBe(false) // `hosts` is empty: no account on that host
+  expect(tool.isHostAuthed('ghe.example.invalid')).toBe(false)
+  expect(asked().every(c => c.join(' ').endsWith('--json hosts'))).toBe(true)
+  // The active account decides: its bad token (HTTP 401) is a denial, whatever the other account says.
+  answers['github.com'] = ok(fx.AUTH_STATUS_JSON_BAD_TOKEN)
+  const other = new GhTool(run, () => NOW)
+  expect(await other.checkHost('github.com')).toBe(false)
+  expect(other.isHostAuthed('github.com')).toBe(false)
+  expect(asked()).toHaveLength(3)
+  // A stored token (keyring, hosts.yml: what `gh auth login` leaves) that the host refuses says `HTTP 401: ...`, not the
+  // `non-200 OK status code: 401` of an env token. It is a denial as well, and cached.
+  answers['github.com'] = ok(fx.AUTH_STATUS_JSON_STORED_BAD_TOKEN)
+  const stored = new GhTool(run, () => NOW)
+  expect(await stored.checkHost('github.com')).toBe(false)
+  expect(stored.isHostAuthed('github.com')).toBe(false)
+  expect(await stored.checkHost('github.com')).toBe(false)
+  expect(asked()).toHaveLength(4) // the second answer came from the cache
+})
+
+test('checkHost: a host that cannot be reached is a failure of that host, not a denial: not cached, and it rests after three', async () => {
+  for (const [host, json] of [
+    ['ghe.example.invalid', fx.AUTH_STATUS_JSON_DNS],
+    ['192.0.2.1', fx.AUTH_STATUS_JSON_TIMEOUT],
+    // A gateway error: `HTTP <code>: <message> (<url>)`, the format of the stored-token capture with another code.
+    [
+      'ghe.corp',
+      fx.authStatusJson('ghe.corp', { state: 'error', error: 'HTTP 502: Bad Gateway (https://ghe.corp/api/v3/)' }),
+    ],
+  ] as const) {
+    let reachable = false
+    const { run, asked } = authRig(() => (reachable ? ok(fx.authStatusJson(host)) : ok(json)))
+    const tool = new GhTool(run, () => NOW)
+    await tool.probe()
+    expect(tool.canCallHost(host, NOW)).toBe(true)
+    for (let i = 0; i < 3; i++) expect(await tool.checkHost(host)).toBe(false)
+    expect(tool.isHostAuthed(host)).toBeUndefined() // the login is not known
+    expect(tool.status().breaker).toBe('closed') // the breaker of the tool did not count them
+    expect(asked()).toHaveLength(3)
+    expect(await tool.checkHost(host)).toBe(false) // the host rests: no call
+    expect(asked()).toHaveLength(3)
+    expect(tool.canCallHost(host, NOW)).toBe(false)
+    tool.reset() // /track refresh: one more try
+    reachable = true
+    expect(await tool.checkHost(host)).toBe(true)
+    expect(asked()).toHaveLength(4)
+    expect(tool.canCallHost(host, NOW)).toBe(true) // a good check frees the slot of the half-open breaker
+  }
+})
+
+test('checkHost: a failed check of the home host feeds no breaker and is not cached', async () => {
+  const { run, asked } = authRig(() => ok(fx.AUTH_STATUS_JSON_DNS))
+  const tool = new GhTool(run, () => NOW)
+  const host = 'ghe.example.invalid'
+  tool.setHome(host) // the session host
+  await tool.probe()
+  for (let i = 0; i < 4; i++) expect(await tool.checkHost(host)).toBe(false)
+  expect(tool.isHostAuthed(host)).toBeUndefined()
+  expect(asked()).toHaveLength(4) // the home host never rests on a check: each call asks
+  expect(tool.status().breaker).toBe('closed') // and the breaker of the tool did not count them
+  expect(tool.canCall(NOW)).toBe(true)
+})
+
+test('checkHost: a denial frees the slot of the half-open breaker of the host as well', async () => {
+  let answer: RunResult = ok(fx.AUTH_STATUS_JSON_DNS)
+  const { run } = authRig(() => answer)
+  const tool = new GhTool(run, () => NOW)
+  await tool.probe()
+  const host = 'ghe.example.invalid'
+  for (let i = 0; i < 3; i++) await tool.checkHost(host) // the host rests
+  tool.reset() // half open
+  answer = JSON_NO_LOGIN()
+  expect(await tool.checkHost(host)).toBe(false)
+  expect(tool.isHostAuthed(host)).toBe(false)
+  tool.reset() // forgets the denial; the slot must be free by now
+  expect(tool.canCallHost(host, NOW)).toBe(true)
+})
+
+test('checkHost: an older gh with no --json for auth status is asked for the text, and the text tells the same', async () => {
+  let text: RunResult = ok('', 1, fx.AUTH_STATUS_NO_LOGIN_NOTICE)
+  const { run, asked } = authRig(argv => (argv.includes('--json') ? ok('', 1, fx.AUTH_STATUS_UNKNOWN_JSON_FLAG) : text))
+  const verdict = async (answer: RunResult) => {
+    text = answer
+    const tool = new GhTool(run, () => NOW)
+    tool.setHome('ghe.corp') // the host under test is not the home host
+    return { ok: await tool.checkHost('ghe.example.invalid'), authed: tool.isHostAuthed('ghe.example.invalid'), tool }
+  }
+  // No login on that host, no login at all: a denial, cached.
+  expect(await verdict(ok('', 1, fx.AUTH_STATUS_NO_LOGIN_NOTICE))).toMatchObject({ ok: false, authed: false })
+  expect(await verdict(ok('', 1, fx.GHE_AUTH_STATUS_STDERR))).toMatchObject({ ok: false, authed: false })
+  // gh before 2.40 (`status.go` at v2.39.0): no account on the host. A denial, as on main.
+  expect(
+    await verdict(ok('', 1, 'Hostname "ghe.example.invalid" not found among authenticated GitHub hosts\n')),
+  ).toMatchObject({ ok: false, authed: false })
+  // The text of an unreachable host reads as an invalid token, and carries the login hint: a denial, as on main.
+  expect(await verdict(ok('', 1, fx.AUTH_STATUS_TEXT_DNS))).toMatchObject({ ok: false, authed: false })
+  // A timeout has no login hint: a failure, not cached.
+  expect(await verdict(ok('', 1, fx.AUTH_STATUS_TEXT_TIMEOUT))).toMatchObject({ ok: false, authed: undefined })
+  // Exit 0 is a login.
+  expect(await verdict(ok('github.com\n  Logged in\n'))).toMatchObject({ ok: true, authed: true })
+  // Each check asked twice: `--json hosts`, then the text.
+  expect(
+    asked()
+      .slice(0, 2)
+      .map(c => c.includes('--json')),
+  ).toEqual([true, false])
+})
+
+test('host names are one key whatever the case: the check, the denial and the breaker', async () => {
+  const { run, calls } = rig(
+    (_q, argv) => (argv.some(a => a.toLowerCase() === 'ghe.corp') ? new Error('timeout') : ok(DATA)),
+    argv => (argv[1] === 'auth' ? ok(fx.authStatusJson('ghe.corp')) : undefined),
+  )
+  const tool = new GhTool(run, () => NOW)
+  expect(await tool.checkHost('GHE.corp')).toBe(true)
+  expect(await tool.checkHost('ghe.CORP')).toBe(true)
+  expect(calls.filter(c => c[1] === 'auth')).toHaveLength(1) // one check for one host
+  expect(tool.isHostAuthed('ghe.corp')).toBe(true)
+  expect(tool.isHostAuthed('Ghe.Corp')).toBe(true)
+  await tool.probe()
+  await tool.graphql('GHE.corp', DQ)
+  await tool.graphql('ghe.corp', DQ)
+  await tool.graphql('Ghe.Corp', DQ)
+  expect(await tool.graphql('ghe.corp', DQ)).toEqual({ ok: false, kind: 'blocked' }) // three failures of one host
+  // Two checks of one host in flight, in two cases, are one call.
+  const slow = authRig(() => ok(fx.authStatusJson('ghe.example.invalid')))
+  const two = new GhTool(slow.run, () => NOW)
+  expect(await Promise.all([two.checkHost('GHE.example.invalid'), two.checkHost('ghe.example.invalid')])).toEqual([
+    true,
+    true,
+  ])
+  expect(slow.asked()).toHaveLength(1)
+  // A refusal of a query, in any case, denies the host under its one key.
+  const refused = rig(() => REFUSED())
+  const denied = new GhTool(refused.run, () => NOW)
+  await denied.probe()
+  await denied.graphql('GHE.corp', DQ)
+  expect(denied.isHostAuthed('ghe.corp')).toBe(false)
+  expect(denied.canCallHost('Ghe.Corp', NOW)).toBe(false)
+})
+
+test('graphql: the last error of another host goes with a good reply and with a manual refresh', async () => {
+  // A breaker that lets the call through when the test says so: `allows` false is a half-open slot that another call took.
+  const allow = { value: true }
+  const breaker: Breaker = {
+    state: 'closed',
+    openUntil: undefined,
+    peek: () => true,
+    allows: () => allow.value,
+    success: () => {},
+    failure: () => {},
+    reset: () => {},
+  }
+  let reject = true
+  const { run } = rig(() => (reject ? new Error('timeout') : ok(DATA)))
+  const cli = new CliTool(
+    { id: 'gh', probe: ['gh', '--version'], timeoutMs: () => 1000, probeTimeoutMs: () => 1000 },
+    run,
+    () => NOW,
+    undefined,
+    () => breaker,
+  )
+  const tool = new GhTool(cli, () => NOW)
+  await tool.probe()
+  expect(await tool.graphql('ghe.corp', DQ)).toMatchObject({ ok: false, kind: 'transport', error: 'timeout' })
+  allow.value = false // the slot is taken: no call, so no new error, and the one of the last failure is told
+  expect(await tool.graphql('ghe.corp', DQ)).toMatchObject({ ok: false, kind: 'transport', error: 'timeout' })
+  allow.value = true
+  reject = false
+  expect(await tool.graphql('ghe.corp', DQ)).toMatchObject({ ok: true }) // a good reply forgets the error
+  allow.value = false
+  expect(await tool.graphql('ghe.corp', DQ)).toEqual({ ok: false, kind: 'transport' })
+  // A manual refresh forgets it too.
+  allow.value = true
+  reject = true
+  await tool.graphql('ghe.corp', DQ)
+  allow.value = false
+  tool.reset()
+  expect(await tool.graphql('ghe.corp', DQ)).toEqual({ ok: false, kind: 'transport' })
 })

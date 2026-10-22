@@ -1,7 +1,7 @@
 // Discovered items (spec A9 to A12, 8.4): PRs on tracked branches and the refs in their bodies.
 // Pure: no `$`. A call that changes nothing returns its input list (A22).
 
-import type { Claim, JsonObject, StoredItem } from '../../core/interfaces/items'
+import type { Claim, JsonObject, ReasonSet, StoredItem } from '../../core/interfaces/items'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
 import { addReason, dropReason } from '../../core/lib/reasons'
 import { type BaseRecord, enforceCap, isAutoOnly, isDiscovered } from '../../core/lib/records'
@@ -27,6 +27,7 @@ function discoveryFields(pr: DiscoveredPr) {
     headRefName: pr.headRefName,
     baseRefName: pr.baseRefName,
     ...(pr.crossRepo ? { crossRepo: true as const } : {}),
+    ...(pr.otherRepo ? { otherRepo: true as const } : {}),
     ...(pr.reviewDecision !== undefined ? { reviewDecision: pr.reviewDecision } : {}),
     ...(pr.mergeable !== undefined ? { mergeable: pr.mergeable } : {}),
     ...(pr.mergeStateStatus !== undefined ? { mergeStateStatus: pr.mergeStateStatus } : {}),
@@ -47,6 +48,8 @@ function isCurrent(rec: GitHubRecord, pr: DiscoveredPr, at: number, staleMs: num
     rec.headRefName === pr.headRefName &&
     rec.baseRefName === pr.baseRefName &&
     rec.crossRepo === pr.crossRepo &&
+    rec.otherRepo === pr.otherRepo &&
+    (pr.created !== true || rec.reasons.all.includes('created')) &&
     rec.reviewDecision === pr.reviewDecision &&
     rec.mergeable === pr.mergeable &&
     rec.mergeStateStatus === pr.mergeStateStatus &&
@@ -55,16 +58,26 @@ function isCurrent(rec: GitHubRecord, pr: DiscoveredPr, at: number, staleMs: num
   )
 }
 
+/**
+ * The reasons a PR of the lane has: `discovered` always, and `created` when the session made the PR (issue #158). The
+ * lane keeps `discovered` beside `created`, so the marker, the prune and a resume load treat it as any lane PR.
+ */
+function laneReasons(set: ReasonSet, pr: DiscoveredPr): ReasonSet {
+  const found = addReason(set, 'discovered')
+  return pr.created ? addReason(found, 'created') : found
+}
+
 function withDiscovery(rec: GitHubRecord, pr: DiscoveredPr, at: number): GitHubRecord {
   const next: GitHubRecord = {
     ...rec,
     lane: true,
-    reasons: addReason(rec.reasons, 'discovered'),
+    reasons: laneReasons(rec.reasons, pr),
     ...discoveryFields(pr),
     refreshedAt: at,
   }
   delete next.error
   if (pr.crossRepo === undefined) delete next.crossRepo
+  if (pr.otherRepo === undefined) delete next.otherRepo
   if (pr.reviewDecision === undefined) delete next.reviewDecision
   if (pr.mergeable === undefined) delete next.mergeable
   if (pr.mergeStateStatus === undefined) delete next.mergeStateStatus
@@ -78,12 +91,14 @@ function withDiscovery(rec: GitHubRecord, pr: DiscoveredPr, at: number): GitHubR
  */
 function prClaim(pr: DiscoveredPr, at: number): Claim {
   const fields = { host: pr.host, owner: pr.owner, repo: pr.repo, number: pr.number, type: 'pr', url: pr.url }
-  return { category: 'github', key: prKey(pr), source: 'auto', reason: 'discovered', at, fields: fields as JsonObject }
+  const reason = pr.created ? 'created' : 'discovered'
+  return { category: 'github', key: prKey(pr), source: 'auto', reason, at, fields: fields as JsonObject }
 }
 
 function newPrRecord(pr: DiscoveredPr, at: number): GitHubRecord {
   const base = githubKind.merge(null, prClaim(pr, at)) as GitHubRecord
-  return { ...base, sources: [], lane: true, seenCount: 0, ...discoveryFields(pr), refreshedAt: at }
+  const reasons = laneReasons(base.reasons, pr)
+  return { ...base, sources: [], reasons, lane: true, seenCount: 0, ...discoveryFields(pr), refreshedAt: at }
 }
 
 /** The numbers `applyDiscovery` reads: how long a record stays current, and the two item caps. */
@@ -102,6 +117,12 @@ export function applyDiscovery(
     /** The claims in the body of each PR, by the key of the PR (`prBodyRefs`). */
     refsByPr: ReadonlyMap<string, readonly Claim[]>
     complete: boolean
+    /**
+     * The keys of the created PRs that got no sure answer (issue #158): all of a repo that failed, and the PRs with no
+     * verdict in a repo that answered. The reply is complete for the rest, so the prune runs. A held PR keeps its lane
+     * marker and its reason, and the refs of its body keep their `via` entry. A PR whose body was read is never held.
+     */
+    held?: ReadonlySet<string>
     dismissed: ReadonlySet<string>
     at: number
     /** The record a claim of any kind makes (`ItemStorePort.build`). null: the claim adds no record. */
@@ -111,6 +132,8 @@ export function applyDiscovery(
   },
 ): DiscoveryApplied {
   const { refsByPr, complete, dismissed, at, build } = input
+  // A dismissed PR is no PR of the lane, held or not: its record is gone, and the refs of its body go as for any dismissed PR.
+  const heldPrs = new Set([...(input.held ?? [])].filter(k => !dismissed.has(k)))
   const caps = input.caps ?? {
     staleMs: GLOBAL_DEFAULTS.refresh.staleMs,
     maxAutoItems: PR_LANE_DEFAULTS.maxAutoItems,
@@ -136,8 +159,9 @@ export function applyDiscovery(
       if (rec.category !== 'github' || isCurrent(rec as GitHubRecord, pr, at, caps.staleMs)) continue
       out[i] = withDiscovery(rec as GitHubRecord, pr, at)
       changed = true
-    } else if (budget > 0) {
-      budget--
+    } else if (pr.created || budget > 0) {
+      // A PR the session created is not an auto-only item: the session made it, so the budget neither counts nor stops it.
+      if (!pr.created) budget--
       index.set(key, out.length)
       out.push(newPrRecord(pr, at))
       changed = true
@@ -193,11 +217,12 @@ export function applyDiscovery(
       const rec = out[i]!
       const held = rec.via as string[] | undefined
       let via = held
-      // The lane marker stays only while the lane still finds the PR.
+      // The lane marker stays only while the lane still finds the PR, or while it got no sure answer (held).
       const laneHeld = rec.lane === true
-      const lane = laneHeld && live.has(rec.key)
+      const lane = laneHeld && (live.has(rec.key) || heldPrs.has(rec.key))
       if (via) {
-        const kept = via.filter(k => listed.get(k)?.has(rec.key) === true)
+        // The body of a held PR was not read: its refs keep their entry.
+        const kept = via.filter(k => heldPrs.has(k) || listed.get(k)?.has(rec.key) === true)
         if (kept.length !== via.length) via = kept.length > 0 ? kept : undefined
       }
       // The reason `discovered` stays while the lane finds the record or a body of a live PR still names it.

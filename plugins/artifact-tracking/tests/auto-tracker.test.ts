@@ -214,6 +214,51 @@ test('a Bash commit records the agent branch; a pr result kicks a round; a plain
   expect(t.rounds()).toBe(before + 2)
 })
 
+// Issue #158: a PR the run created is a proof, in any repo, by any agent. The fact `auto.prs` carries it to the PR lane.
+const OTHER_PR = ev.createdPr('https://github.com/VerticeOne/vertice-iam/pull/657', 657)
+
+test('a Bash result that created a PR records the proof, publishes auto.prs and opens the PR step', async () => {
+  const t = setup()
+  const before = await t.running()
+  expect(t.m.facts.read('auto.prs')).toEqual([])
+  await t.call('Bash', { command: 'gh pr create --repo VerticeOne/vertice-iam' }, OTHER_PR)
+  const proof = { host: 'github.com', owner: 'VerticeOne', repo: 'vertice-iam', number: 657 }
+  expect(t.auto()?.prs).toEqual([proof])
+  expect(t.m.facts.read('auto.prs')).toEqual([proof])
+  await t.settle(WINDOW)
+  expect(t.rounds()).toBe(before + 1)
+  expect(t.branches()?.reasons).toEqual(['pr-event'])
+  // The same PR again, and a PR that was only merged, write no more proof.
+  const sets = t.w.stateSets.auto
+  await t.call('Bash', { command: 'gh pr create' }, OTHER_PR)
+  await t.call(
+    'Bash',
+    { command: 'gh pr merge 657' },
+    ev.createdPr('https://github.com/VerticeOne/vertice-iam/pull/700', 700, 'merged'),
+  )
+  expect(t.auto()?.prs).toEqual([proof])
+  expect(t.w.stateSets.auto).toBe(sets)
+})
+
+test('a subagent that created a PR leaves a proof too', async () => {
+  const t = setup()
+  await t.running()
+  await t.spawn()
+  await t.call('Bash', { command: 'gh pr create' }, ev.BASH_PR_RAN, { agentId: ev.SPAWN_ANSWER.agentId })
+  expect(t.auto()?.prs?.map(p => `${p.owner}/${p.repo}#${p.number}`)).toEqual(['octo/demo#7'])
+})
+
+test('the proofs of a run hold up to maxProofs PRs, the newest', async () => {
+  const t = setup()
+  await t.running()
+  const max = autoConfig.defaults.maxProofs
+  for (let n = 1; n <= max + 2; n++)
+    await t.call('Bash', { command: 'gh pr create' }, ev.createdPr(`https://github.com/o/r/pull/${n}`, n))
+  const numbers = t.auto()?.prs?.map(p => p.number) ?? []
+  expect(numbers).toHaveLength(max)
+  expect([numbers[0], numbers.at(-1)]).toEqual([3, max + 2])
+})
+
 test('Monitor, TaskStop, Write, Edit and Read touch a workflow agent', async () => {
   const t = setup()
   await t.running()
@@ -331,9 +376,12 @@ test('restore uses carryAuto: a held root fills an empty state and never replace
   const slot = world.host.slots().find(s => s.id === 'auto')
   if (!slot) throw new Error('no auto slot')
   expect(slot.persist).toBe(false)
-  const held = { ...emptyAuto(), root: { cwd: '/old', at: 1 } }
+  const prs = [{ host: 'github.com', owner: 'o', repo: 'r', number: 4 }]
+  const held = { ...emptyAuto(), root: { cwd: '/old', at: 1 }, prs }
   await slot.restore(held as unknown as Json, 'carry')
   expect((world.w.state.get('auto') as unknown as AutoState).root).toEqual({ cwd: '/old', at: 1 })
+  expect((world.w.state.get('auto') as unknown as AutoState).prs).toEqual(prs) // the PR proofs survive /clear
+  expect(world.facts.read('auto.prs')).toEqual(prs)
   expect(world.facts.read('auto.root')).toEqual({ cwd: '/old', at: 1 })
   await slot.restore({ ...emptyAuto(), root: { cwd: '/other', at: 2 } } as unknown as Json, 'load')
   expect((world.w.state.get('auto') as unknown as AutoState).root).toEqual({ cwd: '/old', at: 1 })
@@ -355,10 +403,12 @@ test('the facts auto.root, auto.agents and auto.checkedAt follow the slot', asyn
 
 test('a hot reload keeps the slot and loses the facts: init publishes what the slot holds', async () => {
   const world = hostWorld([autoTracker])
-  world.w.state.set('auto', { ...emptyAuto(), root: { cwd: ROOT, at: 5 } } as unknown as Json)
+  const prs = [{ host: 'github.com', owner: 'o', repo: 'r', number: 4 }]
+  world.w.state.set('auto', { ...emptyAuto(), root: { cwd: ROOT, at: 5 }, prs } as unknown as Json)
   await world.host.init()
   expect(world.facts.read('auto.root')).toEqual({ cwd: ROOT, at: 5 })
   expect(world.facts.read('auto.agents')).toEqual([])
+  expect(world.facts.read('auto.prs')).toEqual(prs)
   expect(world.host.failed()).toEqual([])
 })
 

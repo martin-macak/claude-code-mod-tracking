@@ -32,7 +32,13 @@ type Lookup = { local: Promise<Remote>; done: Promise<void> }
 /** The lookup of each load's facts, memoised while the session stays the same. */
 const lookups = new WeakMap<FactsPort, Lookup>()
 
+/** The session repo's host is the one the tool-wide login flag and breaker of `gh` stand for (`GhTool.setHome`). */
+function setHome(ctx: RepoContext, repo: RepoRef | null): void {
+  ghOf(ctx.tools, ctx.config, () => ctx.clock.wall())?.setHome(repo?.host)
+}
+
 function publish(ctx: RepoContext, repo: RepoRef | null, hosts: string[]): void {
+  setHome(ctx, repo)
   ctx.facts.publish('session.repo', (repo ?? undefined) as unknown as Json | undefined)
   ctx.facts.publish('github.hosts', hosts)
   if (repo) ctx.items.refresh() // the items that waited for a repo (a GHE host needs its auth check) are due

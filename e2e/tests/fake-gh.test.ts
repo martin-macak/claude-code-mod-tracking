@@ -140,6 +140,37 @@ test('a base alias finds an open PR that targets the branch, a head alias also f
   )
 })
 
+test('a pullRequest(number:) alias of a created PR gets the PR of any state, and a missing number a NOT_FOUND on its alias', () => {
+  const closed: FakePr = { ...PR, number: 12, headRefName: 'feat/untracked', state: 'CLOSED' }
+  const spec = { ...SPEC, prs: [PR, closed] }
+  // As `buildDiscoveryQuery` writes the aliases of the numbers of the PRs the session created (issue #158).
+  const query = `query {
+  rateLimit { cost remaining }
+  repository(owner: "e2e-owner", name: "e2e-repo") {
+    defaultBranchRef { name }
+    p0: pullRequest(number: 12) { ...pr }
+    p1: pullRequest(number: 99) { ...pr }
+  }
+}
+fragment pr on PullRequest { number }`
+  const r = answer(graphql(query), spec)
+  assert.equal(r.call, 'graphql discovery')
+  assert.equal(r.exitCode, 1) // GitHub exits 1 on an error, and prints the reply all the same
+  const reply = body(r.stdout)
+  assert.equal(reply.data.repository.p0.number, 12)
+  assert.equal(reply.data.repository.p0.state, 'CLOSED')
+  assert.equal(reply.data.repository.p0.url, 'https://github.com/e2e-owner/e2e-repo/pull/12')
+  assert.equal(reply.data.repository.p1, null)
+  assert.deepEqual(
+    reply.errors.map((e: { type: string; path: string[] }) => [e.type, e.path]),
+    [['NOT_FOUND', ['repository', 'p1']]],
+  )
+  // All the numbers are there: no error, and the exit is 0.
+  const found = answer(graphql(query.replace('number: 99', 'number: 7')), spec)
+  assert.equal(found.exitCode, 0)
+  assert.equal(body(found.stdout).errors, undefined)
+})
+
 test('a query for a repo the fake does not stand for is a NOT_FOUND, never a PR', () => {
   const r = answer(graphql(discovery('martin-macak', 'claude-code-mod-tracking', 'feat/fake-conflict')), SPEC)
   assert.equal(r.exitCode, 1)

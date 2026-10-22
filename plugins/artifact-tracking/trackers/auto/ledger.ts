@@ -9,6 +9,7 @@ import type {
   AgentResultFacts,
   AutoState,
   EnterFacts,
+  PrFacts,
   SpawnFacts,
   TurnCompleteReason,
   WorktreeProof,
@@ -79,6 +80,23 @@ export function recordEnter(
     ev.branch,
     maxProofs,
   )
+}
+
+/** The identity of a PR proof: host, owner, repo and number, lower case, as the item key lowers them. */
+const prProofKey = (p: PrFacts): string => `${p.host}/${p.owner}/${p.repo}#${p.number}`.toLowerCase()
+
+/**
+ * Proof of a PR (issue #158): the PR that a `gitOperation.pr` with the action `created` made, in any repo. It needs no
+ * root to be recorded. The lane asks for it once a round runs, and a run with no root runs none (spec K31). `carryAuto`
+ * also carries only a state that has a root. A PR already known keeps its first record (and the case it came with).
+ * The list keeps the newest `maxProofs`, oldest first.
+ */
+export function recordPr(s: AutoState, pr: PrFacts, maxProofs: number = AUTO_DEFAULTS.maxProofs): AutoState {
+  const held = s.prs ?? []
+  const key = prProofKey(pr)
+  if (held.some(p => prProofKey(p) === key)) return s
+  const proof: PrFacts = { host: pr.host, owner: pr.owner, repo: pr.repo, number: pr.number }
+  return { ...s, prs: [...held, proof].slice(-maxProofs) }
 }
 
 export type AgentPatch = { [K in keyof AgentProof]?: AgentProof[K] | undefined }

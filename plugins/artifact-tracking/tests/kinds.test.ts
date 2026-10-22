@@ -164,6 +164,26 @@ test('github: a known key adds its source once, counts the sighting and takes a 
   expect('owner' in bare).toBe(false)
 })
 
+// Issue #158: the row and the label show the repo as GitHub spells it. Only the key and the comparisons lower it.
+test('github: owner and repo keep their case in the record, its label and its URL; key and host are lower case', () => {
+  const mixed = { host: 'GitHub.com', owner: 'VerticeOne', repo: 'Vertice-IAM', number: 657, type: 'pr' }
+  const rec = made(githubKind, claim('github', githubKeyOf(mixed), mixed))
+  expect(rec).toMatchObject({
+    key: 'gh:github.com/verticeone/vertice-iam#657',
+    host: 'github.com',
+    owner: 'VerticeOne',
+    repo: 'Vertice-IAM',
+    label: 'VerticeOne/Vertice-IAM#657',
+    url: 'https://github.com/VerticeOne/Vertice-IAM/pull/657',
+  })
+  // The same item named with another case is the same key: one sighting more, and the first spelling stays.
+  const again = githubKind.merge(
+    rec,
+    claim('github', rec.key, { ...mixed, owner: 'verticeone', repo: 'vertice-iam' }, 'response', 4),
+  )!
+  expect(again).toMatchObject({ owner: 'VerticeOne', repo: 'Vertice-IAM', seenCount: 2 })
+})
+
 test('github: fold takes a known type; apply takes the refreshed type unless the record knows better', () => {
   const unknown = made(githubKind, ghClaim({ type: 'unknown' }))
   const pr = made(githubKind, ghClaim({ type: 'pr' }))

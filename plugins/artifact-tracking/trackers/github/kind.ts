@@ -41,8 +41,8 @@ function githubRecord(ref: GitHubRef, claim: Claim): GitHubRecord {
       type: ref.type,
     }
   }
-  const owner = ref.owner.toLowerCase()
-  const repo = ref.repo.toLowerCase()
+  // The key lowers owner and repo (`githubKeyOf`). The record keeps their case, for the row and the label (issue #158).
+  const { owner, repo } = ref
   return {
     key: githubKeyOf(ref),
     category: 'github',
@@ -145,6 +145,8 @@ export const githubKind: ItemKind<GitHubRecord> = {
     apply: (out, fresh) => (out.type === 'unknown' || fresh.type !== 'unknown' ? { ...out, type: fresh.type } : out),
     // A manual refresh also forgets the hosts `gh` denied, which the handle does not know.
     reset: c => clientOf(c).reset(),
+    // The login and the breaker of a host that is not the session host are its own: it does not wait for the session host.
+    canCall: (item, c, now) => clientOf(c).canCallHost((item as unknown as GitHubTarget).host, now),
   },
   rules: [BRANCH_PR, CLOSED_BY_PR],
   row: githubRow,

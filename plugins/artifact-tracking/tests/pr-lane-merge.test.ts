@@ -47,7 +47,7 @@ function rig(o: { dismissed?: string[]; porcelain?: string | null | 'throw' } = 
     isAvailable: true,
     canCall: () => true,
     status: () => ({ name: 'gh', available: true, loggedIn: true, breaker: 'closed' }),
-    isHostAuthed: () => true,
+    checkHost: async () => true,
     graphql: async (_host: string, q: string): Promise<GraphqlOutcome> => {
       log.gh++
       return outcome ?? reply(q, nodes)

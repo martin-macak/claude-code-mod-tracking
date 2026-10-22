@@ -58,7 +58,10 @@ function statusOf(item: GitHubRecord, env: GithubEnv): RowStatus {
   return { label: item.isDraft ? 'draft' : (item.state ?? ''), token: tokenOf(item, env) }
 }
 
-/** An issue or a PR in the GitHub section. A key in the session repo reads `#N`, any other `owner/repo#N`. */
+/**
+ * An issue or a PR in the GitHub section. A key in the session repo reads `#N`, any other `owner/repo#N`, in the case the
+ * record keeps (issue #158). A name that long is cut in the middle, so `#N` stays in the shared name column.
+ */
 export function githubRow(item: GitHubRecord, env: GithubEnv): TreeRow {
   const unresolved = !item.owner || !item.repo
   const s = sessionRepoOf(env)
@@ -68,6 +71,7 @@ export function githubRow(item: GitHubRecord, env: GithubEnv): TreeRow {
     lower(item.owner) === lower(s.owner) &&
     lower(item.repo) === lower(s.repo) &&
     lower(item.host) === lower(s.host)
+  const named = !unresolved && !inSession
   const row = itemRow({
     id: item.key,
     owner: 'github',
@@ -77,7 +81,8 @@ export function githubRow(item: GitHubRecord, env: GithubEnv): TreeRow {
     firstSeen: item.firstSeen,
     ...(item.type === 'unknown' ? {} : { kind: item.type }),
     text: {
-      key: unresolved || inSession ? `#${item.number}` : `${item.owner}/${item.repo}#${item.number}`,
+      key: named ? `${item.owner}/${item.repo}#${item.number}` : `#${item.number}`,
+      ...(named ? { keyClip: 'middle' as const } : {}),
       href: item.url,
       title: viaPrefix(item.via) + (item.title ?? (unresolved ? 'unresolved: no repo' : '')),
       type: item.type === 'pr' ? 'PR' : item.type === 'issue' ? 'Issue' : '',
@@ -124,7 +129,12 @@ function fileRows(item: GitHubRecord, found: ConflictFiles): TreeRow[] {
  */
 export function prRow(item: GitHubRecord, env: GithubEnv, defaultBranch: string | undefined): TreeRow {
   const base = githubRow(item, env)
-  const stacked = defaultBranch !== undefined && item.baseRefName !== undefined && item.baseRefName !== defaultBranch
+  // The default branch is the session repo's: a PR of another repo cannot be told stacked by it (issue #158).
+  const stacked =
+    defaultBranch !== undefined &&
+    item.baseRefName !== undefined &&
+    item.baseRefName !== defaultBranch &&
+    !item.otherRepo
   const done = item.state === 'merged' || item.state === 'closed'
   const found = conflictNote(item, env.merge)?.files
   const files = found === undefined ? undefined : fileRows(item, found)

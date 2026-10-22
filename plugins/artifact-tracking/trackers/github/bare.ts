@@ -12,9 +12,9 @@ import { githubKey, githubUrl } from './urls'
 const onlyGithub = (category: string) => (category === 'github' ? githubKind : undefined)
 
 export function resolveBareRefs(list: readonly StoredItem[], repo: RepoRef): StoredItem[] {
+  // The key lowers owner and repo (`githubKey`). The record keeps the case of the session repo (issue #158).
   const host = repo.host.toLowerCase()
-  const owner = repo.owner.toLowerCase()
-  const name = repo.repo.toLowerCase()
+  const { owner, repo: name } = repo
   const out: (StoredItem | null)[] = list.map(cloneRecord)
   const index = new Map<string, number>()
   out.forEach((r, i) => {
