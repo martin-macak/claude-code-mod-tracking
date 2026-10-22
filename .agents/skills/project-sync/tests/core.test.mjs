@@ -504,13 +504,14 @@ test('readDifferences: the same items in another order are no difference', () =>
   assert.deepEqual(readDifferences(a, b), [])
 })
 
-// A read of three items with what the plan sees of each: kind, key, state, milestone, fields, and
-// the blockers in the graph.
+// A read of three items with what the plan sees of each: kind, key, title, state, milestone, fields,
+// and the blockers in the graph.
 const withValues = () => ({
   items: [1, 2, 3].map(n => ({
     id: `PVTI_${n}`,
     kind: 'issue',
     key: `o/r#${n}`,
+    title: `Item ${n}`,
     state: 'OPEN',
     milestone: { title: 'm' },
     fields: { Status: 'In progress', Wave: 'Wave 0', Order: n },
@@ -519,8 +520,11 @@ const withValues = () => ({
   totalCounts: [3],
 })
 
-test('readDifferences: the same ids with other field values, state, milestone or blockers are a difference', () => {
+test('readDifferences: the same ids with another title, field value, state, milestone or blocker are a difference', () => {
   const changed = {
+    'a title': r => {
+      r.items[1].title = 'Another title' // the title breaks the Order ties of the positions
+    },
     'a field value': r => {
       r.items[0].fields.Status = 'Ready'
     },
@@ -542,7 +546,7 @@ test('readDifferences: the same ids with other field values, state, milestone or
     change(b)
     const diff = readDifferences(withValues(), b)
     assert.equal(diff.length, 1, what)
-    assert.match(diff[0], /3 and 3 items, 0 only in the first, 0 only in the second, 1 with other field values or blockers/, what)
+    assert.match(diff[0], /3 and 3 items, 0 only in the first, 0 only in the second, 1 with other values or blockers/, what)
   }
 })
 
@@ -550,8 +554,9 @@ test('readDifferences: the blockers of an item in another order, and an item wit
   const a = withValues()
   const b = withValues()
   b.graph['o/r#2'].blockedBy.reverse()
-  a.items.push({ id: 'PVTI_draft', kind: 'draft', key: null, state: null, milestone: null, fields: {} })
-  b.items.push({ id: 'PVTI_draft', kind: 'draft', key: null, state: null, milestone: null, fields: {} })
+  const draft = { id: 'PVTI_draft', kind: 'draft', key: null, title: 'A draft', state: null, milestone: null, fields: {} }
+  a.items.push({ ...draft })
+  b.items.push({ ...draft })
   assert.deepEqual(readDifferences(a, b), [])
 })
 

@@ -1179,7 +1179,16 @@ const glitches = {
     spoil: (items, n) => {
       if (n % 2 === 0) items.nodes.find(x => x.content?.number === 55).fieldValues.nodes = []
     },
-    message: /23 and 23 items, 0 only in the first, 0 only in the second, 1 with other field values or blockers/i,
+    message: /23 and 23 items, 0 only in the first, 0 only in the second, 1 with other values or blockers/i,
+    pair: true,
+  },
+  'two reads that list the same items with another title': {
+    // The title of a draft breaks the Order ties of the positions, so a plan from a read with
+    // another title would move items from data that the first read did not confirm.
+    spoil: (items, n) => {
+      if (n % 2 === 0) items.nodes.find(x => x.content?.__typename === 'DraftIssue').content.title = 'Another title'
+    },
+    message: /23 and 23 items, 0 only in the first, 0 only in the second, 1 with other values or blockers/i,
     pair: true,
   },
 }

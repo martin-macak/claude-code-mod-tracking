@@ -466,22 +466,15 @@ export function readProblems({ items, totalCounts }, { expectIds = null } = {}) 
   return problems
 }
 
-// What an item looks like to the plan: what the plan reads of the item and of its blockers.
-const itemShape = (read, i) =>
-  JSON.stringify([
-    i.kind,
-    i.key,
-    i.state,
-    i.milestone,
-    i.fields,
-    [...(read.graph?.[i.key]?.blockedBy ?? [])].sort(),
-  ])
+// What an item looks like to the plan: the whole normalized item (its title breaks the Order ties
+// of the positions, its fields and state feed Wave and Status), and the blockers of its issue.
+const itemShape = (read, i) => JSON.stringify([i, [...(read.graph?.[i.key]?.blockedBy ?? [])].sort()])
 
 // What differs between two reads that came one after the other: [] when they list the same items
 // with the same values. The ids are not enough: a read can list every item and still lose the
-// field values or the blockers of some (a degraded nested connection), and the plan would turn that
-// into writes. A real edit between two reads that come under a second apart is rare, and a retry
-// is cheap. The order of the items does not count.
+// title, the field values or the blockers of some (a degraded nested connection), and the plan
+// would turn that into writes. A real edit between two reads that come under a second apart is
+// rare, and a retry is cheap. The order of the items does not count.
 export function readDifferences(a, b) {
   const shapes = read => new Map(read.items.map(i => [i.id, itemShape(read, i)]))
   const [inA, inB] = [shapes(a), shapes(b)]
@@ -491,7 +484,7 @@ export function readDifferences(a, b) {
   if (onlyA + onlyB + changed === 0) return []
   return [
     `The two reads list different items: ${a.items.length} and ${b.items.length} items, ` +
-      `${onlyA} only in the first, ${onlyB} only in the second, ${changed} with other field values or blockers.`,
+      `${onlyA} only in the first, ${onlyB} only in the second, ${changed} with other values or blockers.`,
   ]
 }
 
