@@ -79,7 +79,13 @@ test("the values outside LIMITS equal today's constants", () => {
   expect(PROCESSES_DEFAULTS.probeTimeoutMs).toBe(10000)
   expect(AUTO_DEFAULTS.gitTimeoutMs).toBe(REPOS_DEFAULTS.gitTimeoutMs)
   expect(GLOBAL_DEFAULTS.store.maxBytes).toBe(3000000)
-  expect(GLOBAL_DEFAULTS.ui).toEqual({ maxRows: 300, sectionRows: 50, turnStrip: 'off' })
+  expect(GLOBAL_DEFAULTS.ui).toEqual({
+    maxRows: 300,
+    sectionRows: 50,
+    turnStrip: 'off',
+    view: 'list',
+    views: ['list', 'status', 'flat'],
+  })
 })
 
 test('PR_LANE_DEFAULTS is the lane part of GITHUB_DEFAULTS', () => {
@@ -326,6 +332,62 @@ test('TRACKERS uses the specs', () => {
 test('the defaults of every spec are deeply frozen', () => {
   for (const { defaults } of Object.values(SPECS)) expect(Object.isFrozen(defaults)).toBe(true)
   expect(Object.isFrozen(GITHUB_DEFAULTS.shortRefKeywords)).toBe(true)
+})
+
+// ---------------------------------------------------------------- global.ui.view and global.ui.views (issue #63, L3)
+
+test('global.ui.view is the view the pane starts in: list by default, and any of the five views', () => {
+  expect(GLOBAL_DEFAULTS.ui.view).toBe('list')
+  for (const view of ['list', 'tracker', 'status', 'reason', 'flat']) {
+    const out: string[] = []
+    expect(normaliseGlobal({ ui: { view } }, p => void out.push(p)).ui.view).toBe(view)
+    expect(out).toEqual([])
+  }
+})
+
+test('a bad global.ui.view is a config problem and reads as list', () => {
+  for (const bad of ['type', 'List', true, 1, null]) {
+    const out: string[] = []
+    expect(normaliseGlobal({ ui: { view: bad } }, p => void out.push(p)).ui.view).toBe('list')
+    expect(out).toEqual([
+      `global.ui.view: ${JSON.stringify(bad)} is not one of list, tracker, status, reason, flat. Using list.`,
+    ])
+  }
+})
+
+test('global.ui.views is the list that g cycles: list, status and flat by default; by tracker and by reason are opt-in', () => {
+  expect(GLOBAL_DEFAULTS.ui.views).toEqual(['list', 'status', 'flat'])
+  const out: string[] = []
+  const got = normaliseGlobal({ ui: { views: ['reason', 'list', 'reason', 'tracker'] } }, p => void out.push(p))
+  expect(got.ui.views).toEqual(['reason', 'list', 'tracker'])
+  expect(out).toEqual([])
+})
+
+test('an unknown name in global.ui.views is left out with one problem; a list with none left reads as the default list', () => {
+  const out: string[] = []
+  expect(normaliseGlobal({ ui: { views: ['status', 'type', 'flat'] } }, p => void out.push(p)).ui.views).toEqual([
+    'status',
+    'flat',
+  ])
+  expect(out).toEqual([
+    'global.ui.views: "type" is not one of list, tracker, status, reason, flat. The mod leaves it out.',
+  ])
+  const none: string[] = []
+  expect(normaliseGlobal({ ui: { views: ['type'] } }, p => void none.push(p)).ui.views).toEqual([
+    'list',
+    'status',
+    'flat',
+  ])
+  expect(none).toEqual([
+    'global.ui.views: "type" is not one of list, tracker, status, reason, flat. The mod leaves it out.',
+    'global.ui.views: no listed word is left. Using the default list.',
+  ])
+  // Through the file reader: the problem reaches `/track`.
+  const cfg = fakeConfig({ specs: TRACKERS, file: { global: { ui: { views: ['status', 'bogus'] } } } })
+  expect(cfg.problems()).toEqual([
+    'global.ui.views: "bogus" is not one of list, tracker, status, reason, flat. The mod leaves it out.',
+  ])
+  expect(cfg.global().ui.views).toEqual(['status'])
 })
 
 // ---------------------------------------------------------------- global.ui.turnStrip (issue #69, P2)

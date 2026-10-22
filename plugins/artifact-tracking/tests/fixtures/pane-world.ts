@@ -249,6 +249,8 @@ export type PaneWorldOpts = {
   off?: readonly string[]
   /** Keys of the tracker slices in config.json, by tracker id: `{ auto: { endedTtlMs: 1000 } }`. */
   config?: Readonly<Record<string, JsonObject>>
+  /** The `global` block of config.json: `{ ui: { view: 'status' } }`. */
+  global?: JsonObject
 }
 
 /**
@@ -259,7 +261,7 @@ export type PaneWorldOpts = {
 export async function paneWorld(o: PaneWorldOpts = {}) {
   const trackers: Record<string, JsonObject> = Object.fromEntries((o.off ?? []).map(id => [id, { enabled: false }]))
   for (const [id, slice] of Object.entries(o.config ?? {})) trackers[id] = { ...trackers[id], ...slice }
-  const file: JsonObject = { trackers }
+  const file: JsonObject = { trackers, ...(o.global === undefined ? {} : { global: o.global }) }
   const t = managerWorld({ fake: { now: NOW }, config: specs => fakeConfig({ specs, file }) })
   await t.m.ensureStarted(t.w.ports)
   seedPaneWorld(t.w.state, t.m)

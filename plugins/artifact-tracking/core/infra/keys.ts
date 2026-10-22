@@ -8,18 +8,25 @@ import type { Level } from '../interfaces/items'
 import type { KeySpec } from '../interfaces/tracker'
 import type { FooterKey, PaneKey, RowRef } from '../interfaces/view'
 
-const core = (id: string, key: string, label: string, scope: PaneKey['scope']): PaneKey => ({
+const core = (id: string, key: string, label: string, scope: PaneKey['scope'], bar?: PaneKey['bar']): PaneKey => ({
   id,
   key,
   label,
   scope,
   owner: 'core',
+  ...(bar === undefined ? {} : { bar }),
 })
 
-/** The keys of the pane, in footer order. `x` and `0`-`3` act on the selected row. */
+/**
+ * The keys of the pane, in footer order. `x` and `0`-`3` act on the selected row. `g`, `a` and `t` (issue #63, L3) work on the
+ * whole pane and sit on the view line, not in the footer: the footer keeps the rows it has.
+ */
 export const CORE_KEYS: readonly PaneKey[] = [
   core('refresh', 'r', 'refresh', 'pane'),
   core('help', 'h', 'help', 'pane'),
+  core('view', 'g', 'view', 'pane', 'view'),
+  core('show-all', 'a', 'show all', 'pane', 'view'),
+  core('touched', 't', 'touched only', 'pane', 'view'),
   core('dismiss', 'x', 'dismiss', 'row'),
   core('prio-1', '1', 'high', 'row'),
   core('prio-2', '2', 'normal', 'row'),
@@ -104,6 +111,9 @@ export class KeyRegistry {
 export type Route =
   | { readonly to: 'refresh' }
   | { readonly to: 'help' }
+  | { readonly to: 'view' }
+  | { readonly to: 'showAll' }
+  | { readonly to: 'touched' }
   | { readonly to: 'dismiss'; readonly rowId: string }
   | { readonly to: 'priority'; readonly rowId: string; readonly level: Level | undefined }
   | { readonly to: 'owner'; readonly owner: string; readonly id: string; readonly rowId: string | null }
@@ -112,7 +122,7 @@ export type Route =
 const NONE: Route = { to: 'none' }
 
 /**
- * Where a pressed key goes, given the selected row. `refresh` and `help` always route. `x` needs `can.dismiss` on the
+ * Where a pressed key goes, given the selected row. `refresh`, `help` and the view line keys (`g`, `a`, `t`) always route. `x` needs `can.dismiss` on the
  * row: the owner hears the dismiss through the dismiss list (G7). `0`-`3` need an item owner and `can.priority`. A tracker
  * key goes to its owner while one of its rows is selected. An absent `can` flag counts as false.
  */
@@ -122,6 +132,9 @@ export function route(k: PaneKey, row: RowRef | undefined, isItemOwner: (owner: 
   }
   if (k.id === 'refresh') return { to: 'refresh' }
   if (k.id === 'help') return { to: 'help' }
+  if (k.id === 'view') return { to: 'view' }
+  if (k.id === 'show-all') return { to: 'showAll' }
+  if (k.id === 'touched') return { to: 'touched' }
   if (row === undefined) return NONE
   if (k.id === 'dismiss') return row.can?.dismiss === true ? { to: 'dismiss', rowId: row.id } : NONE
   if (Object.hasOwn(PRIO_LEVEL, k.id)) {
@@ -144,7 +157,9 @@ export function footerKeys(
   help: boolean,
   state?: (owner: string, id: string) => 'enabled' | 'disabled',
 ): readonly FooterKey[] {
-  const shown = reg.all().filter(k => k.owner === 'core' || (row !== undefined && k.owner === row.owner))
+  const shown = reg
+    .all()
+    .filter(k => k.bar !== 'view' && (k.owner === 'core' || (row !== undefined && k.owner === row.owner)))
   return shown.map(k => {
     const core = k.owner === 'core'
     const live = help
@@ -152,4 +167,15 @@ export function footerKeys(
       : route(k, row, isItemOwner).to !== 'none' && (core || state?.(k.owner, k.id) !== 'disabled')
     return { ...k, label: help && core && k.id === 'help' ? 'back' : k.label, enabled: live, buttonKey: buttonKeyOf(k) }
   })
+}
+
+/**
+ * The keys of the view line: `g`, `a` and `t` (issue #63, L3), in registry order. The line is drawn in the pane only: the help
+ * view has none, so its caller does not ask. `buttonKey` is the key of the Button on the line.
+ */
+export function viewKeys(reg: KeyRegistry): readonly FooterKey[] {
+  return reg
+    .all()
+    .filter(k => k.bar === 'view')
+    .map(k => ({ ...k, enabled: true, buttonKey: buttonKeyOf(k) }))
 }

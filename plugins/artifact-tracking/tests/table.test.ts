@@ -30,6 +30,8 @@ import { group, row, webRows } from './fixtures/sections'
 
 // The first title of the help view: it names Tab, Shift+Tab and the arrows (issue #108).
 const PANE_KEYS = 'Pane keys (Tab, Shift+Tab, Up, Down move between rows)'
+/** The core keys that have a Button in the footer: all but the keys of the view line (issue #63, L3). */
+const FOOTER_CORE = CORE_KEYS.filter(k => k.bar !== 'view')
 
 const draw = (sections: Parameters<typeof TreeDataTable.render>[0], over: Parameters<typeof view>[0] = {}) => {
   resetWidths()
@@ -104,7 +106,7 @@ test('every drawn row has exactly one Button; the header and detail lines have n
   expect(detailBoxes(drawn.tree).length).toBeGreaterThan(0)
   for (const d of detailBoxes(drawn.tree)) expect(nodes(d, 'Button')).toHaveLength(0)
   for (const h of headerBoxes(drawn.tree)) expect(nodes(h, 'Button')).toHaveLength(0)
-  expect(nodes(drawn.tree, 'Button')).toHaveLength(3 + CORE_KEYS.length)
+  expect(nodes(drawn.tree, 'Button')).toHaveLength(3 + FOOTER_CORE.length)
 })
 
 test('no Box and no Text carries a key', () => {
@@ -417,7 +419,7 @@ test('every core key has one footer Button in every state; disabled ones are dim
   const cases = [
     { footer: footerKeys(reg, undefined, () => false, false), help: null, on: ['refresh', 'help'] },
     { footer: footerKeys(reg, process, () => false, false), help: null, on: ['refresh', 'help'] },
-    { footer: footerKeys(reg, item, o => o === 'items', false), help: null, on: CORE_KEYS.map(k => k.id) },
+    { footer: footerKeys(reg, item, o => o === 'items', false), help: null, on: FOOTER_CORE.map(k => k.id) },
     {
       footer: footerKeys(reg, item, o => o === 'items', true),
       help: helpModel(reg.all(), sections, undefined, []),
@@ -428,7 +430,7 @@ test('every core key has one footer Button in every state; disabled ones are dim
     const { drawn, calls, asks } = draw(sections, { footer: c.footer, help: c.help })
     const buttons = footerOf(drawn.tree)
     expect(buttons.map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
-    expect(buttons.map(b => b.props.key)).toEqual(CORE_KEYS.map(k => k.id))
+    expect(buttons.map(b => b.props.key)).toEqual(FOOTER_CORE.map(k => k.id))
     for (const b of buttons) {
       const live = c.on.includes(String(b.props.key))
       expect(b.props.dimColor).toBe(live ? undefined : true)
@@ -545,7 +547,7 @@ const FULL_LINES = 11
 
 /** The help view of the core keys over `bodyRows` rows: its Box, the footer Box and the gap between them. */
 function helpIn(bodyRows: number | undefined, bodyColumns = 96) {
-  const reg = new KeyRegistry()
+  const reg = new KeyRegistry(FOOTER_CORE)
   const footer = footerKeys(reg, undefined, () => false, true)
   const { drawn } = draw([], {
     footer,
@@ -635,9 +637,10 @@ test('the help view lists every problem of its model when the body has the rows,
   expect(tall.lines.filter(l => /^Problem \d+\.$/.test(l))).toEqual(problemsOf(30)) // the full form: no cap, no count
   expect(tall.lines.join('\n')).not.toContain('/track help')
   expect(tall.tree.props.rowGap).toBe(1)
-  const room = problemsIn(12, 16, '/c/config.json') // the compact form: 15 rows with the footer, and 5 problems of 12 fit
-  expect(room.lines.filter(l => /^Problem \d+\.$/.test(l))).toHaveLength(4)
-  expect(room.lines.at(-1)).toBe('8 more problems: /track help')
+  // The compact form: the footer and a body of 16 rows. The pane keys take two lines now (g, a and t, issue #63, L3), so 3 of 12 problems fit.
+  const room = problemsIn(12, 16, '/c/config.json')
+  expect(room.lines.filter(l => /^Problem \d+\.$/.test(l))).toHaveLength(3)
+  expect(room.lines.at(-1)).toBe('9 more problems: /track help')
 })
 
 test('the table view never turns compact: the root keeps its gap, and a body that holds the tree changes nothing', () => {

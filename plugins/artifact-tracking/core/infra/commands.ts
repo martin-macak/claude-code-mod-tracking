@@ -1,5 +1,5 @@
 // Commands: the router of `/track <args>`. Core answers the empty command, `refresh`, `clear`, `help`, `version`,
-// `show-all` and `prio`; then the first sub-command a live tracker declared runs; any other word prints the usage
+// `show-all`, `view`, `turn` and `prio`; then the first sub-command a live tracker declared runs; any other word prints the usage
 // line. The host does the work and this holds only the order of the calls and the text of the answer. The list text and
 // the help text come in as functions (the draw path is not core). A reply that prints the list ends with the problems
 // of the config file, when there are any. The help text lists them itself. The fixed words sit in command-text.ts.
@@ -11,10 +11,11 @@ import type { CommandEvent } from '../interfaces/events'
 import type { ItemsHost, Priority } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { CommandSpec } from '../interfaces/tracker'
+import { flipShowAll, isViewId } from '../lib/grouping'
 import { TURN_USAGE } from '../lib/turn-text'
-import { CORE_HINT, CORE_SUBS, PRIO_WORDS, problemsText, USAGE, versionText } from './command-text'
+import { CORE_HINT, CORE_SUBS, PRIO_WORDS, problemsText, USAGE, VIEW_USAGE, versionText } from './command-text'
 
-export { CORE_HINT, PRIO_WORDS, problemsText, USAGE, versionText } from './command-text'
+export { CORE_HINT, PRIO_WORDS, problemsText, USAGE, VIEW_USAGE, versionText } from './command-text'
 
 /** What the router needs of the rest of core. The LifecycleManager builds it. */
 export interface CommandHost {
@@ -71,6 +72,8 @@ export class Commands {
     if (arg === 'refresh') return this.refresh(p)
     if (arg === 'help') return this.help(p)
     if (arg === 'show-all') return this.showAll(p)
+    const view = /^view(?:\s+(.*))?$/.exec(arg)
+    if (view) return this.view(p, view[1])
     if (arg === 'clear') return this.clear(p)
     const turn = /^turn(?:\s+(.*))?$/.exec(arg)
     if (turn) return this.turn(p, turn[1])
@@ -115,10 +118,25 @@ export class Commands {
    */
   private async showAll(p: Ports): Promise<Reply> {
     await this.host.refreshConfig(p)
-    const { showAll } = await p.state.hidden.update(cur => ({ ...cur, showAll: !cur.showAll }))
+    const { showAll } = await p.state.hidden.update(flipShowAll)
     p.ui.invalidate()
     const { text } = await this.list(p)
     return { text: `${showAll ? 'Showing all rows.' : 'Hiding ended rows again.'}\n\n${text}` }
+  }
+
+  /**
+   * `/track view <name>` sets the view of the pane for the session (issue #63, L3): the session atom `view`, so `/clear`
+   * resets it and no file is written. The reply is the list in that view. It checks the config file first, like `show-all`:
+   * the configured views show at once. A name that is no view, no name and more than one word print the usage with the names.
+   */
+  private async view(p: Ports, word: string | undefined): Promise<Reply> {
+    if (word === undefined || !isViewId(word)) return { text: VIEW_USAGE }
+    await this.host.refreshConfig(p)
+    await p.state.view.update(() => word)
+    p.ui.invalidate()
+    const { text } = await this.list(p)
+    // The text of a view other than by list says the view first. By list does not, so the reply says it, or it would not tell.
+    return { text: text.startsWith('View: ') ? text : `View: ${word}\n\n${text}` }
   }
 
   private async clear(p: Ports): Promise<Reply> {

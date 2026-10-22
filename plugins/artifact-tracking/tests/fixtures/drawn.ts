@@ -44,8 +44,16 @@ export const handlesOf = (tree: unknown): string[] =>
     .map(b => String(b.props.key))
     .filter(k => /^r\d+$/.test(k))
 
-/** The footer Buttons: the ones with a hotkey. */
-export const footerOf = (tree: unknown): Node[] => nodes(tree, 'Button').filter(b => b.props.hotkey !== undefined)
+/** The Button keys of the view line: `g`, `a` and `t` (issue #63, L3). Their Buttons have hotkeys, but they are no footer keys. */
+export const VIEW_LINE_KEYS: readonly string[] = ['view', 'show-all', 'touched']
+
+/** The footer Buttons: the ones with a hotkey that are not on the view line. */
+export const footerOf = (tree: unknown): Node[] =>
+  nodes(tree, 'Button').filter(b => b.props.hotkey !== undefined && !VIEW_LINE_KEYS.includes(String(b.props.key)))
+
+/** The Buttons of the view line, in order. */
+export const viewLineOf = (tree: unknown): Node[] =>
+  nodes(tree, 'Button').filter(b => VIEW_LINE_KEYS.includes(String(b.props.key)))
 
 /** The one Button with this key. */
 export function buttonOf(tree: unknown, key: string): Node {

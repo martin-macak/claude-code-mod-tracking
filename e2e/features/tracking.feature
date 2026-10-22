@@ -28,7 +28,7 @@ Feature: Track the work a session mentions
     Then the selected row shows "#16"
     And I pause for 1.5 seconds
     When I press "1"
-    Then the screen matches /│GitHub \d+ (?:\(\d+ failed\) )?gh[^\n]*\n[^\n]*│> ▲ +▸ #16\s[^\n]*\n[^\n]*│ +▸ #15\s/
+    Then the screen matches /│Pinned 1[^\n]*\n[^\n]*│> ▲ +▸ #16\s[^\n]*\n(?:[^\n]*\n)*[^\n]*│GitHub \d+ (?:\(\d+ failed\) )?gh[^\n]*\n[^\n]*│ +▸ #15\s/
     And I pause for 3 seconds
 
     Given the caption "r refreshes every item, Esc closes the pane"

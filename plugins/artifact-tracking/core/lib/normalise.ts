@@ -1,5 +1,5 @@
 // The schema normaliser: one rule set for the `global` block and for every tracker slice of the config file.
-// A schema is data (`int`, `bool`, `words`, `oneOf`, `obj`). `normaliseWith` turns a raw value into a valid one: per-field
+// A schema is data (`int`, `bool`, `words`, `oneOf`, `enums`, `obj`). `normaliseWith` turns a raw value into a valid one: per-field
 // fallback to the default, a min and a max on every number, one problem line per bad value, unknown keys kept.
 // Pure: no I/O, no clock. The functions do not freeze. `specOf` freezes its defaults only; the caller freezes results.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.7. Plan: L4 Task 1 (copy table N1 to N10).
@@ -12,6 +12,7 @@ export type Rule =
   | { readonly kind: 'bool'; readonly def: boolean }
   | { readonly kind: 'words'; readonly def: readonly string[]; readonly max: number }
   | { readonly kind: 'enum'; readonly def: string; readonly values: readonly string[] }
+  | { readonly kind: 'enums'; readonly def: readonly string[]; readonly values: readonly string[] }
   | { readonly kind: 'obj'; readonly of: Schema }
 
 export type Schema = { readonly [key: string]: Rule }
@@ -26,9 +27,11 @@ export type ConfigOf<S extends Schema> = {
         ? readonly string[]
         : S[K] extends { readonly kind: 'enum'; readonly values: readonly (infer V extends string)[] }
           ? V
-          : S[K] extends { readonly kind: 'obj'; readonly of: infer O extends Schema }
-            ? ConfigOf<O>
-            : never
+          : S[K] extends { readonly kind: 'enums'; readonly values: readonly (infer V extends string)[] }
+            ? readonly V[]
+            : S[K] extends { readonly kind: 'obj'; readonly of: infer O extends Schema }
+              ? ConfigOf<O>
+              : never
 }
 
 /** A word of a word list, after lowercasing. */
@@ -51,6 +54,20 @@ export const oneOf = <const V extends string>(
   def: V,
   values: readonly V[],
 ): { readonly kind: 'enum'; readonly def: V; readonly values: readonly V[] } => ({ kind: 'enum', def, values })
+
+/**
+ * A list of words from a fixed list: each word compared as written, each kept once, in the order given. The default list must
+ * hold only listed words. The result type is the list of the union, so a reader gets `readonly ('list' | 'flat')[]`. A value
+ * that is no list, and a list with no listed word left, read as the default list: a reader of it (the `g` key) needs one entry.
+ */
+export const enums = <const V extends string>(
+  def: readonly V[],
+  values: readonly V[],
+): { readonly kind: 'enums'; readonly def: readonly V[]; readonly values: readonly V[] } => ({
+  kind: 'enums',
+  def,
+  values,
+})
 
 /**
  * A nested object with its own schema. The result type is the exact member, not `Rule & {...}`: that intersection would
@@ -78,7 +95,7 @@ export function defaultsOf<S extends Schema>(s: S): ConfigOf<S> {
   const out: Rec = {}
   for (const [key, rule] of Object.entries(s)) {
     if (rule.kind === 'obj') out[key] = defaultsOf(rule.of)
-    else if (rule.kind === 'words') out[key] = [...rule.def]
+    else if (rule.kind === 'words' || rule.kind === 'enums') out[key] = [...rule.def]
     else out[key] = rule.def
   }
   return out as ConfigOf<S>
@@ -114,6 +131,32 @@ function wordsOf(
   if (kept.length > rule.max) {
     warn(`${p}: the list has more than ${rule.max} words. The mod uses the first ${rule.max}.`)
     return kept.slice(0, rule.max)
+  }
+  return kept
+}
+
+/** The listed words of a raw list, each once. One problem for each item that is not listed, and one when no word is left. */
+function enumsOf(
+  rule: Rule & { kind: 'enums' },
+  v: unknown,
+  fallback: readonly string[],
+  p: string,
+  warn: (problem: string) => void,
+): readonly string[] {
+  const names = rule.values.join(', ')
+  if (!Array.isArray(v)) {
+    warn(`${p}: ${show(v)} is not a list of ${names}. Using the default list.`)
+    return fallback
+  }
+  const kept: string[] = []
+  for (const item of v) {
+    if (typeof item !== 'string' || !rule.values.includes(item)) {
+      warn(`${p}: ${show(item)} is not one of ${names}. The mod leaves it out.`)
+    } else if (!kept.includes(item)) kept.push(item)
+  }
+  if (kept.length === 0) {
+    warn(`${p}: no listed word is left. Using the default list.`)
+    return fallback
   }
   return kept
 }
@@ -195,6 +238,7 @@ export function normaliseWith<S extends Schema>(
         known[key] = fallback
       }
     } else if (rule.kind === 'enum') known[key] = enumOf(rule, v, fallback as string, p, warn)
+    else if (rule.kind === 'enums') known[key] = enumsOf(rule, v, fallback as readonly string[], p, warn)
     else known[key] = wordsOf(rule, v, fallback as readonly string[], p, warn)
   }
   for (const key of Object.keys(src))

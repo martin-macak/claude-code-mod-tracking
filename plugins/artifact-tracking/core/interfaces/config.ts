@@ -3,6 +3,7 @@
 
 import type { JsonObject } from './items'
 import type { FsStat } from './ports'
+import type { ViewId } from './view'
 
 /** A tracker's config: its defaults and the rule that turns a raw file slice into a valid one. */
 export interface ConfigSpec<C extends JsonObject> {
@@ -33,7 +34,15 @@ export interface GlobalConfig {
     readonly maxDismissed: number
     readonly maxBytes: number
   }
-  readonly ui: { readonly maxRows: number; readonly sectionRows: number; readonly turnStrip: TurnStripMode }
+  readonly ui: {
+    readonly maxRows: number
+    readonly sectionRows: number
+    readonly turnStrip: TurnStripMode
+    /** The view the pane opens in, until the person picks another (a session choice that `/clear` resets). */
+    readonly view: ViewId
+    /** The views that `g` cycles, in order. At least one. */
+    readonly views: readonly ViewId[]
+  }
 }
 
 /** What the strip under each answer is (issue #69): nothing, one line of text, or the counts and an open Button on the duration line. */

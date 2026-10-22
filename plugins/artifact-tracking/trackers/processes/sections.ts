@@ -62,6 +62,7 @@ export function sections(ctx: ViewContext<ProcessesConfig, Json>): readonly Sect
       id: 'processes',
       title: 'Processes',
       note: { text: `${ui?.dockerIssue ?? `${rows.length} tracked`}${hidden > 0 ? ` (${hidden} hidden)` : ''}` },
+      ...(hidden > 0 ? { hiddenRows: hidden } : {}),
       rank: 80,
       band: { label: 'Processes', count: rows.length, failing: rows.filter(failing).length, rank: 10 },
       rows: rows.map(r => processRow(r, ctx.root, ctx.home)),

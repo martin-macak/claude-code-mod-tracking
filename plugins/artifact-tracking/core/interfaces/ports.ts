@@ -3,7 +3,7 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.4 and 5.13.
 
 import type { Json, StoredItem, ToolStatus, TurnLedger } from '../../types'
-import type { HiddenState } from './view'
+import type { FilterState, HiddenState } from './view'
 
 /** The engine's timer handle. */
 export interface Timer {
@@ -147,6 +147,13 @@ export interface StatePorts {
   readonly help: AtomPort<boolean>
   /** `/track show-all`: shows the rows the TTL hides, until `/clear`. */
   readonly hidden: AtomPort<HiddenState>
+  /**
+   * Issue #63, L3: the view the person chose with `g` or `/track view`, as a view id. `null`: none chosen, so the pane uses
+   * `global.ui.view`. A value that is no view id reads as none. Session scope, reset by `/clear`, never written to the config file.
+   */
+  readonly view: AtomPort<string | null>
+  /** Issue #63, L3: `t` (touched only). Session scope, reset by `/clear`. */
+  readonly filters: AtomPort<FilterState>
   /** Issue #69: what each main-loop turn tracked. The TurnLedger writes it, Persistence stores it. */
   readonly turns: AtomPort<TurnLedger>
 }
