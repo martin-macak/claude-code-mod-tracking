@@ -17,6 +17,7 @@ import {
   PlanError,
   pickNext,
   plan,
+  plural,
   positionPlan,
   refLabel,
   withNewItem,
@@ -28,10 +29,11 @@ import {
   GhError,
   loadBlockers,
   makeGh,
+  readComplete,
   readMilestoneIssues,
-  readProject,
   resolveContent,
   setField,
+  sleepSync,
 } from './gh.mjs'
 
 const DEFAULTS = { owner: 'martin-macak', project: '3', repo: 'martin-macak/claude-code-mod-tracking' }
@@ -39,6 +41,7 @@ const DEFAULTS = { owner: 'martin-macak', project: '3', repo: 'martin-macak/clau
 const USAGE = `Usage: sync.mjs <command> [options]
 
 Keeps the GitHub Project in step with the issues. Reads with gh api graphql, writes with gh api graphql and gh project.
+A command that writes reads the project twice first, and refuses to write from a read that is not complete.
 
 Commands:
   sync                                     Plan Wave, Status and "Blocked by" for the open issues. A dry run: --apply writes.
@@ -156,24 +159,63 @@ function findItem(items, text, repo) {
   )
 }
 
-// The project, read once and checked: its fields, its items and the graph of its issues. No other call.
-function readState(ctx) {
-  const read = readProject(ctx.gh, { owner: ctx.owner, number: ctx.number })
+const target = ctx => ({ owner: ctx.owner, number: ctx.number })
+const projectName = ctx => `project ${ctx.number} of ${ctx.owner}`
+const tries = n => `${n} ${n === 1 ? 'try' : 'tries'}`
+const problemLines = problems => problems.map(p => `  - ${p}`).join('\n')
+
+// GitHub's project API sometimes answers with part of the items, or none (issue #228). A run that
+// writes stops at a read like that, before it plans anything. A dry run warns instead.
+function incompleteRefusal(ctx, read) {
+  return [
+    `refusing to write: the read of ${projectName(ctx)} is not complete after ${tries(read.attempts)}.`,
+    problemLines(read.problems),
+    'Nothing was written. GitHub sometimes answers with part of the items, or none (issue #228). Run the command again in a minute.',
+  ].join('\n')
+}
+
+const incompleteWarning = (ctx, read) =>
+  [
+    `the read of ${projectName(ctx)} looks incomplete after ${tries(read.attempts)}, so this plan may be wrong.`,
+    problemLines(read.problems),
+    'Do not trust the plan. --apply refuses to write from an incomplete read. Run the command again in a minute.',
+  ].join('\n')
+
+// A warning prints once per run, however often the inputs are read.
+function warnOnce(ctx, text) {
+  if (ctx.warned.has(text)) return
+  ctx.warned.add(text)
+  ctx.stderr(`warning: ${text}`)
+}
+
+// The project, read and checked: its fields, its items and the graph of its issues. No other call.
+// write: the run will write. It defaults to ctx.apply, the flag that lets the writes happen, so a
+// command cannot write from a read that it did not check: only `status` always writes, and says
+// so. A run that writes reads twice, and an incomplete read stops it here, so that no plan and no
+// write comes from it. A dry run reads once per try, and an incomplete read is a warning:
+// state.problems says what was wrong with it. state.listedIds are the items that the plan sees.
+function readState(ctx, { write = ctx.apply } = {}) {
+  const read = readComplete(ctx.gh, target(ctx), { twice: write, sleep: ctx.sleep })
+  if (write && read.problems.length > 0) throw new Fail(incompleteRefusal(ctx, read))
   checkFields(read.fields)
-  return { ...read, warnings: [], milestoneIssues: [], options: optionsOf(read.fields) }
+  const warnings = read.problems.length > 0 ? [incompleteWarning(ctx, read)] : []
+  for (const w of warnings) warnOnce(ctx, w)
+  return {
+    ...read,
+    warnings,
+    milestoneIssues: [],
+    options: optionsOf(read.fields),
+    listedIds: new Set(read.items.map(i => i.id)),
+  }
 }
 
 // What plan() needs on top: the blockers outside the project, and the open milestone issues.
 // A warning prints once per run, however often the inputs are read.
 function withPlanInputs(ctx, state) {
-  const warnings = loadBlockers(ctx.gh, state.graph)
-  for (const w of warnings) {
-    if (ctx.warned.has(w)) continue
-    ctx.warned.add(w)
-    ctx.stderr(`warning: ${w}`)
-  }
+  const found = loadBlockers(ctx.gh, state.graph)
+  for (const w of found) warnOnce(ctx, w)
   const milestoneIssues = readMilestoneIssues(ctx.gh, { repo: ctx.repo })
-  return { ...state, warnings, milestoneIssues }
+  return { ...state, warnings: [...state.warnings, ...found], milestoneIssues }
 }
 
 const load = ctx => withPlanInputs(ctx, readState(ctx)) // sync and next
@@ -197,6 +239,9 @@ function document(ctx, state, result, done, extra = {}) {
     positions: result.positions,
     moved: done.moved,
     positionsLeft: done.left,
+    // The problems of the read after the writes when it was not complete and the places were not
+    // checked. null: the check ran, or none was due.
+    positionsUnverified: done.unverified === null ? null : done.unverified.problems,
     cycles: result.cycles,
     inversions: result.inversions,
     missingFromProject: result.missingFromProject,
@@ -208,7 +253,6 @@ function document(ctx, state, result, done, extra = {}) {
   }
 }
 
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
 // "a", "a and b", "a, b and c".
 const list = words => (words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words.at(-1)}`)
 const writtenBefore = n => `${plural(n, 'change')} ${n === 1 ? 'was' : 'were'} written before the failure.`
@@ -230,6 +274,12 @@ function writing(before, fn) {
 function printReport(ctx, state, result, done, lead = []) {
   ctx.say(formatReport({ project: state.project, repo: ctx.repo, items: state.items }, result))
   if (!ctx.apply) {
+    if (state.problems.length > 0) {
+      // --apply would refuse this read, so the hint to pass it would mislead.
+      ctx.say('')
+      ctx.say('Warning: the read was incomplete. Do not trust the report above.')
+      return
+    }
     const planned = [
       ...lead,
       result.changes.length > 0 && 'changes',
@@ -254,7 +304,7 @@ function printReport(ctx, state, result, done, lead = []) {
 // Writes the plan: the field changes first, then the position moves. A failure carries `applied`:
 // everything that this run wrote before it, `before` too (the writes that came ahead of the plan).
 function applyIf(ctx, state, { changes, positions }, before = []) {
-  const done = { applied: [], moved: [], left: null, unlisted: null }
+  const done = { applied: [], moved: [], left: null, unlisted: null, unverified: null }
   if (!ctx.apply) return done
   const projectId = state.project.id
   done.applied = writing(before, () => applyChanges(ctx.gh, { projectId, fields: state.fields, changes }))
@@ -267,15 +317,33 @@ function applyIf(ctx, state, { changes, positions }, before = []) {
 // check still covers every item that the read shows. done.unlisted holds the key of a new item
 // that the read lacks: its place is not checked. The read runs only after a write: when a move was
 // written, or when add put in a new item, also with no move (the new item may be last already).
-function checkPositions(ctx, done, newKey = null) {
+// The read must be complete and list every item that the plan saw (state.listedIds): a list with
+// no item, or a cut one, has no move left to plan, and would pass the check. When no try gives a
+// complete read, done.unverified holds the last one, and the places are not checked.
+function checkPositions(ctx, state, done, newKey = null) {
   if (!ctx.apply || (done.moved.length === 0 && newKey === null)) return
-  const read = readProject(ctx.gh, { owner: ctx.owner, number: ctx.number })
+  const read = readComplete(ctx.gh, target(ctx), { expectIds: state.listedIds, sleep: ctx.sleep })
+  if (read.problems.length > 0) {
+    done.unverified = read
+    return
+  }
   done.left = positionPlan(read.items, ctx.repo).moves.length
   done.unlisted = newKey !== null && !read.items.some(isItem(newKey)) ? newKey : null
 }
 
 // The exit code after the check: 1 when an item that the read shows is still out of position.
 function stillOutOfPosition(ctx, done) {
+  if (done.unverified !== null) {
+    const { attempts, problems } = done.unverified
+    ctx.stderr(
+      [
+        `project-sync: the writes are done, but the read after them is not complete after ${tries(attempts)}, so the item positions were not checked.`,
+        problemLines(problems),
+        'Run sync later to check the positions.',
+      ].join('\n'),
+    )
+    return 1
+  }
   if (done.left > 0) {
     ctx.stderr(
       `project-sync: ${plural(done.left, 'item')} ${done.left === 1 ? 'is' : 'are'} still out of position after the moves. ` +
@@ -297,7 +365,7 @@ function syncRun(ctx) {
   const state = load(ctx)
   const result = planFor(ctx, state)
   const done = applyIf(ctx, state, result)
-  checkPositions(ctx, done)
+  checkPositions(ctx, state, done)
   return { state, result, done }
 }
 
@@ -310,13 +378,16 @@ function cmdSync(ctx) {
 
 function cmdNext(ctx) {
   const { state, result, done } = syncRun(ctx)
+  // A short list can lack the Ready item with the lowest Order, so no pick comes from an
+  // incomplete read (only a dry run gets here with one: --apply refuses it).
+  const unsure = state.problems.length > 0
   const picked = pickNext(result.effective)
   if (ctx.json) {
-    ctx.emit(document(ctx, state, result, done, { next: picked.next, ready: picked.ready }))
+    ctx.emit(document(ctx, state, result, done, { next: unsure ? null : picked.next, ready: unsure ? null : picked.ready }))
   } else {
     printReport(ctx, state, result, done)
     ctx.say('')
-    ctx.say(formatNext(picked, ctx.repo))
+    ctx.say(unsure ? 'No pick: the read was incomplete. Run next again in a minute.' : formatNext(picked, ctx.repo))
   }
   return stillOutOfPosition(ctx, done)
 }
@@ -324,7 +395,7 @@ function cmdNext(ctx) {
 function cmdStatus(ctx, args) {
   if (args.length !== 2) throw usageError('status needs an item and a Status: status <number|"draft title"> <Status>.')
   refuseDone(args[1])
-  const state = readState(ctx)
+  const state = readState(ctx, { write: true })
   const to = pickOption(state.options.Status, args[1], 'Status')
   const item = findItem(state.items, args[0], ctx.repo)
   const from = item.fields.Status
@@ -430,7 +501,7 @@ function cmdAdd(ctx, args) {
     result = planFor(ctx, state) // the same plan, now with the id of the new item
   }
   const done = applyIf(ctx, state, result, written)
-  checkPositions(ctx, done, existed ? null : key)
+  checkPositions(ctx, state, done, existed ? null : key)
 
   const kind = item.kind === 'pr' ? 'PR' : 'issue'
   if (ctx.json) {
@@ -503,6 +574,7 @@ export function main(argv, io = {}) {
       json: values.json,
       opts: values,
       warned: new Set(),
+      sleep: io.sleep ?? sleepSync,
       stderr,
       say: text => {
         if (!values.json) stdout(text)

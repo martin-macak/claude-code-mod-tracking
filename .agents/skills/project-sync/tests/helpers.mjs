@@ -96,11 +96,21 @@ export function project() {
 }
 
 // The live project on 2026-10-18, as `gh api graphql` returned it (query: ProjectItems), and the
-// same after normalizeProject. Tests that change the snapshot work on a copy.
+// same after normalizeProject. Tests that change the snapshot work on a copy. The query asks for
+// items.totalCount since issue #228, and the capture is older: the file stays as it was, and the
+// count is added here, as many as the nodes. That count is made up. The real one is in livePages.
 export const snapshot = JSON.parse(
   readFileSync(new URL('./fixtures/live-project-2026-10-18.json', import.meta.url), 'utf8'),
 )
+snapshot.data.repositoryOwner.projectV2.items.totalCount = snapshot.data.repositoryOwner.projectV2.items.nodes.length
 export const live = normalizeProject(snapshot.data.repositoryOwner.projectV2)
+
+// The two replies of the project query on 2026-10-22, as `gh api graphql` returned them, from a
+// read that was complete: 105 items in two pages (100 and 5), items.totalCount 105 on both. The
+// real shape of totalCount and pageInfo, for the tests of the read that checks them (issue #228).
+export const livePages = JSON.parse(
+  readFileSync(new URL('./fixtures/live-project-2026-10-22.json', import.meta.url), 'utf8'),
+)
 
 // What GitHub does with updateProjectV2ItemPosition: it takes the entry out and puts it after
 // afterId (null: first). `idOf` reads the id of an entry. Returns the new list. An id that the list

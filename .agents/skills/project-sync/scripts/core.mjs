@@ -427,6 +427,71 @@ export function withNewItem({ items, graph }, content, id) {
   }
 }
 
+// --- A read that is complete (issue #228) ---
+//
+// GitHub's project API sometimes answers with part of the items, or with none, and says nothing
+// about it: reads seconds apart gave 0, 100 and 105 items of about 109, and once totalCount itself
+// said 0. A plan made from such a list is wrong, and the writes that follow it too. These checks
+// say whether a read can be trusted. They take a read as readProject() returns it: `items` and
+// `totalCounts` (the totalCount that each page gave, null for a page that gave none).
+
+export const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
+
+// What is wrong with one read: [] when nothing is. A read is complete when the items it lists
+// are all different, as many as GitHub counts (totalCount, the same on every page), and at least
+// one: this project is never empty, so a list with no item is a failed read too. expectIds, when
+// it is set, are the ids that an earlier read listed. A later read must list them all: items are
+// added by the run itself, but none is taken away.
+export function readProblems({ items, totalCounts }, { expectIds = null } = {}) {
+  const problems = []
+  const listed = items.length
+  const counts = [...new Set(totalCounts)]
+  if (totalCounts.length === 0 || counts.includes(null)) {
+    problems.push('GitHub gave no item count (totalCount), so the list cannot be checked.')
+  } else if (counts.length > 1) {
+    problems.push(`The item count changed while the pages were read: ${totalCounts.join(', then ')}.`)
+  } else if (counts[0] !== listed) {
+    problems.push(`The read listed ${plural(listed, 'item')}, but GitHub counts ${counts[0]} (totalCount).`)
+  }
+  if (listed === 0 && problems.length === 0) problems.push('The read listed no item. This project is never empty.')
+  const ids = new Set(items.map(i => i.id))
+  const twice = listed - ids.size
+  if (twice > 0) problems.push(`${plural(twice, 'item')} ${twice === 1 ? 'is' : 'are'} listed more than once.`)
+  if (expectIds !== null) {
+    const missing = [...expectIds].filter(id => !ids.has(id)).length
+    if (missing > 0) {
+      problems.push(`The read lacks ${missing} of the ${expectIds.size} items that the read before it listed.`)
+    }
+  }
+  return problems
+}
+
+// What an item looks like to the plan: the whole normalized item (its title breaks the Order ties
+// of the positions, its fields and state feed Wave and Status), and the blockers of its issue,
+// each with its state: the plan skips a CLOSED blocker, also one that is outside the project.
+const itemShape = (read, i) => {
+  const blockers = [...(read.graph?.[i.key]?.blockedBy ?? [])].sort()
+  return JSON.stringify([i, blockers.map(key => [key, read.graph?.[key]?.state ?? null])])
+}
+
+// What differs between two reads that came one after the other: [] when they list the same items
+// with the same values. The ids are not enough: a read can list every item and still lose the
+// title, the field values or the blockers of some (a degraded nested connection), and the plan
+// would turn that into writes. A real edit between two reads that come under a second apart is
+// rare, and a retry is cheap. The order of the items does not count.
+export function readDifferences(a, b) {
+  const shapes = read => new Map(read.items.map(i => [i.id, itemShape(read, i)]))
+  const [inA, inB] = [shapes(a), shapes(b)]
+  const onlyA = [...inA.keys()].filter(id => !inB.has(id)).length
+  const onlyB = [...inB.keys()].filter(id => !inA.has(id)).length
+  const changed = [...inA].filter(([id, shape]) => inB.has(id) && inB.get(id) !== shape).length
+  if (onlyA + onlyB + changed === 0) return []
+  return [
+    `The two reads list different items: ${a.items.length} and ${b.items.length} items, ` +
+      `${onlyA} only in the first, ${onlyB} only in the second, ${changed} with other values or blockers.`,
+  ]
+}
+
 // Ids of the open issues in the graph whose blockers are not known yet.
 export const unloadedOpenIds = graph =>
   Object.values(graph)
