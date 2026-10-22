@@ -190,6 +190,37 @@ test('a session keeps at most the bytes the config names: the oldest drop first'
   expect(t.calls().length).toBeLessThan(4)
 })
 
+test('a call cut to fit the byte cap keeps its sign of a question that asked for a secret: /track qa still masks the answer', async () => {
+  const t = setup({ file: { trackers: { questions: { maxBytes: 8192 } } } })
+  const questions = [
+    {
+      question: `${'x'.repeat(6000)} What is the password?`,
+      header: 'Login',
+      multiSelect: false,
+      options: [{ label: 'A', preview: 'p'.repeat(60_000) }],
+    },
+  ]
+  await t.hear({
+    ...ANSWERED_ASK,
+    toolUseId: 'huge',
+    input: { questions } as unknown as Json,
+    result: {
+      result: {
+        questions,
+        answers: { [questions[0]!.question]: 'hunter2' },
+        annotations: { [questions[0]!.question]: { notes: 'it is hunter2' } },
+      },
+    } as unknown as Json,
+  })
+  const [kept] = t.calls()
+  expect(kept?.cut).toBe(true)
+  expect(kept?.items?.[0]?.question).not.toMatch(/password/) // the cut took the words
+  expect(JSON.stringify(kept)).toContain('hunter2') // the record is word for word as far as the cut allows
+  const text = await t.qa('1')
+  expect(text).not.toContain('hunter2')
+  expect(text).toContain('Other (typed): [masked]')
+})
+
 test('the defaults are 100 calls and 256 KiB', () => {
   const tracker = questionsTracker()
   expect(tracker.config.defaults).toMatchObject({ maxCalls: 100, maxBytes: 262144, mask: true, enabled: true })
@@ -284,6 +315,99 @@ test('a resume adds a call that the transcript has after the stored ones, and dr
   expect(t.calls().map(c => [c.id, c.n, c.replayed])).toEqual([
     ['c', 3, undefined],
     ['d', 4, true],
+  ])
+})
+
+// The caps may leave only calls that the transcript lacks: the `$.ui.ask` of another plugin is not in it. None of their ids
+// is in the transcript, so the ids alone cannot tell a copy that the caps cut from a copy that has seen no transcript. The
+// first call that stays keeps the id of the newest transcript call that the caps dropped (its watermark), in the stored copy.
+const PLUGIN_ID = (n: number) => `toolu_plugin_${n}`
+const askOf = (id: string): ToolCallEvent => ({ ...ANSWERED_ASK, toolUseId: id })
+
+/** A session that heard `heard` live and left with `/resume`, then a new load of its stored copy with `transcript`. */
+async function resumedWith(maxCalls: number, heard: string[], transcript: string[]) {
+  const file = { trackers: { questions: { maxCalls } } }
+  const before = setup({ file, session: 'sess-b' })
+  await before.m.entry(before.w.ports)
+  for (const id of heard) await before.hear(askOf(id))
+  await before.m.end(before.w.ports, 'resume', 1500)
+  const t = setup({
+    file,
+    session: 'sess-b',
+    store: Object.fromEntries(before.w.store),
+    messages: transcript.map(id => messageOf(askOf(id))),
+  })
+  await t.begin()
+  return t
+}
+
+test('a resume whose stored copy holds only plugin calls keeps them, and brings back none that the cap dropped', async () => {
+  const t = await resumedWith(2, ['a', 'b', PLUGIN_ID(1), PLUGIN_ID(2)], ['a', 'b'])
+  expect(t.calls().map(c => [c.id, c.n, c.replayed])).toEqual([
+    [PLUGIN_ID(1), 3, undefined],
+    [PLUGIN_ID(2), 4, undefined],
+  ])
+})
+
+test('a resume whose stored copy holds only plugin calls adds the transcript calls that come after the dropped ones', async () => {
+  const t = await resumedWith(3, ['a', 'b', 'c', PLUGIN_ID(1), PLUGIN_ID(2), PLUGIN_ID(3)], ['a', 'b', 'c', 'd'])
+  expect(t.calls().map(c => [c.id, c.replayed])).toEqual([
+    [PLUGIN_ID(2), undefined],
+    [PLUGIN_ID(3), undefined],
+    ['d', true],
+  ])
+})
+
+test('a resume whose stored copy holds only the calls of a subagent keeps them, and brings back none that the cap dropped', async () => {
+  const file = { trackers: { questions: { maxCalls: 1 } } }
+  const before = setup({ file, session: 'sess-b' })
+  await before.m.entry(before.w.ports)
+  await before.hear(askOf('a'))
+  await before.hear({ ...askOf('s'), agentId: 'agent-1' })
+  await before.m.end(before.w.ports, 'resume', 1500)
+  const t = setup({
+    file,
+    session: 'sess-b',
+    store: Object.fromEntries(before.w.store),
+    messages: [messageOf(askOf('a'))],
+  })
+  await t.begin()
+  expect(t.calls().map(c => [c.id, c.agentId, c.replayed])).toEqual([['s', 'agent-1', undefined]])
+})
+
+test('a stored copy with no watermark and none of the transcript calls cannot tell what the cap dropped: the resume reads all back', async () => {
+  const t = setup({
+    session: 'sess-b',
+    store: {
+      'v2:s:sess-b': { questions: [{ ...keptCall(PLUGIN_ID(1), 1), plugin: true }] as unknown as Json },
+      'v2:index': ['sess-b'],
+    },
+    messages: ['x', 'y'].map(id => messageOf(askOf(id))),
+  })
+  await t.begin()
+  expect(t.calls().map(c => [c.id, c.n, c.replayed])).toEqual([
+    [PLUGIN_ID(1), 1, undefined],
+    ['x', 2, true],
+    ['y', 3, true],
+  ])
+})
+
+test('a watermark that this transcript lacks (the copy came over /clear) reads every call of the new transcript back', async () => {
+  const t = setup({
+    session: 'sess-b',
+    store: {
+      'v2:s:sess-b': {
+        questions: [{ ...keptCall(PLUGIN_ID(1), 4), plugin: true, watermark: 'of-the-old-session' }] as unknown as Json,
+      },
+      'v2:index': ['sess-b'],
+    },
+    messages: ['x', 'y'].map(id => messageOf(askOf(id))),
+  })
+  await t.begin()
+  expect(t.calls().map(c => [c.id, c.replayed])).toEqual([
+    [PLUGIN_ID(1), undefined],
+    ['x', true],
+    ['y', true],
   ])
 })
 

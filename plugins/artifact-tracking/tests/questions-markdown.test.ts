@@ -1,6 +1,7 @@
 // The Markdown of a call (issue #71): what `/track qa` prints and the copy key puts on the clipboard. Word for word, with the
 // chosen option marked, typed text tagged, and secrets masked unless masking is off. Pure.
 import { expect, test } from 'claude-code/testing'
+import { capCalls } from '../trackers/questions/log'
 import { callMarkdown, QA_USAGE, qaMarkdown, qaText } from '../trackers/questions/markdown'
 import { askCall, planCall } from '../trackers/questions/parse'
 import { answerText, masker, shownItem } from '../trackers/questions/present'
@@ -167,6 +168,44 @@ test('the typed answer and the notes of a question that asks for a password are 
   expect(md).toContain(`- [x] Other (typed): ${MASKED}`)
   expect(md).toContain(`> Notes: ${MASKED}`)
   expect(callMarkdown(callOf([q]), false)).toContain('hunter2')
+})
+
+test('an item that the byte cut marked sensitive masks its typed answer and its notes whole, whatever its words say now', () => {
+  const q = item({
+    question: 'Which one?',
+    header: 'Pick',
+    options: [{ label: 'A' }],
+    answer: 'hunter2',
+    notes: 'it is hunter2',
+  })
+  const open = callMarkdown(callOf([q]), true)
+  expect(open).toContain('hunter2') // nothing in the words asks for a secret
+  const marked = callMarkdown(callOf([{ ...q, sensitive: true }]), true)
+  expect(marked).not.toContain('hunter2')
+  expect(marked).toContain(`- [x] Other (typed): ${MASKED}`)
+  expect(marked).toContain(`> Notes: ${MASKED}`)
+  expect(callMarkdown(callOf([{ ...q, sensitive: true }]), false)).toContain('hunter2') // the config toggle still shows it
+})
+
+test('a call that was cut and asked for a secret before the cut masks the answer in the export', () => {
+  const long = (question: string): QuestionCall =>
+    callOf(
+      [
+        item({
+          question,
+          header: 'Login',
+          options: [{ label: 'A', preview: 'p'.repeat(100_000) }],
+          answer: 'hunter2',
+          notes: 'it is hunter2',
+        }),
+      ],
+      { id: 'huge' },
+    )
+  const [kept] = capCalls([long(`${'x'.repeat(400)} What is the password?`)], { maxCalls: 100, maxBytes: 1000 })
+  expect(kept?.cut).toBe(true)
+  const md = callMarkdown(kept!, true)
+  expect(md).not.toContain('hunter2')
+  expect(md).toContain(`- [x] Other (typed): ${MASKED}`)
 })
 
 test('answerText: labels, then typed text tagged, and the words for blank and notes only', () => {

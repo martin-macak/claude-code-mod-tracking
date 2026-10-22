@@ -7,6 +7,7 @@
 import type { Json } from '../../core/interfaces/items'
 import { isRecord } from '../../core/lib/json'
 import { clip } from '../../core/lib/prompt-text'
+import { isSensitive } from './secrets'
 import type { QuestionCall } from './types'
 
 /** The most calls a session keeps, and the most bytes (JSON characters) of its list. */
@@ -29,11 +30,14 @@ export const nextNumber = (calls: readonly QuestionCall[]): number => calls.redu
 
 /**
  * Two copies of one call as one record. A record read back from the transcript has the time of the replay and no turn, so a
- * call that was seen live wins. The first copy otherwise, with a turn filled in when only the other has one.
+ * call that was seen live wins. The first copy otherwise, with a turn and a watermark filled in when only the other has one.
  */
 export function joinCall(a: QuestionCall, b: QuestionCall): QuestionCall {
   const [keep, other] = a.replayed === true && b.replayed !== true ? [b, a] : [a, b]
-  return keep.turn === undefined && other.turn !== undefined ? { ...keep, turn: other.turn } : keep
+  const turn = keep.turn === undefined ? other.turn : undefined
+  const watermark = keep.watermark === undefined ? other.watermark : undefined
+  if (turn === undefined && watermark === undefined) return keep
+  return { ...keep, ...(turn !== undefined ? { turn } : {}), ...(watermark !== undefined ? { watermark } : {}) }
 }
 
 /**
@@ -93,9 +97,12 @@ export function addCall(
   return merged.length === calls.length && merged.every((c, i) => c === calls[i]) ? (calls as QuestionCall[]) : merged
 }
 
-/** The strings of a value, each cut to `limit` characters. A new value; the id of a call stays whole. */
+/** The keys whose text is an id, so a cut never shortens it: a shorter id names no call. */
+const WHOLE = new Set(['id', 'watermark'])
+
+/** The strings of a value, each cut to `limit` characters. A new value; the id of a call and its watermark stay whole. */
 function cutStrings(v: unknown, limit: number, key?: string): unknown {
-  if (typeof v === 'string') return key === 'id' || v.length <= limit ? v : clip(v, limit)
+  if (typeof v === 'string') return (key !== undefined && WHOLE.has(key)) || v.length <= limit ? v : clip(v, limit)
   if (Array.isArray(v)) return v.map(x => cutStrings(x, limit))
   if (isRecord(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, cutStrings(x, limit, k)]))
   return v
@@ -111,32 +118,81 @@ const longest = (v: unknown): number =>
         : 0
 
 /**
+ * The call with every question that asks for a secret marked (`sensitive`). The cut below may take the words that ask
+ * (`password`, `token`), and the typed answer is short, so it stays whole: the masking needs the sign after the cut.
+ */
+function markSensitive(call: QuestionCall): QuestionCall {
+  if (call.items === undefined) return call
+  return {
+    ...call,
+    items: call.items.map(i => (isSensitive(i.question, i.header) ? { ...i, sensitive: true as const } : i)),
+  }
+}
+
+/**
  * A call cut to fit `maxBytes`: the longest texts shrink first (the limit halves until the call fits), so a long preview or
- * plan goes before a short answer does. The record says it was cut. The same call comes back when it fits.
+ * plan goes before a short answer does. The record says it was cut, and a question that asked for a secret says so before
+ * its words are cut. The same call comes back when it fits.
  */
 export function fitCall(call: QuestionCall, maxBytes: number): QuestionCall {
   if (sizeOf(call) <= maxBytes) return call
-  let limit = longest(call)
-  let out = call
+  const marked = markSensitive(call)
+  let limit = longest(marked)
+  let out = marked
   while (sizeOf(out) > maxBytes && limit > SMALLEST_CUT) {
     limit = Math.max(SMALLEST_CUT, Math.floor(limit / 2))
-    out = cutStrings(call, limit) as QuestionCall
+    out = cutStrings(marked, limit) as QuestionCall
   }
   return { ...out, cut: true }
 }
 
+/** True for a call that the transcript of the main loop holds: not the `ui.ask` of a plugin, not the call of a subagent. */
+const inTranscript = (c: QuestionCall): boolean => c.plugin !== true && c.agentId === undefined
+
 /**
- * The list within the caps. The oldest calls drop first: by count, then by bytes while more than one call is left. A last
+ * The watermark that the calls in `dropped` (oldest first) leave: the id of the newest call of the transcript among them, or
+ * else the newest watermark that one of them carries. A mark that a dropped call carries came from calls before it, and the
+ * call itself is later than its mark, so scanning from the end finds the newest.
+ */
+function watermarkOf(dropped: readonly QuestionCall[]): string | undefined {
+  for (let i = dropped.length - 1; i >= 0; i--) {
+    const c = dropped[i]!
+    if (inTranscript(c)) return c.id
+    if (c.watermark !== undefined) return c.watermark
+  }
+  return undefined
+}
+
+/**
+ * `calls` without the first `drop` of them. The first call that stays takes the watermark of the dropped ones, unless it
+ * has one: a mark that it carries was set when the calls before it dropped, so it is the newer.
+ */
+function dropFirst(calls: QuestionCall[], drop: number): QuestionCall[] {
+  if (drop === 0) return calls
+  const kept = calls.slice(drop)
+  const first = kept[0]
+  if (first === undefined || first.watermark !== undefined) return kept
+  const watermark = watermarkOf(calls.slice(0, drop))
+  return watermark === undefined ? kept : [{ ...first, watermark }, ...kept.slice(1)]
+}
+
+/**
+ * The list within the caps. The oldest calls drop first: by count, then by bytes while more than one call is left. The first
+ * call that stays keeps the id of the newest call of the transcript that dropped (`watermark`), and its bytes count. A last
  * call that is over the byte cap alone is cut (`fitCall`). The same list comes back when it fits.
  */
 export function capCalls(calls: QuestionCall[], caps: Caps): QuestionCall[] {
-  let out = calls.length > caps.maxCalls ? calls.slice(calls.length - caps.maxCalls) : calls
+  let drop = Math.max(0, calls.length - caps.maxCalls)
+  let out = dropFirst(calls, drop)
   if (sizeOf(out) > caps.maxBytes) {
     let total = sizeOf(out)
-    let drop = 0
+    let more = 0
     const sizes = out.map(c => sizeOf(c) + 1)
-    while (total > caps.maxBytes && out.length - drop > 1) total -= sizes[drop++]!
-    out = out.slice(drop)
+    while (total > caps.maxBytes && out.length - more > 1) total -= sizes[more++]!
+    drop += more
+    out = dropFirst(calls, drop)
+    // The watermark of the new first call has bytes too: when it tips the list over the cap, one more call goes.
+    while (sizeOf(out) > caps.maxBytes && out.length > 1) out = dropFirst(calls, ++drop)
   }
   const last = out.at(-1)
   if (last !== undefined && sizeOf(out) > caps.maxBytes) {

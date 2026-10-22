@@ -341,6 +341,23 @@ test('the answer to a question that asks for a password is masked whole', () => 
   expect(row?.cells.description?.text).toBe(`Login → typed: ${MASKED}`)
 })
 
+test('the answer to an item that the byte cut marked sensitive is masked whole on the screen, in the row and in the detail', () => {
+  const marked = item({
+    question: 'Which one?',
+    header: 'Pick',
+    options: [],
+    answer: 'hunter2',
+    notes: 'it is hunter2',
+    sensitive: true,
+  })
+  const [row] = rowsOf([call('a', 1, { items: [marked] })])
+  expect(row?.cells.description?.text).toBe(`Pick → typed: ${MASKED}`)
+  const all = JSON.stringify([row, ...(row?.children ?? []).map(c => c.detail?.())])
+  expect(all).not.toContain('hunter2')
+  const [open] = rowsOf([call('b', 2, { items: [{ ...marked, sensitive: undefined }] })])
+  expect(open?.cells.description?.text).toBe('Pick → typed: hunter2')
+})
+
 // ---------------------------------------------------------------- the /track text
 
 test('the /track text names the Questions group and holds no question, answer or note: the model reads every /track reply', () => {

@@ -170,3 +170,138 @@ test('a call that fits is not marked as cut', () => {
   const [kept] = capCalls([call('a', 1)], { maxCalls: 10, maxBytes: 20_000 })
   expect(kept).not.toHaveProperty('cut')
 })
+
+// A cut shortens the question and the header, so the words that made a question ask for a secret (`password`, `token`) may
+// be gone while the short typed answer stays whole. The cut marks the item before it cuts, and the masking reads the mark.
+const longAsk = (question: string, header: string): QuestionCall =>
+  call('huge', 2, {
+    items: [
+      {
+        question,
+        header,
+        multiSelect: false,
+        options: [{ label: 'A', preview: 'p'.repeat(200_000) }],
+        answer: 'hunter2',
+        notes: 'it is hunter2',
+      },
+    ],
+  })
+const TIGHT = { maxCalls: 100, maxBytes: 1000 }
+
+test('a cut keeps the sign of a question that asked for a secret, also when the words are gone: the item says sensitive', () => {
+  const [byQuestion] = capCalls([longAsk(`${'x'.repeat(400)} What is the password?`, 'Login')], TIGHT)
+  expect(byQuestion?.cut).toBe(true)
+  expect(byQuestion?.items?.[0]?.question).not.toMatch(/password/)
+  expect(byQuestion?.items?.[0]?.sensitive).toBe(true)
+  const [byHeader] = capCalls([longAsk('Which one?', `${'h'.repeat(400)} API key`)], TIGHT)
+  expect(byHeader?.items?.[0]?.header).not.toMatch(/key/)
+  expect(byHeader?.items?.[0]?.sensitive).toBe(true)
+  expect(sizeOf(byQuestion!)).toBeLessThanOrEqual(TIGHT.maxBytes)
+})
+
+test('a plan that is cut has no questions to mark: its text is cut and the record says so', () => {
+  const plan: QuestionCall = { id: 'p', n: 1, kind: 'plan', state: 'answered', at: 1, plan: 'x'.repeat(100_000) }
+  const [kept] = capCalls([plan], TIGHT)
+  expect(kept?.cut).toBe(true)
+  expect(kept?.plan?.endsWith('…')).toBe(true)
+  expect(kept).not.toHaveProperty('items')
+})
+
+test('a cut call with nothing secret in a question has no sensitive mark, and a call that fits has none either', () => {
+  const [plain] = capCalls([longAsk(`${'x'.repeat(400)} Which one?`, 'Pick')], TIGHT)
+  expect(plain?.cut).toBe(true)
+  expect(plain?.items?.[0]).not.toHaveProperty('sensitive')
+  const fits = [call('a', 1, { items: [{ ...call('x', 1).items![0]!, question: 'What is the password?' }] })]
+  expect(capCalls(fits, CAPS)).toBe(fits) // the same list: no write, no mark
+  expect(fits[0]?.items?.[0]).not.toHaveProperty('sensitive')
+})
+
+// ---------------------------------------------------------------- the replay watermark
+
+const plugin = (id: string, n: number, over: Partial<QuestionCall> = {}) => call(id, n, { plugin: true, ...over })
+const TWO = { maxCalls: 2, maxBytes: 262_144 }
+const ONE = { maxCalls: 1, maxBytes: 262_144 }
+
+test('the caps leave the id of the newest dropped call of the transcript on the first call that stays: the watermark', () => {
+  const kept = capCalls([call('a', 1), call('b', 2), call('c', 3)], TWO)
+  expect(kept.map(c => [c.id, c.watermark])).toEqual([
+    ['b', 'a'],
+    ['c', undefined],
+  ])
+  const more = capCalls(addCall(kept, { id: 'd', kind: 'ask', state: 'answered' }, { at: 9 }), TWO)
+  expect(more.map(c => [c.id, c.watermark])).toEqual([
+    ['c', 'b'], // the mark moves on with the calls that drop
+    ['d', undefined],
+  ])
+})
+
+test('a plugin call or a subagent call that drops makes no watermark: the transcript of the main loop has neither', () => {
+  const list = [plugin('p', 1), call('s', 2, { agentId: 'agent-1' }), call('c', 3), call('d', 4)]
+  expect(capCalls(list, ONE).map(c => [c.id, c.watermark])).toEqual([['d', 'c']])
+  const none = capCalls([plugin('p', 1), call('s', 2, { agentId: 'agent-1' }), call('d', 4)], ONE)
+  expect(none.map(c => [c.id, 'watermark' in c])).toEqual([['d', false]])
+})
+
+test('a dropped call that carries a watermark hands it on when no call of the transcript drops after it', () => {
+  const kept = capCalls([plugin('p1', 1, { watermark: 'x' }), plugin('p2', 2), plugin('p3', 3)], TWO)
+  expect(kept.map(c => [c.id, c.watermark])).toEqual([
+    ['p2', 'x'],
+    ['p3', undefined],
+  ])
+  // A call of the transcript after the carrier is newer than its mark.
+  const newer = capCalls([plugin('p1', 1, { watermark: 'x' }), call('c', 2), call('d', 3)], ONE)
+  expect(newer[0]?.watermark).toBe('c')
+})
+
+test('the first call that stays keeps the watermark it has: the mark of a list that was capped before is the newer one', () => {
+  const kept = capCalls([call('old', 1), call('b', 2, { watermark: 'x' })], ONE)
+  expect(kept.map(c => [c.id, c.watermark])).toEqual([['b', 'x']])
+})
+
+test('the byte cap leaves a watermark too, and the mark counts: a list that the mark tips over the cap loses one more call', () => {
+  const [a, b, c] = [call('a', 1), call('b', 2), call('c', 3)] as [QuestionCall, QuestionCall, QuestionCall]
+  // Without the mark, b and c fit exactly. With it they do not, so b drops too and its id is the mark.
+  const tight = capCalls([a, b, c], { maxCalls: 100, maxBytes: sizeOf([b, c]) })
+  expect(tight.map(x => [x.id, x.watermark])).toEqual([['c', 'b']])
+  expect(sizeOf(tight)).toBeLessThanOrEqual(sizeOf([b, c]))
+  const roomy = capCalls([a, b, c], { maxCalls: 100, maxBytes: sizeOf([b, c]) + 40 })
+  expect(roomy.map(x => [x.id, x.watermark])).toEqual([
+    ['b', 'a'],
+    ['c', undefined],
+  ])
+  expect(sizeOf(roomy)).toBeLessThanOrEqual(sizeOf([b, c]) + 40)
+})
+
+test('a list within the caps comes back as it is, and carries no watermark', () => {
+  const list = [call('a', 1), call('b', 2)]
+  expect(capCalls(list, CAPS)).toBe(list)
+  expect(list.some(c => 'watermark' in c)).toBe(false)
+})
+
+test('a call that is cut to fit keeps its watermark whole', () => {
+  const huge = call('huge', 2, {
+    items: [
+      {
+        question: 'Q?',
+        header: 'H',
+        multiSelect: false,
+        options: [{ label: 'A', preview: 'p'.repeat(100_000) }],
+        answer: 'A',
+      },
+    ],
+  })
+  const [kept] = capCalls([call('old', 1), huge], { maxCalls: 1, maxBytes: 20_000 })
+  expect(kept?.cut).toBe(true)
+  expect(kept?.watermark).toBe('old')
+  expect(sizeOf(kept!)).toBeLessThanOrEqual(20_000)
+})
+
+test('two copies of one call join with the watermark that either has, and a new call keeps the one it carries', () => {
+  expect(joinCall(call('a', 1), call('a', 1, { watermark: 'w' })).watermark).toBe('w')
+  expect(joinCall(call('a', 1, { watermark: 'k' }), call('a', 1, { watermark: 'w' })).watermark).toBe('k')
+  const merged = mergeCalls([call('a', 1)], [call('b', 2, { watermark: 'z' })])
+  expect(merged.map(c => [c.id, c.watermark])).toEqual([
+    ['a', undefined],
+    ['b', 'z'],
+  ])
+})

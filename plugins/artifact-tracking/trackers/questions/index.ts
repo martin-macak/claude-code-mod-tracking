@@ -62,18 +62,24 @@ export function questionsTracker(): Tracker<QuestionsConfig, Json> & Traceable<J
 
   // A `--resume` fires no hook for the old calls: the transcript comes back as one batch, in order, after the stored copy was
   // restored. The calls it holds that the stored copy has are not added again (the merge is keyed by the id of the call). The
-  // transcript calls that come before the oldest call the slot holds were dropped by the caps: they stay dropped, or the
-  // replay would bring them back at the end and the caps would evict newer live calls in their place. A slot with none of
-  // the transcript calls (a cold load) keeps every call. A subagent's own calls are in its own transcript, which the replay
-  // does not read.
+  // transcript calls that the caps dropped stay dropped, or the replay would bring them back at the end and the caps would
+  // evict newer live calls in their place. Two things say which they are: the first call of the transcript that the slot
+  // holds (the ones before it are older than every call the slot keeps), and the watermark, the id that the caps leave on the
+  // first call that stays (`log.ts`). The watermark is the one that works when the slot holds no call of the transcript: only
+  // a plugin's `ui.ask` or a subagent's call, which the transcript of the main loop lacks. A slot with neither (a cold load,
+  // or a copy that came over `/clear` from another transcript) keeps every call. A subagent's own calls are in its own
+  // transcript, which the replay does not read.
   const onReplay: H<readonly ReplayItem[]> = (ctx, batch) => {
     const bodies = batch.flatMap(item => (item.kind === 'toolCall' ? (own(item.ev.tool)?.(item.ev) ?? []) : []))
     if (bodies.length === 0) return undefined
     const at = ctx.clock.wall()
     return setCalls(ctx, calls => {
       const held = new Set(calls.map(c => c.id))
+      const marks = new Set(calls.flatMap(c => c.watermark ?? []))
       const first = bodies.findIndex(b => held.has(b.id))
-      const fresh = first < 0 ? bodies : bodies.slice(first)
+      const marked = bodies.findLastIndex(b => marks.has(b.id))
+      // Neither found: `first` is -1 and `marked + 1` is 0, so every call of the transcript is new.
+      const fresh = bodies.slice(Math.max(first, marked + 1))
       return fresh.reduce((acc, body) => addCall(acc, body, { replayed: true, at }), calls)
     })
   }

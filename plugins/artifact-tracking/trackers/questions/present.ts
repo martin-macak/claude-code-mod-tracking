@@ -41,10 +41,13 @@ export const masker =
   (text, whole = false) =>
     !on ? text : whole && text !== '' ? MASKED : maskSecrets(text)
 
-/** One question of a call, ready to show. A question that asks for a secret hides its typed text and its notes whole. */
+/**
+ * One question of a call, ready to show. A question that asks for a secret hides its typed text and its notes whole. The words
+ * say it, or, after a cut to the byte cap that may have taken them, the mark `sensitive` of the record.
+ */
 export function shownItem(item: QuestionItem, mask: Masker): ShownItem {
   const parts = answerParts(item)
-  const secret = isSensitive(item.question, item.header)
+  const secret = item.sensitive === true || isSensitive(item.question, item.header)
   const picked = new Set(parts.chosen)
   return {
     question: mask(item.question),

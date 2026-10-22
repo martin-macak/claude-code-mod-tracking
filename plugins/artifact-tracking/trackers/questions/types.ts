@@ -34,6 +34,12 @@ export type QuestionItem = {
   preview?: string
   /** The notes the person added. */
   notes?: string
+  /**
+   * True when the question or its header asked for a secret (`isSensitive`) and the byte cap then cut their texts. The cut may
+   * take the words that asked, so the cut keeps the sign: the typed text and the notes stay masked whole. Absent on a record
+   * that was never cut: its words say it.
+   */
+  sensitive?: true
 }
 
 export type QuestionCall = {
@@ -69,4 +75,11 @@ export type QuestionCall = {
   refusal?: string
   /** True when the record alone passed the byte cap, so its longest texts were cut to fit. */
   cut?: true
+  /**
+   * The replay watermark: the id of the newest call of the transcript that the caps dropped just before this record. The
+   * transcript calls up to it were seen once, so a resume leaves them dropped. Only the first record that stays carries it, and
+   * it moves on when that record drops. It is the one fact the caps would otherwise erase: a list that holds only calls that
+   * the transcript lacks (a plugin's `ui.ask`, a subagent's call) shows none of the ids of the dropped ones.
+   */
+  watermark?: string
 }
