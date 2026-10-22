@@ -99,6 +99,12 @@ export function paneTextAt(screen: string, text: string): { column: number; row:
   return undefined
 }
 
+// Whether the pane draws `text` (issue #165). It reads the pane only, as `paneTextAt` does: the transcript beside it can hold
+// the same words, for example the `/track` line that still names a row the pane dropped.
+export function paneShows(screen: string, text: string): boolean {
+  return paneTextAt(screen, text) !== undefined
+}
+
 // The strip of `ui.turnStrip: interactive` (issue #69, P2): one transcript row under the duration line, two cells in, with
 // the counts and the Button `open` (`  +3 new · 1 seen again open`). A docked pane may follow on the same screen line, after
 // a border. The band says `9: open` and starts with `tracking`, so it never matches.
@@ -110,6 +116,24 @@ export function stripOpenAt(screen: string): { column: number; row: number } | u
   for (const [at, line] of screen.split('\n').entries()) {
     const found = STRIP.exec(line)
     if (found !== null) return { column: found[0].length - 'open'.length + 2, row: at + 1 }
+  }
+  return undefined
+}
+
+// The age that a section note gives its last refresh: `gh · refreshed just now`, `gh · refreshed 3s ago`. The note comes
+// after the ` · ` that follows the tool, so a line of the transcript that says "refreshed 3s ago" is no note.
+const REFRESHED = / · refreshed (?:just now|(\d+)([smhd]) ago)/
+const UNIT_SECONDS: Readonly<Record<string, number>> = { s: 1, m: 60, h: 3600, d: 86_400 }
+
+// How old the last refresh is, in seconds, as the first section note of the screen says it (`just now` is 0), or undefined
+// while no section says it refreshed. The pane draws the age when it draws, so the number is the age at that drawing.
+// The age is read from the screen and not the clock of the harness, so a scenario compares what the person would see.
+export function refreshAge(screen: string): number | undefined {
+  for (const line of screen.split('\n')) {
+    const found = REFRESHED.exec(line)
+    if (found === null) continue
+    const [, count, unit] = found
+    return count === undefined ? 0 : Number(count) * (UNIT_SECONDS[unit as string] as number)
   }
   return undefined
 }

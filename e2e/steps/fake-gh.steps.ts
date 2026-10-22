@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Given, Then } from '@cucumber/cucumber'
-import { callsOf, type FakePr, fakeGhSpec, type Mergeable } from '../support/fake-gh.ts'
+import { Given, Then, When } from '@cucumber/cucumber'
+import { callsOf, type FakePr, fakeGhSpec, isQuiet, type Mergeable } from '../support/fake-gh.ts'
 import { FAKE_ORIGIN_NAME, fakeGithubClone, listRefs } from '../support/session.ts'
-import { waitUntil } from '../support/wait.ts'
+import { idleMs, waitUntil } from '../support/wait.ts'
 import type { DemoWorld } from '../support/world.ts'
 
 // The fake gh (support/fake-gh.ts) answers the calls of the github tracker from a spec, so a scenario can show a
@@ -59,6 +59,23 @@ Then('the fake gh answered {string}', async function (this: DemoWorld, call: str
   await waitUntil(() => (log(this).some(c => c.call === call && c.exit === 0) ? true : undefined), {
     timeoutMs: this.config.screenTimeoutMs,
     what: `the fake gh to answer "${call}"`,
+    last: () => describe(this),
+  })
+  this.tl.phase('normal')
+})
+
+// Issue #165. The mod makes its first calls at the start of a session: the probes, then the PR discovery. A machine under
+// load makes the start slow, so a wait of a fixed time after the start does not say that the calls are over. The log is quiet
+// when no call came for the given time: the wait counts from the last call, and every call that lands in the meantime starts
+// it again. The log starts empty, so it counts as quiet only after the first call (`isQuiet`). The discovery takes the time
+// for its stamp before it calls `gh`, so a pane that draws after the quiet time shows an age of at least that time.
+When('the fake gh has been quiet for {int} seconds', async function (this: DemoWorld, seconds: number) {
+  this.tl.phase('fast')
+  await waitUntil(() => (isQuiet(log(this), idleMs(this.fakeGhFiles.logFile), seconds) ? true : undefined), {
+    // The quiet time itself is no part of the bound: the wait is over after it, at the earliest.
+    timeoutMs: this.config.screenTimeoutMs + seconds * 1000,
+    intervalMs: 100,
+    what: `the fake gh to answer no call for ${seconds} seconds`,
     last: () => describe(this),
   })
   this.tl.phase('normal')

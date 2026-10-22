@@ -35,6 +35,7 @@ Make the README demo GIF from a Gherkin scenario that also runs as an E2E test.
 | `When I pause for N seconds` | Real time, at most 5 s. Put 1.5–3 s after each `Then` the viewer must read: the next step types at once. |
 | `Then the screen shows "…"` / `matches /re/` | Polling is sped up. Fails after 20 s with the last screen. |
 | `Then the screen stops showing "…"` | Polls until the text is gone, for example a pane after Esc. |
+| `Then the pane stops showing "…"` | Polls until the pane no longer draws the text. It reads the pane only (right of the first border), so a transcript line that still holds the text, such as the `/track` line with `#7`, does not hold it up. Use it for a row that the pane drops. |
 | `Then the screen does not show "…"` | One check, no wait. Only for text that can never appear. |
 | `Then no permission dialog is open` | Fails if a tool approval opened. |
 | `Given the tracker config file:` (doc string) | Hidden. Writes the scenario's `config.json` before the session starts. Every scenario has its own empty config folder. |
@@ -45,6 +46,9 @@ Make the README demo GIF from a Gherkin scenario that also runs as an E2E test.
 | `Given a fake GitHub repo "owner/repo" with the clone on the branch "…"` | Hidden. Puts the clone on a feature branch (PR discovery drops the default branch), makes its `origin` a local copy and puts the fake `gh` on the `PATH` of the session. Not for `@demo`: the demo uses live data. |
 | `Given the fake gh reports PR #N "title" from "head" into "base" as CONFLICTING` | Hidden. Adds a PR to the fake. The last word is `CONFLICTING`, `MERGEABLE` or `UNKNOWN`. |
 | `Then the fake gh answered "call"` | Polls the fake's log, for example `"graphql discovery"` or `"--version"`. Shows that the session ran the fake and not the real `gh`. |
+| `When the fake gh has been quiet for N seconds` | Sped up. Polls until the log of the fake has had no new call for N seconds, counted from the last call. Use it after `the fake gh answered "call"` to know that the first calls of the mod are over, instead of `I wait for N seconds` from the start of the session: the start takes longer on a loaded machine. A log with no call is never quiet, so the step cannot pass before the fake got its first call. |
+| `When I note how old the last refresh on the screen is` | Polls for a section note (`gh · refreshed 3s ago`) and keeps its age. Fails when the age is `just now`: the pane draws the age when it draws, so the scenario must wait before it opens the pane. |
+| `Then the last refresh on the screen is younger than the one noted` | Polls until the section note is younger than the noted age: a key refreshed. Use it in place of `refreshed just now`, which says "less than 1 s" and fails when a slow draw ages the refresh. |
 | `Then the fake gh answered no unsupported call` | Fails when the fake got no call, or one it does not know. |
 | `Then the fake origin got no push` | Fails when a ref of the local copy of the origin changed. Use it after a step that makes the session act on its own. |
 
