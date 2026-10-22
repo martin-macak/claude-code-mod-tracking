@@ -93,7 +93,8 @@ e2e/
   package.json          @cucumber/cucumber, @types/node; npm scripts
   package-lock.json
   tsconfig.json         noEmit, erasableSyntaxOnly, strict
-  cucumber.mjs          profiles: default (e2e), demo (record, tags @demo)
+  cucumber.mjs          profiles: default (every scenario but @artifacts), all (every scenario, make e2e),
+                        artifacts (@artifacts alone), one (no paths: only what the command line names), demo (record, tags @demo)
   features/
     tracking.feature    written by the skill
     conflicts.feature   the conflict chip and the resolve key, on the fake gh (section 14)
@@ -326,7 +327,7 @@ Unit tests cover:
 | --- | --- |
 | `e2e-deps` | `npm ci` in `e2e/` when `package-lock.json` is newer than `node_modules`. |
 | `e2e-unit` | `node --test e2e/tests` (no `claude`, no tmux). |
-| `e2e` | `e2e-deps`, then `cucumber-js` with the default profile. All scenarios, no recording. |
+| `e2e` | `e2e-deps`, then `cucumber-js -p all`. All scenarios, `@artifacts` included, no recording. The default profile (a bare `cucumber-js`) skips `@artifacts`, which publishes a page to claude.ai. |
 | `demo` | `e2e-deps`, then `cucumber-js -p demo`, then `render.ts` to `docs/assets/demo.gif`. |
 | `typecheck` | Also runs `tsc -p e2e`. |
 | `init` | Also reports `tmux`, `asciinema`, `agg` and `gifsicle`. They are needed by `e2e` and `demo` only. |

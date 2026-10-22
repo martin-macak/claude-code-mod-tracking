@@ -156,8 +156,10 @@ $(E2E_STAMP): $(E2E)/package-lock.json
 e2e-unit: e2e-deps ## Unit-test the e2e harness (no claude, tmux tests skip without tmux)
 	cd $(E2E) && $(NODE_RUN) node --test 'tests/**/*.test.ts'
 
-e2e: e2e-deps ## Run the Gherkin scenarios against a real claude (needs a Claude login, tmux)
-	cd $(E2E) && $(NODE_RUN) npx cucumber-js
+# The default profile skips the @artifacts scenario (it publishes a private page to claude.ai). This target runs
+# every scenario, so it names the profile `all`. e2e/cucumber.mjs and e2e/README.md say why.
+e2e: e2e-deps ## Run every Gherkin scenario, @artifacts included, against a real claude (needs a Claude login, tmux)
+	cd $(E2E) && $(NODE_RUN) npx cucumber-js -p all
 
 demo: e2e-deps ## Record the @demo scenario and render docs/assets/demo.gif (at most 2 MB)
 	cd $(E2E) && DEMO_RECORD=1 $(NODE_RUN) npx cucumber-js -p demo
