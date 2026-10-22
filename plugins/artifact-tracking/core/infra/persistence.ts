@@ -1,12 +1,23 @@
-// Persistence: the only writer of the plugin store. Keys: `v2:s:<id>`, `v2:index`, `v2:run` (spec 5.13).
+// Persistence: the only writer of the plugin store. Keys: `v2:s:<id>`, `v2:index`, `v2:run` and `v2:log` (spec 5.13).
 // It writes through with a debounce, bounds the total size, and writes the leaving session at `session.end`.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.6 and 5.13. Plan decisions D1 to D3.
 
+import type { LogEntry } from '../interfaces/clean'
 import type { Json } from '../interfaces/items'
 import type { StorePort, Timer } from '../interfaces/ports'
 import type { DataSlot, PendingEnd, RunCopy, SessionCopy, Snapshot } from '../interfaces/slots'
+import { isRecord } from '../lib/json'
 
-export const KEYS = { session: (id: string) => `v2:s:${id}`, index: 'v2:index', run: 'v2:run' } as const
+export const KEYS = {
+  session: (id: string) => `v2:s:${id}`,
+  index: 'v2:index',
+  run: 'v2:run',
+  /** The audit log of `/track clean` (issue #122): not per session, so `/clear` and the session copies leave it alone. */
+  log: 'v2:log',
+} as const
+
+/** How many entries of the audit log the store keeps: the newest. */
+export const LOG_KEEP = 200
 
 /** Under this budget `session.end` writes nothing: the exit is too close. */
 export const MIN_END_BUDGET_MS = 200
@@ -26,6 +37,15 @@ export interface PersistenceDeps {
 }
 
 const size = (v: Json | undefined): number => (v === undefined ? 0 : JSON.stringify(v).length)
+/**
+ * A stored log entry that `logText` can print: a store fault or a later schema must not make `--log` throw on one bad entry.
+ * The time must make a `Date`: a finite number past the range of a `Date` (`1e100`) still throws in `toISOString()`.
+ */
+const isEntry = (e: unknown): e is LogEntry =>
+  isRecord(e) &&
+  typeof e.at === 'number' &&
+  Number.isFinite(new Date(e.at).getTime()) &&
+  ['by', 'kind', 'id', 'action', 'outcome'].every(k => typeof e[k] === 'string')
 const reason = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
 /** The persisted slots as a stored copy, and whether any of them holds something worth a write. */
@@ -49,6 +69,8 @@ export class Persistence {
   /** The size of each stored copy. Learned from the store once per load, then kept. */
   private readonly sizes = new Map<string, number>()
   private runSize: number | undefined
+  /** The size of `v2:log`. Learned from the store once per load, then kept. */
+  private logSize: number | undefined
 
   constructor(private readonly d: PersistenceDeps) {}
 
@@ -115,7 +137,8 @@ export class Persistence {
       const kept = all.slice(0, Math.max(1, keepSessions))
       this.sizes.set(id, json.length)
       for (const x of kept) if (!this.sizes.has(x)) this.sizes.set(x, size(await this.d.store.get(KEYS.session(x))))
-      const run = runChars ?? (await this.runBytes())
+      // The run record and the audit log sit in the store beside the copies, so both count against the bound.
+      const run = (runChars ?? (await this.runBytes())) + (await this.logBytes())
       const total = () => kept.reduce((n, x) => n + (this.sizes.get(x) ?? 0), 0) + JSON.stringify(kept).length + run
       while (kept.length > 1 && total() > maxBytes) dropped.push(kept.pop() as string)
       let held = 0
@@ -204,6 +227,49 @@ export class Persistence {
       )
   }
 
+  /**
+   * The audit log of `/track clean`: the newest entries first, at most `LOG_KEEP`. A failed read is logged and counts as an
+   * empty log.
+   */
+  async readLog(): Promise<readonly LogEntry[]> {
+    return (await this.loadLog())?.log ?? []
+  }
+
+  /**
+   * Adds entries to the audit log, in the order given (oldest first): the newest end up first, and the log keeps the newest
+   * `LOG_KEEP`. It writes at once and never rejects. A log that cannot be read is left as it is, and so is a failed write:
+   * the faults are logged, and the next append tries again.
+   */
+  async appendLog(entries: readonly LogEntry[]): Promise<void> {
+    if (entries.length === 0) return
+    const cur = await this.loadLog()
+    if (cur === undefined) return // never replace a log that cannot be read
+    const next = [...[...entries].reverse(), ...cur.log].slice(0, LOG_KEEP)
+    // The log never takes more than half of the bound, so the copies of the sessions keep the other half. The oldest go first,
+    // and the newest try stays even when it alone is over. The sessions make room for the log at their next write (`write`).
+    const { maxBytes } = this.d.limits()
+    while (next.length > 1 && size(next as unknown as Json) > maxBytes / 2) next.pop()
+    try {
+      await this.d.store.set(KEYS.log, next as unknown as Json)
+      this.logSize = size(next as unknown as Json)
+    } catch (e) {
+      this.logSize = undefined // the stored size is not the new one: learn it again
+      this.d.log(`store: write of ${KEYS.log} failed: ${reason(e)}`)
+    }
+  }
+
+  /** The stored log and its size. `undefined` when the read fails; the fault is logged. An absent key is an empty log. */
+  private async loadLog(): Promise<{ log: LogEntry[] } | undefined> {
+    try {
+      const raw = (await this.d.store.get(KEYS.log)) as LogEntry[] | undefined
+      this.logSize = size(raw as unknown as Json | undefined)
+      return { log: Array.isArray(raw) ? raw.filter(isEntry) : [] }
+    } catch (e) {
+      this.d.log(`store: read of ${KEYS.log} failed: ${reason(e)}`)
+      return undefined
+    }
+  }
+
   /** Deletes the keys of the old layout (`s:*` and `index`). Writes no marker. Returns how many it deleted. */
   async dropLegacy(): Promise<number> {
     const old = (await this.d.store.keys()).filter(k => k === 'index' || k.startsWith('s:'))
@@ -237,6 +303,12 @@ export class Persistence {
   private async runBytes(): Promise<number> {
     this.runSize ??= size(await this.d.store.get(KEYS.run))
     return this.runSize
+  }
+
+  /** The size of `v2:log`, read once per load. A read that fails counts as 0 and is tried again at the next write. */
+  private async logBytes(): Promise<number> {
+    if (this.logSize === undefined) await this.loadLog()
+    return this.logSize ?? 0
   }
 
   private async setRun(run: RunCopy): Promise<void> {

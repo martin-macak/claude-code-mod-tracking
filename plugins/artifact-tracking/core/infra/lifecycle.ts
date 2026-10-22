@@ -26,6 +26,7 @@ import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
 import type { DurationStrip, TurnTarget } from '../interfaces/turns'
 import { EventBus } from './bus'
+import { Cleaner } from './clean'
 import type { Commands } from './commands'
 import { Facts } from './facts'
 import { commandsOf, configRefresher, itemHostOf, persistenceOf, schedulerOf, turnLedgerOf } from './lifecycle-parts'
@@ -190,7 +191,18 @@ export class LifecycleManager extends PaneApi {
       items: this.items,
       log: ports.log,
     })
-    this.commands = commandsOf(this, { items: this.items, host: this.host, bus: this.bus, config: this.cfg }, d)
+    const cleanup = new Cleaner({
+      trackers: d.trackers,
+      host: this.host,
+      views: this.views,
+      persistence: this.persistence,
+      log: ports.log,
+    })
+    this.commands = commandsOf(
+      this,
+      { items: this.items, host: this.host, bus: this.bus, config: this.cfg, cleanup },
+      d,
+    )
   }
 
   get generation(): number {

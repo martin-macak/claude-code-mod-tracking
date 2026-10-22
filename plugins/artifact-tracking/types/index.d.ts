@@ -183,8 +183,11 @@ declare module 'claude-code' {
       help: boolean
       /** Issue #69. What each main-loop turn tracked. Persisted per session, carried by `/clear`. */
       turns: TurnLedger
-      /** Issue #49. `/track show-all` is on: the rows the TTL hides show again. Session scope, reset by `/clear`. */
-      hidden: { showAll: boolean }
+      /**
+       * Issues #49 and #122. `showAll`: `/track show-all` is on, so the rows the TTL hides show again. `before`: the time of
+       * the last `/track clean --hide`; a row that ended at or before it is hidden. Session scope, reset by `/clear`.
+       */
+      hidden: { showAll: boolean; before?: number }
       /** Issue #63, L3. The view the person chose (`g`, `/track view`), or `null` for `global.ui.view`. Session scope, reset by `/clear`. */
       view: string | null
       /** Issue #63, L3. The filters of the pane: `t` hides the rows nobody touched. Session scope, reset by `/clear`. */

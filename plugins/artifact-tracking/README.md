@@ -79,6 +79,7 @@ An artifact row shows its name: the page title from the Artifact tool, else the 
 | `/track help` | Prints the help view as text: every pane key, the config file path, the version and the problems. It prints the first 50 problems, then one line that counts the rest and names the debug log. Use it in `claude -p`. |
 | `/track show-all` | Shows the ended rows that their TTL hides, and prints the list. A second call hides them again. It lasts until `/clear` and writes nothing to the config file. See [Ended rows](#ended-rows). |
 | `/track view <name>` | Sets the view of the pane for the session: `list`, `tracker`, `status`, `reason` or `flat`, and prints the list in it with `View: <name>` as the first line. A name that is no view, or no name, prints the usage with the five names. It lasts until `/clear` and writes nothing to the config file. See [Views](#views). |
+| `/track clean [--hide\|--log\|--yes <kind>...]` | Cleans up what a long session leaves behind. With no argument it prints a plan by kind and changes nothing. `--hide` hides every ended row now. `--yes tasks` stops the background tasks that still run. `--yes worktrees` removes the git record of a removed worktree. `--log` prints what it did. See [Clean up on demand](#clean-up-on-demand). |
 | `/track version` | Prints the version of the mod (`artifact-tracking 0.2.0`), read from its `.claude-plugin/plugin.json`. It prints `unknown` when the manifest cannot be read. The help view (key `h`) shows it too, and one debug log line names it at the start of a session. |
 | `/track turn [n]` | Prints what turn `n` tracked: the items it added and the known items it saw again, each with its reason. Without `n`, the newest turn. It opens no pane and works in `claude -p`. See [What each turn tracked](#what-each-turn-tracked). |
 | `/track prio <ref> <level>` | Sets the priority of one item: `high`, `normal`, `low`, or `auto` to remove your mark. See [Priority](#priority). |
@@ -398,7 +399,7 @@ An ended row does not stay for ever. The pane, the `/track` text and the band hi
 | Processes | failed, killed | 60 min | `trackers.processes.failedTtlMs` |
 
 - Each tick (30 s) draws the pane and the band again, with no key and no state write. A row leaves the pane within one tick after its TTL.
-- A row with no end time is never hidden. An ended agent whose child is still shown stays, dimmed, so the tree keeps its shape. The master agent never hides. A worktree row counts as removed from the first round that finds its directory gone. The root worktree and a live one never hide.
+- A row with no end time is never hidden by its TTL. (`/track clean --hide` hides it: it was over before now.) An ended agent whose child is still shown stays, dimmed, so the tree keeps its shape. The master agent never hides. A worktree row counts as removed from the first round that finds its directory gone. The root worktree and a live one never hide.
 - The Agents note keeps counting every ended agent and ends with the hidden count: `2 running · 29 ended (26 hidden)`. The Worktrees note does the same with its removed rows: `git · 2 live · 1 removed · checked 5m ago (1 hidden)`. The Processes note counts the rows it shows: `3 tracked (5 hidden)`. The Processes band counts shown rows only, so a hidden row is not in it.
 - `/track show-all` shows every hidden row again, in the pane and in the `/track` text, until you call it again or `/clear`. It is a switch of the session. It is not stored, and it never changes `config.json`.
 - `trackers.auto.hideEnded` or `trackers.processes.hideEnded` set to `false` turns the hiding off for that tracker. Every row shows, and the notes read as before. A finished workflow run of 2 agents or more still folds: set `trackers.auto.foldWorkflows` to `false` to show its agents as rows.
@@ -410,6 +411,42 @@ An ended row does not stay for ever. The pane, the `/track` text and the band hi
 **Process row cap.** `trackers.processes.maxRows` (200) bounds the Processes section and the stored rows. Past it, only ended rows leave, and a live row never leaves, so a list of live rows can pass the cap. Live rows count against it. In the stored rows, a row past its TTL leaves first, the oldest end first, even when a row still inside its TTL ended earlier: a failed row that ended 50 min ago stays, and a completed row that ended 40 min ago goes. Then the oldest ended rows leave, by their end time. The TTL only orders the cut: the stored rows lose no row while they hold `maxRows` rows or fewer. The cut runs each time rows merge: a new row, a `/clear` carry, a save and a load. It does not depend on `hideEnded`. A row that left the stored rows is gone. It is not in the hidden count of the note, and `/track show-all` cannot show it. With `hideEnded` true, the view applies the same cap to what it draws, so a lower `maxRows` works at once: until the next merge cuts them from the stored rows, the rows over the cap count in the hidden count. `/track show-all` and `hideEnded` false show them until then.
 
 **Selection.** When the row you selected hides (its TTL, the cap or a fold), the selection moves to a shown row: the next row of the last drawing, else the one before it. For a row that a closed run row now holds, it is the run row. The `>`, `x` and the digit keys follow it. On a run row `x` is dim, because a run row cannot be dismissed. The selection is not written until you press a key that selects a row, so a row that comes back (`/track show-all`) is selected again.
+
+### Clean up on demand
+
+`/track clean` is the manual side of [Ended rows](#ended-rows). The TTL hides rows by itself. This command lets you act at once, and it can change things outside the view. It always shows a plan first.
+
+| Command | What it does |
+| --- | --- |
+| `/track clean` | A dry run. It prints the plan by kind, with a `skipped: <reason>` line for each step that it would not take. It writes no state, writes no store key and runs no process. |
+| `/track clean --hide` | Hides every ended row now: agents, process rows and removed worktrees that are over. A live row stays. `/track show-all` shows them again, and a second `show-all` hides them again. `/clear` forgets the hide. It writes nothing to the config file, and `hideEnded: false` does not stop it. |
+| `/track clean --yes tasks` | Stops each running background Bash task. One TaskStop call carries its task id, and the row reads `killed` when the answer names that task. An answer that does not is `skipped`, and the row keeps its state. |
+| `/track clean --yes worktrees` | Removes the git record of each removed worktree that this run made, one path at a time: `git worktree remove <path>`. |
+| `/track clean --yes tasks worktrees` | Both. `--yes` needs the kinds: a bare `--yes` prints the usage. |
+| `/track clean --log` | Prints the audit log, newest entry first. |
+
+Example plan:
+
+```text
+Clean plan. Nothing changed.
+
+Tasks (apply with /track clean --yes tasks)
+  sleep 300: stop
+  npm run dev: skipped: no task id
+Worktrees (apply with /track clean --yes worktrees)
+  /work/.claude/worktrees/agent-a94bdd45b56e2c631: remove record
+
+Hide: /track clean --hide hides every ended row now, and /track show-all shows them again.
+Log: /track clean --log
+```
+
+Each kind shows 10 lines and a count of the rest. After `--yes`, each line ends with `done` or `skipped: <reason>`. One failed step never stops the others, and one kind that fails (git is missing, for example) never stops the other kinds. `--yes` checks each step against the world again at that moment.
+
+**Tasks.** A step is a background Bash task that the mod holds as `running` with a task id. The mod sets the row to `killed` itself when the engine confirms the stop. When the engine answers `Error: ...` (the task is unknown or not running) or a hook refuses the call, the step is `skipped: <text>` and the row keeps its state. A Monitor task is listed as skipped: its stop was not tested. Docker, tmux, screen and detached processes are never touched.
+
+**Worktrees.** A step is a child worktree that this run made (it has a proof) and that the last round found removed with a record that git still lists as prunable. A removed child that git does not list at all, for example one removed with `git worktree remove`, is not a step: nothing is left to remove, and it is never tried or logged. `git worktree remove` also deletes the folder of a worktree that is still there, so the mod asks git again just before it removes: the step runs only when git lists the record as prunable, which means its folder is gone. It finds the record as a round does: by the recorded path, or by the branch when the recorded path is a symlink alias of the path that git lists (an alias changes the start of a path, so the last three segments must be the same: a record of that branch somewhere else is another worktree, and is never taken). Then it removes the path that git lists. A live record, a locked record, the main worktree and the root of the session are skipped, and there is no `--force`. The command is `git worktree remove <path>` by argument vector, and never `git worktree prune`: prune takes no path and would clear every prunable record of the repo, including records that this mod did not make. The branch stays.
+
+**Audit log.** The store key `v2:log` holds the newest 200 tries of `--yes`. Each entry has the time, `manual`, the kind, the row id, the action (`stop` or `remove-record`) and the outcome (`done` or `skipped: <reason>`). It has no command line and no output. A hide changes nothing outside the view, so it is not logged, and neither is a step that was skipped before it was tried. The log is not part of a session: `/clear` and `/track clear` keep it. It counts in `global.store.maxBytes`, and it keeps at most half of it: past that, the oldest entries go first. A stored entry that `--log` cannot print is dropped when the log is read.
 
 ### Merge conflicts
 
@@ -457,6 +494,7 @@ By default, a tool that fails three times in a row is paused for 5 minutes (circ
 - `x` and `/track clear` remove an item with its mark. An item tracked again starts with no mark. A new session starts with no marks.
 - `--resume` and `--continue` restore the stored copy, then add what the transcript holds. Restored items are due for a refresh.
 - The turn ledger is one more slot of the stored copy (see [What each turn tracked](#what-each-turn-tracked)). A cold load with no stored copy has no ledger: the replayed transcript gives items no turn.
+- The audit log of `/track clean` is the key `v2:log`, outside the session copies (see [Clean up on demand](#clean-up-on-demand)).
 
 ## Configuration
 
@@ -626,6 +664,7 @@ Cost. A block is short: 134 characters for one link, 164 for two (about 34 and 4
 
 - **False positives.** `rank #1` counts as issue 1 of the session repo. The scanner cannot tell it from `fixed in #1`.
 - **Hidden rows.** A row leaves the view up to one tick (30 s) after its TTL. A workflow agent that finished can look running for up to `trackers.auto.workflowIdleMs` (60 min), so its TTL starts late. The `/track` text prints every child of a row, so it does not fold a workflow run. An ended process row that an older version stored has no end time. It gets one when the session is restored, and hides after its TTL from then. The process row cap counts that time as its end too, so such a row can outlive a row that ended earlier. The process row cap also bounds the stored process rows (see [Ended rows](#ended-rows)): a row it drops is gone, and `/track show-all` cannot show it.
+- **Clean up.** `/track clean --yes tasks` was run against the fake engine and the real hooks of the test kit, not yet against a live background task in auto permission mode (the design study of #49 ran TaskStop in manual mode only). It stops Bash tasks only: a Monitor task, Docker, tmux, screen and detached processes are left to you. It removes git records only: never a folder of a worktree that exists, and never the branch. `--hide` hides rows for the session only and `/clear` forgets it.
 - **Focus after a background change.** A row that appears or leaves above the focus ring moves the ring onto another row: the ring sits on a position, not on a row. The `>` and the highlight stay on your row, and `x` and the digits act on it, not on the ring. Tab moves the ring again. After `x` or a digit, the ring goes back to the selected row. `h` and the `x` that removes the last row take the rows away, and every footer Button changes its place, so the pane asks for the ring on its own Button again. A ring on a Button that the next view has not (a row, `N more`, a tracker key) goes to `h: back`, and the second `h` puts it back on the selected row. After the last `x`, such a ring goes to `r: refresh`. After a `ctrl+x Tab` chord or a second `/track` gives the keys back to the pane, the ring starts on the selected row (on the first row when none is selected). `r` leaves the ring where it was. When the row you selected hides, the selection moves to a shown row (see [Ended rows](#ended-rows)).
 - **Keys in the prompt on the desktop.** The dim `>` and the line `Keys go to the prompt.` were checked in a terminal only. The desktop gives the pane the same `isFocused` flag, but nobody has run it there yet, so a desktop pane may show the hint at times when it has the keys. The click that asks for the keys ([#115](https://github.com/martin-macak/claude-code-mod-tracking/issues/115), [#129](https://github.com/martin-macak/claude-code-mod-tracking/issues/129)) was checked in a terminal only.
 - **Click on a row.** Only the `▸` or `▾` takes a click. A click on the text of a row, or on its gutter, does nothing. A click on the `▸` of a row while the keys are in the prompt asks the engine to give them to the pane. A click on a footer key (a dim one too) or on an `N more` row asks the same way. The engine refuses while the prompt box holds text: the row is still selected and opened (or the key still does its work), the keys stay in the prompt and the hint stays. Clear the prompt box and click again. [#108](https://github.com/martin-macak/claude-code-mod-tracking/issues/108) holds the spikes for a whole-row click and for arrows that walk the rows.

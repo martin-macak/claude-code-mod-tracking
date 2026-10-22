@@ -185,6 +185,8 @@ export function world(on: On, opts: Opts = {}) {
     /** The whole `tool.call` answer by tool name, returned as it stands (`{ deny }`, `{ isError: true, ... }`). */
     toolAnswers: {} as Record<string, unknown>,
     toolRuns: {} as Record<string, number>,
+    /** The input of every `tool.call`, by tool name, in order: what the engine would have run. */
+    toolInputs: {} as Record<string, unknown[]>,
     /** Discovery nodes by `head:<branch>` or `base:<branch>`. */
     nodes: {} as Record<string, unknown[]>,
     discoveryMode: 'ok' as 'ok' | 'transport' | 'query-error' | 'auth',
@@ -296,6 +298,7 @@ export function world(on: On, opts: Opts = {}) {
   on('tool.call', (_$, e) => {
     const tool = (e as { tool: string }).tool
     fake.toolRuns[tool] = (fake.toolRuns[tool] ?? 0) + 1
+    fake.toolInputs[tool] = [...(fake.toolInputs[tool] ?? []), e]
     if (tool in fake.toolThrows) throw new Error(fake.toolThrows[tool])
     if (tool in fake.toolReplies) return fake.toolReplies[tool] as never
     if (Object.hasOwn(fake.toolAnswers, tool)) return fake.toolAnswers[tool] as never

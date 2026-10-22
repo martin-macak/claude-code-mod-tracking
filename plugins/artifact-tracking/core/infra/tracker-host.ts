@@ -56,7 +56,7 @@ const UNGUARDED: ReadonlySet<BusKind> = new Set<BusKind>(['start', 'sessionChang
 
 const reason = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-type Base = Omit<TrackerContext<JsonObject, Json>, 'data' | 'items'>
+type Base = Omit<TrackerContext<JsonObject, Json>, 'data' | 'items' | 'tasks'>
 
 export class TrackerHost {
   private readonly ordered: readonly Tracker[]
@@ -211,6 +211,8 @@ export class TrackerHost {
       },
       items: d.itemsOf?.(t.id) ?? d.items,
       ...(port !== undefined ? { turn: port } : {}),
+      // Only a tracker that declared it may stop a task (issue #122).
+      ...(t.stopsTasks ? { tasks: { stop: (taskId: string) => ports.tasks.stop(taskId) } } : {}),
     })
   }
 

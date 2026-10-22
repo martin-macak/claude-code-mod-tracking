@@ -8,6 +8,7 @@ import { ConfigManager } from '../core/infra/config-manager'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
+import { stopResultOf } from '../core/lib/tasks'
 import { withLine } from '../core/lib/turn-strip'
 import { emptyLedger } from '../core/lib/turns'
 import { DISMISS, parseRemote, TRACKERS } from '../trackers'
@@ -143,6 +144,18 @@ function portsOf($: EngineInterface): Ports {
           ...(a.description !== undefined ? { description: a.description } : {}),
           ...(a.type !== undefined ? { type: a.type } : {}),
         })),
+    },
+    // TaskStop for `/track clean --yes tasks` (issue #122): one literal call, so `claude plugin validate` lists it. The engine
+    // answers `{ deny }` for a hook that refuses it and `isError` for a task it does not know or that is not running; none
+    // of them throws. The mod's own `tool.call` hook may see this call too (the engine skips only the calling hook), and it marks the row the same way; the caller writes the row itself and does not rely on that.
+    tasks: {
+      stop: async taskId => {
+        try {
+          return stopResultOf(await $.tool.call({ tool: 'TaskStop', task_id: taskId }), taskId)
+        } catch (e) {
+          return { stopped: false, reason: e instanceof Error ? e.message : String(e) }
+        }
+      },
     },
     state: {
       items: {

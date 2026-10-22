@@ -158,6 +158,17 @@ export interface StatePorts {
   readonly turns: AtomPort<TurnLedger>
 }
 
+/** What stopping a background task gave: the engine stopped it, or it did not, and says why. */
+export type StopResult = { readonly stopped: true } | { readonly stopped: false; readonly reason: string }
+
+/**
+ * Stops one background task by its id: the engine's TaskStop tool. Narrow on purpose: no other tool, no other input. It
+ * never rejects. A tracker gets it only when it declares `stopsTasks`.
+ */
+export interface TasksPort {
+  stop(taskId: string): Promise<StopResult>
+}
+
 /** The plugin store: the plugin's key-value store. Persistence is its only writer. */
 export interface StorePort {
   get(key: string): Promise<Json | undefined>
@@ -209,6 +220,8 @@ export interface Ports {
    * calls nothing.
    */
   readonly prompt: { submit(text: string, onRefused?: (reason: string) => void): void }
+  /** The engine's TaskStop, for `/track clean --yes tasks` (issue #122). Only a tracker that declares `stopsTasks` reaches it. */
+  readonly tasks: TasksPort
   /** Closures per atom, refs inline. */
   readonly state: StatePorts
   readonly ui: {

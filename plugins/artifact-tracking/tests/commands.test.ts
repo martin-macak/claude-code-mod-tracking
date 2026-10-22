@@ -17,7 +17,7 @@ import { managerWorld } from './fixtures/manager'
 import { fakePorts, MANIFEST_FILE } from './fixtures/ports'
 
 const USAGE_LITERAL =
-  'Usage: /track [refresh|clear|help|version|show-all|view <name>|turn [n]|prio <ref> <high|normal|low|auto>]'
+  'Usage: /track [refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <high|normal|low|auto>]'
 
 /** A tracker that writes the commands it hears to `log`, with the number of items at that moment. */
 function recorder(log: string[], count: () => number): Tracker {
@@ -166,6 +166,20 @@ function fakeHost(
       return `TURN ${n ?? 'last'}`
     },
     version: () => (o.noVersion ? undefined : (o.version ?? '1.2.3')),
+    cleanup: {
+      plan: async () => {
+        note('clean:plan')
+        return { lines: [], failed: [] }
+      },
+      apply: async (_p, kinds) => {
+        note(`clean:apply:${kinds.join(',')}`)
+        return { lines: [], failed: [] }
+      },
+      history: async () => {
+        note('clean:history')
+        return []
+      },
+    },
   }
   const commands = new Commands(
     host,
@@ -236,6 +250,50 @@ test('view is a core sub-command: a tracker cannot take it', async () => {
   expect(t.commands.hint()).toBe(CORE_HINT)
 })
 
+test('clean prints the plan and nothing else: no config check, no list, no flush', async () => {
+  const t = fakeHost()
+  expect((await t.commands.run(t.ports, 'clean')).text).toContain('Clean plan. Nothing changed.')
+  expect(t.calls).toEqual(['entry', 'clean:plan'])
+})
+
+test('clean --log prints the log and nothing else', async () => {
+  const t = fakeHost()
+  expect((await t.commands.run(t.ports, ' CLEAN  --log ')).text).toBe('The clean log is empty.')
+  expect(t.calls).toEqual(['entry', 'clean:history'])
+})
+
+test('clean --yes <kind> applies, saves before it replies, and prints the result and then the list', async () => {
+  const t = fakeHost()
+  const text = (await t.commands.run(t.ports, 'clean --yes tasks worktrees')).text
+  expect(t.calls).toEqual(['entry', 'clean:apply:tasks,worktrees', 'flushNow', 'prepare'])
+  expect(text).toMatch(/^Cleaned: tasks, worktrees\.\n[\s\S]*\n\nLIST$/)
+})
+
+test('a failed flush does not fail the reply of clean --yes', async () => {
+  const t = fakeHost({
+    flush: async () => {
+      throw new Error('disk full')
+    },
+  })
+  expect((await t.commands.run(t.ports, 'clean --yes tasks')).text).toContain('Cleaned: tasks.')
+})
+
+test('clean --hide sets hidden.before, redraws, and prints the list; the plan and the log are not asked', async () => {
+  const t = fakeHost()
+  t.ports.clock.after(0, () => {}) // the fake clock is at 0: the hide time is its wall time
+  const text = (await t.commands.run(t.ports, 'clean --hide')).text
+  expect(text).toBe('Ended rows hidden. /track show-all shows them again.\n\nLIST')
+  expect(await t.ports.state.hidden.get()).toEqual({ showAll: false, before: 0 })
+  expect(t.calls).toEqual(['entry', 'prepare'])
+})
+
+test('a word that only starts with clean is not clean', async () => {
+  const t = fakeHost()
+  expect((await t.commands.run(t.ports, 'cleanup')).text).toBe(USAGE)
+  expect((await t.commands.run(t.ports, 'clean --now')).text).toContain('Usage: /track clean')
+  expect(t.calls).toEqual(['entry', 'entry'])
+})
+
 test('an item host that never started says it is not ready', async () => {
   const t = fakeHost({ ready: false })
   expect((await t.commands.run(t.ports, '')).text).toBe('artifact-tracking: not ready.')
@@ -293,11 +351,15 @@ test('a sub that no tracker declared, or that core claims, prints the usage', as
 
 test('the hint is the core literal with no declared command and grows with one', () => {
   expect(fakeHost().commands.hint()).toBe(
-    '[refresh|clear|help|version|show-all|view <name>|turn [n]|prio <ref> <level>]',
+    '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>]',
   )
-  expect(CORE_HINT).toBe('[refresh|clear|help|version|show-all|view <name>|turn [n]|prio <ref> <level>]')
+  expect(CORE_HINT).toBe(
+    '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>]',
+  )
   const one = fakeHost({ declared: [notes('a')] }).commands.hint()
-  expect(one).toBe('[refresh|clear|help|version|show-all|view <name>|turn [n]|prio <ref> <level>|notes <id>]')
+  expect(one).toBe(
+    '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>|notes <id>]',
+  )
   const more = fakeHost({
     declared: [
       notes('a'),
@@ -306,7 +368,9 @@ test('the hint is the core literal with no declared command and grows with one',
       { owner: 'b', spec: { sub: 'sweep', hint: '' } }, // no hint text: no trailing space
     ],
   }).commands.hint()
-  expect(more).toBe('[refresh|clear|help|version|show-all|view <name>|turn [n]|prio <ref> <level>|notes <id>|sweep]')
+  expect(more).toBe(
+    '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>|notes <id>|sweep]',
+  )
 })
 
 test('the usage line is the core literal and names help', () => {
@@ -392,7 +456,7 @@ test('a declared command of a live tracker runs through the manager: its first o
   const log: string[] = []
   const t = managerWorld({ extra: [noter('second', 7, log), noter('first', 6, log)] })
   expect(t.m.commands.hint()).toBe(
-    '[refresh|clear|help|version|show-all|view <name>|turn [n]|prio <ref> <level>|notes <id>]',
+    '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>|notes <id>]',
   )
   expect((await t.m.track(t.w.ports, 'notes 7')).text).toBe('No tracked items yet.')
   expect(log).toEqual(['first:notes:7:true'])
@@ -455,7 +519,7 @@ test('version prints unknown when the manifest cannot be read, and the rest of /
 test('a bad argument prints the usage line with help', async () => {
   const t = managerWorld()
   expect((await t.m.track(t.w.ports, 'bogus')).text).toBe(
-    'Usage: /track [refresh|clear|help|version|show-all|view <name>|turn [n]|prio <ref> <high|normal|low|auto>]',
+    'Usage: /track [refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <high|normal|low|auto>]',
   )
 })
 

@@ -57,6 +57,18 @@ test('a proof without a record is removed, also a prunable record', () => {
   expect(v.rows[1]?.branch).toBe('worktree-gone')
 })
 
+test('only a removed child whose prunable record git still lists is marked prunable (what /track clean may remove)', () => {
+  const s = base({ worktrees: [proof(`${DIR}/gone`), proof(`${DIR}/dead`), proof(`${DIR}/w`)] })
+  const list = [root(), rec(`${DIR}/dead`, 'b-dead', { prunable: 'gitdir missing' }), rec(`${DIR}/w`, 'b-w')]
+  const v = trackWorktrees(s, list, AT)
+  expect(v.rows.map(r => [r.id, r.state, r.prunable])).toEqual([
+    [`wt:${MAIN}`, 'live', undefined],
+    [`wt:${DIR}/gone`, 'removed', undefined], // no record at all: nothing is left to clean
+    [`wt:${DIR}/dead`, 'removed', true],
+    [`wt:${DIR}/w`, 'live', undefined],
+  ])
+})
+
 test('a locked record is live: Claude locks its own session worktrees', () => {
   const s = base({ worktrees: [proof(`${DIR}/w`)] })
   const v = trackWorktrees(s, [root(), rec(`${DIR}/w`, 'b', { locked: 'claude agent running' })], AT)
@@ -113,6 +125,31 @@ test('a symlinked proof path falls back to the same branch', () => {
   const s = base({ worktrees: [proof('/private/x/repo/.claude/worktrees/w', { branch: 'worktree-w' })] })
   const v = trackWorktrees(s, [root(), rec(`${DIR}/w`, 'worktree-w')], AT)
   expect(v.rows[1]).toMatchObject({ state: 'live', branch: 'worktree-w' })
+})
+
+// The premise of the clean recheck: a record that a symlink alias reaches by branch can be prunable, so the round marks the
+// row, and `/track clean` must find the same record (tests/clean-worktrees.test.ts, "a proof matched by branch ...").
+test('a symlinked proof path matched by branch to a prunable record is a removed row, marked prunable', () => {
+  const alias = '/private/x/repo/.claude/worktrees/w'
+  const s = base({ worktrees: [proof(alias, { branch: 'worktree-w' })] })
+  const v = trackWorktrees(s, [root(), rec(`${DIR}/w`, 'worktree-w', { prunable: 'gitdir missing' })], AT)
+  expect(v.rows[1]).toMatchObject({ id: `wt:${alias}`, path: alias, state: 'removed', prunable: true })
+})
+
+// A symlink alias changes the start of a path and never its last segments. A record of the same branch somewhere else is
+// a manual worktree that reuses the branch: it is not the child of the proof, live or prunable.
+test('a record of the remembered branch at an unrelated path is not the proof: the child stays removed', () => {
+  const s = base({ worktrees: [proof(`${DIR}/w`, { branch: 'worktree-w' })] })
+  const prunable = trackWorktrees(
+    s,
+    [root(), rec('/manual/checkout', 'worktree-w', { prunable: 'gitdir missing' })],
+    AT,
+  )
+  expect(prunable.rows[1]).toMatchObject({ state: 'removed' })
+  expect(prunable.rows[1]?.prunable).toBeUndefined()
+  const live = trackWorktrees(s, [root(), rec('/manual/checkout', 'worktree-w')], AT)
+  expect(live.rows[1]).toMatchObject({ state: 'removed' })
+  expect(live.state.worktrees[0]?.removedAt).toBe(AT)
 })
 
 test('branches: root first, live newest first, removed last; detached and duplicates left out', () => {

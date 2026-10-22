@@ -5,6 +5,7 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L5 Task 14, L6 A1.
 
 import type { RowStatus, SectionSpec, StatusToken, TreeRow, ViewContext } from '../../core/interfaces/view'
+import { sweptAway } from '../../core/lib/hidden'
 import { textCells } from '../../core/lib/rows'
 import { ago, compactIds } from '../../core/lib/text'
 import type { AutoConfig } from './config'
@@ -82,7 +83,11 @@ function worktreesSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
   const cfg = ctx.config.slice()
   const removedAt = new Map(auto.worktrees.map(p => [worktreeId(p.path), p.removedAt]))
   const hiding = cfg.hideEnded && !ctx.hidden.showAll
-  const shown = kids.filter(r => !(hiding && expiredWorktree(r, removedAt, cfg, ctx.now)))
+  // `/track clean --hide` hides every removed child now, whatever the TTL (issue #122).
+  const gone = (r: WorktreeRow) =>
+    (hiding && expiredWorktree(r, removedAt, cfg, ctx.now)) ||
+    (r.state === 'removed' && sweptAway(ctx.hidden, removedAt.get(r.id)))
+  const shown = kids.filter(r => !gone(r))
   const provenAt: ProvenAt = new Map(auto.worktrees.map(p => [worktreeId(p.path), p.provenAt]))
   const rows = shown.map(r => worktreeRow(auto, r, provenAt))
   const live = kids.filter(r => r.state === 'live').length
@@ -358,14 +363,15 @@ function agentsSection(ctx: Ctx, auto: AutoState): SectionSpec | null {
   const endedAt = new Map(auto.agents.map(p => [agentRowId(p.id), p.endedAt]))
   const hiding = cfg.hideEnded && !ctx.hidden.showAll
   const tree = nest(snap.agents)
+  // A row is past its TTL, or `/track clean --hide` hides it now (issue #122). The master has no end.
+  const over = (r: AgentRow): boolean =>
+    (hiding && expiredAgent(r, endedAt, cfg, ctx.now)) ||
+    (r.kind !== 'master' && isDone(r) && sweptAway(ctx.hidden, endedAt.get(r.id)))
   // A finished run folds as a unit (issue #49): its rows go together, when every agent of it is past its own TTL.
   const runs = cfg.foldWorkflows ? finishedRuns(tree) : new Set<string>()
-  const runGone = goneRuns(tree, runs, r => expiredAgent(r, endedAt, cfg, ctx.now))
+  const runGone = goneRuns(tree, runs, over)
   const gone = (r: AgentRow): boolean =>
-    hiding &&
-    (r.workflow && runs.has(r.workflow.runId)
-      ? runGone.get(r.workflow.runId) === true
-      : expiredAgent(r, endedAt, cfg, ctx.now))
+    r.workflow && runs.has(r.workflow.runId) ? runGone.get(r.workflow.runId) === true : over(r)
   const hidden = { n: 0 }
   const items = fold(prune(tree, gone, hidden), runs)
   const stats = runStats(snap.agents)
