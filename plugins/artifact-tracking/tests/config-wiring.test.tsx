@@ -4,6 +4,7 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.7 and 7. Plan: L4 Task 10.
 
 import { expect, mock } from 'claude-code/testing'
+import { MAX_PROBLEMS } from '../core/lib/problems'
 import { PROCESSES_DEFAULTS } from '../trackers/processes/config'
 import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
@@ -153,20 +154,36 @@ const unknownKeys = (n: number) =>
   JSON.stringify({ version: 1, global: Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}`, i])) })
 const UNKNOWN_KEY = ': unknown key. The mod keeps it and ignores it.'
 
-test('5000 unknown keys: /track lists ten problems and counts the other 4990, and the debug log holds all 5000', async ($, on) => {
-  const w = world(on, { disk: { [C]: unknownKeys(5000) } })
+// The wiring test needs more problems than the cap of the mod (`MAX_PROBLEMS`, 50), which is also more than the 10 that
+// /track prints. 120 does. Do not raise it to thousands (issue #216): the mod logs each problem with one `$.ui.log` call,
+// all of them in flight at once, and the kit takes such a burst in time that grows faster than its size: above 2000 keys,
+// twice the keys cost about four times the time. The 5000 case sits in problems-cap.test.ts, where the ConfigManager takes
+// it with no kit in the way. The title and the expected text keep 120, 110 and 70 as literals on purpose: they check
+// `MANY_KEYS` and the caps from outside.
+const MANY_KEYS = 120
+
+test('120 unknown keys: /track lists ten problems and counts the other 110, and the debug log holds all 120', async ($, on) => {
+  expect(MANY_KEYS).toBeGreaterThan(MAX_PROBLEMS)
+  const w = world(on, { disk: { [C]: unknownKeys(MANY_KEYS) } })
   mock.env(on, { HOME: '/home/u' })
   await $.session.start(START)
   const lines = ((await track($)).text ?? '').split('\n')
   expect(lines.slice(-12)).toEqual([
     `Config problems in ${C}:`,
     ...Array.from({ length: 10 }, (_, i) => `  global.k${i}${UNKNOWN_KEY}`),
-    '  and 4990 more problems: see /track help.',
+    '  and 110 more problems: see /track help.',
   ])
   const logged = w.fake.logs.filter(l => l.text.startsWith('config: global.k'))
-  expect(logged).toHaveLength(5000)
+  expect(logged).toHaveLength(MANY_KEYS)
+  expect(logged[0]?.text).toBe(`config: global.k0${UNKNOWN_KEY}`)
+  expect(logged.at(-1)?.text).toBe(`config: global.k${MANY_KEYS - 1}${UNKNOWN_KEY}`)
   expect(new Set(logged.map(l => l.to))).toEqual(new Set(['debug']))
   expect(w.fake.logs.some(l => l.text.includes('more problems'))).toBe(false)
+  // The 50 cap of the mod, through the hooks: /track lists 10 of the 120 and counts the rest, so only the help view shows it.
+  const help = ((await track($, 'help')).text ?? '').split('\n')
+  const shown = help.slice(help.indexOf('Problems') + 1)
+  expect(shown).toHaveLength(MAX_PROBLEMS + 1) // the 50 the mod keeps, then its count line
+  expect(shown.at(-1)).toBe('  70 more problems: see /home/u/.claude/debug/latest (claude --debug)')
 })
 
 test('60 unknown keys and a refused write: /track names the refused write first, inside the 50', async ($, on) => {
