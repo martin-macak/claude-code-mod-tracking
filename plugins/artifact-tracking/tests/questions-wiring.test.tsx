@@ -67,3 +67,26 @@ test('the pane lists the call; the copy key puts its Markdown on the clipboard t
   expect(copied[0]).toContain('Where should the records live?')
   await ui.unmount()
 })
+
+// Codex review of PR 191. One session can be drawn on two surfaces. A press of the copy key on the second one must copy on
+// that one: with the surface left out, the engine takes the first, and the clipboard of the other client gets the text.
+test('the copy key copies on the surface that the press came from, not on the first one', async ($, on) => {
+  const surfaces: (string | undefined)[] = []
+  on('ui.copy', (_$, e) => {
+    surfaces.push(e.surface)
+    return { value: { isCopied: true } }
+  })
+  const { fake } = world(on)
+  fake.toolAnswers.AskUserQuestion = LIVE_ASK.result
+  await $.session.start(START)
+  await $.tool.call(argsOf(LIVE_ASK.input) as never)
+  await track($)
+  const terminal = await mountPane($, { bodyColumns: 100, surface: 'terminal' })
+  const desktop = await mountPane($, { bodyColumns: 100, surface: 'desktop' })
+  await select($, desktop, 'Q1')
+  await desktop.press({ key: 'questions.copy' })
+  for (let i = 0; i < 100 && surfaces.length === 0; i++) await sleep(10)
+  expect(surfaces).toEqual(['desktop'])
+  await desktop.unmount()
+  await terminal.unmount()
+})

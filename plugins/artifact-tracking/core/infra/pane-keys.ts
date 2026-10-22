@@ -88,11 +88,16 @@ export class PaneKeys {
     return footerKeys(this.reg, row, o => this.isItemOwner(o), help, state)
   }
 
-  /** Runs the key `id` of a tracker with its context and the row it acts on. A missing impl does nothing. */
-  async runAction(ports: Ports, owner: string, id: string, rowId: string | null): Promise<void> {
+  /**
+   * Runs the key `id` of a tracker with its context and the row it acts on. A missing impl does nothing. `surface` is the one
+   * the press came from: a copy of the action goes to the clipboard of that surface.
+   */
+  async runAction(ports: Ports, owner: string, id: string, rowId: string | null, surface?: string): Promise<void> {
     try {
       const impl = own(await this.implsOf(ports, owner, rowId), id)
-      await impl?.run(this.d.host.ctx(owner, ports) as TrackerContext<JsonObject, Json>, rowId)
+      const pressed: Ports =
+        surface === undefined ? ports : { ...ports, ui: { ...ports.ui, copy: text => ports.ui.copy(text, surface) } }
+      await impl?.run(this.d.host.ctx(owner, pressed) as TrackerContext<JsonObject, Json>, rowId)
     } catch (e) {
       this.d.log(`keys: ${owner}.${id} failed: ${reason(e)}`)
     }

@@ -101,6 +101,8 @@ export type FakeWorld = {
     toasts: string[]
     /** The texts put on the clipboard, in order. */
     copied: string[]
+    /** The surface each copy named, in the order of `copied`. `undefined`: it named none. */
+    copiedOn: (string | undefined)[]
     /** What the next copy answers. Default: it took. */
     copyResult: CopyResult
     panes: PaneInfo[]
@@ -277,8 +279,9 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       toast(text) {
         world.ui.toasts.push(text)
       },
-      async copy(text) {
+      async copy(text, surface) {
         world.ui.copied.push(text)
+        world.ui.copiedOn.push(surface)
         return world.ui.copyResult
       },
     },
@@ -340,6 +343,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       invalidated: 0,
       toasts: [],
       copied: [],
+      copiedOn: [],
       copyResult: { isCopied: true },
       panes: o.panes ?? [],
     },

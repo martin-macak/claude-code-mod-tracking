@@ -62,8 +62,9 @@ export function buttonOf(tree: unknown, key: string): Node {
   return hit[0] as Node
 }
 
-/** Press a Button the way the engine does. */
-export const press = (b: Node): void => (b.props.onPress as () => void)()
+/** Press a Button the way the engine does: with the press event, which names the surface the press came from. */
+export const press = (b: Node, surface?: string): void =>
+  (b.props.onPress as (e?: { surface: string }) => void)(surface === undefined ? undefined : { surface })
 
 /** The footer of a pane with no row selected. */
 export const NO_ROW_FOOTER = footerKeys(new KeyRegistry(), undefined, () => false, false)
@@ -87,16 +88,26 @@ export function view(over: Partial<TableView> = {}): TableView {
  * `calls` lists each action as `toggle:<id>`, `more:<section>` or `press:<buttonKey>`. `asks` counts the presses that only
  * ask for the keys (a dim footer key), which are not work.
  */
-export function recorder(): { calls: string[]; asks: { count: number }; actions: TableActions } {
+export function recorder(): {
+  calls: string[]
+  surfaces: (string | undefined)[]
+  asks: { count: number }
+  actions: TableActions
+} {
   const calls: string[] = []
+  const surfaces: (string | undefined)[] = []
   const asks = { count: 0 }
   return {
     calls,
+    surfaces,
     asks,
     actions: {
       toggle: id => void calls.push(`toggle:${id}`),
       more: id => void calls.push(`more:${id}`),
-      press: key => void calls.push(`press:${key}`),
+      press: (key, surface) => {
+        calls.push(`press:${key}`)
+        surfaces.push(surface)
+      },
       keys: () => void asks.count++,
     },
   }

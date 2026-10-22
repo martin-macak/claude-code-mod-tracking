@@ -240,10 +240,12 @@ export interface Ports {
     invalidate(): void
     toast(text: string): void
     /**
-     * Puts `text` on the clipboard of the surface the session draws on (the engine's `ui.copy`). The text is verbatim: newlines
-     * and all. It rejects when the engine refuses the call. Call it from a press, never from a render.
+     * Puts `text` on the clipboard of a surface (the engine's `ui.copy`). The text is verbatim: newlines and all. `surface`
+     * is the one a press came from (`UiPressArgument.surface`): a session can be drawn on several, and the copy must reach
+     * the clipboard of the person who pressed. Left out, the engine takes the first surface the session draws on. It rejects
+     * when the engine refuses the call. Call it from a press, never from a render.
      */
-    copy(text: string): Promise<CopyResult>
+    copy(text: string, surface?: string): Promise<CopyResult>
   }
   readonly log: (line: string) => void
 }

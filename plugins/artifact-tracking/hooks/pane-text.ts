@@ -30,7 +30,7 @@ export interface PaneHost {
   dismiss(p: Ports, ids: readonly string[]): Promise<void>
   setPriority(p: Ports, rowId: string, level: Level | undefined): Promise<void>
   refreshManual(p: Ports): Promise<void>
-  runAction(p: Ports, owner: string, id: string, rowId: string | null): Promise<void>
+  runAction(p: Ports, owner: string, id: string, rowId: string | null, surface?: string): Promise<void>
   problems(): readonly string[]
   isItemOwner(owner: string): boolean
   /**

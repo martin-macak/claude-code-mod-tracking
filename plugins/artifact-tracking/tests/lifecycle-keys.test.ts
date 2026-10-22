@@ -297,3 +297,13 @@ test('an async action is awaited before runAction resolves', async () => {
   order.push('after')
   expect(order).toEqual(['ran', 'after'])
 })
+
+test('a copy from an action goes to the surface that runAction was given, and to none when it got none', async () => {
+  const t = await started([
+    fake('t', 10, { keys: [OPEN], actions: () => ({ open: { run: async ctx => void (await ctx.ui.copy('words')) } }) }),
+  ])
+  await t.m.runAction(t.w.ports, 't', 'open', 'row-1', 'desktop')
+  await t.m.runAction(t.w.ports, 't', 'open', 'row-1')
+  expect(t.w.ui.copied).toEqual(['words', 'words'])
+  expect(t.w.ui.copiedOn).toEqual(['desktop', undefined])
+})

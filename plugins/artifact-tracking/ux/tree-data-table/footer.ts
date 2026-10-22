@@ -30,7 +30,7 @@ export function keyButton(el: TableElements, k: FooterKey, actions: TableActions
     hotkey: k.key,
     label: k.label,
     ...(k.enabled ? {} : { dimColor: true }),
-    onPress: k.enabled ? () => actions.press(k.buttonKey) : () => actions.keys(),
+    onPress: k.enabled ? e => actions.press(k.buttonKey, e?.surface) : () => actions.keys(),
   })
 }
 

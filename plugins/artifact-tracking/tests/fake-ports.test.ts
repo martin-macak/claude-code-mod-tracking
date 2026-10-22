@@ -155,6 +155,7 @@ test('session, env, settings, agents and ui answer what the test set', async () 
   w.ports.ui.invalidate()
   w.ports.ui.toast('hi')
   expect(await w.ports.ui.copy('text')).toEqual({ isCopied: true })
+  await w.ports.ui.copy('more', 'desktop')
   w.ports.log('line')
   expect(w.ui).toEqual({
     opened: 1,
@@ -163,7 +164,8 @@ test('session, env, settings, agents and ui answer what the test set', async () 
     focused: ['k'],
     invalidated: 1,
     toasts: ['hi'],
-    copied: ['text'],
+    copied: ['text', 'more'],
+    copiedOn: [undefined, 'desktop'],
     copyResult: { isCopied: true },
     panes: [],
   })

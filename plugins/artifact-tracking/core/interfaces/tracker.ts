@@ -204,8 +204,11 @@ export interface TrackerContext<C extends JsonObject = JsonObject, D extends Jso
   readonly tasks?: TasksPort
   /** A turn the mod asks for. See `Ports['prompt']`: a press only, never awaited. */
   readonly prompt: Ports['prompt']
-  /** A short message over the pane, and the clipboard of the surface (a press only, never a render). */
-  readonly ui: Pick<Ports['ui'], 'toast' | 'copy'>
+  /**
+   * A short message over the pane, and the clipboard (a press only, never a render). The copy goes to the surface that the
+   * press came from: the host binds it, so the tracker passes the text only.
+   */
+  readonly ui: Pick<Ports['ui'], 'toast'> & { copy(text: string): ReturnType<Ports['ui']['copy']> }
   readonly fs: Pick<Ports['fs'], 'stat' | 'exists'>
   readonly env: {
     get(name: EnvName): Promise<string | undefined>
