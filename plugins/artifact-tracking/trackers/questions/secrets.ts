@@ -94,7 +94,16 @@ export function maskSecrets(text: string): string {
   return out
 }
 
-const SENSITIVE = /pass(?:word|phrase|code)|secret|token|api[ _-]?key|credential|private[ _-]?key|auth[ _-]?key/i
+/** The spans `[start, end)` of every known secret in `text`, in no order. Patterns may overlap. The byte cut reads them. */
+export function secretSpans(text: string): [number, number][] {
+  return SECRET_PATTERNS.flatMap(({ pattern }) =>
+    [...text.matchAll(pattern)].map((m): [number, number] => [m.index ?? 0, (m.index ?? 0) + m[0].length]),
+  )
+}
+
+// The words that ask for a secret, as the assignment pattern names them: `passwd` and `pwd` count like `password`.
+const SENSITIVE =
+  /pass(?:word|phrase|code|wd)|\bpwd\b|secret|token|api[ _-]?key|credential|private[ _-]?key|auth[ _-]?key/i
 
 /**
  * True when a question or its header asks for a secret. The typed answer and the notes of such a question are masked

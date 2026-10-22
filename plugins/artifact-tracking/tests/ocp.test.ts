@@ -211,7 +211,9 @@ test('ocp: a tracker added only through a test-local list is captured, refreshed
   // The router: the sub-command reaches the tracker's handler with its arguments, and the hint names it.
   await t.m.track(p, 'notes 7')
   expect(t.heard).toEqual(['7'])
-  expect(t.m.commands.hint()).toContain('|notes <id>')
+  // The hint lists the declared subs in tracker order: the test tracker (order 65) comes just before `qa [n]` of the questions
+  // tracker (order 90), the last of the shipped list. The tail pins both places, as `endsWith('|notes <id>]')` did.
+  expect(t.m.commands.hint().endsWith('|notes <id>|qa [n]]')).toBe(true)
 
   expect(TRACKERS.length).toBe(9) // the shipped list did not change
   expect(TRACKERS.some(x => x.id === 'notes')).toBe(false)

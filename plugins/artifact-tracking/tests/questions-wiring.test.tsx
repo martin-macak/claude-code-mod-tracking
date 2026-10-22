@@ -6,7 +6,7 @@ import type { Json } from '../core/interfaces/items'
 import { test } from './fixtures/kit'
 import { mountPane, select } from './fixtures/pane'
 import { LIVE_ASK, LIVE_ESC, LIVE_PLAN_APPROVED, LIVE_QUESTIONS, PLAN } from './fixtures/questions'
-import { START, sleep, track, world } from './fixtures/world'
+import { START, track, until, world } from './fixtures/world'
 
 /** The `tool.call` input of a hook: the arguments of the tool beside its name and its id. */
 const argsOf = (input: Json): Record<string, unknown> => ({ ...(input as Record<string, unknown>) })
@@ -62,7 +62,7 @@ test('the pane lists the call; the copy key puts its Markdown on the clipboard t
   expect(await ui.find({ text: 'Questions' })).toBeDefined()
   await select($, ui, 'Q1')
   await ui.press({ key: 'questions.copy' })
-  for (let i = 0; i < 100 && copied.length === 0; i++) await sleep(10)
+  await until(() => copied.length > 0, 'the ui.copy call of the copy key')
   expect(copied).toHaveLength(1)
   expect(copied[0]?.startsWith('## Q1 · partial')).toBe(true)
   expect(copied[0]).toContain('Where should the records live?')
@@ -86,7 +86,7 @@ test('the copy key copies on the surface that the press came from, not on the fi
   const desktop = await mountPane($, { bodyColumns: 100, surface: 'desktop' })
   await select($, desktop, 'Q1')
   await desktop.press({ key: 'questions.copy' })
-  for (let i = 0; i < 100 && surfaces.length === 0; i++) await sleep(10)
+  await until(() => surfaces.length > 0, 'the ui.copy call of the press on the desktop surface')
   expect(surfaces).toEqual(['desktop'])
   await desktop.unmount()
   await terminal.unmount()

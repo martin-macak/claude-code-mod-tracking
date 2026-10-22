@@ -81,6 +81,8 @@ export function callMarkdown(call: QuestionCall, mask: boolean): string {
       '',
       ...(call.plan === undefined ? ['_The engine gave no plan text._'] : fenced(m(call.plan.trimEnd()), '')),
     )
+    // The file that holds the plan, as the pane tells it, through the same mask.
+    if (call.planFile !== undefined) out.push('', ...lines(m(call.planFile), '', 'File: '))
     if (refusal.length > 0) out.push('', ...refusal)
     return out.join('\n')
   }

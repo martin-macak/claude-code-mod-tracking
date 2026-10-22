@@ -2,6 +2,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { SectionSpec, TreeRow } from '../core/interfaces/view'
 import { groupId, LIST_VIEW, listGroups, VIEW_IDS, viewGroups } from '../core/lib/grouping'
+import { groupsText } from '../ux/tree-data-table/text'
 
 const row = (id: string, children?: TreeRow[]): TreeRow => ({
   id,
@@ -114,8 +115,27 @@ test('viewGroups marks the rows of a section with text title quiet, in every vie
         .sort(),
       view,
     ).toEqual(['p1', 'w1', 'w2'])
-    // The children of a quiet row are not marked: the text skips the whole tree at its root.
-    expect(rows.find(r => r.id === 'q1')?.children?.[0]).not.toHaveProperty('quiet')
+    // The whole tree is marked: a `lift` makes a child a row of its own in the groups of a view, and the text must skip it too.
+    expect(rows.find(r => r.id === 'q1')?.children?.[0]?.quiet, view).toBe(true)
+    expect(rows.find(r => r.id === 'w2')?.children?.[0]).not.toHaveProperty('quiet')
+  }
+})
+
+test('a lifted child of a quiet row stays quiet in every view: no row of a text-title section prints', () => {
+  const lifted = { ...row('q1', [row('q1:0', [row('q1:0:0')])]), lift: true as const }
+  const qa = section('qa', [lifted, row('q2')], { text: 'title', note: { text: '2 calls' } })
+  for (const view of VIEW_IDS) {
+    const { groups } = viewGroups([qa], view, { touchedOnly: false })
+    const rows = groups.flatMap(g => g.rows)
+    expect(
+      rows.every(r => r.quiet === true),
+      view,
+    ).toBe(true)
+    // In a view other than by list the lift makes `q1:0` a row of its own (its child stays below it): it is there, and quiet.
+    if (view !== LIST_VIEW) expect(rows.map(r => r.id).sort(), view).toEqual(['q1', 'q1:0', 'q2'])
+    expect(rows.find(r => r.id === 'q1:0')?.children?.[0]?.quiet ?? true, view).toBe(true)
+    // groupsText prints none of them: no title for a group of quiet rows either.
+    expect(groupsText(groups), view).toBe(view === LIST_VIEW ? 'QA  2 calls' : '')
   }
 })
 

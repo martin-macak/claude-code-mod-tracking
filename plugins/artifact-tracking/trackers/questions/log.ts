@@ -7,7 +7,7 @@
 import type { Json } from '../../core/interfaces/items'
 import { isRecord } from '../../core/lib/json'
 import { clip } from '../../core/lib/prompt-text'
-import { wordsAskForSecret } from './secrets'
+import { secretSpans, wordsAskForSecret } from './secrets'
 import type { QuestionCall } from './types'
 
 /** The most calls a session keeps, and the most bytes (JSON characters) of its list. */
@@ -107,12 +107,29 @@ export function addCall(
   return merged.length === calls.length && merged.every((c, i) => c === calls[i]) ? (calls as QuestionCall[]) : merged
 }
 
+/**
+ * `v` cut to `limit` characters (`clip`: the last one is the ellipsis), but never inside a known secret. A cut in the middle
+ * of a token leaves a prefix that is shorter than any pattern needs, so the mask would not know it and would show it. When
+ * the cut would split a secret, the text stops before the secret starts, so no part of it stays.
+ */
+function clipClear(v: string, limit: number): string {
+  const spans = secretSpans(v)
+  let keep = limit - 1 // the characters that `clip` keeps
+  // Moving the cut before a secret can put it inside an overlapping one that starts earlier: go on until none is split.
+  for (let split = splitBy(spans, keep); split !== undefined; split = splitBy(spans, keep)) keep = split[0]
+  return clip(v, keep + 1)
+}
+
+/** A span that has characters on both sides of the cut at `keep`. */
+const splitBy = (spans: readonly [number, number][], keep: number): [number, number] | undefined =>
+  spans.find(([start, end]) => start < keep && end > keep)
+
 /** The keys whose text is an id, so a cut never shortens it: a shorter id names no call. */
 const WHOLE = new Set(['id', 'watermark'])
 
 /** The strings of a value, each cut to `limit` characters. A new value; the id of a call and its watermark stay whole. */
 function cutStrings(v: unknown, limit: number, key?: string): unknown {
-  if (typeof v === 'string') return (key !== undefined && WHOLE.has(key)) || v.length <= limit ? v : clip(v, limit)
+  if (typeof v === 'string') return (key !== undefined && WHOLE.has(key)) || v.length <= limit ? v : clipClear(v, limit)
   if (Array.isArray(v)) return v.map(x => cutStrings(x, limit))
   if (isRecord(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, cutStrings(x, limit, k)]))
   return v
@@ -146,7 +163,9 @@ const CUT_MARK_BYTES = ',"cut":true'.length
  * A call cut to fit `maxBytes`: the longest texts shrink first (the limit halves until the call fits), so a long preview or
  * plan goes before a short answer does. The record says it was cut, and a question that asked for a secret says so before
  * its words are cut. The mark `cut` comes after the fit, so its bytes are kept out of the texts' budget: the call with its
- * marks is within `maxBytes`. The same call comes back when it fits.
+ * marks is within `maxBytes`. No text is cut inside a known secret (`clipClear`). The loop stops at `SMALLEST_CUT`, so a call
+ * whose keys and structure alone pass `maxBytes` comes back as small as it can be and may stay over. The same call comes
+ * back when it fits.
  */
 export function fitCall(call: QuestionCall, maxBytes: number): QuestionCall {
   if (sizeOf(call) <= maxBytes) return call

@@ -1,7 +1,7 @@
 // The masking of secrets in the text of a question (issue #71): every pattern, the text it leaves alone, the rule of a
 // question that asks for a secret, and the list in the README. Pure.
 import { expect, test } from 'claude-code/testing'
-import { isSensitive, MASKED, maskSecrets, SECRET_PATTERNS } from '../trackers/questions/secrets'
+import { isSensitive, MASKED, maskSecrets, SECRET_PATTERNS, secretSpans } from '../trackers/questions/secrets'
 import { expectLinear } from './fixtures/scaling'
 
 // A secret must not stand in this file as a real one: each sample is built from pieces.
@@ -153,6 +153,26 @@ test('masking a long value, and a long text of unclosed quotes, is linear', asyn
   await expectLinear({ make: k => `token: '${'it\n'.repeat(50_000 * k)}`, run: t => void maskSecrets(t) })
   await expectLinear({ make: k => `token='${'\\\\'.repeat(25_000 * k)}`, run: t => void maskSecrets(t) })
   await expectLinear({ make: k => `https://ada:${'p'.repeat(50_000 * k)}`, run: t => void maskSecrets(t) })
+})
+
+test('isSensitive knows the short names of a password, as the assignment pattern does: passwd and pwd', () => {
+  expect(isSensitive('Enter the db passwd', 'Login')).toBe(true)
+  expect(isSensitive('What is the PWD?', '')).toBe(true)
+  expect(isSensitive('Which pwd for the share?', '')).toBe(true)
+  // A word that only contains the letters is not a secret: the short name stands alone.
+  expect(isSensitive('Which pwdx tool should we use?', 'Tool')).toBe(false)
+  expect(isSensitive('Where is the cwd of the run?', 'Run')).toBe(false)
+})
+
+test('secretSpans gives the start and the end of each known secret, and nothing for a text with none', () => {
+  const token = `ghp_${hex(36)}`
+  expect(secretSpans(`use ${token} now`)).toEqual([[4, 4 + token.length]])
+  expect(secretSpans('db password: hunter2 ok')).toEqual([[3, 20]]) // the name goes with the value
+  expect(secretSpans('Use the main branch')).toEqual([])
+  // Two patterns may name overlapping spans: a token in an assignment.
+  const both = secretSpans(`token=${token}`)
+  expect(both.length).toBeGreaterThanOrEqual(1)
+  expect(both.every(([s, e]) => s >= 0 && e <= `token=${token}`.length && e > s)).toBe(true)
 })
 
 test('isSensitive: a question that asks for a password, a token, a key or a secret', () => {
