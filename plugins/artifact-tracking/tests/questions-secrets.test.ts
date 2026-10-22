@@ -80,6 +80,14 @@ test('a value is masked to its end, however long: no tail of a long credential s
   )
 })
 
+test('a quoted value runs to its real closing quote: an escaped quote inside it does not end it', () => {
+  expect(maskSecrets('password: "abc\\"tail-secret" after')).toBe(`password: ${MASKED} after`)
+  expect(maskSecrets("secret='abc\\'tail-secret' after")).toBe(`secret=${MASKED} after`)
+  expect(maskSecrets('{"api_key": "a\\\\\\"b c", "x": 1}')).toBe(`{"api_key": ${MASKED}, "x": 1}`)
+  // A value that ends in an escaped backslash is closed by the quote after it.
+  expect(maskSecrets('token="abc\\\\" and more')).toBe(`token=${MASKED} and more`)
+})
+
 test('text that is no secret is left as it is', () => {
   for (const text of [
     'Use the main branch',
@@ -107,6 +115,8 @@ test('masking a long value, and a long text of unclosed quotes, is linear', asyn
   await expectLinear({ make: k => `password=${'x'.repeat(50_000 * k)}`, run: t => void maskSecrets(t) })
   await expectLinear({ make: k => `secret="${'x '.repeat(25_000 * k)}`, run: t => void maskSecrets(t) })
   await expectLinear({ make: k => 'token="a '.repeat(10_000 * k), run: t => void maskSecrets(t) })
+  await expectLinear({ make: k => `token="${'a\\"'.repeat(25_000 * k)}`, run: t => void maskSecrets(t) })
+  await expectLinear({ make: k => `token='${'\\\\'.repeat(25_000 * k)}`, run: t => void maskSecrets(t) })
   await expectLinear({ make: k => `https://ada:${'p'.repeat(50_000 * k)}`, run: t => void maskSecrets(t) })
 })
 
