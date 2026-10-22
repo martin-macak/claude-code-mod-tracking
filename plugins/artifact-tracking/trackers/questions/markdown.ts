@@ -2,7 +2,7 @@
 // issue, a PR or a doc: every question word for word, every option with its description and preview, the chosen option
 // marked, typed text tagged, the notes quoted. Secrets are masked unless the config turns masking off. Pure.
 
-import { type Masker, masker, type ShownItem, shownItem, stateWord } from './present'
+import { type Masker, masker, type ShownItem, shownItem, shownResponse, stateWord } from './present'
 import type { QuestionCall } from './types'
 
 export const QA_USAGE = 'Usage: /track qa [n]'
@@ -82,7 +82,8 @@ export function callMarkdown(call: QuestionCall, mask: boolean): string {
   const items = call.items ?? []
   for (const [i, q] of items.entries()) out.push(...itemLines(shownItem(q, m), i, call.state === 'declined'))
   if (call.followUp) out.push('', '_The person asked for another round._')
-  if (call.response !== undefined) out.push('', ...lines(m(call.response), '> ', '> Response: '))
+  const response = shownResponse(call, m)
+  if (response !== undefined) out.push('', ...lines(response, '> ', '> Response: '))
   if (call.afkTimeoutMs !== undefined)
     out.push('', `_The dialog answered itself after ${Math.round(call.afkTimeoutMs / 1000)} s with nobody there._`)
   if (refusal.length > 0) out.push('', ...refusal)

@@ -3,8 +3,10 @@
 // lines. The parts it is made of have tests of their own (questions-parse, -log, -markdown, -sections, -prompt).
 import { expect, test } from 'claude-code/testing'
 import { NO_VIEW } from '../core/infra/views'
+import type { ConfigService } from '../core/interfaces/config'
 import type { ToolCallEvent } from '../core/interfaces/events'
 import type { Json, JsonObject } from '../core/interfaces/items'
+import type { Tracker } from '../core/interfaces/tracker'
 import type { RowRef } from '../core/interfaces/view'
 import { reasonSet } from '../core/lib/reasons'
 import { questionsTracker } from '../trackers/questions'
@@ -29,9 +31,31 @@ const NOW = 1_800_000_000_000
 type Setup = {
   /** The config file: `{ trackers: { questions: { ... } } }`. */
   file?: JsonObject
+  /** The config service itself, for a test that changes the file after the start. Wins over `file`. */
+  config?: (specs: readonly Tracker[]) => ConfigService
   messages?: ReturnType<typeof messageOf>[]
   store?: Record<string, Json>
   session?: string
+}
+
+/**
+ * A config that learns of an edit at the next `refresh()` only, as the real manager does when the file changes between two
+ * checks: `edit` stages the new file, and a view reads the old one until the refresh.
+ */
+function lagging(specs: readonly Tracker[], file: JsonObject) {
+  const cfg = fakeConfig({ specs, file })
+  const real = cfg.refresh.bind(cfg)
+  let staged: JsonObject | undefined
+  return Object.assign(cfg, {
+    edit: (next: JsonObject) => {
+      staged = next
+    },
+    refresh: async () => {
+      if (staged !== undefined) cfg.set(staged)
+      staged = undefined
+      return real()
+    },
+  })
 }
 
 const ref = (id: string): RowRef => ({
@@ -44,7 +68,11 @@ const ref = (id: string): RowRef => ({
 function setup(o: Setup = {}) {
   const t = managerWorld({
     trackers: () => [questionsTracker()],
-    ...(o.file ? { config: specs => fakeConfig({ specs, file: o.file as JsonObject }) } : {}),
+    ...(o.config
+      ? { config: o.config }
+      : o.file
+        ? { config: specs => fakeConfig({ specs, file: o.file as JsonObject }) }
+        : {}),
     fake: {
       now: NOW,
       session: {
@@ -485,6 +513,33 @@ test('a secret in a typed answer is stored word for word and masked in /track qa
   const open = setup({ file: { trackers: { questions: { mask: false } } } })
   await open.hear(secretCall())
   expect(await open.qa()).toContain(KEY)
+})
+
+test('/track holds no question, answer or note in any view the person chose: the model reads that reply', async () => {
+  const t = setup()
+  await t.hear(ANSWERED_ASK)
+  await t.hear(LIVE_ESC)
+  for (const view of ['list', 'tracker', 'status', 'reason', 'flat']) {
+    const text = (await t.m.track(t.w.ports, `view ${view}`)).text
+    for (const word of ['Where should', 'State only', 'Lint', 'keep it simple', 'Storage', 'Ship it', 'Declined'])
+      expect(text, `${view}: ${word}`).not.toContain(word)
+  }
+  // The rows are still in the pane: only the text keeps them out.
+  const rows = (await t.m.paneData(t.w.ports, NO_VIEW)).find(s => s.id === 'questions')?.rows ?? []
+  expect(rows).toHaveLength(2)
+})
+
+test('/track qa checks the config file first: a mask switched on a moment ago masks the export at once', async () => {
+  let cfg: ReturnType<typeof lagging> | undefined
+  const t = setup({ config: specs => (cfg = lagging(specs, { trackers: { questions: { mask: false } } })) })
+  await t.hear(secretCall())
+  expect(await t.qa('1')).toContain(KEY) // masking is off in the file
+  cfg?.edit({ trackers: { questions: { mask: true } } }) // no tick has run since
+  const after = await t.qa('1')
+  expect(after).not.toContain(KEY)
+  expect(after).toContain('[masked]')
+  cfg?.edit({ trackers: { questions: { mask: false } } })
+  expect(await t.qa('1')).toContain(KEY) // and the other way round
 })
 
 // ---------------------------------------------------------------- the copy key

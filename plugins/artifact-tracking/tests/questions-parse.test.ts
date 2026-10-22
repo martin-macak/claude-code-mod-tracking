@@ -175,6 +175,18 @@ test('declined: Esc is an error result, and the words of the engine are kept', (
   expect(call?.items?.[0]).not.toHaveProperty('answer')
 })
 
+test('declined: the words are the structured error of the result, never the display text beside it', () => {
+  const structured = (LIVE_ESC.result as { result: string }).result
+  expect(structured.startsWith('Error: ')).toBe(true) // the capture: only the structured string has the prefix
+  expect(askCall(LIVE_ESC)?.refusal).toBe(structured)
+  const both = { ...LIVE_ESC, result: { isError: true, result: 'the record', text: 'the display' } as unknown as Json }
+  expect(askCall(both)?.refusal).toBe('the record')
+  const onlyText = { ...LIVE_ESC, result: { isError: true, text: 'the display' } as unknown as Json }
+  expect(askCall(onlyText)?.refusal).toBe('the display') // a transcript use that stored the text only
+  const neither = { ...LIVE_ESC, result: { isError: true } as unknown as Json }
+  expect(askCall(neither)?.refusal).toBe('')
+})
+
 test('declined: a call that another hook denied keeps the text of the hook', () => {
   const ev: ToolCallEvent = { ...ANSWERED_ASK, result: { deny: 'blocked by policy' } as unknown as Json }
   const call = askCall(ev)
@@ -291,7 +303,9 @@ test('planCall: a rejection is declined, and keeps the plan from the input and t
   expect(call?.state).toBe('declined')
   expect(call?.plan).toBe(PLAN)
   expect(call?.planFile).toBe(PLAN_FILE)
-  expect(call?.refusal).toContain('the user said:\nUse fewer steps')
+  // The structured error word for word: the note of the person is in it, so the display text is not needed.
+  expect(call?.refusal).toBe((LIVE_PLAN_REJECTED.result as { result: string }).result)
+  expect(call?.refusal?.endsWith('the user said:\nUse fewer steps')).toBe(true)
 })
 
 test('planCall: a plan that a hook denied is declined with the text of the hook', () => {

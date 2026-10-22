@@ -103,6 +103,6 @@ test('a group with text title prints its title line and no row: the model reads 
   const quiet = group('questions', [secret], { title: 'Questions', note: { text: '1 call' }, text: 'title' })
   const plain = group('prs', [row('a', { name: 'PR 1', description: 'Fix it' })], { title: 'PRs' })
   expect(groupsText([quiet])).toBe('Questions  1 call')
-  expect(groupsText([quiet, plain])).toBe('Questions  1 call\n\nPRs  \n  PR 1  Fix it')
+  expect(groupsText([quiet, plain])).toBe('Questions  1 call\n\nPRs\n  PR 1  Fix it')
   expect(groupsText([{ ...quiet, text: 'rows' }])).toContain('hunter2')
 })

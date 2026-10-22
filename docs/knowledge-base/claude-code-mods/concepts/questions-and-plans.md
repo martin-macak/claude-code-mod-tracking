@@ -45,7 +45,7 @@ One `tool.call` hook (`tool: 'AskUserQuestion'` or `'ExitPlanMode'`) calls `awai
 | `awaitingLeaderApproval` and `requestId` are in the output schema for a teammate that sends its plan to a leader. No run asked one. | [d.ts:21380-21383](../sources/claude-code-2.1.302/types/claude-code.d.ts#L21380-L21383) | `[primary source]` |
 | `planWasEdited` (an edit with `Ctrl+G` or on the web) is in the schema. Not run. | [d.ts:21378](../sources/claude-code-2.1.302/types/claude-code.d.ts#L21378) | `[primary source]` |
 
-So a hook sees both the plan and the outcome. The outcome is `isError`. The plan is in the input. The one value that only the text holds is the note of a rejection.
+So a hook sees both the plan and the outcome. The outcome is `isError`. The plan is in the input. The note of a rejection is in the string `result` and in the `text`: the capture of the rejected plan (R6) shows both, so the text is not needed for it.
 
 ## After `--resume`
 
@@ -64,4 +64,4 @@ The mod keeps its caps (100 calls, 256 KiB) across a resume, so the replay must 
 
 ## What the mod does with it
 
-[`trackers/questions/`](../../../../plugins/artifact-tracking/trackers/questions/) reads `result.result` and never the text, except for the pieces of a multi-select answer and the note of a rejected plan. See the README section [Questions and answers](../../../../plugins/artifact-tracking/README.md#questions-and-answers).
+[`trackers/questions/`](../../../../plugins/artifact-tracking/trackers/questions/) reads `result.result` and never the text, except for the pieces of a multi-select answer. The words of a refusal, with the note of a rejected plan, are the string `result.result` (it keeps the engine's `Error:` mark). The text is the fallback for a transcript use that stored no `result`. See the README section [Questions and answers](../../../../plugins/artifact-tracking/README.md#questions-and-answers).

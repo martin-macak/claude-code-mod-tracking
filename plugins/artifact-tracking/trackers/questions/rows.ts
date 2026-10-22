@@ -5,7 +5,16 @@
 
 import type { Cell, DetailLine, RowStatus, TreeRow } from '../../core/interfaces/view'
 import { textCells } from '../../core/lib/rows'
-import { answerText, firstLine, type Masker, type ShownItem, STATE_TOKEN, shownItem, stateWord } from './present'
+import {
+  answerText,
+  firstLine,
+  type Masker,
+  type ShownItem,
+  STATE_TOKEN,
+  shownItem,
+  shownResponse,
+  stateWord,
+} from './present'
 import { itemRowId, questionReasons } from './reasons'
 import type { QuestionCall } from './types'
 
@@ -92,7 +101,8 @@ function callDetail(call: QuestionCall, m: Masker): DetailLine[] {
     return out
   }
   if (call.followUp) out.push({ label: 'follow-up', cell: { text: 'the person asked for another round' } })
-  if (call.response !== undefined) out.push(...textLines('response', m(call.response)))
+  const response = shownResponse(call, m)
+  if (response !== undefined) out.push(...textLines('response', response))
   if (call.afkTimeoutMs !== undefined)
     out.push({
       label: 'away',

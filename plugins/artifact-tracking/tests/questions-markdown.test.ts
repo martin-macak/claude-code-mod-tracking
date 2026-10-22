@@ -138,7 +138,8 @@ test('an approved plan: the plan in a fence. A rejected one: the plan and the wo
   const rejected = callMarkdown(stamped(planCall(LIVE_PLAN_REJECTED)!, 5), true)
   expect(rejected).toContain('plan rejected')
   expect(rejected).toContain('```\n# Plan')
-  expect(rejected).toContain('> Rejected: The user')
+  // The words are the structured error, so they keep the engine's own `Error:` mark (the display text has none).
+  expect(rejected).toContain("> Rejected: Error: The user doesn't want to proceed")
   expect(rejected).toContain('the user said:\n> Use fewer steps')
 })
 
@@ -168,6 +169,24 @@ test('the typed answer and the notes of a question that asks for a password are 
   expect(md).toContain(`- [x] Other (typed): ${MASKED}`)
   expect(md).toContain(`> Notes: ${MASKED}`)
   expect(callMarkdown(callOf([q]), false)).toContain('hunter2')
+})
+
+test('the freeform response of a call with a question that asks for a secret is masked whole, and a call with none keeps it', () => {
+  const asks = callOf([item({ question: 'What is the password?', header: 'Login', options: [], answer: 'x' })], {
+    response: 'it is hunter2',
+  })
+  const md = callMarkdown(asks, true)
+  expect(md).not.toContain('hunter2')
+  expect(md).toContain(`> Response: ${MASKED}`)
+  expect(callMarkdown(asks, false)).toContain('> Response: it is hunter2')
+  expect(callMarkdown(callOf([item()], { response: 'it is hunter2' }), true)).toContain('> Response: it is hunter2')
+  // The mark that a cut leaves says it too, when the words are gone.
+  const cut = callOf([item({ sensitive: true })], { response: 'it is hunter2' })
+  expect(callMarkdown(cut, true)).toContain(`> Response: ${MASKED}`)
+  // An empty response stays empty: there is nothing to hide, and the line does not say [masked].
+  const empty = callMarkdown(callOf([item({ sensitive: true })], { response: '' }), true)
+  expect(empty).toContain('> Response:')
+  expect(empty).not.toContain(MASKED)
 })
 
 test('an item that the byte cut marked sensitive masks its typed answer and its notes whole, whatever its words say now', () => {

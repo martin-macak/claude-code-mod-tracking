@@ -132,6 +132,12 @@ export interface TreeRow {
    * stays under it in every view. Rows below a lifted row may say `lift` too: the lift goes on through them.
    */
   readonly lift?: true
+  /**
+   * The `/track` text leaves the row and its children out: the model reads every `/track` reply. A view sets it on the rows of
+   * a section that says `text: 'title'`, because a view groups the rows of several sections, so the text of the section
+   * cannot ride on a group. The pane draws the row as any other row. A tracker does not set it.
+   */
+  readonly quiet?: true
 }
 
 export interface SectionSpec {
@@ -169,7 +175,8 @@ export interface SectionSpec {
   /**
    * What the `/track` text prints of the section: `rows` (the default) the title line and every row, `title` the title line
    * only. The rows stay in the pane. The model reads every `/track` reply, so a section whose words are private keeps its
-   * rows out of the text (the questions of issue #71).
+   * rows out of the text (the questions of issue #71). In a view other than by list, whose groups mix the rows of several
+   * sections, the view marks each such row `quiet`: the text prints nothing for it.
    */
   readonly text?: 'rows' | 'title'
 }

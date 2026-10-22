@@ -4,7 +4,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Json } from '../core/interfaces/items'
 import type { DetailLine, TreeRow, ViewContext } from '../core/interfaces/view'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
-import { listGroups } from '../core/lib/grouping'
+import { listGroups, viewGroups } from '../core/lib/grouping'
 import { reasonSet } from '../core/lib/reasons'
 import { QUESTIONS_DEFAULTS, type QuestionsConfig } from '../trackers/questions/config'
 import { MASKED } from '../trackers/questions/secrets'
@@ -358,12 +358,48 @@ test('the answer to an item that the byte cut marked sensitive is masked whole o
   expect(open?.cells.description?.text).toBe('Pick → typed: hunter2')
 })
 
+test('the freeform response of a call with a question that asks for a secret is masked whole in the detail', () => {
+  const asks = item({ question: 'What is the password?', header: 'Login', options: [], answer: 'x' })
+  const [secret] = rowsOf([call('a', 1, { items: [asks], response: 'it is hunter2' })])
+  expect(JSON.stringify(detail(secret))).not.toContain('hunter2')
+  expect(detail(secret)).toContain(`response|${MASKED}`)
+  const [plain] = rowsOf([call('b', 2, { items: [item()], response: 'it is hunter2' })])
+  expect(detail(plain)).toContain('response|it is hunter2')
+})
+
 // ---------------------------------------------------------------- the /track text
 
 test('the /track text names the Questions group and holds no question, answer or note: the model reads every /track reply', () => {
   const text = groupsText(listGroups(sections(ctx([call('a', 1), plan({ n: 2, id: 'p' })]))))
   expect(text).toBe('Questions  2 calls · /track qa prints them')
   for (const word of ['Storage', 'State only', 'Lint', 'Plan']) expect(text).not.toContain(word)
+})
+
+// The views of issue #63 regroup the rows of every section: by status, by tracker, by reason or flat. A group of such a view
+// mixes the rows of several sections, so the section's `text` cannot ride on a group. The rows carry the mark instead.
+test('in every view the /track text holds no question, answer or note: the rows of the Questions section are quiet', () => {
+  const secs = sections(ctx([call('a', 1), plan({ n: 2, id: 'p' })]))
+  for (const view of ['list', 'tracker', 'status', 'reason', 'flat'] as const) {
+    const { groups } = viewGroups(secs, view, { touchedOnly: false })
+    const text = groupsText(groups)
+    for (const word of ['Storage', 'State only', 'Lint', 'Plan', 'Q1', 'Q2', 'typed', 'Checks'])
+      expect(text, `${view}: ${word}`).not.toContain(word)
+    // The pane still draws every row, in the groups of the view.
+    expect(groups.flatMap(g => g.rows.map(r => r.id)).sort(), view).toEqual(['a', 'p'])
+  }
+})
+
+test('a row of another section keeps its text in a view that groups it with the quiet rows', () => {
+  const web: TreeRow = {
+    id: 'w',
+    owner: 'web',
+    cells: { name: { text: 'link' } },
+    can: { dismiss: true, priority: true },
+  }
+  const mixed = [...sections(ctx([call('a', 1)])), { id: 'web', title: 'Web', rows: [web] }]
+  const text = groupsText(viewGroups(mixed, 'flat', { touchedOnly: false }).groups)
+  expect(text).toContain('link')
+  expect(text).not.toContain('Storage')
 })
 
 test('the pane still draws every row of the group that the /track text keeps out', () => {

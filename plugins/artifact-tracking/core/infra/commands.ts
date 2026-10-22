@@ -217,13 +217,18 @@ export class Commands {
 
   /**
    * The first tracker that declared the first word runs it with the rest. Any other word is the usage line. A sub-command
-   * that has a text of its own answers with it and prints no list (issue #71).
+   * that has a text of its own answers with it and prints no list (issue #71). It checks the config file first, like `/track`,
+   * `refresh`, `help` and `show-all`: its text may hang on a toggle that was edited since the last check (`/track qa` and the
+   * mask), and the text reaches the model.
    */
   private async declared(p: Ports, args: string): Promise<Reply> {
     const [, first = '', rest = ''] = /^(\S+)\s*([\s\S]*)$/.exec(args) ?? []
     const found = this.table().get(first.toLowerCase())
     if (found === undefined) return { text: USAGE }
-    if (found.spec.text !== undefined) return { text: await this.host.textOf(p, found.owner, found.spec, rest) }
+    if (found.spec.text !== undefined) {
+      await this.host.refreshConfig(p)
+      return { text: await this.host.textOf(p, found.owner, found.spec, rest) }
+    }
     await this.host.runDeclared(p, found.owner, { sub: found.spec.sub, args: rest, wait: true })
     return this.list(p)
   }

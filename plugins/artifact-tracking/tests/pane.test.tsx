@@ -406,7 +406,8 @@ test('pane: h in a docked pane keeps the full help view, one key to a line', asy
   await ui.press({ key: 'help' })
   const { gap, help } = await helpTree(ui)
   expect(gap).toBe(1)
-  expect(help).toHaveLength(17) // 3 titles, 12 keys (g, a and t, and the github keys c and f of the started mod), the config line, the version line
+  // 4 titles, 13 keys (g, a and t, the github keys c and f and the questions key y of the started mod), the config line, the version line
+  expect(help).toHaveLength(19)
   expect(JSON.stringify(help[0])).toContain('Pane keys')
   expect(JSON.stringify(help[1])).toContain('refresh')
   await ui.unmount()

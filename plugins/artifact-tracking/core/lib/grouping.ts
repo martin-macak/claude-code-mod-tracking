@@ -230,7 +230,9 @@ export function viewGroups(sections: readonly SectionSpec[], view: ViewId, optio
   const tally: Tally = { hidden: 0, rows: 0 }
   const kept = sections.map(s => {
     const before = tally.rows
-    const rows = options.touchedOnly ? touchedRows(s.rows, tally) : s.rows
+    const shown = options.touchedOnly ? touchedRows(s.rows, tally) : s.rows
+    // A section whose text is its title only (`text: 'title'`) keeps its rows out of the `/track` text in every view.
+    const rows = s.text === 'title' ? shown.map(r => ({ ...r, quiet: true as const })) : shown
     return { s, rows, gone: tally.rows - before }
   })
   const make = (key: string, title: string, rows: readonly TreeRow[]): GroupSpec => ({

@@ -41,7 +41,8 @@ test('an Esc is a declined call, and a plan the person approved is a call of its
   await $.tool.call(argsOf(LIVE_PLAN_APPROVED.input) as never)
   const text = (await track($, 'qa')).text ?? ''
   expect(text).toContain('## Q1 · declined')
-  expect(text).toContain("> Declined: The user doesn't want to proceed")
+  // The words are the structured error of the result, which keeps the engine's `Error:` mark.
+  expect(text).toContain("> Declined: Error: The user doesn't want to proceed")
   expect(text).toContain('## Q2 · plan approved')
   expect(text).toContain(PLAN.trimEnd())
 })

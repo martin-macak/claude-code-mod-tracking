@@ -572,7 +572,14 @@ test('a declared command that has a text answers with it: the router runs no com
   const t = fakeHost({ declared: [say] })
   expect((await t.commands.run(t.ports, 'QA 3')).text).toBe('TEXT a:qa:3')
   expect((await t.commands.run(t.ports, 'qa')).text).toBe('TEXT a:qa:')
-  expect(t.calls).toEqual(['entry', 'textOf:a:qa:3', 'entry', 'textOf:a:qa:'])
+  // The config file first, as `/track`, `refresh`, `help` and `show-all` do: a text may depend on a toggle that was just edited.
+  expect(t.calls).toEqual(['entry', 'refreshConfig', 'textOf:a:qa:3', 'entry', 'refreshConfig', 'textOf:a:qa:'])
+})
+
+test('a declared command with no text checks no config of its own: the tracker handles the command', async () => {
+  const t = fakeHost({ declared: [notes('a')] })
+  await t.commands.run(t.ports, 'notes 3')
+  expect(t.calls).not.toContain('refreshConfig')
 })
 
 test('a declared command with a text prints that text through the manager, built from the context of its tracker', async () => {

@@ -51,12 +51,16 @@ const itemsOf = (questions: unknown): QuestionItem[] =>
 /** The tool's own record: `result.result`. A string there is an error text. */
 const structuredOf = (result: unknown): unknown => (isRecord(result) ? result.result : undefined)
 
-/** How the engine refused a call: a hook's `deny` text, or an error result with the words of the engine. Absent: the call ran. */
+/**
+ * How the engine refused a call: a hook's `deny` text, or an error result with the words of the engine. Absent: the call ran.
+ * The words are the structured error, `result.result`, which holds the note of a rejected plan too (live, 2.1.306). The
+ * display text beside it is the fallback only, for a transcript use that stored nothing else.
+ */
 function refusalOf(result: unknown): string | undefined {
   if (!isRecord(result)) return undefined
   if (typeof result.deny === 'string') return result.deny
   if (result.isError !== true) return undefined
-  return str(result.text) ?? str(result.result) ?? ''
+  return str(result.result) ?? str(result.text) ?? ''
 }
 
 /**
