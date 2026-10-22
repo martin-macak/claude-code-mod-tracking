@@ -34,7 +34,7 @@ Enforcement, so a skipped step fails loudly:
 - Run `make test` after a change in `plugins/`.
   - A kit test checks order or causality, not wall time, and takes `test` from `plugins/artifact-tracking/tests/fixtures/kit.ts`. Rule: `docs/AGENTS.md`, "Tests". A contract in `make test-scripts` (part of `make verify` and CI) fails a test file that breaks it.
 - Run `make e2e` after a change in `plugins/` or `e2e/`, when you have a Claude login and tmux. It runs real model turns, so CI does not run it. CI runs `make e2e-unit`.
-  - The `@artifacts` scenario publishes a private test page to claude.ai with your login and deletes it again. Skip it with `cd e2e && npx cucumber-js --tags 'not @artifacts'`.
+  - The `@artifacts` scenario publishes a private test page to claude.ai with your login and deletes it again. `make e2e` runs it (`-p all`). Skip it with `cd e2e && npx cucumber-js`: the default profile skips it, also when you name a feature file. `--tags 'not @artifacts'` means the same. To run it alone: `npx cucumber-js -p artifacts`. Add `--dry-run` to see what a command selects.
 - Refresh the README demo GIF with the `demo-scenario` skill (`.agents/skills/demo-scenario/`, `make demo`).
 - Never skip hooks (`--no-verify`). Fix the cause.
 - Fix lint findings in the code. Change a rule in `biome.json` or `.markdownlint-cli2.jsonc` only with a reason in a comment or the PR.

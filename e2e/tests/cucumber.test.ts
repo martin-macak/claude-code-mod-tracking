@@ -3,17 +3,30 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
-// These tests pin what e2e/README.md says about running one scenario. They use `--dry-run`: no hook runs, so
+// These tests pin what e2e/README.md says about running one scenario and about the @artifacts scenario (which profile
+// selects it, the scope of `make e2e`). They use `--dry-run`: no hook runs, so
 // they take no lock, start no tmux and make no model turn.
 const e2eDir = fileURLToPath(new URL('..', import.meta.url))
 const cucumber = join(e2eDir, 'node_modules', '@cucumber', 'cucumber', 'bin', 'cucumber.js')
 
-type Selected = { uri: string; name: string; steps: string[] }
+type Selected = { uri: string; name: string; tags: string[]; steps: string[] }
 
-// The scenarios that `cucumber-js --dry-run <args>` selects.
+const selections = new Map<string, Selected[]>()
+
+// The scenarios that `cucumber-js --dry-run <args>` selects. Each cucumber process takes about 1.3 s, so one process
+// runs per distinct argument list. No test changes a result: they only `filter` and `map` it.
 function select(...args: string[]): Selected[] {
+  const key = JSON.stringify(args)
+  const cached = selections.get(key)
+  if (cached) return cached
+  const selected = dryRun(args)
+  selections.set(key, selected)
+  return selected
+}
+
+function dryRun(args: string[]): Selected[] {
   const run = spawnSync(process.execPath, [cucumber, '--dry-run', '--format', 'json', ...args], {
     cwd: e2eDir,
     encoding: 'utf8',
@@ -21,12 +34,13 @@ function select(...args: string[]): Selected[] {
   assert.equal(run.status, 0, run.stderr)
   const features = JSON.parse(run.stdout) as {
     uri: string
-    elements: { name: string; steps: { keyword: string; name: string }[] }[]
+    elements: { name: string; tags?: { name: string }[]; steps: { keyword: string; name: string }[] }[]
   }[]
   return features.flatMap(feature =>
-    feature.elements.map(({ name, steps }) => ({
+    feature.elements.map(({ name, tags, steps }) => ({
       uri: feature.uri,
       name,
+      tags: (tags ?? []).map(tag => tag.name),
       steps: steps.filter(step => step.keyword !== 'Before' && step.keyword !== 'After').map(step => step.name),
     })),
   )
@@ -94,4 +108,85 @@ test('the inline help scenario sets the width of the config file path before it 
   assert.notEqual(width, -1, 'a step sets the width')
   assert.ok(width < steps.indexOf('the tracker config file:'), 'before the step that writes the file')
   assert.ok(steps.includes('the pane is inline'))
+})
+
+// The @artifacts scenario publishes a private page to claude.ai with the login of the person. A command that
+// merely names a feature file must never run it (issue #198: it did, twice). Only a profile that says so selects it.
+const ARTIFACTS = '@artifacts'
+const OPT_IN_PROFILES = ['artifacts', 'all']
+const artifactScenarios = (selected: Selected[]) => selected.filter(s => s.tags.includes(ARTIFACTS))
+
+test('the default profile selects scenarios, and none of them is an @artifacts scenario', () => {
+  const selected = select()
+  assert.ok(selected.length > 0, 'the default profile selects something')
+  assert.deepEqual(artifactScenarios(selected), [])
+})
+
+test('a bare feature path selects no @artifacts scenario', () => {
+  assert.deepEqual(artifactScenarios(select(PANE)), [])
+  // Naming the feature file of the scenario does not select it either: the tag expression of the default profile wins.
+  const artifactsFeature = 'features/artifacts.feature'
+  assert.deepEqual(
+    select(artifactsFeature).filter(s => s.uri === artifactsFeature),
+    [],
+  )
+})
+
+test('no profile of cucumber.mjs selects an @artifacts scenario, except the opt-in profiles', async () => {
+  const config = (await import(pathToFileURL(join(e2eDir, 'cucumber.mjs')).href)) as Record<string, unknown>
+  const profiles = Object.keys(config)
+  assert.ok(profiles.includes('default'), 'the default profile exists')
+  for (const opt of OPT_IN_PROFILES) assert.ok(profiles.includes(opt), `the opt-in profile ${opt} exists`)
+  for (const profile of profiles.filter(name => !OPT_IN_PROFILES.includes(name))) {
+    const selected = profile === 'default' ? select() : select('-p', profile)
+    assert.deepEqual(artifactScenarios(selected), [], `the profile ${profile} must not select an @artifacts scenario`)
+  }
+})
+
+test('the artifacts profile selects the @artifacts scenario and nothing else', () => {
+  const selected = select('-p', 'artifacts')
+  assert.ok(selected.length > 0, 'the profile selects the scenario')
+  assert.deepEqual(selected, artifactScenarios(selected))
+})
+
+test('--tags keeps working with the default profile: it narrows the selection and never adds @artifacts', () => {
+  const skip = select('--tags', 'not @artifacts')
+  assert.deepEqual(skip, select())
+  // The tag expressions of the profile and of the command line are joined with `and`, so this selects nothing.
+  assert.deepEqual(select('--tags', ARTIFACTS), [])
+})
+
+test('the demo profile still selects the @demo scenario alone', () => {
+  const selected = select('-p', 'demo')
+  assert.ok(selected.length > 0, 'the demo profile selects the scenario')
+  assert.ok(
+    selected.every(s => s.tags.includes('@demo')),
+    'every selected scenario is @demo',
+  )
+})
+
+test('make e2e runs every scenario: the profile of its recipe selects the @artifacts scenario and all the others', () => {
+  const makefile = readFileSync(join(e2eDir, '..', 'Makefile'), 'utf8').split('\n')
+  const target = makefile.findIndex(line => line.startsWith('e2e:'))
+  assert.notEqual(target, -1, 'the Makefile has an e2e target')
+  // The recipe is the run of tab-indented lines under the target.
+  const recipeLines = makefile.slice(target + 1)
+  const end = recipeLines.findIndex(line => !line.startsWith('\t'))
+  const recipe = recipeLines.slice(0, end).join('\n')
+  assert.match(recipe, /cucumber-js/, 'the e2e target runs cucumber-js')
+  // Plain words only: the test cannot read a quoted argument, so it cuts the recipe at the first shell operator.
+  const args = recipe
+    .split('cucumber-js')[1]!
+    .split(/&&|;|\|/)[0]!
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+  assert.ok(
+    args.every(arg => !/['"$]/.test(arg)),
+    `the recipe of e2e has an argument this test cannot read: ${args}`,
+  )
+  const selected = select(...args)
+  assert.equal(artifactScenarios(selected).length, artifactScenarios(select('-p', 'artifacts')).length)
+  const names = (list: Selected[]) => list.map(s => `${s.uri}: ${s.name}`).sort()
+  assert.deepEqual(names(selected), names([...select(), ...select('-p', 'artifacts')]))
 })

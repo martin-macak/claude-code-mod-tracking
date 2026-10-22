@@ -5,7 +5,8 @@ Gherkin scenarios that drive a real `claude` in tmux. The same harness records t
 | Command | What it does |
 | --- | --- |
 | `make e2e-unit` | Unit tests of the harness. No `claude`. Runs in CI. |
-| `make e2e` | All scenarios against a real `claude`. Needs a Claude login and tmux. Local only. |
+| `make e2e` | Every scenario against a real `claude`, the `@artifacts` scenario included (`-p all`). Needs a Claude login and tmux. Local only. |
+| `npx cucumber-js` (in `e2e/`) | Every scenario except `@artifacts`. This is the default profile. |
 | `make demo` | Records the `@demo` scenario and renders `docs/assets/demo.gif`. |
 
 ## The terminal size
@@ -66,20 +67,21 @@ The copy key of the questions tracker hands its text to the engine (`$.ui.copy`)
 
 ## Run one scenario
 
-`make e2e` runs every scenario. Pick fewer with a tag, a name or a file position:
+`make e2e` runs every scenario. `npx cucumber-js` runs every scenario except `@artifacts`. Pick fewer with a tag, a name or a file position:
 
 | Goal | Command (from `e2e/`) |
 | --- | --- |
 | Scenarios with a tag | `npx cucumber-js --tags @inline-help` |
 | A scenario by name | `npx cucumber-js --name 'Tab moves the selection'` |
 | One scenario by its line | `npx cucumber-js -p one features/pane.feature:42` |
+| The `@artifacts` scenario alone | `npx cucumber-js -p artifacts` |
 | Check what runs, with no run | add `--dry-run` to any of them |
 
-A positional argument such as `features/pane.feature:42` does not replace the paths of the default profile. It merges with them. So `npx cucumber-js features/pane.feature:42` runs that scenario and also every scenario of the other feature files. The profile `one` has no `paths`: with `-p one` only the position that you name runs.
+A positional argument such as `features/pane.feature:42` does not replace the paths of the default profile. It merges with them. So `npx cucumber-js features/pane.feature:42` runs that scenario and also every scenario of the other feature files. The profile `one` has no `paths`: with `-p one` only the position that you name runs. (With no position at all, cucumber runs every feature file.)
 
 A line number that points at a `Scenario Outline` or at one row of its `Examples` table picks all examples or that one example.
 
-Tags in use: `@demo` marks the scenario that `make demo` records. `@artifacts` publishes a private page to claude.ai and deletes it: skip it with `--tags 'not @artifacts'`. `@inline-help` is the help view of the inline pane at 100 by 40, with a config file path of 90 cells.
+Tags in use: `@demo` marks the scenario that `make demo` records. `@artifacts` publishes a private page to claude.ai with your login and deletes it. The default profile and the profiles `one` and `demo` skip it, so a bare `npx cucumber-js features/pane.feature` is safe. `--tags 'not @artifacts'` still works and means the same. Opt in with `-p artifacts` (that scenario alone) or `-p all` (every scenario, as `make e2e` does). `--tags @artifacts` on the default profile selects nothing: cucumber joins the tag expression of the profile and the one of the command line with `and`, so `(not @artifacts) and @artifacts` is empty. A guard test in `tests/cucumber.test.ts` fails when any other profile can select the `@artifacts` scenario. `@inline-help` is the help view of the inline pane at 100 by 40, with a config file path of 90 cells.
 
 ## Environment
 
