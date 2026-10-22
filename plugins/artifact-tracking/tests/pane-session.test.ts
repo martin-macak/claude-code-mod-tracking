@@ -32,6 +32,8 @@ function setup(
     sections: [section('web', rows)] as SectionSpec[],
     views: [] as PaneView[],
     calls: [] as string[],
+    /** The surface each `runAction` got, in order. */
+    surfaces: [] as (string | undefined)[],
     keyProblems: [] as string[],
     /** The version the manager read from the manifest. Absent: the help view has no version line. */
     version: o.version,
@@ -63,8 +65,10 @@ function setup(
       host.onPriority(id, level)
     },
     refreshManual: async () => void host.calls.push('refreshManual'),
-    runAction: async (_p: unknown, owner: string, id: string, rowId: string | null) =>
-      void host.calls.push(`runAction ${owner}.${id} ${rowId}`),
+    runAction: async (_p: unknown, owner: string, id: string, rowId: string | null, surface?: string) => {
+      host.calls.push(`runAction ${owner}.${id} ${rowId}`)
+      host.surfaces.push(surface)
+    },
     problems: () => host.keyProblems,
     isItemOwner: (owner: string) => owner === 'web',
     keys: reg,
@@ -2440,4 +2444,18 @@ test('g in a pane that has no keys asks for them once, before the write', async 
   await t.session.idle()
   expect(t.w.ui.opened - opened).toBe(1)
   expect(t.w.state.get('view')).toBe('status')
+})
+
+// Codex review of PR 191. A session can be drawn on several surfaces. A tracker key that copies must copy on the surface that
+// the person pressed, and the press event names it: the pane hands it to the action as it got it.
+test('a tracker key passes the surface of its press to runAction', async () => {
+  const t = setup(webs('a', 'b', 'c'))
+  t.host.keys.add('web', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+  t.host.allLive = true
+  t.w.state.set('selected', 'b')
+  press(buttonOf(await t.draw(), 'web.open'), 'desktop')
+  await t.session.idle()
+  press(buttonOf(await t.draw(), 'web.open'))
+  await t.session.idle()
+  expect(t.host.surfaces).toEqual(['desktop', undefined])
 })

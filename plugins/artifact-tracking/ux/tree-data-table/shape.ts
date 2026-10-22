@@ -72,7 +72,8 @@ export interface TableView {
 export interface TableActions {
   toggle(rowId: string): void
   more(groupId: string): void
-  press(buttonKey: string): void
+  /** A press of a footer key. `surface` is the one the press came from (`UiPressArgument.surface`): absent when the press names none. */
+  press(buttonKey: string, surface?: string): void
   /** A press that does no work: it only gives the pane the keys (issue #129). A dim footer key calls it. */
   keys(): void
 }

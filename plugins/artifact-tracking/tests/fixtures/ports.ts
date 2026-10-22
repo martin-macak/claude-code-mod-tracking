@@ -7,6 +7,7 @@ import type { Json, StoredItem } from '../../core/interfaces/items'
 import type {
   AgentInfo,
   AtomPort,
+  CopyResult,
   EnvName,
   FsStat,
   PaneInfo,
@@ -98,6 +99,12 @@ export type FakeWorld = {
     focused: string[]
     invalidated: number
     toasts: string[]
+    /** The texts put on the clipboard, in order. */
+    copied: string[]
+    /** The surface each copy named, in the order of `copied`. `undefined`: it named none. */
+    copiedOn: (string | undefined)[]
+    /** What the next copy answers. Default: it took. */
+    copyResult: CopyResult
     panes: PaneInfo[]
   }
   logs: string[]
@@ -272,6 +279,11 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       toast(text) {
         world.ui.toasts.push(text)
       },
+      async copy(text, surface) {
+        world.ui.copied.push(text)
+        world.ui.copiedOn.push(surface)
+        return world.ui.copyResult
+      },
     },
     log: line => void (VERSION_LOG.test(line) ? world.versionLogs : world.logs).push(line),
   }
@@ -323,7 +335,18 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       messages: o.session?.messages ?? [],
     },
     agents: o.agents ?? [],
-    ui: { opened: 0, openedWith: [], placed: true, focused: [], invalidated: 0, toasts: [], panes: o.panes ?? [] },
+    ui: {
+      opened: 0,
+      openedWith: [],
+      placed: true,
+      focused: [],
+      invalidated: 0,
+      toasts: [],
+      copied: [],
+      copiedOn: [],
+      copyResult: { isCopied: true },
+      panes: o.panes ?? [],
+    },
     logs: [],
     versionLogs: [],
   }

@@ -12,7 +12,7 @@ import { graphqlCalls, prompt, quiet, SESSION, START, track, until, world } from
 
 /** The config file under `HOME = /home/u`. */
 const C = '/home/u/.config/claude-code/mods/tracker/config.json'
-const IDS = ['github', 'jira', 'web', 'artifact', 'file', 'repos', 'processes', 'auto']
+const IDS = ['github', 'jira', 'web', 'artifact', 'file', 'repos', 'processes', 'questions', 'auto']
 
 /** The config file as a Claude Code user writes it: strict JSON. */
 const file = (trackers: Record<string, unknown> = {}) => JSON.stringify({ version: 1, trackers })

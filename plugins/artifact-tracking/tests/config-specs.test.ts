@@ -14,6 +14,7 @@ import { FILE_DEFAULTS, FILE_SCHEMA, fileConfig } from '../trackers/file/config'
 import { GITHUB_DEFAULTS, GITHUB_SCHEMA, githubConfig, PR_LANE_DEFAULTS } from '../trackers/github/config'
 import { JIRA_DEFAULTS, JIRA_SCHEMA, jiraConfig } from '../trackers/jira/config'
 import { PROCESSES_DEFAULTS, PROCESSES_SCHEMA, processesConfig } from '../trackers/processes/config'
+import { QUESTIONS_DEFAULTS, QUESTIONS_SCHEMA, questionsConfig } from '../trackers/questions/config'
 import { REPOS_DEFAULTS, REPOS_SCHEMA, reposConfig } from '../trackers/repos/config'
 import { WEB_DEFAULTS, WEB_SCHEMA, webConfig } from '../trackers/web/config'
 import { fakeConfig } from './fixtures/config-fs'
@@ -28,6 +29,7 @@ const SPECS = {
   file: { schema: FILE_SCHEMA, defaults: FILE_DEFAULTS, spec: fileConfig },
   repos: { schema: REPOS_SCHEMA, defaults: REPOS_DEFAULTS, spec: reposConfig },
   processes: { schema: PROCESSES_SCHEMA, defaults: PROCESSES_DEFAULTS, spec: processesConfig },
+  questions: { schema: QUESTIONS_SCHEMA, defaults: QUESTIONS_DEFAULTS, spec: questionsConfig },
   auto: { schema: AUTO_SCHEMA, defaults: AUTO_DEFAULTS, spec: autoConfig },
 } as const
 
@@ -225,6 +227,9 @@ const TABLE: readonly (readonly [string, number, number])[] = [
   ['trackers.processes.endedTtlMs', 0, 86400000],
   ['trackers.processes.failedTtlMs', 0, 86400000],
   ['trackers.processes.maxRows', 20, 2000],
+  ['trackers.questions.maxCalls', 1, 1000],
+  ['trackers.questions.maxBytes', 8192, 1048576],
+  ['trackers.questions.prompt.maxItems', 5, 50],
   ['trackers.auto.debounceMs', 50, 60000],
   ['trackers.auto.gitTimeoutMs', 500, 60000],
   ['trackers.auto.workflowIdleMs', 60000, 86400000],

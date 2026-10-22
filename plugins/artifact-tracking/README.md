@@ -82,11 +82,12 @@ An artifact row shows its name: the page title from the Artifact tool, else the 
 | `/track clean [--hide\|--log\|--yes <kind>...]` | Cleans up what a long session leaves behind. With no argument it prints a plan by kind and changes nothing. `--hide` hides every ended row now. `--yes tasks` stops the background tasks that still run. `--yes worktrees` removes the git record of a removed worktree. `--log` prints what it did. See [Clean up on demand](#clean-up-on-demand). |
 | `/track version` | Prints the version of the mod (`artifact-tracking 0.2.0`), read from its `.claude-plugin/plugin.json`. It prints `unknown` when the manifest cannot be read. The help view (key `h`) shows it too, and one debug log line names it at the start of a session. |
 | `/track turn [n]` | Prints what turn `n` tracked: the items it added and the known items it saw again, each with its reason. Without `n`, the newest turn. It opens no pane and works in `claude -p`. See [What each turn tracked](#what-each-turn-tracked). |
+| `/track qa [n]` | Prints the questions Claude asked and your answers as Markdown: every call, or call `n`. The text is masked by default. It opens no pane and works in `claude -p`. See [Questions and answers](#questions-and-answers). |
 | `/track prio <ref> <level>` | Sets the priority of one item: `high`, `normal`, `low`, or `auto` to remove your mark. See [Priority](#priority). |
 
 The pane is one table. A bold header row names its columns once: `Name`, `Description`, `Type` and `Status`. Two columns have no word: the control column, which holds the priority mark, and the extras column, which holds badges. Every row of every source fills the same columns, so the rows scan alike. A badge is a small signal that a source adds to a row, such as the merge chip and the checks of a PR (see [Merge conflicts](#merge-conflicts)). A badge is text only and takes no Tab stop. The extras column is 14 cells wide at most: it cuts a long list of badges, and Enter on the row shows each one. The type column is 20 cells wide at most and the status column 14. A longer text ends in `…`, or for a branch or a path keeps both ends.
 
-Under the header the rows come in groups. In the default view, `list`, there is one group for each source: Worktrees, Agents, Pull requests, Jira, GitHub, Artifacts, Repos, Web links, Files and Processes. Four other views group the same rows another way (see [Views](#views)). A group with nothing to show is left out. A group starts with a title line: its title, the number of its rows (for Worktrees and Agents every row they hold, not the one root row), `(n failed)` when some rows have the status `failed` (see [Status](#status)), then its note. For example `Pull requests 7 (2 failed) gh · refreshed 2m ago`. A narrow terminal drops the type column first, then the extras column. The control, the name, the description and the status stay.
+Under the header the rows come in groups. In the default view, `list`, there is one group for each source: Worktrees, Agents, Pull requests, Jira, GitHub, Artifacts, Repos, Web links, Files, Processes and Questions. Four other views group the same rows another way (see [Views](#views)). A group with nothing to show is left out. A group starts with a title line: its title, the number of its rows (for Worktrees and Agents every row they hold, not the one root row), `(n failed)` when some rows have the status `failed` (see [Status](#status)), then its note. For example `Pull requests 7 (2 failed) gh · refreshed 2m ago`. A narrow terminal drops the type column first, then the extras column. The control, the name, the description and the status stay.
 
 ### Status
 
@@ -115,6 +116,10 @@ Every row has a status: a word in the Status column, and one of six tokens behin
 | | `failed`, `killed`, `exited`, `unhealthy` | `failed` |
 | | `completed` | `done` |
 | | `unknown` | `gone` |
+| Questions | `answered`, a plan that is `approved` | `done` |
+| | `partial`: a question was left blank, or has notes and no option (the dialog is closed, so nothing waits for it) | `done` |
+| | a child row `blank` or `notes only` | `none` |
+| | `declined`: Esc, a call that another hook denied, a plan that is `rejected` | `gone` |
 | Agents | `running`, `waiting`, `ended`, `failed` | `active`, `waiting`, `done`, `failed` |
 | Worktrees | live, `removed` | `active`, `gone` |
 | Artifacts | `deleted`, any other | `gone`, `none` |
@@ -170,6 +175,7 @@ The keys work only while the pane has the keyboard. A letter that is no key of t
 | `1` `2` `3` `0` | Set the priority of the selected row. See [Priority](#priority). |
 | `c` | Resolve: asks Claude to resolve the merge conflicts of the selected PR. See [Merge conflicts](#merge-conflicts). |
 | `f` | Files: lists the files that conflict in the selected PR. See [Merge conflicts](#merge-conflicts). |
+| `y` | Copy: puts the call of the selected Questions row on the clipboard as Markdown. See [Questions and answers](#questions-and-answers). |
 | Esc | Closes the pane. |
 
 A group shows at most `global.ui.sectionRows` rows (50). When rows are left, the group ends in an `N more` row. The whole pane shows at most `global.ui.maxRows` rows (300), plus the chunks you opened. Open children do not count against these caps. If the pane is still too large to draw, it drops the detail lines first, then shows fewer rows, and last shows one line: `The pane is too large to draw. /track prints the list.`
@@ -359,6 +365,72 @@ The key `global.ui.turnStrip` puts one short line under each answer that says wh
 - **`claude -p`** prints no strip with `--output-format text` or `json`. With `--output-format stream-json` the line comes as a `system` event with subtype `informational`.
 - **The terminal only.** The engine draws the duration line on the terminal. On the desktop or in the VS Code panel `interactive` shows nothing for an answer: use `text` there.
 
+## Questions and answers
+
+The Questions section keeps what Claude asked you in its question dialogs and what you answered. A decision no longer scrolls away: after `/clear` or a compaction the list is still there. The tracker `questions` keeps three kinds of call:
+
+- Every call of the `AskUserQuestion` tool: its questions, its options and your answers.
+- Every `$.ui.ask` of another plugin. It reaches the same hook, with an id that starts with `toolu_plugin_`. The engine does not name the plugin, so the detail says `by a plugin`.
+- Every plan that you approved or rejected in the dialog of `ExitPlanMode`: the plan word for word, and the outcome.
+
+It does not keep permission prompts (their outcome shows only in the tool result), MCP elicitation (its classic hooks did not run in a plugin), a question that Claude asks in plain text, or a "waiting for an answer" state (it needs an event before the dialog answers).
+
+Each call is one summary row. It shows the number of the call (`Q3`), its first question with your answer and the count of the questions that follow (`Storage → State only (+1)`), the kind (`question` or `plan`), the state and a badge with the turn (`T7`, see [What each turn tracked](#what-each-turn-tracked)). The newest call comes first, so the cap of the pane hides the oldest. A closed call has one child row for each question: the header, the answer and its state. The `/track` list text prints the title line only (`Questions  2 calls · /track qa prints them`): the rows are in the pane, and `/track qa` prints them on request (see [Privacy](#privacy)). Enter on a call shows when it was asked, its turns (`first 7 · last 7`), its id and who asked. Enter on a question shows everything word for word: the question, each option with its description and preview, the option you picked (`[x]`), the text you typed (tagged `typed`), your notes and the preview you chose. A line that the pane cannot draw whole is split in pieces, so no word is lost.
+
+| State | Meaning |
+| --- | --- |
+| `answered` | Every question has an answer. For a plan: `approved`. |
+| `partial` | A question was left blank, or has notes and no option (the engine writes `(notes only)`). |
+| `declined` | You pressed Esc, another hook denied the call, or you rejected the plan. For a plan: `rejected`. The words of the engine stay, and a rejected plan keeps what you wrote. |
+
+The mod reads the structured result of the tool and never its text. It takes the questions, the headers, `multiSelect`, the options with label, description and preview, the answers, the notes and the picked preview from it. A multi-select answer is one string: the engine joins the labels with a comma and a space and puts double quotes round a piece that holds a comma (`Lint, "Tests, all", "typed, with comma"`). The mod splits it and tells a label from text that you typed by the options of the question. `(notes only)` is the engine's word for notes with no option.
+
+### `/track qa [n]`
+
+`/track qa` prints every call as Markdown, ready to paste into an issue, a PR or a doc. `/track qa 3` prints call 3 only. The number is the `Q` number of the row. It stays when the oldest calls drop, so `Q3` stays `Q3`. The text holds each question, the placeholder of a text question and the range, step, default and unit of a number question (as the engine gave them), every option with its description and preview, the chosen option marked `[x]`, the text you typed as `Other (typed)`, your notes as a quote, and the state, the turn and the time of the call. A plan call has the plan in a fence and the file that holds it (`File: …`, masked like the plan). A call that was read back from the transcript has no time. The reply is a transcript line, so the model reads it (see [Privacy](#privacy)). The command opens no pane and works in `claude -p`. A word that is no number prints the usage line. A number that no call has prints the numbers that exist.
+
+The key `y` copies the call of the selected row, a question row too, as the same Markdown: the engine puts it on the clipboard of the surface (`ui.copy`), and a toast says whether it took. The terminal writes by OSC 52, which gives no answer back, so a terminal that drops it still reads as copied.
+
+### Privacy
+
+- **The records are verbatim.** The slot keeps every word as the engine gave it, a typed password too.
+- **The screen and the exports are masked.** The pane, `/track qa` and the key `y` mask the secrets below unless you turn masking off with `trackers.questions.mask` set to `false`. A masked secret reads `[masked]`. For `password: hunter2` the name stays: `password: [masked]`.
+- **The model reads nothing on its own.** The `/track` list text names the Questions group and counts the calls: no question, answer or note. In a view other than by list (`g`, `/track view`) those views mix the rows of every tracker, so the text prints no row of the Questions section there. It prints the same title line once, at the end (`Questions  2 calls · /track qa prints them`), so you and the model know that Q&A exists and where to read it; the rows stay in the pane. The prompt lines are off by default (see [Prompt sections](#prompt-sections)). When you turn them on, a line holds the headers and the chosen labels only. It never holds a question, a typed text or a note.
+- **`/track qa` is an export, and the model reads it.** Its reply is a transcript line, as every `/track` reply is, so the model reads it in its next request, also after `/clear` or a compaction. The reply is masked like the screen, so with `trackers.questions.mask` set to `false` it is not masked either. The command reads the config file first, so a `mask` that you switched a moment ago applies to this reply at once. A press of `y` does the same. Run it when you want the model to have the calls. The key `y` copies a call to the clipboard and the model never reads that.
+
+The masked patterns, in the order the mod applies them:
+
+<!-- masked-patterns:start -->
+- GitHub token (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`)
+- GitHub fine-grained token (`github_pat_`)
+- GitLab token (`glpat-`)
+- npm token (`npm_`)
+- Anthropic or OpenAI key (`sk-`)
+- Stripe key (`sk_live_`, `sk_test_`, `rk_live_`, `rk_test_`)
+- AWS access key id (`AKIA`, `ASIA`)
+- Slack token (`xoxa-`, `xoxb-`, `xoxe-`, `xoxp-`, `xoxr-`, `xoxs-`)
+- Google API key (`AIza`)
+- JSON Web Token (three parts that start with `eyJ`)
+- private key block (`-----BEGIN ... PRIVATE KEY-----`, to the end line or the end of the text)
+- bearer token (`Bearer <value>`)
+- password in a URL (`scheme://user:password@host`)
+- value after a name that holds `password`, `passwd`, `pwd`, `passphrase`, `secret`, `token`, `api_key`, `access_key` or `private_key`
+<!-- masked-patterns:end -->
+
+A pattern is a known shape of a secret, never a guess: a long random text that no pattern knows stays. One more rule covers the passwords that have no shape. When the question, its header, its helper text or the placeholder of its text box names a password (or a `passwd`, a `pwd`), a passphrase, a passcode, a secret, a token, an API key, a credential, a private key or an auth key, the text you typed for it and your notes are masked whole. So is the response you typed beside the questions of a call that has such a question: it answers no question in particular, so it may hold the secret. A question that only uses the word (`How many tokens?`) is masked too: turn masking off when that costs you more than it gives. A cut to the byte cap (see [Limits of the log](#limits-of-the-log)) may take that word out of a long question. The cut marks the question first (`sensitive` in the record), so the text you typed and your notes stay masked.
+
+### Limits of the log
+
+A session keeps at most 100 calls (`trackers.questions.maxCalls`) and 256 KiB of them (`trackers.questions.maxBytes`, JSON characters). The oldest calls drop first, and the first call that stays keeps the id of the newest dropped call of the transcript, so a resume knows what the caps dropped (see [the replay](#clear-resume-and-the-replay)). For scale: a call is 1.6 KB at the median. A call that passes the byte cap alone is cut to fit: its longest texts shrink first (a preview or a plan before a short answer), each cut text ends in `…`, and the record says `cut`. The cut never lands inside a known secret: it stops before the secret starts, so no part of a token stays that the mask would not know. The cap counts the two characters of the list around a call and the mark `cut`, so a call of the size that the tool makes never passes it. The cut shrinks a text to 16 characters at the least: a call whose keys and structure alone are larger than the cap (a plugin's `ui.ask` that skips the schema of the tool) is cut as far as it can be and may stay over. A limit that you lower applies at once to the pane, `/track qa` and the key `y`, which cut the list by the config as it is now, and the next beat writes the shorter list back. The numbers of the calls only grow: after a resume, a new call never takes the number of a call that the caps dropped or that the stored copy holds. The calls live in their own slot, so the shared item cap never drops a decision.
+
+### `/clear`, `/resume` and the replay
+
+`/clear` carries the calls over, as it does the items. After `--resume` the mod loads the stored copy, then reads the transcript back and adds the calls that the copy lacks. A call is keyed by its `tool_use_id`, so the replay never adds one twice, in whatever order the copy and the transcript meet. A call that you saw live beats the same call read back. A call of the transcript that is older than the oldest call of the stored copy was dropped by the caps, and it stays dropped. The transcript holds no time, so a replayed call says `not known`, and it has no turn. The transcript keeps the arguments of the model and the stored record of the answer: a plan you approved comes back with its text, a plan you rejected comes back without it. A `$.ui.ask` of another plugin is not in the transcript, so only the stored copy keeps it. A stored copy may hold none of the transcript's calls: the caps can leave only `$.ui.ask` calls or the calls of a subagent. Their ids are not in the transcript, so the ids alone would not tell what the caps dropped. So the first call that stays keeps the id of the newest transcript call that the caps dropped (the replay watermark, `watermark` in the record), and it moves on when that call drops. The resume reads the transcript only after that id. A stored copy with no watermark and none of the transcript's calls has seen no transcript call drop (it came over `/clear` from another transcript, or the mod was off), so the resume reads all of them back. `/track clear` empties the calls and the watermark with them: the next resume reads the whole transcript back.
+
+### Plans
+
+A `tool.call` hook sees the plan in its input (`plan`, `planFilePath`) before the dialog opens, and the outcome after it. An approval is a result with the plan again and no error. A rejection, with a note or with Esc, is an error result, and the words of the engine hold what you wrote (`the user said: …`). For a rejected plan the mod keeps that structured error word for word and does not parse it. An approved plan is the plan of the result when the result has one (the plan that the dialog returned, an edited one included), else the plan of the input. The way to edit a plan (`Ctrl+G`) was not run, so the edited plan is not proven live ([#208](https://github.com/martin-macak/claude-code-mod-tracking/issues/208)). A teammate that waits for its leader was not tried either: a teammate with no outcome yet is not kept. The spike is in [the knowledge base](../../docs/knowledge-base/claude-code-mods/concepts/questions-and-plans.md).
+
 ## Auto tracking
 
 The mod also tracks the work around the session, with no mention:
@@ -495,6 +567,7 @@ By default, a tool that fails three times in a row is paused for 5 minutes (circ
 - `--resume` and `--continue` restore the stored copy, then add what the transcript holds. Restored items are due for a refresh.
 - The turn ledger is one more slot of the stored copy (see [What each turn tracked](#what-each-turn-tracked)). A cold load with no stored copy has no ledger: the replayed transcript gives items no turn.
 - The audit log of `/track clean` is the key `v2:log`, outside the session copies (see [Clean up on demand](#clean-up-on-demand)).
+- The calls of the Questions section are one more slot of the stored copy: at most 100 calls and 256 KiB for a session. `/clear` carries them over. `--resume` loads them, then adds from the transcript what the copy lacks, with no call twice. See [Questions and answers](#questions-and-answers).
 
 ## Configuration
 
@@ -580,8 +653,8 @@ Every key. Time values are in milliseconds.
 | `global.ui.view` | `list` | | | The view the pane opens in until you pick another: `list`, `tracker`, `status`, `reason` or `flat`. Any other value is a config problem and reads as `list`. See [Views](#views). |
 | `global.ui.views` | `list`, `status`, `flat` | | | The views that `g` cycles, in order, as a list of view names. A name that is no view is left out with a config problem. A list with no valid name reads as the default list. By tracker and by reason are not in the default list: add them here, or set one with `/track view`. |
 | `global.ui.turnStrip` | `off` | | | The line under each answer that says what the turn tracked: `off`, `text` or `interactive`. Any other value is a config problem and reads as `off`. See [The strip under an answer](#the-strip-under-an-answer). |
-| `trackers.<id>.enabled` | true | | | Switch of each of `github`, `jira`, `web`, `artifact`, `file`, `repos`, `processes` and `auto`. |
-| `trackers.<id>.prompt.enabled` | false | | | Puts the items of `github`, `jira`, `web`, `artifact` or `file` in the system prompt. See [Prompt sections](#prompt-sections). |
+| `trackers.<id>.enabled` | true | | | Switch of each of `github`, `jira`, `web`, `artifact`, `file`, `repos`, `processes`, `questions` and `auto`. |
+| `trackers.<id>.prompt.enabled` | false | | | Puts the items of `github`, `jira`, `web`, `artifact` or `file`, or the calls of `questions`, in the system prompt. See [Prompt sections](#prompt-sections). |
 | `trackers.<id>.prompt.maxItems` | 20 | 5 | 50 | Lines of that tracker in the system prompt, the `and N more not listed` line included. |
 | `trackers.github.chunkSize` | 50 | 1 | 100 | Items in one GraphQL call. |
 | `trackers.github.pendingStaleMs` | 60000 | 10000 | 3600000 | Age at which a PR with pending checks is due again. |
@@ -605,6 +678,9 @@ Every key. Time values are in milliseconds.
 | `trackers.processes.endedTtlMs` | 1800000 | 0 | 86400000 | Time after which a `completed`, `exited` or `unknown` row is hidden. 0 hides it at once. |
 | `trackers.processes.failedTtlMs` | 3600000 | 0 | 86400000 | Time after which a `failed` or `killed` row is hidden. |
 | `trackers.processes.maxRows` | 200 | 20 | 2000 | Rows that the Processes section shows. The cap also bounds the stored rows: each merge cuts the rows over it, the rows past their TTL first, then the oldest ended rows. With `hideEnded` true, the view cuts them at once, so a lower value works at once. A live row never leaves. `hideEnded` false and `/track show-all` show every stored row, but not a row that left the stored rows. |
+| `trackers.questions.mask` | true | | | Masks the known secrets in the pane, in `/track qa` and in the key `y`. The records keep every word. `false` shows them as typed. See [Privacy](#privacy). |
+| `trackers.questions.maxCalls` | 100 | 1 | 1000 | Calls that one session keeps. The oldest drop first. |
+| `trackers.questions.maxBytes` | 262144 | 8192 | 1048576 | Size of the calls of one session, in JSON characters. The oldest drop first. A call that passes it alone is cut. See [Limits of the log](#limits-of-the-log). |
 | `trackers.auto.debounceMs` | 750 | 50 | 60000 | Window that groups the events of auto tracking. |
 | `trackers.auto.gitTimeoutMs` | 5000 | 500 | 60000 | Timeout of one `git` call of auto tracking. |
 | `trackers.auto.workflowIdleMs` | 3600000 | 60000 | 86400000 | Time with no sign of life after which a workflow agent ends as stale. |
@@ -619,7 +695,7 @@ Every key. Time values are in milliseconds.
 
 ## Prompt sections
 
-A tracker can put its items into the system prompt of the model. This is off by default. To turn it on for one tracker, set `trackers.<id>.prompt.enabled` to `true` in the config file. `<id>` is `github`, `jira`, `web`, `artifact` or `file`:
+A tracker can put its items into the system prompt of the model. This is off by default. To turn it on for one tracker, set `trackers.<id>.prompt.enabled` to `true` in the config file. `<id>` is `github`, `jira`, `web`, `artifact`, `file` or `questions`:
 
 ```json
 { "version": 1, "trackers": { "github": { "prompt": { "enabled": true, "maxItems": 20 } } } }
@@ -634,7 +710,10 @@ jira: ISS-1 (mentioned, Story, In Progress) "Add login"
 web: code.claude.com/docs/en/overview (mentioned) "Claude Code docs"
 artifact: claude.ai/artifact/9f2c1d3e-0000-4000-8000-000000000001 (published) "Sprint board"
 file: "docs/plan.md" (created, edited 2, viewed 1)
+question: Q3 (answered, turn 7) "Storage: State only; Checks: Lint, E2E"
 ```
+
+The `questions` tracker lists the calls of the Questions section, newest first, so the cap drops the oldest. A line holds the number of the call, its state and turn, and the header and the chosen labels of each question. A text that you typed shows as `typed answer`, a question left blank as `blank`, and a declined call as `declined`. The question, the typed text, the notes and a plan never go in a line: you wrote them, and the model must not read a secret from them. See [Questions and answers](#questions-and-answers).
 
 Rules for the lines:
 
@@ -676,7 +755,8 @@ Cost. A block is short: 134 characters for one link, 164 for two (about 34 and 4
 - **GitHub Enterprise.** A GHE issue URL is a web link, unless the host is the host of the session repo and `gh` is logged in to it.
 - **Other github.com URLs** (repo pages, commits, files) are web links.
 - **Bare `#N` without a repo** stays unresolved. It has no link and no status.
-- **Turns.** No lineage across `/rewind` (it raises no event), after a cold load with no stored copy, or past the cap of 50 turns. A prompt typed while a turn or a wake runs counts for the running turn. The band exists on the terminal and the desktop only. Queued prompts, nested agents, workflow agents and teammates were not tried live, and neither were the end words `refusal` and `error`. A background task that no tool call the mod hears started, and whose agent id is unknown, wakes the newest turn. Work that comes late (a subagent or a wake that names an older turn than the item's last turn) still counts an item again that did not fit the 50 entries of its list. The rows of processes, repos and agents have a turn from the tracker that makes them, with the limits in [Rows of processes, repos and agents](#rows-of-processes-repos-and-agents). No real session has run them. The kit ran the main-loop cases. A subagent's own call cannot come through the kit (`$.tool.call` drops `agentId`), so that case ran on fakePorts. A workflow agent is stamped but adds no entry, so `/track turn` does not list a workflow run. The strip has limits of its own (the engine's prefix, the terminal only, mouse only, `refusal` and `error` not run): see [The strip under an answer](#the-strip-under-an-answer).
+- **Turns.** No lineage across `/rewind` (it raises no event), after a cold load with no stored copy, or past the cap of 50 turns. A prompt typed while a turn or a wake runs counts for the running turn. The band exists on the terminal and the desktop only. Queued prompts, nested agents, workflow agents and teammates were not tried live, and neither were the end words `refusal` and `error`. A background task that no tool call the mod hears started, and whose agent id is unknown, wakes the newest turn. Work that comes late (a subagent or a wake that names an older turn than the item's last turn) still counts an item again that did not fit the 50 entries of its list. The rows of processes, repos and agents have a turn from the tracker that makes them, with the limits in [Rows of processes, repos and agents](#rows-of-processes-repos-and-agents). A call of the Questions section carries its turn (the badge `T7`), but `/track turn n` does not list it yet. No real session has run them. The kit ran the main-loop cases. A subagent's own call cannot come through the kit (`$.tool.call` drops `agentId`), so that case ran on fakePorts. A workflow agent is stamped but adds no entry, so `/track turn` does not list a workflow run. The strip has limits of its own (the engine's prefix, the terminal only, mouse only, `refusal` and `error` not run): see [The strip under an answer](#the-strip-under-an-answer).
+- **Questions and answers.** Only a call that reaches the `tool.call` hook is kept: a permission prompt, MCP elicitation and a question in plain text are not. The engine does not name the plugin that made a `$.ui.ask`. "Chat about this" (`followUp`, `response`) and the answer of an away dialog (`afkTimeoutMs`) are kept as the engine gives them but were not run live. A call whose questions were all left blank is `partial`, not `declined`: only Esc, a denial or a rejected plan decline a call. Masking knows the patterns in the list, no more: a secret of another shape shows on the screen and in the exports. A question that asks for a "token" or a "key" masks the text you typed for it, even when the question means something else. The plan of a rejected call is not in the transcript, so a replay shows it without its text. The copy key `y` and its toast ran live with a probe plugin that answers `ui.copy` without writing it: the text is proven, and the clipboard of the machine was not touched. The write of the clipboard by the engine was not run. The state `waiting for an answer` does not exist: the hook sees the call only after the dialog answers.
 - **`/clear`.** The items come back at the next hook, command or 30 s tick, not at the `/clear` itself. The tick runs from session.start. A `/resume` of a session that the store knows restores that session only, not the one you left.
 - **`--resume` backfill.** The transcript has no `isMeta` or origin flags. The backfill skips the wrappers it knows (`<system-reminder>`, `<teammate-message>`, command output, task notifications). Other meta rows, for example a skill body or a coordinator message, may add items that the live session did not track.
 - **`claude -p "/track"`** ends before its background refresh finishes. Use `/track refresh`.
@@ -715,6 +795,7 @@ claude plugin test .
 | `trackers/file/` | File items and the Markdown path scanner. |
 | `trackers/repos/` | Repository hints, identity, paths, queue, rows, tracker and view. |
 | `trackers/processes/` | Process parsing, probing and view. |
+| `trackers/questions/` | The calls of AskUserQuestion and ExitPlanMode: parsing, the log and its caps, masking, the rows, the Markdown export, the copy key and the prompt lines. |
 | `trackers/auto/` | Ledger, worktrees, agents, events and round of auto tracking. |
 | `trackers/*/config.ts` | One config spec for each tracker: its schema, defaults and `ConfigSpec`. |
 | `trackers/*/prompt.ts` | The pure prompt line builder of each item tracker (`github`, `jira`, `web`, `artifact`, `file`). |

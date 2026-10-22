@@ -1,6 +1,6 @@
 // The tracker list: ids and orders are unique, no tracker takes the id of the item list, and every `store` serves its
 // defaults with the tracker on. The OCP proof of the list: tests/tracker-host.test.ts runs a fake tracker with no edit
-// to core. The list holds all eight trackers, in the order of the pane.
+// to core. The list holds all nine trackers, in the order of the pane.
 import { expect, test } from 'claude-code/testing'
 import { TRACKERS } from '../trackers'
 import type { AutoState } from './fixtures/contracts'
@@ -32,7 +32,7 @@ test('each store(ctx) equals its config.defaults and enabled is true', async () 
   }
 })
 
-test('trackers: eight trackers in order 10 … 80: auto, jira, github, artifact, repos, web, file, processes', () => {
+test('trackers: nine trackers in order 10 … 90: auto, jira, github, artifact, repos, web, file, processes, questions', () => {
   expect([...list].sort((a, b) => a.order - b.order).map(t => [t.id, t.order])).toEqual([
     ['auto', 10],
     ['jira', 20],
@@ -42,6 +42,7 @@ test('trackers: eight trackers in order 10 … 80: auto, jira, github, artifact,
     ['web', 60],
     ['file', 70],
     ['processes', 80],
+    ['questions', 90],
   ])
   expect(list.find(t => t.id === 'auto')?.persist).toBe(false)
   // The jira and web trackers declare their identity and config only (plan decision D13): no events, no data. The github

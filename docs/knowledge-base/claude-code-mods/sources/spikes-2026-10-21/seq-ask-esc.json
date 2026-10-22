@@ -1,0 +1,45 @@
+[
+  [
+    { "type": "text", "text": "One question." },
+    {
+      "type": "tool_use",
+      "id": "toolu_ask_esc",
+      "name": "AskUserQuestion",
+      "input": {
+        "questions": [
+          {
+            "question": "Ship it?",
+            "header": "Ship",
+            "multiSelect": false,
+            "options": [
+              { "label": "Yes", "description": "Go." },
+              { "label": "No", "description": "Stop." }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  [
+    { "type": "text", "text": "Second try." },
+    {
+      "type": "tool_use",
+      "id": "toolu_ask_one",
+      "name": "AskUserQuestion",
+      "input": {
+        "questions": [
+          {
+            "question": "Ship it?",
+            "header": "Ship",
+            "multiSelect": false,
+            "options": [
+              { "label": "Yes", "description": "Go." },
+              { "label": "No", "description": "Stop." }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  [{ "type": "text", "text": "Thanks, noted." }]
+]

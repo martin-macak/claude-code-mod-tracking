@@ -163,6 +163,7 @@ export class LifecycleManager extends PaneApi {
       host: this.host,
       views: this.views,
       kinds: this.items,
+      refreshConfig: p => this.refreshConfig(p),
       log: ports.log,
     })
     this.sequence = new StartSequence({

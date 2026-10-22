@@ -298,10 +298,10 @@ export class PaneSession {
       },
       // A press that waited in the chain through a closing does nothing: it reads `selected`, and that may be a row of the
       // next pane.
-      press: key => {
+      press: (key, surface) => {
         const press = this.pressOf(keysInPrompt)
         const run = async () => {
-          if (press.still()) await this.pressed(p, m, key, press)
+          if (press.still()) await this.pressed(p, m, key, press, surface)
         }
         if (m.keys.get(key)?.scope === 'pane') this.work.detach(p, key, run)
         else this.work.queue(p, key, run)
@@ -332,7 +332,7 @@ export class PaneSession {
    * engine refuses while the prompt has the keys, and `r` may run long. `Refocus.to` asks no more: one press asks once.
    * A closing that comes while `selected` is read ends the press: the read may return a row of the next pane.
    */
-  private async pressed(p: Ports, m: PaneHost, buttonKey: string, begun: Press): Promise<void> {
+  private async pressed(p: Ports, m: PaneHost, buttonKey: string, begun: Press, surface?: string): Promise<void> {
     const key = m.keys.get(buttonKey)
     if (key === undefined) return
     const selected = await this.selectedRow(p)
@@ -393,7 +393,7 @@ export class PaneSession {
         // A tracker's own work may take long. It must not hold the keys that come after it.
         this.work.detach(p, buttonKey, async () => {
           await m.entry(p)
-          await m.runAction(p, to.owner, to.id, to.rowId)
+          await m.runAction(p, to.owner, to.id, to.rowId, surface)
         })
         return
       case 'none':

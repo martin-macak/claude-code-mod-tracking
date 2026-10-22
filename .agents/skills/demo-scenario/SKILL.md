@@ -51,6 +51,8 @@ Make the README demo GIF from a Gherkin scenario that also runs as an E2E test.
 | `Then the last refresh on the screen is younger than the one noted` | Polls until the section note is younger than the noted age: a key refreshed. Use it in place of `refreshed just now`, which says "less than 1 s" and fails when a slow draw ages the refresh. |
 | `Then the fake gh answered no unsupported call` | Fails when the fake got no call, or one it does not know. |
 | `Then the fake origin got no push` | Fails when a ref of the local copy of the origin changed. Use it after a step that makes the session act on its own. |
+| `Given a fake model that asks "q" under the header "h" with the options "a" and "b"` | Hidden. The model of the session is a script (`e2e/support/fake-api.ts`): Claude asks that one question with `AskUserQuestion`, then says `Noted.`. The session runs in a config folder of its own, with a fake token, so it needs no login. Put it before the step that starts the session. Not for `@demo`. |
+| `Then the fake model was told "text"` | Polls what the engine told the model about its tools, for example the answer of a dialog. Shows that the dialog of the real session ran. |
 
 ## Loop
 
@@ -91,6 +93,8 @@ Make the README demo GIF from a Gherkin scenario that also runs as an E2E test.
 | The session has no tool (`--tools ''` and `--strict-mcp-config`), so a prompt that asks for a command gets words, not a run. | A scenario that needs a tool uses the step with `and the tools "…"`, and plans for every call the tool makes (the fake gh answers few). |
 | A prompt that invites a tool ("look at", "fetch") may open a dialog, in a session that has tools. | "Note X for later. Reply ok." |
 | A `gh` first on the `PATH` of claude also answers claude. Claude Code itself runs `gh auth token` at start. | The fake gives no token. `e2e/fake-gh` and spec section 14 hold the rest. |
+| An Esc aborts the turn, and the Stop hook does not run for an aborted turn. | After an Esc do not use `Claude finishes`. Wait for the screen: `matches /for \d+s · done/`. |
+| The result of a tool is not in the last message of the next request: the engine adds a message of its own after it. | `e2e/support/fake-api.ts` reads every `tool_result` block of the body, each once. |
 
 ## Red flags
 

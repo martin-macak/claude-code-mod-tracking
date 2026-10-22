@@ -78,6 +78,16 @@ Left open by the strip of issue [#69](https://github.com/martin-macak/claude-cod
 | 43 | Do the desktop app and the VS Code panel raise `TurnDuration` or append `turn_duration` rows? The types say terminal only (*types-only*). | Open. See [turn-strip](concepts/turn-strip.md#the-spikes). |
 | 44 | How does the engine draw a `turn.complete` text of two lines? The mod joins the text of a hook below it and its strip line with a new line (the kit pins the string only). | Open. Run a second plugin that returns its own `turn.complete` text with `global.ui.turnStrip` on `text`, and capture the screen. See [turn-strip](concepts/turn-strip.md#what-turncomplete-may-return). |
 
+Left open by the questions tracker of issue [#71](https://github.com/martin-macak/claude-code-mod-tracking/issues/71). The page [questions-and-plans](concepts/questions-and-plans.md) holds the evidence.
+
+| # | Question | Status |
+| --- | --- | --- |
+| 45 | What do "Chat about this" (`followUp`, `response`) and the answer of an away dialog (`afkTimeoutMs`) look like in the structured result of `AskUserQuestion`? The output schema has the fields (*types-only*). | Open. Press `Chat about this` and leave a dialog alone past its timeout in tmux, and read the capture. See [questions-and-plans](concepts/questions-and-plans.md#not-tested). |
+| 46 | How does a `text` or a `number` question (`kind`) answer? Does a hook see them in `answers` as a plain string? | Open. Ask one from the fake API. |
+| 47 | Does the `tool.call` event of a plugin's `$.ui.ask` say which plugin asked? The id is `toolu_plugin_…` and the event holds no name that the mod found (*types-only*). | Open. Run a second plugin that calls `$.ui.ask` and capture `e`. |
+| 48 | What does `ExitPlanMode` give for a teammate that awaits its leader (`awaitingLeaderApproval`), and for a plan edited with `Ctrl+G` (`planWasEdited`)? | Open. The questions tracker keeps no call with `awaitingLeaderApproval`. |
+| 49 | Does `ui.copy` reach the clipboard when a press of a pane key calls it? | **Partly answered 2026-10-22.** Live (Claude Code 2.1.307, fake API, tmux): a press of `y` on a call raises `ui.copy`, and a hook of another plugin hears it with the Markdown of the call as `text`. That probe answered `{ value: { isCopied: true } }` without `next`, so the engine wrote nothing and the toast said `Copied Q1 as Markdown`; the clipboard of the machine did not change (`e2e/features/questions.feature`, "The copy key hands the selected call to the engine as Markdown"). Open: the real write by the engine (a clipboard tool or OSC 52) with no probe, which would overwrite the clipboard. |
+
 ## See also
 
 - [gotchas](gotchas.md)

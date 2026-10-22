@@ -242,6 +242,41 @@ test('the name pattern is a whole word, in any case', () => {
     assert.ok(!TRACKER_NAMES.test(line), `flagged: ${line}`)
 })
 
+// ---------------------------------------------------------------- the quiet mark
+
+/** A line that writes the field `quiet` of a row: `quiet: true`, `quiet,` in an object, `.quiet =`. A comment line does not count. */
+const WRITES_QUIET = /(?:\bquiet\s*[:,}]|\.quiet\s*=(?!=))/
+
+/** The `file:line: text` of each code line of `text` (as `file`) that writes the field `quiet`. */
+const quietWriters = (file, text) =>
+  text
+    .split('\n')
+    .flatMap((line, i) => (!isComment(line) && WRITES_QUIET.test(line) ? [`${file}:${i + 1}: ${line.trim()}`] : []))
+
+// `TreeRow.quiet` is the mark of a view (core/lib/grouping.ts): the /track text skips the row, and a group of quiet rows prints
+// no title. A tracker that set it on rows of a section with no `text: 'title'` would drop that section from /track with no trace
+// (the by-list view prints no title for such a group, and `quietTitles` names only a section with `text: 'title'`).
+test('no tracker sets TreeRow.quiet: only a view marks a row', () => {
+  const writers = sourcesUnder(['trackers']).flatMap(file => quietWriters(file, textOf(file)))
+  assert.deepEqual(writers, [])
+})
+
+test('the scan for quiet finds a write in any form and ignores a comment', () => {
+  const write = quietWriters(
+    'trackers/x/rows.ts',
+    ['const a = { id, quiet: true }', 'const b = { ...r, quiet }', 'r.quiet = true', '{ quiet }'].join('\n'),
+  )
+  assert.equal(write.length, 4)
+  assert.deepEqual(
+    quietWriters(
+      'trackers/x/rows.ts',
+      ['// quiet: true', ' * sets quiet: true', 'const quietly = 1', 'const x = r.quiet === true'].join('\n'),
+    ),
+    [],
+  )
+  assert.ok(sourcesUnder(['trackers']).includes('trackers/questions/rows.ts'), 'the scan reaches the questions tracker')
+})
+
 // ---------------------------------------------------------------- imports
 
 test('the scan sees the whole source tree', () => {

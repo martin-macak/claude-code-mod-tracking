@@ -753,3 +753,17 @@ test('R6: the turns line follows the detail() of a tracker and the default detai
   const open = draw([group('web', [parent])], { expanded: new Set(['p']) })
   expect(detailBoxes(open.drawn.tree).flatMap(leaves).slice(-2)).toEqual(['turns:', 'first 1 · last 4'])
 })
+
+test('a footer key passes the surface of its press to the action; a press with no event names none', () => {
+  const reg = new KeyRegistry()
+  reg.add('a', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+  const mine: RowRef = { id: 'w0', owner: 'a', group: 'web', can: {} }
+  const { drawn, calls, surfaces } = draw([group('web', webRows(1))], {
+    footer: footerKeys(reg, mine, () => false, false),
+  })
+  const key = buttonOf(drawn.tree, 'a.open')
+  press(key, 'desktop')
+  press(key)
+  expect(calls).toEqual(['press:a.open', 'press:a.open'])
+  expect(surfaces).toEqual(['desktop', undefined])
+})

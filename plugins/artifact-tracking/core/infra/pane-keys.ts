@@ -21,6 +21,8 @@ export interface PaneKeysDeps {
   views: Pick<Views, 'viewOf'>
   /** The kinds: one problem line for each kind reason that is off (#62). */
   kinds: { problems(): readonly string[] }
+  /** Checks the config file. A key reads the config it runs with, so a press sees an edit made since the last tick. Never rejects. */
+  refreshConfig(ports: Ports): Promise<unknown>
   log(line: string): void
 }
 
@@ -88,11 +90,18 @@ export class PaneKeys {
     return footerKeys(this.reg, row, o => this.isItemOwner(o), help, state)
   }
 
-  /** Runs the key `id` of a tracker with its context and the row it acts on. A missing impl does nothing. */
-  async runAction(ports: Ports, owner: string, id: string, rowId: string | null): Promise<void> {
+  /**
+   * Runs the key `id` of a tracker with its context and the row it acts on. A missing impl does nothing. `surface` is the one
+   * the press came from: a copy of the action goes to the clipboard of that surface. The config file is checked first, as the
+   * commands do: an action may hang on a toggle that was edited since the last tick (the mask of the questions copy).
+   */
+  async runAction(ports: Ports, owner: string, id: string, rowId: string | null, surface?: string): Promise<void> {
     try {
+      await this.d.refreshConfig(ports)
       const impl = own(await this.implsOf(ports, owner, rowId), id)
-      await impl?.run(this.d.host.ctx(owner, ports) as TrackerContext<JsonObject, Json>, rowId)
+      const pressed: Ports =
+        surface === undefined ? ports : { ...ports, ui: { ...ports.ui, copy: text => ports.ui.copy(text, surface) } }
+      await impl?.run(this.d.host.ctx(owner, pressed) as TrackerContext<JsonObject, Json>, rowId)
     } catch (e) {
       this.d.log(`keys: ${owner}.${id} failed: ${reason(e)}`)
     }

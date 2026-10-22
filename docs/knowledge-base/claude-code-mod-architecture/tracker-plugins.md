@@ -184,6 +184,13 @@ What to copy: one explicit composition root that names every tracker (ESLint con
 - `Traceable.turnsOf(data, rowId)`: the first and the last turn that stamped a row. The view puts it on the pane row.
 - A tracker that does neither works as before (tested in `tests/slot-turns.test.ts`).
 
+**Update (issue [#71](https://github.com/martin-macak/claude-code-mod-tracking/issues/71)):** four more optional pieces, all small, each with a test of its own:
+
+- `TrackerContext.ui.copy(text)`: the text goes to the clipboard of the surface that the press came from. The footer Button passes the surface of its press event, the pane hands it to `runAction`, and the host binds it into the context, so a tracker never names a surface. `ctx.ui` also has `toast`.
+- `CommandSpec.text(ctx, args)`: a declared sub-command that answers with its own text, with no pane and no list. The router checks the config file first, because the text may hang on a toggle.
+- `SectionSpec.text` (`'rows'` by default, `'title'`): the `/track` text keeps the rows of a private section out. `GroupSpec.text` carries it by list, and a view marks the rows `quiet` (`TreeRow.quiet`), because the groups of a view mix sections. A tracker never sets `quiet`.
+- Every tracker key runs after the config file was checked, so a key reads a toggle that was edited since the last tick.
+
 The turn travels on the bus call (`EventBus.emit(kind, ev, via, only, turn)`), not on the event: an event is what the engine said, and the turn is what the ledger decided. The spike that fixed this is in [reference/events.md](../claude-code-mods/reference/events.md#notes-on-the-engine-events).
 
 ### 5.4 Phases

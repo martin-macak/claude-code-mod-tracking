@@ -1,0 +1,32 @@
+{
+  "tool": "AskUserQuestion",
+  "startedAt": 1792611730252,
+  "endedAt": 1792611738162,
+  "input": {
+    "questions": [
+      {
+        "question": "Ship it?",
+        "header": "Ship",
+        "multiSelect": false,
+        "options": [
+          {
+            "label": "Yes",
+            "description": "Go."
+          },
+          {
+            "label": "No",
+            "description": "Stop."
+          }
+        ]
+      }
+    ],
+    "tool": "AskUserQuestion",
+    "tool_use_id": "toolu_ask_esc"
+  },
+  "ran": {
+    "ref": 1,
+    "result": "Error: The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+    "text": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+    "isError": true
+  }
+}

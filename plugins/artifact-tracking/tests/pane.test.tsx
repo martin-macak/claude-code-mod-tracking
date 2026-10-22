@@ -345,9 +345,9 @@ test('pane: h shows the help view with every key and the config path; h again re
 })
 
 // The inline pane of a short terminal (issue #92): 100 columns and 40 rows give a body of 11 rows. The full help view with
-// its footer needs 16 rows once the start ran: the started mod registers the row keys of the github tracker (a group
-// title and two keys) and the help view has the version line of issue #65. The compact form keeps its first lines and the
-// footer in view together.
+// its footer needs 18 rows once the start ran: the started mod registers the row keys of the github tracker (a group
+// title and two keys) and the copy key of the questions tracker (a group title and one key), and the help view has the
+// version line of issue #65. The compact form keeps its first lines and the footer in view together.
 const MANIFEST = JSON.stringify({ name: 'artifact-tracking', version: '1.2.3' })
 // 10 help elements and the footer, one row each, with no gap: Pane keys (title, two lines of keys: r h g, a t), Row keys
 // (title, two lines of keys), the github group (title, one line of keys), the config line and the version line.
@@ -406,7 +406,8 @@ test('pane: h in a docked pane keeps the full help view, one key to a line', asy
   await ui.press({ key: 'help' })
   const { gap, help } = await helpTree(ui)
   expect(gap).toBe(1)
-  expect(help).toHaveLength(17) // 3 titles, 12 keys (g, a and t, and the github keys c and f of the started mod), the config line, the version line
+  // 4 titles, 13 keys (g, a and t, the github keys c and f and the questions key y of the started mod), the config line, the version line
+  expect(help).toHaveLength(19)
   expect(JSON.stringify(help[0])).toContain('Pane keys')
   expect(JSON.stringify(help[1])).toContain('refresh')
   await ui.unmount()

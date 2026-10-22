@@ -1,0 +1,34 @@
+[
+  [
+    { "type": "text", "text": "I have two questions." },
+    {
+      "type": "tool_use",
+      "id": "toolu_ask_1",
+      "name": "AskUserQuestion",
+      "input": {
+        "questions": [
+          {
+            "question": "Where should the records live?",
+            "header": "Storage",
+            "multiSelect": false,
+            "options": [
+              { "label": "State only", "description": "Keep them in the plugin state.", "preview": "state.set(records)" },
+              { "label": "State and store", "description": "Also write them to the plugin store." }
+            ]
+          },
+          {
+            "question": "Which checks should run?",
+            "header": "Checks",
+            "multiSelect": true,
+            "options": [
+              { "label": "Lint", "description": "Biome and markdownlint." },
+              { "label": "Tests, all", "description": "claude plugin test." },
+              { "label": "E2E", "description": "cucumber against a real claude." }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  [{ "type": "text", "text": "Thanks, noted." }]
+]

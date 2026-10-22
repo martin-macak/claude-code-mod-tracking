@@ -79,6 +79,7 @@ export function listGroups(sections: readonly SectionSpec[]): readonly GroupSpec
     count: s.count ?? s.rows.length,
     failing: countFailed(s.rows),
     ...(s.empty !== undefined ? { empty: s.empty } : {}),
+    ...(s.text !== undefined ? { text: s.text } : {}),
   }))
 }
 
@@ -145,6 +146,16 @@ function touchedRows(rows: readonly TreeRow[], tally: Tally): readonly TreeRow[]
   }
   return out.length === rows.length && out.every((r, i) => r === rows[i]) ? rows : out
 }
+
+/**
+ * The row and every row below it, marked `quiet` (a copy). The whole tree is marked, not its root only: a `lift` makes a
+ * child a row of its own in the groups of a view, and the text prints a row by its own mark.
+ */
+const quietTree = (r: TreeRow): TreeRow => ({
+  ...r,
+  quiet: true as const,
+  ...(r.children !== undefined ? { children: r.children.map(quietTree) } : {}),
+})
 
 /** The rows with every `lift` row stripped of its children and followed by them, which lift in their turn. */
 function lifted(rows: readonly TreeRow[]): TreeRow[] {
@@ -229,7 +240,9 @@ export function viewGroups(sections: readonly SectionSpec[], view: ViewId, optio
   const tally: Tally = { hidden: 0, rows: 0 }
   const kept = sections.map(s => {
     const before = tally.rows
-    const rows = options.touchedOnly ? touchedRows(s.rows, tally) : s.rows
+    const shown = options.touchedOnly ? touchedRows(s.rows, tally) : s.rows
+    // A section whose text is its title only (`text: 'title'`) keeps its rows out of the `/track` text in every view.
+    const rows = s.text === 'title' ? shown.map(quietTree) : shown
     return { s, rows, gone: tally.rows - before }
   })
   const make = (key: string, title: string, rows: readonly TreeRow[]): GroupSpec => ({

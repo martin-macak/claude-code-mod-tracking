@@ -2,7 +2,7 @@
 // LifecycleManager per load and one hook per engine event. The manager, the trackers and the item host do the work.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.3 (the hook table).
 
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderSurface } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 import { ConfigManager } from '../core/infra/config-manager'
 import { LifecycleManager } from '../core/infra/lifecycle'
@@ -186,6 +186,12 @@ function portsOf($: EngineInterface): Ports {
       panes: () => $.ui.panes(),
       invalidate: () => void soft(() => $.ui.invalidate('ui.render')), // a refused redraw: the next one fixes it
       toast: text => $.ui.toast(text),
+      // The surface of the press goes with the text, so the copy reaches the clipboard of the person who pressed. With none
+      // the engine takes the first one the session draws on. The engine's closed reason passes on.
+      copy: async (text, surface) => {
+        const out = await $.ui.copy({ text, ...(surface !== undefined ? { surface: surface as RenderSurface } : {}) })
+        return out.isCopied ? { isCopied: true } : { isCopied: false, reason: out.reason }
+      },
     },
     log: line => void soft(() => $.ui.log(line, { to: 'debug' })), // a log line must never fail a hook
   }
