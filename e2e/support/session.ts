@@ -14,7 +14,8 @@ export const TRUST_CHOSEN = /❯\sYes, I trust this folder/
 export const READY_MARKERS = [/^❯\s/m]
 export const PERMISSION_MARKERS = [/do you want to (proceed|make this edit|create)/i]
 
-// Keeps turns short and tool-free, so no permission dialog opens in the recording.
+// Keeps turns short. The flags `--tools ''` and `--strict-mcp-config` (see `claudeCommand`) keep them tool-free, so no
+// permission dialog opens in the recording. This sentence alone did not: a prompt that asks for git or gh work wins over it now and then.
 export const DEMO_SYSTEM_PROMPT =
   'This session is recorded for a short product demo. Answer in one short sentence. Do not use any tools.'
 // For a scenario that must use tools: no questions, no detours.
@@ -36,7 +37,11 @@ export type LaunchSpec = {
   model: string
   signalFile: string
   prompt?: string
-  /** Tools the session may use without a permission dialog. Absent: the demo session, which uses no tools. */
+  /**
+   * Tools the session may use without a permission dialog. Absent: the demo session, which has no tool at all (no
+   * built-in tool by `--tools ''`, no MCP server by `--strict-mcp-config`), so it can run no command, whatever its
+   * prompt asks and whatever permission mode the machine has.
+   */
   tools?: readonly string[]
   /** Variables for claude only, set through env(1) so they win over the tmux server's own. */
   env?: Readonly<Record<string, string>>
@@ -54,7 +59,9 @@ export function claudeCommand(spec: LaunchSpec): string {
     '--append-system-prompt',
     spec.tools ? TOOLS_SYSTEM_PROMPT : DEMO_SYSTEM_PROMPT,
     // Variadic: it takes every word up to the next flag, so a flag must follow it, never the prompt.
-    ...(spec.tools ? ['--allowedTools', spec.tools.join(',')] : []),
+    // A scenario with tools gets the default set and an allow list that spares the dialog. Any other gets no tool:
+    // `--tools ''` drops the built-in tools, `--strict-mcp-config` the MCP servers of the account (the repo has none).
+    ...(spec.tools ? ['--allowedTools', spec.tools.join(',')] : ['--tools', '', '--strict-mcp-config']),
     '--settings',
     stopHookSettings(spec.signalFile),
   ]
