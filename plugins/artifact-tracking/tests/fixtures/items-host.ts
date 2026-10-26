@@ -15,6 +15,7 @@ export const IDLE_ITEMS: Pick<
   | 'kick'
   | 'refreshAll'
   | 'setPriority'
+  | 'setPriorities'
   | 'rowIdOf'
   | 'levels'
   | 'port'
@@ -32,6 +33,7 @@ export const IDLE_ITEMS: Pick<
   kick: () => {},
   refreshAll: async () => {},
   setPriority: async () => false,
+  setPriorities: async () => false,
   rowIdOf: async () => undefined,
   levels: async () => new Map(),
   port(this: ItemStorePort) {

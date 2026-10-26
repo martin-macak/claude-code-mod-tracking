@@ -43,6 +43,9 @@ const hidden = atom({ plugin: 'artifact-tracking', key: 'hidden' } as const, { s
 // that resets the atom puts the pane back on the configured view with no seeding from the config at start.
 const view = atom({ plugin: 'artifact-tracking', key: 'view' } as const, null as string | null)
 const filters = atom({ plugin: 'artifact-tracking', key: 'filters' } as const, { touchedOnly: false })
+// Issue #138: the rows the person marked with `m`. Session state like `hidden` and `filters`: the pane clears it at close and
+// `/clear` resets it. The ids only: a render never prunes them (E9), the next mark write does.
+const marks = atom({ plugin: 'artifact-tracking', key: 'marks' } as const, [] as string[])
 // Issue #69: what each main-loop turn tracked. The module that declares the atoms is the only one that may touch the state
 // keys; the empty ledger is the rule's own, so a field added to it cannot drift from this default.
 const turns = atom({ plugin: 'artifact-tracking', key: 'turns' } as const, emptyLedger() as TurnLedger)
@@ -169,6 +172,7 @@ function portsOf($: EngineInterface): Ports {
       hidden: { get: () => read($, hidden), update: fn => update($, hidden, fn) },
       view: { get: () => read($, view), update: fn => update($, view, fn) },
       filters: { get: () => read($, filters), update: fn => update($, filters, fn) },
+      marks: { get: () => read($, marks), update: fn => update($, marks, fn) },
       turns: { get: () => read($, turns), update: fn => update($, turns, fn) },
       shown: {
         get: async id => (await read($, { plugin: 'artifact-tracking', key: 'shown', id } as const)) ?? 0,
@@ -398,7 +402,7 @@ export const register: Register = on => {
 
   // The wheel or a page key. While the pane draws a window over its rows, the tree fits the body and the engine has nothing
   // to scroll: the mod moves the selection and the ring by a page, and the window follows (issue #109). With no window
-  // (every row shows, or the help view) the engine moves as it did.
+  // (every row shows, or the help view) the engine moves as it did, and the session still ends the question of a bulk dismiss.
   on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
     const p = portsOf($)
     if (!(await pane.scrolled(p, managerOf($), e.by))) return next(e)

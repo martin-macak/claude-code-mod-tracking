@@ -239,6 +239,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       hidden: atom<HiddenState>('hidden', () => ({ showAll: false })),
       view: atom<string | null>('view', () => null),
       filters: atom<FilterState>('filters', () => ({ touchedOnly: false })),
+      marks: atom<string[]>('marks', () => []),
       turns: atom<TurnLedger>('turns', emptyLedger),
       // A family member sits under `shown:<id>`: a bare section id would collide with a tracker slot of the same id.
       shown: {

@@ -26,9 +26,19 @@ import { groupsText, quietTitles } from '../ux/tree-data-table/text'
 export interface PaneHost {
   entry(p: Ports): Promise<void>
   paneData(p: Ports, view: PaneView): Promise<readonly SectionSpec[]>
-  footer(p: Ports, row: RowRef | undefined, help: boolean): Promise<readonly FooterKey[]>
+  /** The sections with every row that the trackers hold, the ones that the TTL, the row cap and `--hide` leave out too (issue #138). */
+  inventory(p: Ports): Promise<readonly SectionSpec[]>
+  /** `markedRows`: the marked rows that the last drawing laid (issue #138). `x` and the digits then act on them. */
+  footer(
+    p: Ports,
+    row: RowRef | undefined,
+    help: boolean,
+    markedRows?: readonly RowRef[],
+  ): Promise<readonly FooterKey[]>
   dismiss(p: Ports, ids: readonly string[]): Promise<void>
   setPriority(p: Ports, rowId: string, level: Level | undefined): Promise<void>
+  /** The same level on many rows: one write, one rebuild of the prompt (issue #138). */
+  setPriorities(p: Ports, rowIds: readonly string[], level: Level | undefined): Promise<void>
   refreshManual(p: Ports): Promise<void>
   runAction(p: Ports, owner: string, id: string, rowId: string | null, surface?: string): Promise<void>
   problems(): readonly string[]

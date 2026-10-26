@@ -1,5 +1,5 @@
 // The view line of the pane (issue #63, L3): one line above the footer. It says the view and the filters, and holds the Buttons
-// of `g`, `a` and `t`. Those keys sit here, not in the footer, so the footer keeps the rows it has. The words are clipped to the
+// of `g`, `a`, `t` and `m`. Those keys sit here, not in the footer, so the footer keeps the rows it has. The words are clipped to the
 // width and the Buttons wrap whole, as the footer's do, so the rows it takes are a count. Pure.
 import type { RenderElement } from 'claude-code'
 import { cellWidth, clipTo } from '../text/cell-width'

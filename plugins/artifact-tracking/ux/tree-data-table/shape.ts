@@ -25,7 +25,7 @@ export const indentOf = (columnWidth: number, depth: number): number =>
 
 /**
  * The view line (issue #63, L3): one line above the footer. `text` says the view, the filters and the rows they hid. `keys` are
- * the Buttons of `g`, `a` and `t`: they sit here and not in the footer, so the footer keeps its rows. The line is clipped to
+ * the Buttons of `g`, `a`, `t` and `m`: they sit here and not in the footer, so the footer keeps its rows. The line is clipped to
  * the width, and its Buttons wrap like the footer's.
  */
 export interface ViewLine {
@@ -58,6 +58,8 @@ export interface TableView {
   /** The key of the "N more" Button the ring sits on (`m0`, …). Its group row must show, so the window follows it. */
   readonly onMore?: string
   readonly expanded: ReadonlySet<string>
+  /** The ids of the rows the person marked (`m`, issue #138). A drawn row of the set shows `*` in its control column. */
+  readonly marked?: ReadonlySet<string>
   /** Rows shown beyond the cap, by group id (`<view>:<group>`, e.g. `list:prs`). */
   shown(groupId: string): number
   readonly limits: { readonly sectionRows: number; readonly maxRows: number }

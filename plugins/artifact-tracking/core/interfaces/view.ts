@@ -251,7 +251,11 @@ export interface ViewContext<C = JsonObject, D = Json> {
   readonly root: string | undefined
   /** The home folder of the person: `HOME`, when absolute. Absent: the engine gave none, or a relative one. Display only. */
   readonly home: string | undefined
-  /** The `/track show-all` toggle. A tracker that hides rows by time shows them all while `showAll` is on. */
+  /**
+   * The `/track show-all` toggle. A tracker that hides rows by time or by a cap shows them all while `showAll` is on. Every such
+   * rule must read it: the inventory that prunes the marks (`Views.inventory`, issue #138) sets it, and a rule that ignores it
+   * would end the marks of the rows it hides.
+   */
   readonly hidden: HiddenState
   isDismissed(id: string): boolean
   /** The level of one item, by key: the person's mark, or a rule's. An item with no level, and an unknown key, give `{}`. */
@@ -273,6 +277,11 @@ export interface PaneKey {
    * and `t` are there, so the footer does not grow a row. The help view lists the key either way. Only core sets it.
    */
   readonly bar?: 'view'
+  /**
+   * A key that asks before it acts on many rows (issue #138): `x`. Its question stands until a press of the same key answers it, so the
+   * pane does not end the question on this key, and the label of the key says the count (`dismiss 3`, `confirm 3`). Only core sets it.
+   */
+  readonly confirm?: boolean
 }
 
 /**

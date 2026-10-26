@@ -21,8 +21,19 @@ export class ItemLevels {
 
   /** The person's mark on a row. `undefined` removes it. `top` comes from a rule only: it does nothing. True when the list changed. */
   async setPriority(rowId: string, level: Level | undefined): Promise<boolean> {
-    if (level === 'top') return false
-    return this.d.store.rawUpdate(list => setLevel(list, rowId, level, this.d.kinds.table))
+    return this.setPriorities([rowId], level)
+  }
+
+  /**
+   * The person's mark on many rows (the digits on the marked rows of the pane, issue #138): one write for all of them, so the
+   * list is stored and the prompt rebuilt once. A row that holds the level already, an id no item holds and `top` change
+   * nothing. True when the list changed.
+   */
+  async setPriorities(rowIds: readonly string[], level: Level | undefined): Promise<boolean> {
+    if (level === 'top' || rowIds.length === 0) return false
+    return this.d.store.rawUpdate(list =>
+      [...new Set(rowIds)].reduce((marked, id) => setLevel(marked, id, level, this.d.kinds.table), list),
+    )
   }
 
   /** The row of a typed ref (`/track prio`). It waits for the session repo first, so `#N` keys are right. */

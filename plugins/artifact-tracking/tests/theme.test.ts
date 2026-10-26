@@ -50,8 +50,9 @@ test('accent is suggestion and selected is blue', () => {
   expect(COLOR.selected).toBe('blue')
 })
 
-test('the glyphs are one cell each', () => {
-  expect(Object.values(GLYPH).map(cellWidth)).toEqual([1, 1, 1, 1])
+test('the glyphs are one cell each, the mark of a row (issue #138) a plain *, no emoji', () => {
+  expect(Object.values(GLYPH).map(cellWidth)).toEqual([1, 1, 1, 1, 1])
+  expect(GLYPH.marked).toBe('*')
 })
 
 test('cellText maps fg to its theme color, dim to dimColor and keeps truncate-end', () => {

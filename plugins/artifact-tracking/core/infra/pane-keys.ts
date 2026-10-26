@@ -67,9 +67,15 @@ export class PaneKeys {
 
   /**
    * The footer for the selected row. A tracker key works when the owner's actions have an impl for it, and the impl's
-   * `state` does not say `disabled`. Reads only: it runs in a render.
+   * `state` does not say `disabled`. Reads only: it runs in a render. `markedRows` are the marked rows that the last drawing laid
+   * (issue #138): `x` and the digits then follow them, and a tracker key stays on the selected row.
    */
-  async footer(ports: Ports, row: RowRef | undefined, help: boolean): Promise<readonly FooterKey[]> {
+  async footer(
+    ports: Ports,
+    row: RowRef | undefined,
+    help: boolean,
+    markedRows: readonly RowRef[] = [],
+  ): Promise<readonly FooterKey[]> {
     let impls: ActionImpls = {}
     if (row !== undefined && !help && this.reg.all().some(k => k.owner === row.owner)) {
       try {
@@ -87,7 +93,7 @@ export class PaneKeys {
         return 'disabled'
       }
     }
-    return footerKeys(this.reg, row, o => this.isItemOwner(o), help, state)
+    return footerKeys(this.reg, row, o => this.isItemOwner(o), help, state, markedRows)
   }
 
   /**

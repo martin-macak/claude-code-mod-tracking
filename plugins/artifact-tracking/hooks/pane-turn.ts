@@ -1,7 +1,8 @@
 // The press of the band Button `9: open` and of the open Button of a strip (issue #69): open `/track` with the pane focused and
 // the first entry of a turn selected, and run the refresh that `/track` runs on open (`kick('open')`, owner decision of
-// 2026-10-21). The band names no turn, so it takes the newest turn that tracked anything; the strip names its own (P2). The pane
-// lists one selected row, so only the first entry is selected; marking a whole turn waits for #63.
+// 2026-10-21). The band names no turn, so it takes the newest turn that tracked anything; the strip names its own (P2). The press
+// selects the first entry only. The marks of the pane exist (issue #138): `writeMarks` in `pane-marks.ts` is the write that a
+// press makes. Marking a whole turn waits for #232.
 // PaneSession calls it with its own Refocus; nothing here touches the engine but the `ui` ports.
 // Spec: issue #69, the design study (section 5, "Band") and the owner decisions of 2026-10-21.
 

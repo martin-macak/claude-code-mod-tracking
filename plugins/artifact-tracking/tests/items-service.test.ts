@@ -701,6 +701,25 @@ test('setPriority sets a Jira child mark and calls persisted once; a top level d
   expect(t.persisted).toEqual(['items'])
 })
 
+test('setPriorities marks every named row in one write; a level that changes nothing, `top` and an unknown row write none', async () => {
+  const t = fakeItems()
+  const items = await t.started()
+  await items.capture(promptRow('see https://docs.example/a and https://docs.example/b and https://docs.example/c'))
+  const [a, b, c] = ['a', 'b', 'c'].map(x => `web:https://docs.example/${x}`) as [string, string, string]
+  const writes = t.persisted.length
+  expect(await items.setPriorities([a, c, a, 'web:https://nowhere.example/'], 'high')).toBe(true)
+  expect(t.persisted.length - writes).toBe(1) // one write for two rows
+  const marks = () => Object.fromEntries(t.list().map(r => [r.key, (r as { priority?: string }).priority]))
+  expect(marks()).toEqual({ [a]: 'high', [b]: undefined, [c]: 'high' })
+  expect(await items.setPriorities([a, c], 'high')).toBe(false) // no change, no write
+  expect(await items.setPriorities([a, b], 'top')).toBe(false) // `top` is a rule's: it does nothing
+  expect(await items.setPriorities([], 'low')).toBe(false)
+  expect(t.persisted.length - writes).toBe(1)
+  expect(await items.setPriorities([a, b, c], undefined)).toBe(true) // `undefined` removes the marks
+  expect(marks()).toEqual({ [a]: undefined, [b]: undefined, [c]: undefined })
+  expect(t.persisted.length - writes).toBe(2)
+})
+
 test('levels gives the mark of the person, and nothing for an item no rule lifts', async () => {
   const t = fakeItems()
   const items = await t.started()

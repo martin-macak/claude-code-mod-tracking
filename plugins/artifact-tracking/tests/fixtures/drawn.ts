@@ -1,6 +1,6 @@
 // Helpers to read what TreeDataTable.render draws: the plain-data tree of `{ type, props, children }` nodes, a table
 // view with the defaults of a normal pane, and a recording TableActions. Node and kit tests use them alike.
-import { footerKeys, KeyRegistry } from '../../core/infra/keys'
+import { footerKeys, KeyRegistry, viewKeys } from '../../core/infra/keys'
 import type { TableActions, TableView } from '../../ux/tree-data-table/table'
 
 export interface Node {
@@ -44,8 +44,16 @@ export const handlesOf = (tree: unknown): string[] =>
     .map(b => String(b.props.key))
     .filter(k => /^r\d+$/.test(k))
 
-/** The Button keys of the view line: `g`, `a` and `t` (issue #63, L3). Their Buttons have hotkeys, but they are no footer keys. */
-export const VIEW_LINE_KEYS: readonly string[] = ['view', 'show-all', 'touched']
+/** The Button keys of the view line: `g`, `a`, `t` (issue #63, L3) and `m` (issue #138). Their Buttons have hotkeys, but they are no footer keys. */
+export const VIEW_LINE_KEYS: readonly string[] = ['view', 'show-all', 'touched', 'mark']
+
+/** The keys of the view line as the pane draws them on a row that takes every bulk key: all of them live. */
+export const LIVE_VIEW_KEYS = viewKeys(
+  new KeyRegistry(),
+  { id: 'a', owner: 'web', group: 's', can: { dismiss: true, priority: true } },
+  owner => owner === 'web',
+  false,
+)
 
 /** The footer Buttons: the ones with a hotkey that are not on the view line. */
 export const footerOf = (tree: unknown): Node[] =>

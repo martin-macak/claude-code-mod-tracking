@@ -16,6 +16,9 @@ import { reason } from './steps'
 /** The view of a pane nobody touched: nothing selected, nothing opened. */
 export const NO_VIEW: PaneView = { selected: null, expanded: new Set() }
 
+/** `/track show-all` on, with no `--hide` sweep: every tracker lets every row pass. */
+const SHOW_ALL: HiddenState = { showAll: true }
+
 /**
  * The sections in the order of the pane or of the band. The pane places a section by its `rank`, else by the `order` of
  * its tracker. The band places a part by `band.rank`, else the section's `rank`, else the `order`. A tie keeps the
@@ -150,6 +153,17 @@ export class Views {
     return sortSections(await this.collect(ports, view), 'pane')
   }
 
+  /**
+   * The sections of the live trackers with no row left out for a rule of time or of a cap. Each such rule reads
+   * `ViewContext.hidden.showAll`, and the inventory sets it: the TTL of an ended row, the row cap and `/track clean --hide`
+   * let every row pass. A row that is still left out is gone: a dismissed row, or one no tracker holds any more. The next
+   * mark write prunes by it (issue #138): a mark ends with its row, never because the pane hides the row for now. It reads
+   * like `paneData` and writes nothing.
+   */
+  async inventory(ports: Ports): Promise<readonly SectionSpec[]> {
+    return (await this.collect(ports, NO_VIEW, SHOW_ALL)).map(x => x.s)
+  }
+
   /** The sections that carry a band part, in the order of the band. */
   async bandData(ports: Ports): Promise<readonly SectionSpec[]> {
     return sortSections(
@@ -158,13 +172,21 @@ export class Views {
     )
   }
 
-  /** Asks each live tracker, in `order`. A tracker that throws loses its own sections and is logged. */
-  private async collect(ports: Ports, view: PaneView): Promise<{ s: SectionSpec; order: number }[]> {
+  /**
+   * Asks each live tracker, in `order`. A tracker that throws loses its own sections and is logged. `hidden` replaces the
+   * session's `/track show-all` and `--hide` state for this one call.
+   */
+  private async collect(
+    ports: Ports,
+    view: PaneView,
+    hidden?: HiddenState,
+  ): Promise<{ s: SectionSpec; order: number }[]> {
     const drawing = this.ordered.filter(t => t.sections !== undefined && this.d.live(t.id))
-    const [read, data] = await Promise.all([
+    const [seen, data] = await Promise.all([
       readView(ports, this.d),
       Promise.all(drawing.map(t => ports.state.slot.get(t.id))),
     ])
+    const read = hidden === undefined ? seen : { ...seen, hidden }
     const out: { s: SectionSpec; order: number }[] = []
     // The first and the last turn of each item go on its row (issue #69), so no kind draws them. A slot tracker that has
     // `turnsOf` (issue #133) gives the turns of its own rows; the rest of the trackers have none.

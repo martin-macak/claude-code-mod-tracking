@@ -382,8 +382,13 @@ export class LifecycleManager extends PaneApi {
 
   /** The person's mark on a row; `undefined` removes it. `top` is a rule's and does nothing. The prompt follows. */
   async setPriority(ports: Ports, rowId: string, level: Level | undefined): Promise<void> {
+    return this.setPriorities(ports, [rowId], level)
+  }
+
+  /** The person's mark on many rows (the digits on the marked rows, issue #138): one write, one rebuild of the prompt. */
+  async setPriorities(ports: Ports, rowIds: readonly string[], level: Level | undefined): Promise<void> {
     await this.entry(ports)
-    await this.items.setPriority(rowId, level)
+    await this.items.setPriorities(rowIds, level)
     await this.prompt.rebuild(ports)
   }
 

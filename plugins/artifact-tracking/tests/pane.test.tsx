@@ -4,13 +4,12 @@
 // reads the tree.
 import type { Engine } from 'claude-code/testing'
 import { expect, mock } from 'claude-code/testing'
-import { KeyRegistry, viewKeys } from '../core/infra/keys'
 import { wrapRows } from '../ux/text/wrap'
 import { BUDGET, fits, measure } from '../ux/tree-data-table/budget'
 import { footerRows } from '../ux/tree-data-table/footer'
 import { NO_KEYS_HINT } from '../ux/tree-data-table/hint'
 import { viewLineRows } from '../ux/tree-data-table/viewline'
-import { NO_ROW_FOOTER, VIEW_LINE_KEYS } from './fixtures/drawn'
+import { LIVE_VIEW_KEYS, NO_ROW_FOOTER, VIEW_LINE_KEYS } from './fixtures/drawn'
 import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { focusOn, handleFor, headersOf, mountPane, type PaneUi, rowsOf, select } from './fixtures/pane'
@@ -223,7 +222,7 @@ test('pane: the help view of a pane with no keys draws no hint line, so it still
   const ui = await mountPane($, { isFocused: false })
   await ui.press({ key: 'help' })
   expect((await ui.findAll({ type: 'Text' })).some(t => t.text?.includes(NO_KEYS))).toBe(false)
-  expect(await ui.find({ text: 'Row keys (act on the selected row)' })).toBeDefined()
+  expect(await ui.find({ text: 'Row keys (act on the selected or marked rows)' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -292,6 +291,34 @@ test('pane: x dismisses the selected row and selects the next one', async ($, on
   await ui.unmount()
 })
 
+// Issue #138, through the engine: `m` marks the selected row, `x` asks about the marked rows and the second `x` dismisses them.
+// The cases of the question (a double tap, a key that ends it, a ring move) are in pane-session.test.ts.
+test('pane: m marks rows, x asks about them, the second x dismisses them and the marks end', async ($, on) => {
+  const { ui } = await paneOver($, on, THREE)
+  for (const row of ['one.example', 'three.example']) {
+    await select($, ui, row)
+    await ui.press({ key: 'mark' })
+    await ui.redraw()
+  }
+  expect(rowsOf(await ui.drawn()).map(r => r.text.includes('*'))).toEqual([true, false, true])
+  expect(await ui.find({ text: 'View: list · 2 marked' })).toBeDefined()
+  await ui.press({ key: 'dismiss' })
+  await ui.redraw()
+  expect(await ui.find({ text: 'Dismiss 2 marked rows? x again: yes' })).toBeDefined()
+  const asked = (await track($)).text
+  expect(asked).toContain('one.example')
+  expect(asked).toContain('three.example') // asking dismisses nothing
+  await ui.press({ key: 'dismiss' })
+  await ui.redraw()
+  const left = (await track($)).text
+  expect(left).toContain('two.example')
+  expect(left).not.toContain('one.example')
+  expect(left).not.toContain('three.example')
+  expect(rowsOf(await ui.drawn()).map(r => r.text.includes('*'))).toEqual([false])
+  expect(await ui.find({ text: 'View: list' })).toBeDefined()
+  await ui.unmount()
+})
+
 // The route of `x` and the digits on a row that cannot take them is proved in pane-session.test.ts ('a key on a row that
 // cannot take it does nothing'); here the Buttons must draw dim.
 test('pane: x and the digits are dim and inert on a process row', async ($, on) => {
@@ -335,11 +362,11 @@ test('pane: h shows the help view with every key and the config path; h again re
   const { ui } = await paneOver($, on, LINKS)
   expect(rowsOf(await ui.drawn()).length).toBe(2)
   await ui.press({ key: 'help' })
-  expect(await ui.find({ text: 'Row keys (act on the selected row)' })).toBeDefined()
+  expect(await ui.find({ text: 'Row keys (act on the selected or marked rows)' })).toBeDefined()
   expect((await ui.findAll({ type: 'Text' })).some(t => t.text?.startsWith('Config file:'))).toBe(true)
   expect(rowsOf(await ui.drawn())).toEqual([])
   await ui.press({ key: 'help' })
-  expect(await ui.find({ text: 'Row keys (act on the selected row)' })).toBeUndefined()
+  expect(await ui.find({ text: 'Row keys (act on the selected or marked rows)' })).toBeUndefined()
   expect(rowsOf(await ui.drawn()).length).toBe(2)
   await ui.unmount()
 })
@@ -374,7 +401,7 @@ test('pane: h in a short inline pane draws the compact help view, so Pane keys a
   expect(JSON.stringify(help[0])).toContain('Pane keys')
   expect(footer).toBeDefined()
   expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
-  expect(await ui.find({ text: 'Row keys (act on the selected row)' })).toBeDefined()
+  expect(await ui.find({ text: 'Row keys (act on the selected or marked rows)' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -406,8 +433,8 @@ test('pane: h in a docked pane keeps the full help view, one key to a line', asy
   await ui.press({ key: 'help' })
   const { gap, help } = await helpTree(ui)
   expect(gap).toBe(1)
-  // 4 titles, 13 keys (g, a and t, the github keys c and f and the questions key y of the started mod), the config line, the version line
-  expect(help).toHaveLength(19)
+  // 4 titles, 14 keys (g, a, t and m, the github keys c and f and the questions key y of the started mod), the config line, the version line
+  expect(help).toHaveLength(20)
   expect(JSON.stringify(help[0])).toContain('Pane keys')
   expect(JSON.stringify(help[1])).toContain('refresh')
   await ui.unmount()
@@ -452,7 +479,8 @@ test('pane: a body shorter than the footer plus one line still draws the help vi
   world(on)
   const ui = await mountPane($, { bodyColumns: 96, bodyRows: 1, placement: 'inline' })
   await ui.press({ key: 'help' })
-  expect((await helpTree(ui)).help).toHaveLength(5) // no start: nothing fits, so the fewest rows: 2 titles, 2 lines of keys, the config line
+  // No start: nothing fits, so the fewest rows: 2 titles, 2 lines of keys (the six row keys, m among them, hold one line: each group's columns are as wide as its widest key), the config line
+  expect((await helpTree(ui)).help).toHaveLength(5)
   expect(await hotkeysOf(ui)).toEqual(HOTKEYS)
   await ui.unmount()
 })
@@ -558,7 +586,7 @@ test('pane: inline 100x40 with 12 links shows the title, the header and the foot
   expect(await ui.find({ text: '▼ 7 more below' })).toBeDefined()
   expect(await ui.find({ text: /more above/ })).toBeUndefined()
   expect(await ui.find({ text: 'View: list' })).toBeDefined()
-  expect((await viewLineOf(ui)).map(b => b.props.hotkey)).toEqual(['g', 'a', 't'])
+  expect((await viewLineOf(ui)).map(b => b.props.hotkey)).toEqual(['g', 'a', 't', 'm'])
   await ui.unmount()
 })
 
@@ -601,7 +629,7 @@ test('pane: a hint line that wraps in a narrow body costs the window both of its
   const hint = wrapRows(NO_KEYS_HINT, narrow.bodyColumns)
   const footer = footerRows(NO_ROW_FOOTER, narrow.bodyColumns, false)
   // `View: list` and the three keys do not fit 40 cells in one row: the view line takes two (issue #63, L3).
-  const line = viewLineRows({ text: 'View: list', keys: viewKeys(new KeyRegistry()) }, narrow.bodyColumns)
+  const line = viewLineRows({ text: 'View: list', keys: LIVE_VIEW_KEYS }, narrow.bodyColumns)
   expect(hint).toBe(2)
   expect(line).toBe(2)
   const ui = await mountPane($, { ...narrow, isFocused: false })
