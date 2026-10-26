@@ -73,6 +73,20 @@ function extrasCell(d: Draw, col: SolvedColumn, r: LaidRow, dim: boolean): Rende
   return box(d.el, { width: col.width, flexShrink: 0, columnGap: GAP, justifyContent: col.justify }, ...parts)
 }
 
+/**
+ * The control cell of a marked row (issue #138): `*` in the first cell, the level marker in the cell that is left. Both are
+ * one glyph wide, so the column keeps its two cells. The marker keeps its color and its dim.
+ */
+function markedControl(d: Draw, col: SolvedColumn, cell: Cell, dim: boolean): RenderElement {
+  const rest = clipTo(normaliseCell(cell.text), Math.max(0, col.width - cellWidth(GLYPH.marked)))
+  return box(
+    d.el,
+    { width: col.width, flexShrink: 0, justifyContent: col.justify, ...cellBox(cell) },
+    text(d.el, cellText({ text: GLYPH.marked, fg: 'accent' }, dim), GLYPH.marked),
+    rest === '' ? null : cellNode(d.el, cell, rest, dim),
+  )
+}
+
 function rowLine(d: Draw, solved: Solved, r: LaidRow): RenderElement {
   const selected = r.row.id === d.view.selected
   // A pane that has no keys keeps the marker, dim, and drops the background: nothing here answers a key (issue #108).
@@ -82,6 +96,7 @@ function rowLine(d: Draw, solved: Solved, r: LaidRow): RenderElement {
     if (col.id === 'extras') return extrasCell(d, col, r, dim)
     const cell = cellOf(r.row, col.id) ?? EMPTY
     if (col.tree) return treeCell(d, col, cell, r, dim)
+    if (col.id === 'control' && d.view.marked?.has(r.row.id) === true) return markedControl(d, col, cell, dim)
     return box(
       d.el,
       { width: col.width, flexShrink: 0, justifyContent: col.justify, ...cellBox(cell) },

@@ -291,6 +291,8 @@ export interface ItemsHost extends ItemStorePort {
   refreshAll(): Promise<void>
   /** The person's mark on a row (`undefined` removes it). True when the list changed. `top` comes from a rule: it does nothing. */
   setPriority(rowId: string, level: Level | undefined): Promise<boolean>
+  /** The person's mark on many rows in one write (issue #138). True when the list changed. `top` does nothing. */
+  setPriorities(rowIds: readonly string[], level: Level | undefined): Promise<boolean>
   /** The row id a typed ref names (`#5`, a URL, a key a kind names). undefined: it names no tracked row. */
   rowIdOf(ref: string): Promise<string | undefined>
   /** The level of every item, by key: the person's mark, or a rule's. `list` is a list already read; default: the store's. */

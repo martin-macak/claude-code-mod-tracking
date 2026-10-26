@@ -192,6 +192,8 @@ declare module 'claude-code' {
       view: string | null
       /** Issue #63, L3. The filters of the pane: `t` hides the rows nobody touched. Session scope, reset by `/clear`. */
       filters: { touchedOnly: boolean }
+      /** Issue #138. The ids of the rows the person marked with `m`. Session scope: the pane clears it at close, `/clear` resets it. */
+      marks: string[]
     }
   }
 }

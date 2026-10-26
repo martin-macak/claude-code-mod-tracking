@@ -8,9 +8,20 @@ import { type Frame, NEXT_DRAWING_MS, Refocus, RING_PAUSE_MS } from '../hooks/pa
 import { helpTextOf, listText, type PaneHost, PaneSession, TEXT_VIEW } from '../hooks/pane-session'
 import { KEYS as GITHUB_ROW_KEYS } from '../trackers/github/actions'
 import { resetWidths } from '../ux/tree-data-table/columns'
-import { neighbourOf } from '../ux/tree-data-table/table'
+import { neighbourOf, survivorOf } from '../ux/tree-data-table/table'
 import { fakeConfig } from './fixtures/config-fs'
-import { buttonOf, footerOf, handlesOf, leaves, nodes, press, rowBoxes, texts, viewLineOf } from './fixtures/drawn'
+import {
+  buttonOf,
+  footerOf,
+  handlesOf,
+  leaves,
+  nodes,
+  press,
+  rowBoxes,
+  texts,
+  VIEW_LINE_KEYS,
+  viewLineOf,
+} from './fixtures/drawn'
 import { EL } from './fixtures/elements'
 import { fakePorts } from './fixtures/ports'
 import { row, section } from './fixtures/sections'
@@ -45,16 +56,26 @@ function setup(
     /** What a fake write does to `sections`. */
     onDismiss: (_ids: readonly string[]): void => {},
     onPriority: (_id: string, _level: string | undefined): void => {},
+    onPriorities: (_ids: readonly string[], _level: string | undefined): void => {},
     setPriorityError: undefined as Error | undefined,
     entry: async () => void host.calls.push('entry'),
     paneData: async (_p: unknown, view: PaneView) => {
       host.views.push(view)
       return host.sections
     },
-    footer: async (_p: unknown, rowRef: RowRef | undefined, help: boolean): Promise<readonly FooterKey[]> =>
+    /** The rows that the trackers hold and the sections leave out for a rule of time or of a cap (issue #138). */
+    held: [] as TreeRow[],
+    /** The sections with no rule of time or of a cap: what `paneData` draws, and the held rows. */
+    inventory: async (_p: unknown) => [...host.sections, section('held', host.held)],
+    footer: async (
+      _p: unknown,
+      rowRef: RowRef | undefined,
+      help: boolean,
+      markedRows?: readonly RowRef[],
+    ): Promise<readonly FooterKey[]> =>
       host.allLive
         ? reg.all().map(k => ({ ...k, enabled: true, buttonKey: buttonKeyOf(k) }))
-        : footerKeys(reg, rowRef, owner => owner === 'web', help),
+        : footerKeys(reg, rowRef, owner => owner === 'web', help, undefined, markedRows),
     dismiss: async (_p: unknown, ids: readonly string[]) => {
       host.calls.push(`dismiss ${ids.join(',')}`)
       host.onDismiss(ids)
@@ -63,6 +84,10 @@ function setup(
       if (host.setPriorityError) throw host.setPriorityError
       host.calls.push(`setPriority ${id} ${level}`)
       host.onPriority(id, level)
+    },
+    setPriorities: async (_p: unknown, ids: readonly string[], level: string | undefined) => {
+      host.calls.push(`setPriorities ${ids.join(',')} ${level}`)
+      host.onPriorities(ids, level)
     },
     refreshManual: async () => void host.calls.push('refreshManual'),
     runAction: async (_p: unknown, owner: string, id: string, rowId: string | null, surface?: string) => {
@@ -143,10 +168,10 @@ test('draw hands the body height to the help view: a short body draws it compact
   const t = setup(webs('a'), { path: '/p/config.json', version: '1.2.3' })
   t.w.state.set('help', true)
   const help = async (rows?: number) => (await t.draw(96, rows)) as unknown as { children: { children: unknown[] }[] }
-  // The full view is 2 titles, 10 keys (g, a and t are pane keys, issue #63, L3), the config line and the version line. The compact
-  // view is 8 lines: three keys to a line.
-  expect((await help(undefined)).children[0]?.children).toHaveLength(14)
-  expect((await help(28)).children[0]?.children).toHaveLength(14)
+  // The full view is 2 titles, 11 keys (g, a and t are pane keys, issue #63, L3; m is a row key, issue #138), the config line and the
+  // version line. The compact view is 8 lines: three keys to a line.
+  expect((await help(undefined)).children[0]?.children).toHaveLength(15)
+  expect((await help(28)).children[0]?.children).toHaveLength(15)
   expect((await help(11)).children[0]?.children).toHaveLength(8)
 })
 
@@ -917,6 +942,27 @@ test('a digit whose read of selected is in flight through a closing and a reopen
     release()
     await t.session.idle()
     expect(calls, key).toEqual([]) // no `setPriority d high`, no `dismiss d`, no ask, no ring
+    expect(t.selected(), key).toBe('d')
+  }
+})
+
+// The read of the marks follows the ask for the keys, and a bulk key waits for it. It can still be in flight when the pane closes and
+// opens again, and then the key must not act on the rows of the old pane (issue #138, review M1).
+test('a digit or x whose read of the marks is in flight through a closing and a reopening acts on nothing', async () => {
+  for (const key of ['prio-1', 'dismiss']) {
+    const t = setup(webs('a', 'b', 'c', 'd'))
+    t.w.state.set('selected', 'b')
+    const calls = engineLog(t)
+    t.host.calls = calls
+    const tree = await t.draw() // the pane has the keys: the press asks for none
+    const release = holdFirst(t.w.ports.state.marks, 'get') // after the draw, which reads `marks` too
+    press(buttonOf(tree, key))
+    await turn()
+    await t.session.closed(t.w.ports)
+    t.w.state.set('selected', 'd') // /track again, and a click on d
+    release()
+    await t.session.idle()
+    expect(calls, key).toEqual([]) // no `setPriority b high`, no `dismiss b`
     expect(t.selected(), key).toBe('d')
   }
 })
@@ -2158,10 +2204,10 @@ test('x on the last row while the ring is on x or r asks for the ring on that Bu
   }
 })
 
-// `g`, `a` and `t` sit on the view line, not in the footer. A ring on one of them is a ring on a Button that the next drawing
+// `g`, `a`, `t` and `m` sit on the view line, not in the footer. A ring on one of them is a ring on a Button that the next drawing
 // still holds, so the press that took the last row asks for that Button again (issue #63, L3, review m1).
-test('x on the only row while the ring sits on g keeps the ring on g: a view line Button is still drawn', async () => {
-  for (const at of ['view', 'show-all', 'touched']) {
+test('x on the only row while the ring sits on a view line Button keeps the ring on it: the Button is still drawn', async () => {
+  for (const at of VIEW_LINE_KEYS) {
     const t = await ringOn(at, ['a'])
     t.host.onDismiss = () => t.host.setRows([])
     await pressDraw(t, 'dismiss')
@@ -2171,8 +2217,8 @@ test('x on the only row while the ring sits on g keeps the ring on g: a view lin
 })
 
 // The bound reads the state (`frameFromState`), which must name the view line Buttons too, as the drawing does.
-test('x on the only row while the ring sits on g, with no frame before the bound: the state read keeps the ring on g', async () => {
-  for (const at of ['view', 'show-all', 'touched']) {
+test('x on the only row while the ring sits on a view line Button, with no frame before the bound: the state read keeps the ring on it', async () => {
+  for (const at of VIEW_LINE_KEYS) {
     const t = await ringOn(at, ['a'])
     t.host.onDismiss = () => t.host.setRows([])
     press(buttonOf(await t.draw(), 'dismiss'))
@@ -2206,6 +2252,21 @@ test('neighbourOf: the next row at the same or a lower depth, else the one befor
   expect(neighbourOf(rows, 'c')).toBe('b1') // nothing at depth 0 or lower follows c: the drawn row before it
   expect(neighbourOf(rows, 'zz')).toBeNull()
   expect(neighbourOf([at('a', 0)], 'a')).toBeNull()
+})
+
+test('survivorOf: the row itself when it stays, else the next row outside a dismissed subtree, else the one before, else none', () => {
+  const at = (id: string, depth: number) => ({ id, owner: 't', group: 's', can: {}, handle: `r-${id}`, depth })
+  const rows = [at('a', 0), at('b', 0), at('b1', 1), at('c', 0), at('c1', 1), at('d', 0)]
+  const gone = new Set(['b', 'c'])
+  expect(survivorOf(rows, 'a', gone)).toBe('a')
+  expect(survivorOf(rows, 'b1', new Set(['c']))).toBe('b1') // a child that stays
+  expect(survivorOf(rows, 'b', gone)).toBe('d') // past b1 (a child of b), c and c1
+  expect(survivorOf(rows, 'c', gone)).toBe('d')
+  expect(survivorOf(rows, 'd', new Set(['c', 'd']))).toBe('b1') // nothing stays after d: the drawn row before that stays
+  expect(survivorOf(rows, 'a', new Set(rows.map(r => r.id)))).toBeNull()
+  expect(survivorOf(rows, 'zz', gone)).toBe('zz') // a row no drawing holds: the selection is not touched
+  expect(survivorOf(rows, null, gone)).toBeNull()
+  expect(survivorOf(rows, 'b', new Set(['b']))).toBe('c') // as neighbourOf: the one row dismissed
 })
 
 test('listText is the text of paneData with nothing selected', async () => {
@@ -2247,7 +2308,7 @@ async function views(o: Parameters<typeof setup>[1] = {}) {
   return t
 }
 
-test('draw puts the view line above the footer: the view, then g, a and t; the footer keeps its keys', async () => {
+test('draw puts the view line above the footer: the view, then g, a, t and m; the footer keeps its keys', async () => {
   const t = await views()
   const tree = await t.draw()
   expect(texts(tree).some(([, s]) => s === 'View: list')).toBe(true)
@@ -2255,6 +2316,7 @@ test('draw puts the view line above the footer: the view, then g, a and t; the f
     ['g', 'view'],
     ['a', 'show all'],
     ['t', 'touched only'],
+    ['m', 'mark'],
   ])
   expect(footerOf(tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
 })
@@ -2458,4 +2520,711 @@ test('a tracker key passes the surface of its press to runAction', async () => {
   press(buttonOf(await t.draw(), 'web.open'))
   await t.session.idle()
   expect(t.host.surfaces).toEqual(['desktop', undefined])
+})
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Issue #138, row marks and bulk actions. `m` marks the selected row, `x` and the digits then act on the marked rows, and a
+// bulk `x` asks first: the view line holds the question, and only an `x` from a drawing that showed it answers.
+
+const marksOf = (t: ReturnType<typeof setup>): unknown => t.w.state.get('marks')
+const QUESTION = (n: number): string => `Dismiss ${n} marked rows? x again: yes`
+const viewWords = (tree: unknown): string | undefined =>
+  texts(tree).find(([, s]) => s.startsWith('View:') || s.startsWith('Dismiss '))?.[1]
+const labelOf = (tree: unknown, key: string): unknown => buttonOf(tree, key).props.label
+/** Rows `a` to `d` with `b` selected, and the rows in `ids` marked. The first drawing is made. */
+async function marked(...ids: string[]) {
+  const t = setup(webs('a', 'b', 'c', 'd'))
+  t.w.state.set('selected', 'b')
+  t.w.state.set('marks', ids)
+  await t.draw()
+  t.w.stateSets = {}
+  return t
+}
+/** The ring requests that the engine got, as `r<n>`. */
+const rings = (t: ReturnType<typeof setup>): string[] => t.w.ui.focused
+
+test('draw with marks writes nothing: a render never prunes the marks (E9)', async () => {
+  const t = await marked('a', 'gone')
+  await t.draw()
+  expect(t.w.stateSets).toEqual({})
+  expect(marksOf(t)).toEqual(['a', 'gone'])
+})
+
+test('m marks the selected row, redraws once and asks for the ring on that row; a second m unmarks it', async () => {
+  const t = await abc()
+  const drawn = t.w.ui.invalidated
+  await t.pressKey('mark')
+  expect(marksOf(t)).toEqual(['b'])
+  expect(t.w.ui.invalidated - drawn).toBe(1)
+  expect(t.selected()).toBe('b')
+  expect(rings(t)).toEqual(['r1'])
+  await t.pressKey('mark')
+  expect(marksOf(t)).toEqual([])
+  expect(rings(t)).toEqual(['r1', 'r1'])
+})
+
+test('marks live in a session atom: no config file write, no store key', async () => {
+  const t = await abc()
+  await t.w.clock.advance(5000)
+  const files = { ...t.w.files }
+  const sets = t.w.storeSets
+  await t.pressKey('mark')
+  await t.w.clock.advance(5000)
+  expect(t.w.files).toEqual(files)
+  expect(t.w.storeSets).toBe(sets)
+})
+
+test('a marked row draws * and the view line says how many are marked; x names the count', async () => {
+  const t = await marked('a', 'c')
+  const tree = await t.draw()
+  expect(rowBoxes(tree).map(b => leaves(b).includes('*'))).toEqual([true, false, true, false])
+  expect(viewWords(tree)).toBe('View: list · 2 marked')
+  expect(labelOf(tree, 'dismiss')).toBe('dismiss 2')
+  expect(labelOf(tree, 'prio-1')).toBe('high') // the digits keep their words
+  const none = await (await abc()).draw()
+  expect(viewWords(none)).toBe('View: list')
+  expect(labelOf(none, 'dismiss')).toBe('dismiss')
+})
+
+test('a mark survives a view switch: it is a row id', async () => {
+  const t = await views()
+  await t.pressKey('mark')
+  await t.pressKey('view')
+  expect(marksOf(t)).toEqual(['b'])
+  expect(rowBoxes(await t.draw()).filter(b => leaves(b).includes('*'))).toHaveLength(1)
+})
+
+test('m is dim on a row that takes no bulk key, and does nothing; a marked row can always be unmarked', async () => {
+  const t = setup([web('a', { can: {} }), web('b')])
+  t.w.state.set('selected', 'a')
+  const tree = await t.draw()
+  expect(buttonOf(tree, 'mark').props.dimColor).toBe(true)
+  press(buttonOf(tree, 'mark'))
+  await t.session.idle()
+  expect(marksOf(t) ?? []).toEqual([])
+  t.w.state.set('marks', ['a']) // marked another way (a later press that marks a whole turn): it stays unmarkable
+  expect(buttonOf(await t.draw(), 'mark').props.dimColor).toBeUndefined()
+  await t.pressKey('mark')
+  expect(marksOf(t)).toEqual([])
+})
+
+test('the next mark write prunes the ids that no tracker row holds', async () => {
+  const t = await marked('a', 'gone')
+  await t.pressKey('mark') // b
+  expect(marksOf(t)).toEqual(['a', 'b'])
+})
+
+test('the next mark write keeps the marks of rows that the trackers hold and a rule of time or of a cap leaves out', async () => {
+  const t = await marked('a', 'old', 'gone')
+  t.host.held = [web('old', { children: [web('older')] })] // the trackers hold `old`; the sections (what `paneData` gives) do not
+  await t.pressKey('mark') // b
+  expect(marksOf(t)).toEqual(['a', 'old', 'b']) // `gone` is held by no tracker: it goes
+  t.w.state.set('marks', ['older', 'gone'])
+  await t.pressKey('mark')
+  expect(marksOf(t)).toEqual(['older', 'b']) // a child of a held row is held too
+})
+
+test('the next mark write keeps the marks of rows that the filter t, a cap and a closed parent leave out of the drawing', async () => {
+  const t = setup(
+    [web('a'), web('p', { children: [web('k')] }), reasoned('d', 'discovered'), ...webs('c', 'e', 'f', 'g')],
+    {
+      file: { global: { ui: { sectionRows: 5 } } },
+    },
+  )
+  t.w.state.set('selected', 'a')
+  t.w.state.set('marks', ['k', 'd', 'g']) // `k` under a closed row, `d` out by the filter, `g` past the cap
+  await t.draw()
+  await t.pressKey('touched')
+  await t.pressKey('mark') // a
+  expect(marksOf(t)).toEqual(['k', 'd', 'g', 'a'])
+})
+
+test('a mark press that began before the pane closed writes nothing after it', async () => {
+  const t = await abc()
+  const release = holdFirst(t.w.ports.state.marks, 'update')
+  press(buttonOf(await t.draw(), 'mark'))
+  await turn()
+  await t.session.closed(t.w.ports)
+  release()
+  await t.session.idle()
+  expect(marksOf(t)).toEqual([])
+  expect(rings(t)).toEqual([])
+})
+
+// One press asks for the keys once, before the work (issue #115). `m` and a bulk digit have refocus calls of their own.
+test('m and a bulk digit in a pane that has no keys ask for them once, before the work', async () => {
+  const cases = [
+    { key: 'mark', marks: [] as string[], engine: ['open', 'focus r1'] },
+    { key: 'prio-1', marks: ['a', 'c'], engine: ['open', 'setPriorities a,c high', 'focus r1'] },
+  ]
+  for (const { key, marks, engine } of cases) {
+    const t = setup(webs('a', 'b', 'c'))
+    t.w.state.set('selected', 'b')
+    t.w.state.set('marks', marks)
+    const calls = engineLog(t)
+    t.host.calls = calls
+    press(buttonOf(await t.draw(80, undefined, false), key))
+    await t.session.idle()
+    expect(calls, key).toEqual(engine)
+  }
+})
+
+test('x on one marked row that is the selected row dismisses it at once, as it did, and the marks clear', async () => {
+  const t = await marked('b')
+  t.host.onDismiss = () => t.host.setRows(webs('a', 'c', 'd'))
+  await t.pressKey('dismiss')
+  expect(t.host.calls).toEqual(['dismiss b'])
+  expect(marksOf(t)).toEqual([])
+  expect(t.selected()).toBe('c')
+  expect(rings(t)).toEqual(['r1'])
+})
+
+test('x with two marked rows asks first: the view line holds the question, x says confirm 2, nothing is dismissed', async () => {
+  const t = await marked('a', 'c')
+  press(buttonOf(await t.draw(), 'dismiss'))
+  await t.session.idle()
+  expect(t.host.calls).toEqual([])
+  const tree = await t.draw()
+  expect(viewWords(tree)).toBe(QUESTION(2))
+  expect(texts(tree).some(([, s]) => s.startsWith('View:'))).toBe(false) // the question replaces the words
+  expect(labelOf(tree, 'dismiss')).toBe('confirm 2')
+  expect(marksOf(t)).toEqual(['a', 'c']) // asking changes no mark
+})
+
+test('x again, from the drawing that showed the question, dismisses both rows in one call and clears the marks', async () => {
+  const t = await marked('a', 'c')
+  t.host.onDismiss = () => t.host.setRows(webs('b', 'd'))
+  await t.pressKey('dismiss') // asks
+  await t.pressKey('dismiss') // a drawing with the question, then the press
+  expect(t.host.calls).toEqual(['dismiss a,c'])
+  expect(marksOf(t)).toEqual([])
+  // The selected row `b` stays: the ring goes to its new handle.
+  expect(t.selected()).toBe('b')
+  expect(rings(t)).toEqual(['r0'])
+  expect(viewWords(await t.draw())).toBe('View: list') // no question is left
+})
+
+test('x on a selected row that was dismissed selects the next row that stays, and the ring follows it', async () => {
+  const t = setup(webs('a', 'b', 'c', 'd', 'e'))
+  t.w.state.set('selected', 'b')
+  t.w.state.set('marks', ['b', 'c'])
+  await t.draw()
+  t.host.onDismiss = () => t.host.setRows(webs('a', 'd', 'e'))
+  await t.pressKey('dismiss')
+  await t.pressKey('dismiss')
+  expect(t.host.calls).toEqual(['dismiss b,c'])
+  expect(t.selected()).toBe('d') // past the marked c, not onto it
+  expect(rings(t)).toEqual(['r1'])
+})
+
+test('x on the marked rows that were the last ones selects the row before; with no row left it clears the selection', async () => {
+  const last = setup(webs('a', 'b', 'c'))
+  last.w.state.set('selected', 'c')
+  last.w.state.set('marks', ['b', 'c'])
+  await last.draw()
+  last.host.onDismiss = () => last.host.setRows(webs('a'))
+  await last.pressKey('dismiss')
+  await last.pressKey('dismiss')
+  expect(last.selected()).toBe('a')
+  expect(rings(last)).toEqual(['r0'])
+
+  const all = setup(webs('a', 'b'))
+  all.w.state.set('selected', 'a')
+  all.w.state.set('marks', ['a', 'b'])
+  await all.draw()
+  all.host.onDismiss = () => all.host.setRows([])
+  await all.pressKey('dismiss')
+  await all.pressKey('dismiss')
+  expect(all.host.calls).toEqual(['dismiss a,b'])
+  expect(all.selected()).toBeNull()
+  expect(rings(all)).toEqual([])
+})
+
+test('x skips the children of a dismissed row when it picks the next row to select', async () => {
+  const t = setup([web('a'), web('b', { expandedByDefault: true, children: [web('b1')] }), web('c'), web('d')])
+  t.w.state.set('selected', 'b')
+  t.w.state.set('marks', ['b', 'c'])
+  await t.draw()
+  t.host.onDismiss = () => t.host.setRows(webs('a', 'd'))
+  await t.pressKey('dismiss')
+  await t.pressKey('dismiss')
+  expect(t.selected()).toBe('d')
+})
+
+test('x with one marked row that is not the selected row asks as well (a stale mark must not act in silence)', async () => {
+  const t = await marked('d')
+  await t.pressKey('dismiss')
+  expect(t.host.calls).toEqual([])
+  expect(viewWords(await t.draw())).toBe('Dismiss 1 marked row? x again: yes')
+  await t.pressKey('dismiss')
+  expect(t.host.calls).toEqual(['dismiss d'])
+})
+
+test('an x from a drawing where it was live does nothing once no marked row can be dismissed', async () => {
+  const process = row('p', { name: 'p', description: 'p' }, { owner: 'processes', can: {} })
+  const t = setup([...webs('a', 'b'), process])
+  t.w.state.set('selected', 'a')
+  t.w.state.set('marks', ['a', 'b'])
+  const tree = await t.draw() // x is live: a and b can be dismissed
+  t.w.state.set('marks', ['p']) // the marks changed before the press ran
+  press(buttonOf(tree, 'dismiss'))
+  await t.session.idle()
+  expect(t.host.calls).toEqual([])
+  expect(viewWords(await t.draw())).toBe('View: list · 1 marked') // no "Dismiss 0 marked rows?"
+})
+
+test('a marked child and its marked parent go to one dismiss call, each once', async () => {
+  const t = setup([web('a'), web('p', { expandedByDefault: true, children: [web('k')] }), web('c')])
+  t.w.state.set('selected', 'a')
+  t.w.state.set('marks', ['p', 'k'])
+  await t.draw()
+  t.host.onDismiss = () => t.host.setRows(webs('a', 'c'))
+  await t.pressKey('dismiss')
+  expect(viewWords(await t.draw())).toBe(QUESTION(2))
+  await t.pressKey('dismiss')
+  expect(t.host.calls).toEqual(['dismiss p,k'])
+  expect(t.selected()).toBe('a')
+})
+
+test('two presses of x from one drawing do not confirm: only a drawing that showed the question answers', async () => {
+  const t = await marked('a', 'c')
+  const tree = await t.draw()
+  press(buttonOf(tree, 'dismiss'))
+  press(buttonOf(tree, 'dismiss'))
+  await t.session.idle()
+  expect(t.host.calls).toEqual([])
+  // The next drawing shows the question: its press confirms.
+  press(buttonOf(await t.draw(), 'dismiss'))
+  await t.session.idle()
+  expect(t.host.calls).toEqual(['dismiss a,c'])
+})
+
+test('two presses of x from two drawings that came before the question do not confirm either', async () => {
+  const t = await marked('a', 'c')
+  const first = await t.draw()
+  const second = await t.draw() // a redraw between the presses, before the first press ran
+  press(buttonOf(first, 'dismiss'))
+  press(buttonOf(second, 'dismiss'))
+  await t.session.idle()
+  expect(t.host.calls).toEqual([])
+  const shown = await t.draw() // shows the question
+  press(buttonOf(first, 'dismiss')) // a press of a drawing from before the question keeps it armed
+  await t.session.idle()
+  expect(t.host.calls).toEqual([])
+  press(buttonOf(shown, 'dismiss'))
+  await t.session.idle()
+  expect(t.host.calls).toEqual(['dismiss a,c'])
+})
+
+test('x with marked rows that changed since the question asks again, for the new rows', async () => {
+  const t = await marked('a', 'c')
+  await t.pressKey('dismiss') // asks about a and c
+  t.w.state.set('marks', ['a', 'c', 'd']) // a mark that no key made
+  await t.pressKey('dismiss')
+  expect(t.host.calls).toEqual([])
+  expect(viewWords(await t.draw())).toBe(QUESTION(3))
+})
+
+test('an x from the drawing that showed the question does not dismiss rows that were marked after it', async () => {
+  const t = await marked('a', 'c')
+  await t.pressKey('dismiss') // asks about a and c
+  const shown = await t.draw() // shows the question
+  t.w.state.set('marks', ['a', 'c', 'd']) // a mark that no key made, after the drawing
+  press(buttonOf(shown, 'dismiss'))
+  await t.session.idle()
+  expect(t.host.calls).toEqual([])
+  expect(marksOf(t)).toEqual(['a', 'c', 'd'])
+  expect(viewWords(await t.draw())).toBe(QUESTION(3))
+})
+
+test('a drawing that holds other marked rows than the question withdraws it', async () => {
+  const t = await marked('a', 'c')
+  await t.pressKey('dismiss')
+  expect(viewWords(await t.draw())).toBe(QUESTION(2))
+  t.w.state.set('marks', ['a'])
+  expect(viewWords(await t.draw())).toBe('View: list · 1 marked')
+})
+
+// Every key and every move of the person that is not the answer ends the question. The next x asks again.
+const ENDS: [string, (t: ReturnType<typeof setup>) => Promise<void>][] = [
+  ['r', t => t.pressKey('refresh')],
+  ['g', t => t.pressKey('view')],
+  ['a', t => t.pressKey('show-all')],
+  ['t', t => t.pressKey('touched')],
+  ['m', t => t.pressKey('mark')],
+  [
+    'h and back',
+    async t => {
+      await t.pressKey('help')
+      await t.pressKey('help')
+    },
+  ],
+  ['a click on a row', async t => press(buttonOf(await t.draw(), 'r0'))],
+  ['the ring on an N more row', t => t.session.focused(t.w.ports, 'm0', 'person')],
+  ['a ring move of the person onto a row', t => t.session.focused(t.w.ports, 'r0', 'person')],
+]
+
+test('any other key, a click on a row and a ring move onto a row end the question: the next x asks again', async () => {
+  for (const [name, end] of ENDS) {
+    const t = await marked('a', 'c')
+    await t.pressKey('dismiss') // asks
+    expect(viewWords(await t.draw()), name).toBe(QUESTION(2))
+    await end(t)
+    await t.session.idle()
+    expect(viewWords(await t.draw()), name).toMatch(/^View: /)
+    await t.pressKey('dismiss')
+    expect(
+      t.host.calls.filter(c => c.startsWith('dismiss')),
+      name,
+    ).toEqual([])
+  }
+})
+
+const repoRow = (id: string) => row(id, { name: id, description: id }, { owner: 'repos', can: { dismiss: true } })
+
+test('a click on a dim footer key or on an "N more" Button ends the question and the pane redraws without it', async () => {
+  for (const end of ['prio-1', 'm0']) {
+    const t = setup([repoRow('r1'), repoRow('r2'), ...webs('a', 'b', 'c', 'd', 'e', 'f')], {
+      file: { global: { ui: { sectionRows: 5 } } },
+    })
+    t.w.state.set('selected', 'a')
+    t.w.state.set('marks', ['r1', 'r2'])
+    await t.draw()
+    await t.pressKey('dismiss') // asks: two repo rows take x and no digit
+    const tree = await t.draw()
+    expect(viewWords(tree), end).toBe(QUESTION(2))
+    expect(buttonOf(tree, 'prio-1').props.dimColor).toBe(true)
+    const drawn = t.w.ui.invalidated
+    press(buttonOf(tree, end))
+    await t.session.idle()
+    expect(t.w.ui.invalidated, end).toBeGreaterThan(drawn) // the pane is asked to draw without the question
+    expect(viewWords(await t.draw()), end).toMatch(/^View: /)
+    await t.pressKey('dismiss')
+    expect(t.host.calls, end).toEqual([]) // asks again, dismisses nothing
+  }
+})
+
+// A page key and the wheel move the selection and the ring, so they end the question like any move of the person (review m7).
+test('a page key and a wheel tick end the question: the next x asks again', async () => {
+  for (const by of [11, 1, -1]) {
+    const t = setup(TWELVE)
+    t.w.state.set('selected', 'w3')
+    t.w.state.set('marks', ['w0', 'w2'])
+    press(buttonOf(await t.draw(96, SHORT), 'dismiss'))
+    await t.session.idle()
+    expect(viewWords(await t.draw(96, SHORT)), String(by)).toBe(QUESTION(2))
+    expect(await t.session.scrolled(t.w.ports, t.m, by)).toBe(true)
+    expect(viewWords(await t.draw(96, SHORT)), String(by)).toMatch(/^View: /)
+    press(buttonOf(await t.draw(96, SHORT), 'dismiss'))
+    await t.session.idle()
+    expect(t.host.calls, String(by)).toEqual([]) // asks again, dismisses nothing
+    expect(viewWords(await t.draw(96, SHORT)), String(by)).toBe(QUESTION(2))
+  }
+})
+
+// Codex review of #239 (round 5). With every row in view no window cuts the list, so `scrolled` leaves the move to the engine and
+// returns false. The question must end before that return: a page key, Home, End and the wheel are things the person did other
+// than answer, with a window or without one.
+test('a page key and a wheel tick end the question also when every row fits, and the engine still scrolls', async () => {
+  for (const by of [11, 1, -1]) {
+    const t = await marked('a', 'c') // four rows in a body of no limit: no window
+    press(buttonOf(await t.draw(), 'dismiss'))
+    await t.session.idle()
+    expect(viewWords(await t.draw()), String(by)).toBe(QUESTION(2))
+    const drawn = t.w.ui.invalidated
+    expect(await t.session.scrolled(t.w.ports, t.m, by), String(by)).toBe(false) // no window: the move is the engine's
+    expect(t.w.ui.invalidated, String(by)).toBeGreaterThan(drawn) // the pane is asked to draw without the question
+    expect(viewWords(await t.draw()), String(by)).toMatch(/^View: /)
+    press(buttonOf(await t.draw(), 'dismiss'))
+    await t.session.idle()
+    expect(t.host.calls, String(by)).toEqual([]) // asks again, dismisses nothing
+    expect(viewWords(await t.draw()), String(by)).toBe(QUESTION(2))
+  }
+})
+
+// A body that holds every row of the list: `scrolled` finds a drawing with no window (`page` is absent).
+test('a page key, Home and End end the question when a tall body holds every row of a long list', async () => {
+  for (const by of [40, -40]) {
+    const t = setup(TWELVE)
+    t.w.state.set('selected', 'w3')
+    t.w.state.set('marks', ['w0', 'w2'])
+    press(buttonOf(await t.draw(96, 40), 'dismiss'))
+    await t.session.idle()
+    expect(viewWords(await t.draw(96, 40)), String(by)).toBe(QUESTION(2))
+    expect(await t.session.scrolled(t.w.ports, t.m, by), String(by)).toBe(false)
+    expect(viewWords(await t.draw(96, 40)), String(by)).toMatch(/^View: /)
+  }
+})
+
+// Home on the first row and End on the last row of a window move nothing: the clamp leaves the selection where it is. The person
+// still pressed a key other than the answer.
+test('a page key that the window clamps at the first or the last row still ends the question', async () => {
+  for (const [at, by] of [
+    ['w0', -11],
+    ['w0', -1],
+    ['w11', 11],
+    ['w11', 1],
+  ] as const) {
+    const t = setup(TWELVE)
+    t.w.state.set('selected', at)
+    t.w.state.set('marks', ['w1', 'w2'])
+    press(buttonOf(await t.draw(96, SHORT), 'dismiss'))
+    await t.session.idle()
+    expect(viewWords(await t.draw(96, SHORT)), `${at} ${by}`).toBe(QUESTION(2))
+    expect(await t.session.scrolled(t.w.ports, t.m, by), `${at} ${by}`).toBe(true)
+    expect(t.selected(), `${at} ${by}`).toBe(at) // the clamp moved nothing
+    expect(viewWords(await t.draw(96, SHORT)), `${at} ${by}`).toMatch(/^View: /)
+  }
+})
+
+// A scroll event with no distance or no number is no move of the person: it leaves the question, with a window and without one.
+test('a scroll event of 0 or of no number leaves the question standing', async () => {
+  for (const rows of [undefined, SHORT]) {
+    for (const by of [0, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const t = setup(TWELVE)
+      t.w.state.set('selected', 'w3')
+      t.w.state.set('marks', ['w0', 'w2'])
+      press(buttonOf(await t.draw(96, rows), 'dismiss'))
+      await t.session.idle()
+      expect(viewWords(await t.draw(96, rows)), `${rows} ${by}`).toBe(QUESTION(2))
+      await t.session.scrolled(t.w.ports, t.m, by)
+      expect(viewWords(await t.draw(96, rows)), `${rows} ${by}`).toBe(QUESTION(2))
+    }
+  }
+})
+
+// The close mark is a stop of the ring between the footer Buttons and the first row, with no key. A move onto it ends nothing, as a
+// move onto a footer Button ends nothing: Tab from `x` walks the Buttons of the footer and the view line, then the close mark.
+test('a ring move onto the close mark keeps the question, as a move onto a footer Button does', async () => {
+  const t = await marked('a', 'c')
+  await t.pressKey('dismiss')
+  expect(viewWords(await t.draw())).toBe(QUESTION(2))
+  await t.session.focused(t.w.ports, undefined, 'person')
+  expect(viewWords(await t.draw())).toBe(QUESTION(2))
+  await t.session.focused(t.w.ports, 'mark', 'person') // a Button of the view line
+  expect(viewWords(await t.draw())).toBe(QUESTION(2))
+})
+
+// The label counts the marked rows that the drawing lays with the caps of the config. The budget guard may halve the caps of the
+// drawing it keeps (a pane of thousands of values), and then a row that the label counted is no row of the drawing. The press
+// reads the same laid rows as the label (review m5), so the question names the rows that the label named.
+test('with the budget guard cutting the rows, the press acts on the rows that the label counted', async () => {
+  // 300 rows with four open children each: 1500 rows, too many values for the budget, so the guard halves the caps.
+  const kids = (id: string) => [1, 2, 3, 4].map(n => web(`${id}.${n}`))
+  const rows = Array.from({ length: 300 }, (_, i) => web(`u${i}`, { expandedByDefault: true, children: kids(`u${i}`) }))
+  const t = setup(rows, { file: { global: { ui: { sectionRows: 300, maxRows: 1000 } } } })
+  t.w.state.set('selected', 'u0')
+  t.w.state.set('marks', ['u0', 'u299'])
+  const tree = await t.draw()
+  expect(handlesOf(tree)).toHaveLength(750) // the guard halved the caps to 150 rows: u299 is no row of the drawing
+  expect(labelOf(tree, 'dismiss')).toBe('dismiss 2')
+  expect(viewWords(tree)).toBe('View: list · 2 marked')
+  press(buttonOf(tree, 'dismiss'))
+  await t.session.idle()
+  expect(t.host.calls).toEqual([]) // two targets, as the label said: the press asks
+  expect(viewWords(await t.draw())).toBe(QUESTION(2))
+})
+
+test('a digit ends the question as well, and clears the marks it acted on', async () => {
+  const t = await marked('a', 'c')
+  await t.pressKey('dismiss')
+  expect(viewWords(await t.draw())).toBe(QUESTION(2))
+  await t.pressKey('prio-3')
+  expect(viewWords(await t.draw())).toBe('View: list')
+  expect(marksOf(t)).toEqual([])
+})
+
+test('a ring move onto x keeps the question, and Enter on x confirms', async () => {
+  const t = await marked('a', 'c')
+  await t.pressKey('dismiss')
+  const tree = await t.draw()
+  await t.session.focused(t.w.ports, 'dismiss', 'person') // Tab onto x: a footer Button, no row
+  expect(viewWords(await t.draw())).toBe(QUESTION(2))
+  press(buttonOf(tree, 'dismiss'))
+  await t.session.idle()
+  expect(t.host.calls).toEqual(['dismiss a,c'])
+})
+
+test('a move of the plugin onto a row (its own ring request) does not end the question', async () => {
+  const t = await marked('a', 'c')
+  await t.pressKey('dismiss')
+  await t.draw()
+  await t.session.focused(t.w.ports, 'r1', 'plugin')
+  expect(viewWords(await t.draw())).toBe(QUESTION(2))
+})
+
+test('a drawing without the keys ends the question, and the next x asks again', async () => {
+  const t = await marked('a', 'c')
+  await t.pressKey('dismiss')
+  expect(viewWords(await t.draw())).toBe(QUESTION(2))
+  expect(viewWords(await t.draw(80, undefined, false))).toBe('View: list · 2 marked')
+  expect(viewWords(await t.draw())).toBe('View: list · 2 marked')
+  await t.pressKey('dismiss')
+  expect(t.host.calls).toEqual([])
+})
+
+test('closing the pane clears the marks and the question', async () => {
+  const t = await marked('a', 'c')
+  await t.pressKey('dismiss')
+  await t.session.closed(t.w.ports)
+  expect(marksOf(t)).toEqual([])
+  t.w.state.set('selected', 'b')
+  t.w.state.set('marks', ['a', 'c']) // marked again in the next pane
+  expect(viewWords(await t.draw())).toBe('View: list · 2 marked')
+  await t.pressKey('dismiss')
+  expect(t.host.calls).toEqual([])
+})
+
+test('a press of x that began before the pane closed arms nothing after it', async () => {
+  const t = await marked('a', 'c')
+  press(buttonOf(await t.draw(), 'dismiss'))
+  await t.session.closed(t.w.ports) // the press has not run: it reads `selected` first
+  await t.session.idle()
+  t.w.state.set('marks', ['a', 'c'])
+  expect(viewWords(await t.draw())).toBe('View: list · 2 marked')
+})
+
+test('a digit with marked rows sets every marked row that takes it in one call, never asks and clears the marks', async () => {
+  const t = await marked('a', 'c')
+  await t.pressKey('prio-1')
+  expect(t.host.calls).toEqual(['setPriorities a,c high'])
+  expect(marksOf(t)).toEqual([])
+  expect(t.selected()).toBe('b')
+  expect(rings(t)).toEqual(['r1'])
+  const auto = await marked('a', 'd')
+  await auto.pressKey('prio-0')
+  expect(auto.host.calls).toEqual(['setPriorities a,d undefined'])
+})
+
+test('a bulk dismiss and a bulk digit that fail log one line, keep the marks and leave the selection', async () => {
+  const t = await marked('a', 'c')
+  t.host.dismiss = async () => {
+    throw new Error('boom')
+  }
+  await t.pressKey('dismiss') // asks
+  await t.pressKey('dismiss') // confirms and fails
+  expect(t.w.logs).toEqual(['pane: dismiss failed: boom'])
+  expect(marksOf(t)).toEqual(['a', 'c'])
+  expect(t.selected()).toBe('b')
+  await t.pressKey('dismiss')
+  expect(viewWords(await t.draw())).toBe(QUESTION(2)) // the answer was used: the next x asks again
+  expect(t.w.logs).toHaveLength(1)
+  t.host.setPriorities = async () => {
+    throw new Error('bang')
+  }
+  await t.pressKey('prio-1')
+  expect(t.w.logs.at(-1)).toBe('pane: prio-1 failed: bang')
+  expect(marksOf(t)).toEqual(['a', 'c'])
+})
+
+test('a digit with a marked row that cannot take it leaves that row out', async () => {
+  const t = setup([web('a'), web('b'), web('c', { can: { dismiss: true } })])
+  t.w.state.set('selected', 'a')
+  t.w.state.set('marks', ['b', 'c'])
+  await t.draw()
+  await t.pressKey('prio-2')
+  expect(t.host.calls).toEqual(['setPriorities b normal'])
+})
+
+test('marks win: with two marked rows that take no digit and an item row selected, the digits are dim and change nothing', async () => {
+  const t = setup([web('a'), repoRow('r1'), repoRow('r2')])
+  t.w.state.set('selected', 'a')
+  t.w.state.set('marks', ['r1', 'r2'])
+  const tree = await t.draw()
+  for (const key of ['prio-1', 'prio-2', 'prio-3', 'prio-0']) expect(buttonOf(tree, key).props.dimColor, key).toBe(true)
+  expect(buttonOf(tree, 'dismiss').props.dimColor).toBeUndefined()
+  for (const key of ['prio-1', 'prio-0']) press(buttonOf(tree, key))
+  await t.session.idle()
+  expect(t.host.calls).toEqual([])
+  expect(marksOf(t)).toEqual(['r1', 'r2'])
+  // x acts on the marked rows, not on the selected `a`: it asks about two rows.
+  await t.pressKey('dismiss')
+  expect(viewWords(await t.draw())).toBe(QUESTION(2))
+})
+
+test('marks win for x too: marked rows that cannot be dismissed make x dim, though the selected row could be', async () => {
+  const process = (id: string) => row(id, { name: id, description: id }, { owner: 'processes', can: {} })
+  const t = setup([web('a'), process('p1')])
+  t.w.state.set('selected', 'a')
+  t.w.state.set('marks', ['p1'])
+  const tree = await t.draw()
+  expect(buttonOf(tree, 'dismiss').props.dimColor).toBe(true)
+  press(buttonOf(tree, 'dismiss'))
+  await t.session.idle()
+  expect(t.host.calls).toEqual([])
+  expect(t.w.ui.invalidated).toBe(0) // it asked nothing
+})
+
+test('x acts on the marked rows while the selected row is a process row that cannot be dismissed', async () => {
+  const process = row('p', { name: 'p', description: 'p' }, { owner: 'processes', can: {} })
+  const t = setup([process, ...webs('a', 'b')])
+  t.w.state.set('selected', 'p')
+  t.w.state.set('marks', ['a', 'b'])
+  const tree = await t.draw()
+  expect(buttonOf(tree, 'dismiss').props.dimColor).toBeUndefined()
+  expect(labelOf(tree, 'dismiss')).toBe('dismiss 2')
+  await t.pressKey('dismiss')
+  await t.pressKey('dismiss')
+  expect(t.host.calls).toEqual(['dismiss a,b'])
+})
+
+test('a tracker key stays on the selected row, whatever is marked', async () => {
+  const t = await marked('a', 'c')
+  t.host.keys.add('web', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+  t.host.allLive = true
+  await t.pressKey('web.open')
+  expect(t.host.calls).toEqual(['entry', 'runAction web.open b'])
+})
+
+test('marked rows that the drawing lacks (a cap, a closed parent) count nowhere and get no action', async () => {
+  const t = setup([web('a'), web('p', { children: [web('k')] }), ...webs('c', 'd', 'e', 'f', 'g')], {
+    file: { global: { ui: { sectionRows: 5 } } },
+  })
+  t.w.state.set('selected', 'a')
+  t.w.state.set('marks', ['a', 'g', 'k']) // `g` is past the cap, `k` sits under a closed row
+  const tree = await t.draw()
+  expect(viewWords(tree)).toBe('View: list · 1 marked')
+  expect(labelOf(tree, 'dismiss')).toBe('dismiss 1')
+  await t.pressKey('dismiss') // one target, the selected row: at once
+  expect(t.host.calls).toEqual(['dismiss a'])
+})
+
+test('a mark of a row that the touched filter hides is not drawn, counted or acted on', async () => {
+  const t = setup([web('a'), reasoned('b', 'discovered'), reasoned('c', 'created')])
+  t.w.state.set('selected', 'a')
+  t.w.state.set('marks', ['a', 'b'])
+  await t.draw()
+  await t.pressKey('touched')
+  const tree = await t.draw()
+  expect(viewWords(tree)).toBe('View: list · touched only · 1 hidden · 1 marked')
+  expect(rowBoxes(tree).map(b => leaves(b).includes('*'))).toEqual([true, false]) // a and c are drawn; b is not
+  expect(labelOf(tree, 'dismiss')).toBe('dismiss 1')
+  await t.pressKey('dismiss') // one target, the selected row: at once
+  expect(t.host.calls).toEqual(['dismiss a'])
+})
+
+test('with no marked row drawn, x and the digits act on the selected row as before', async () => {
+  const t = await marked('gone')
+  await t.pressKey('prio-1')
+  expect(t.host.calls).toEqual(['setPriority b high'])
+  await t.pressKey('dismiss')
+  expect(t.host.calls).toEqual(['setPriority b high', 'dismiss b'])
+})
+
+test('at 40 cells m keeps the selected row drawn and asks for the ring on it', async () => {
+  const t = setup(TWELVE)
+  t.w.state.set('selected', 'w9')
+  await t.draw(40, 14)
+  await t.pressKey('mark')
+  const tree = await t.draw(40, 14)
+  expect(shownIds(tree)).toContain('w9')
+  expect(rings(t).at(-1)).toBe('r9')
+})
+
+test('the help view draws no question', async () => {
+  const t = await marked('a', 'c')
+  await t.pressKey('dismiss')
+  t.w.state.set('help', true)
+  const tree = await t.draw()
+  expect(texts(tree).some(([, s]) => s.startsWith('Dismiss '))).toBe(false)
 })

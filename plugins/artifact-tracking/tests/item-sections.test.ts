@@ -784,6 +784,28 @@ test('setPriority marks the row and touches persistence once', async () => {
   expect(stored().find(i => i.key === KEYS.web)?.priority).toBeUndefined()
 })
 
+test('setPriorities marks many rows, a Jira node among them, and touches persistence once', async () => {
+  const t = await paneWorld()
+  let touched = 0
+  const touch = t.m.persistence.touch.bind(t.m.persistence)
+  t.m.persistence.touch = () => {
+    touched++
+    return touch()
+  }
+  const child = 'jira:acme.atlassian.net/ISS-1/PROJ-202'
+  await t.m.setPriorities(t.w.ports, [KEYS.web, child], 'low')
+  expect(touched).toBe(1)
+  const stored = () => t.w.state.get('items') as unknown as { key: string; priority?: string }[]
+  expect(stored().find(i => i.key === KEYS.web)?.priority).toBe('low')
+  expect(cell(find(await t.m.paneData(t.w.ports, NO_VIEW), 'jira', child), 'control').text).toBe('▽')
+  touched = 0
+  await t.m.setPriorities(t.w.ports, [KEYS.web, child], 'low') // nothing changes: no write
+  expect(touched).toBe(0)
+  await t.m.setPriorities(t.w.ports, [KEYS.web, child], undefined)
+  expect(touched).toBe(1)
+  expect(stored().find(i => i.key === KEYS.web)?.priority).toBeUndefined()
+})
+
 test('refreshManual kicks the items and sends manual to the trackers', async () => {
   const log: string[] = []
   const recorder: Tracker = {

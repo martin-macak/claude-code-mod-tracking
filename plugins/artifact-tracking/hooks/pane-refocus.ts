@@ -9,7 +9,7 @@
 // PaneSession owns one; nothing here touches the engine but the `ui.focus` and `ui.open` ports.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Selection". Plan: L6 Task 11, G8.
 
-import { viewKeys } from '../core/infra/keys'
+import { viewButtonKeys } from '../core/infra/keys'
 import { reason } from '../core/infra/steps'
 import type { Ports, Timer } from '../core/interfaces/ports'
 import { type Drawn, findRow, handleOf } from '../ux/tree-data-table/table'
@@ -31,7 +31,7 @@ export const RING_PAUSE_MS = 10
 
 /**
  * What a press can tell about a drawing: whether it is the help view, the handle of each row it draws (by row id) and the
- * keys of its Buttons outside the rows: the footer in drawing order, then the view line (`g`, `a` and `t`, issue #63; the help
+ * keys of its Buttons outside the rows: the footer in drawing order, then the view line (`g`, `a`, `t` and `m`, issues #63 and #138; the help
  * view has none). `keep` chooses the Button for its ring request from this alone. A press whose drawing never came gets one
  * from the state instead (`frameFromState`).
  *
@@ -106,8 +106,8 @@ export async function frameFromState(
   return {
     help: next.help,
     rows: row === null || handle === undefined ? new Map() : new Map([[row, handle]]),
-    // The view line holds `g`, `a` and `t` outside the footer, and a ring on one of them stays on it (not in the help view).
-    keys: [...footer, ...(next.help ? [] : viewKeys(m.keys))].map(k => k.buttonKey),
+    // The view line holds `g`, `a`, `t` and `m` outside the footer, and a ring on one of them stays on it (not in the help view).
+    keys: [...footer.map(k => k.buttonKey), ...(next.help ? [] : viewButtonKeys(m.keys))],
     stops: [], // no pause follows the bound, so nothing compares this frame
   }
 }

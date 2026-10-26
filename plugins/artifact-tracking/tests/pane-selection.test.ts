@@ -7,7 +7,7 @@ import { footerKeys, KeyRegistry } from '../core/infra/keys'
 import type { FooterKey, PaneView, RowRef, SectionSpec, TreeRow } from '../core/interfaces/view'
 import { type PaneHost, PaneSession } from '../hooks/pane-session'
 import { resetWidths } from '../ux/tree-data-table/columns'
-import { type DrawnRow, handleOf, shownSelection } from '../ux/tree-data-table/table'
+import { type DrawnRow, handleOf, laidRefs, refOf, shownSelection } from '../ux/tree-data-table/table'
 import { fakeConfig } from './fixtures/config-fs'
 import { buttonOf, handlesOf, nodes, press, rowBoxes } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
@@ -28,6 +28,34 @@ const drawnRow = (id: string, depth = 0): DrawnRow => ({
   depth,
 })
 const drawnRows = (...ids: string[]): DrawnRow[] => ids.map(id => drawnRow(id))
+
+// ---------------------------------------------------------------- the rows a drawing lays, as the keys see them (issue #138)
+
+test('laidRefs lists the rows of a full drawing as the key routing sees them: open children in, closed children and rows past a cap out', () => {
+  const sections = [
+    group('web', [
+      web('a', { expandedByDefault: true, children: [web('a1')] }),
+      web('b', { children: [web('b1')] }),
+      web('c'),
+    ]),
+  ]
+  expect(laidRefs(sections, view()).map(r => [r.id, r.group])).toEqual([
+    ['a', 'web'],
+    ['a1', 'web'],
+    ['b', 'web'], // b is closed: b1 is not laid
+    ['c', 'web'],
+  ])
+  const capped = { ...view(), limits: { sectionRows: 2, maxRows: 300 } }
+  expect(laidRefs(sections, capped).map(r => r.id)).toEqual(['a', 'a1', 'b']) // the cap counts the top-level rows
+  expect(laidRefs(sections, view(['b'])).map(r => r.id)).toEqual(['a', 'a1', 'b', 'b1', 'c']) // an opened row lays its children
+})
+
+test('refOf is the one RowRef of a row: findRow, laidRefs and the drawn rows give the same one', () => {
+  const sections = [group('web', webs('a', 'b'))]
+  const ref = refOf(web('a'), 'web')
+  expect(ref).toEqual({ id: 'a', owner: 'web', group: 'web', can: { dismiss: true, priority: true } })
+  expect(laidRefs(sections, view())[0]).toEqual(ref)
+})
 
 // ---------------------------------------------------------------- the rule
 

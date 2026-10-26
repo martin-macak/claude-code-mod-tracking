@@ -75,6 +75,12 @@ test('/track prints the text of every section as it did before the pane drew one
   expect(await listText(t.w.ports, t.m)).toBe(GOLDEN)
 })
 
+test('/track never says marks (issue #138): the text is the same with marked rows', async () => {
+  const t = await paneWorld()
+  await t.w.ports.state.marks.update(() => ['web:https://docs.example/a', 'gh:github.com/acme/web#22'])
+  expect(await listText(t.w.ports, t.m)).toBe(GOLDEN)
+})
+
 test('/track turn labels: a file reads its type, name and folder, a process its kind and name (issue #63, L2, G9)', async () => {
   const t = await paneWorld()
   const labels = await turnLabels(t.w.ports, t.m)

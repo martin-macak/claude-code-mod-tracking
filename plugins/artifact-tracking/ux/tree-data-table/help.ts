@@ -15,7 +15,7 @@ import { ROW_GAP } from './shape'
 // The title says how to move: Tab, Shift+Tab and the arrows are no footer keys, so the help view is where they are named
 // (issue #108). It adds no row, which a short inline pane has none to spare (issue #92).
 const PANE_KEYS = 'Pane keys (Tab, Shift+Tab, Up, Down move between rows)'
-const ROW_KEYS = 'Row keys (act on the selected row)'
+const ROW_KEYS = 'Row keys (act on the selected or marked rows)'
 
 const owns = (rows: readonly TreeRow[], owner: string): boolean =>
   rows.some(r => r.owner === owner || owns(r.children ?? [], owner))
@@ -115,6 +115,11 @@ export function compactHelp(m: HelpModel, footerRows: number, columns: number, b
  * the rest, the ones the config left out too, with the place to read them (`/track help` prints the first 50).
  */
 export interface CompactForm {
+  /**
+   * The width of the body in cells that the form was made for. `compactRows` and `renderHelp` read it, so the rows that the form
+   * counts are the rows that it draws: a caller cannot draw a form made at 96 cells in another width (issue #105).
+   */
+  readonly columns: number
   readonly perLine: number
   readonly problems: number
   /**
@@ -161,7 +166,10 @@ const sharesRow = (g: HelpGroup, columns: number): boolean =>
 function listRows(m: HelpModel, columns: number, perLine: number, merge = false): number {
   const groups = m.groups.reduce(
     (n, g) =>
-      n + (merge && sharesRow(g, columns) ? 1 : wrapRows(g.title, columns) + Math.ceil(g.keys.length / perLine)),
+      n +
+      (merge && sharesRow(g, columns)
+        ? 1
+        : wrapRows(g.title, columns) + Math.ceil(g.keys.length / columnsOf(m, g, columns, perLine).per)),
     0,
   )
   const lines =
@@ -171,10 +179,11 @@ function listRows(m: HelpModel, columns: number, perLine: number, merge = false)
 }
 
 /**
- * The rows of the compact form in a body `columns` wide, in the same terms as `helpRows`: a title takes as many rows as it
- * wraps to, a line of keys takes one, a config line or a problem takes the rows it wraps to.
+ * The rows of the compact form in the body width that it was made for (`form.columns`), in the same terms as `helpRows`: a title
+ * takes as many rows as it wraps to, a line of keys takes one, a config line or a problem takes the rows it wraps to.
  */
-export function compactRows(m: HelpModel, columns: number, form: CompactForm): number {
+export function compactRows(m: HelpModel, form: CompactForm): number {
+  const { columns } = form
   const named = Math.min(form.problems, m.problems.length)
   return (
     listRows(m, columns, form.perLine, form.merge !== undefined) +
@@ -182,16 +191,41 @@ export function compactRows(m: HelpModel, columns: number, form: CompactForm): n
   )
 }
 
+/** The widest `key  label` text of a group: the cells of one column of its keys. */
+const widestOf = (g: HelpGroup): number => Math.max(0, ...g.keys.map(k => cellWidth(keyText(k))))
+
 /** The widest `key  label` text of the help view: the cells of one column of keys. */
-const widestKey = (m: HelpModel): number =>
-  Math.max(0, ...m.groups.flatMap(g => g.keys.map(k => cellWidth(keyText(k)))))
+const widestKey = (m: HelpModel): number => Math.max(0, ...m.groups.map(widestOf))
+
+/** How many keys a line of `columns` cells holds, with columns `width` cells wide. */
+const holds = (width: number, columns: number): number =>
+  Math.max(1, Math.floor((columns - KEY_INDENT + KEY_GAP) / (width + KEY_GAP)))
+
+/**
+ * How the keys of a group run when the form asks for `perLine`: the cells of a column, and the keys to a line. Up to what the
+ * widest key of the view holds, every group uses that width and takes `perLine`, so the columns of all groups line up. Asked
+ * for more, a group takes its own widest key as its column and holds as many as that gives, never more than `perLine`: the
+ * row keys (`m  mark`, `x  dismiss`) are shorter than the pane keys (`t  touched only`), so six of them fit a line of the body
+ * where five of the pane keys do (issue #138: the sixth row key must not take a second line).
+ */
+function columnsOf(
+  m: HelpModel,
+  g: HelpGroup,
+  columns: number,
+  perLine: number,
+): { readonly width: number; readonly per: number } {
+  const all = widestKey(m)
+  if (perLine <= holds(all, columns)) return { width: all, per: perLine }
+  const own = widestOf(g)
+  return { width: own, per: Math.min(perLine, holds(own, columns)) }
+}
 
 /**
  * The compact form for a body `columns` wide and `bodyRows` rows, with a footer of `footerRows`. `undefined` means the
  * full form (`compactHelp`). The compact form must fit, so `Pane keys` and the footer stay in view:
  * - It starts with `PER_LINE` keys to a line, fewer when a longer key would wrap a narrow body.
  * - When the keys, the config lines and one count line do not fit, it takes one more key to a line, up to as many as the
- *   width holds.
+ *   width holds for the group of the shortest keys (`columnsOf`: a group never takes more than its own widest key holds).
  * - It names as many problems as the rows left hold and counts the rest. It names all of them when they fit. The cap is
  *   the body, not a number: the /track text names 10 (spec C6), and no body of 11 rows holds 10 with the keys.
  * A body too short for even that takes the form with the fewest rows (the widest line of keys, with the count line), so the
@@ -204,40 +238,46 @@ export function compactForm(
   bodyRows: number | undefined,
 ): CompactForm | undefined {
   if (bodyRows === undefined || !compactHelp(m, footerRows, columns, bodyRows)) return undefined
-  const most = Math.max(1, Math.floor((columns - KEY_INDENT + KEY_GAP) / (widestKey(m) + KEY_GAP)))
-  const first = Math.min(PER_LINE, most)
+  const most = Math.max(1, ...m.groups.map(g => holds(widestOf(g), columns)))
+  const first = Math.min(PER_LINE, holds(widestKey(m), columns)) // the start does not depend on the shorter keys of a group
   // The rows of every prefix of the problems are counted once: a malformed config gives one problem per unknown key, with no
   // limit, and the search below asks for the rows of many candidates (a rescan of the named problems for each is quadratic).
   const wraps = problemWraps(m, columns)
-  const rowsOf = (perLine: number, problems: number, merge = false): number =>
-    listRows(m, columns, perLine, merge) + problemRows(m, columns, wraps, problems)
-  const fits = (perLine: number, problems: number, merge = false): boolean =>
-    rowsOf(perLine, problems, merge) + footerRows <= bodyRows
+  // The rows of the keys, titles and config lines (`list`) do not depend on the problems that the form names, so each form
+  // counts them once and the cap loop adds only the rows of the problems (`columnsOf` makes a count of them dear).
+  const fits = (list: number, problems: number): boolean =>
+    list + problemRows(m, columns, wraps, problems) + footerRows <= bodyRows
   let tightest = { perLine: first, rows: Number.POSITIVE_INFINITY }
   for (let perLine = first; perLine <= most; perLine++) {
-    if (fits(perLine, 0)) {
+    const list = listRows(m, columns, perLine)
+    if (fits(list, 0)) {
       let problems = m.problems.length
-      while (!fits(perLine, problems)) problems--
-      return { perLine, problems }
+      while (!fits(list, problems)) problems--
+      return { columns, perLine, problems }
     }
-    const rows = rowsOf(perLine, 0)
+    const rows = list + problemRows(m, columns, wraps, 0)
     if (rows < tightest.rows) tightest = { perLine, rows }
   }
   // No form with every group on rows of its own fits. The groups of the trackers may share their rows with their titles.
   for (let perLine = first; perLine <= most; perLine++) {
-    if (!fits(perLine, 0, true)) continue
+    const list = listRows(m, columns, perLine, true)
+    if (!fits(list, 0)) continue
     let problems = m.problems.length
-    while (!fits(perLine, problems, true)) problems--
-    return { perLine, problems, merge: columns }
+    while (!fits(list, problems)) problems--
+    return { columns, perLine, problems, merge: columns }
   }
-  return { perLine: tightest.perLine, problems: 0 }
+  return { columns, perLine: tightest.perLine, problems: 0 }
 }
 
 /**
  * The compact form of one group's keys: `perLine` keys to a line. Every key but the last column sits in a column
  * `width` cells wide, so each column starts in the same cell on every line.
  */
-function keyLines(el: TableElements, keys: readonly PaneKey[], width: number, perLine: number): RenderElement[] {
+function keyLines(
+  el: TableElements,
+  keys: readonly PaneKey[],
+  { width, per: perLine }: { readonly width: number; readonly per: number },
+): RenderElement[] {
   const lines: RenderElement[] = []
   for (let i = 0; i < keys.length; i += perLine) {
     const cells = keys
@@ -270,7 +310,8 @@ function problemLines(el: TableElements, m: HelpModel, form: CompactForm | undef
 /**
  * The help view as elements: a bold title per group, one two-column row per key, the config line and the problems.
  * `compact` takes the compact form, so the view takes fewer rows: a `CompactForm` (from `compactForm`) says how many keys to
- * a line and how many problems. Both forms draw every key.
+ * a line and how many problems. Both forms draw every key. The form carries the body width it was made for (`form.columns`): a
+ * group never takes more keys to a line than its columns hold in it.
  */
 export function renderHelp(
   el: TableElements,
@@ -278,7 +319,6 @@ export function renderHelp(
   compact: CompactForm | false = false,
 ): readonly RenderElement[] {
   const form = compact === false ? undefined : compact
-  const width = widestKey(m)
   const shared = (g: HelpGroup): boolean => form?.merge !== undefined && sharesRow(g, form.merge)
   return [
     ...m.groups.flatMap(g =>
@@ -294,7 +334,7 @@ export function renderHelp(
         : [
             text(el, { weight: 'bold' }, g.title),
             ...(form
-              ? keyLines(el, g.keys, width, form.perLine)
+              ? keyLines(el, g.keys, columnsOf(m, g, form.columns, form.perLine))
               : g.keys.map(k =>
                   box(el, { paddingLeft: KEY_INDENT, columnGap: KEY_GAP }, text(el, {}, k.key), text(el, {}, k.label)),
                 )),

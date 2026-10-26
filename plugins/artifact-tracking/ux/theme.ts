@@ -21,7 +21,7 @@ export const COLOR: Readonly<Record<ColorToken, Color>> = {
 }
 
 /** Each glyph is one cell wide (East Asian Width N, Bun width 1). */
-export const GLYPH = { closed: '▸', open: '▾', selected: '>', unselected: ' ' } as const
+export const GLYPH = { closed: '▸', open: '▾', selected: '>', unselected: ' ', marked: '*' } as const
 
 /** The Text props of one cell. The data is clipped to its column first, so the engine never cuts. */
 export function cellText(cell: Cell, rowDim: boolean): TextProps {

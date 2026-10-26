@@ -38,6 +38,8 @@ test('R11: the press selects the first entry of the newest turn, opens the pane 
   expect(t.w.ui.toasts).toEqual([])
   expect(t.w.ui.focused).toHaveLength(1)
   expect(t.w.ui.focused[0]).toMatch(/^r\d+$/) // the handle of the selected row
+  // The press leaves the marks alone: #138 gives the seam (`writeMarks`), and marking a turn is #232 (owner decision Q5).
+  expect(t.w.state.get('marks') ?? []).toEqual([])
 })
 
 test('R11: the first entry is the first one the turn lists: what it added, then what it saw again', async () => {

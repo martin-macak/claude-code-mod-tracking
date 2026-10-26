@@ -56,12 +56,24 @@ export function handleOf(groups: readonly GroupSpec[], view: LayoutView, rowId: 
   return undefined
 }
 
+/** A row as the key routing sees it. The one place that builds a `RowRef`: `findRow`, `laidRefs` and the drawing use it. */
+export const refOf = (row: TreeRow, group: string): RowRef => ({ id: row.id, owner: row.owner, group, can: row.can })
+
+/**
+ * Every row that a full drawing holds (`layout` with no halving), as the key routing sees it, in drawing order. A row that a cap,
+ * a filter or a closed parent leaves out is not here. The footer, the labels, the question and the press all read the marked
+ * rows from this one list, so a label never counts rows that the press does not act on (issue #138).
+ */
+export function laidRefs(groups: readonly GroupSpec[], view: LayoutView): readonly RowRef[] {
+  return layout(groups, view).flatMap(g => g.rows.map(r => refOf(r.row, g.spec.id)))
+}
+
 /** The row with this id, drawn or not: a child of a closed row counts. */
 export function findRow(groups: readonly GroupSpec[], rowId: string | null): RowRef | undefined {
   if (rowId === null) return undefined
   const search = (rows: readonly TreeRow[], group: string): RowRef | undefined => {
     for (const row of rows) {
-      if (row.id === rowId) return { id: row.id, owner: row.owner, group, can: row.can }
+      if (row.id === rowId) return refOf(row, group)
       const hit = search(row.children ?? [], group)
       if (hit !== undefined) return hit
     }
@@ -74,12 +86,32 @@ export function findRow(groups: readonly GroupSpec[], rowId: string | null): Row
   return undefined
 }
 
-/** The row to select once `id` is gone: the next drawn row at the same or a lower depth, else the one before. */
+/**
+ * The row to select once `id` is gone: the next drawn row at the same or a lower depth, else the one before. It is `survivorOf`
+ * for one dismissed row, so the single and the bulk dismiss follow one rule. An `id` that no drawing holds gives none.
+ */
 export function neighbourOf(rows: readonly DrawnRow[], id: string): string | null {
-  const at = rows.findIndex(r => r.id === id)
-  if (at < 0) return null
-  const depth = rows[at]?.depth ?? 0
-  return (rows.slice(at + 1).find(r => r.depth <= depth) ?? rows[at - 1])?.id ?? null
+  return rows.some(r => r.id === id) ? survivorOf(rows, id, new Set([id])) : null
+}
+
+/**
+ * The row to select once the rows in `gone` are dismissed (issue #138): `from` itself when it stays, else the next drawn row
+ * that stays, else the one before. A dismissed row takes its children with it, so they never stay. A `from` that no drawing
+ * holds, and no selection, stay as they are.
+ */
+export function survivorOf(rows: readonly DrawnRow[], from: string | null, gone: ReadonlySet<string>): string | null {
+  const at = rows.findIndex(r => r.id === from)
+  if (at < 0) return from
+  let under = -1 // the depth of the dismissed row whose subtree the loop is in
+  const stays = rows.map(r => {
+    if (under >= 0 && r.depth > under) return false
+    under = gone.has(r.id) ? r.depth : -1
+    return under < 0
+  })
+  const after = rows.findIndex((_, i) => i >= at && stays[i] === true)
+  if (after >= 0) return rows[after]?.id ?? null
+  const before = stays.lastIndexOf(true, at)
+  return before >= 0 ? (rows[before]?.id ?? null) : null
 }
 
 /**

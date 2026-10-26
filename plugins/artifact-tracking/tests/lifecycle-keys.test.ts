@@ -76,7 +76,7 @@ test('start builds the key registry from the live trackers', async () => {
       .all()
       .slice(0, CORE_KEYS.length)
       .map(k => k.key),
-  ).toEqual(['r', 'h', 'g', 'a', 't', 'x', '1', '2', '3', '0'])
+  ).toEqual(['r', 'h', 'g', 'a', 't', 'm', 'x', '1', '2', '3', '0'])
   expect(keysOf(m).at(-1)).toBe('t.open')
 })
 
@@ -209,6 +209,19 @@ test('footer with no row, or for an owner with no key, reads no action', async (
   const quiet = await t.m.footer(t.w.ports, { ...ROW, owner: 'quiet' }, false)
   expect(quiet).toHaveLength(7)
   expect(reads).toBe(0)
+})
+
+test('footer with marked rows: x is live when a marked row can be dismissed, whatever row is selected, and the tracker key stays on the selected row', async () => {
+  const t = await started([fake('t', 10, { keys: [OPEN], actions: () => ({ open: { run: () => {} } }) })])
+  const marked: RowRef[] = [
+    { id: 'm1', owner: 't', group: 'web', can: { dismiss: true } },
+    { id: 'm2', owner: 't', group: 'web', can: {} },
+  ]
+  const live = async (marks: readonly RowRef[]) =>
+    Object.fromEntries((await t.m.footer(t.w.ports, ROW, false, marks)).map(k => [k.buttonKey, k.enabled]))
+  expect(await live([])).toMatchObject({ dismiss: false, 't.open': true }) // ROW takes no dismiss
+  expect(await live(marked)).toMatchObject({ dismiss: true, 'prio-1': false, 't.open': true })
+  expect(await live([marked[1] as RowRef])).toMatchObject({ dismiss: false })
 })
 
 test('in the help view the tracker key is off and h reads back', async () => {

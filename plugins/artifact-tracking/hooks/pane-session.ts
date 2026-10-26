@@ -5,11 +5,12 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Selection". Plan: L6 Task 11, G6, G8, G22.
 
 import type { RenderElement } from 'claude-code'
-import { route, viewKeys } from '../core/infra/keys'
+import { type Bulk, bulkTargets, dismissTargets, route, viewKeys } from '../core/infra/keys'
 import { reason } from '../core/infra/steps'
 import type { Ports } from '../core/interfaces/ports'
-import type { GroupSpec } from '../core/interfaces/view'
+import type { GroupSpec, RowRef } from '../core/interfaces/view'
 import { flipShowAll, flipTouched, listGroups, nextView, resolveView, viewSummary } from '../core/lib/grouping'
+import { dismissQuestion, markedSummary, pruned, relabelDismiss, rowIdsOf, toggled } from '../core/lib/marks'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import type { TableElements } from '../ux/tree-data-table/el'
 import { hintRows, withKeysHint } from '../ux/tree-data-table/hint'
@@ -18,12 +19,16 @@ import {
   type Drawn,
   type DrawnRow,
   findRow,
+  laidRefs,
   neighbourOf,
   shownSelection,
+  survivorOf,
   type TableActions,
   type TableView,
   TreeDataTable,
 } from '../ux/tree-data-table/table'
+import { clearMarks, writeMarks } from './pane-marks'
+import { BulkQuestion } from './pane-question'
 import { WorkQueue } from './pane-queue'
 import { frameFromState, type Press, Refocus, unlessClosed } from './pane-refocus'
 import { helpOf, type PaneHost, paneGroups, paneModel, shownOf } from './pane-text'
@@ -59,11 +64,21 @@ export class PaneSession {
   private onMore: string | undefined
   /** The rows of the last drawing that held any. The help view and an empty pane draw none (issue #49). */
   private rows: readonly DrawnRow[] = []
+  /**
+   * The rows that the last drawing of the pane laid (`laidRefs`), as the key routing sees a row (issue #138). The label of `x`, the
+   * question and the press read the marked rows from it, so the press acts on the rows that the label counted. The help view draws none and
+   * leaves it as it was.
+   */
+  private laid: readonly RowRef[] = []
   private groups: readonly GroupSpec[] = []
   /** The `selected` atom as the last drawing read it, and the row that drawing treated as selected (issue #49). */
   private chosen: { readonly atom: string | null; readonly id: string | null } | undefined
   private readonly refocus = new Refocus()
   private readonly work = new WorkQueue()
+  /** The drawings so far. A drawing takes the next number when it reads the question, and its presses carry it (issue #138). */
+  private drawing = 0
+  /** The question of a bulk dismiss (issue #138). A press of `x` answers it only from a drawing that showed it. */
+  private readonly question = new BulkQuestion()
 
   /**
    * Reads the state and the groups, and draws. It writes nothing and calls no entry (E9). `focused` is
@@ -71,10 +86,11 @@ export class PaneSession {
    */
   async draw(p: Ports, m: PaneHost, el: TableElements, props: PaneDrawProps = {}): Promise<RenderElement> {
     const { bodyColumns, bodyRows, focused, placement } = props
-    const [expanded, selected, help] = await Promise.all([
+    const [expanded, selected, help, marks] = await Promise.all([
       p.state.expanded.get(),
       p.state.selected.get(),
       p.state.help.get(),
+      p.state.marks.get(),
     ])
     const model = await paneModel(p, m, { selected, expanded: new Set(expanded) })
     const { groups } = model
@@ -98,6 +114,19 @@ export class PaneSession {
       hinted && bodyRows !== undefined
         ? Math.max(0, bodyRows - hintRows(bodyColumns ?? DEFAULT_BODY_COLUMNS))
         : bodyRows
+    // The marked rows that this drawing lays: a row that a cap, a filter or a closed parent leaves out counts nowhere (G7). The
+    // keys read them, so the footer is asked for them before the drawing is made.
+    const laid = help ? [] : laidRefs(groups, { expanded: new Set(expanded), shown: id => shown.get(id) ?? 0, limits })
+    const marked = new Set(marks)
+    const markedDrawn = laid.filter(r => marked.has(r.id))
+    const row = help ? undefined : findRow(groups, chosen)
+    const footer = await m.footer(p, row, help, markedDrawn)
+    // No await from here to the drawing: the question is read once, with the number of this drawing (issue #138, G4).
+    const drawing = ++this.drawing
+    const targets = dismissTargets(markedDrawn)
+    // The question stands while the same rows are its targets and the pane has the keys: a drawing without them, the help
+    // view and a change of the marked rows withdraw it. The first drawing that reads it notes its number.
+    const asking = this.question.read(drawing, targets, focused !== false && !help)
     const view: TableView = {
       bodyColumns,
       bodyRows: room,
@@ -109,21 +138,39 @@ export class PaneSession {
       top: selected === null ? 0 : this.top,
       ...(this.onMore === undefined ? {} : { onMore: this.onMore }),
       expanded: new Set(expanded),
+      marked: new Set(markedDrawn.map(r => r.id)),
       shown: id => shown.get(id) ?? 0,
       limits,
       // The help view works only `r` and `h`, so its footer is drawn as with no row selected: a tracker's dim, inert keys
-      // would wrap the footer to a second row and push `Pane keys` out of the body again (issue #105).
-      footer: await m.footer(p, help ? undefined : findRow(groups, chosen), help),
-      // The view line above the footer: the view, the filters and the keys `g`, `a` and `t` (issue #63, L3). The help view has none.
-      ...(help ? {} : { viewLine: { text: viewSummary(model), keys: viewKeys(m.keys) } }),
+      // would wrap the footer to a second row and push `Pane keys` out of the body again (issue #105). While marked rows are
+      // the targets of `x`, its label says how many (`dismiss 3`, and `confirm 3` while the question stands).
+      footer: relabelDismiss(footer, targets.length, asking),
+      // The view line above the footer: the view, the filters and the keys `g`, `a`, `t` and `m` (issue #63, L3; issue #138). The
+      // words say how many rows are marked, and the question of a bulk dismiss takes their place. The help view has none.
+      ...(help
+        ? {}
+        : {
+            viewLine: {
+              text: asking
+                ? dismissQuestion(this.question.ids?.length ?? 0)
+                : markedSummary(viewSummary(model), markedDrawn.length),
+              keys: viewKeys(
+                m.keys,
+                row,
+                owner => m.isItemOwner(owner),
+                markedDrawn.some(r => r.id === chosen),
+              ),
+            },
+          }),
       // The help titles a tracker's keys by the sections that hold its rows, whatever the view draws (issue #63, L3).
       help: help ? helpOf(m, listGroups(model.sections)) : null,
     }
-    const drawn = TreeDataTable.render(groups, view, el, this.actionsOf(p, m, focused === false))
+    const drawn = TreeDataTable.render(groups, view, el, this.actionsOf(p, m, focused === false, drawing))
     this.refocus.seen(drawn)
     this.drawn = drawn
     if (!help) this.top = drawn.top // the help view draws no window: its place of 0 would reset the one the rows left
     if (drawn.rows.length > 0) this.rows = drawn.rows
+    if (!help) this.laid = laid // the help view lays no row: the rows of the last pane drawing stay
     this.groups = groups
     // The help view fills the body of a short pane to the row (issue #92): no line is added to it.
     // A press that waits for a frame like this one goes on. The frame names the Buttons the engine got: the press asks for
@@ -155,6 +202,8 @@ export class PaneSession {
     try {
       this.refocus.noted(element)
       if (element === undefined) return
+      // The person's ring on a row or an "N more" row ends the question. A footer Button does not: Tab to `x` and Enter answers it.
+      if (origin === 'person' && (MORE_KEY.test(element) || this.drawn?.handles.has(element) === true)) this.disarm(p)
       if (MORE_KEY.test(element)) {
         this.onMore = element
         if (this.drawn?.page !== undefined) p.ui.invalidate()
@@ -183,12 +232,18 @@ export class PaneSession {
    * the selection and the ring by about a page, and the next drawing follows them: the engine's own scroll has nothing to
    * move, because the tree fits the body. True when the mod answered. False leaves the move to the engine: no window cuts
    * the rows, so nothing is hidden.
+   *
+   * A page key, Home, End or the wheel is something the person did other than answer the question of a bulk dismiss, so it ends
+   * the question (issue #138). It ends it before the return that leaves the move to the engine too: with every row in view no
+   * window cuts the list, and the engine still scrolls. A distance of 0 or no number is no move, so it leaves the question.
    */
   async scrolled(p: Ports, m: PaneHost, by: number): Promise<boolean> {
+    const moves = Number.isFinite(by) && by !== 0
+    if (moves) this.disarm(p)
     const rows = this.drawn?.rows ?? []
     const page = this.drawn?.page
     if (page === undefined || rows.length === 0) return false
-    if (!Number.isFinite(by) || by === 0) return true // a window cuts the rows and nothing asks for a move: nothing to scroll
+    if (!moves) return true // a window cuts the rows and nothing asks for a move: nothing to scroll
     const press = this.pressOf(false) // the move reads `selected` first: a closing in between ends it (issue #130)
     try {
       const step = Math.sign(by) * Math.min(Math.abs(by), Math.max(1, page - 1))
@@ -203,19 +258,35 @@ export class PaneSession {
     return true
   }
 
-  /** The pane closed: no selection, no help view, no refocus and no window place left over. Each write stands alone: one may fail. */
+  /** The pane closed: no selection, no help view, no marks, no question, no refocus and no window place left over. Each write stands alone: one may fail. */
   async closed(p: Ports): Promise<void> {
     this.closings++
     this.refocus.clear()
     this.top = 0
     this.onMore = undefined
-    for (const write of [() => p.state.selected.update(() => null), () => p.state.help.update(() => false)]) {
+    this.question.clear()
+    for (const write of [
+      () => p.state.selected.update(() => null),
+      () => p.state.help.update(() => false),
+      () => clearMarks(p),
+    ]) {
       try {
         await write()
       } catch (e) {
         p.log(`pane: close failed: ${reason(e)}`)
       }
     }
+  }
+
+  /** The person did something other than answer: the question ends, and the pane draws without it. */
+  private disarm(p: Ports): void {
+    if (this.question.clear()) p.ui.invalidate()
+  }
+
+  /** The marked rows that the last drawing laid, by the marks as they are now. A mark of a row that drawing lacks counts nowhere (G7). */
+  private async markedRows(p: Ports): Promise<readonly RowRef[]> {
+    const marks = new Set(await p.state.marks.get())
+    return marks.size === 0 ? [] : this.laid.filter(r => marks.has(r.id))
   }
 
   /**
@@ -258,22 +329,25 @@ export class PaneSession {
    * milliseconds: a click on row B while an `x` on row A is in flight can end with the selection on the neighbour of A,
    * because the `x` asks for the ring last. The next click or Tab sets it right.
    *
+   * `drawing` is the number of the drawing these actions belong to: a press of `x` answers the question of a bulk dismiss only
+   * from a drawing that showed it (issue #138).
+   *
    * `keysInPrompt` is `Pane.isFocused === false` of the drawing these actions belong to. One session can be drawn on
    * several surfaces and each has its own value, so a press uses the value of its own tree, not that of the last drawing.
    * A click on any Button then gives the pane the keys, so the next Up or Down moves the selection and not the prompt
    * history (issues #115 and #129). Each press takes its closing count when the person presses, before it waits in the
    * chain: a press that began before a closing does nothing after it (issue #130).
    */
-  private actionsOf(p: Ports, m: PaneHost, keysInPrompt: boolean): TableActions {
+  private actionsOf(p: Ports, m: PaneHost, keysInPrompt: boolean, drawing: number): TableActions {
     return {
       // A press is a click or Enter. It opens or closes the row and selects it (issue #108): the row stays selected
       // whether it opens or closes, and the ring goes to the handle the drawing gives the row. The keys come before the
       // ring, as the ring is refused for a pane that has none.
       toggle: id => {
+        this.disarm(p)
         const press = this.pressOf(keysInPrompt)
         this.work.detach(p, 'toggle', async () => {
-          const flip = (cur: string[]) => (cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id])
-          await p.state.expanded.update(unlessClosed(press, flip))
+          await p.state.expanded.update(unlessClosed(press, cur => toggled(cur, id)))
           await this.refocus.to(p, m, id, press)
         })
       },
@@ -282,6 +356,7 @@ export class PaneSession {
       // The press asks for the keys too, once: `Refocus.to` asks before it asks for the ring, and with no row selected there
       // is no ring request, so the press asks alone.
       more: groupId => {
+        this.disarm(p)
         const press = this.pressOf(keysInPrompt)
         this.work.detach(p, 'more', async () => {
           await p.state.shown.update(groupId, n => n + m.config.global().ui.sectionRows)
@@ -293,15 +368,18 @@ export class PaneSession {
       },
       // A dim footer key does no work, but a click on a Button moves no focus: the press asks for the keys alone.
       keys: () => {
+        this.disarm(p)
         const press = this.pressOf(keysInPrompt)
         this.work.detach(p, 'keys', () => this.refocus.askKeys(p, press))
       },
       // A press that waited in the chain through a closing does nothing: it reads `selected`, and that may be a row of the
       // next pane.
       press: (key, surface) => {
+        // Any key but the one that asks ends the question; that key (`confirm`, `x`) is answered in the chain (issue #138).
+        if (m.keys.get(key)?.confirm !== true) this.disarm(p)
         const press = this.pressOf(keysInPrompt)
         const run = async () => {
-          if (press.still()) await this.pressed(p, m, key, press, surface)
+          if (press.still()) await this.pressed(p, m, key, press, surface, drawing)
         }
         if (m.keys.get(key)?.scope === 'pane') this.work.detach(p, key, run)
         else this.work.queue(p, key, run)
@@ -332,15 +410,34 @@ export class PaneSession {
    * engine refuses while the prompt has the keys, and `r` may run long. `Refocus.to` asks no more: one press asks once.
    * A closing that comes while `selected` is read ends the press: the read may return a row of the next pane.
    */
-  private async pressed(p: Ports, m: PaneHost, buttonKey: string, begun: Press, surface?: string): Promise<void> {
+  private async pressed(
+    p: Ports,
+    m: PaneHost,
+    buttonKey: string,
+    begun: Press,
+    surface: string | undefined,
+    drawing: number,
+  ): Promise<void> {
     const key = m.keys.get(buttonKey)
     if (key === undefined) return
     const selected = await this.selectedRow(p)
     if (!begun.still()) return // the read took time: after a closing and a reopening it returns a row of the new pane
     await this.refocus.askKeys(p, begun)
     const afterAsk: Press = { ...begun, keys: false } // one press asks once: the refocus below must not ask again
+    // While a marked row is drawn, `x` and the digits act on the marked rows only, whatever row is selected (issue #138, G2).
+    // Only a core row key reads the marks: `r`, `h`, `g`, `a`, `t` and the keys of a tracker do not wait for the read.
+    const marked = key.owner === 'core' && key.scope === 'row' ? await this.markedRows(p) : []
+    if (!afterAsk.still()) return
+    const isItemOwner = (owner: string) => m.isItemOwner(owner)
+    const bulk = bulkTargets(key, marked, isItemOwner)
+    if (bulk !== undefined) return this.bulk(p, m, bulk, selected, afterAsk, drawing)
     const row = findRow(this.groups, selected)
-    const to = route(key, row, owner => m.isItemOwner(owner))
+    const to = route(
+      key,
+      row,
+      isItemOwner,
+      marked.some(r => r.id === selected),
+    )
     switch (to.to) {
       case 'refresh':
         resetWidths()
@@ -357,21 +454,8 @@ export class PaneSession {
         await this.refocus.keep(p, next, afterAsk, drawn, () => frameFromState(p, m, next))
         return
       }
-      case 'dismiss': {
-        const next = neighbourOf(this.drawn?.rows ?? [], to.rowId)
-        // Armed before the write that takes the row. A drawing that still holds the row is not the frame the ring waits for.
-        // Rows that were hidden behind an "N more" can take its place, so the frame need not be empty.
-        const drawn =
-          next === null ? this.refocus.awaitFrame(p, frame => !frame.help && !frame.rows.has(to.rowId)) : undefined
-        await m.dismiss(p, [to.rowId])
-        await this.refocus.to(p, m, next, afterAsk)
-        // The last row went: no row is left to take the ring, and the tracker keys left the footer with it (issue #140).
-        if (drawn !== undefined) {
-          const none = { help: false, row: null }
-          await this.refocus.keep(p, none, afterAsk, drawn, () => frameFromState(p, m, none))
-        }
-        return
-      }
+      case 'dismiss':
+        return this.dismissRows(p, m, [to.rowId], neighbourOf(this.drawn?.rows ?? [], to.rowId), afterAsk, false)
       case 'priority':
         await m.setPriority(p, to.rowId, to.level)
         await this.refocus.to(p, m, to.rowId, afterAsk)
@@ -389,6 +473,15 @@ export class PaneSession {
       case 'touched':
         await p.state.filters.update(unlessClosed(afterAsk, flipTouched))
         return this.redrawn(p, m, selected, afterAsk)
+      // `m` (issue #138) writes a session atom and nothing else, as `g`, `a` and `t` do. The write also drops the marks of rows
+      // that no tracker holds any more. It reads the inventory, not `paneData`: a rule that only hides a row (the TTL, the row
+      // cap, `--hide`) must not end its mark, since `a` shows the row again. A count on the `x` label can add a footer row at 40
+      // cells, so the ring is asked for again.
+      case 'mark': {
+        const known = rowIdsOf(await m.inventory(p))
+        await writeMarks(p, afterAsk, cur => pruned(toggled(cur, to.rowId), known))
+        return this.redrawn(p, m, selected, afterAsk)
+      }
       case 'owner':
         // A tracker's own work may take long. It must not hold the keys that come after it.
         this.work.detach(p, buttonKey, async () => {
@@ -398,6 +491,92 @@ export class PaneSession {
         return
       case 'none':
         return
+    }
+  }
+
+  /**
+   * `x` and the digits on the marked rows (issue #138). `bulk.rowIds` are the marked rows that the key allows: none means a dim key,
+   * and a hotkey does nothing. A digit never asks: a priority is set again with one key. `x` asks first, unless its one target is
+   * the selected row (as today). The first `x` asks the question and the pane draws it; an `x` from a drawing that showed it, for
+   * the same rows, dismisses them. An `x` from an older drawing leaves the question as it is. Marks win: the key never acts on the
+   * unmarked selected row (G2).
+   */
+  private async bulk(
+    p: Ports,
+    m: PaneHost,
+    bulk: Bulk,
+    selected: string | null,
+    press: Press,
+    drawing: number,
+  ): Promise<void> {
+    if (bulk.rowIds.length === 0) return
+    // One case for each kind of bulk key. A new member of `Bulk` has no case until it gets one, and `tsc` fails here (issue #138): a
+    // dismiss has no undo, so a key must never reach it by falling through.
+    switch (bulk.to) {
+      case 'priority':
+        await m.setPriorities(p, bulk.rowIds, bulk.level)
+        await this.marksDone(p, press)
+        await this.refocus.to(p, m, selected, press)
+        return
+      case 'dismiss':
+        return this.bulkDismiss(p, m, bulk.rowIds, selected, press, drawing)
+      default:
+        return bulk satisfies never
+    }
+  }
+
+  /** `x` on the marked rows: it asks first, unless its one target is the selected row, and an `x` from a drawing that showed the question dismisses. */
+  private async bulkDismiss(
+    p: Ports,
+    m: PaneHost,
+    targets: readonly string[],
+    selected: string | null,
+    press: Press,
+    drawing: number,
+  ): Promise<void> {
+    if (!(targets.length === 1 && targets[0] === selected)) {
+      const answer = this.question.answer(drawing, targets)
+      if (answer === 'ask') {
+        this.question.ask(targets)
+        p.ui.invalidate()
+      }
+      if (answer !== 'confirm') return // the press came from a drawing that did not show the question: it asks and never dismisses
+    }
+    this.question.clear()
+    await this.dismissRows(p, m, targets, survivorOf(this.drawn?.rows ?? [], selected, new Set(targets)), press, true)
+  }
+
+  /** The marks did their work: they clear, and the pane draws without them. */
+  private async marksDone(p: Ports, press: Press): Promise<void> {
+    await writeMarks(p, press, () => [])
+    if (press.still()) p.ui.invalidate()
+  }
+
+  /**
+   * Dismisses `ids` and puts the selection on `next`, with the ring on its new handle. `endMarks`: the rows were marked, so
+   * the marks end with the action.
+   */
+  private async dismissRows(
+    p: Ports,
+    m: PaneHost,
+    ids: readonly string[],
+    next: string | null,
+    press: Press,
+    endMarks: boolean,
+  ): Promise<void> {
+    // Armed before the write that takes the rows. A drawing that still holds a row is not the frame the ring waits for.
+    // Rows that were hidden behind an "N more" can take their place, so the frame need not be empty.
+    const drawn =
+      next === null
+        ? this.refocus.awaitFrame(p, frame => !frame.help && ids.every(id => !frame.rows.has(id)))
+        : undefined
+    await m.dismiss(p, ids)
+    if (endMarks) await this.marksDone(p, press)
+    await this.refocus.to(p, m, next, press)
+    // The last row went: no row is left to take the ring, and the tracker keys left the footer with it (issue #140).
+    if (drawn !== undefined) {
+      const none = { help: false, row: null }
+      await this.refocus.keep(p, none, press, drawn, () => frameFromState(p, m, none))
     }
   }
 }

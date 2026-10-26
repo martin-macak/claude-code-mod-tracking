@@ -315,6 +315,17 @@ test('a priority mark from the pane reorders the text at once, with no turn betw
   expect(order()).toEqual(['a', 'b'])
 })
 
+test('a bulk priority mark from the pane reorders the text at once, with no turn between', async () => {
+  const { t, order } = await twoLinks()
+  await t.m.row(t.w.ports, promptRow('and https://docs.example/c'))
+  await t.m.turnComplete(t.w.ports, MAIN)
+  expect(order()).toEqual(['a', 'b', 'c'])
+  await t.m.setPriorities(t.w.ports, ['web:https://docs.example/b', 'web:https://docs.example/c'], 'high')
+  expect(order()).toEqual(['b', 'c', 'a'])
+  await t.m.setPriorities(t.w.ports, ['web:https://docs.example/b', 'web:https://docs.example/c'], undefined)
+  expect(order()).toEqual(['a', 'b', 'c'])
+})
+
 test('/track prio reorders the text at once, with no turn between (review of L7)', async () => {
   const { t, order } = await twoLinks()
   expect(order()).toEqual(['a', 'b'])

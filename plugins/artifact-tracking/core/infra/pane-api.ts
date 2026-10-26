@@ -14,6 +14,7 @@ export abstract class PaneApi {
   readonly viewOf: Views['viewOf'] = (...a) => this.views.viewOf(...a)
   readonly viewsOf: Views['viewsOf'] = (...a) => this.views.viewsOf(...a)
   readonly paneData: Views['paneData'] = (...a) => this.views.paneData(...a)
+  readonly inventory: Views['inventory'] = (...a) => this.views.inventory(...a)
   readonly bandData: Views['bandData'] = (...a) => this.views.bandData(...a)
   readonly levels: Views['levels'] = (...a) => this.views.levels(...a)
 

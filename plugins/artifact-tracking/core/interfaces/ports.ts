@@ -161,6 +161,11 @@ export interface StatePorts {
   readonly view: AtomPort<string | null>
   /** Issue #63, L3: `t` (touched only). Session scope, reset by `/clear`. */
   readonly filters: AtomPort<FilterState>
+  /**
+   * Issue #138: the ids of the rows the person marked with `m`. `x` and the digits act on the marked rows. Session scope: the
+   * pane clears it when it closes and `/clear` resets it. Never written to the config file or the store.
+   */
+  readonly marks: AtomPort<string[]>
   /** Issue #69: what each main-loop turn tracked. The TurnLedger writes it, Persistence stores it. */
   readonly turns: AtomPort<TurnLedger>
 }

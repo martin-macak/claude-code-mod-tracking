@@ -15,6 +15,30 @@ Feature: Drive the /track pane with the keys
     Then the screen matches /Web links 2 +2 links/
     And the selected row shows "three.example"
 
+  # Issue #138. `m` marks the selected row and the view line counts the marks. `x` then asks about the marked rows, and a second
+  # `x`, pressed once the pane shows the question, dismisses them. The selection goes to the row that stays.
+  Scenario: m marks rows, x asks about them and a second x dismisses them
+    Given a Claude Code session with the artifact-tracking mod
+    When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "one.example"
+    When I press "m"
+    Then the screen shows "1 marked"
+    When I press "Tab"
+    And I press "Tab"
+    Then the selected row shows "three.example"
+    When I press "m"
+    Then the screen shows "2 marked"
+    When I press "x"
+    Then the screen shows "Dismiss 2 marked rows? x again: yes"
+    And the screen shows "x: confirm 2"
+    And the screen matches /Web links 3 +3 links/
+    When I press "x"
+    Then the screen matches /Web links 1 +1 links/
+    And the screen stops showing "marked"
+    And the selected row shows "two.example"
+
   Scenario: Enter expands a leaf into its detail, and h shows the help view
     Given a Claude Code session with the artifact-tracking mod
     When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
@@ -26,7 +50,7 @@ Feature: Drive the /track pane with the keys
     When I press "Enter"
     Then the screen stops showing "link: https://one.example/a"
     When I press "h"
-    Then the screen shows "Row keys (act on the selected row)"
+    Then the screen shows "Row keys (act on the selected or marked rows)"
     And the screen shows "Config file:"
     And the screen shows "Version:"
     When I press "h"
@@ -304,7 +328,7 @@ Feature: Drive the /track pane with the keys
     When I press "Tab" until the focus ring is on "c: resolve"
     Then the focus ring is on "c: resolve"
     When I press "h"
-    Then the screen shows "Row keys (act on the selected row)"
+    Then the screen shows "Row keys (act on the selected or marked rows)"
     And the focus ring is on "h: back"
     When I press "h"
     Then the screen stops showing "Row keys"

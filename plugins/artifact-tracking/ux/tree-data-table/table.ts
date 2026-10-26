@@ -10,7 +10,7 @@ import { guard } from './budget'
 import { box, type TableElements, text } from './el'
 import { footerBox, footerRows, moveHintFits } from './footer'
 import { compactForm, renderHelp } from './help'
-import { type LaidGroup, layout } from './layout'
+import { type LaidGroup, layout, refOf } from './layout'
 import { type Draw, drawGroups } from './rows'
 import {
   DEFAULT_BODY_COLUMNS,
@@ -26,7 +26,18 @@ import { EMPTY_TEXT } from './text'
 import { viewLineBox } from './viewline'
 import { drawWindowed, pageOf, shownRows, type Windowed, windowOf } from './windowed'
 
-export { findRow, handleOf, type LaidGroup, type LaidRow, layout, neighbourOf, shownSelection } from './layout'
+export {
+  findRow,
+  handleOf,
+  type LaidGroup,
+  type LaidRow,
+  laidRefs,
+  layout,
+  neighbourOf,
+  refOf,
+  shownSelection,
+  survivorOf,
+} from './layout'
 export {
   DEFAULT_BODY_COLUMNS,
   DETAIL_CELLS,
@@ -106,14 +117,7 @@ export const TreeDataTable = {
     const { body, step } = guard(footer, attempts, () => [text(el, { dimColor: true }, TOO_LARGE)], view.budget)
     const win = windows[step]
     const rows: DrawnRow[] = (laids[step] ?? []).flatMap(s =>
-      s.rows.map(r => ({
-        id: r.row.id,
-        owner: r.row.owner,
-        group: s.spec.id,
-        can: r.row.can,
-        handle: r.handle,
-        depth: r.depth,
-      })),
+      s.rows.map(r => ({ ...refOf(r.row, s.spec.id), handle: r.handle, depth: r.depth })),
     )
     // A docked body has a fixed height: the tree takes all of it and the footer grows to the end of the column (issue #109).
     // The wrapper replaces the footer in the root, so it adds no child and no gap row. `minHeight` never clips: a tree that

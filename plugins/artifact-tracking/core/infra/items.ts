@@ -118,6 +118,8 @@ export class ItemService implements ItemsHost {
   readonly tools = (owner: string): ToolPort | undefined => this.life.tools(owner)
   readonly problems = (): readonly string[] => this.kinds.problems()
   readonly setPriority = (rowId: string, level: Level | undefined) => this.priority.setPriority(rowId, level)
+  readonly setPriorities = (rowIds: readonly string[], level: Level | undefined) =>
+    this.priority.setPriorities(rowIds, level)
   readonly rowIdOf = (ref: string) => this.priority.rowIdOf(ref)
   readonly levels = (list?: readonly StoredItem[]): Promise<ReadonlyMap<string, Effective>> =>
     this.priority.levels(list)
