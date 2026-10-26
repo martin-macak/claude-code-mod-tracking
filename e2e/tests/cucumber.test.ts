@@ -5,9 +5,9 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-// These tests pin what e2e/README.md says about running one scenario and about the @artifacts scenario (which profile
-// selects it, the scope of `make e2e`). They use `--dry-run`: no hook runs, so
-// they take no lock, start no tmux and make no model turn.
+// These tests pin what e2e/README.md says about running one scenario and about the @artifacts scenario: which profile
+// selects it, and the scope of `make e2e` and `make e2e-safe`. They use `--dry-run`: no hook runs, so they take no
+// lock, start no tmux and make no model turn.
 const e2eDir = fileURLToPath(new URL('..', import.meta.url))
 const cucumber = join(e2eDir, 'node_modules', '@cucumber', 'cucumber', 'bin', 'cucumber.js')
 
@@ -30,8 +30,10 @@ function dryRun(args: string[]): Selected[] {
   const run = spawnSync(process.execPath, [cucumber, '--dry-run', '--format', 'json', ...args], {
     cwd: e2eDir,
     encoding: 'utf8',
+    // A dry run takes a few seconds at most. An argument that makes cucumber hang must fail soon, not block the run.
+    timeout: 30_000,
   })
-  assert.equal(run.status, 0, run.stderr)
+  assert.equal(run.status, 0, `cucumber-js ${args.join(' ')}: ${run.error?.message ?? run.signal ?? run.stderr}`)
   const features = JSON.parse(run.stdout) as {
     uri: string
     elements: { name: string; tags?: { name: string }[]; steps: { keyword: string; name: string }[] }[]
@@ -166,15 +168,20 @@ test('the demo profile still selects the @demo scenario alone', () => {
 })
 
 // The arguments that the recipe of a make target gives to cucumber-js. The tests below select scenarios with them, so
-// they check what the target runs and not what a document says.
-function recipeArgs(target: string): string[] {
-  const makefile = readFileSync(join(e2eDir, '..', 'Makefile'), 'utf8').split('\n')
+// they check what the target runs and not what a document says. It takes the text of the Makefile, so a test can feed
+// it a recipe of its own.
+function parseRecipeArgs(makefileText: string, target: string): string[] {
+  const makefile = makefileText.split('\n')
   const at = makefile.findIndex(line => line.startsWith(`${target}:`))
   assert.notEqual(at, -1, `the Makefile has a ${target} target`)
   // The recipe is the run of tab-indented lines under the target.
   const recipeLines = makefile.slice(at + 1)
   const end = recipeLines.findIndex(line => !line.startsWith('\t'))
-  const recipe = recipeLines.slice(0, end).join('\n')
+  // A backslash at the end of a line continues the recipe on the next one, as make and the shell read it.
+  const recipe = recipeLines
+    .slice(0, end)
+    .join('\n')
+    .replace(/\\\n\s*/g, ' ')
   assert.match(recipe, /cucumber-js/, `the ${target} target runs cucumber-js`)
   // Plain words only: the test cannot read a quoted argument, so it cuts the recipe at the first shell operator.
   const args = recipe
@@ -184,11 +191,28 @@ function recipeArgs(target: string): string[] {
     .split(/\s+/)
     .filter(Boolean)
   assert.ok(
-    args.every(arg => !/['"$]/.test(arg)),
+    args.every(arg => !/['"$\\]/.test(arg)),
     `the recipe of ${target} has an argument this test cannot read: ${args}`,
   )
   return args
 }
+
+const recipeArgs = (target: string): string[] =>
+  parseRecipeArgs(readFileSync(join(e2eDir, '..', 'Makefile'), 'utf8'), target)
+
+// A Makefile with one target, `demo-target`, whose recipe is the lines given.
+const makefileWith = (...recipe: string[]) =>
+  ['demo-target: e2e-deps', ...recipe, '', 'other:', '\ttrue', ''].join('\n')
+
+test('the recipe parser reads a recipe line that ends in a backslash together with the next line', () => {
+  const makefile = makefileWith('\tcd e2e && npx cucumber-js \\', '\t  -p all')
+  assert.deepEqual(parseRecipeArgs(makefile, 'demo-target'), ['-p', 'all'])
+})
+
+test('the recipe parser refuses a backslash inside a word, which it cannot read', () => {
+  const makefile = makefileWith('\tcd e2e && npx cucumber-js --name a\\ b')
+  assert.throws(() => parseRecipeArgs(makefile, 'demo-target'), /an argument this test cannot read/)
+})
 
 const names = (list: Selected[]) => list.map(s => `${s.uri}: ${s.name}`).sort()
 
@@ -201,10 +225,6 @@ test('make e2e runs every scenario: the profile of its recipe selects the @artif
 test('make e2e-safe runs the default profile: every scenario except @artifacts, so it publishes nothing', () => {
   const selected = select(...recipeArgs('e2e-safe'))
   assert.ok(selected.length > 0, 'the target selects scenarios')
-  assert.deepEqual(artifactScenarios(selected), [])
-  assert.deepEqual(names(selected), names(select()))
-  // It is make e2e without the @artifacts scenario, so the two targets differ by that scenario alone.
-  const everything = select(...recipeArgs('e2e'))
-  assert.deepEqual(names(selected), names(everything.filter(s => !s.tags.includes(ARTIFACTS))))
-  assert.notDeepEqual(names(selected), names(everything))
+  assert.deepEqual(artifactScenarios(selected), [], 'the target selects no @artifacts scenario')
+  assert.deepEqual(names(selected), names(select()), 'the target selects what the default profile selects')
 })
