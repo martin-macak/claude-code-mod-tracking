@@ -1055,8 +1055,28 @@ test('splitShell marks a typed redirection of the standard output', () => {
     '2>&1 > f',
     '2> e > f',
     '2> e >f',
+    // A copy of another descriptor onto fd 1, a close, and a file that only looks like a descriptor move it. The target of a
+    // spaced `>&` is no word of the command (`>& f` sends both outputs to the file `f`).
+    '>& 2',
+    '1>& 2',
+    '>&-',
+    '1>&-',
+    '>&0',
+    '>&10',
+    '>&11',
+    '>&1x',
+    '>& f',
+    // `&>&1` and `>>&1` are syntax errors in bash (5.3.20). They copy nothing, so the reader keeps them as a redirection.
+    '&>&1',
+    '>>&1',
+    // A copy of fd 1 onto itself next to another redirection of fd 1: the other one moves it, in either order.
+    '>&1 > f',
+    '> f >&1',
+    '>&1 2>&2 &> f',
   ])
     expect({ redir, marks: outMarks(`docker run -d x ${redir}`) }).toEqual({ redir, marks: ['docker run -d x >'] })
+  // An empty quote right behind `>&` is the target (bash: ambiguous redirect), so the next word stays a word of the command.
+  expect(outMarks("docker run -d x >&'' y")).toEqual(['docker run -d x y >'])
 })
 
 // A typed `>` or `<` ends the word before it, as in bash (issue #231): `nginx>f` is the word `nginx` and the redirection `>f`.
@@ -1260,6 +1280,128 @@ test('splitShell ends the redirection of an exec with the shell it ran in', () =
   expect(outMarks('a; exec > f')).toEqual(['a', 'exec >'])
 })
 
+// A group, loop or `if` that redirects the output saves fd 1 and gives it back at its end, so an `exec` inside it moves the
+// output only up to there (bash 5.3.20: `{ exec >/dev/null; } >/dev/null; echo after` prints `after`). A group that redirects
+// something else (stderr, the input, fd 3) saves no fd 1, and an unredirected group is the shell itself: the exec stays.
+test('splitShell ends the redirection of an exec where the redirected group or compound around it ends', () => {
+  for (const redir of ['> g', '>g', '>> g', '>| g', '&> g', '&>> g', '1> g', '>&2'])
+    expect({ redir, marks: outMarks(`{ exec > f; } ${redir}; a`) }).toEqual({ redir, marks: ['exec >', 'a'] })
+  expect(outMarks('{ exec > f; a; } > g; b')).toEqual(['exec >', 'a >', 'b'])
+  expect(outMarks('{ exec > f; } > g && a')).toEqual(['exec >', 'a'])
+  expect(outMarks('{ exec -c > f; } > g; a')).toEqual(['exec -c >', 'a'])
+  expect(outMarks('( exec > f ) > g; a')).toEqual(['exec >', 'a'])
+  expect(outMarks('for i in 1; do exec > f; done > g; a')).toEqual(['for i in 1 >', 'do exec >', 'done >', 'a'])
+  expect(outMarks('while c; do exec > f; break; done > g; a')).toEqual([
+    'while c >',
+    'do exec >',
+    'break >',
+    'done >',
+    'a',
+  ])
+  expect(outMarks('if c; then exec > f; fi > g; a')).toEqual(['if c >', 'then exec >', 'fi >', 'a'])
+  expect(outMarks('case x in x) exec > f;; esac > g; a')).toEqual(['case x in >', 'exec >', 'esac >', 'a'])
+  // An exec in the condition of a redirected compound is inside it, as the first segment of the range.
+  expect(outMarks('if exec > f; then a; fi > g; b')).toEqual(['if exec >', 'then a >', 'fi >', 'b'])
+  expect(outMarks('while exec > f; do a; done > g; b')).toEqual(['while exec >', 'do a >', 'done >', 'b'])
+  // A group that is redirected deeper in keeps what is outside of it: the exec ends at the first redirected group around it.
+  expect(outMarks('{ { exec > f; } > g; a; }; b')).toEqual(['exec >', 'a', 'b'])
+  expect(outMarks('{ { exec > f; }; a; } > g; b')).toEqual(['exec >', 'a >', 'b'])
+  expect(outMarks('if c; then { exec > f; }; fi > g; a')).toEqual(['if c >', 'then >', 'exec >', 'fi >', 'a'])
+  expect(outMarks('( { exec > f; } > g; a ); b')).toEqual(['exec >', 'a', 'b'])
+  // An exec before the redirected group still reaches what comes after it, and a second exec inside it changes nothing.
+  expect(outMarks('exec > f; { a; } > g; b')).toEqual(['exec >', 'a >', 'b >'])
+  expect(outMarks('exec > f; { exec > g; } > h; b')).toEqual(['exec >', 'exec >', 'b >'])
+  // Every exec inside the group ends with it, not only the last one.
+  expect(outMarks('{ exec > f; exec > g; } > h; a')).toEqual(['exec >', 'exec >', 'a'])
+  expect(outMarks('for i in 1; do exec > f; exec > g; done > h; a')).toEqual([
+    'for i in 1 >',
+    'do exec >',
+    'exec >',
+    'done >',
+    'a',
+  ])
+  // A later exec of the shell marks again after the group.
+  expect(outMarks('{ exec > f; } > g; a; exec > h; b')).toEqual(['exec >', 'a', 'exec >', 'b >'])
+})
+
+test('splitShell keeps the redirection of an exec when the group or compound around it moves no fd 1', () => {
+  // An unredirected group or compound is the shell itself, so the exec stays for the commands after it.
+  expect(outMarks('{ exec > f; }; a')).toEqual(['exec >', 'a >'])
+  expect(outMarks('for i in 1; do exec > f; done; a')).toEqual(['for i in 1', 'do exec >', 'done >', 'a >'])
+  expect(outMarks('{ { exec > f; }; }; a')).toEqual(['exec >', 'a >'])
+  // A redirection of stderr, of the input or of another descriptor saves no fd 1: bash 5.3.20 keeps the exec after it.
+  for (const redir of ['2> g', '2>&1', '< g', '<<< x', '3>&1', '{fd}> g', '12> g'])
+    expect({ redir, marks: outMarks(`{ exec > f; } ${redir}; a`) }).toEqual({ redir, marks: ['exec >', 'a >'] })
+  expect(outMarks('for i in 1; do exec > f; done 2> g; a')).toEqual(['for i in 1', 'do exec >', 'done >', 'a >'])
+  expect(outMarks('while c; do exec > f; break; done < g; a')).toEqual([
+    'while c',
+    'do exec >',
+    'break >',
+    'done >',
+    'a >',
+  ])
+  // A redirection in front of the group, on the command before it, is not the group's.
+  expect(outMarks('a > g; { exec > f; }; b')).toEqual(['a >', 'exec >', 'b >'])
+  // A redirected group before the exec ends nothing: the exec comes after it.
+  expect(outMarks('{ a; } > g; exec > f; b')).toEqual(['a >', 'exec >', 'b >'])
+})
+
+// The compound that closes with a redirection (`done > g`) ends the execs inside it from its own first segment, and no earlier
+// one: an exec in front of it keeps its mark for the commands after it, and a command in front of it is not marked. These rows
+// pin the bound at the close of a compound, the same way the rows with `{ }` above pin it at the close of a group.
+test('splitShell ends only the execs inside a redirected compound, not one in front of it', () => {
+  expect(outMarks('exec > f; for i in 1; do a; done > g; b')).toEqual([
+    'exec >',
+    'for i in 1 >',
+    'do a >',
+    'done >',
+    'b >',
+  ])
+  expect(outMarks('exec > f; while c; do a; break; done > g; b')).toEqual([
+    'exec >',
+    'while c >',
+    'do a >',
+    'break >',
+    'done >',
+    'b >',
+  ])
+  expect(outMarks('exec > f; if c; then a; fi > g; b')).toEqual(['exec >', 'if c >', 'then a >', 'fi >', 'b >'])
+  expect(outMarks('exec > f; case x in x) a;; esac > g; b')).toEqual(['exec >', 'case x in >', 'a >', 'esac >', 'b >'])
+  // A command in front of the compound is no part of its range.
+  expect(outMarks('x; for i in 1; do a; done > g; b')).toEqual(['x', 'for i in 1 >', 'do a >', 'done >', 'b'])
+  expect(outMarks('x; while c; do a; break; done > g; b')).toEqual([
+    'x',
+    'while c >',
+    'do a >',
+    'break >',
+    'done >',
+    'b',
+  ])
+  expect(outMarks('x; if c; then a; fi > g; b')).toEqual(['x', 'if c >', 'then a >', 'fi >', 'b'])
+  expect(outMarks('x; case x in x) a;; esac > g; b')).toEqual(['x', 'case x in >', 'a >', 'esac >', 'b'])
+})
+
+// `>&1` copies fd 1 onto itself: bash saves nothing and changes nothing (5.3.20: `{ exec >/dev/null; } >&1; echo after` prints
+// nothing, and `echo hi >&1` prints). It is no redirection of fd 1, so it ends no exec, and it marks no segment.
+test('splitShell reads a copy of fd 1 onto itself as no redirection, so an exec stays after it', () => {
+  for (const same of ['>&1', '1>&1', '>& 1', '1>& 1', '>&01', '>&1-', '>&"1"', "1>&'1'"])
+    expect({ same, marks: outMarks(`{ exec > f; } ${same}; a`) }).toEqual({ same, marks: ['exec >', 'a >'] })
+  expect(outMarks('for i in 1; do exec > f; done >&1; a')).toEqual(['for i in 1', 'do exec >', 'done >', 'a >'])
+  expect(outMarks('if c; then exec > f; fi >&1; a')).toEqual(['if c', 'then exec >', 'fi >', 'a >'])
+  expect(outMarks('case x in x) exec > f;; esac >&1; a')).toEqual(['case x in', 'exec >', 'esac >', 'a >'])
+  // Another redirection of fd 1 on the same group still ends the exec, before or after the copy.
+  expect(outMarks('{ exec > f; } >&1 > g; a')).toEqual(['exec >', 'a'])
+  expect(outMarks('{ exec > f; } > g >&1; a')).toEqual(['exec >', 'a'])
+  expect(outMarks('{ exec > f; } >&1 2>&2 &> g; a')).toEqual(['exec >', 'a'])
+  // A copy of another descriptor onto fd 1 moves it: `>&2` ends the exec, as the rows above show, and so do `>&0`, `>&-`, `>&10`.
+  for (const moved of ['>&0', '>&-', '>&10', '>&11', '>&1x', '1>&2', '1>&-'])
+    expect({ moved, marks: outMarks(`{ exec > f; } ${moved}; a`) }).toEqual({ moved, marks: ['exec >', 'a'] })
+  // `exec >&1` puts nothing away, and a run after it prints: bash 5.3.20 `exec >&1; echo hi` prints `hi`.
+  expect(outMarks('exec >&1; a')).toEqual(['exec', 'a'])
+  expect(outMarks('exec 1>&1; a')).toEqual(['exec', 'a'])
+  expect(outMarks('exec >& 1; a')).toEqual(['exec', 'a'])
+})
+
 test('splitShell marks no redirection of the standard output for stderr, input and other descriptors', () => {
   for (const redir of [
     '2> f',
@@ -1278,6 +1420,19 @@ test('splitShell marks no redirection of the standard output for stderr, input a
     '{fd}>&2',
     '{fd}<> f',
     '12> f',
+    // A copy of fd 1 onto itself puts nothing away (bash 5.3.20 `echo hi >&1` prints). The target is the next word when spaced.
+    '>&1',
+    '1>&1',
+    '>& 1',
+    '1>& 1',
+    '>&01',
+    '>&1-',
+    '<&1',
+    '1<&1',
+    '>&"1"',
+    "1>&'1'",
+    '2>& 1',
+    '3>& 1',
   ])
     expect({ redir, marks: outMarks(`docker run -d x ${redir}`) }).toEqual({ redir, marks: ['docker run -d x'] })
   // A quoted or escaped `>` is a word (issue #162), not a redirection.
@@ -1443,6 +1598,15 @@ const MARK_FAMILIES: Record<string, (k: number) => string> = {
   'glued redirections': k => 'a>'.repeat(10_000 * k) + 'b',
   'an open parameter expansion with many redirections': k => '${x' + ':-a>'.repeat(10_000 * k) + '}',
   'bare exec segments': k => 'exec > f; a; '.repeat(5_000 * k) + 'b',
+  // Each redirected group ends the execs inside it. A close that reads every exec of the list again (`execs.filter`, in place
+  // of popping the last ones) costs O(n) per close, so a nest of n groups costs O(n^2). Only the nest can show that: it holds
+  // n execs at its deepest close. At 1_000 groups that part stays under twice the linear part (the rule of scaling.ts, "Pick
+  // a base size") and the ratio stays under the limit, so the nest is 6_000 groups. A list of groups keeps one exec at a time,
+  // so it sees no such cost (a scan over the kept execs stays under the limit at 3_000 groups too). It checks only that a long
+  // list of closes stays flat.
+  'nested redirected groups that each hold an exec': k =>
+    '{ exec > f; '.repeat(6_000 * k) + 'a' + '; } > g'.repeat(6_000 * k),
+  'a list of redirected groups that each hold an exec': k => '{ exec > f; } > g; a; '.repeat(3_000 * k) + 'b',
 }
 for (const [family, make] of Object.entries(MARK_FAMILIES)) {
   test(`splitShell stays linear on ${family}`, async () => {

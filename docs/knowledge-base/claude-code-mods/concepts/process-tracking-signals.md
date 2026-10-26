@@ -357,14 +357,24 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   spaced forms. A file descriptor in front of a `>` or `<` (`2>f`, `{fd}>f`),
   arithmetic text and an open `${ }` keep the character. The `&` of `&>` has no
   descriptor form: `12&>f` is the word `12` and the redirection `&>f`. `2>&1`,
-  `2>`, `<` and `{fd}>` leave the output alone. A bare `exec` with such a
+  `2>`, `<` and `{fd}>` leave the output alone. So does a copy of fd 1 onto
+  itself (`>&1`, `1>&1`, `>& 1`, `>&01`, `>&1-`, `1<&1`): `bash` saves nothing and
+  changes nothing there. The target of `>& 1` is no word of the run. A copy of
+  another descriptor (`>&2`, `>&-`, `>&0`) and `>& file` move the output.
+  A bare `exec` with such a
   redirection (`exec > f`, `exec >> f`, `exec 1> f`, `exec &> f`,
   `exec 3>&1 >/dev/null`) moves the output of its shell for good, so it marks
   every later segment of that shell and of the subshells under it. The options
   of `exec` (`-c`, `-l`, `-a name`, `--`) matter only when a command follows:
   `exec -c > f` and `exec -a name > f` move the shell too, and `exec -c a > f`
   runs `a`. A subshell, a `$(...)`, a background list and a pipeline
-  part are shells of their own: the mark ends with them. `exec >&3`, which puts
+  part are shells of their own: the mark ends with them. So does a group, loop,
+  `if` or `case` that redirects the output (`{ exec > f; } > g; a`,
+  `for ...; do exec > f; done > g; a`): it saves fd 1 and gives it back at its
+  end, and the exec inside it moves the output only up to there. A group that
+  redirects stderr, the input or fd 3, or that copies fd 1 onto itself (`>&1`),
+  saves no fd 1, and an unredirected group is the shell itself, so
+  `{ exec > f; } 2> g; a`, `{ exec > f; } >&1; a` and `{ exec > f; }; a` stay marked. `exec >&3`, which puts
   the output back, is read as one more redirection, so the later runs stay
   marked. `stdoutPiped` is a `|` or `|&` after the pipeline part that holds the
   run (`{ a; } | b` marks `a`; `echo x | a` does not). `substituted` is `$(...)`,
@@ -418,7 +428,17 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   `[x/dev/fd/63]`, and `exec 3>&1 >/dev/null; echo hidden; echo shown >&3` prints
   `shown` only. The same probe: `exec -c > f; echo hidden` and
   `exec -a name > f; echo hidden` write `hidden` to `f`, and `echo a 12&>f`
-  writes `a 12` to `f`. No live Docker run repeated them after the fix.
+  writes `a 12` to `f`. The end of an exec at a redirected group was probed the
+  same way: `{ exec >/dev/null; } >/dev/null; echo after` prints `after`, as
+  do `for ...; do exec >/dev/null; done >/dev/null`, `if ...; fi >/dev/null`
+  and `case ...; esac >/dev/null` (also an exec in the condition of the `if`).
+  `{ exec >/dev/null; }; echo after`, `{ exec >/dev/null; } 2>&1; echo after`,
+  `{ exec >/dev/null; } <&0; echo after` and `{ exec >/dev/null; } 3>&1; echo after`
+  print nothing. So do `{ exec >/dev/null; } >&1; echo after` and its forms
+  `1>&1`, `>& 1`, `>&01`, `>&1-` and `1<&1`, while `>&2`, `>&-`, `>&0`, `>&10`
+  and `>&1x` (a file) print `after`. `echo hi >&1` and `exec >&1; echo hi` print
+  `hi`, and `&>&1` and `>>&1` are syntax errors. No live Docker run repeated
+  them after the fix.
 - A foreground `nohup cmd` (no `&`) is not a detached process.
 
 Probe facts found in manual tests:
