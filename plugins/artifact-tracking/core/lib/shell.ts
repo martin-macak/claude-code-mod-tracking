@@ -16,7 +16,7 @@ export const unmarkDollars = (word: string): string => word.replaceAll(LITERAL_D
 const literalDollars = (text: string): string => text.replaceAll('$', LITERAL_DOLLAR)
 
 export type Segment = {
-  /** Words with quotes and escapes removed. Redirections are dropped. */
+  /** Words with quotes and escapes removed. Redirections are dropped: `stdoutRedirected` says if one sent the output away. */
   words: string[]
   /**
    * The same words, with each `$` that quotes or an escape made literal replaced by `LITERAL_DOLLAR`. Quotes and escapes
@@ -44,6 +44,22 @@ export type Segment = {
    * too, and so does each part of a pipeline, so their segments get a child scope of their own (see `splitShell`).
    */
   scope: string
+  /**
+   * Where the standard output of the segment goes (issue #231). A reader that pairs an output line with a command reads
+   * these three: a segment with none of them prints where the shell prints, and in a Bash call that is the tool result.
+   * `stdoutRedirected`: a typed redirection sends fd 1 away (`>`, `>>`, `>|`, `&>`, `&>>`, `>&word`, `1>`), on the segment
+   * or on the group, subshell or compound that holds it (`{ a; } > f`, `for ...; done > f`), or after a substitution that cut
+   * the command into segments (`a $(b) c > f` marks `a` and `c`). A redirection of stderr
+   * (`2>`, `2>&1`), of the input or of another descriptor (`3>`, `{fd}>`) leaves the output alone.
+   */
+  stdoutRedirected: boolean
+  /**
+   * A `|` or `|&` follows the pipeline part that holds the segment (`a | b` marks `a`, `{ a; } | b` marks `a`), so the
+   * output goes to the next command. The last part of a pipeline is not marked: its output goes where the shell's goes.
+   */
+  piped: boolean
+  /** The segment runs inside `$(...)`, backticks or a process substitution (`<(...)`, `>(...)`), so the shell takes its output. */
+  substituted: boolean
 }
 
 // A compound command spans several segments: `for ...; do ...; done`. `COMPOUND_LEAD` are the reserved words that can
@@ -142,6 +158,9 @@ type Place = {
  * A heredoc tag is the next word with its quotes and backslashes removed, so `<<\EOF` hides its body as `<<'EOF'` does. A
  * file descriptor right before `<<` (`3<<EOF`, `{fd}<<EOF`) is part of the redirection, and so is `{name}` before `<`, `>`
  * or `<>` (issue #194). A `<<` inside `$(( ))` or `(( ))` is a shift, not a heredoc: the scope of that text says so.
+ * Each segment says where its standard output goes (issue #231): `stdoutRedirected`, `piped` and `substituted`. A group,
+ * subshell, loop or `case` that is redirected or piped marks every segment in it. The marks are ranges over the segments,
+ * summed once at the end, so a redirection on each of a deep nest of groups costs O(n), not O(n^2).
  */
 export function splitShell(command: string): Segment[] {
   const out: Segment[] = []
@@ -158,8 +177,22 @@ export function splitShell(command: string): Segment[] {
   const s = command
   // Open subshells, innermost last. The segment ends before a scope opens or closes, so it keeps the scope it ran in.
   // `saved` is the `Place` of the scope that opened it. `compounds` is how many compounds were open then. `arith`: the text
-  // in it is an arithmetic expression (`$(( ))`, `(( ))`), where `<<` is a shift (issue #194).
-  const stack: { id: string; tick: boolean; saved: Place; compounds: number; arith: boolean }[] = []
+  // in it is an arithmetic expression (`$(( ))`, `(( ))`), where `<<` is a shift (issue #194). `sub`: the shell takes the
+  // output of the commands in it: a `$(`, a backtick or a process substitution opened it, or one of its parents did
+  // (`Segment.substituted`). `cont`: it was opened by a substitution of its own, so the simple command around it goes on
+  // after it (`a $(b) c`). `outerHead`: the `cmdHead` of that command, back at the close. `from`: the index of the first
+  // segment in it.
+  const stack: {
+    id: string
+    tick: boolean
+    saved: Place
+    compounds: number
+    arith: boolean
+    sub: boolean
+    cont: boolean
+    outerHead: number
+    from: number
+  }[] = []
   let scopes = 0
   const scope = () => stack.at(-1)?.id ?? ''
   // The first segment of the and-or list that the next `&`, `;` or newline ends. `&&` and `||` keep it, and a newline
@@ -174,13 +207,39 @@ export function splitShell(command: string): Segment[] {
   // opener of a compound is the first segment of the part that its head (`if cd x | cat; then`) opens.
   let partFrom = 0
   let piped = false
-  const groups: Place[] = []
+  // `from`: the index of the first segment in the group.
+  const groups: (Place & { from: number })[] = []
   // `isCase`: the compound is a `case`. Its `arm` says where the reader is in it: `head` is the subject (`case $(x)`, before
   // the `in`), `pattern` the pattern list of an arm (`in`, or `;;`, up to the `)`), `arm` the commands after the `)`. The
   // words of a pattern are no command, and the `)` that ends one is no end of a subshell. `fresh`: no word of this pattern
   // list yet. `paren`: it began with a `(`. An `esac` that comes first in a pattern list, with no `(` before it, ends the
-  // case: bash reads `case x in esac` as an empty case, and `esac)` there is a syntax error.
-  const compounds: (Place & { isCase: boolean; arm: 'head' | 'pattern' | 'arm'; fresh: boolean; paren: boolean })[] = []
+  // case: bash reads `case x in esac` as an empty case, and `esac)` there is a syntax error. `from`: the index of the
+  // segment of its opener, the first of the compound.
+  const compounds: (Place & {
+    isCase: boolean
+    arm: 'head' | 'pattern' | 'arm'
+    fresh: boolean
+    paren: boolean
+    from: number
+  })[] = []
+  // Where the output of the segments goes (`Segment.piped`, `Segment.stdoutRedirected`). A pipe or a redirection of a
+  // group covers a range of segments: `cover` puts +1 at its start and -1 at its end, and the sums at the end of the scan
+  // say which segments are covered. Marking each segment of the range would cost O(n) for each of a nest of n groups.
+  const pipeRuns: number[] = []
+  const redirRuns: number[] = []
+  const cover = (runs: number[], from: number, to: number) => {
+    if (from >= to) return
+    runs[from] = (runs[from] ?? 0) + 1
+    runs[to] = (runs[to] ?? 0) - 1
+  }
+  // The first segment of the group, subshell or backtick that closed just now, while only redirections have come after
+  // it: `{ a; } > f` has the words `> f` after the `}`, and they make no segment. -1: no group closed right before.
+  let closedFrom = -1
+  // A substitution splits a simple command into segments: `docker run -d $(a) nginx > f` has the segments `docker run -d`,
+  // `a` (inside) and `nginx > f`, and the redirection belongs to all of the command. `cmdHead` is the index of the first
+  // segment of the simple command that a substitution has split, in the scope that is open now. -1: none. An operator that
+  // ends the command resets it. A substitution gives back the one of the scope around it at its close.
+  let cmdHead = -1
   const here = (): Place => ({ list: listFrom, part: partFrom, piped })
   const back = (p: Place) => {
     listFrom = p.list
@@ -196,10 +255,22 @@ export function splitShell(command: string): Segment[] {
   // gives that word `Typed.redir`. A redirection that leaves a word (`>f`, `2>&1`) is marked by `dropRedirections`.
   let afterHeredoc = false
   // A scope opens a list and a pipeline part of its own. Its close gives back the place it sat in.
-  const openScope = (tick: boolean, arith = false) => {
-    stack.push({ id: `${scope()}.${++scopes}`, tick, saved: here(), compounds: compounds.length, arith })
+  // `sub`: the shell takes the output of the commands inside (`$(`, a backtick, `<(` and `>(`). A scope inside one keeps it.
+  const openScope = (tick: boolean, arith = false, sub = false) => {
+    stack.push({
+      id: `${scope()}.${++scopes}`,
+      tick,
+      saved: here(),
+      compounds: compounds.length,
+      arith,
+      sub: sub || (stack.at(-1)?.sub ?? false),
+      cont: sub,
+      outerHead: cmdHead,
+      from: out.length,
+    })
     listFrom = partFrom = out.length
     piped = false
+    cmdHead = -1
   }
   // The innermost scope holds arithmetic text. A `(` in it is a grouping parenthesis, so it holds arithmetic text too; a
   // `$(` in it is a command substitution, and what is in that is a command again.
@@ -295,7 +366,11 @@ export function splitShell(command: string): Segment[] {
   }
   const closeScope = () => {
     const top = stack.pop()
-    if (top) back(top.saved)
+    if (top) {
+      back(top.saved)
+      closedFrom = top.from
+      cmdHead = top.outerHead
+    }
   }
   // The `case` that the reader is in right now: the innermost open compound, when it is a `case` that opened inside the
   // innermost scope. A subshell, a `$(` or a backtick in an arm opens a scope after the `case`, so inside it there is none:
@@ -382,7 +457,9 @@ export function splitShell(command: string): Segment[] {
       heads = []
       return
     }
-    const { words: clean, heads: cleanHeads } = dropRedirections(words, heads)
+    const { words: clean, heads: cleanHeads, stdout } = dropRedirections(words, heads)
+    // The words after the `}` or `)` of a group that only redirect (`{ a; } > f`) make no segment: the group is redirected.
+    if (clean.length === 0 && stdout && closedFrom >= 0) cover(redirRuns, closedFrom, out.length)
     if (clean.length > 0) {
       out.push({
         words: clean.map(unmarkDollars),
@@ -391,12 +468,22 @@ export function splitShell(command: string): Segment[] {
         redir: cleanHeads.map(h => h.redir),
         bg,
         scope: scope(),
+        stdoutRedirected: stdout,
+        piped: false,
+        substituted: stack.at(-1)?.sub ?? false,
       })
       const lead = compoundLead(clean, cleanHeads)
       if (lead.opens.length > 0) {
         // `if for i in 1; do ...; done; then` opens an `if` and a `for` in one segment: each gets its own level.
         for (const kind of lead.opens) {
-          compounds.push({ ...here(), isCase: kind === 'case', arm: 'head', fresh: false, paren: false })
+          compounds.push({
+            ...here(),
+            isCase: kind === 'case',
+            arm: 'head',
+            fresh: false,
+            paren: false,
+            from: out.length - 1,
+          })
           partFrom = out.length - 1
           piped = false
         }
@@ -404,14 +491,20 @@ export function splitShell(command: string): Segment[] {
         if (top.isCase && clean[lead.at + 2] === 'in') startPattern(top)
       } else {
         // `esac` can follow a compound with no `;;` (`a | { b; } esac`), and `fi esac` or `done esac` close two compounds.
-        // Each close ends the pipeline that is open in it, then gives back the place from before its compound.
+        // Each close ends the pipeline that is open in it, then gives back the place from before its compound. A redirection
+        // on the closing segment (`done > f`) is one of the whole compound.
         for (let k = 0; closesAt(clean, cleanHeads, k); k++) {
           endPipe()
           const open = compounds.pop()
-          if (open) back(open)
+          if (open) {
+            back(open)
+            if (stdout) cover(redirRuns, open.from, out.length)
+          }
         }
       }
     }
+    // A redirection after a substitution (`docker run -d $(a) nginx > f`) is one of the whole command, its head too.
+    if (stdout && cmdHead >= 0) cover(redirRuns, cmdHead, out.length)
     words = []
     heads = []
   }
@@ -548,15 +641,32 @@ export function splitShell(command: string): Segment[] {
         }
       }
       if (pending) wantsMore = false
+      const before = out.length
       endSegment(op === '&')
+      closedFrom = -1 // a redirection counts for the group that closed right before it, and only until the next operator
+      // The simple command goes on after a substitution, so it keeps its head: the first segment that the substitution cut off.
+      // Any other operator ends the command.
+      const goesOn =
+        op === '$(' ||
+        op === '`' ||
+        (op === '(' && typedRedir === i - 1) ||
+        (op === ')' && !theCase() && stack.at(-1)?.cont === true)
+      if (!goesOn) cmdHead = -1
+      else if (op !== ')' && cmdHead < 0 && out.length > before) cmdHead = out.length - 1
       if (op === '(') {
         // A `(` in front of the first word of a pattern list is part of the pattern, no subshell. The segment above can have
         // ended the header just now (`case x in(x)`), so the case is read again.
         const c = theCase()
         if (c?.arm === 'pattern' && c.fresh && !c.paren) c.paren = true
-        else openScope(false, inArith() || (s[i + 1] === '(' && !/[<>]/.test(s[i - 1] ?? '') && arithFollows(i + 2)))
+        // A `(` right behind a typed `<` or `>` (`<(cmd)`, `>(cmd)`) is a process substitution: the shell takes the output.
+        else
+          openScope(
+            false,
+            inArith() || (s[i + 1] === '(' && !/[<>]/.test(s[i - 1] ?? '') && arithFollows(i + 2)),
+            typedRedir === i - 1,
+          )
       } else if (op === '$(') {
-        openScope(false, s[i + 2] === '(' && arithFollows(i + 3))
+        openScope(false, s[i + 2] === '(' && arithFollows(i + 3), true)
       } else if (op === ')') {
         endPipe()
         // A `)` in a `case` closes no scope: the pattern ends there. The arm after it is a list of its own.
@@ -566,17 +676,21 @@ export function splitShell(command: string): Segment[] {
         if (stack.at(-1)?.tick) {
           endPipe()
           closeScope()
-        } else openScope(true)
+        } else openScope(true, false, true)
       } else if (op === '{') {
-        groups.push(here())
+        groups.push({ ...here(), from: out.length })
         listFrom = partFrom = out.length // the group opens a list and a part of its own; `}` gives back the outer ones
         piped = false
       } else if (op === '}') {
         endPipe()
         const outer = groups.pop()
-        if (outer) back(outer)
+        if (outer) {
+          back(outer)
+          closedFrom = outer.from
+        }
       } else if (op === '|' || op === '|&') {
         moveToChild(partFrom) // the part before the `|` runs in a subshell
+        cover(pipeRuns, partFrom, out.length) // and its output feeds the next part
         partFrom = out.length
         piped = true
       } else if (op === '&') {
@@ -601,6 +715,15 @@ export function splitShell(command: string): Segment[] {
   }
   endSegment(false)
   endPipe()
+  // Read the ranges of the pipes and of the redirected groups: a segment is marked when some range covers it.
+  let piping = 0
+  let redirecting = 0
+  out.forEach((seg, k) => {
+    piping += pipeRuns[k] ?? 0
+    redirecting += redirRuns[k] ?? 0
+    seg.piped = piping > 0
+    if (redirecting > 0) seg.stdoutRedirected = true
+  })
   return out
 }
 
@@ -651,16 +774,28 @@ export function scopedVars(): {
 const FD = String.raw`(?:\d+|\{[A-Za-z_][A-Za-z0-9_]*\})`
 const FD_WORD = new RegExp(`^${FD}$`)
 // `<>` stands before `<<?<?`: that branch matches the lone `<` of `<>` and leaves the `>` in the target (issue #183).
-const REDIRECT = new RegExp(String.raw`^(?:${FD}?|&)(?:>\||>>?|<>|<<?<?|>&|<&)(.*)$`)
+const REDIRECT = new RegExp(String.raw`^(?<fd>${FD}?|&)(?<op>>\||>>?|<>|<<?<?|>&|<&)(?<rest>.*)$`)
+
+/**
+ * The redirection sends fd 1 away (issue #231). `fd` is the descriptor in front of the operator: none or `&` for a `>` form
+ * (`> f`, `>> f`, `>| f`, `>&2`, `&> f`), or `1` for any operator. A number other than 1 (`2>&1`), a `{name}` and an input
+ * redirection with no number (`< f`, `<> f`, `<<< x`) leave the output alone. `>&2` and `>&-` count as one: they move or close it.
+ */
+const sendsStdout = (fd: string, op: string): boolean =>
+  /^\d+$/.test(fd) ? Number(fd) === 1 : (fd === '' || fd === '&') && op.startsWith('>')
 
 /**
  * Drops redirections (`> f`, `2>&1`, `&>f`, `<f`, `<> f`, `<<< word`, `{fd}>f`) and their targets. `typed[i].head` is how
  * many of the first characters of `words[i]` were typed. Only that head can hold the redirection: a quoted or escaped `>`
- * is a word (`\>`, `'>'`, `2\>&1`), and so is the word after it (issue #162). Returns the kept words and their `Typed`.
+ * is a word (`\>`, `'>'`, `2\>&1`), and so is the word after it (issue #162). Returns the kept words and their `Typed`,
+ * and `stdout`: one of the redirections sends fd 1 away (`sendsStdout`).
  * The first word that stays behind a dropped redirection gets `redir` (issue #227).
  */
-function dropRedirections(words: readonly string[], typed: readonly Typed[]): { words: string[]; heads: Typed[] } {
-  const out: { words: string[]; heads: Typed[] } = { words: [], heads: [] }
+function dropRedirections(
+  words: readonly string[],
+  typed: readonly Typed[],
+): { words: string[]; heads: Typed[]; stdout: boolean } {
+  const out: { words: string[]; heads: Typed[]; stdout: boolean } = { words: [], heads: [], stdout: false }
   // A redirection was dropped since the last word that stayed: the next one stands right behind it.
   let cut = false
   for (let i = 0; i < words.length; i++) {
@@ -674,9 +809,10 @@ function dropRedirections(words: readonly string[], typed: readonly Typed[]): { 
       continue
     }
     cut = true
+    if (sendsStdout(m.groups!.fd!, m.groups!.op!)) out.stdout = true
     // `>` alone takes the next word as its target; `>file` and `2>&1` carry it. So does a target that was quoted or
     // escaped, right behind the typed `>` (`>\>`, `>'f g'`, and an empty quote: `>''`).
-    if (m[1] === '' && t.whole) i++
+    if (m.groups!.rest === '' && t.whole) i++
   }
   return out
 }

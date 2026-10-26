@@ -187,6 +187,22 @@ test('docker run -d after docker info in one Bash call shows the container as up
   expect(t.rows().map(r => [r.name, r.state])).toEqual([['track-test-sleep', 'up']])
 })
 
+// A row of a name keeps no id that its latest run did not print (issue #231). The id comes from the tool result of each Bash
+// call, and a run whose output went elsewhere makes the row hold none, also when an earlier call gave it an exact one.
+test('a second sighting of a named container replaces the exact id of the first, also with none', async () => {
+  const OTHER = 'd'.repeat(64)
+  const t = setup()
+  await t.bash('docker run -d --name api nginx', `${CID}\n`)
+  expect(t.rows().map(r => [r.name, r.containerId, r.containerIdExact])).toEqual([['api', CID, true]])
+  await t.bash('docker run -d --name api nginx > /dev/null; docker inspect -f "{{.Id}}" web', `${OTHER}\n`)
+  expect(t.rows()).toHaveLength(1)
+  expect(t.rows()[0]?.name).toBe('api')
+  expect('containerId' in (t.rows()[0] as ProcessRecord)).toBe(false)
+  expect('containerIdExact' in (t.rows()[0] as ProcessRecord)).toBe(false)
+  await t.bash('docker run -d --name api nginx', `${OTHER}\n`)
+  expect(t.rows().map(r => [r.name, r.containerId, r.containerIdExact])).toEqual([['api', OTHER, true]])
+})
+
 test('docker compose up -d at the end of a compound command shows the project', async () => {
   const t = setup()
   t.w.run = argv =>
