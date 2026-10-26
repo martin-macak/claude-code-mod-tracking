@@ -17,6 +17,7 @@ import {
   READ_ATTEMPTS,
   READ_BACKOFF_MS,
   readComplete,
+  readItemCount,
   readMilestoneIssues,
   readProject,
   resolveContent,
@@ -769,5 +770,211 @@ test('readComplete does not retry a failed gh call: an auth failure stops at onc
     err => err instanceof GhError && err.kind === 'auth',
   )
   assert.equal(runner.calls.length, 1)
+  assert.deepEqual(sleep.pauses, [])
+})
+
+// --- The second count of the items (issue #230) ---
+//
+// The list and its own totalCount can agree on a partial answer (100 of 100) while another
+// resolver counts 105. Once per try, readComplete asks node(id: <project id>) for the count only.
+
+const PROJECT_ID = snapshot.data.repositoryOwner.projectV2.id
+const isCount = body => /query ProjectItemCount/.test(body.query)
+// gh on 2026-10-26 for an id that GitHub cannot resolve, asked with the count query: exit 1, the
+// message on stderr, and on stdout a body with a null node and a NOT_FOUND error. It is no reply
+// with a null node and no error.
+const notFoundError = id => ({
+  type: 'NOT_FOUND',
+  path: ['node'],
+  locations: [{ line: 1, column: 36 }],
+  message: `Could not resolve to a node with the global id of '${id}'`,
+})
+const notFoundBody = id => ({ data: { node: null }, errors: [notFoundError(id)] })
+const notFoundCount = id => fail(1, `gh: ${notFoundError(id).message}\n`, JSON.stringify(notFoundBody(id)))
+// A runner that answers the project reads from `reads` (by the n-th read, the last repeats) and
+// the count query from `counts` (by the n-th count, the last repeats). A count is a number, or
+// null for a node that GitHub cannot resolve: gh fails with NOT_FOUND then. The runner records the
+// kind of every call.
+function countingRunner({ reads = [good()], counts = [23] } = {}) {
+  let nRead = 0
+  let nCount = 0
+  const runner = fakeRunner((_args, body) => {
+    if (!isCount(body)) return ok(reads[Math.min(++nRead, reads.length) - 1])
+    const count = counts[Math.min(++nCount, counts.length) - 1]
+    return count === null ? notFoundCount(body.variables.id) : ok({ data: { node: { items: { totalCount: count } } } })
+  })
+  runner.kinds = () => runner.calls.map(c => (isCount(c.body) ? 'count' : 'read'))
+  return runner
+}
+// The glitch of 2026-10-22: the first path lists 100 of 100 and says 100, the second says 105.
+const stableHundred = () => {
+  const cut = structuredClone(livePages[0])
+  cut.data.repositoryOwner.projectV2.items.pageInfo.hasNextPage = false
+  cut.data.repositoryOwner.projectV2.items.totalCount = 100
+  return cut
+}
+
+test('readItemCount asks node(id:) for the item count only: no nodes, and the id is the variable', () => {
+  const runner = countingRunner({ counts: [105] })
+  assert.equal(readItemCount(makeGh(runner), PROJECT_ID), 105)
+  const { query, variables } = runner.calls[0].body
+  assert.deepEqual(variables, { id: PROJECT_ID })
+  assert.match(query, /node\(id: \$id\) \{\s+\.\.\. on ProjectV2 \{\s+items \{ totalCount \}\s+\}\s+\}/)
+  assert.doesNotMatch(query, /nodes|first:|repositoryOwner|user\(/) // a small query, and not the first path
+})
+
+test('readItemCount gives null for a node that gh cannot resolve: NOT_FOUND, exit 1, a null node', () => {
+  const runner = countingRunner({ counts: [null] })
+  assert.equal(readItemCount(makeGh(runner), PROJECT_ID), null)
+  assert.deepEqual(runner.calls[0].body.variables, { id: PROJECT_ID })
+})
+
+test('readItemCount also gives null for a NOT_FOUND body when gh exits 0 (a guard: gh exits 1 today)', () => {
+  const runner = fakeRunner(() => ok(notFoundBody(PROJECT_ID)))
+  assert.equal(readItemCount(makeGh(runner), PROJECT_ID), null)
+})
+
+test('readItemCount gives null for a reply with no count', () => {
+  const noCount = fakeRunner(() => ok({ data: { node: { items: {} } } }))
+  assert.equal(readItemCount(makeGh(noCount), PROJECT_ID), null)
+  const notItems = fakeRunner(() => ok({ data: { node: {} } })) // a node that is no ProjectV2
+  assert.equal(readItemCount(makeGh(notItems), PROJECT_ID), null)
+  const nullNode = fakeRunner(() => ok({ data: { node: null } })) // no error: not what gh gives, still no count
+  assert.equal(readItemCount(makeGh(nullNode), PROJECT_ID), null)
+})
+
+test('readItemCount does not hide an error that is not only a NOT_FOUND', () => {
+  const mixed = { data: { node: null }, errors: [notFoundError(PROJECT_ID), { type: 'FORBIDDEN', message: 'no' }] }
+  const replies = [
+    fail(1, 'gh: Bad credentials (HTTP 401)'),
+    fail(1, 'gh: Your token has not been granted the required scopes to execute this query.', SCOPE_BODY),
+    fail(1, 'gh: no', JSON.stringify(mixed)),
+    fail(1, 'gh: Server Error (HTTP 502)', '<html>bad gateway</html>'),
+  ]
+  for (const reply of replies) {
+    assert.throws(() => readItemCount(makeGh(fakeRunner(() => reply)), PROJECT_ID), GhError, reply.stderr)
+  }
+})
+
+test('readItemCount lets a failed gh call through: an auth failure is no bad count', () => {
+  const runner = fakeRunner(() => fail(1, 'gh: Bad credentials (HTTP 401)'))
+  assert.throws(
+    () => readItemCount(makeGh(runner), PROJECT_ID),
+    err => err instanceof GhError && err.kind === 'auth',
+  )
+})
+
+test('readComplete with count: one read and one count query, with the project id of the read, and no pause', () => {
+  const runner = countingRunner()
+  const sleep = fakeSleep()
+  const read = readComplete(makeGh(runner), TARGET, { count: true, sleep })
+  assert.deepEqual(read.problems, [])
+  assert.deepEqual(runner.kinds(), ['read', 'count'])
+  assert.equal(runner.calls[1].body.variables.id, PROJECT_ID)
+  assert.equal(read.attempts, 1)
+  assert.deepEqual(sleep.pauses, [])
+})
+
+test('readComplete with twice and count: the count comes once per try, after the pair of reads', () => {
+  const runner = countingRunner()
+  const read = readComplete(makeGh(runner), TARGET, { twice: true, count: true, sleep: fakeSleep() })
+  assert.deepEqual(read.problems, [])
+  assert.deepEqual(runner.kinds(), ['read', 'read', 'count'])
+})
+
+test('readComplete without count asks no second query', () => {
+  const runner = countingRunner()
+  readComplete(makeGh(runner), TARGET, { twice: true, sleep: fakeSleep() })
+  assert.deepEqual(runner.kinds(), ['read', 'read'])
+})
+
+test('readComplete with count: a stable 100 of 100 against a second count of 105 is a bad read, one count per try', () => {
+  // The read passes every check of the first path. Only the second count tells.
+  const runner = countingRunner({ reads: [stableHundred()], counts: [105] })
+  const sleep = fakeSleep()
+  const read = readComplete(makeGh(runner), TARGET, { twice: true, count: true, sleep })
+  assert.equal(read.problems.length, 1)
+  assert.match(read.problems[0], /second query \(node\(id:\)\) counted 105 items, but the read listed 100/)
+  assert.equal(read.attempts, READ_ATTEMPTS)
+  assert.deepEqual(runner.kinds(), Array.from({ length: READ_ATTEMPTS }, () => ['read', 'read', 'count']).flat())
+  assert.deepEqual(sleep.pauses, READ_BACKOFF_MS)
+})
+
+// The positive half of the glitch of 2026-10-22: the real read, 105 items in two pages, against a
+// second count of 105. A count that is off by one, either way, is a bad read.
+const pagesWithCount = n =>
+  fakeRunner((_args, body) =>
+    isCount(body) ? ok({ data: { node: { items: { totalCount: n } } } }) : ok(livePages[body.variables.cursor ? 1 : 0]),
+  )
+
+test('readComplete with count: the real read of 2026-10-22 (105 items in two pages) agrees with a count of 105, and not with 104 or 106', () => {
+  const runner = pagesWithCount(105)
+  const read = readComplete(makeGh(runner), TARGET, { twice: true, count: true, sleep: fakeSleep() })
+  assert.deepEqual(read.problems, [])
+  assert.equal(read.items.length, 105)
+  assert.deepEqual(
+    runner.calls.map(c => (isCount(c.body) ? 'count' : 'read')),
+    ['read', 'read', 'read', 'read', 'count'], // two reads of two pages, then one count
+  )
+  for (const n of [104, 106]) {
+    const bad = readComplete(makeGh(pagesWithCount(n)), TARGET, { twice: true, count: true, sleep: fakeSleep() })
+    assert.equal(bad.problems.length, 1, `a count of ${n}`)
+    assert.match(bad.problems[0], new RegExp(`counted ${n} items, but the read listed 105`))
+  }
+})
+
+test('readComplete with count: a second count that is right on the next try comes back clean after one pause', () => {
+  const runner = countingRunner({ counts: [28, 23] })
+  const sleep = fakeSleep()
+  const read = readComplete(makeGh(runner), TARGET, { count: true, sleep })
+  assert.deepEqual(read.problems, [])
+  assert.equal(read.attempts, 2)
+  assert.deepEqual(runner.kinds(), ['read', 'count', 'read', 'count'])
+  assert.deepEqual(sleep.pauses, [READ_BACKOFF_MS[0]])
+})
+
+test('readComplete with count: a node that gh cannot resolve (NOT_FOUND, exit 1) is no count: a bad read, tried again', () => {
+  const runner = countingRunner({ counts: [null] })
+  const sleep = fakeSleep()
+  const read = readComplete(makeGh(runner), TARGET, { count: true, sleep })
+  assert.equal(read.problems.length, 1)
+  assert.match(read.problems[0], /second query \(node\(id:\)\) gave no item count/)
+  assert.equal(read.attempts, READ_ATTEMPTS)
+  assert.deepEqual(runner.kinds(), Array.from({ length: READ_ATTEMPTS }, () => ['read', 'count']).flat())
+  assert.deepEqual(sleep.pauses, READ_BACKOFF_MS)
+})
+
+test('readComplete with count: a NOT_FOUND on the first try and a count on the next comes back clean after one pause', () => {
+  const runner = countingRunner({ counts: [null, 23] })
+  const sleep = fakeSleep()
+  const read = readComplete(makeGh(runner), TARGET, { count: true, sleep })
+  assert.deepEqual(read.problems, [])
+  assert.equal(read.attempts, 2)
+  assert.deepEqual(runner.kinds(), ['read', 'count', 'read', 'count'])
+  assert.deepEqual(sleep.pauses, [READ_BACKOFF_MS[0]])
+})
+
+test('readComplete with count: a reply with no count is a bad read, tried again', () => {
+  const runner = fakeRunner((_args, body) => ok(isCount(body) ? { data: { node: { items: {} } } } : good()))
+  const read = readComplete(makeGh(runner), TARGET, { count: true, sleep: fakeSleep() })
+  assert.match(read.problems.join('\n'), /second query \(node\(id:\)\) gave no item count/)
+  assert.equal(read.attempts, READ_ATTEMPTS)
+})
+
+test('readComplete with count: a read that fails its own checks skips the second query', () => {
+  const runner = countingRunner({ reads: [emptyProject()] })
+  const read = readComplete(makeGh(runner), TARGET, { count: true, sleep: fakeSleep() })
+  assert.match(read.problems.join('\n'), /no item/)
+  assert.deepEqual(runner.kinds(), Array(READ_ATTEMPTS).fill('read')) // no count: the read is bad already
+})
+
+test('readComplete with count: a failed second query is no bad read and is not tried again', () => {
+  const runner = fakeRunner((_args, body) => (isCount(body) ? fail(1, 'gh: Bad credentials (HTTP 401)') : ok(good())))
+  const sleep = fakeSleep()
+  assert.throws(
+    () => readComplete(makeGh(runner), TARGET, { count: true, sleep }),
+    err => err instanceof GhError && err.kind === 'auth',
+  )
+  assert.equal(runner.calls.length, 2)
   assert.deepEqual(sleep.pauses, [])
 })

@@ -41,7 +41,8 @@ const DEFAULTS = { owner: 'martin-macak', project: '3', repo: 'martin-macak/clau
 const USAGE = `Usage: sync.mjs <command> [options]
 
 Keeps the GitHub Project in step with the issues. Reads with gh api graphql, writes with gh api graphql and gh project.
-A command that writes reads the project twice first, and refuses to write from a read that is not complete.
+A command that writes reads the project twice and counts its items a second way first, and refuses to write from a read
+that is not complete.
 
 Commands:
   sync                                     Plan Wave, Status and "Blocked by" for the open issues. A dry run: --apply writes.
@@ -194,8 +195,9 @@ function warnOnce(ctx, text) {
 // so. A run that writes reads twice, and an incomplete read stops it here, so that no plan and no
 // write comes from it. A dry run reads once per try, and an incomplete read is a warning:
 // state.problems says what was wrong with it. state.listedIds are the items that the plan sees.
+// Every read of the state asks the second count too (issue #230), for a write and a dry run alike.
 function readState(ctx, { write = ctx.apply } = {}) {
-  const read = readComplete(ctx.gh, target(ctx), { twice: write, sleep: ctx.sleep })
+  const read = readComplete(ctx.gh, target(ctx), { twice: write, count: true, sleep: ctx.sleep })
   if (write && read.problems.length > 0) throw new Fail(incompleteRefusal(ctx, read))
   checkFields(read.fields)
   const warnings = read.problems.length > 0 ? [incompleteWarning(ctx, read)] : []

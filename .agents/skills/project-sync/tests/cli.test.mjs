@@ -53,6 +53,9 @@ function applyEdit(data, args) {
   values.push({ ...value, field: { name: field.name } })
 }
 
+// What onCount gives for a reply that holds no count (see fakeGh).
+const NO_COUNT = Symbol('no count')
+
 // An in-process gh that answers from the snapshot and records every call. A write changes the data
 // that the next read returns, as GitHub does. issues: the answer of IssuesByIds, by node id.
 // The add answers with the id of the new item (addedId, else the last item of afterAdd). Without
@@ -60,6 +63,10 @@ function applyEdit(data, args) {
 // addFail: the error of the add. A read of the project answers with the count of its nodes as
 // totalCount, as GitHub does. onRead(items, n) may spoil the n-th read (1 for the first): items is
 // the connection of that reply (totalCount, pageInfo, nodes), and the test changes it in place.
+// The second count (ProjectItemCount, issue #230) answers with the count of the nodes too.
+// onCount(actual, n) may change it: it gets that count and the number of the query (1 for the
+// first), and gives the count to answer with. null: a node that GitHub does not resolve, which
+// fails as gh does (NOT_FOUND, exit 1). NO_COUNT: a reply that holds no count.
 function fakeGh({
   project = fresh(),
   afterAdd = null,
@@ -72,6 +79,7 @@ function fakeGh({
   moveFail = null,
   moveNoop = false,
   onRead = null,
+  onCount = null,
 } = {}) {
   const calls = []
   let added = false
@@ -87,6 +95,26 @@ function fakeGh({
         items.totalCount = items.nodes.length
         onRead?.(items, calls.filter(c => c.op === 'ProjectItems').length)
         return data
+      }
+      if (op === 'ProjectItemCount') {
+        const actual = nodesOf(current()).length
+        const count = onCount ? onCount(actual, calls.filter(c => c.op === 'ProjectItemCount').length) : actual
+        if (count === NO_COUNT) return { node: { items: {} } }
+        if (count === null) {
+          // gh on 2026-10-26 for an id that does not resolve: exit 1, the message on stderr, and on
+          // stdout a body with a null node and a NOT_FOUND error. Not a reply with a null node.
+          const error = {
+            type: 'NOT_FOUND',
+            path: ['node'],
+            locations: [{ line: 1, column: 36 }],
+            message: `Could not resolve to a node with the global id of '${variables.id}'`,
+          }
+          throw new GhError('other', `gh: ${error.message}`, {
+            status: 1,
+            stdout: JSON.stringify({ data: { node: null }, errors: [error] }),
+          })
+        }
+        return { node: { items: { totalCount: count } } }
       }
       if (op === 'AddItem') {
         if (addFail) throw addFail
@@ -635,12 +663,12 @@ test('status never sets Done, whatever the item or the letter case: GitHub sets 
   }
 })
 
-test('status reads the project twice and writes one field, and makes no other call', () => {
+test('status reads the project twice, counts its items a second way, writes one field, and makes no other call', () => {
   const r = run(['status', '64', 'In progress'])
   assert.equal(r.code, 0)
   assert.deepEqual(
     r.gh.calls.map(c => c.op ?? c.type),
-    ['ProjectItems', 'ProjectItems', 'exec'],
+    ['ProjectItems', 'ProjectItems', 'ProjectItemCount', 'exec'],
   )
   assert.deepEqual(r.slept, [])
 })
@@ -1413,6 +1441,170 @@ test('the check after the add accepts a list that lacks the new item (issue #107
   assert.equal(r.code, 1)
   assert.equal(adds(cut).length, 1)
   assert.match(r.err, /the writes are done, but the read after them is not complete/)
+})
+
+// --- A second count of the items (issue #230) ---
+//
+// The first path can answer with a stable partial list: 100 of 100 in two reads in a row, with a
+// totalCount of 100, while another path counts 105. Every try that passes the other checks asks
+// node(id: <project id>) for the item count only. A command that writes refuses on a mismatch, and
+// a dry run only warns. Here the list is the 23 items of the snapshot, and the second path counts
+// more, fewer or none.
+const countGlitches = {
+  'a second count that is higher than the list': {
+    count: actual => actual + 5,
+    message: /second query \(node\(id:\)\) counted 28 items, but the read listed 23/,
+  },
+  'a second count that is lower than the list': {
+    count: actual => actual - 1,
+    message: /second query \(node\(id:\)\) counted 22 items, but the read listed 23/,
+  },
+  // gh fails for an id that it cannot resolve (NOT_FOUND, exit 1). The count counts as none, so the
+  // read is tried again, and a dry run still prints its plan.
+  'a second count that GitHub cannot resolve (NOT_FOUND)': {
+    count: () => null,
+    message: /second query \(node\(id:\)\) gave no item count/,
+  },
+  'a second count reply that holds no count': {
+    count: () => NO_COUNT,
+    message: /second query \(node\(id:\)\) gave no item count/,
+  },
+}
+const countQueries = gh => gh.calls.filter(c => c.op === 'ProjectItemCount')
+
+for (const [glitch, { count, message }] of Object.entries(countGlitches)) {
+  for (const [name, args] of Object.entries(writers)) {
+    test(`${name} refuses to write with ${glitch}: exit 1, nothing written, the counts named`, () => {
+      const gh = fakeGh({ project: drift(), onCount: count })
+      const r = run(args, gh)
+      assert.equal(r.code, 1)
+      assert.deepEqual(changes(gh), [])
+      assert.equal(r.out, '') // it made no plan
+      assert.match(r.err, /^project-sync: refusing to write: the read of project 3 of martin-macak is not complete after 4 tries/)
+      assert.match(r.err, message)
+      assert.match(r.err, /Nothing was written\./)
+      // It stopped at the read: no blocker, milestone or REST call, and no write.
+      assert.deepEqual([...new Set(gh.calls.map(c => c.op ?? c.type))], ['ProjectItems', 'ProjectItemCount'])
+      assert.equal(reads(gh), 8) // two reads in every try
+      assert.equal(countQueries(gh).length, 4) // one count in every try
+      assert.deepEqual(r.slept, READ_BACKOFF_MS)
+    })
+  }
+
+  test(`sync --apply --json refuses with ${glitch} and prints no JSON`, () => {
+    const gh = fakeGh({ project: drift(), onCount: count })
+    const r = run(['sync', '--apply', '--json'], gh)
+    assert.equal(r.code, 1)
+    assert.equal(r.out, '')
+    assert.deepEqual(changes(gh), [])
+  })
+
+  test(`a dry run with ${glitch} still prints the plan, and warns loudly with the counts`, () => {
+    const gh = fakeGh({ project: drift(), onCount: count })
+    const r = run(['sync'], gh)
+    assert.equal(r.code, 0)
+    assert.deepEqual(changes(gh), [])
+    assert.match(r.err, /^warning: the read of project 3 of martin-macak looks incomplete after 4 tries/)
+    assert.match(r.err, message)
+    assert.match(r.err, /--apply refuses/)
+    assert.match(r.out, /^Project "artifact-tracking 0\.2\.0"/) // the report is there
+    assert.match(r.out, /Warning: the read was incomplete\. Do not trust the report above\./)
+    assert.doesNotMatch(r.out, /Pass --apply/) // --apply would refuse
+    assert.equal(reads(gh), 4) // a dry run reads once in every try
+    assert.equal(countQueries(gh).length, 4)
+    assert.deepEqual(r.slept, READ_BACKOFF_MS)
+    const doc = JSON.parse(run(['sync', '--json'], fakeGh({ project: drift(), onCount: count })).out)
+    assert.equal(doc.warnings.length, 1)
+    assert.match(doc.warnings[0], /looks incomplete after 4 tries/)
+    assert.match(doc.warnings[0], message)
+  })
+}
+
+test('next and add without --apply warn about a second count that disagrees, and write nothing', () => {
+  for (const args of [['next'], addArgs]) {
+    const gh = fakeGh({ ...around66(), onCount: actual => actual + 5 })
+    const r = run(args, gh)
+    assert.equal(r.code, 0, args.join(' '))
+    assert.deepEqual(changes(gh), [], args.join(' '))
+    assert.match(r.err, /looks incomplete after 4 tries/, args.join(' '))
+    const m = /counted (\d+) items, but the read listed (\d+)/.exec(r.err)
+    assert.ok(m, `${args.join(' ')}: the warning names both counts`)
+    assert.equal(Number(m[1]), Number(m[2]) + 5, args.join(' '))
+  }
+})
+
+test('a dry next with a second count that disagrees names no item to pick', () => {
+  const r = run(['next'], fakeGh({ project: drift(), onCount: actual => actual + 5 }))
+  assert.equal(r.code, 0)
+  assert.doesNotMatch(r.out, /^Next:/m)
+  assert.match(r.out, /No pick: the read was incomplete\. Run next again in a minute\./)
+})
+
+test('the second count asks node(id:) with the project id of the first read, once per try', () => {
+  const gh = fakeGh({ project: drift() })
+  run(['sync', '--apply'], gh)
+  const [query] = countQueries(gh)
+  assert.deepEqual(query.variables, { id: PROJECT_ID })
+  assert.equal(countQueries(gh).length, 1)
+})
+
+test('a good read with equal counts writes as before: one count, after the two reads and before the first write', () => {
+  const gh = fakeGh({ project: driftAndMoves() })
+  const r = run(['sync', '--apply'], gh)
+  assert.equal(r.code, 0)
+  assert.deepEqual(writes(gh), [editArgs(nodeOf(fresh(), 64).id, 'Status', '--single-select-option-id', 'f75ad846')])
+  assert.equal(moves(gh).length, 11)
+  assert.match(r.out, /Applied 1 change and 11 position moves\./)
+  assert.equal(r.err, '')
+  assert.deepEqual(r.slept, [])
+  // The check after the moves reads the list only: it needs the items of the read before the write.
+  // It is not known whether a count agrees with a list that lags after a write (issue #107).
+  assert.deepEqual(
+    gh.calls
+      .filter(c => ['ProjectItems', 'ProjectItemCount', 'MoveItem'].includes(c.op) || c.type === 'exec')
+      .map(c => c.op ?? c.type),
+    ['ProjectItems', 'ProjectItems', 'ProjectItemCount', 'exec', ...Array(11).fill('MoveItem'), 'ProjectItems'],
+  )
+})
+
+test('a dry run on a good read asks one second count, prints no warning and does not pause', () => {
+  const gh = fakeGh({ project: drift() })
+  const r = run(['sync'], gh)
+  assert.equal(r.err, '')
+  assert.equal(reads(gh), 1)
+  assert.equal(countQueries(gh).length, 1)
+  assert.deepEqual(r.slept, [])
+})
+
+test('a second count that is wrong once and right after the pause writes as before', () => {
+  const gh = fakeGh({ project: drift(), onCount: (actual, n) => (n === 1 ? actual + 5 : actual) })
+  const r = run(['sync', '--apply'], gh)
+  assert.equal(r.code, 0)
+  assert.equal(writes(gh).length, 1)
+  assert.deepEqual(r.slept, [READ_BACKOFF_MS[0]])
+  assert.equal(countQueries(gh).length, 2)
+})
+
+test('the check after the moves does not use the second count: a count that is wrong only then changes nothing', () => {
+  const gh = fakeGh({ onCount: (actual, n) => (n > 1 ? actual + 5 : actual) })
+  const r = run(['sync', '--apply'], gh)
+  assert.equal(r.code, 0)
+  assert.equal(moves(gh).length, 11)
+  assert.match(r.out, /Positions checked: the manual order follows Order\./)
+  assert.equal(countQueries(gh).length, 1)
+})
+
+test('a failed second query is no bad read: an auth failure exits 3 and nothing is written', () => {
+  const gh = fakeGh({ project: drift() })
+  const graphql = gh.graphql
+  gh.graphql = (query, variables) => {
+    if (/query ProjectItemCount/.test(query)) throw new GhError('auth', 'gh: Bad credentials (HTTP 401)')
+    return graphql(query, variables)
+  }
+  const r = run(['sync', '--apply'], gh)
+  assert.equal(r.code, 3)
+  assert.deepEqual(changes(gh), [])
+  assert.deepEqual(r.slept, [])
 })
 
 // The real process: exit codes and the output streams.

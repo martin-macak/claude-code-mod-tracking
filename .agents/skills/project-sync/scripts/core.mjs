@@ -466,6 +466,24 @@ export function readProblems({ items, totalCounts }, { expectIds = null } = {}) 
   return problems
 }
 
+// What is wrong with a read when a second path counted the items (issue #230): [] when nothing
+// is. readProblems() cannot see a stable partial list: the items and their own totalCount come
+// from one path, and on 2026-10-22 that path gave 100 of 100 while the others counted 105.
+// `counted` is the number that the second path gave (readItemCount in gh.mjs), or null for none.
+// A count that is not the number of items listed is a bad read, higher or lower. No count is
+// one too: the list cannot be checked, and the safe outcome of a write is to refuse.
+export function countProblems({ items }, counted) {
+  if (counted === null) {
+    return ['A second query (node(id:)) gave no item count, so the list cannot be checked against it.']
+  }
+  if (counted !== items.length) {
+    return [
+      `A second query (node(id:)) counted ${plural(counted, 'item')}, but the read listed ${plural(items.length, 'item')}.`,
+    ]
+  }
+  return []
+}
+
 // What an item looks like to the plan: the whole normalized item (its title breaks the Order ties
 // of the positions, its fields and state feed Wave and Status), and the blockers of its issue,
 // each with its state: the plan skips a CLOSED blocker, also one that is outside the project.
