@@ -215,6 +215,9 @@ test('parseRepoHintsFromBash keeps the session folder after a cd that runs in th
   expect(paths('cd /x && git status & git -C . status')).toEqual(['/x', '/session/proj'])
   expect(paths('cd /x && git status; git -C . status')).toEqual(['/x', '/x'])
   expect(paths('cd /x || git -C . status')).toEqual(['/x', '/x'])
+  expect(paths('cd - & git -C . status')).toEqual(['/session/proj'])
+  expect(paths('if true; then cd /x & git -C . status; fi')).toEqual(['/x', '/session/proj'])
+  expect(paths('(cd /x) & git -C . status')).toEqual(['/x', '/session/proj'])
 })
 
 // A `{` group opens a list of its own: an `&` inside it does not background the `cd` before the group. `}` gives the

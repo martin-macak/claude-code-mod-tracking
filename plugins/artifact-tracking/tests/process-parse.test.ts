@@ -642,6 +642,9 @@ test('parseBashProcesses keeps the session folder after a cd that runs in the ba
   expect(project('{ cd /x; } & docker compose up -d')).toBe('app')
   expect(project('pushd /x & docker compose up -d')).toBe('app')
   expect(project('for d in a; do cd /x & docker compose up -d; done')).toBe('app')
+  expect(project('if true; then cd /x & docker compose up -d; fi')).toBe('app')
+  expect(project('cd - & docker compose up -d')).toBe('app')
+  expect(project('(cd /x) & docker compose up -d')).toBe('app')
   expect(detachedOf('cd /x & srv $PWD/app.js &', '/w')[0]?.fingerprint).toBe('srv /w/app.js')
 })
 
