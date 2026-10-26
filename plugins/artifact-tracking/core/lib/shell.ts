@@ -518,10 +518,12 @@ export function splitShell(command: string): Segment[] {
     heads = []
   }
   // A typed `>`, `<` or `&>` ends the word in front of it, as in bash: `nginx>f` is the word `nginx` and the redirection `>f`
-  // (issue #231). Not when the text in front is a file descriptor (`2>f`, `{fd}>f`, `&>f`), which belongs to the redirection,
-  // or when it is inside arithmetic (`$((1>2))`) or an open `${ ... }`, where the character is text. Each test is O(1), or it
-  // reads a word that the split then ends, so a run of `>` in one word costs O(n), not O(n^2).
-  const splitsAtRedirect = () => inWord && !inArith() && paramOpen === 0 && !(headOpen && FD_OR_AMP.test(word))
+  // (issue #231). Not when the text in front is a file descriptor of a `>` or `<` (`2>f`, `{fd}>f`) or the `&` of `&>f`, which
+  // belongs to the redirection, or when it is inside arithmetic (`$((1>2))`) or an open `${ ... }`, where the character is text.
+  // The `&` of `&>` has no descriptor form (`12&>f` is the word `12` and `&>f`), so it asks `textBeforeRedirect` alone. Each test
+  // is O(1), or it reads a word that the split then ends, so a run of `>` in one word costs O(n), not O(n^2).
+  const textBeforeRedirect = () => inWord && !inArith() && paramOpen === 0
+  const splitsAtRedirect = () => textBeforeRedirect() && !(headOpen && FD_OR_AMP.test(word))
   const skipHeredocs = () => {
     // At a newline: skip each pending heredoc body up to its tag line.
     for (const h of heredocs) {
@@ -613,7 +615,8 @@ export function splitShell(command: string): Segment[] {
     // `&` inside a redirection (`2>&1`, `>&2`, `&>file`, `&>>file`) is not an operator. The `>` or `<` just before must be
     // typed: after a quoted or escaped one (`'>'&`, `\>&`) the `&` runs the command in the background.
     if (c === '&' && (typedRedir === i - 1 || s[i + 1] === '>')) {
-      if (typedRedir !== i - 1 && splitsAtRedirect()) endWord() // `nginx&>f`: the word ends, `&>f` is the redirection
+      // `nginx&>f`: the word ends, `&>f` is the redirection. A number or `{name}` in front is a word too: bash has no `N&>` form.
+      if (typedRedir !== i - 1 && textBeforeRedirect()) endWord()
       typed(c)
       i++
       continue
@@ -827,12 +830,33 @@ const FD_OR_AMP = new RegExp(`^(?:${FD}|&)$`)
 const REDIRECT = new RegExp(String.raw`^(?<fd>${FD}?|&)(?<op>>\||>>?|<>|<<?<?|>&|<&)(?<rest>.*)$`)
 
 /**
- * The segment is a bare `exec`: no command follows it, so its redirections stay on the shell itself (`exec > f`, `exec 3>&1`).
- * `stripLead` drops `exec` as a wrapper, and nothing is left. Quotes do not matter: `'exec'` is the builtin too. A word that
- * only holds the text (`echo exec`) leaves a command, so it is no bare exec.
+ * The words after `exec` are only its options: `-c`, `-l`, `-a name`, joined as getopt reads them (`-cl`, `-cla name`, `-aname`),
+ * and `--`. They matter only when a command follows. `-a` with no name is an error in bash, and counts as an option all the
+ * same: the later commands are then marked, the safe side. Any other word, and any word after `--`, is the command.
  */
-const bareExec = (words: readonly string[], typed: readonly Typed[]): boolean =>
-  words.includes('exec') && stripLead({ words, whole: typed.map(t => t.whole) }).words.length === 0
+const execOptionsOnly = (rest: readonly string[]): boolean => {
+  for (let k = 0; k < rest.length; ) {
+    const w = rest[k]!
+    if (w === '--') return k + 1 === rest.length
+    const m = /^-[cl]*(?:(a)(.*))?$/.exec(w)
+    if (!m || w === '-') return false
+    k += m[1] !== undefined && m[2] === '' ? 2 : 1 // `-a` takes the next word as its name
+  }
+  return true
+}
+
+/**
+ * The segment is a bare `exec`: no command follows it, so its redirections stay on the shell itself (`exec > f`, `exec 3>&1`).
+ * `stripLead` drops `exec` as a wrapper, and nothing is left, or only the options of `exec` are (`exec -c > f`, `exec -a name
+ * > f`: bash redirects the shell then too). Quotes do not matter: `'exec'` is the builtin too. A word that only holds the text
+ * (`echo exec`) leaves a command, so it is no bare exec.
+ */
+const bareExec = (words: readonly string[], typed: readonly Typed[]): boolean => {
+  if (!words.includes('exec')) return false
+  const rest = stripLead({ words, whole: typed.map(t => t.whole) }).words
+  // `stripLead` stops at the first option of `exec`, so the word right before `rest` is the `exec` that the options belong to.
+  return rest.length === 0 || (words[words.length - rest.length - 1] === 'exec' && execOptionsOnly(rest))
+}
 
 /**
  * The redirection sends fd 1 away (issue #231). `fd` is the descriptor in front of the operator: none or `&` for a `>` form
