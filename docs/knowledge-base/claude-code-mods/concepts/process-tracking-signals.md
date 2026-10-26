@@ -42,7 +42,22 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
 - Quoted text stays one word. So `bash -c '...'`, `ssh host '...'` and
   `echo "...; ..."` start nothing local and are not tracked.
 - Heredoc bodies and comments are skipped.
-- `VAR=x`, `sudo`, `env`, `nohup`, `time` and `exec` in front are stripped.
+- `VAR=x`, `sudo`, `env`, `nice`, `nohup`, `time`, `command`, `exec` and
+  `builtin` in front are stripped. `time` takes its options with it: `-p`,
+  then `--`, each at most once, as bash reads them, and only when typed whole
+  with no redirection right before them. So `time -p git status` is
+  `git status`. `time -x git status` is the command `-x`, and so is
+  `time "-p" git status` (bash: `-p: command not found`): an option in quotes
+  or after a backslash is the command. So is an option behind a redirection:
+  `time >/dev/null -p git status` and `time -p 2>&1 -- git status` run the
+  command `-p` and the command `--` (bash 3.2 and 5.3), also with a heredoc or
+  a here-string. The splitter drops the redirection from the words, so it marks
+  the word behind it (`Segment.redir`). A redirection behind the options, in
+  front of the command, changes nothing: `time -p >/dev/null git status` is
+  `git status`. A word glued to a redirection (`time -p>/dev/null git status`)
+  stays one word, as for every other command, so no option is read there. The
+  options of `command`, `exec` and `builtin` stay, so `command -v git` is no
+  call of `git`.
 - `!`, `if`, `while`, `until`, `do`, `then`, `else` and `elif` in front are
   stripped, in any order with the wrappers above: `time ! git push` and
   `! time git push` are both valid shell. A part that is only `done`, `fi` or
@@ -58,7 +73,7 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   [:605](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L605),
   [:615](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L615) and
   [:649](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L649)
-  pass under `claude plugin test`, and [shell.test.ts:45](../../../../plugins/artifact-tracking/tests/shell.test.ts#L45)
+  pass under `claude plugin test`, and [shell.test.ts:48](../../../../plugins/artifact-tracking/tests/shell.test.ts#L48)
   covers `stripLead`. The shell fact under the builtin rule was run in `bash`
   and `zsh` outside Claude Code (macOS). `bash 3.2.57` with
   `sleep 3 & S=$!; echo x & B=$!; echo "sleep=$S builtin=$B"` printed
@@ -93,10 +108,10 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   case, and the pipeline before it. Only the `in` of the `case` header makes a
   `(` a pattern start: a word `in` at the end of an arm (`echo logged in`) does
   not.
-  Code: `splitShell` [shell.ts:123](../../../../plugins/artifact-tracking/core/lib/shell.ts#L123), the case state
-  `theCase` [:277](../../../../plugins/artifact-tracking/core/lib/shell.ts#L277) and the header end [:289](../../../../plugins/artifact-tracking/core/lib/shell.ts#L289), the part move
-  [:300](../../../../plugins/artifact-tracking/core/lib/shell.ts#L300) and [:310](../../../../plugins/artifact-tracking/core/lib/shell.ts#L310), the close of a compound
-  [:379](../../../../plugins/artifact-tracking/core/lib/shell.ts#L379), the `>|` guard [:485](../../../../plugins/artifact-tracking/core/lib/shell.ts#L485).
+  Code: `splitShell` [shell.ts:146](../../../../plugins/artifact-tracking/core/lib/shell.ts#L146), the case state
+  `theCase` [:303](../../../../plugins/artifact-tracking/core/lib/shell.ts#L303) and the header end [:315](../../../../plugins/artifact-tracking/core/lib/shell.ts#L315), the part move
+  [:326](../../../../plugins/artifact-tracking/core/lib/shell.ts#L326) and [:336](../../../../plugins/artifact-tracking/core/lib/shell.ts#L336), the close of a compound
+  [:408](../../../../plugins/artifact-tracking/core/lib/shell.ts#L408), the `>|` guard [:515](../../../../plugins/artifact-tracking/core/lib/shell.ts#L515).
   Evidence (grade: *verified-kit* for the parser): the pipeline part in
   [repos.test.ts:264](../../../../plugins/artifact-tracking/tests/repos.test.ts#L264), [:276](../../../../plugins/artifact-tracking/tests/repos.test.ts#L276), [:293](../../../../plugins/artifact-tracking/tests/repos.test.ts#L293)
   and [:304](../../../../plugins/artifact-tracking/tests/repos.test.ts#L304), and in [process-parse.test.ts:684](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L684),
@@ -109,7 +124,7 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   bookkeeping in [repos.test.ts:393](../../../../plugins/artifact-tracking/tests/repos.test.ts#L393), [:401](../../../../plugins/artifact-tracking/tests/repos.test.ts#L401),
   [:407](../../../../plugins/artifact-tracking/tests/repos.test.ts#L407), [process-parse.test.ts:800](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L800),
   [:808](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L808), [:813](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L813), and the scopes in
-  [shell.test.ts:70](../../../../plugins/artifact-tracking/tests/shell.test.ts#L70) to [:190](../../../../plugins/artifact-tracking/tests/shell.test.ts#L190). A differential run
+  [shell.test.ts:278](../../../../plugins/artifact-tracking/tests/shell.test.ts#L278) to [:398](../../../../plugins/artifact-tracking/tests/shell.test.ts#L398). A differential run
   against real `bash` 5.3 (macOS) of random `cd`, `pushd`, `|`, `|&`, `&`, `&&`,
   `;`, newline, group, subshell, loop and `case` lists (`;;`, `;&`, `;;&`, `(x)`
   and `a|b` patterns): 21500 random commands, 0 differences in the folder of the
@@ -140,19 +155,19 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   open a compound: the segment `if for i in 1; do :; done; then` opens an `if`
   and a `for`, and `elif` takes one too. So the `done` closes the `for`, the `fi`
   closes the `if`, and the `&` after the `fi` backgrounds the whole `if`.
-  Code: the word end before a backtick [shell.ts:493](../../../../plugins/artifact-tracking/core/lib/shell.ts#L493), the typed head
-  [:344](../../../../plugins/artifact-tracking/core/lib/shell.ts#L344) and its use [:631](../../../../plugins/artifact-tracking/core/lib/shell.ts#L631), the `&` guard
-  [:478](../../../../plugins/artifact-tracking/core/lib/shell.ts#L478), the compounds of a segment [:62](../../../../plugins/artifact-tracking/core/lib/shell.ts#L62) and [:369](../../../../plugins/artifact-tracking/core/lib/shell.ts#L369), the
-  pattern words [:349](../../../../plugins/artifact-tracking/core/lib/shell.ts#L349) and [:505](../../../../plugins/artifact-tracking/core/lib/shell.ts#L505), the end of an arm
-  [:561](../../../../plugins/artifact-tracking/core/lib/shell.ts#L561), the `in` and `esac` of a header and a pattern list [:316](../../../../plugins/artifact-tracking/core/lib/shell.ts#L316).
+  Code: the word end before a backtick [shell.ts:523](../../../../plugins/artifact-tracking/core/lib/shell.ts#L523), the typed head
+  [:371](../../../../plugins/artifact-tracking/core/lib/shell.ts#L371) and its use [:662](../../../../plugins/artifact-tracking/core/lib/shell.ts#L662), the `&` guard
+  [:508](../../../../plugins/artifact-tracking/core/lib/shell.ts#L508), the compounds of a segment [:85](../../../../plugins/artifact-tracking/core/lib/shell.ts#L85) and [:398](../../../../plugins/artifact-tracking/core/lib/shell.ts#L398), the
+  pattern words [:376](../../../../plugins/artifact-tracking/core/lib/shell.ts#L376) and [:535](../../../../plugins/artifact-tracking/core/lib/shell.ts#L535), the end of an arm
+  [:591](../../../../plugins/artifact-tracking/core/lib/shell.ts#L591), the `in` and `esac` of a header and a pattern list [:342](../../../../plugins/artifact-tracking/core/lib/shell.ts#L342).
   Evidence (grade: *verified-kit* for the parser): a `}` before a backtick in
-  [shell.test.ts:204](../../../../plugins/artifact-tracking/tests/shell.test.ts#L204) and [:216](../../../../plugins/artifact-tracking/tests/shell.test.ts#L216), [repos.test.ts:1231](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1231) and
+  [shell.test.ts:412](../../../../plugins/artifact-tracking/tests/shell.test.ts#L412) and [:424](../../../../plugins/artifact-tracking/tests/shell.test.ts#L424), [repos.test.ts:1231](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1231) and
   [process-parse.test.ts:927](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L927). Quoted and escaped redirections in
-  [shell.test.ts:222](../../../../plugins/artifact-tracking/tests/shell.test.ts#L222), [:244](../../../../plugins/artifact-tracking/tests/shell.test.ts#L244) and [:266](../../../../plugins/artifact-tracking/tests/shell.test.ts#L266), [repos.test.ts:1242](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1242) and
-  [process-parse.test.ts:942](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L942). Case patterns in [shell.test.ts:280](../../../../plugins/artifact-tracking/tests/shell.test.ts#L280),
-  [:310](../../../../plugins/artifact-tracking/tests/shell.test.ts#L310), [:321](../../../../plugins/artifact-tracking/tests/shell.test.ts#L321), [:340](../../../../plugins/artifact-tracking/tests/shell.test.ts#L340), [:357](../../../../plugins/artifact-tracking/tests/shell.test.ts#L357) and [:382](../../../../plugins/artifact-tracking/tests/shell.test.ts#L382), [repos.test.ts:1258](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1258) and
+  [shell.test.ts:430](../../../../plugins/artifact-tracking/tests/shell.test.ts#L430), [:452](../../../../plugins/artifact-tracking/tests/shell.test.ts#L452) and [:474](../../../../plugins/artifact-tracking/tests/shell.test.ts#L474), [repos.test.ts:1242](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1242) and
+  [process-parse.test.ts:942](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L942). Case patterns in [shell.test.ts:488](../../../../plugins/artifact-tracking/tests/shell.test.ts#L488),
+  [:518](../../../../plugins/artifact-tracking/tests/shell.test.ts#L518), [:529](../../../../plugins/artifact-tracking/tests/shell.test.ts#L529), [:548](../../../../plugins/artifact-tracking/tests/shell.test.ts#L548), [:565](../../../../plugins/artifact-tracking/tests/shell.test.ts#L565) and [:590](../../../../plugins/artifact-tracking/tests/shell.test.ts#L590), [repos.test.ts:1258](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1258) and
   [process-parse.test.ts:957](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L957). Compounds in a condition in
-  [shell.test.ts:389](../../../../plugins/artifact-tracking/tests/shell.test.ts#L389), [repos.test.ts:1289](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1289) and
+  [shell.test.ts:597](../../../../plugins/artifact-tracking/tests/shell.test.ts#L597), [repos.test.ts:1289](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1289) and
   [process-parse.test.ts:985](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L985). A differential run against real `bash` 5.3
   (macOS) of random lists as in the run above, now also with backtick groups,
   keyword and `cd` patterns (`cd)`, `if|x)`, `a|esac)`, `(esac)`) and compounds in
@@ -183,16 +198,16 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   `\fi y`, `"esac" y` and `done'' y` are commands, as in `bash` (checked with
   commands of those names on the PATH). So the loop stays open, and it stays one
   part of its pipeline, and a `cd` in it does not reach the commands after it.
-  Code: the heredoc test [shell.ts:455](../../../../plugins/artifact-tracking/core/lib/shell.ts#L455), the close of a compound
-  [:91](../../../../plugins/artifact-tracking/core/lib/shell.ts#L91) and [:379](../../../../plugins/artifact-tracking/core/lib/shell.ts#L379), the redirection pattern
-  [:624](../../../../plugins/artifact-tracking/core/lib/shell.ts#L624).
+  Code: the heredoc test [shell.ts:484](../../../../plugins/artifact-tracking/core/lib/shell.ts#L484), the close of a compound
+  [:114](../../../../plugins/artifact-tracking/core/lib/shell.ts#L114) and [:408](../../../../plugins/artifact-tracking/core/lib/shell.ts#L408), the redirection pattern
+  [:654](../../../../plugins/artifact-tracking/core/lib/shell.ts#L654).
   Evidence (grade: *verified-kit* for the parser): here-strings in
-  [shell.test.ts:420](../../../../plugins/artifact-tracking/tests/shell.test.ts#L420), [repos.test.ts:1310](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1310) and
+  [shell.test.ts:628](../../../../plugins/artifact-tracking/tests/shell.test.ts#L628), [repos.test.ts:1310](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1310) and
   [process-parse.test.ts:1000](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L1000). Every heredoc form that the splitter knows still hides its
-  body, also next to a here-string, in [shell.test.ts:449](../../../../plugins/artifact-tracking/tests/shell.test.ts#L449) and [:465](../../../../plugins/artifact-tracking/tests/shell.test.ts#L465). `<>` in
-  [shell.test.ts:476](../../../../plugins/artifact-tracking/tests/shell.test.ts#L476), [repos.test.ts:1323](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1323) and
+  body, also next to a here-string, in [shell.test.ts:657](../../../../plugins/artifact-tracking/tests/shell.test.ts#L657) and [:673](../../../../plugins/artifact-tracking/tests/shell.test.ts#L673). `<>` in
+  [shell.test.ts:684](../../../../plugins/artifact-tracking/tests/shell.test.ts#L684), [repos.test.ts:1323](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1323) and
   [process-parse.test.ts:1016](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L1016). Quoted closers in
-  [shell.test.ts:500](../../../../plugins/artifact-tracking/tests/shell.test.ts#L500), [repos.test.ts:1336](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1336) and
+  [shell.test.ts:708](../../../../plugins/artifact-tracking/tests/shell.test.ts#L708), [repos.test.ts:1336](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1336) and
   [process-parse.test.ts:1028](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L1028). A differential run against real `bash` 5.3
   (macOS) of random lists with here-strings (glued, spaced, quoted, with a
   substitution, with a file descriptor, joined by newlines), heredocs (`<<EOF`,
@@ -238,19 +253,21 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   quoted or escaped is a command. `Segment.whole` carries the typed flag for each
   word, and `stripLead` (it takes the words with their flags, so a caller cannot
   leave them out) and `stripReserved` read it as `compoundLead` and `closesAt` do.
+  `Segment.redir` is the same kind of flag for a redirection that stood right
+  before the word, and `stripLead` takes it too.
   So `'done' git -C /x status` is a command named `done` (checked
   with commands of those names on the PATH): the readers see no `git`, and
   `'done' docker compose up -d` starts no project.
-  Code: the heredoc test [shell.ts:455](../../../../plugins/artifact-tracking/core/lib/shell.ts#L455), the tag reader
-  [:231](../../../../plugins/artifact-tracking/core/lib/shell.ts#L231) and its scan for a substitution [:215](../../../../plugins/artifact-tracking/core/lib/shell.ts#L215), the arithmetic scan [:196](../../../../plugins/artifact-tracking/core/lib/shell.ts#L196) and the scope
-  flag [:527](../../../../plugins/artifact-tracking/core/lib/shell.ts#L527), the file descriptor patterns [:621](../../../../plugins/artifact-tracking/core/lib/shell.ts#L621), the
-  typed flag per word [:31](../../../../plugins/artifact-tracking/core/lib/shell.ts#L31), [:665](../../../../plugins/artifact-tracking/core/lib/shell.ts#L665) and [:719](../../../../plugins/artifact-tracking/core/lib/shell.ts#L719).
+  Code: the heredoc test [shell.ts:484](../../../../plugins/artifact-tracking/core/lib/shell.ts#L484), the tag reader
+  [:257](../../../../plugins/artifact-tracking/core/lib/shell.ts#L257) and its scan for a substitution [:241](../../../../plugins/artifact-tracking/core/lib/shell.ts#L241), the arithmetic scan [:222](../../../../plugins/artifact-tracking/core/lib/shell.ts#L222) and the scope
+  flag [:557](../../../../plugins/artifact-tracking/core/lib/shell.ts#L557), the file descriptor patterns [:651](../../../../plugins/artifact-tracking/core/lib/shell.ts#L651), the
+  typed flag per word [:31](../../../../plugins/artifact-tracking/core/lib/shell.ts#L31), [:700](../../../../plugins/artifact-tracking/core/lib/shell.ts#L700) and [:773](../../../../plugins/artifact-tracking/core/lib/shell.ts#L773).
   Evidence (grade: *verified-kit* for the parser): escaped and split tags in
-  [shell.test.ts:531](../../../../plugins/artifact-tracking/tests/shell.test.ts#L531) and [:558](../../../../plugins/artifact-tracking/tests/shell.test.ts#L558), a substitution in the tag in [:585](../../../../plugins/artifact-tracking/tests/shell.test.ts#L585), a file descriptor before `<<` in
-  [:607](../../../../plugins/artifact-tracking/tests/shell.test.ts#L607), a variable file descriptor in [:630](../../../../plugins/artifact-tracking/tests/shell.test.ts#L630), the typed flag in [:662](../../../../plugins/artifact-tracking/tests/shell.test.ts#L662) and
-  [:683](../../../../plugins/artifact-tracking/tests/shell.test.ts#L683), the arithmetic shift in [:700](../../../../plugins/artifact-tracking/tests/shell.test.ts#L700), [:727](../../../../plugins/artifact-tracking/tests/shell.test.ts#L727) and [:749](../../../../plugins/artifact-tracking/tests/shell.test.ts#L749),
-  the cap of the arithmetic scan in [:765](../../../../plugins/artifact-tracking/tests/shell.test.ts#L765) and [:781](../../../../plugins/artifact-tracking/tests/shell.test.ts#L781),
-  and the cap of the scan in a tag in [:795](../../../../plugins/artifact-tracking/tests/shell.test.ts#L795).
+  [shell.test.ts:739](../../../../plugins/artifact-tracking/tests/shell.test.ts#L739) and [:766](../../../../plugins/artifact-tracking/tests/shell.test.ts#L766), a substitution in the tag in [:793](../../../../plugins/artifact-tracking/tests/shell.test.ts#L793), a file descriptor before `<<` in
+  [:815](../../../../plugins/artifact-tracking/tests/shell.test.ts#L815), a variable file descriptor in [:838](../../../../plugins/artifact-tracking/tests/shell.test.ts#L838), the typed flag in [:870](../../../../plugins/artifact-tracking/tests/shell.test.ts#L870) and
+  [:891](../../../../plugins/artifact-tracking/tests/shell.test.ts#L891), the arithmetic shift in [:923](../../../../plugins/artifact-tracking/tests/shell.test.ts#L923), [:950](../../../../plugins/artifact-tracking/tests/shell.test.ts#L950) and [:972](../../../../plugins/artifact-tracking/tests/shell.test.ts#L972),
+  the cap of the arithmetic scan in [:988](../../../../plugins/artifact-tracking/tests/shell.test.ts#L988) and [:1004](../../../../plugins/artifact-tracking/tests/shell.test.ts#L1004),
+  and the cap of the scan in a tag in [:1018](../../../../plugins/artifact-tracking/tests/shell.test.ts#L1018).
   The readers: [repos.test.ts:1352](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1352), [:1367](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1367), [:1380](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1380) and
   [:1396](../../../../plugins/artifact-tracking/tests/repos.test.ts#L1396), and [process-parse.test.ts:1040](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L1040), [:1057](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L1057),
   [:1069](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L1069) and [:1087](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L1087). A differential run against real `bash` 5.3.20
@@ -425,8 +442,8 @@ Not known. Open question 40 holds the first five.
 
 A detached process whose command names a shell variable:
 
-- `ps` shows the command after the shell expanded it. The parser expands the variables that the same Bash call sets (a bare `L=/x`, `export L=/x`) and `$PWD`. A variable lives in the subshell that set it and in the ones below it, like the directory. Code: [parse.ts:268-282](../../../../plugins/artifact-tracking/trackers/processes/parse.ts#L268-L282), [parse.ts:376-381](../../../../plugins/artifact-tracking/trackers/processes/parse.ts#L376-L381), the scopes [shell.ts:597-617](../../../../plugins/artifact-tracking/core/lib/shell.ts#L597-L617). Tests: [process-parse.test.ts:409-417](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L409-L417), [process-parse.test.ts:422-427](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L422-L427), scopes [process-parse.test.ts:454-465](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L454-L465).
-- A word the shell passes as typed is not a reference. `'$F'`, `\$F` and `"\$F"` keep the text `$F`, and `"$F"` and a bare `$F` expand. The splitter drops quotes and escapes from its words, so it also returns each word with a mark on every such `$` (`Segment.marked`). Only the expansion reads the marks. Code: [shell.ts:6-26](../../../../plugins/artifact-tracking/core/lib/shell.ts#L6-L26), the marks [shell.ts:409-428](../../../../plugins/artifact-tracking/core/lib/shell.ts#L409-L428), the read [parse.ts:268-282](../../../../plugins/artifact-tracking/trackers/processes/parse.ts#L268-L282), [parse.ts:383-390](../../../../plugins/artifact-tracking/trackers/processes/parse.ts#L383-L390), [parse.ts:404-408](../../../../plugins/artifact-tracking/trackers/processes/parse.ts#L404-L408), [parse.ts:455-459](../../../../plugins/artifact-tracking/trackers/processes/parse.ts#L455-L459). Tests: [process-parse.test.ts:467-484](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L467-L484), a quoted value stays literal when read [process-parse.test.ts:486-493](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L486-L493), other words keep the plain `$` [process-parse.test.ts:495-500](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L495-L500). A stored `$F` is a variable to the probe, so the live process still fits [process-probe.test.ts:135-163](../../../../plugins/artifact-tracking/tests/process-probe.test.ts#L135-L163). Without a pid it reads as `unknown` (see the last bullet), never `exited`.
+- `ps` shows the command after the shell expanded it. The parser expands the variables that the same Bash call sets (a bare `L=/x`, `export L=/x`) and `$PWD`. A variable lives in the subshell that set it and in the ones below it, like the directory. Code: [parse.ts:268-282](../../../../plugins/artifact-tracking/trackers/processes/parse.ts#L268-L282), [parse.ts:376-381](../../../../plugins/artifact-tracking/trackers/processes/parse.ts#L376-L381), the scopes [shell.ts:627-647](../../../../plugins/artifact-tracking/core/lib/shell.ts#L627-L647). Tests: [process-parse.test.ts:409-417](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L409-L417), [process-parse.test.ts:422-427](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L422-L427), scopes [process-parse.test.ts:454-465](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L454-L465).
+- A word the shell passes as typed is not a reference. `'$F'`, `\$F` and `"\$F"` keep the text `$F`, and `"$F"` and a bare `$F` expand. The splitter drops quotes and escapes from its words, so it also returns each word with a mark on every such `$` (`Segment.marked`). Only the expansion reads the marks. Code: [shell.ts:6-26](../../../../plugins/artifact-tracking/core/lib/shell.ts#L6-L26), the marks [shell.ts:438-457](../../../../plugins/artifact-tracking/core/lib/shell.ts#L438-L457), the read [parse.ts:268-282](../../../../plugins/artifact-tracking/trackers/processes/parse.ts#L268-L282), [parse.ts:383-390](../../../../plugins/artifact-tracking/trackers/processes/parse.ts#L383-L390), [parse.ts:404-408](../../../../plugins/artifact-tracking/trackers/processes/parse.ts#L404-L408), [parse.ts:455-459](../../../../plugins/artifact-tracking/trackers/processes/parse.ts#L455-L459). Tests: [process-parse.test.ts:467-484](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L467-L484), a quoted value stays literal when read [process-parse.test.ts:486-493](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L486-L493), other words keep the plain `$` [process-parse.test.ts:495-500](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L495-L500). A stored `$F` is a variable to the probe, so the live process still fits [process-probe.test.ts:135-163](../../../../plugins/artifact-tracking/tests/process-probe.test.ts#L135-L163). Without a pid it reads as `unknown` (see the last bullet), never `exited`.
 - A name that the command assigns with a command substitution (`D=$(mktemp -d)`, `D=/tmp/run-$(date +%s)`, a backtick) is never expanded. The shell splitter drops the substitution from the word, so the value would read as the wrong literal `/tmp/run-`. The scan is by name over the whole command. A substitution inside quotes stays in the word and does not count. Code: [parse.ts:284-294](../../../../plugins/artifact-tracking/trackers/processes/parse.ts#L284-L294). Test: [process-parse.test.ts:438-452](../../../../plugins/artifact-tracking/tests/process-parse.test.ts#L438-L452).
 - A variable that stays unexpanded makes the probe read that word as a pattern. A variable stands for one word: a value of several words fits nothing. A fingerprint with such a word that fits no process gives the state `unknown`, never `exited`. Code: [probe.ts:103-131](../../../../plugins/artifact-tracking/trackers/processes/probe.ts#L103-L131), the state [types.ts:15-16](../../../../plugins/artifact-tracking/trackers/processes/types.ts#L15-L16). Tests: [process-probe.test.ts:135-163](../../../../plugins/artifact-tracking/tests/process-probe.test.ts#L135-L163), [process-probe.test.ts:198-204](../../../../plugins/artifact-tracking/tests/process-probe.test.ts#L198-L204), [processes-tracker.test.ts:797-814](../../../../plugins/artifact-tracking/tests/processes-tracker.test.ts#L797-L814), [processes-tracker.test.ts:835-842](../../../../plugins/artifact-tracking/tests/processes-tracker.test.ts#L835-L842), and the state at the view [tracker-sections.test.ts:362-380](../../../../plugins/artifact-tracking/tests/tracker-sections.test.ts#L362-L380).
 - A fingerprint that names only its program and variables (`node $F`) is never searched in `ps -A`: any process of that program would fit, and the pid would be a guess. The row stays `unknown`. A word with a literal part (`$D/s.js`) is a constraint and is searched. With a pid known (`ps -p`), the loose fingerprint is enough. Code: [probe.ts:163-172](../../../../plugins/artifact-tracking/trackers/processes/probe.ts#L163-L172), [probe.ts:191-199](../../../../plugins/artifact-tracking/trackers/processes/probe.ts#L191-L199). Tests: [process-probe.test.ts:180-196](../../../../plugins/artifact-tracking/tests/process-probe.test.ts#L180-L196), [processes-tracker.test.ts:777-795](../../../../plugins/artifact-tracking/tests/processes-tracker.test.ts#L777-L795), [processes-tracker.test.ts:816-833](../../../../plugins/artifact-tracking/tests/processes-tracker.test.ts#L816-L833).

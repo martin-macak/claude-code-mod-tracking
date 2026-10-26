@@ -399,9 +399,12 @@ export function parseBashProcesses(
 
   for (const seg of splitShell(command)) {
     // The marked words tell `'$F'` and `\$F` (as typed) from `$F` and `"$F"` (expanded). Only the variables read them.
-    const pre = stripLead({ words: seg.marked, whole: seg.whole })
+    const pre = stripLead({ words: seg.marked, whole: seg.whole, redir: seg.redir })
     const ss = stripSetsid(pre.words)
-    const inner = stripWrappers(ss.words)
+    // `pre.words` is the end of `seg.marked` and `stripSetsid` drops from the front, so `ss.words` is the end too: its
+    // flags are the end of `seg.whole` and `seg.redir`. `stripWrappers` reads them for the options of `time`.
+    const from = seg.whole.length - ss.words.length
+    const inner = stripWrappers(ss.words, seg.whole.slice(from), seg.redir.slice(from))
     const marked = inner.words
     const words = marked.map(unmarkDollars)
     const env = { ...exported, ...plainEnv(pre.env), ...plainEnv(inner.env) }

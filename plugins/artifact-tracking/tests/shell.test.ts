@@ -1,9 +1,12 @@
 import { expect, test } from 'claude-code/testing'
-import { splitShell, stripLead, stripReserved } from '../core/lib/shell'
+import { splitShell, stripLead, stripReserved, stripWrappers } from '../core/lib/shell'
 import { expectLinear } from './fixtures/scaling'
 
-/** The words of a command that was typed whole: `stripLead` takes the typed flags of its words (issue #194). */
-const typed = (words: string[]) => ({ words, whole: words.map(() => true) })
+/**
+ * The words of a command that was typed whole, with no redirection among them: `stripLead` takes the typed flags of its
+ * words (issue #194) and the redirection flags (issue #227).
+ */
+const typed = (words: string[]) => ({ words, whole: words.map(() => true), redir: words.map(() => false) })
 
 test('stripReserved drops the reserved words in front of a command', () => {
   expect(stripReserved(['do', 'git', '-C', '/tmp/r', 'push'])).toEqual(['git', '-C', '/tmp/r', 'push'])
@@ -48,6 +51,211 @@ test('stripLead drops reserved words and wrappers in any order', () => {
   expect(stripLead(typed(['!', 'time', ...cmd])).words).toEqual(cmd)
   expect(stripLead(typed(['if', 'time', '!', 'sudo', ...cmd])).words).toEqual(cmd)
   expect(stripLead(typed(['do', 'time', 'nohup', '!', ...cmd])).words).toEqual(cmd)
+})
+
+// bash reads `time -p` and `time --` as one prefix: the options belong to `time`, not to the command (issue #227).
+// `compoundLead` already skips them. `command`, `exec` and `builtin` keep their own rule: `command -v acli` runs nothing.
+test('stripWrappers drops the options of time together with it', () => {
+  const cmd = ['git', '-C', '/tmp/r', 'push']
+  expect(stripWrappers(['time', '-p', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['time', '--', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['time', '-p', '--', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['time', '-p', 'sudo', '-u', 'root', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['time', '-p', 'time', '-p', ...cmd]).words).toEqual(cmd)
+})
+
+// Bash gives `time` only `-p`, then `--`, each at most once. Any other word is the command: `time -x git push` runs a
+// command named `-x` and starts nothing, so a reader must not see `git push` (issue #227).
+test('stripWrappers gives time only -p and then --, each once: any other word is the command', () => {
+  expect(stripWrappers(['time', '-x', 'git', 'push']).words).toEqual(['-x', 'git', 'push'])
+  expect(stripWrappers(['time', '-p', '-x', 'git', 'push']).words).toEqual(['-x', 'git', 'push'])
+  expect(stripWrappers(['time', '-p', '-p', 'git', 'push']).words).toEqual(['-p', 'git', 'push'])
+  expect(stripWrappers(['time', '--', '-p', 'git', 'push']).words).toEqual(['-p', 'git', 'push'])
+  expect(stripWrappers(['time', '--', '--', 'git', 'push']).words).toEqual(['--', 'git', 'push'])
+})
+
+test('stripWrappers drops only the options right behind time', () => {
+  expect(stripWrappers(['time', 'git', '-p', 'push']).words).toEqual(['git', '-p', 'push'])
+  expect(stripWrappers(['git', 'time', '-p'])).toEqual({ words: ['git', 'time', '-p'], env: {}, nohup: false })
+  expect(stripWrappers(['time', '-p'])).toEqual({ words: [], env: {}, nohup: false })
+})
+
+// Bash reads an option of `time` only when it was typed whole: `time "-p" printf ok` fails with `-p: command not found`.
+// A quoted or escaped `-p` or `--` is the command (Codex review of the PR). The flags are those of `Segment.whole`.
+test('stripWrappers reads a quoted or escaped option of time as the command', () => {
+  const cmd = ['git', 'push']
+  expect(stripWrappers(['time', '-p', ...cmd], [true, false, true, true]).words).toEqual(['-p', ...cmd])
+  expect(stripWrappers(['time', '--', ...cmd], [true, false, true, true]).words).toEqual(['--', ...cmd])
+  // The typed `-p` goes, the quoted `--` after it is the command.
+  expect(stripWrappers(['time', '-p', '--', ...cmd], [true, true, false, true, true]).words).toEqual(['--', ...cmd])
+  // A word that is only partly quoted (`-"p"`) is not whole either.
+  const partly = stripWrappers(['time', '-p', '--', ...cmd], [true, false, true, true, true])
+  expect(partly.words).toEqual(['-p', '--', ...cmd])
+  // The controls: a typed option goes, and so does a word with no flag at all.
+  expect(stripWrappers(['time', '-p', '--', ...cmd], [true, true, true, true, true]).words).toEqual(cmd)
+  expect(stripWrappers(['time', '-p', '--', ...cmd]).words).toEqual(cmd)
+})
+
+test('stripLead reads a quoted or escaped option of time as the command', () => {
+  const words = (command: string) => stripLead(splitShell(command)[0]!).words
+  expect(words('time "-p" git push')).toEqual(['-p', 'git', 'push'])
+  expect(words("time '-p' git push")).toEqual(['-p', 'git', 'push'])
+  expect(words('time \\-p git push')).toEqual(['-p', 'git', 'push'])
+  expect(words('time -"p" git push')).toEqual(['-p', 'git', 'push'])
+  expect(words('time "--" git push')).toEqual(['--', 'git', 'push'])
+  expect(words('time -p "--" git push')).toEqual(['--', 'git', 'push'])
+  expect(words('time -p \\-- git push')).toEqual(['--', 'git', 'push'])
+  // The flags follow the words through the reserved words in front of `time`.
+  expect(words('! time "-p" git push')).toEqual(['-p', 'git', 'push'])
+  expect(words('if ! time "-p" git push; then :; fi')).toEqual(['-p', 'git', 'push'])
+  // The controls: typed options still go.
+  expect(words('time -p -- git push')).toEqual(['git', 'push'])
+  expect(words('! time -p git push')).toEqual(['git', 'push'])
+})
+
+// Bash reads an option of `time` only when nothing stands between it and `time` or the option before it. A redirection
+// does: `time >/dev/null -p printf ok` fails with `-p: command not found` (bash 3.2 and 5.3, Codex review of the PR).
+// `splitShell` drops the redirection from `words`, so `Segment.redir` says that one stood right before a word.
+test('splitShell marks each word that stands right behind a redirection', () => {
+  const redirOf = (command: string) => splitShell(command)[0]!.redir
+  expect(redirOf('time >/dev/null -p git push')).toEqual([false, true, false, false])
+  expect(redirOf('time > /dev/null -p git push')).toEqual([false, true, false, false])
+  expect(redirOf('time -p >/dev/null -- git push')).toEqual([false, false, true, false, false])
+  expect(redirOf('time 2>&1 -p git push')).toEqual([false, true, false, false])
+  expect(redirOf('time </dev/null -p git push')).toEqual([false, true, false, false])
+  expect(redirOf('time <<<x -p git push')).toEqual([false, true, false, false])
+  expect(redirOf('time {fd}>/dev/null -p git push')).toEqual([false, true, false, false])
+  expect(redirOf('time &>/dev/null -p git push')).toEqual([false, true, false, false])
+  expect(redirOf('time >/dev/null 2>&1 -p git push')).toEqual([false, true, false, false])
+  expect(redirOf('time >"/tmp/a b" -p git push')).toEqual([false, true, false, false])
+  // A heredoc leaves no word, so the scanner marks the word behind it. So does a file descriptor in front of it.
+  expect(redirOf('time <<EOF -p git push\nbody\nEOF')).toEqual([false, true, false, false])
+  expect(redirOf("time <<-'EOF' -p git push\nbody\nEOF")).toEqual([false, true, false, false])
+  expect(redirOf('time 3<<EOF -p git push\nbody\nEOF')).toEqual([false, true, false, false])
+  expect(redirOf('time {fd}<<EOF -p git push\nbody\nEOF')).toEqual([false, true, false, false])
+  // The controls: no redirection, a redirection at the end, a quoted or escaped `>` (a word).
+  expect(redirOf('time -p git push')).toEqual([false, false, false, false])
+  expect(redirOf('time -p git push >/dev/null')).toEqual([false, false, false, false])
+  expect(redirOf("time '>' -p git push")).toEqual([false, false, false, false, false])
+  expect(redirOf('time \\> -p git push')).toEqual([false, false, false, false, false])
+})
+
+test('splitShell marks only the word right behind a redirection, and no word of the next segment', () => {
+  expect(splitShell('git >/dev/null push -p')[0]!.redir).toEqual([false, true, false])
+  // A heredoc on the line of a segment that ends with `;` does not mark the first word of the next segment.
+  const segs = splitShell('cat <<EOF; time -p git push\nbody\nEOF')
+  expect(segs.map(s => s.words)).toEqual([['cat'], ['time', '-p', 'git', 'push']])
+  expect(segs.map(s => s.redir)).toEqual([[false], [false, false, false, false]])
+  // A redirection at the end of a segment marks nothing in the next one either.
+  const next = splitShell('time -p git push >/dev/null; time -p git status')
+  expect(next[1]!.redir).toEqual([false, false, false, false])
+})
+
+test('stripWrappers reads a word behind a redirection as the command, not as an option of time', () => {
+  const cmd = ['git', 'push']
+  // Same length as the words: the flags of `time >/dev/null -p git push` once the redirection is dropped.
+  expect(stripWrappers(['time', '-p', ...cmd], undefined, [false, true, false, false]).words).toEqual(['-p', ...cmd])
+  expect(stripWrappers(['time', '--', ...cmd], undefined, [false, true, false, false]).words).toEqual(['--', ...cmd])
+  // The typed `-p` goes, the `--` behind the redirection is the command.
+  expect(stripWrappers(['time', '-p', '--', ...cmd], undefined, [false, false, true, false, false]).words).toEqual([
+    '--',
+    ...cmd,
+  ])
+  // A redirection behind the first `-p` does not touch it, and one in front of the command is no matter.
+  expect(stripWrappers(['time', '-p', ...cmd], undefined, [false, false, true, false]).words).toEqual(cmd)
+  expect(stripWrappers(['time', '-p', '--', ...cmd], undefined, [false, false, false, true, false]).words).toEqual(cmd)
+  // The controls: no flag at all, and no redirection anywhere.
+  expect(stripWrappers(['time', '-p', '--', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['time', '-p', '--', ...cmd], undefined, [false, false, false, false, false]).words).toEqual(cmd)
+  // A quote and a redirection both end the options.
+  expect(
+    stripWrappers(['time', '-p', '--', ...cmd], [true, true, true, true, true], [false, true, false, false, false])
+      .words,
+  ).toEqual(['-p', '--', ...cmd])
+})
+
+test('stripLead reads a word behind a redirection as the command, not as an option of time', () => {
+  const words = (command: string) => stripLead(splitShell(command)[0]!).words
+  // Both positions: the redirection stands right behind `time`, and right behind `-p`.
+  expect(words('time >/dev/null -p git push')).toEqual(['-p', 'git', 'push'])
+  expect(words('time > /dev/null -p git push')).toEqual(['-p', 'git', 'push'])
+  expect(words('time >/dev/null -- git push')).toEqual(['--', 'git', 'push'])
+  expect(words('time -p >/dev/null -- git push')).toEqual(['--', 'git', 'push'])
+  expect(words('time -p 2>&1 -- git push')).toEqual(['--', 'git', 'push'])
+  expect(words('time >/dev/null -p -- git push')).toEqual(['-p', '--', 'git', 'push'])
+  // Every form of redirection: a file, a descriptor, an input, a here-string, `&>`, a heredoc, a variable descriptor.
+  expect(words('time 2>&1 -p git push')).toEqual(['-p', 'git', 'push'])
+  expect(words('time </dev/null -p git push')).toEqual(['-p', 'git', 'push'])
+  expect(words('time <<<x -p git push')).toEqual(['-p', 'git', 'push'])
+  expect(words('time &>/dev/null -p git push')).toEqual(['-p', 'git', 'push'])
+  expect(words('time {fd}>/dev/null -p git push')).toEqual(['-p', 'git', 'push'])
+  expect(words('time <<EOF -p git push\nbody\nEOF')).toEqual(['-p', 'git', 'push'])
+  expect(words('time 3<<EOF -p git push\nbody\nEOF')).toEqual(['-p', 'git', 'push'])
+  expect(words('time -p <<EOF -- git push\nbody\nEOF')).toEqual(['--', 'git', 'push'])
+  // The flags follow the words through the reserved words in front of `time`.
+  expect(words('! time >/dev/null -p git push')).toEqual(['-p', 'git', 'push'])
+  expect(words('if time 2>&1 -p git push; then :; fi')).toEqual(['-p', 'git', 'push'])
+  // A redirection behind the options, in front of the command, is no matter: the options still go.
+  expect(words('time -p >/dev/null git push')).toEqual(['git', 'push'])
+  expect(words('time -p -- >/dev/null git push')).toEqual(['git', 'push'])
+  expect(words('time >/dev/null git push')).toEqual(['git', 'push'])
+  expect(words('time -p <<EOF git push\nbody\nEOF')).toEqual(['git', 'push'])
+  expect(words('time -p git push >/dev/null')).toEqual(['git', 'push'])
+  expect(words('time -p -- git push')).toEqual(['git', 'push'])
+})
+
+// Every other word that ends the options of `time` already ends them: the loop skips `-p` and `--` only right behind
+// `time` and the option before it, and takes any other word as the command (bash 3.2 and 5.3).
+test('stripLead ends the options of time at an assignment, a reserved word, a glued word or a new line', () => {
+  const words = (command: string) => stripLead(splitShell(command)[0]!).words
+  // An assignment: `time FOO=1 -p printf ok` runs a command named `-p` with `FOO=1` in its environment.
+  expect(stripLead(splitShell('time FOO=1 -p git push')[0]!)).toEqual({
+    words: ['-p', 'git', 'push'],
+    env: { FOO: '1' },
+    nohup: false,
+  })
+  expect(stripLead(splitShell('time -p FOO=1 git push')[0]!)).toEqual({
+    words: ['git', 'push'],
+    env: { FOO: '1' },
+    nohup: false,
+  })
+  // A reserved word: `time ! -p printf ok` runs a command named `-p`, but `time -p ! printf ok` negates `printf`.
+  expect(words('time ! -p git push')).toEqual(['-p', 'git', 'push'])
+  expect(words('time -p ! git push')).toEqual(['git', 'push'])
+  // Another `time`.
+  expect(words('time time -p git push')).toEqual(['git', 'push'])
+  expect(words('time -p time -p git push')).toEqual(['git', 'push'])
+  expect(words('time -p -- time -p git push')).toEqual(['git', 'push'])
+  // A word glued to the option is another word.
+  expect(words('time -p-- git push')).toEqual(['-p--', 'git', 'push'])
+  expect(words('time -pp git push')).toEqual(['-pp', 'git', 'push'])
+  expect(words('time --p git push')).toEqual(['--p', 'git', 'push'])
+  // A backslash and a new line join the lines: the option stays one.
+  expect(words('time \\\n-p git push')).toEqual(['git', 'push'])
+})
+
+test('stripWrappers keeps the env and the nohup flag of what follows time -p', () => {
+  expect(stripWrappers(['time', '-p', 'A=1', 'nohup', 'sleep', '9'])).toEqual({
+    words: ['sleep', '9'],
+    env: { A: '1' },
+    nohup: true,
+  })
+})
+
+test('stripWrappers and stripLead keep the options of command, exec and builtin', () => {
+  expect(stripWrappers(['command', '-v', 'acli']).words).toEqual(['-v', 'acli'])
+  expect(stripWrappers(['exec', '-c', 'git', 'push']).words).toEqual(['-c', 'git', 'push'])
+  expect(stripWrappers(['builtin', '-x', 'echo']).words).toEqual(['-x', 'echo'])
+  expect(stripLead(typed(['command', '-v', 'acli'])).words).toEqual(['-v', 'acli'])
+})
+
+test('stripLead drops time and its options in any order with the reserved words', () => {
+  const cmd = ['git', '-C', '/tmp/r', 'push']
+  expect(stripLead(typed(['time', '-p', ...cmd])).words).toEqual(cmd)
+  expect(stripLead(typed(['time', '-p', '!', ...cmd])).words).toEqual(cmd)
+  expect(stripLead(typed(['!', 'time', '-p', ...cmd])).words).toEqual(cmd)
+  expect(stripLead(typed(['if', 'time', '--', '!', ...cmd])).words).toEqual(cmd)
+  expect(stripLead(splitShell('time -p git push')[0]!).words).toEqual(['git', 'push'])
 })
 
 test('stripLead adds up the env and the nohup flag of every round', () => {
@@ -678,19 +886,34 @@ test('stripLead keeps a quoted or escaped reserved word, which is a command', ()
 })
 
 // `stripReserved` keeps the typed flags optional: no flags means every word counts as typed. `stripLead` has no such
-// fallback. It takes the words with their flags (a `Segment` fits), so a reader that leaves `whole` out does not compile and
-// cannot bring issue #194 back without a sign.
+// fallback. It takes the words with their flags (a `Segment` fits), so a reader that leaves `whole` or `redir` out does not
+// compile and cannot bring issue #194 or issue #227 back without a sign.
 test('stripReserved reads the optional typed flags of the words, and stripLead the flags of its segment', () => {
   expect(stripReserved(['done', 'git'], [false, true])).toEqual(['done', 'git'])
   expect(stripReserved(['do', 'done', 'git'], [true, false, true])).toEqual(['done', 'git'])
   expect(stripReserved(['do', 'done', 'git'], [true, true, true])).toEqual(['git'])
-  expect(stripLead({ words: ['time', '!', 'fi', 'git'], whole: [true, true, false, true] }).words).toEqual([
-    'fi',
-    'git',
-  ])
   expect(
-    stripLead({ words: ['!', 'time', 'sudo', 'if', 'git'], whole: [true, true, true, false, true] }).words,
+    stripLead({
+      words: ['time', '!', 'fi', 'git'],
+      whole: [true, true, false, true],
+      redir: [false, false, false, false],
+    }).words,
+  ).toEqual(['fi', 'git'])
+  expect(
+    stripLead({
+      words: ['!', 'time', 'sudo', 'if', 'git'],
+      whole: [true, true, true, false, true],
+      redir: [false, false, false, false, false],
+    }).words,
   ).toEqual(['if', 'git'])
+  // A word behind a redirection is no option of `time`, whatever the reserved words in front of it.
+  expect(
+    stripLead({
+      words: ['!', 'time', '-p', 'git'],
+      whole: [true, true, true, true],
+      redir: [false, false, true, false],
+    }).words,
+  ).toEqual(['-p', 'git'])
   // Every word typed: the reserved words go.
   expect(stripReserved(['done', 'git'])).toEqual(['git'])
   expect(stripLead(typed(['time', '!', 'fi', 'git'])).words).toEqual(['git'])
