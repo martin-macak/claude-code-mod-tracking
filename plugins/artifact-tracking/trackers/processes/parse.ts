@@ -1,5 +1,6 @@
 import { isRecord } from '../../core/lib/json'
 import {
+  keepsStdout,
   resolvePath,
   scopedDir,
   scopedVars,
@@ -230,6 +231,25 @@ const containerIds = (stdout: string): string[] =>
     .map(l => l.trim().toLowerCase())
     .filter(l => /^[a-f0-9]{64}$/.test(l))
 
+/**
+ * The id of each run, in order, or undefined (issue #231). `printed[n]`: the output of run n reaches the tool result. The id
+ * lines pair in order with the runs that print when the counts match and no id repeats (two runs never print one id), or
+ * when one run that prints stands with lines that all say one id (a later `docker inspect -f '{{.Id}}'` of it). Any other
+ * count says that a line came from another command (`docker ps -aq`, an `inspect` of another container): no run takes an
+ * id then. A run that does not print takes none, and it is left out of the count.
+ */
+export function pairContainerIds(ids: readonly string[], printed: readonly boolean[]): (string | undefined)[] {
+  const printing = printed.filter(Boolean).length
+  const unique = new Set(ids).size
+  let next = 0
+  return printed.map(p => {
+    if (!p) return undefined
+    const n = next++
+    if (ids.length === printing) return unique === ids.length ? ids[n] : undefined
+    return printing === 1 && unique === 1 ? ids[0] : undefined
+  })
+}
+
 /** Lines that `echo $!` (or `echo "pid: $!"`) prints. */
 function pidLines(stdout: string): number[] {
   const out: number[] = []
@@ -451,7 +471,7 @@ export function parseBashProcesses(
         runs.push({
           ...(o.name !== undefined ? { name: o.name } : {}),
           text: shortCmd(words.join(' ')),
-          printed: !seg.stdoutRedirected && !seg.piped && !seg.substituted,
+          printed: keepsStdout(seg),
         })
       continue
     }
@@ -494,22 +514,15 @@ export function parseBashProcesses(
     }
   }
 
-  // An id line is the id of a run only when the run printed it (issue #231). The lines pair in order with the runs whose
-  // output reaches the tool result (`printed`) when the two counts match and the ids differ (two runs never print one id),
-  // or when one such run stands with lines that all say one id (a later `docker inspect -f '{{.Id}}'` of it). Any other
-  // count says that a line came from another command (`docker ps -aq`, an `inspect` of another container): no run takes an
-  // id then, and a run that printed nothing to the tool result never does. A paired row is exact (`containerIdExact`). Left
-  // over: a run that failed and printed no id, in a call where another command printed one id, still pairs with it.
-  const ids = containerIds(stdout)
-  const printing = runs.filter(r => r.printed)
-  const unique = new Set(ids).size
-  const idOf = (run: (typeof runs)[number]): string | undefined => {
-    if (!run.printed) return undefined
-    if (ids.length === printing.length) return unique === ids.length ? ids[printing.indexOf(run)] : undefined
-    return printing.length === 1 && unique === 1 ? ids[0] : undefined
-  }
-  for (const run of runs) {
-    const containerId = idOf(run)
+  // An id line is the id of a run only when the run printed it (issue #231): `pairContainerIds` holds the rule. A paired row is
+  // exact (`containerIdExact`). Left over: the limits that the KB page process-tracking-signals lists under "The id of a
+  // container" (a run that failed or did not run, a trailing `&`, a function called with a redirection).
+  const paired = pairContainerIds(
+    containerIds(stdout),
+    runs.map(r => r.printed),
+  )
+  runs.forEach((run, n) => {
+    const containerId = paired[n]
     rows.push({
       id: `docker:ctr:${run.name ?? containerId ?? run.text}`,
       kind: 'docker-container',
@@ -519,7 +532,7 @@ export function parseBashProcesses(
       lastSeen: at,
       ...(containerId !== undefined ? { containerId, containerIdExact: true as const } : {}),
     })
-  }
+  })
 
   detached.forEach((d, n) => {
     rows.push({

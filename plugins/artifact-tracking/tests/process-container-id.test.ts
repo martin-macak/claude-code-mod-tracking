@@ -61,8 +61,37 @@ test('a merge keeps the id and the mark of rows that no new sighting names', () 
   ])
 })
 
-test('a new sighting keeps the first sighting time and the other fields of the old row', () => {
-  const old = row({ containerId: A, containerIdExact: true, firstSeen: 5, state: 'up' })
+test('a new sighting keeps the first sighting time and the old-only fields, and takes the new state', () => {
+  // `pid` and `agentId` stand only on the old row: `sighted` must keep them while it drops the old id.
+  const old = row({ containerId: A, containerIdExact: true, firstSeen: 5, state: 'up', pid: 7, agentId: 'a1' })
   const merged = mergeProcessRows([old], [row({ firstSeen: 99 })], 1234)
-  expect(only(merged)).toMatchObject({ firstSeen: 5, lastSeen: 1234, state: 'running' })
+  expect(only(merged)).toMatchObject({ firstSeen: 5, lastSeen: 1234, state: 'running', pid: 7, agentId: 'a1' })
+  expect('containerId' in only(merged)).toBe(false)
+  expect('containerIdExact' in only(merged)).toBe(false)
+})
+
+// The three callers of the merge pass a different row as the new side (`index.ts`): `settle` the live rows, `restore('carry')`
+// the current rows and `restore('load')` the stored copy. The new side alone gives the id and the mark. So a stored copy with
+// no id, or an older build with no mark, wins over a live exact row on a load, as the stored copy wins for `state`.
+test('a stored copy that has no id removes the id of the live row on load, as it does for state', () => {
+  const live = row({ containerId: A, containerIdExact: true })
+  const stored = row() // an older build: no id, no mark
+  const loaded = mergeProcessRows([live], [stored]) // restore('load'): the current rows first, the stored copy as the new side
+  expect('containerId' in only(loaded)).toBe(false)
+  expect('containerIdExact' in only(loaded)).toBe(false)
+})
+
+test('a stored copy with an id and no mark removes the mark of the live row on load', () => {
+  const live = row({ containerId: A, containerIdExact: true })
+  const stored = row({ containerId: A }) // an older build: the id, no mark
+  const loaded = mergeProcessRows([live], [stored])
+  expect(only(loaded).containerId).toBe(A)
+  expect('containerIdExact' in only(loaded)).toBe(false)
+})
+
+test('a carry keeps the id and the mark of the live row that the stored copy names, and gives the stored one none', () => {
+  const live = row({ containerId: A, containerIdExact: true })
+  const stored = row({ containerId: B, containerIdExact: true })
+  // restore('carry'): the stored rows first, the current rows as the new side.
+  expect(only(mergeProcessRows([stored], [live]))).toMatchObject({ containerId: A, containerIdExact: true })
 })

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { splitShell, stripLead, stripReserved, stripWrappers } from '../core/lib/shell'
+import { keepsStdout, splitShell, stripLead, stripReserved, stripWrappers } from '../core/lib/shell'
 import { expectLinear } from './fixtures/scaling'
 
 /**
@@ -1031,7 +1031,8 @@ test('splitShell reads a substitution in a heredoc tag up to the cap, and none p
 // container id) read the marks.
 const outMarks = (cmd: string) =>
   splitShell(cmd).map(
-    s => `${s.words.join(' ')}${s.stdoutRedirected ? ' >' : ''}${s.piped ? ' |' : ''}${s.substituted ? ' $' : ''}`,
+    s =>
+      `${s.words.join(' ')}${s.stdoutRedirected ? ' >' : ''}${s.stdoutPiped ? ' |' : ''}${s.substituted ? ' $' : ''}`,
   )
 
 test('splitShell marks a typed redirection of the standard output', () => {
@@ -1201,6 +1202,24 @@ test('splitShell marks a segment inside a command substitution, backticks or a p
   // A pipe or a redirection inside the substitution marks its own segments too.
   expect(outMarks('x=$(a | b)')).toEqual(['x=', 'a | $', 'b $'])
   expect(outMarks('x=$(a > f)')).toEqual(['x=', 'a > $'])
+})
+
+// One named rule for the three marks, so a reader cannot read two of them and bring the bug of #231 back unseen.
+test('keepsStdout is true only for a segment that has none of the three marks', () => {
+  const none = { stdoutRedirected: false, stdoutPiped: false, substituted: false }
+  expect(keepsStdout(none)).toBe(true)
+  expect(keepsStdout({ ...none, stdoutRedirected: true })).toBe(false)
+  expect(keepsStdout({ ...none, stdoutPiped: true })).toBe(false)
+  expect(keepsStdout({ ...none, substituted: true })).toBe(false)
+  // The rule reads the marks of the splitter: a plain command keeps its output, the others lose it.
+  expect(splitShell('a; b > f; c | d; e $(f)').map(s => [s.words[0], keepsStdout(s)])).toEqual([
+    ['a', true],
+    ['b', false],
+    ['c', false],
+    ['d', true],
+    ['e', true],
+    ['f', false],
+  ])
 })
 
 // The redirection of a group is a range over the segments, read once at the end. A redirection on each of a deep nest of
