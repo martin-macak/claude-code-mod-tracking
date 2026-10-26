@@ -185,3 +185,31 @@ test('the JSON paragraph of project-sync says when positionsLeft is null, and na
   assert.match(line, /`null` when no check ran: a dry run, or a `sync` or `next` that wrote no move/)
   assert.match(line, /`add --apply` of a new item always checks, also when no move was written/)
 })
+
+// Issue #230: a stable partial list passes every check of one resolver path, so the skill names the
+// second count, its path, the rule on a mismatch and its cost, where agents read the read checks.
+test('the Complete reads rule of project-sync names the second count, its path and its cost', () => {
+  const skill = read('.agents/skills/project-sync/SKILL.md')
+  const start = skill.indexOf('- **Complete reads.**')
+  assert.ok(start >= 0, 'the skill has the Complete reads rule')
+  const rule = skill.slice(start, skill.indexOf('- **How positions are written.**'))
+  const bullet = rule.split('\n').find(l => l.includes('**Second count.**'))
+  assert.ok(bullet, 'the rule has a Second count bullet')
+  assert.match(bullet, /node\(id: <project id>\) \{ \.\.\. on ProjectV2 \{ items \{ totalCount \} \} \}/)
+  assert.match(bullet, /one small query per try/)
+  assert.match(bullet, /refuses/)
+  assert.match(bullet, /dry run warns/)
+  // A node that gh cannot resolve is no count, so it makes a bad read. Any other failed call stops the run.
+  assert.match(bullet, /A node that GitHub cannot resolve \(`NOT_FOUND`\) and a reply with no count both give none/)
+  assert.match(bullet, /Any other failure of the query .* stops the run, as for any failed `gh` call/)
+})
+
+// Issue #107 reports a list and a count that stayed together, so the reason for no count after a
+// write is not that a count runs ahead of the list. It is that nobody knows how the two agree then.
+test('the After the writes rule of project-sync asks no second count and names the reason that holds', () => {
+  const skill = read('.agents/skills/project-sync/SKILL.md')
+  const bullet = skill.split('\n').find(l => l.includes('**After the writes.**'))
+  assert.ok(bullet, 'the Complete reads rule has an After the writes bullet')
+  assert.match(bullet, /It asks no second count: it is not known whether a count agrees with a list that lags after a write \(issue #107\)/)
+  assert.doesNotMatch(bullet, /could include a new item/)
+})

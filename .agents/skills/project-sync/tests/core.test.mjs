@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { formatRefs, parseRefs, pickNext, plan, readDifferences, readProblems } from '../scripts/core.mjs'
+import {
+  countProblems,
+  formatRefs,
+  parseRefs,
+  pickNext,
+  plan,
+  readDifferences,
+  readProblems,
+} from '../scripts/core.mjs'
 import { NONE, OPTIONS, project, REPO } from './helpers.mjs'
 
 const run = (p, extra = {}) => plan({ ...p.build(), options: OPTIONS, repo: REPO, ...extra })
@@ -582,4 +590,44 @@ test('readDifferences: names the counts of both reads and of the items that only
   // Same size, other items.
   const swapped = readDifferences(listed(3), listed(3, [3], 1))
   assert.match(swapped[0], /3 and 3 items, 1 only in the first, 1 only in the second/)
+})
+
+// --- A second count of the items (issue #230) ---
+//
+// One resolver path can stay wrong for a while: the list and its own totalCount agree (100 of 100)
+// while another path counts 105. countProblems() compares the items of a read with the count that
+// the second path gave (null when it gave none).
+
+test('countProblems: a second count that equals the items listed has no problem', () => {
+  assert.deepEqual(countProblems(listed(105), 105), [])
+})
+
+test('countProblems: a higher second count names both numbers and the path (a stable partial list)', () => {
+  // The glitch of 2026-10-22: the list and its totalCount said 100, node(id:) said 105.
+  const problems = countProblems(listed(100, [100]), 105)
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /second query \(node\(id:\)\) counted 105 items, but the read listed 100/)
+})
+
+test('countProblems: a lower second count disagrees too', () => {
+  const problems = countProblems(listed(105), 100)
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /counted 100 items, but the read listed 105/)
+})
+
+test('countProblems: a count of one item reads "1 item", as the other messages do', () => {
+  assert.equal(
+    countProblems(listed(1), 2)[0],
+    'A second query (node(id:)) counted 2 items, but the read listed 1 item.',
+  )
+  assert.equal(
+    countProblems(listed(2), 1)[0],
+    'A second query (node(id:)) counted 1 item, but the read listed 2 items.',
+  )
+})
+
+test('countProblems: no second count cannot confirm the list', () => {
+  const problems = countProblems(listed(105), null)
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /second query \(node\(id:\)\) gave no item count/)
 })

@@ -6,6 +6,7 @@
 
 import { spawnSync } from 'node:child_process'
 import {
+  countProblems,
   issueKey,
   mergeIssueNodes,
   normalizeProject,
@@ -135,6 +136,18 @@ const PROJECT_QUERY = `query ProjectItems($owner: String!, $number: Int!, $curso
   }
 }`
 
+// The item count of the project through a second path (issue #230): `node(id:)` with the id that
+// the project query gave. It asks for the count only, no items, so it is small. The project query
+// reaches the project through `repositoryOwner`, and on 2026-10-22 that path answered 0 or 100
+// items while `node(id:)` answered 105. `node(id:)` works for a user and an organization owner.
+const COUNT_QUERY = `query ProjectItemCount($id: ID!) {
+  node(id: $id) {
+    ... on ProjectV2 {
+      items { totalCount }
+    }
+  }
+}`
+
 // The blockers of issues that are not in the project, by node id.
 const ISSUES_QUERY = `query IssuesByIds($ids: [ID!]!) {
   nodes(ids: $ids) {
@@ -207,6 +220,41 @@ export function readProject(gh, { owner, number }) {
   return { ...normalizeProject({ ...first, items: { nodes } }), totalCounts }
 }
 
+// JSON in a failed reply may be missing or cut off. Null then.
+const parseJson = text => {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+// The body of a failed gh call whose errors are all NOT_FOUND: GitHub could not resolve something
+// that the query asked for, and the body still holds the data that it could. gh exits 1 for it, and
+// graphql() also throws on a body with errors when gh exits 0. Both end up here with the body in
+// err.stdout. Null for any other error: a login, a scope, a rate limit or a server error is no
+// NOT_FOUND, and the run stops.
+function notFoundBody(err) {
+  const body = err instanceof GhError ? parseJson(err.stdout) : null
+  return body?.errors?.length > 0 && body.errors.every(e => e.type === 'NOT_FOUND') ? body : null
+}
+
+// The number of items that the second path (COUNT_QUERY) counts, or null when it gives none: a
+// node that GitHub cannot resolve, or a reply with no count. For an id that does not resolve, gh
+// exits 1 with a NOT_FOUND error and a null node (as for issueNodes), so that failure is no count
+// and the read is bad. Any other failed gh call throws, as for any other call.
+export function readItemCount(gh, projectId) {
+  let data
+  try {
+    data = gh.graphql(COUNT_QUERY, { id: projectId })
+  } catch (err) {
+    if (notFoundBody(err)) return null
+    throw err
+  }
+  const count = data?.node?.items?.totalCount
+  return Number.isInteger(count) ? count : null
+}
+
 // A bad read is tried again until READ_ATTEMPTS tries are used, with a pause before each new try.
 // The pauses are short, and the last try has none after it: GitHub answers with part of the items
 // for seconds at a time. The failure is the safe outcome, and the message tells to run it again.
@@ -224,12 +272,25 @@ export const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer
 //   twice      read twice in every try, and require the same items, with the same values, both
 //              times (readDifferences). For a run that writes: one read can look complete and
 //              still be a cut of the list.
+//   count      once per try, after the reads: ask a second path for the item count (readItemCount),
+//              and require it to equal the items listed. A stable partial list agrees with its own
+//              totalCount, and only another path tells (issue #230). One small query per try. A
+//              read that failed its other checks skips it: the try is lost already. The check after
+//              a write does not use it: it requires the items of the read before, and it is not
+//              known whether a count agrees with a list that lags after a write (issue #107).
 //   expectIds  ids of an earlier read. The read must list them all (the check after a write).
 //   sleep      (ms) => void, the pause between two tries.
 export function readComplete(
   gh,
   target,
-  { twice = false, expectIds = null, sleep = sleepSync, attempts = READ_ATTEMPTS, backoff = READ_BACKOFF_MS } = {},
+  {
+    twice = false,
+    count = false,
+    expectIds = null,
+    sleep = sleepSync,
+    attempts = READ_ATTEMPTS,
+    backoff = READ_BACKOFF_MS,
+  } = {},
 ) {
   for (let attempt = 1; ; attempt += 1) {
     let read = readProject(gh, target)
@@ -239,17 +300,9 @@ export function readComplete(
       problems = [...readProblems(again, { expectIds }), ...readDifferences(read, again)]
       read = again
     }
+    if (count && problems.length === 0) problems = countProblems(read, readItemCount(gh, read.project.id))
     if (problems.length === 0 || attempt >= attempts) return { ...read, problems, attempts: attempt }
     sleep(backoff[Math.min(attempt, backoff.length) - 1])
-  }
-}
-
-// JSON in a failed reply may be missing or cut off. Null then.
-const parseJson = text => {
-  try {
-    return JSON.parse(text)
-  } catch {
-    return null
   }
 }
 
@@ -261,9 +314,8 @@ export function issueNodes(gh, ids) {
   try {
     return gh.graphql(ISSUES_QUERY, { ids }).nodes
   } catch (err) {
-    const body = err instanceof GhError ? parseJson(err.stdout) : null
-    const onlyNotFound = body?.errors?.length > 0 && body.errors.every(e => e.type === 'NOT_FOUND')
-    if (onlyNotFound && Array.isArray(body.data?.nodes)) return body.data.nodes
+    const body = notFoundBody(err)
+    if (Array.isArray(body?.data?.nodes)) return body.data.nodes
     throw err
   }
 }
