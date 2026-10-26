@@ -120,6 +120,7 @@ test-scripts: ## Test the repo scripts (no claude needed)
 	$(NODE_RUN) node --experimental-transform-types --test scripts/coverage/kit-shim.test.ts scripts/coverage/check.test.mjs
 	$(NODE_RUN) node --experimental-transform-types --no-warnings --import $(ROOT)/scripts/coverage/loader.mjs --test scripts/contracts/*.test.mjs
 	scripts/dev/gh-check.test.sh
+	bash scripts/ci/check-pr-body.test.sh
 	bash scripts/release/release.test.sh
 	bash scripts/release/ci-guards.test.sh
 	bash scripts/release/smoke.test.sh
