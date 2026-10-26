@@ -87,6 +87,11 @@ export type WorktreeRow = {
    * remove` took it away, so `/track clean` has nothing left to remove (issue #122).
    */
   prunable?: true
+  /**
+   * The lock reason that git lists for a live child (`''`: locked with no reason). Absent: not locked, a removed child, or
+   * the root. The plan of `/track clean` is pure, so it reads the lock here (issue #123).
+   */
+  locked?: string
   depth: 0 | 1
 }
 

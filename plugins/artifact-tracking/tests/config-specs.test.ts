@@ -161,7 +161,19 @@ test('the slices hold exactly the keys of the Defaults table', () => {
     'failedTtlMs',
     'removedTtlMs',
     'foldWorkflows',
+    'destroyWorktrees',
   ])
+})
+
+// Issue #123: `/track clean --yes worktrees` removes a clean, merged worktree that is still there only when the person
+// turned the switch on. A word where the switch belongs keeps it off.
+test('destroyWorktrees is off by default, and a word where the switch belongs keeps it off', () => {
+  expect(AUTO_DEFAULTS.destroyWorktrees).toBe(false)
+  const problems: string[] = []
+  const slice = autoConfig.normalise({ destroyWorktrees: 'yes' }, AUTO_DEFAULTS, p => void problems.push(p))
+  expect(slice.destroyWorktrees).toBe(false)
+  expect(problems).toHaveLength(1)
+  expect(autoConfig.normalise({ destroyWorktrees: true }, AUTO_DEFAULTS, () => {}).destroyWorktrees).toBe(true)
 })
 
 test('every slice has enabled first, on by default', () => {

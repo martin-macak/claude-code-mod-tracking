@@ -68,6 +68,15 @@ test('a plan lists the steps by kind, with the action, and says nothing changed'
   ])
 })
 
+// Owner decision Q2 of #123: git deletes the ignored files of a worktree with it, so the plan line says so.
+test('a remove-worktree step reads: remove worktree, if clean and merged, and it deletes ignored files', () => {
+  const step: CleanStep = { kind: 'worktrees', id: 'wt:/w/a', label: '/w/a', action: 'remove-worktree' }
+  expect(planText(lines(step), [])).toContain(
+    'Worktrees (apply with /track clean --yes worktrees)\n  /w/a: remove worktree (if clean and merged; deletes ignored files)\n',
+  )
+  expect(planText(lines({ ...step, skip: 'not enabled' }), [])).toContain('  /w/a: skipped: not enabled\n')
+})
+
 test('a step with a reason is a skipped: line', () => {
   const text = planText(lines(stop('task:1', 'sleep 300'), stop('task:2', 'npm run dev', { skip: 'no task id' })), [])
   expect(text).toContain('  sleep 300: stop\n  npm run dev: skipped: no task id\n')

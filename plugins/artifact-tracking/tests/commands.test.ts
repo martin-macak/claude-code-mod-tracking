@@ -254,22 +254,24 @@ test('view is a core sub-command: a tracker cannot take it', async () => {
   expect(t.commands.hint()).toBe(CORE_HINT)
 })
 
-test('clean prints the plan and nothing else: no config check, no list, no flush', async () => {
+// Issue #123: the plan reads the switches `destroyWorktrees` (and later `destroyContainers`), so an edit of the file
+// just before `--yes` must count. Every mode checks the file first, like `show-all`.
+test('clean checks the config file, then prints the plan and nothing else: no list, no flush', async () => {
   const t = fakeHost()
   expect((await t.commands.run(t.ports, 'clean')).text).toContain('Clean plan. Nothing changed.')
-  expect(t.calls).toEqual(['entry', 'clean:plan'])
+  expect(t.calls).toEqual(['entry', 'refreshConfig', 'clean:plan'])
 })
 
-test('clean --log prints the log and nothing else', async () => {
+test('clean --log checks the config file, then prints the log and nothing else', async () => {
   const t = fakeHost()
   expect((await t.commands.run(t.ports, ' CLEAN  --log ')).text).toBe('The clean log is empty.')
-  expect(t.calls).toEqual(['entry', 'clean:history'])
+  expect(t.calls).toEqual(['entry', 'refreshConfig', 'clean:history'])
 })
 
 test('clean --yes <kind> applies, saves before it replies, and prints the result and then the list', async () => {
   const t = fakeHost()
   const text = (await t.commands.run(t.ports, 'clean --yes tasks worktrees')).text
-  expect(t.calls).toEqual(['entry', 'clean:apply:tasks,worktrees', 'flushNow', 'prepare'])
+  expect(t.calls).toEqual(['entry', 'refreshConfig', 'clean:apply:tasks,worktrees', 'flushNow', 'prepare'])
   expect(text).toMatch(/^Cleaned: tasks, worktrees\.\n[\s\S]*\n\nLIST$/)
 })
 
@@ -288,7 +290,13 @@ test('clean --hide sets hidden.before, redraws, and prints the list; the plan an
   const text = (await t.commands.run(t.ports, 'clean --hide')).text
   expect(text).toBe('Ended rows hidden. /track show-all shows them again.\n\nLIST')
   expect(await t.ports.state.hidden.get()).toEqual({ showAll: false, before: 0 })
-  expect(t.calls).toEqual(['entry', 'prepare'])
+  expect(t.calls).toEqual(['entry', 'refreshConfig', 'prepare'])
+})
+
+test('a clean call with an argument that is no mode prints the usage and does not read the config file', async () => {
+  const t = fakeHost()
+  expect((await t.commands.run(t.ports, 'clean --yes')).text).toContain('Usage: /track clean')
+  expect(t.calls).toEqual(['entry'])
 })
 
 test('a word that only starts with clean is not clean', async () => {

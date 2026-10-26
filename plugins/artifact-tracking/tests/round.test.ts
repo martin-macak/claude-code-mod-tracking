@@ -197,6 +197,24 @@ test('two rounds in a row with the same replies make no auto write and no item w
   expect(t.log.saves).toBe(saves) // the PR note is not in the snapshot, so it cannot move it
 })
 
+test('a locked record of a proven child: the row carries the lock, and rounds after the first make no auto write (A22)', async () => {
+  const t = rig()
+  t.state.porcelain = porcelain(['probe-wt', 'worktree-probe-wt']) + 'locked claude agent wf_1-1 (pid 5)\n'
+  await t.run('start')
+  expect(t.auto().snapshot?.worktrees.map(r => r.locked)).toEqual([undefined, 'claude agent wf_1-1 (pid 5)'])
+  const saves = t.log.saves
+  for (let i = 0; i < 3; i++) {
+    t.state.now += 30_000
+    await t.run('tick')
+  }
+  expect(t.log.saves).toBe(saves)
+  // The lock goes: that is a change, so it is written once.
+  t.state.porcelain = porcelain(['probe-wt', 'worktree-probe-wt'])
+  await t.run('tick')
+  expect(t.log.saves).toBe(saves + 1)
+  expect(t.auto().snapshot?.worktrees.map(r => r.locked)).toEqual([undefined, undefined])
+})
+
 test('a prunable record of a proven child: rounds after the first make no auto write (A22)', async () => {
   const t = rig()
   t.state.porcelain =

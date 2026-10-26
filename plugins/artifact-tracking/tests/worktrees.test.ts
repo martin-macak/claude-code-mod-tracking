@@ -75,6 +75,27 @@ test('a locked record is live: Claude locks its own session worktrees', () => {
   expect(v.rows[1]?.state).toBe('live')
 })
 
+// Issue #123: the plan of `/track clean` is pure, so the dry run can name a lock only when the row carries it.
+test('a locked record gives its child row the lock reason; an empty reason stays, an unlocked or removed child has none', () => {
+  const s = base({ worktrees: [proof(`${DIR}/a`), proof(`${DIR}/b`), proof(`${DIR}/c`), proof(`${DIR}/gone`)] })
+  const list = [
+    root(),
+    rec(`${DIR}/a`, 'b-a', { locked: 'claude agent wf_1-1 (pid 5)' }),
+    rec(`${DIR}/b`, 'b-b', { locked: '' }),
+    rec(`${DIR}/c`, 'b-c'),
+  ]
+  const v = trackWorktrees(s, list, AT)
+  expect(v.rows.map(r => [r.name, r.locked])).toEqual([
+    ['repo', undefined], // the root row never carries a lock
+    ['a', 'claude agent wf_1-1 (pid 5)'],
+    ['b', ''],
+    ['c', undefined],
+    ['gone', undefined],
+  ])
+  expect(v.rows[2]).toHaveProperty('locked', '')
+  expect(v.rows[3]).not.toHaveProperty('locked')
+})
+
 test('a removed child comes back live when its record returns', () => {
   const first = trackWorktrees(base({ worktrees: [proof(`${DIR}/w`)] }), [root(), rec(`${DIR}/w`, 'b')], AT)
   const withSnapshot: AutoState = {

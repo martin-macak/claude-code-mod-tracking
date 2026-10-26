@@ -80,14 +80,13 @@ test('the plan lists a removed child that has a proof, by its path', async () =>
   expect(text).toContain(`Worktrees (apply with /track clean --yes worktrees)\n  ${OLD}: remove record\n`)
 })
 
-test('the plan skips a live child, the root and a removed row with no proof', async () => {
+test('the plan skips the root and a child with no proof, live or removed', async () => {
   const t = await treeWorld({
-    rows: [removedRow(OLD), removedRow('/work/no-proof'), removedRow('/work/live', { state: 'live' })],
+    rows: [removedRow(OLD), removedRow('/work/no-proof'), { ...recordlessRow('/work/no-proof-live'), state: 'live' }],
   })
   const text = (await t.run('clean')).text
   expect(text).toContain(`  ${OLD}: remove record`)
   expect(text).not.toContain('no-proof')
-  expect(text).not.toContain('/work/live')
   expect(text).not.toContain('  /work:')
 })
 
@@ -197,30 +196,47 @@ test('a child at the root path of the session is planned as skipped, and git nev
   expect(t.gits()).toEqual([])
 })
 
-test('a git remove that fails is skipped: <first line of stderr>, and the next path is still tried, one at a time', async () => {
+// G14 holds for this action too: a refusal that git words with its advice to force is in the words of the mod, in the
+// outcome and in the log. Any other refusal shows its first line.
+test('a git remove that fails is skipped in the words of the mod, never with git advice to force, and the next path is still tried, one at a time', async () => {
   const A = '/work/a'
   const B = '/work/b'
+  const C = '/work/c'
   const t = await treeWorld({
-    proofs: [proofOf(A), proofOf(B)],
-    rows: [removedRow(A), removedRow(B)],
-    list: porcelain([A, PRUNABLE], [B, PRUNABLE]),
+    proofs: [proofOf(A), proofOf(B), proofOf(C)],
+    rows: [removedRow(A), removedRow(B), removedRow(C)],
+    list: porcelain([A, PRUNABLE], [B, PRUNABLE], [C, PRUNABLE]),
     git: argv =>
       argv[2] === 'list'
-        ? ok(porcelain([A, PRUNABLE], [B, PRUNABLE]))
+        ? ok(porcelain([A, PRUNABLE], [B, PRUNABLE], [C, PRUNABLE]))
         : argv[3] === A
           ? fail("fatal: '/work/a' contains modified or untracked files, use --force to delete it\nsecond line")
-          : ok(),
+          : argv[3] === C
+            ? fail("fatal: '/work/c' is a main working tree\nsecond line")
+            : ok(),
   })
   const text = (await t.run('clean --yes worktrees')).text
   expect(t.removes()).toEqual([
     ['git', 'worktree', 'remove', A],
     ['git', 'worktree', 'remove', B],
+    ['git', 'worktree', 'remove', C],
   ])
-  expect(text).toContain(
-    `  ${A}: skipped: fatal: '/work/a' contains modified or untracked files, use --force to delete it\n`,
-  )
+  expect(text).toContain(`  ${A}: skipped: uncommitted or untracked files\n`)
   expect(text).toContain(`  ${B}: done`)
+  expect(text).toContain(`  ${C}: skipped: fatal: '/work/c' is a main working tree\n`)
+  expect(text).not.toContain('--force')
   expect(text).not.toContain('second line')
+  expect(t.log().map(e => e.outcome)).toContain('skipped: uncommitted or untracked files')
+  for (const e of t.log()) expect(e.outcome).not.toContain('--force')
+})
+
+// m5: the mod maps git's English refusals, so every git call asks for English messages. The same closure runs both actions.
+test('every git call of the record removal asks for English messages with LC_ALL=C', async () => {
+  const t = await treeWorld()
+  await t.run('clean --yes worktrees')
+  const git = t.w.calls.flatMap((c, i) => (c[0] === 'git' ? [t.w.callOpts[i]] : []))
+  expect(git).toHaveLength(2) // list, remove
+  for (const o of git) expect(o?.env).toEqual({ LC_ALL: 'C' })
 })
 
 // The snapshot is the plan's only source and a round rewrites it, so the row is cleared by the apply itself: until the
@@ -392,6 +408,7 @@ function applyOf(auto: AutoState, git: (argv: string[]) => Promise<RunResult>) {
     },
     tools: { run: (_tool: string, argv: string[]) => git(argv) },
     config: { slice: () => AUTO_DEFAULTS },
+    clock: { wall: () => NOW },
     log: () => {},
   } as unknown as Parameters<typeof autoCleanup.apply>[0]
   const step = (path: string) =>

@@ -3,9 +3,12 @@ import { expect, test } from 'claude-code/testing'
 import {
   agentWorktreePath,
   findByPath,
+  holds,
   locate,
   normPath,
   parsePorcelain,
+  workflowWorktreeName,
+  workflowWorktreePath,
   worktreeOfBranch,
 } from '../core/lib/porcelain'
 import type { GitWorktree } from './fixtures/contracts'
@@ -74,6 +77,26 @@ test('locate and findByPath: a trailing slash on a stored record path finds the 
   expect(findByPath(list, '/x/repo/.claude/worktrees/probe-wt/')?.branch).toBe('worktree-probe-wt')
   expect(findByPath(list, '/x/repo/.claude/worktrees/probe-wt/sub')).toBeUndefined()
   expect(findByPath(list, '/x/repo/', new Set([list[0]!]))).toBeUndefined()
+})
+
+test('holds: a path holds itself and a folder inside it, with or without a trailing slash, and not a sibling that shares letters', () => {
+  expect(holds('/x/repo', '/x/repo')).toBe(true)
+  expect(holds('/x/repo', '/x/repo/src/deep')).toBe(true)
+  expect(holds('/x/repo/', '/x/repo/src')).toBe(true)
+  expect(holds('/x/repo', '/x/repo/')).toBe(true)
+  expect(holds('/x/repo', '/x/repo-other')).toBe(false)
+  expect(holds('/x/repo', '/x')).toBe(false)
+  expect(holds('/x/repo', '/elsewhere')).toBe(false)
+})
+
+test('holds: the root holds every absolute path', () => {
+  expect(holds('/', '/')).toBe(true)
+  expect(holds('/', '/x/repo')).toBe(true)
+})
+
+test('workflowWorktreeName is <runId>-<agentIndex>, the last segment of workflowWorktreePath', () => {
+  expect(workflowWorktreeName('wf_ab12', 3)).toBe('wf_ab12-3')
+  expect(workflowWorktreePath('/x/repo/', 'wf_ab12', 3)).toBe('/x/repo/.claude/worktrees/wf_ab12-3')
 })
 
 test('agentWorktreePath is the Claude convention under the main tree', () => {

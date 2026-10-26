@@ -163,6 +163,7 @@ export function trackWorktrees(
       detached: r?.detached ?? false,
       state: r && r.prunable === undefined ? 'live' : 'removed',
       ...(r?.prunable !== undefined ? { prunable: true as const } : {}),
+      ...(r?.locked !== undefined && r.prunable === undefined ? { locked: r.locked } : {}),
       depth: 1,
     })
   }
