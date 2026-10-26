@@ -292,15 +292,11 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   against the arguments that `bash` passes: 0 differences after the fix, 6,171
   before (8,355 ran in `bash`). A mutation run broke one line of the new code at a
   time: the tests killed 28 of 28 mutants.
-  Not covered: a typed `>` or `<` glued to the text before
-  it (`echo hi>f`, `cat<<<hi`) stays in its word, where `bash` splits the word at
-  the operator. A typed `>&` with a space before its target (`cmd >& f`) keeps the
+  Not covered: a typed `>&` with a space before its target (`cmd >& f`) keeps the
   target as a word. An extended glob in a pattern (`+(a|b))`) reads its words as
   commands in a subshell. The readers still apply every `cd` in text order, so a
   `cd` in an arm that does not match, or after a short-circuit `||`, counts.
-  A glued `done<f` is one word, so its loop stays open and a `cd` in it reaches
-  the commands after the loop (`while read l; do cd /x; done<f | cat; git -C . status`
-  puts `cd /x` at the top level). An arithmetic shift in the old `$[ ]` form or in
+  An arithmetic shift in the old `$[ ]` form or in
   a parameter expansion (`echo $[1<<2]`, `${x:1<<2}`) still reads `<<2` as a
   heredoc tag, so the lines after it are lost. A subscript in an assignment
   (`a[1<<2]=1`) reads `<<2` as a heredoc tag too, and so does an arithmetic
@@ -329,43 +325,71 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   Bash command").
 - **The id of a container (issue #231).** A row gets an id only when the id is
   the run's own output. The splitter marks each segment with where its standard
-  output goes (`Segment.stdoutRedirected`, `Segment.stdoutPiped`, `Segment.substituted`).
-  A run *prints* when it has none of the three marks (`keepsStdout`). `stdoutRedirected` is a typed
-  `>`, `>>`, `>|`, `&>`, `&>>`, `>&word` or `1>` form, on the run or on the group,
-  subshell, loop or `case` around it (`{ a; } > f`, `done > f`). `2>&1`, `2>`, `<`
-  and `{fd}>` leave the output alone. `stdoutPiped` is a `|` or `|&` after the
-  pipeline part that holds the run (`{ a; } | b` marks `a`; `echo x | a` does not).
-  `substituted` is `$(...)`, backticks or a process substitution (`<(...)`,
-  `>(...)`). A substitution in the arguments splits the run into segments
-  (`docker run -d -e T=$(cat t) nginx > f` is `docker run -d -e T=`, `cat t` and
-  `nginx > f`), so a redirection after it marks the first segment too: the splitter
-  keeps the head of the command until an operator ends it. `pairContainerIds` pairs the id lines in order with the runs that print when
-  the two counts match and no id repeats (two runs never print one id), or when
-  one run that prints stands with lines that all say one id (`docker run -d
-  --name api nginx && docker inspect -f '{{.Id}}' api`). Any other count says
-  that a line came from another command, so no run takes an id. A run that does
-  not print takes none, and it is left out of the count, so `docker run -d a >
-  /dev/null; docker run -d b` pairs the one id line with `b`. A paired row has
-  `containerIdExact: true`. A new sighting of the same row id replaces `containerId`
-  and `containerIdExact`, also with none: the merge `{ ...old, ...row }` kept the
-  old id before. A row of an older build has no mark. Code that acts on an id
-  (the `docker rm` of #123) trusts only a row with the mark. Left over, and
-  still paired: a run that failed and printed no id, in a call where another
-  command printed one id line, and a run after an `exec > file` that redirects
-  the whole shell. A run with a trailing `&` pairs too: its output reaches the
-  tool result when the run ends before the call does. A row with no id and no
-  `--name` is named by its command, so the probe finds no container and shows it
-  `exited`.
+  output goes (`Segment.stdoutRedirected`, `Segment.stdoutPiped`,
+  `Segment.substituted`). A run *prints* when it has none of the three marks
+  (`keepsStdout`). `stdoutRedirected` is a typed `>`, `>>`, `>|`, `&>`, `&>>`,
+  `>&word` or `1>` form, on the run or on the group, subshell, loop or `case`
+  around it (`{ a; } > f`, `done > f`). The operator may stand glued to the last
+  word: a typed `>` or `<` ends the word in front of it, as in `bash`, so
+  `nginx>/dev/null`, `"nginx">f`, `{ a; }>f` and `done>f` are read like their
+  spaced forms. A file descriptor in front (`2>f`, `{fd}>f`), arithmetic text and an
+  open `${ }` keep the character. `2>&1`, `2>`, `<` and `{fd}>` leave the output
+  alone. A bare `exec` with such a redirection (`exec > f`, `exec >> f`,
+  `exec 1> f`, `exec &> f`, `exec 3>&1 >/dev/null`) moves the output of its
+  shell for good, so it marks every later segment of that shell and of the
+  subshells under it. A subshell, a `$(...)`, a background list and a pipeline
+  part are shells of their own: the mark ends with them. `exec >&3`, which puts
+  the output back, is read as one more redirection, so the later runs stay
+  marked. `stdoutPiped` is a `|` or `|&` after the pipeline part that holds the
+  run (`{ a; } | b` marks `a`; `echo x | a` does not). `substituted` is `$(...)`,
+  backticks or a process substitution (`<(...)`, `>(...)`). The `>` of `>(...)`
+  is the opener of the substitution, not a redirection of the command around it
+  (`tee >(a) x` redirects nothing; `a > >(b)` does). A substitution in the arguments
+  splits the run into segments (`docker run -d -e T=$(cat t) nginx > f` is
+  `docker run -d -e T=`, `cat t` and `nginx > f`), so a redirection after it marks
+  the first segment too: the splitter keeps the head of the command until an
+  operator ends it. `pairContainerIds` pairs the id lines in order with the runs
+  that print when the two counts match and no id repeats (two runs never print
+  one id), or when one run that prints stands with lines that all say one id
+  (`docker run -d --name api nginx && docker inspect -f '{{.Id}}' api`). Any other
+  count says that a line came from another command, so no run takes an id. A run
+  that does not print takes none, and it is left out of the count, so
+  `docker run -d a > /dev/null; docker run -d b` pairs the one id line with `b`.
+  A paired row has `containerIdExact: true`. A new sighting of the same row id
+  replaces `containerId` and `containerIdExact`, also with none: the merge
+  `{ ...old, ...row }` kept the old id before. A row of an older build has no
+  mark. A row with no id and no `--name` is named by its command, so the probe
+  finds no container and shows it `exited`.
+  Limits, where a run still pairs and gets the mark. These are the same four in
+  the README ("Container ids"), in the doc of `containerIdExact` and in the test
+  "container id: known limits ..."; change all of them together. (1) A run that
+  failed and printed no id, in a call where another command printed one id line
+  (`docker run -d --name api nginx; docker inspect -f '{{.Id}}' web`). (2) A run
+  that did not run at all, with the same one id line (`[ -n "$X" ] && docker run -d
+  --name api nginx; docker inspect ...`). (3) A run with a trailing `&`: its output
+  reaches the tool result when the run ends before the call does. (4) A run in a
+  function body that the call runs with a redirection (`f() { docker run -d y; };
+  f > log; docker ps -q --no-trunc`): the parser reads a function body as a live
+  command, and the call of the function is not read as the run's. So the mark is
+  strong evidence, not proof. Code that acts on an id (the `docker rm` of #123)
+  trusts only a row with the mark, and must also check the container by its name
+  or label before it removes it.
   Evidence (grade: *verified-kit* for the parser, not *verified-live*): the
-  tests "container id: ..." in `process-parse.test.ts`, the marks in
-  `shell.test.ts` ("splitShell marks ..."), the merge in
-  `process-container-id.test.ts` and the stored row in `processes-tracker.test.ts`
-  ("a second sighting of a named container ..."). The wrong pairs were seen in
-  the real parser at `9b5fa44` before the fix: one `docker run -d` with four id
-  lines took the last, an older container ([study of #123, part 2](https://github.com/martin-macak/claude-code-mod-tracking/issues/123#issuecomment-6412081219), L301 to L306),
-  and a run redirected to `/dev/null` or captured by `$(...)` took the one id of
-  `docker inspect` or `docker ps` (L401 to L409). No live Docker run repeated
-  them after the fix.
+  tests "container id: ..." in `process-parse.test.ts` (the glued forms, the bare
+  `exec` and the limits among them), the marks in `shell.test.ts` ("splitShell
+  marks ..."), the merge in `process-container-id.test.ts` and the stored row in
+  `processes-tracker.test.ts` ("a second sighting of a named container ...").
+  The wrong pairs were seen in the real parser at `9b5fa44` before the fix: one
+  `docker run -d` with four id lines took the last, an older container ([study of
+  #123, part 2](https://github.com/martin-macak/claude-code-mod-tracking/issues/123#issuecomment-6412081219),
+  L301 to L306), and a run redirected to `/dev/null` or captured by `$(...)` took
+  the one id of `docker inspect` or `docker ps` (L401 to L409). The review of the
+  fix saw the glued forms and a run after `exec > file` take a foreign id with the
+  mark, and the tests above pin them. A probe with `bash` 5.3.20 gave the words
+  that the tests expect: `printf '[%s]' nginx2>f b` writes `[nginx2][b]` to the
+  file `f` and prints nothing, `printf '[%s]' x>(cat)` prints one word,
+  `[x/dev/fd/63]`, and `exec 3>&1 >/dev/null; echo hidden; echo shown >&3` prints
+  `shown` only. No live Docker run repeated them after the fix.
 - A foreground `nohup cmd` (no `&`) is not a detached process.
 
 Probe facts found in manual tests:
