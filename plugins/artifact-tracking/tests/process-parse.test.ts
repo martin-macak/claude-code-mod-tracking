@@ -147,9 +147,225 @@ test('compound: two detached runs get their own ids in order', () => {
     'docker run -d --name a alpine sleep 9 && docker run -d --name b alpine sleep 9',
     out(`${ID_A}\n${ID_B}\n`),
   )
-  expect(rows.map(r => [r.name, r.containerId])).toEqual([
-    ['a', ID_A],
-    ['b', ID_B],
+  expect(rows.map(r => [r.name, r.containerId, r.containerIdExact])).toEqual([
+    ['a', ID_A, true],
+    ['b', ID_B, true],
+  ])
+})
+
+// ---------------------------------------------------------------- the id of a container (issue #231)
+
+// A row gets a container id only when that id is the run's own output: the id lines pair one to one with the runs whose
+// standard output reaches the tool result, or every id line is one id and there is one such run. The row then has
+// `containerIdExact: true`. Cases of the delta study of #123 (part 2, logs L301 to L312 and L401 to L409).
+const NEW = 'a'.repeat(64)
+const OLD1 = 'b'.repeat(64)
+const OLD2 = 'c'.repeat(64)
+const OTHER = 'd'.repeat(64)
+const idLines = (...ids: string[]) => ids.join('\n') + '\n'
+const containers = (command: string, stdout: string) =>
+  parseBashProcesses(command, out(stdout), { at: 1 }).filter(r => r.kind === 'docker-container')
+/** The name, the id and the mark of each container row. A row with no id has no key for it. */
+const paired = (command: string, stdout: string) =>
+  containers(command, stdout).map(r => [r.name, r.containerId, r.containerIdExact])
+/** The row as `parseBashProcesses` returns it for a run that got no id: no `containerId` and no `containerIdExact` key. */
+const unpaired = (id: string, name: string) => ({
+  id,
+  kind: 'docker-container',
+  name,
+  state: 'running',
+  firstSeen: 1,
+  lastSeen: 1,
+})
+
+test('container id: a row keeps its own id and is exact when the run printed it alone (L310 to L312)', () => {
+  expect(containers('docker run -d --name api nginx', idLines(NEW))).toEqual([
+    { ...unpaired('docker:ctr:api', 'api'), containerId: NEW, containerIdExact: true },
+  ])
+  expect(containers('docker run -d nginx', idLines(NEW))).toEqual([
+    { ...unpaired(`docker:ctr:${NEW}`, NEW.slice(0, 12)), containerId: NEW, containerIdExact: true },
+  ])
+})
+
+test('container id: more id lines than runs give the row no id, with or without --name (L301 to L306)', () => {
+  const ps = idLines(NEW, NEW, OLD1, OLD2)
+  expect(containers('docker run -d --name api nginx && docker ps -aq --no-trunc', ps)).toEqual([
+    unpaired('docker:ctr:api', 'api'),
+  ])
+  // Without --name the row takes its name from the command, not from an older container.
+  expect(containers('docker run -d nginx; docker ps -aq --no-trunc', ps)).toEqual([
+    unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
+  ])
+})
+
+test('container id: one run and a later command that prints the same id pair, and the row is exact (L307 to L309)', () => {
+  expect(paired('docker run -d --name api nginx && docker inspect -f "{{.Id}}" api', idLines(NEW, NEW))).toEqual([
+    ['api', NEW, true],
+  ])
+  // Two different lines are not one id.
+  expect(paired('docker run -d --name api nginx && docker inspect -f "{{.Id}}" web', idLines(NEW, OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+})
+
+test('container id: a run whose standard output goes to a file takes no id from another command (L401 to L406)', () => {
+  for (const redir of [
+    '> /dev/null',
+    '>/dev/null',
+    '>> log',
+    '>| log',
+    '&> log',
+    '&>> log',
+    '1> log',
+    '1>> log',
+    '>&2',
+  ]) {
+    const inspect = '; docker inspect -f "{{.Id}}" web'
+    expect({ redir, rows: paired(`docker run -d --name api nginx ${redir}${inspect}`, idLines(OTHER)) }).toEqual({
+      redir,
+      rows: [['api', undefined, undefined]],
+    })
+    expect(containers(`docker run -d nginx ${redir}${inspect}`, idLines(OTHER))).toEqual([
+      unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
+    ])
+  }
+  // The same when the redirection stands in front of the arguments, or after a stderr redirection.
+  expect(
+    paired('docker run -d --name api > /dev/null 2>&1 nginx; docker inspect -f "{{.Id}}" web', idLines(OTHER)),
+  ).toEqual([['api', undefined, undefined]])
+})
+
+test('container id: a run inside a command substitution or backticks takes no id from another command (L407 to L409)', () => {
+  const ps = 'docker ps -aq --no-trunc --filter name=web'
+  expect(containers(`CID=$(docker run -d nginx); ${ps}`, idLines(OTHER))).toEqual([
+    unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
+  ])
+  expect(paired(`CID=$(docker run -d --name api nginx); ${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`CID=\`docker run -d --name api nginx\`; ${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`echo $(docker run -d --name api nginx); ${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`docker inspect -f '{{.Id}}' $(docker run -d --name api nginx) && ${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`diff <(docker run -d --name api nginx) /dev/null; ${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+})
+
+test('container id: a substitution inside the arguments of the run does not hide its redirection or pipe', () => {
+  // The substitution splits the command into segments. The redirection stands on a later one, and it is the run's all the same.
+  const ps = '; docker inspect -f "{{.Id}}" web'
+  for (const run of [
+    'docker run -d --name api $(echo nginx) > /dev/null',
+    'docker run -d --name api $(img) nginx > /dev/null',
+    'docker run -d --name api -e T=$(cat t) nginx >/dev/null',
+    'docker run -d --name api `cat x` nginx &> log',
+    'docker run -d --name api $(a) $(b) nginx >> log',
+    'docker run -d --name api -e T=$(cat t) nginx | cat',
+    'docker run -d --name api -e T=$(cat t) nginx > log 2>&1',
+  ])
+    expect({ run, rows: paired(`${run}${ps}`, idLines(OTHER)) }).toEqual({ run, rows: [['api', undefined, undefined]] })
+  // The controls: with no redirection after the substitution, or with one of stderr only, the run prints its id.
+  for (const run of [
+    'docker run -d --name api -e T=$(cat t) nginx',
+    'docker run -d --name api -e T=$(cat t) nginx 2>/dev/null',
+    'docker run -d --name api $(a) $(b) nginx',
+  ])
+    expect({ run, rows: paired(run, idLines(NEW)) }).toEqual({ run, rows: [['api', NEW, true]] })
+  // A redirection of the next command is not the run's.
+  expect(paired('docker run -d --name api -e T=$(cat t) nginx; echo x > log', idLines(NEW))).toEqual([
+    ['api', NEW, true],
+  ])
+})
+
+test('container id: a run in front of a pipe takes no id, a run behind one does', () => {
+  expect(paired('docker run -d --name api nginx | tee /tmp/id; docker ps -aq --no-trunc -n 1', idLines(OTHER))).toEqual(
+    [['api', undefined, undefined]],
+  )
+  expect(paired('docker run -d --name api nginx 2>&1 | tail -1', idLines(NEW))).toEqual([['api', undefined, undefined]])
+  expect(paired('docker run -d --name api nginx |& cat', idLines(NEW))).toEqual([['api', undefined, undefined]])
+  expect(paired('echo go | docker run -d --name api nginx', idLines(NEW))).toEqual([['api', NEW, true]])
+})
+
+test('container id: a group, loop or subshell with the run in it is read like the run itself', () => {
+  const ps = '; docker ps -aq --no-trunc --filter name=web'
+  expect(paired(`{ docker run -d --name api nginx; } > /dev/null${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`( docker run -d --name api nginx ) >> log${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`for i in 1; do docker run -d --name w nginx; done > /dev/null${ps}`, idLines(OTHER))).toEqual([
+    ['w', undefined, undefined],
+  ])
+  expect(paired('{ docker run -d --name api nginx; } | cat', idLines(NEW))).toEqual([['api', undefined, undefined]])
+  expect(paired('if docker run -d --name api nginx; then :; fi | cat', idLines(NEW))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  // A group without a redirection or a pipe prints to the tool result.
+  expect(paired('{ docker run -d --name api nginx; } 2>&1', idLines(NEW))).toEqual([['api', NEW, true]])
+  expect(paired('( docker run -d --name api nginx ) 2> err', idLines(NEW))).toEqual([['api', NEW, true]])
+})
+
+test('container id: a redirection of stderr or of the input leaves the id', () => {
+  for (const redir of ['2>/dev/null', '2>&1', '2>> err', '< /dev/null', '<<< x', '3> f', '{fd}> f'])
+    expect({ redir, rows: paired(`docker run -d --name api nginx ${redir}`, idLines(NEW)) }).toEqual({
+      redir,
+      rows: [['api', NEW, true]],
+    })
+})
+
+test('container id: a run with the output redirected does not stop the next run from pairing', () => {
+  // The first run prints nothing to the tool result, so the one id line is the second run's own.
+  expect(paired('docker run -d --name a nginx > /dev/null; docker run -d --name b nginx', idLines(NEW))).toEqual([
+    ['a', undefined, undefined],
+    ['b', NEW, true],
+  ])
+  expect(paired('CID=$(docker run -d --name a nginx) && docker run -d --name b nginx', idLines(NEW))).toEqual([
+    ['a', undefined, undefined],
+    ['b', NEW, true],
+  ])
+  // Two runs in the tool result pair in order, and the redirected one between them takes nothing.
+  expect(
+    paired(
+      'docker run -d --name a nginx && docker run -d --name b nginx >/dev/null && docker run -d --name c nginx',
+      idLines(NEW, OLD1),
+    ),
+  ).toEqual([
+    ['a', NEW, true],
+    ['b', undefined, undefined],
+    ['c', OLD1, true],
+  ])
+})
+
+test('container id: more runs or more id lines than the other side give no run an id', () => {
+  const two = 'docker run -d --name a nginx && docker run -d --name b nginx'
+  expect(paired(two, idLines(NEW))).toEqual([
+    ['a', undefined, undefined],
+    ['b', undefined, undefined],
+  ])
+  expect(paired(`${two} && docker ps -aq --no-trunc -n 1`, idLines(NEW, OLD1, OLD2))).toEqual([
+    ['a', undefined, undefined],
+    ['b', undefined, undefined],
+  ])
+  // One id line repeated does not pair with two runs: it cannot be both of their ids. Two runs never print the same id, so
+  // equal counts do not pair either when the lines repeat one.
+  expect(paired(`${two}; docker inspect -f "{{.Id}}" a`, idLines(NEW, NEW, NEW))).toEqual([
+    ['a', undefined, undefined],
+    ['b', undefined, undefined],
+  ])
+  expect(paired(`${two}; docker inspect -f "{{.Id}}" a`, idLines(NEW, NEW))).toEqual([
+    ['a', undefined, undefined],
+    ['b', undefined, undefined],
+  ])
+  // A loop makes one row for the run in it, and its passes print one id each.
+  expect(paired('for i in 1 2; do docker run -d --name w$i img; done', idLines(NEW, OLD1))).toEqual([
+    ['w$i', undefined, undefined],
   ])
 })
 

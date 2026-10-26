@@ -1023,3 +1023,195 @@ test('splitShell reads a substitution in a heredoc tag up to the cap, and none p
   expect(hides(254)).toBe(true)
   expect(hides(255)).toBe(false)
 })
+
+// Where the standard output of a segment goes (issue #231). `>`: a typed redirection of fd 1, on the segment or on the group,
+// subshell or loop around it. `|`: a `|` or `|&` follows the pipeline part that holds it, so its output feeds the next
+// command. `$`: it runs inside `$(...)`, backticks or a process substitution, so the shell takes its output. A segment with
+// none of the three prints to the tool result. The readers that pair an output line with a command (`docker run -d` and its
+// container id) read the marks.
+const outMarks = (cmd: string) =>
+  splitShell(cmd).map(
+    s => `${s.words.join(' ')}${s.stdoutRedirected ? ' >' : ''}${s.piped ? ' |' : ''}${s.substituted ? ' $' : ''}`,
+  )
+
+test('splitShell marks a typed redirection of the standard output', () => {
+  for (const redir of [
+    '> f',
+    '>f',
+    '>> f',
+    '>>f',
+    '>| f',
+    '&> f',
+    '&>f',
+    '&>> f',
+    '1> f',
+    '1>f',
+    '1>> f',
+    '1>| f',
+    '>&2',
+    '1>&2',
+    '> /dev/null 2>&1',
+    '2>&1 > f',
+    '2> e > f',
+    '2> e >f',
+  ])
+    expect({ redir, marks: outMarks(`docker run -d x ${redir}`) }).toEqual({ redir, marks: ['docker run -d x >'] })
+})
+
+test('splitShell marks no redirection of the standard output for stderr, input and other descriptors', () => {
+  for (const redir of [
+    '2> f',
+    '2>f',
+    '2>> f',
+    '2>&1',
+    '2>/dev/null',
+    '3> f',
+    '3>&1',
+    '< f',
+    '<f',
+    '<<< x',
+    '<> f',
+    '0<> f',
+    '{fd}> f',
+    '{fd}>&2',
+    '{fd}<> f',
+    '12> f',
+  ])
+    expect({ redir, marks: outMarks(`docker run -d x ${redir}`) }).toEqual({ redir, marks: ['docker run -d x'] })
+  // A quoted or escaped `>` is a word (issue #162), not a redirection.
+  expect(outMarks("docker run -d x '>' f")).toEqual(['docker run -d x > f'])
+  expect(outMarks('docker run -d x \\> f')).toEqual(['docker run -d x > f'])
+  expect(outMarks('docker run -d x ">>" f')).toEqual(['docker run -d x >> f'])
+  expect(outMarks("docker run -d x 1'>' f")).toEqual(['docker run -d x 1> f'])
+})
+
+test('splitShell marks the redirection on the segment it stands on, not on its neighbours', () => {
+  expect(outMarks('a > f; b; c >> g')).toEqual(['a >', 'b', 'c >'])
+  expect(outMarks('a > f && b || c &> g')).toEqual(['a >', 'b', 'c >'])
+  expect(outMarks('a 2> f\nb > g')).toEqual(['a', 'b >'])
+  // A heredoc is a redirection of the input. Its body is no command.
+  expect(outMarks('cat <<EOF\ndocker run -d x\nEOF\nb')).toEqual(['cat', 'b'])
+  // The pipe marks the part before it, and a redirection marks its own part.
+  expect(outMarks('a > f | b')).toEqual(['a > |', 'b'])
+  expect(outMarks('a | b > f')).toEqual(['a |', 'b >'])
+})
+
+test('splitShell marks the whole group, subshell or loop that has the redirection', () => {
+  expect(outMarks('{ a; b; } > f')).toEqual(['a >', 'b >'])
+  expect(outMarks('{ a; b; } > f; c')).toEqual(['a >', 'b >', 'c'])
+  expect(outMarks('{ a; } 2>&1 > f')).toEqual(['a >'])
+  expect(outMarks('( a; b ) >> f')).toEqual(['a >', 'b >'])
+  expect(outMarks('( a; b ) &> f && c')).toEqual(['a >', 'b >', 'c'])
+  expect(outMarks('x; { a; } > f')).toEqual(['x', 'a >'])
+  expect(outMarks('for i in 1; do a; done > f')).toEqual(['for i in 1 >', 'do a >', 'done >'])
+  expect(outMarks('if a; then b; fi > f; c')).toEqual(['if a >', 'then b >', 'fi >', 'c'])
+  expect(outMarks('while a; do b; done >| f')).toEqual(['while a >', 'do b >', 'done >'])
+  expect(outMarks('case $x in y) a;; esac > f')).toEqual(['case $x in >', 'a >', 'esac >'])
+  expect(outMarks('{ { a; } > f; b; }')).toEqual(['a >', 'b'])
+  expect(outMarks('{ a; } > f | b')).toEqual(['a > |', 'b'])
+  // A redirection of stderr or of the input leaves the output alone, and so does a command of its own after the group.
+  expect(outMarks('{ a; } 2> f')).toEqual(['a'])
+  expect(outMarks('{ a; } < f')).toEqual(['a'])
+  expect(outMarks('{ a; }; > f')).toEqual(['a'])
+  expect(outMarks('{ a; } && > f')).toEqual(['a'])
+  expect(outMarks('for i in 1; do a; done 2> f')).toEqual(['for i in 1', 'do a', 'done'])
+  // A redirection inside the group stays on its segment.
+  expect(outMarks('{ a > f; b; }')).toEqual(['a >', 'b'])
+  expect(outMarks('for i in 1; do a > f; b; done')).toEqual(['for i in 1', 'do a >', 'b', 'done'])
+})
+
+// A substitution splits a simple command into segments: `a $(b) c > f` is `a`, `b` (inside) and `c > f`. A redirection or a
+// pipe after it is one of the whole command, so `a` is marked too. The marks of the segments inside the substitution are
+// not read: the shell takes their output anyway.
+test('splitShell marks the head of a command that a substitution split, when a redirection or a pipe comes after', () => {
+  const outer = (cmd: string) => outMarks(cmd).filter(m => !m.endsWith(' $'))
+  expect(outer('a $(b) > f')).toEqual(['a >'])
+  expect(outer('a $(b) c > f')).toEqual(['a >', 'c >'])
+  expect(outer('a `b` c > f')).toEqual(['a >', 'c >'])
+  expect(outer('a $(b) $(c) d >> f')).toEqual(['a >', 'd >'])
+  expect(outer('a -e T=$(b) c > f')).toEqual(['a -e T= >', 'c >'])
+  expect(outer('a <(b) c &> f')).toEqual(['a >', 'c >'])
+  expect(outer('a $(b) c | d')).toEqual(['a |', 'c |', 'd'])
+  expect(outer('a $(b) c 2>&1 | d')).toEqual(['a |', 'c |', 'd'])
+  // A redirection before the substitution marks the head already, and one of stderr marks nothing.
+  expect(outer('a > f $(b) c')).toEqual(['a >', 'c'])
+  expect(outer('a $(b) c 2> f')).toEqual(['a', 'c'])
+  expect(outer('a $(b) c < f')).toEqual(['a', 'c'])
+  // The command ends at an operator: what comes after is another command.
+  expect(outer('a $(b) c; d > f')).toEqual(['a', 'c', 'd >'])
+  expect(outer('a $(b) c && d > f')).toEqual(['a', 'c', 'd >'])
+  expect(outer('a $(b) c\nd > f')).toEqual(['a', 'c', 'd >'])
+  expect(outer('a $(b) c & d > f')).toEqual(['a', 'c', 'd >'])
+  expect(outer('a $(b) c; { d; } > f')).toEqual(['a', 'c', 'd >'])
+  expect(outer('a $(b) c; ( d ) > f')).toEqual(['a', 'c', 'd >'])
+  // A redirection inside the substitution is the inner command's, not the outer one's.
+  expect(outer('a $(b > g) c')).toEqual(['a', 'c'])
+  expect(outer('a $(b $(c) > g) d')).toEqual(['a', 'd'])
+  expect(outer('a $(b; c > g) d')).toEqual(['a', 'd'])
+  // The part of a command that comes before the substitution is not marked by a redirection of an earlier command.
+  expect(outer('x > f; a $(b) c')).toEqual(['x >', 'a', 'c'])
+})
+
+test('splitShell marks every part of a pipeline except the last as piped', () => {
+  expect(outMarks('a | b')).toEqual(['a |', 'b'])
+  expect(outMarks('a |& b')).toEqual(['a |', 'b'])
+  expect(outMarks('a | b | c')).toEqual(['a |', 'b |', 'c'])
+  expect(outMarks('echo x | docker run -d y')).toEqual(['echo x |', 'docker run -d y'])
+  // The pipeline is one part of the and-or list: the commands around it are not piped.
+  expect(outMarks('a && b | c || d')).toEqual(['a', 'b |', 'c', 'd'])
+  expect(outMarks('a; b | c; d')).toEqual(['a', 'b |', 'c', 'd'])
+  expect(outMarks('a\nb | c\nd')).toEqual(['a', 'b |', 'c', 'd'])
+  expect(outMarks('a & b | c')).toEqual(['a', 'b |', 'c'])
+  // `>|` is a redirection and `||` an or-list: neither pipes.
+  expect(outMarks('a >| f')).toEqual(['a >'])
+  expect(outMarks('a || b')).toEqual(['a', 'b'])
+  // A pipe that was quoted or escaped is a word.
+  expect(outMarks("a '|' b")).toEqual(['a | b'])
+  expect(outMarks('a \\| b')).toEqual(['a | b'])
+})
+
+test('splitShell marks the whole group, subshell or loop in front of a pipe as piped', () => {
+  expect(outMarks('{ a; b; } | c')).toEqual(['a |', 'b |', 'c'])
+  expect(outMarks('( a; b ) | c')).toEqual(['a |', 'b |', 'c'])
+  expect(outMarks('for i in 1; do a; done | c')).toEqual(['for i in 1 |', 'do a |', 'done |', 'c'])
+  expect(outMarks('if a; then b; fi | c')).toEqual(['if a |', 'then b |', 'fi |', 'c'])
+  expect(outMarks('x && { a; } | c')).toEqual(['x', 'a |', 'c'])
+  expect(outMarks('{ a; } | c; d')).toEqual(['a |', 'c', 'd'])
+  // A pipe inside the group marks the segments of its own part only.
+  expect(outMarks('{ a | b; c; }')).toEqual(['a |', 'b', 'c'])
+  expect(outMarks('for i in 1; do a | b; c; done')).toEqual(['for i in 1', 'do a |', 'b', 'c', 'done'])
+})
+
+test('splitShell reads the | between the patterns of a case as no pipe', () => {
+  expect(outMarks('case $x in a|b) c;; d) e | f;; esac')).toEqual(['case $x in', 'c', 'e |', 'f', 'esac'])
+})
+
+test('splitShell marks a segment inside a command substitution, backticks or a process substitution', () => {
+  expect(outMarks('echo $(a)')).toEqual(['echo', 'a $'])
+  expect(outMarks('echo `a`')).toEqual(['echo', 'a $'])
+  expect(outMarks('x=$(a; b) c')).toEqual(['x=', 'a $', 'b $', 'c'])
+  expect(outMarks('echo $(a $(b) c) d')).toEqual(['echo', 'a $', 'b $', 'c $', 'd'])
+  expect(outMarks('echo $( ( a ) )')).toEqual(['echo', 'a $'])
+  expect(outMarks('echo $( { a; } )')).toEqual(['echo', 'a $'])
+  expect(outMarks('diff <(a) <(b) c')).toEqual(['diff', 'a $', 'b $', 'c'])
+  expect(outMarks('cat < <(a)')).toEqual(['cat', 'a $'])
+  expect(outMarks('tee >(a) x')).toEqual(['tee >', 'a $', 'x'])
+  // A subshell, a group and a background list capture nothing: their output goes where the shell's own goes.
+  expect(outMarks('( a ); { b; }; c &')).toEqual(['a', 'b', 'c'])
+  // A pipe or a redirection inside the substitution marks its own segments too.
+  expect(outMarks('x=$(a | b)')).toEqual(['x=', 'a | $', 'b $'])
+  expect(outMarks('x=$(a > f)')).toEqual(['x=', 'a > $'])
+})
+
+// The redirection of a group is a range over the segments, read once at the end. A redirection on each of a deep nest of
+// groups would otherwise mark every inner segment again (issue #231): 4 times the input would cost 16 times as much.
+const MARK_FAMILIES: Record<string, (k: number) => string> = {
+  'nested redirected groups': k => '{ a; '.repeat(1_000 * k) + 'a' + '; } > f'.repeat(1_000 * k),
+  'nested redirected loops': k => 'for i in 1; do a; '.repeat(500 * k) + 'a' + '; done > f'.repeat(500 * k),
+  'a long pipeline': k => 'a | '.repeat(5_000 * k) + 'a',
+}
+for (const [family, make] of Object.entries(MARK_FAMILIES)) {
+  test(`splitShell stays linear on ${family}`, async () => {
+    await expectLinear({ label: family, make, run: text => splitShell(text) })
+  })
+}

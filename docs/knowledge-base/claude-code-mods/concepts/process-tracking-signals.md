@@ -18,7 +18,7 @@ The types contract names the core fields:
 | --- | --- | --- | --- | --- |
 | Background Bash | `tool.call` Bash result `backgroundTaskId` | `task-notification` (`task.status`) and `TaskStop` | High | None (event only) |
 | Monitor | `tool.call` Monitor result `taskId` | `task-notification` (a `<status>` when the source ends, the `<event>` text at the deadline), `TaskStop`, and the end of a workflow agent that armed it | High | None (event only) |
-| Docker run / compose up | Parse Bash command (`docker run -d`, `docker compose up -d`) and stdout container id | `docker ps -a` (+ compose label filter) | Medium-high (exact when id or project is known) | Medium |
+| Docker run / compose up | Parse Bash command (`docker run -d`, `docker compose up -d`) and stdout container id | `docker ps -a` (+ compose label filter) | Medium-high (exact when the id is the run's own output: `containerIdExact`, see "Parsing the Bash command"; or when the project is known) | Medium |
 | tmux / screen | Parse Bash command (`tmux new -d -s`, `screen -dmS`) | `tmux ls`, `screen -ls` | Medium-high (exact when session name is explicit) | Low |
 | Detached process | Parse Bash command (a part that ends in `&`, or `setsid -f`) and PID from `echo $!` | `ps -p <pid> -o lstart=,command=`; with no PID, one `ps -A -o pid=,lstart=,command=` lookup by command and start time | Medium (reuse guarded by command fingerprint and start time) | Low-medium |
 
@@ -322,7 +322,50 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   v24.21.0, 2026-10-22) gave one segment: its words, as JSON, were `[["cat"]]`.
   There was no segment for `echo after`.
 - The container id is a stdout line of exactly 64 hex characters. Other hex
-  in the output (`docker info` prints commit ids) is not an id.
+  in the output (`docker info` prints commit ids) is not an id. A line of that
+  shape is not always the id of the run: `docker ps -aq --no-trunc` and
+  `docker inspect -f '{{.Id}}'` print such lines too. The parser pairs a line
+  with a run by its own rule (see "The id of a container" under "Parsing the
+  Bash command").
+- **The id of a container (issue #231).** A row gets an id only when the id is
+  the run's own output. The splitter marks each segment with where its standard
+  output goes (`Segment.stdoutRedirected`, `Segment.piped`, `Segment.substituted`).
+  A run *prints* when it has none of the three marks. `stdoutRedirected` is a typed
+  `>`, `>>`, `>|`, `&>`, `&>>`, `>&word` or `1>` form, on the run or on the group,
+  subshell, loop or `case` around it (`{ a; } > f`, `done > f`). `2>&1`, `2>`, `<`
+  and `{fd}>` leave the output alone. `piped` is a `|` or `|&` after the
+  pipeline part that holds the run (`{ a; } | b` marks `a`; `echo x | a` does not).
+  `substituted` is `$(...)`, backticks or a process substitution (`<(...)`,
+  `>(...)`). A substitution in the arguments splits the run into segments
+  (`docker run -d -e T=$(cat t) nginx > f` is `docker run -d -e T=`, `cat t` and
+  `nginx > f`), so a redirection after it marks the first segment too: the splitter
+  keeps the head of the command until an operator ends it. The parser pairs the id lines in order with the runs that print when
+  the two counts match and no id repeats (two runs never print one id), or when
+  one run that prints stands with lines that all say one id (`docker run -d
+  --name api nginx && docker inspect -f '{{.Id}}' api`). Any other count says
+  that a line came from another command, so no run takes an id. A run that does
+  not print takes none, and it is left out of the count, so `docker run -d a >
+  /dev/null; docker run -d b` pairs the one id line with `b`. A paired row has
+  `containerIdExact: true`. A new sighting of the same row id replaces `containerId`
+  and `containerIdExact`, also with none: the merge `{ ...old, ...row }` kept the
+  old id before. A row of an older build has no mark. Code that acts on an id
+  (the `docker rm` of #123) trusts only a row with the mark. Left over, and
+  still paired: a run that failed and printed no id, in a call where another
+  command printed one id line, and a run after an `exec > file` that redirects
+  the whole shell. A run with a trailing `&` pairs too: its output reaches the
+  tool result when the run ends before the call does. A row with no id and no
+  `--name` is named by its command, so the probe finds no container and shows it
+  `exited`.
+  Evidence (grade: *verified-kit* for the parser, not *verified-live*): the
+  tests "container id: ..." in `process-parse.test.ts`, the marks in
+  `shell.test.ts` ("splitShell marks ..."), the merge in
+  `process-container-id.test.ts` and the stored row in `processes-tracker.test.ts`
+  ("a second sighting of a named container ..."). The wrong pairs were seen in
+  the real parser at `9b5fa44` before the fix: one `docker run -d` with four id
+  lines took the last, an older container (study of #123, part 2, L301 to L306),
+  and a run redirected to `/dev/null` or captured by `$(...)` took the one id of
+  `docker inspect` or `docker ps` (L401 to L409). No live Docker run repeated
+  them after the fix.
 - A foreground `nohup cmd` (no `&`) is not a detached process.
 
 Probe facts found in manual tests:

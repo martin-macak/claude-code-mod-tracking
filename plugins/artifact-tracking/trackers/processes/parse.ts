@@ -377,7 +377,8 @@ export function parseBashProcesses(
       }),
     )
 
-  const runs: { name?: string; text: string }[] = []
+  // `printed`: the standard output of the run reaches the tool result, so an id line can be its own (issue #231).
+  const runs: { name?: string; text: string; printed: boolean }[] = []
   const detached: Detached[] = []
   let lastBg: Detached | undefined
   const pids = pidLines(stdout)
@@ -446,7 +447,12 @@ export function parseBashProcesses(
     const docker = dockerCall(words)
     if (docker.kind === 'run') {
       const o = runOptions(docker.args)
-      if (o.detach) runs.push({ ...(o.name !== undefined ? { name: o.name } : {}), text: shortCmd(words.join(' ')) })
+      if (o.detach)
+        runs.push({
+          ...(o.name !== undefined ? { name: o.name } : {}),
+          text: shortCmd(words.join(' ')),
+          printed: !seg.stdoutRedirected && !seg.piped && !seg.substituted,
+        })
       continue
     }
     if (docker.kind === 'compose') {
@@ -488,21 +494,32 @@ export function parseBashProcesses(
     }
   }
 
-  // Ids pair with runs in order. With a count mismatch only a single run takes the last id.
+  // An id line is the id of a run only when the run printed it (issue #231). The lines pair in order with the runs whose
+  // output reaches the tool result (`printed`) when the two counts match and the ids differ (two runs never print one id),
+  // or when one such run stands with lines that all say one id (a later `docker inspect -f '{{.Id}}'` of it). Any other
+  // count says that a line came from another command (`docker ps -aq`, an `inspect` of another container): no run takes an
+  // id then, and a run that printed nothing to the tool result never does. A paired row is exact (`containerIdExact`). Left
+  // over: a run that failed and printed no id, in a call where another command printed one id, still pairs with it.
   const ids = containerIds(stdout)
-  runs.forEach((run, n) => {
-    const containerId = ids.length === runs.length ? ids[n] : runs.length === 1 ? ids.at(-1) : undefined
-    const name = run.name ?? containerId?.slice(0, 12) ?? run.text
+  const printing = runs.filter(r => r.printed)
+  const unique = new Set(ids).size
+  const idOf = (run: (typeof runs)[number]): string | undefined => {
+    if (!run.printed) return undefined
+    if (ids.length === printing.length) return unique === ids.length ? ids[printing.indexOf(run)] : undefined
+    return printing.length === 1 && unique === 1 ? ids[0] : undefined
+  }
+  for (const run of runs) {
+    const containerId = idOf(run)
     rows.push({
       id: `docker:ctr:${run.name ?? containerId ?? run.text}`,
       kind: 'docker-container',
-      name,
+      name: run.name ?? containerId?.slice(0, 12) ?? run.text,
       state: 'running',
       firstSeen: at,
       lastSeen: at,
-      ...(containerId !== undefined ? { containerId } : {}),
+      ...(containerId !== undefined ? { containerId, containerIdExact: true as const } : {}),
     })
-  })
+  }
 
   detached.forEach((d, n) => {
     rows.push({
