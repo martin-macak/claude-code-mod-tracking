@@ -516,7 +516,8 @@ export function parseBashProcesses(
 
   // An id line is the id of a run only when the run printed it (issue #231): `pairContainerIds` holds the rule. A paired row is
   // exact (`containerIdExact`). Left over: the limits that the KB page process-tracking-signals lists under "The id of a
-  // container" (a run that failed or did not run, a trailing `&`, a function called with a redirection).
+  // container" (a run that failed or did not run, a trailing `&`, a function called with a redirection). The test "container
+  // id: known limits" pins them.
   const paired = pairContainerIds(
     containerIds(stdout),
     runs.map(r => r.printed),

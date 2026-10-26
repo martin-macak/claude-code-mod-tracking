@@ -241,6 +241,94 @@ test('container id: a run whose standard output goes to a file takes no id from 
   ).toEqual([['api', undefined, undefined]])
 })
 
+// Study log lines L401 to L406, with the operator glued to the last word of the run (`nginx>/dev/null`). The splitter ends the
+// word at a typed `>` or `<`, as bash does, so the redirection is seen.
+test('container id: a redirection glued to the last word of the run takes no id from another command', () => {
+  const inspect = '; docker inspect -f "{{.Id}}" web'
+  for (const glued of ['>/dev/null', '>>log', '>|log', '&>log', '&>>log', '>&2', '1>log', '2>log'])
+    expect({ glued, rows: paired(`docker run -d --name api nginx${glued}${inspect}`, idLines(OTHER)) }).toEqual({
+      glued,
+      rows: [['api', undefined, undefined]],
+    })
+  // Without --name the row is named by its command. The digit of `1>` and `2>` belongs to the word, so it is a word of its own.
+  for (const glued of ['>/dev/null', '>>log', '>|log', '&>log', '&>>log', '>&2'])
+    expect(containers(`docker run -d nginx${glued}${inspect}`, idLines(OTHER))).toStrictEqual([
+      unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
+    ])
+  // A quoted last word, a closed group or subshell, a loop, an `if` and a `while` take the same redirection.
+  for (const run of [
+    'docker run -d --name api "nginx">/dev/null',
+    '{ docker run -d --name api nginx; }>/dev/null',
+    '( docker run -d --name api nginx )>>log',
+    'for i in 1; do docker run -d --name api nginx; done>/dev/null',
+    'if docker run -d --name api nginx; then :; fi>/dev/null',
+    'while docker run -d --name api nginx; do break; done>log',
+  ])
+    expect({ run, rows: paired(`${run}${inspect}`, idLines(OTHER)) }).toEqual({
+      run,
+      rows: [['api', undefined, undefined]],
+    })
+  // The controls: a glued input redirection, a here-string, and a glued redirection of the next command leave the id.
+  for (const run of [
+    'docker run -d --name api nginx</dev/null',
+    'docker run -d --name api nginx<<<x',
+    'docker run -d --name api nginx; echo x>log',
+    '{ docker run -d --name api nginx; }<in',
+  ])
+    expect({ run, rows: paired(run, idLines(NEW)) }).toEqual({ run, rows: [['api', NEW, true]] })
+})
+
+// A bare `exec` that redirects the output moves the output of the shell itself, so no run after it prints to the tool result. The
+// parser reads the exec and marks every later segment of that shell. The redirection ends with a subshell (`( exec > log )`).
+test('container id: a run after a bare exec that redirects the output takes no id from another command', () => {
+  const inspect = '; docker inspect -f "{{.Id}}" web'
+  for (const exec of [
+    'exec > log',
+    'exec >> log',
+    'exec 1> log',
+    'exec &> log',
+    'exec >log',
+    'exec 3>&1 >/dev/null',
+    'exec >&2',
+  ]) {
+    expect({ exec, rows: paired(`${exec}; docker run -d --name api nginx${inspect}`, idLines(OTHER)) }).toEqual({
+      exec,
+      rows: [['api', undefined, undefined]],
+    })
+    expect(containers(`${exec}; docker run -d nginx${inspect}`, idLines(OTHER))).toStrictEqual([
+      unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
+    ])
+  }
+  // A run before the exec printed to the tool result, and a run after it does not take that id.
+  expect(paired('docker run -d --name a nginx; exec > log; docker run -d --name b nginx', idLines(NEW))).toEqual([
+    ['a', NEW, true],
+    ['b', undefined, undefined],
+  ])
+  // No run after the exec prints, so no line pairs with any of them.
+  expect(paired('exec > log; docker run -d --name a nginx; docker run -d --name b nginx', idLines(NEW, OLD1))).toEqual([
+    ['a', undefined, undefined],
+    ['b', undefined, undefined],
+  ])
+  // A group, a loop and an `if` around the run are the same shell.
+  expect(paired(`exec > log; { docker run -d --name api nginx; }${inspect}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`if exec > log; then docker run -d --name api nginx; fi${inspect}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  // A subshell is a shell of its own: its exec ends with it, and it moves the output of the run inside it only.
+  expect(paired('( exec > log ); docker run -d --name api nginx', idLines(NEW))).toEqual([['api', NEW, true]])
+  expect(paired(`( exec > log; docker run -d --name api nginx )${inspect}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  // An exec that leaves the output where it is changes nothing.
+  for (const exec of ['exec', 'exec 2> err', 'exec 3>&1', 'exec < in', 'exec {fd}> f'])
+    expect({ exec, rows: paired(`${exec}; docker run -d --name api nginx`, idLines(NEW)) }).toEqual({
+      exec,
+      rows: [['api', NEW, true]],
+    })
+})
+
 // Study log lines L407 to L409.
 test('container id: a run inside a command substitution or backticks takes no id from another command', () => {
   const ps = 'docker ps -aq --no-trunc --filter name=web'
@@ -373,6 +461,25 @@ test('container id: more runs or more id lines than the other side give no run a
   // A loop makes one row for the run in it, and its passes print one id each.
   expect(paired('for i in 1 2; do docker run -d --name w$i img; done', idLines(NEW, OLD1))).toEqual([
     ['w$i', undefined, undefined],
+  ])
+})
+
+// The limits of the pairing (KB, "The id of a container"): a run that gets an id and the mark `containerIdExact` although the id
+// may be another command's. Each case is pinned so that a later fix, or a regression, changes the test and the docs together.
+// Code that removes a container (the `docker rm` of #123) must not trust the mark alone.
+test('container id: known limits, where a run still pairs and is marked exact', () => {
+  const inspect = '; docker inspect -f "{{.Id}}" web'
+  // A run that failed (a name in use, no image) prints no id. The one id line of the next command pairs with it.
+  expect(paired(`docker run -d --name api nginx${inspect}`, idLines(OTHER))).toEqual([['api', OTHER, true]])
+  // The same for a run that did not run at all: the `&&` stopped before it.
+  expect(paired(`[ -n "$X" ] && docker run -d --name api nginx${inspect}`, idLines(OTHER))).toEqual([
+    ['api', OTHER, true],
+  ])
+  // A trailing `&` leaves the output on the tool result when the run ends before the call does.
+  expect(paired('docker run -d --name api nginx &', idLines(NEW))).toEqual([['api', NEW, true]])
+  // A function body is read as a live command, and the call of the function with a redirection is not read as the run's.
+  expect(paired('f() { docker run -d --name api nginx; }; f > log; docker ps -q --no-trunc', idLines(OTHER))).toEqual([
+    ['api', OTHER, true],
   ])
 })
 

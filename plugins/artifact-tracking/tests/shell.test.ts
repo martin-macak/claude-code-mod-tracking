@@ -647,8 +647,8 @@ test('splitShell reads a here-string as a redirection with one word, so the next
   expect(words('cat <<< hi; cd /x; git -C . status')).toEqual(['cat', ...rest])
   expect(words('cat <<< hi && cd /x\ngit -C . status')).toEqual(['cat', ...rest])
   expect(words('cat <<< hi | wc\ncd /x')).toEqual(['cat', 'wc', 'cd /x'])
-  // Glued to the word before it, the here-string stays in that word (a KB limit). The lines after it are commands.
-  expect(words('cat<<<hi\ncd /x\ngit -C . status')).toEqual(['cat<<<hi', ...rest])
+  // Glued to the word before it, the here-string ends that word, as in bash (issue #231). The lines after it are commands.
+  expect(words('cat<<<hi\ncd /x\ngit -C . status')).toEqual(['cat', ...rest])
 })
 
 // A heredoc has the same first characters as a here-string. Each form that the splitter knows still hides its body, and the
@@ -860,9 +860,9 @@ test('splitShell drops a variable file descriptor redirection with its target', 
   expect(words('echo "{fd}>f" c')).toEqual(['echo {fd}>f c'])
   expect(words("echo '{fd}>f' c")).toEqual(['echo {fd}>f c'])
   // A name that is no identifier, or a name glued to a word, is no variable file descriptor. Bash splits the word at the `>`
-  // there, and the splitter keeps the text in one word (the glued-`>` limit of the KB), so these stay as they were.
-  expect(words('echo {1x}>f c')).toEqual(['echo {1x}>f c'])
-  expect(words('echo x{fd}>f c')).toEqual(['echo x{fd}>f c'])
+  // there (the word `{1x}` or `x{fd}` stays and `>f` is a redirection), and so does the splitter since issue #231.
+  expect(words('echo {1x}>f c')).toEqual(['echo {1x} c'])
+  expect(words('echo x{fd}>f c')).toEqual(['echo x{fd} c'])
 })
 
 // Only a reserved word that was typed whole is one (issue #194): `'done' git -C /x status` runs a command named `done`.
@@ -1059,6 +1059,125 @@ test('splitShell marks a typed redirection of the standard output', () => {
     expect({ redir, marks: outMarks(`docker run -d x ${redir}`) }).toEqual({ redir, marks: ['docker run -d x >'] })
 })
 
+// A typed `>` or `<` ends the word before it, as in bash (issue #231): `nginx>f` is the word `nginx` and the redirection `>f`.
+// A reader that looked at the start of each word saw no redirection there, so the run took the id of another command.
+test('splitShell marks a redirection of the standard output glued to the last word', () => {
+  for (const redir of ['>f', '>>f', '>|f', '&>f', '&>>f', '>&2'])
+    expect({ redir, marks: outMarks(`docker run -d nginx${redir}`) }).toEqual({
+      redir,
+      marks: ['docker run -d nginx >'],
+    })
+  // The digit before the `>` is part of the word when the word has text before it: `nginx2>f` is the word `nginx2` and `>f`.
+  expect(outMarks('docker run -d nginx2>f')).toEqual(['docker run -d nginx2 >'])
+  expect(outMarks('docker run -d nginx 2>f')).toEqual(['docker run -d nginx'])
+  expect(outMarks('docker run -d "nginx">f')).toEqual(['docker run -d nginx >'])
+  expect(outMarks("docker run -d 'nginx'>>f")).toEqual(['docker run -d nginx >'])
+  expect(outMarks('docker run -d $IMG>f')).toEqual(['docker run -d $IMG >'])
+  expect(outMarks('docker run -d -e A=b>f nginx')).toEqual(['docker run -d -e A=b nginx >'])
+  // The words after the redirection stay, and the next command is not marked.
+  expect(outMarks('a b>f c; d e')).toEqual(['a b c >', 'd e'])
+})
+
+test('splitShell leaves the output alone for an input redirection or a here-string glued to the last word', () => {
+  expect(outMarks('docker run -d nginx<f')).toEqual(['docker run -d nginx'])
+  expect(outMarks('docker run -d nginx<<<x')).toEqual(['docker run -d nginx'])
+  expect(outMarks('docker run -d nginx<>f')).toEqual(['docker run -d nginx'])
+  // A quoted or escaped `>` glued to a word is text.
+  expect(outMarks("docker run -d nginx'>'f")).toEqual(['docker run -d nginx>f'])
+  expect(outMarks('docker run -d nginx\\>f')).toEqual(['docker run -d nginx>f'])
+})
+
+test('splitShell marks the group, subshell or compound that a glued redirection follows', () => {
+  expect(outMarks('{ a; b; }>f')).toEqual(['a >', 'b >'])
+  expect(outMarks('{ a; }>>f; c')).toEqual(['a >', 'c'])
+  expect(outMarks('( a; b )>f')).toEqual(['a >', 'b >'])
+  expect(outMarks('for i in 1; do a; done>f')).toEqual(['for i in 1 >', 'do a >', 'done >'])
+  expect(outMarks('if a; then b; fi>f; c')).toEqual(['if a >', 'then b >', 'fi >', 'c'])
+  expect(outMarks('while a; do b; done>|f')).toEqual(['while a >', 'do b >', 'done >'])
+  expect(outMarks('case $x in y) a;; esac>f')).toEqual(['case $x in >', 'a >', 'esac >'])
+  expect(outMarks('{ a; }&>f')).toEqual(['a >'])
+  // A glued redirection of the input leaves the output alone. (`}2>f` is the word `}2`, not a close, as in bash.)
+  expect(outMarks('{ a; }<f')).toEqual(['a'])
+  expect(outMarks('for i in 1; do a; done<f')).toEqual(['for i in 1', 'do a', 'done'])
+})
+
+// `done<f` and `}<f` end the loop or the group, so the loop is closed and a `cd` in it does not reach the commands after it.
+test('splitShell closes a loop at a glued input redirection', () => {
+  const scopes = (cmd: string) => splitShell(cmd).map(s => `${s.words.join(' ')}@${s.scope}`)
+  expect(scopes('while read l; do cd /x; done<f | cat; git -C . status')).toEqual([
+    'while read l@.1',
+    'do cd /x@.1',
+    'done@.1',
+    'cat@.2',
+    'git -C . status@',
+  ])
+})
+
+// A `(` right behind a typed `<` or `>` opens a process substitution: the word is `/dev/fd/N`, and the `>` is no redirection of
+// the command around it. Only a `>` that stands as a word of its own and has a process substitution as its target redirects.
+test('splitShell reads >(...) as a word and > >(...) as a redirection', () => {
+  expect(outMarks('tee >(a) x')).toEqual(['tee', 'a $', 'x'])
+  expect(outMarks('tee x>(a)')).toEqual(['tee x', 'a $'])
+  expect(outMarks('a > >(b)')).toEqual(['a >', 'b $'])
+  expect(outMarks('a >f >(b)')).toEqual(['a >', 'b $'])
+  expect(outMarks('cat < <(a)')).toEqual(['cat', 'a $'])
+  // A redirection after a process substitution is one of the whole command, so `diff` is marked (the inner marks are not read).
+  expect(outMarks('diff <(a) <(b) > f').filter(m => !m.endsWith(' $'))).toEqual(['diff >'])
+})
+
+// A bare `exec` that redirects its output moves the output of the shell itself, so every later command of that shell prints
+// elsewhere (issue #231). A subshell, a command substitution, a background list and a pipeline part are shells of their own:
+// the redirection ends with them. `exec cmd > f` runs `cmd` in place of the shell, and the redirection is the command's.
+test('splitShell marks the commands after a bare exec that redirects the standard output', () => {
+  for (const exec of [
+    'exec > f',
+    'exec >f',
+    'exec >> f',
+    'exec 1> f',
+    'exec &> f',
+    'exec &>> f',
+    'exec >&2',
+    'exec 3>&1 >/dev/null',
+  ])
+    expect({ exec, marks: outMarks(`a; ${exec}; b; c`) }).toEqual({ exec, marks: ['a', 'exec >', 'b >', 'c >'] })
+  expect(outMarks('exec>f; a')).toEqual(['exec >', 'a >'])
+  expect(outMarks("'exec' > f; a")).toEqual(['exec >', 'a >'])
+  expect(outMarks('exec > f && a || b\nc')).toEqual(['exec >', 'a >', 'b >', 'c >'])
+  expect(outMarks('if exec > f; then a; fi; b')).toEqual(['if exec >', 'then a >', 'fi >', 'b >'])
+  expect(outMarks('{ exec > f; }; a')).toEqual(['exec >', 'a >'])
+  expect(outMarks('for i in 1; do exec > f; a; done; b')).toEqual(['for i in 1', 'do exec >', 'a >', 'done >', 'b >'])
+  expect(outMarks('exec > f; ( a; ( b ) ); { c; }')).toEqual(['exec >', 'a >', 'b >', 'c >'])
+})
+
+test('splitShell leaves the commands after an exec that does not move the standard output alone', () => {
+  for (const exec of [
+    'exec',
+    'exec 2> f',
+    'exec 2>&1',
+    'exec 3> f',
+    'exec 3>&1',
+    'exec < f',
+    'exec {fd}> f',
+    'exec <> f',
+  ])
+    expect({ exec, marks: outMarks(`${exec}; a; b`) }).toEqual({ exec, marks: ['exec', 'a', 'b'] })
+})
+
+test('splitShell ends the redirection of an exec with the shell it ran in', () => {
+  expect(outMarks('( exec > f ); a')).toEqual(['exec >', 'a'])
+  expect(outMarks('( exec > f; a ); b')).toEqual(['exec >', 'a >', 'b'])
+  expect(outMarks('x=$(exec > f); a')).toEqual(['x=', 'exec > $', 'a'])
+  expect(outMarks('exec > f & a')).toEqual(['exec >', 'a'])
+  expect(outMarks('exec > f | cat; a')).toEqual(['exec > |', 'cat', 'a'])
+  expect(outMarks('a | exec > f; b')).toEqual(['a |', 'exec >', 'b'])
+  expect(outMarks('{ exec > f; } & a')).toEqual(['exec >', 'a'])
+  // A command that `exec` runs in place of the shell has the redirection of its own, and a word `exec` is no exec.
+  expect(outMarks('exec a > f; b')).toEqual(['exec a >', 'b'])
+  expect(outMarks('echo exec > f; a')).toEqual(['echo exec >', 'a'])
+  // A command before the exec keeps what it had.
+  expect(outMarks('a; exec > f')).toEqual(['a', 'exec >'])
+})
+
 test('splitShell marks no redirection of the standard output for stderr, input and other descriptors', () => {
   for (const redir of [
     '2> f',
@@ -1196,7 +1315,7 @@ test('splitShell marks a segment inside a command substitution, backticks or a p
   expect(outMarks('echo $( { a; } )')).toEqual(['echo', 'a $'])
   expect(outMarks('diff <(a) <(b) c')).toEqual(['diff', 'a $', 'b $', 'c'])
   expect(outMarks('cat < <(a)')).toEqual(['cat', 'a $'])
-  expect(outMarks('tee >(a) x')).toEqual(['tee >', 'a $', 'x'])
+  expect(outMarks('tee >(a) x')).toEqual(['tee', 'a $', 'x'])
   // A subshell, a group and a background list capture nothing: their output goes where the shell's own goes.
   expect(outMarks('( a ); { b; }; c &')).toEqual(['a', 'b', 'c'])
   // A pipe or a redirection inside the substitution marks its own segments too.
@@ -1228,6 +1347,10 @@ const MARK_FAMILIES: Record<string, (k: number) => string> = {
   'nested redirected groups': k => '{ a; '.repeat(1_000 * k) + 'a' + '; } > f'.repeat(1_000 * k),
   'nested redirected loops': k => 'for i in 1; do a; '.repeat(500 * k) + 'a' + '; done > f'.repeat(500 * k),
   'a long pipeline': k => 'a | '.repeat(5_000 * k) + 'a',
+  // A word that ends at each glued `>`, an open `${` that keeps its `>` as text, and a list of bare exec segments.
+  'glued redirections': k => 'a>'.repeat(10_000 * k) + 'b',
+  'an open parameter expansion with many redirections': k => '${x' + ':-a>'.repeat(10_000 * k) + '}',
+  'bare exec segments': k => 'exec > f; a; '.repeat(5_000 * k) + 'b',
 }
 for (const [family, make] of Object.entries(MARK_FAMILIES)) {
   test(`splitShell stays linear on ${family}`, async () => {

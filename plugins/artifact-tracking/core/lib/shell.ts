@@ -49,7 +49,8 @@ export type Segment = {
    * the shell prints. A reader asks `keepsStdout` and reads none of them itself.
    * `stdoutRedirected`: a typed redirection sends fd 1 away (`>`, `>>`, `>|`, `&>`, `&>>`, `>&word`, `1>`), on the segment
    * or on the group, subshell or compound that holds it (`{ a; } > f`, `for ...; done > f`), or after a substitution that cut
-   * the command into segments (`a $(b) c > f` marks `a` and `c`). A redirection of stderr
+   * the command into segments (`a $(b) c > f` marks `a` and `c`), or after a bare `exec` that redirects the output in the
+   * same shell (`exec > f; a` marks `a`, `( exec > f ); a` does not). A redirection of stderr
    * (`2>`, `2>&1`), of the input or of another descriptor (`3>`, `{fd}>`) leaves the output alone.
    */
   stdoutRedirected: boolean
@@ -152,15 +153,19 @@ type Place = {
  * Its segments move to a child scope of their own, so a `cd` in a part does not reach the segments after the pipeline
  * (issue #147). The `)` that ends a `case` pattern is no end of a subshell (issue #148).
  * The words of a `case` pattern are no command (issue #163): they stand in no segment and open or close no compound.
- * Only a `>` or `<` that was typed (no quote, no backslash) is a redirection (issue #162). A here-string (`<<<`) is one
- * too, with one word: it is no heredoc, so the next line is a command (issue #182). So are `<>` and `n<>` (issue #183).
+ * Only a `>` or `<` that was typed (no quote, no backslash) is a redirection (issue #162). It ends the word in front of it,
+ * as in bash: `nginx>f` is the word `nginx` and the redirection `>f`, and `}>f` and `done>f` close a group or a loop
+ * (issue #231). A file descriptor in front (`2>f`, `{fd}>f`, `&>f`), arithmetic text and an open `${ }` keep the character.
+ * A here-string (`<<<`) is one too, with one word: it is no heredoc, so the next line is a command (issue #182). So are
+ * `<>` and `n<>` (issue #183).
  * Only a `done`, `fi` or `esac` that was typed whole closes a compound: `'done' y` is a command (issue #184).
  * A heredoc tag is the next word with its quotes and backslashes removed, so `<<\EOF` hides its body as `<<'EOF'` does. A
  * file descriptor right before `<<` (`3<<EOF`, `{fd}<<EOF`) is part of the redirection, and so is `{name}` before `<`, `>`
  * or `<>` (issue #194). A `<<` inside `$(( ))` or `(( ))` is a shift, not a heredoc: the scope of that text says so.
  * Each segment says where its standard output goes (issue #231): `stdoutRedirected`, `stdoutPiped` and `substituted`. A group,
  * subshell, loop or `case` that is redirected or piped marks every segment in it. The marks are ranges over the segments,
- * summed once at the end, so a redirection on each of a deep nest of groups costs O(n), not O(n^2).
+ * summed once at the end, so a redirection on each of a deep nest of groups costs O(n), not O(n^2). A bare `exec` that
+ * redirects the output marks the later segments of its shell and of the subshells under it.
  */
 export function splitShell(command: string): Segment[] {
   const out: Segment[] = []
@@ -172,6 +177,8 @@ export function splitShell(command: string): Segment[] {
   let typedHead = 0
   let headOpen = true
   let inWord = false
+  // How many `${` of the word are still open. A `>` or `<` in one is text (`${X:-a>b}`).
+  let paramOpen = 0
   const heredocs: { tag: string; strip: boolean }[] = []
   let i = 0
   const s = command
@@ -225,6 +232,9 @@ export function splitShell(command: string): Segment[] {
   // say which segments are covered. Marking each segment of the range would cost O(n) for each of a nest of n groups.
   const pipeRuns: number[] = []
   const redirRuns: number[] = []
+  // The index of each segment that is a bare `exec` with a redirection of the output (`exec > f`). It moves the output of its
+  // shell for good, so the segments after it in that shell, and in the subshells under it, are marked at the end.
+  const execs: number[] = []
   const cover = (runs: number[], from: number, to: number) => {
     if (from >= to) return
     runs[from] = (runs[from] ?? 0) + 1
@@ -437,6 +447,7 @@ export function splitShell(command: string): Segment[] {
     inWord = false
     typedHead = 0
     headOpen = true
+    paramOpen = 0
   }
   // A typed character: no quote, no backslash. It stays in the typed head of the word as long as every character before it
   // in the word was typed too.
@@ -469,6 +480,7 @@ export function splitShell(command: string): Segment[] {
         stdoutPiped: false,
         substituted: stack.at(-1)?.sub ?? false,
       })
+      if (stdout && bareExec(clean, cleanHeads)) execs.push(out.length - 1)
       const lead = compoundLead(clean, cleanHeads)
       if (lead.opens.length > 0) {
         // `if for i in 1; do ...; done; then` opens an `if` and a `for` in one segment: each gets its own level.
@@ -505,6 +517,11 @@ export function splitShell(command: string): Segment[] {
     words = []
     heads = []
   }
+  // A typed `>`, `<` or `&>` ends the word in front of it, as in bash: `nginx>f` is the word `nginx` and the redirection `>f`
+  // (issue #231). Not when the text in front is a file descriptor (`2>f`, `{fd}>f`, `&>f`), which belongs to the redirection,
+  // or when it is inside arithmetic (`$((1>2))`) or an open `${ ... }`, where the character is text. Each test is O(1), or it
+  // reads a word that the split then ends, so a run of `>` in one word costs O(n), not O(n^2).
+  const splitsAtRedirect = () => inWord && !inArith() && paramOpen === 0 && !(headOpen && FD_OR_AMP.test(word))
   const skipHeredocs = () => {
     // At a newline: skip each pending heredoc body up to its tag line.
     for (const h of heredocs) {
@@ -596,6 +613,7 @@ export function splitShell(command: string): Segment[] {
     // `&` inside a redirection (`2>&1`, `>&2`, `&>file`, `&>>file`) is not an operator. The `>` or `<` just before must be
     // typed: after a quoted or escaped one (`'>'&`, `\>&`) the `&` runs the command in the background.
     if (c === '&' && (typedRedir === i - 1 || s[i + 1] === '>')) {
+      if (typedRedir !== i - 1 && splitsAtRedirect()) endWord() // `nginx&>f`: the word ends, `&>f` is the redirection
       typed(c)
       i++
       continue
@@ -610,9 +628,12 @@ export function splitShell(command: string): Segment[] {
     const op = OPS.find(o => s.startsWith(o, i))
     // `{` and `}` group commands only as whole words: `{a,b}` and `${X}` stay words. The closing backtick of a `\`...\``
     // ends a word too (`{ a; }\``), and an opening one does not (`}\`x\`` is the word `}x`). A pattern word is no group.
+    // A `<` or `>` after the `}` ends it too (`{ a; }>f`, `done>f`): the redirection is then one of the group.
     const wordEnds =
-      i + 1 >= s.length || /[\s;&|)]/.test(s[i + 1]!) || (s[i + 1] === '`' && stack.at(-1)?.tick === true)
+      i + 1 >= s.length || /[\s;&|)<>]/.test(s[i + 1]!) || (s[i + 1] === '`' && stack.at(-1)?.tick === true)
     if ((op === '{' || op === '}') && (inWord || !wordEnds || inPattern())) {
+      if (op === '{' && word.endsWith('$')) paramOpen++
+      else if (op === '}' && paramOpen > 0) paramOpen--
       typed(c)
       i++
       continue
@@ -621,6 +642,12 @@ export function splitShell(command: string): Segment[] {
       const pending = inWord || words.length > 0
       // The word `in` or `esac` can change where the reader is in a `case`, so it ends before the operator is read.
       endWord()
+      // A `(` right behind a typed `<` or `>` opens a process substitution (`<(cmd)`, `>(cmd)`). The `<` or `>` is its opener:
+      // a word of its own, so `tee >(a) x` redirects nothing, and `a > >(b)` still does through the first `>`.
+      if (op === '(' && typedRedir === i - 1 && heads.at(-1)?.head === 1 && /^[<>]$/.test(words.at(-1) ?? '')) {
+        words.pop()
+        heads.pop()
+      }
       const pc = theCase()
       if (pc?.arm === 'pattern') {
         // In a pattern list only `)` ends the pattern, and `|` separates the alternatives: it is no pipe. Any other operator
@@ -702,12 +729,40 @@ export function splitShell(command: string): Segment[] {
       if (op === '\n') skipHeredocs()
       continue
     }
-    if (c === '>' || c === '<') typedRedir = i
+    if (c === '>' || c === '<') {
+      // The second character of `>>`, `<>` and `<<<` is part of the operator: only the first one ends the word.
+      if (typedRedir !== i - 1 && splitsAtRedirect()) endWord()
+      typedRedir = i
+    }
     typed(c)
     i++
   }
   endSegment(false)
   endPipe()
+  // The first bare `exec` that redirects the output, per scope. A scope sees the earliest one of its own and of its parents
+  // (`( exec > f; a )` marks `a`, and `( exec > f ); a` does not). The answer is kept per scope, so a long list of segments
+  // in one scope costs one walk. Scopes are final here: a pipeline part or a background list has moved to a child of its own.
+  const execIn = new Map<string, number>()
+  for (const k of execs) if (!execIn.has(out[k]!.scope)) execIn.set(out[k]!.scope, k)
+  const execSeen = new Map<string, number>()
+  const execFrom = (sc: string): number => {
+    const chain: string[] = []
+    let first = Infinity
+    for (let cur = sc; ; cur = cur.slice(0, cur.lastIndexOf('.'))) {
+      const seen = execSeen.get(cur)
+      if (seen !== undefined) {
+        first = seen
+        break
+      }
+      chain.push(cur)
+      if (cur === '') break
+    }
+    for (let n = chain.length - 1; n >= 0; n--) {
+      first = Math.min(first, execIn.get(chain[n]!) ?? Infinity)
+      execSeen.set(chain[n]!, first)
+    }
+    return first
+  }
   // Read the ranges of the pipes and of the redirected groups: a segment is marked when some range covers it.
   let piping = 0
   let redirecting = 0
@@ -715,7 +770,7 @@ export function splitShell(command: string): Segment[] {
     piping += pipeRuns[k] ?? 0
     redirecting += redirRuns[k] ?? 0
     seg.stdoutPiped = piping > 0
-    if (redirecting > 0) seg.stdoutRedirected = true
+    if (redirecting > 0 || (execIn.size > 0 && execFrom(seg.scope) < k)) seg.stdoutRedirected = true
   })
   return out
 }
@@ -766,8 +821,18 @@ export function scopedVars(): {
 // stores the descriptor that it opens in `$fd`. A name that is no identifier (`{1x}`, `{a b}`) is a word.
 const FD = String.raw`(?:\d+|\{[A-Za-z_][A-Za-z0-9_]*\})`
 const FD_WORD = new RegExp(`^${FD}$`)
+// The text in front of a `>` or `<` that is part of the redirection and no word of the command: `2` and `{fd}` of `2>f`, `&` of `&>f`.
+const FD_OR_AMP = new RegExp(`^(?:${FD}|&)$`)
 // `<>` stands before `<<?<?`: that branch matches the lone `<` of `<>` and leaves the `>` in the target (issue #183).
 const REDIRECT = new RegExp(String.raw`^(?<fd>${FD}?|&)(?<op>>\||>>?|<>|<<?<?|>&|<&)(?<rest>.*)$`)
+
+/**
+ * The segment is a bare `exec`: no command follows it, so its redirections stay on the shell itself (`exec > f`, `exec 3>&1`).
+ * `stripLead` drops `exec` as a wrapper, and nothing is left. Quotes do not matter: `'exec'` is the builtin too. A word that
+ * only holds the text (`echo exec`) leaves a command, so it is no bare exec.
+ */
+const bareExec = (words: readonly string[], typed: readonly Typed[]): boolean =>
+  words.includes('exec') && stripLead({ words, whole: typed.map(t => t.whole) }).words.length === 0
 
 /**
  * The redirection sends fd 1 away (issue #231). `fd` is the descriptor in front of the operator: none or `&` for a `>` form
