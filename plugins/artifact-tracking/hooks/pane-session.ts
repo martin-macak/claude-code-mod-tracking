@@ -7,18 +7,23 @@
 import type { RenderElement } from 'claude-code'
 import { type Bulk, bulkTargets, dismissTargets, route, viewKeys } from '../core/infra/keys'
 import { reason } from '../core/infra/steps'
+import { bandSections } from '../core/infra/views'
 import type { Ports } from '../core/interfaces/ports'
 import type { GroupSpec, RowRef } from '../core/interfaces/view'
 import { flipShowAll, flipTouched, listGroups, nextView, resolveView, viewSummary } from '../core/lib/grouping'
+import { healthLine } from '../core/lib/health'
 import { dismissQuestion, markedSummary, pruned, relabelDismiss, rowIdsOf, toggled } from '../core/lib/marks'
+import { bandText } from '../ux/band'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import type { TableElements } from '../ux/tree-data-table/el'
 import { hintRows, withKeysHint } from '../ux/tree-data-table/hint'
+import { SUMMARY_ROWS, selectedLine, statusForm, withSummary } from '../ux/tree-data-table/status'
 import {
   DEFAULT_BODY_COLUMNS,
   type Drawn,
   type DrawnRow,
   findRow,
+  findTreeRow,
   laidRefs,
   neighbourOf,
   shownSelection,
@@ -31,7 +36,7 @@ import { clearMarks, writeMarks } from './pane-marks'
 import { BulkQuestion } from './pane-question'
 import { WorkQueue } from './pane-queue'
 import { frameFromState, type Press, Refocus, unlessClosed } from './pane-refocus'
-import { helpOf, type PaneHost, paneGroups, paneModel, shownOf } from './pane-text'
+import { helpOf, type PaneHost, paneGroups, paneModel, problemCount, shownOf } from './pane-text'
 import { openTurn, type TurnPaneHost } from './pane-turn'
 
 export { helpOf, helpTextOf, listText, type PaneHost, TEXT_VIEW, turnLabels } from './pane-text'
@@ -92,6 +97,14 @@ export class PaneSession {
       p.state.help.get(),
       p.state.marks.get(),
     ])
+    // The form of the bottom follows the engine's body, before the keys hint line takes its row: a move of the keys to the prompt and
+    // back must not flip it (issue #138, owner decision Q3 of the delta study: the full form from 18 body rows, docked or inline;
+    // comment 6412630538 on the issue, linked from tree-table.md, "The adaptive status area"). The help view has no status area.
+    // The health line reads the state of the tools here, before the question is read below: nothing may await between that read
+    // and the drawing. Its time is the wall clock, as `readView` takes for the section notes: a breaker stamps `openUntil` with it.
+    const full = !help && statusForm(bodyRows) === 'full'
+    const tools = full ? await p.state.tools.get() : undefined
+    const now = p.clock.wall()
     const model = await paneModel(p, m, { selected, expanded: new Set(expanded) })
     const { groups } = model
     const shown = await shownOf(p, groups)
@@ -110,10 +123,12 @@ export class PaneSession {
     // A pane with no keys draws a hint line above the tree (issue #108). The table gets the rows below it, else the tree is
     // taller than the body and the footer drops out of view (issue #109).
     const hinted = focused === false && !help
+    const columns = bodyColumns ?? DEFAULT_BODY_COLUMNS
+    // The summary row of the full form wraps the table from above, so its row comes off the room the table gets too.
     const room =
-      hinted && bodyRows !== undefined
-        ? Math.max(0, bodyRows - hintRows(bodyColumns ?? DEFAULT_BODY_COLUMNS))
-        : bodyRows
+      bodyRows === undefined
+        ? undefined
+        : Math.max(0, bodyRows - (hinted ? hintRows(columns) : 0) - (full ? SUMMARY_ROWS : 0))
     // The marked rows that this drawing lays: a row that a cap, a filter or a closed parent leaves out counts nowhere (G7). The
     // keys read them, so the footer is asked for them before the drawing is made.
     const laid = help ? [] : laidRefs(groups, { expanded: new Set(expanded), shown: id => shown.get(id) ?? 0, limits })
@@ -162,6 +177,20 @@ export class PaneSession {
               ),
             },
           }),
+      // The full status area (issue #138): the selected row and the health, in the footer Box. The selected row is the row the
+      // drawing treats as selected, as the keys and the window do.
+      ...(full
+        ? {
+            status: {
+              selected: selectedLine(findTreeRow(groups, chosen)),
+              health: healthLine(
+                m.liveTools().map(id => ({ id, status: tools?.[id] })),
+                now,
+                problemCount(m),
+              ),
+            },
+          }
+        : {}),
       // The help titles a tracker's keys by the sections that hold its rows, whatever the view draws (issue #63, L3).
       help: help ? helpOf(m, listGroups(model.sections)) : null,
     }
@@ -182,7 +211,9 @@ export class PaneSession {
       keys: [...view.footer, ...(view.viewLine?.keys ?? [])].map(k => k.buttonKey),
       stops: drawn.stops,
     })
-    return hinted ? withKeysHint(el, drawn.tree) : drawn.tree
+    // The summary row is the words of the band, from the sections this drawing holds: no second pass over the trackers.
+    const tree = full ? withSummary(el, bandText(bandSections(model.sections)), columns, drawn.tree) : drawn.tree
+    return hinted ? withKeysHint(el, tree) : tree
   }
 
   /**

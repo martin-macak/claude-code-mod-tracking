@@ -7,7 +7,8 @@ import { expect, mock } from 'claude-code/testing'
 import { wrapRows } from '../ux/text/wrap'
 import { BUDGET, fits, measure } from '../ux/tree-data-table/budget'
 import { footerRows } from '../ux/tree-data-table/footer'
-import { NO_KEYS_HINT } from '../ux/tree-data-table/hint'
+import { hintRows, NO_KEYS_HINT } from '../ux/tree-data-table/hint'
+import { SUMMARY_ROWS } from '../ux/tree-data-table/status'
 import { viewLineRows } from '../ux/tree-data-table/viewline'
 import { LIVE_VIEW_KEYS, NO_ROW_FOOTER, VIEW_LINE_KEYS } from './fixtures/drawn'
 import { test } from './fixtures/kit'
@@ -595,11 +596,98 @@ test('pane: docked 120x37 with 36 links shows the title, the header and the foot
   await listed($, w, links(36))
   const ui = await mountPane($, DOCKED)
   const tree = await ui.drawn()
-  expect(rowsOf(tree)).toHaveLength(25) // the view line takes one of the 26 rows
+  // The view line takes one of the 26 rows. The status area (issue #138) takes three more: the summary row above the table, and the
+  // selected-row line and the health line in the footer Box.
+  expect(rowsOf(tree)).toHaveLength(22)
   expect(await ui.find({ text: 'Web links' })).toBeDefined()
   expect(headersOf(tree)).toContainEqual(['Name', 'Description'])
   expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
-  expect(await ui.find({ text: '▼ 11 more below' })).toBeDefined()
+  expect(await ui.find({ text: '▼ 14 more below' })).toBeDefined()
+  await ui.unmount()
+})
+
+// Issue #138, PR 2: with 18 body rows or more, docked or inline, the pane draws a summary row above the table and the selected-row
+// line and the health line in the footer Box. A pane of 120x37 has 31 body rows, one of 100x60 has 18, and one of 100x40 has 11.
+const lines = async (ui: PaneUi) => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+
+test('pane: docked 120x37 draws the summary, the selected row and the health beside the view line and the footer', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(36))
+  const ui = await mountPane($, DOCKED)
+  await ui.drawn()
+  const text = await lines(ui)
+  expect(text[0]).toBe('Links 36') // the words of the band, the first line of the pane
+  expect(text).toContain('No row selected') // nothing is selected when the pane opens
+  expect(text).toContain('Health:')
+  expect(text).toContain('View: list')
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  // A ring move onto a row selects it: the line names it, after its label.
+  await select($, ui, 'site3.example')
+  const after = await lines(ui)
+  expect(after).toContain('Selected:')
+  expect(after).not.toContain('No row selected')
+  expect(after[after.indexOf('Selected:') + 1]).toContain('site3.example/page3') // a Link: the Text holds its href too
+  await ui.unmount()
+})
+
+test('pane: inline 100x60 (18 body rows) draws the full form, also while the keys are in the prompt', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(36))
+  const tall = { bodyColumns: 96, bodyRows: 18, placement: 'inline' } as const
+  for (const isFocused of [true, false]) {
+    const ui = await mountPane($, { ...tall, isFocused })
+    await ui.drawn()
+    const text = await lines(ui)
+    expect(text, String(isFocused)).toContain('No row selected')
+    expect(text, String(isFocused)).toContain('Health:')
+    expect(await footerKeys(ui), String(isFocused)).toEqual([
+      'refresh',
+      'help',
+      'dismiss',
+      'prio-1',
+      'prio-2',
+      'prio-3',
+      'prio-0',
+    ])
+    await ui.unmount()
+  }
+})
+
+test('pane: inline 100x40 (11 body rows) and 17 rows draw no status area: the view line and the footer, as before', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(12))
+  for (const bodyRows of [11, 17]) {
+    const ui = await mountPane($, { bodyColumns: 96, bodyRows, placement: 'inline' })
+    await ui.drawn()
+    const text = await lines(ui)
+    expect(text, String(bodyRows)).not.toContain('No row selected')
+    expect(text, String(bodyRows)).not.toContain('Health:')
+    expect(text, String(bodyRows)).toContain('View: list')
+    await ui.unmount()
+  }
+})
+
+test('pane: the health line names the tools of the trackers that run, with their notes', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(3))
+  const ui = await mountPane($, DOCKED)
+  await ui.drawn()
+  const text = (await lines(ui)).join('\n')
+  expect(text).toContain('gh ready')
+  expect(text).toContain('acli ready')
+  expect(text).toContain('no problems')
+  await ui.unmount()
+})
+
+test('pane: the health line leaves out the tool of a tracker that the config turned off', async ($, on) => {
+  const w = world(on, { disk: { [CONFIG]: JSON.stringify({ version: 1, trackers: { jira: { enabled: false } } }) } })
+  mock.env(on, { HOME: '/home/u' })
+  await listed($, w, links(3))
+  const ui = await mountPane($, DOCKED)
+  await ui.drawn()
+  const text = (await lines(ui)).join('\n')
+  expect(text).toContain('gh ready')
+  expect(text).not.toContain('acli') // never probed: it would say `checking…` for good
   await ui.unmount()
 })
 
@@ -661,7 +749,7 @@ test('pane: docked with 3 links, the footer sits at the bottom of the body', asy
   const ui = await mountPane($, DOCKED)
   expect(rowsOf(await ui.drawn())).toHaveLength(3)
   expect(await pinOf(ui)).toEqual([
-    expect.objectContaining({ minHeight: DOCKED.bodyRows }),
+    expect.objectContaining({ minHeight: DOCKED.bodyRows - SUMMARY_ROWS }), // the body less the summary row of the full status area
     expect.objectContaining({ flexGrow: 1, justifyContent: 'flex-end' }),
   ])
   expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
@@ -672,7 +760,10 @@ test('pane: docked with 3 links and no keys, the tree and the hint line above it
   const w = world(on)
   await listed($, w, links(3))
   const ui = await mountPane($, { ...DOCKED, isFocused: false })
-  expect((await pinOf(ui))[0]).toMatchObject({ minHeight: DOCKED.bodyRows - 1 }) // the hint line is the first row of the body
+  // The hint line and the summary row are the first rows of the body.
+  expect((await pinOf(ui))[0]).toMatchObject({
+    minHeight: DOCKED.bodyRows - hintRows(DOCKED.bodyColumns) - SUMMARY_ROWS,
+  })
   await ui.unmount()
 })
 
@@ -859,7 +950,7 @@ test(
     const more = (await ui.findAll({ type: 'Button' })).find(b => /^m\d+$/.test(b.key ?? ''))
     await ui.press({ key: more?.key ?? 'none' })
     const tree = await ui.drawn()
-    expect(rowsOf(tree).length).toBe(25)
+    expect(rowsOf(tree).length).toBe(22) // the status area takes three of the 25 rows
     expect((await handlesIn(ui)).length).toBe(500)
     expect((await footerOf(ui)).length).toBe(7)
     expect(fits(measure(tree), BUDGET)).toBe(true)

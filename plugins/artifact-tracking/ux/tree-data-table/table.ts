@@ -22,12 +22,14 @@ import {
   TOO_LARGE,
   UNAVAILABLE,
 } from './shape'
+import { statusLineBox, statusOf } from './status'
 import { EMPTY_TEXT } from './text'
 import { viewLineBox } from './viewline'
 import { drawWindowed, pageOf, shownRows, type Windowed, windowOf } from './windowed'
 
 export {
   findRow,
+  findTreeRow,
   handleOf,
   type LaidGroup,
   type LaidRow,
@@ -71,10 +73,21 @@ export const TreeDataTable = {
     const keys = footerBox(el, view.footer, actions, hint)
     // The view line sits right above the keys, in the same Box, so the gap above the bottom is one and the window counts the
     // rows of both. The help view has no view line: its keys are `r` and `h`, and the compact form is budgeted to the row.
+    // The full status area (issue #138) puts the selected-row line above the view line and the health line below it: all of it
+    // in the Box of the footer, so the dock pins it and the budget guard keeps it. The help view has none.
+    const lines = statusOf(view)
+    const viewLine = view.help === null ? view.viewLine : undefined
     const footer =
-      view.viewLine === undefined || view.help !== null
+      viewLine === undefined && lines === undefined
         ? keys
-        : box(el, { flexDirection: 'column' }, viewLineBox(el, view.viewLine, columns, actions), keys)
+        : box(
+            el,
+            { flexDirection: 'column' },
+            ...(lines === undefined ? [] : [statusLineBox(el, lines.selected, columns)]),
+            ...(viewLine === undefined ? [] : [viewLineBox(el, viewLine, columns, actions)]),
+            ...(lines === undefined ? [] : [statusLineBox(el, lines.health, columns)]),
+            keys,
+          )
     // The help view is one tree, so a short body turns it compact, with no gap, once for every attempt. The compact form
     // fits the body: it takes the keys to a line from the width and names only the problems it has rows for (issue #105).
     const compact =

@@ -54,6 +54,17 @@ export class PaneKeys {
     return (this.d.trackers.find(t => t.id === owner)?.kinds?.length ?? 0) > 0
   }
 
+  /**
+   * The ids of the tools of the trackers that run, in the order of the trackers (issue #138). A tracker that is off or failed to
+   * start never probes its tools, so the health line of the pane must not name them: they would say `checking…` for good. A tool
+   * that two trackers declare has one owner (`ToolRunner`), so it is named once.
+   */
+  liveTools(): readonly string[] {
+    return [
+      ...new Set(this.ordered.filter(t => this.d.host.live(t.id)).flatMap(t => (t.tools ?? []).map(spec => spec.id))),
+    ]
+  }
+
   /** The key problems, then the kind reasons that are off, then one line per tracker that failed to start. */
   problems(): readonly string[] {
     return [

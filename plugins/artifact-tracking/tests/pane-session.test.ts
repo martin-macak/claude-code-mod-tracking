@@ -95,6 +95,8 @@ function setup(
       host.surfaces.push(surface)
     },
     problems: () => host.keyProblems,
+    /** The tools of the trackers that run: the health line of a drawing of 18 body rows or more names them (issue #138). */
+    liveTools: (): readonly string[] => [],
     isItemOwner: (owner: string) => owner === 'web',
     keys: reg,
     config: fakeConfig({ path: o.path, problems: o.problems, file: o.file as never }),

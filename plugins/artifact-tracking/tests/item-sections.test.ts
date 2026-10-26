@@ -2,7 +2,7 @@
 // bandData read the state and write nothing, the sections come in the order of the pane and of the band, and each row
 // and cell is what the pane drew before L6. Plan: L5 Task 13, K1, K2; L6 A1 to A5.
 import { expect, test } from 'claude-code/testing'
-import { NO_VIEW, sortSections } from '../core/infra/views'
+import { bandSections, NO_VIEW, sortSections } from '../core/infra/views'
 import type { Json } from '../core/interfaces/items'
 import type { Tracker } from '../core/interfaces/tracker'
 import type { Cell, CellId, SectionSpec, TreeRow } from '../core/interfaces/view'
@@ -200,6 +200,20 @@ test('bandData orders by band rank: Jira, GitHub, Artifacts, Links, Files, …, 
     [3, 1], // the open PRs of the lane, and the one with failed checks
     [3, 1],
   ])
+})
+
+// Issue #138: the summary row of the pane reads the band's words from the sections the drawing holds. It must say what the band
+// above the prompt says, with no second pass over the trackers.
+test('the summary row says what the band says: bandSections over the pane sections, with every tracker on or some off', async () => {
+  for (const off of [[], ['web', 'github'], ['auto', 'processes', 'jira']]) {
+    const t = await paneWorld({ off })
+    const pane = await t.m.paneData(t.w.ports, NO_VIEW)
+    expect(
+      bandSections(pane).map(s => s.id),
+      off.join(),
+    ).toEqual((await t.m.bandData(t.w.ports)).map(s => s.id))
+    expect(bandText(bandSections(pane)), off.join()).toBe(bandText(await t.m.bandData(t.w.ports)))
+  }
 })
 
 // Main pinned `GitHub 1 (1 ✗)` in view.test.ts. The world has no failing PR that the conversation named.

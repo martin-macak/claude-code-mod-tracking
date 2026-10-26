@@ -207,6 +207,17 @@ export interface GroupSpec {
   readonly text?: 'rows' | 'title'
 }
 
+/**
+ * One line of the status area (issue #138): a dim label, then cells that the table joins with a dim dot. The table clips the line
+ * to the width cell by cell, so it takes one row at every width. An empty label draws none. The tail is the last cell and keeps its
+ * room: the cells before it are cut to leave it, so a narrow line loses a cell and not the tail.
+ */
+export interface StatusLine {
+  readonly label: string
+  readonly cells: readonly Cell[]
+  readonly tail?: Cell
+}
+
 /** What the pane remembers of the person's view: the selected row and the rows the person opened. */
 export interface PaneView {
   readonly selected: string | null

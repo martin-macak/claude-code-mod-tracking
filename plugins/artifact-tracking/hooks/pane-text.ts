@@ -42,6 +42,8 @@ export interface PaneHost {
   refreshManual(p: Ports): Promise<void>
   runAction(p: Ports, owner: string, id: string, rowId: string | null, surface?: string): Promise<void>
   problems(): readonly string[]
+  /** The ids of the tools of the trackers that run: the health line of the full status area names them (issue #138). */
+  liveTools(): readonly string[]
   isItemOwner(owner: string): boolean
   /**
    * The version of the mod, from its manifest: `unknown` when it gave none. Read per call: the first start sets it, so a
@@ -157,10 +159,28 @@ export function helpOf(
   m: Pick<PaneHost, 'keys' | 'config' | 'problems' | 'version'>,
   groups: readonly GroupSpec[],
 ): HelpModel {
-  const more = m.config.moreProblems()
-  const problems = [...namedProblems(m.config.problems(), more), ...m.problems()]
+  const { more, named } = problemsOf(m)
   // The config gives the count line with the count: the view prints that line, so every view says the same words.
-  return helpModel(m.keys.all(), groups, m.config.path(), problems, m.version, more)
+  return helpModel(m.keys.all(), groups, m.config.path(), named, m.version, more)
+}
+
+/**
+ * The problems the help view lists: the config problems that it names (the first 50), then the key and tracker problems, and the
+ * count line of the ones the config left out. One place for the three sources, so the view and the count of the health line
+ * (`problemCount`) never disagree.
+ */
+function problemsOf(m: Pick<PaneHost, 'config' | 'problems'>) {
+  const more = m.config.moreProblems()
+  return { more, named: [...namedProblems(m.config.problems(), more), ...m.problems()] }
+}
+
+/**
+ * How many problems the help view lists, the ones the config left out of its 50 included: the count of the health line of the full
+ * status area (issue #138).
+ */
+export function problemCount(m: Pick<PaneHost, 'config' | 'problems'>): number {
+  const { more, named } = problemsOf(m)
+  return named.length + (more?.count ?? 0)
 }
 
 /** The help view as text, for `/track help` (`claude -p` has no pane). */

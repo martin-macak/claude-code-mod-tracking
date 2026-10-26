@@ -68,12 +68,12 @@ export function laidRefs(groups: readonly GroupSpec[], view: LayoutView): readon
   return layout(groups, view).flatMap(g => g.rows.map(r => refOf(r.row, g.spec.id)))
 }
 
-/** The row with this id, drawn or not: a child of a closed row counts. */
-export function findRow(groups: readonly GroupSpec[], rowId: string | null): RowRef | undefined {
+/** The row with this id and the id of its group, drawn or not: a child of a closed row counts. */
+function locate(groups: readonly GroupSpec[], rowId: string | null): { row: TreeRow; group: string } | undefined {
   if (rowId === null) return undefined
-  const search = (rows: readonly TreeRow[], group: string): RowRef | undefined => {
+  const search = (rows: readonly TreeRow[], group: string): { row: TreeRow; group: string } | undefined => {
     for (const row of rows) {
-      if (row.id === rowId) return refOf(row, group)
+      if (row.id === rowId) return { row, group }
       const hit = search(row.children ?? [], group)
       if (hit !== undefined) return hit
     }
@@ -85,6 +85,16 @@ export function findRow(groups: readonly GroupSpec[], rowId: string | null): Row
   }
   return undefined
 }
+
+/** The row with this id, drawn or not, as the key routing sees it. */
+export function findRow(groups: readonly GroupSpec[], rowId: string | null): RowRef | undefined {
+  const hit = locate(groups, rowId)
+  return hit === undefined ? undefined : refOf(hit.row, hit.group)
+}
+
+/** The row with this id, drawn or not, whole: the selected-row line of the status area reads its cells (issue #138). */
+export const findTreeRow = (groups: readonly GroupSpec[], rowId: string | null): TreeRow | undefined =>
+  locate(groups, rowId)?.row
 
 /**
  * The row to select once `id` is gone: the next drawn row at the same or a lower depth, else the one before. It is `survivorOf`

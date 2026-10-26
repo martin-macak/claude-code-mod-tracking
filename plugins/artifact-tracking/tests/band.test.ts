@@ -1,5 +1,6 @@
 // The band above the prompt: the line from the sections that carry a band part, and its drawing (plan L6 Task 9, G17).
 import { expect, test } from 'claude-code/testing'
+import { bandSections } from '../core/infra/views'
 import type { SectionSpec } from '../core/interfaces/view'
 import { bandText, renderBand } from '../ux/band'
 import { EL } from './fixtures/elements'
@@ -38,6 +39,41 @@ test('bandText leaves out a zero count and gives null when all are zero or none 
   expect(bandText([part('Jira', 0), part('Links', 0)])).toBeNull()
   expect(bandText([section('web', [])])).toBeNull()
   expect(bandText([])).toBeNull()
+})
+
+// The summary row of the pane (issue #138) is the band's words from the sections the drawing already holds, so `bandSections`
+// does what `bandData` does without a second pass over the trackers: it keeps the sections with a band part, in band order.
+const ranked = (label: string, band: number | undefined, rank?: number): SectionSpec =>
+  section(label.toLowerCase(), [], {
+    band: { label, count: 1, failing: 0, ...(band === undefined ? {} : { rank: band }) },
+    ...(rank === undefined ? {} : { rank }),
+  })
+
+test('bandSections keeps the sections that carry a band part and puts them in band order, whatever their pane order', () => {
+  const pane = [ranked('PRs', 9), section('plain', []), ranked('Jira', 1), ranked('Links', 4)]
+  expect(bandSections(pane).map(s => s.band?.label)).toEqual(['Jira', 'Links', 'PRs'])
+  expect(pane.map(s => s.id)).toEqual(['prs', 'plain', 'jira', 'links']) // the pane's list is not sorted in place
+})
+
+test('bandSections places a part by its band rank, else the rank of its section, else its place in the pane', () => {
+  const pane = [ranked('A', undefined), ranked('B', undefined, 0.5), ranked('C', 0.25), ranked('D', undefined)]
+  // A has neither rank: its place is 0. B takes the rank of its section, 0.5. C takes its band rank, 0.25. D: place 3.
+  expect(bandSections(pane).map(s => s.band?.label)).toEqual(['A', 'C', 'B', 'D'])
+})
+
+test('bandSections keeps the order of the pane for a tie, and gives nothing for no part', () => {
+  expect(bandSections([ranked('A', 2), ranked('B', 2), ranked('C', 2)]).map(s => s.band?.label)).toEqual([
+    'A',
+    'B',
+    'C',
+  ])
+  expect(bandSections([section('a', []), section('b', [])])).toEqual([])
+  expect(bandSections([])).toEqual([])
+})
+
+test('the words of the summary row are the words of the band: bandText over bandSections', () => {
+  const pane = [ranked('PRs', 9), ranked('Jira', 1)]
+  expect(bandText(bandSections(pane))).toBe('Jira 1 · PRs 1')
 })
 
 test('renderBand draws tracking, the line and /track, then the engine band, in one column', () => {
