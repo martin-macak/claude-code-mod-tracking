@@ -221,7 +221,7 @@ Files  3 files
 | `created` | A successful `Write` of type `create` made the file. It stays set. |
 | `mentioned` | Your prompt, your command arguments or Claude's reply named the path, and the file exists. Shown when the file was not created. |
 | `edited N` | Successful `Edit` calls and `Write` calls of type `update`. |
-| `viewed N` | Successful `Read` calls. A `Read` alone never adds a row: it counts only on a row that a write, an edit or a mention made. |
+| `viewed N` | Successful `Read` calls. This includes a `Read` that Claude Code answers with `file_unchanged`: the file did not change since the last `Read`, or since Claude Code loaded it at startup. A `Read` alone never adds a row: it counts only on a row that a write, an edit or a mention made. |
 | `subagent` | A subagent wrote, edited or read the file. |
 
 An empty cell means that activity did not happen. The `/track` text leaves empty cells out.

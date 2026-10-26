@@ -17,6 +17,9 @@ export function resolvePath(path: string, cwd: string, home?: string): string | 
   return normalizePath(isAbsolutePath(path) ? path : `${cwd}/${path}`)
 }
 
+/** The `Read` result types that count as a view and name the file in `file.filePath`. */
+const VIEW_TYPES: ReadonlySet<unknown> = new Set(['text', 'file_unchanged'])
+
 /**
  * The Markdown file a Write, Edit or Read call touched. `ran` is what `await next(e)` gave, or a transcript tool
  * use (the same `result` and `isError` fields). null: a failed, denied or staged call, or no `.md` path.
@@ -25,7 +28,8 @@ export function touchFromToolResult(tool: string, ran: unknown): FileTouch | nul
   if (!isRecord(ran) || ran.isError === true) return null
   const r = ran.result
   if (!isRecord(r) || r.staged === true) return null
-  const path = tool === 'Read' ? (r.type === 'text' && isRecord(r.file) ? r.file.filePath : undefined) : r.filePath
+  // A repeated Read of a file that did not change answers `file_unchanged`: it is a view as well (issue #245).
+  const path = tool === 'Read' ? (VIEW_TYPES.has(r.type) && isRecord(r.file) ? r.file.filePath : undefined) : r.filePath
   if (typeof path !== 'string' || !MD.test(path)) return null
   if (tool === 'Read') return { spelled: path, kind: 'viewed' }
   if (tool === 'Write') return { spelled: path, kind: r.type === 'create' ? 'created' : 'edited' }

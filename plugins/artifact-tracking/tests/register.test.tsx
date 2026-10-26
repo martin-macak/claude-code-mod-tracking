@@ -24,6 +24,7 @@ import {
   prompt,
   quiet,
   readDone,
+  readUnchanged,
   res,
   response,
   SESSION,
@@ -282,6 +283,18 @@ test('files: a Read counts a view on a tracked row and never adds a row', async 
   await fileTool($, fake, 'Read', readDone('/work/docs/plan.md'))
   await fileTool($, fake, 'Read', readDone('docs/plan.md'))
   expect(await files($)).toBe('Files  1 files\n  plan.md  docs  created  viewed 2')
+})
+
+test('files: a Read of an unchanged file counts a view, as a Read of text does', async ($, on) => {
+  const { fake } = world(on)
+  await $.session.start(START)
+  await fileTool($, fake, 'Read', readUnchanged('/work/README.md'))
+  expect(await files($)).toBe('No tracked items yet.')
+  await fileTool($, fake, 'Write', writeCreated('/work/docs/plan.md'))
+  await fileTool($, fake, 'Read', readDone('/work/docs/plan.md'))
+  await fileTool($, fake, 'Read', readUnchanged('/work/docs/plan.md'))
+  await fileTool($, fake, 'Read', readUnchanged('docs/plan.md'))
+  expect(await files($)).toBe('Files  1 files\n  plan.md  docs  created  viewed 3')
 })
 
 test('files: a reply that names an existing .md adds a mentioned row; a missing one adds nothing', async ($, on) => {

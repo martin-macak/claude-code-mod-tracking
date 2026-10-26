@@ -30,6 +30,8 @@ const viewed = (filePath: string) => ({
   type: 'text',
   file: { filePath, content: '# x', numLines: 1, startLine: 1, totalLines: 1 },
 })
+/** The answer of a second Read of a file that did not change (issue #245). */
+const unchanged = (filePath: string) => ({ type: 'file_unchanged', file: { filePath } })
 
 function world(o: { cwd?: string; env?: Record<string, string>; settings?: Json } = {}) {
   const w = managerWorld({
@@ -156,6 +158,18 @@ test('a Read alone never adds a row; it counts a view on a tracked row', async (
   await t.tool('Read', viewed('/work/docs/plan.md'))
   await t.tool('Read', viewed('docs/plan.md'))
   expect(t.files()).toEqual([{ label: '/work/docs/plan.md', created: true, edits: 0, views: 2 }])
+})
+
+test('a Read of an unchanged file counts a view as a Read of text does, and never adds a row', async () => {
+  const t = world()
+  await t.tool('Read', unchanged('/work/README.md'))
+  expect(t.keys()).toEqual([])
+  await t.tool('Write', created('/work/docs/plan.md'))
+  await t.tool('Read', viewed('/work/docs/plan.md'))
+  await t.tool('Read', unchanged('/work/docs/plan.md'))
+  await t.tool('Read', unchanged('docs/plan.md'))
+  await t.tool('Read', unchanged('/work/docs/plan.md'), { isError: true })
+  expect(t.files()).toEqual([{ label: '/work/docs/plan.md', created: true, edits: 0, views: 3 }])
 })
 
 test('a subagent path joins its spawn cwd from the auto.agents fact; the main loop joins the session cwd', async () => {

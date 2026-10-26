@@ -1,5 +1,6 @@
 // Markdown file facts (issue #28). Pure code, so no `$` is used. The result shapes are the ones the design study
-// observed on Claude Code 2.1.296 (issue #28, study part 1, section 3).
+// observed on Claude Code 2.1.296 (issue #28, study part 1, section 3). The one exception is the `file_unchanged` answer
+// of a Read (issue #245). It comes from probe P1 of the #57 study, on Claude Code 2.1.310.
 import { expect, test } from 'claude-code/testing'
 import { isIgnored, mdCandidates, resolvePath, touchFromToolResult } from '../trackers/file/files'
 import { LIMITS } from './fixtures/limits'
@@ -13,6 +14,8 @@ const edit = (filePath: string) => ({
 const read = (filePath: string) => ({
   result: { type: 'text', file: { filePath, content: '# x', numLines: 1, startLine: 1, totalLines: 1 } },
 })
+// The answer of a second Read of a file that did not change (issue #245, probe P1 of the #57 study, Claude Code 2.1.310).
+const readUnchanged = (filePath: string) => ({ result: { type: 'file_unchanged', file: { filePath } } })
 
 // ---------------------------------------------------------------- paths
 
@@ -31,6 +34,35 @@ test('touchFromToolResult: Write create gives created, Write update and Edit giv
   expect(touchFromToolResult('Write', write('/w/a.md', 'update'))).toEqual({ spelled: '/w/a.md', kind: 'edited' })
   expect(touchFromToolResult('Edit', edit('/w/a.md'))).toEqual({ spelled: '/w/a.md', kind: 'edited' })
   expect(touchFromToolResult('Read', read('/w/a.md'))).toEqual({ spelled: '/w/a.md', kind: 'viewed' })
+})
+
+test('touchFromToolResult: a Read of an unchanged file gives viewed with result.file.filePath for a .md path, in any case', () => {
+  expect(touchFromToolResult('Read', readUnchanged('/w/a.md'))).toEqual({ spelled: '/w/a.md', kind: 'viewed' })
+  expect(touchFromToolResult('Read', readUnchanged('/w/LOUD.MD'))).toEqual({ spelled: '/w/LOUD.MD', kind: 'viewed' })
+  expect(touchFromToolResult('Read', readUnchanged('/w/a.ts'))).toBeNull() // only .md paths count
+})
+
+test('touchFromToolResult: a file_unchanged answer with source seeded, or as a transcript tool use, gives viewed', () => {
+  // `source: 'seeded'` is a field of `file_unchanged` in the types file (claude-code.d.ts, 2.1.302). It was not seen live.
+  const seeded = { result: { ...readUnchanged('/w/CLAUDE.md').result, source: 'seeded' } }
+  expect(touchFromToolResult('Read', seeded)).toEqual({ spelled: '/w/CLAUDE.md', kind: 'viewed' })
+  // A replay passes the whole tool use as `ran`. The input spells the path in another way on purpose: the path must
+  // come from the result, as in the live call, and not from the input.
+  const use = { tool_use_id: 't2', tool: 'Read', input: { file_path: 'a.md' }, ...readUnchanged('/w/a.md') }
+  expect(touchFromToolResult(use.tool, use)).toEqual({ spelled: '/w/a.md', kind: 'viewed' })
+})
+
+test('touchFromToolResult: a file_unchanged answer with no usable path, an error or a staged call gives null', () => {
+  expect(touchFromToolResult('Read', { result: { type: 'file_unchanged' } })).toBeNull()
+  expect(touchFromToolResult('Read', { result: { type: 'file_unchanged', file: {} } })).toBeNull()
+  expect(touchFromToolResult('Read', { result: { type: 'file_unchanged', file: { filePath: 1 } } })).toBeNull()
+  expect(touchFromToolResult('Read', { isError: true, result: readUnchanged('/w/a.md').result })).toBeNull()
+  expect(touchFromToolResult('Read', { result: { ...readUnchanged('/w/a.md').result, staged: true } })).toBeNull()
+})
+
+test('touchFromToolResult: only a Read call reads the file_unchanged type', () => {
+  expect(touchFromToolResult('Write', readUnchanged('/w/a.md'))).toBeNull()
+  expect(touchFromToolResult('Edit', readUnchanged('/w/a.md'))).toBeNull()
 })
 
 test('touchFromToolResult: only .md paths count, in any case', () => {
