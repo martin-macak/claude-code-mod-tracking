@@ -3,10 +3,11 @@
 // have their own tests (clean-tasks.test.ts, clean-worktrees.test.ts).
 import { expect, test } from 'claude-code/testing'
 import { CORE_HINT, CORE_SUBS, USAGE } from '../core/infra/command-text'
+import { ConfigManager } from '../core/infra/config-manager'
 import type { CleanResult, CleanStep, LogEntry } from '../core/interfaces/clean'
 import type { Tracker } from '../core/interfaces/tracker'
 import { CLEAN_USAGE } from '../core/lib/clean-text'
-import { fakeConfig } from './fixtures/config-fs'
+import { fakeConfig, fakeConfigFs } from './fixtures/config-fs'
 import { managerWorld } from './fixtures/manager'
 
 const NOW = 1_000_000
@@ -74,6 +75,51 @@ test('clean is a core sub-command, in the usage line and in the hint', () => {
   expect(CORE_SUBS.has('clean')).toBe(true)
   expect(USAGE).toContain('clean [--hide|--log|--yes <kind>]')
   expect(CORE_HINT).toContain('clean [--hide|--log|--yes <kind>]')
+})
+
+// ---------------------------------------------------------------- the config file
+
+const CONFIG_PATH = '/h/.config/claude-code/mods/tracker/config.json'
+
+// Issue #123: a plan reads a switch of its tracker (`destroyWorktrees`). The tick reads the file every 30 s, so without a
+// check in `clean` an edit just before `--yes` would still say `not enabled`. Here the real ConfigManager reads a fake file.
+test('clean reads the config file before it plans: an edit of a switch just before --yes takes effect', async () => {
+  const applied: CleanStep[][] = []
+  const gated: Tracker = {
+    id: 'gated',
+    order: 1,
+    config: {
+      defaults: { enabled: true, on: false },
+      normalise: (raw, defaults) => ({ ...defaults, ...(raw as object) }),
+    },
+    init: () => {},
+    store: ctx => ctx.config.slice(),
+    cleanup: {
+      plan: ctx => [tree('wt:/x', ctx.config.slice().on === true ? {} : { skip: 'not enabled' })],
+      apply: async (_ctx, steps) => {
+        applied.push([...steps])
+        return steps.map(x => ({ id: x.id, outcome: 'done' }))
+      },
+    },
+  }
+  const file = fakeConfigFs()
+  const env = { get: async (name: string) => (name === 'HOME' ? '/h' : undefined) }
+  const t = managerWorld({
+    trackers: () => [gated],
+    fake: { now: NOW },
+    config: specs => new ConfigManager({ fs: file.fs, env: env as never, specs, log: () => {} }),
+  })
+  await t.m.ensureStarted(t.w.ports)
+  expect((await t.m.track(t.w.ports, 'clean')).text).toContain('  wt:/x: skipped: not enabled')
+  file.edit(CONFIG_PATH, JSON.stringify({ trackers: { gated: { on: true } } }))
+  const text = (await t.m.track(t.w.ports, 'clean --yes worktrees')).text
+  expect(applied.map(steps => steps.map(s => s.id))).toEqual([['wt:/x']])
+  expect(text).toContain('  wt:/x: done')
+  // Switched off again before a dry run: the plan shows it, and nothing more is applied.
+  file.edit(CONFIG_PATH, JSON.stringify({ trackers: { gated: { on: false } } }))
+  expect((await t.m.track(t.w.ports, 'clean')).text).toContain('  wt:/x: skipped: not enabled')
+  await t.m.track(t.w.ports, 'clean --yes worktrees')
+  expect(applied).toHaveLength(1)
 })
 
 // ---------------------------------------------------------------- the dry run

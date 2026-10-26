@@ -1,6 +1,6 @@
 // trackAgents: rows, location (A6), end state (A7). Pure.
 import { expect, test } from 'claude-code/testing'
-import { classifyStatus, trackAgents } from '../trackers/auto/agents'
+import { agentWorksIn, classifyStatus, trackAgents } from '../trackers/auto/agents'
 import type { AgentProof, AutoState, GitWorktree, LiveAgent, WorktreeProof } from './fixtures/contracts'
 import { LIMITS } from './fixtures/limits'
 
@@ -317,4 +317,37 @@ test('a second call with the same inputs returns the same state object', () => {
   const first = trackAgents(s, [live('a', 'running')], LIST, MAIN, AT)
   const second = trackAgents(first.state, [live('a', 'running')], LIST, MAIN, AT + 30_000)
   expect(second.state).toBe(first.state)
+})
+
+// agentWorksIn: `/track clean` asks where the pane draws an agent, by the one rule set of trackAgents (A6), for one record.
+const PROBE = LIST[1]!
+const AGENT_A1 = LIST[2]!
+const ledger = (agents: AgentProof[]) => ({ agents, worktrees: [] })
+
+test('agentWorksIn: an agent that has not ended is in the record where the pane draws it, by any rule of A6', () => {
+  const cases: [string, AgentProof[], GitWorktree][] = [
+    ['the exact path', [agent('x', { worktreePath: PROBE.path })], PROBE],
+    ['the convention path of its id', [agent('a1', { cwd: undefined })], AGENT_A1],
+    ['its branch', [agent('x', { branch: 'worktree-probe-wt', cwd: undefined })], PROBE],
+    ['its spawn cwd, a folder inside', [agent('x', { cwd: `${PROBE.path}/src` })], PROBE],
+    [
+      'the place of an ended parent',
+      [agent('p', { cwd: PROBE.path, endedAt: 4 }), agent('x', { parentId: 'p', cwd: undefined })],
+      PROBE,
+    ],
+  ]
+  for (const [name, agents, target] of cases) expect(agentWorksIn(ledger(agents), LIST, MAIN, target), name).toBe(true)
+})
+
+test('agentWorksIn: an ended agent, an agent in another record and a record with no agent are not in it', () => {
+  expect(agentWorksIn(ledger([agent('x', { cwd: PROBE.path, endedAt: 4 })]), LIST, MAIN, PROBE)).toBe(false)
+  expect(agentWorksIn(ledger([agent('x', { cwd: `${PROBE.path}-other` })]), LIST, MAIN, PROBE)).toBe(false)
+  expect(agentWorksIn(ledger([agent('x', { cwd: MAIN })]), LIST, MAIN, PROBE)).toBe(false)
+  expect(agentWorksIn(ledger([]), LIST, MAIN, PROBE)).toBe(false)
+})
+
+test('agentWorksIn: an agent with no clue of its own and no parent sits where the session is', () => {
+  const s = ledger([agent('x', { cwd: undefined })])
+  expect(agentWorksIn(s, LIST, `${PROBE.path}/src`, PROBE)).toBe(true)
+  expect(agentWorksIn(s, LIST, MAIN, PROBE)).toBe(false)
 })

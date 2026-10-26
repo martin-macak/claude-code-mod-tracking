@@ -50,17 +50,22 @@ export function parsePorcelain(text: string): GitWorktree[] {
   return out
 }
 
+/** Whether `inner` is `outer` or a folder inside it. A path that only starts with the same letters is not inside. */
+export function holds(outer: string, inner: string): boolean {
+  const o = normPath(outer)
+  const i = normPath(inner)
+  return i === o || i.startsWith(o === '/' ? o : `${o}/`)
+}
+
 /** The record whose path equals `path` or holds it (longest prefix wins). */
 export function locate(list: readonly GitWorktree[], path: string): GitWorktree | undefined {
-  const p = normPath(path)
   let best: GitWorktree | undefined
   let bestLen = -1
   for (const w of list) {
-    const wp = normPath(w.path)
-    const holds = p === wp || p.startsWith(wp === '/' ? wp : wp + '/')
-    if (holds && wp.length > bestLen) {
+    const len = normPath(w.path).length
+    if (holds(w.path, path) && len > bestLen) {
       best = w
-      bestLen = wp.length
+      bestLen = len
     }
   }
   return best
@@ -86,10 +91,13 @@ export function agentWorktreePath(main: string, id: string): string {
   return `${normPath(main)}/.claude/worktrees/agent-${id}`
 }
 
+/** `<runId>-<agentIndex>`: the folder name of a workflow agent's worktree. The one source of the name. */
+export const workflowWorktreeName = (runId: string, agentIndex: number): string => `${runId}-${agentIndex}`
+
 /**
  * `<main>/.claude/worktrees/<runId>-<agentIndex>`: where a workflow agent that runs with `isolation: 'worktree'` works.
  * The number is the place of the agent among the `agent()` calls of the run, so it counts agents that run in no worktree.
  */
 export function workflowWorktreePath(main: string, runId: string, agentIndex: number): string {
-  return `${normPath(main)}/.claude/worktrees/${runId}-${agentIndex}`
+  return `${normPath(main)}/.claude/worktrees/${workflowWorktreeName(runId, agentIndex)}`
 }

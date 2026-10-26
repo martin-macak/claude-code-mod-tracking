@@ -21,6 +21,9 @@ export const AUTO_SCHEMA = {
   // A workflow run of 2 agents or more, whose agents have all ended, is one row (`ag:wf:<runId>`) that opens to its agents.
   // The minimum of 2 is fixed: issue #146.
   foldWorkflows: bool(true),
+  // Issue #123: `/track clean --yes worktrees` also removes a live, clean, merged worktree of this run, only with this on.
+  // Off by default: a dry run lists such a worktree as `skipped: not enabled`.
+  destroyWorktrees: bool(false),
 } as const satisfies Schema
 
 export type AutoConfig = ConfigOf<typeof AUTO_SCHEMA>

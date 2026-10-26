@@ -39,7 +39,12 @@ export interface Line {
 }
 
 const TITLES: Readonly<Record<CleanKind, string>> = { tasks: 'Tasks', worktrees: 'Worktrees' }
-const ACTION_WORDS: Readonly<Record<CleanAction, string>> = { stop: 'stop', 'remove-record': 'remove record' }
+/** `remove-worktree` says what git does to the folder: it takes the ignored files with it (owner decision Q2 of issue #123). */
+const ACTION_WORDS: Readonly<Record<CleanAction, string>> = {
+  stop: 'stop',
+  'remove-record': 'remove record',
+  'remove-worktree': 'remove worktree (if clean and merged; deletes ignored files)',
+}
 
 /** How many lines of one kind the text shows before it counts the rest. */
 const SHOWN = 10

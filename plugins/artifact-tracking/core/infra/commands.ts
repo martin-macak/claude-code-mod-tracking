@@ -150,12 +150,15 @@ export class Commands {
   /**
    * `/track clean` (issue #122). With no argument it is a dry run: the plan by kind, and no slot write, no store write and no
    * process. `--hide` hides every ended row now (`hidden.before`, a session atom, undone by `show-all`). `--yes <kind>...`
-   * applies the steps of those kinds, and the audit log keeps what it tried. `--log` prints that log, newest first. It does
-   * not check the config file: a plan needs no setting that a file edit changes.
+   * applies the steps of those kinds, and the audit log keeps what it tried. `--log` prints that log, newest first. In every
+   * mode it checks the config file first, like `show-all`: a plan reads the switches of a tracker (`destroyWorktrees`, issue
+   * #123), and an edit just before `--yes` must count, while the tick reads the file only every 30 s. An argument that is no
+   * mode prints the usage and reads nothing.
    */
   private async clean(p: Ports, rest: string): Promise<Reply> {
     const mode = parseClean(rest)
     if (mode === undefined) return { text: CLEAN_USAGE }
+    await this.host.refreshConfig(p)
     const { cleanup } = this.host
     switch (mode.mode) {
       case 'plan': {

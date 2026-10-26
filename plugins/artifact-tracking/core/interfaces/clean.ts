@@ -9,12 +9,16 @@ import type { ViewContext } from './view'
 
 /**
  * What `--yes` names. `tasks`: background tasks that still run. `worktrees`: git records of worktrees that are gone from
- * disk. A kind that joins the list (containers, issue #49 P3) is a compile error in the places that switch over it.
+ * disk, and (switch `destroyWorktrees`) clean, merged worktrees that are still there. A kind that joins the list
+ * (containers, issue #49 P3) is a compile error in the places that switch over it.
  */
 export type CleanKind = 'tasks' | 'worktrees'
 
-/** `stop`: stop a background task. `remove-record`: remove the git record of a worktree whose directory is gone. */
-export type CleanAction = 'stop' | 'remove-record'
+/**
+ * `stop`: stop a background task. `remove-record`: remove the git record of a worktree whose directory is gone.
+ * `remove-worktree`: remove a live worktree that is clean and merged (issue #123).
+ */
+export type CleanAction = 'stop' | 'remove-record' | 'remove-worktree'
 
 /** One thing a cleanup would do. */
 export interface CleanStep {
