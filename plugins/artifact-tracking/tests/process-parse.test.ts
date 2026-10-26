@@ -347,6 +347,89 @@ test('container id: a run after a bare exec that redirects the output takes no i
     })
 })
 
+// A group, loop or `if` that redirects the output gives fd 1 back at its end (bash 5.3.20: `{ exec >/dev/null; } >/dev/null; echo
+// after` prints `after`), so an exec inside it moves no later run. An unredirected group is the shell itself, and a redirection of
+// stderr or of the input saves no fd 1: the exec stays for the later runs there (review of the PR, Codex on `shell.ts`).
+test('container id: an exec inside a redirected group, loop or if ends where that group ends', () => {
+  const inspect = '; docker inspect -f "{{.Id}}" web'
+  for (const closed of [
+    '{ exec >/dev/null; } >/dev/null',
+    '{ exec >/dev/null; } >>log',
+    '{ exec >/dev/null; } &>log',
+    '{ exec >/dev/null; } >&2',
+    '{ { exec >/dev/null; } >log; a; }',
+    '( exec >/dev/null ) >log',
+    'for i in 1; do exec >/dev/null; done >log',
+    'while true; do exec >/dev/null; break; done >log',
+    'if true; then exec >/dev/null; fi >log',
+    'if exec >/dev/null; then :; fi >log',
+    'while exec >/dev/null; do break; done >log',
+    'case x in x) exec >/dev/null;; esac >log',
+    '{ exec -c >/dev/null; } >log',
+  ]) {
+    expect({ closed, rows: paired(`${closed}; docker run -d --name api nginx`, idLines(NEW)) }).toEqual({
+      closed,
+      rows: [['api', NEW, true]],
+    })
+    // Without --name the row is named by its own id, not by its command.
+    expect({ closed, rows: paired(`${closed}; docker run -d nginx`, idLines(NEW)) }).toEqual({
+      closed,
+      rows: [[NEW.slice(0, 12), NEW, true]],
+    })
+  }
+  // The run inside the redirected group still prints nowhere, and the run after the group takes the one line.
+  expect(
+    paired('{ exec >/dev/null; docker run -d --name a nginx; } >log; docker run -d --name b nginx', idLines(NEW)),
+  ).toEqual([
+    ['a', undefined, undefined],
+    ['b', NEW, true],
+  ])
+  // An unredirected group, a group that redirects stderr or the input, and a loop with such a redirection are the shell itself.
+  for (const open of [
+    '{ exec >/dev/null; }',
+    '{ exec >/dev/null; } 2>err',
+    '{ exec >/dev/null; } 2>&1',
+    '{ exec >/dev/null; } <in',
+    '{ exec >/dev/null; } 3>&1',
+    '{ { exec >/dev/null; }; } 2>err',
+    'for i in 1; do exec >/dev/null; done',
+    'for i in 1; do exec >/dev/null; done 2>err',
+    'if true; then exec >/dev/null; fi',
+  ])
+    expect({ open, rows: paired(`${open}; docker run -d --name api nginx${inspect}`, idLines(OTHER)) }).toEqual({
+      open,
+      rows: [['api', undefined, undefined]],
+    })
+  // An exec in front of the redirected group still reaches the run after it. The group does not end it: it came before the group.
+  expect(paired('exec >/dev/null; { :; } >log; docker run -d --name api nginx', idLines(NEW))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  // The same for a loop, an `if` and a `case` that close with a redirection: the exec before them is no part of their range.
+  for (const compound of [
+    'for i in 1; do :; done >log',
+    'while true; do break; done >log',
+    'if true; then :; fi >log',
+    'case x in x) :;; esac >log',
+  ])
+    expect({
+      compound,
+      rows: paired(`exec >/dev/null; ${compound}; docker run -d --name api nginx`, idLines(NEW)),
+    }).toEqual({ compound, rows: [['api', undefined, undefined]] })
+  // A later exec marks again, and the exec of a redirected group inside a subshell reaches no run, in it or after it.
+  expect(paired('{ exec >/dev/null; } >log; exec >/dev/null; docker run -d --name api nginx', idLines(NEW))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(
+    paired(
+      '( { exec >/dev/null; } >log; docker run -d --name a nginx ); docker run -d --name b nginx',
+      idLines(NEW, OLD1),
+    ),
+  ).toEqual([
+    ['a', NEW, true],
+    ['b', OLD1, true],
+  ])
+})
+
 // Study log lines L407 to L409.
 test('container id: a run inside a command substitution or backticks takes no id from another command', () => {
   const ps = 'docker ps -aq --no-trunc --filter name=web'
@@ -430,6 +513,41 @@ test('container id: a redirection of stderr or of the input leaves the id', () =
     expect({ redir, rows: paired(`docker run -d --name api nginx ${redir}`, idLines(NEW)) }).toEqual({
       redir,
       rows: [['api', NEW, true]],
+    })
+})
+
+// `>&1` copies fd 1 onto itself, so bash changes nothing and the run prints (5.3.20: `echo hi >&1` prints `hi`). A copy of another
+// descriptor onto fd 1 moves it, and so does `>& file`, which sends both outputs to the file. The same holds for `exec` and for
+// the group that ends an exec: `{ exec >/dev/null; } >&1; echo after` prints nothing, so the exec reaches the later runs.
+test('container id: a copy of fd 1 onto itself leaves the id, a copy of another descriptor does not', () => {
+  for (const same of ['>&1', '1>&1', '>& 1', '1>& 1', '>&01', '>&1-', '>&"1"'])
+    for (const run of [`docker run -d --name api nginx ${same}`, `docker run -d --name api nginx${same}`])
+      expect({ run, rows: paired(run, idLines(NEW)) }).toEqual({ run, rows: [['api', NEW, true]] })
+  for (const moved of ['>&2', '1>&2', '>& 2', '>&-', '>&0', '>&10', '>& log', '>&1 >log', '>log >&1'])
+    expect({ moved, rows: paired(`docker run -d --name api nginx ${moved}`, idLines(NEW)) }).toEqual({
+      moved,
+      rows: [['api', undefined, undefined]],
+    })
+  // `exec >&1` puts nothing away: the runs after it print. The target of `>& 1` is no word of the run, so the run keeps its name.
+  for (const exec of ['exec >&1', 'exec 1>&1', 'exec >& 1'])
+    expect({ exec, rows: paired(`${exec}; docker run -d --name api nginx`, idLines(NEW)) }).toEqual({
+      exec,
+      rows: [['api', NEW, true]],
+    })
+  expect(containers('docker run -d nginx >& log', idLines(NEW))).toStrictEqual([
+    unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
+  ])
+  // A group that copies fd 1 onto itself saves nothing, so the exec in it reaches the runs after the group.
+  for (const closed of [
+    '{ exec >/dev/null; } >&1',
+    '{ exec >/dev/null; } 1>& 1',
+    'for i in 1; do exec >/dev/null; done >&1',
+    'if true; then exec >/dev/null; fi >&1',
+    'case x in x) exec >/dev/null;; esac >&1',
+  ])
+    expect({ closed, rows: paired(`${closed}; docker run -d --name api nginx`, idLines(NEW)) }).toEqual({
+      closed,
+      rows: [['api', undefined, undefined]],
     })
 })
 
@@ -1246,6 +1364,10 @@ test('echo $!: one that prints to the tool result gives the pid line', () => {
     'sleep 90 & echo $! 2> err',
     'sleep 90 & echo $! 2>&1',
     'sleep 90 & echo $! < /dev/null',
+    // A copy of fd 1 onto itself puts the output nowhere (bash 5.3.20 `echo hi >&1` prints).
+    'sleep 90 & echo $! >&1',
+    'sleep 90 & echo $! 1>&1',
+    'sleep 90 & echo $! >& 1',
     // A redirection of the command before it, or after it, is not the echo's.
     'sleep 90 > /dev/null & echo $!',
     'sleep 90 & echo $!; echo x > f',

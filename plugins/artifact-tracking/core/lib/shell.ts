@@ -50,8 +50,9 @@ export type Segment = {
    * `stdoutRedirected`: a typed redirection sends fd 1 away (`>`, `>>`, `>|`, `&>`, `&>>`, `>&word`, `1>`), on the segment
    * or on the group, subshell or compound that holds it (`{ a; } > f`, `for ...; done > f`), or after a substitution that cut
    * the command into segments (`a $(b) c > f` marks `a` and `c`), or after a bare `exec` that redirects the output in the
-   * same shell (`exec > f; a` marks `a`, `( exec > f ); a` does not). A redirection of stderr
-   * (`2>`, `2>&1`), of the input or of another descriptor (`3>`, `{fd}>`) leaves the output alone.
+   * same shell (`exec > f; a` marks `a`, `( exec > f ); a` and `{ exec > f; } > g; a` do not: the redirected group gives fd 1
+   * back at its end). A redirection of stderr (`2>`, `2>&1`), of the input or of another descriptor (`3>`, `{fd}>`) leaves
+   * the output alone, and so does a copy of fd 1 onto itself (`>&1`, `1>&1`, `>& 1`).
    */
   stdoutRedirected: boolean
   /**
@@ -165,7 +166,8 @@ type Place = {
  * Each segment says where its standard output goes (issue #231): `stdoutRedirected`, `stdoutPiped` and `substituted`. A group,
  * subshell, loop or `case` that is redirected or piped marks every segment in it. The marks are ranges over the segments,
  * summed once at the end, so a redirection on each of a deep nest of groups costs O(n), not O(n^2). A bare `exec` that
- * redirects the output marks the later segments of its shell and of the subshells under it.
+ * redirects the output marks the later segments of its shell and of the subshells under it, up to the end of the group, loop
+ * or `if` that redirects the output around it (`{ exec > f; } > g; a` marks no `a`, `{ exec > f; }; a` does).
  */
 export function splitShell(command: string): Segment[] {
   const out: Segment[] = []
@@ -232,13 +234,21 @@ export function splitShell(command: string): Segment[] {
   // say which segments are covered. Marking each segment of the range would cost O(n) for each of a nest of n groups.
   const pipeRuns: number[] = []
   const redirRuns: number[] = []
-  // The index of each segment that is a bare `exec` with a redirection of the output (`exec > f`). It moves the output of its
-  // shell for good, so the segments after it in that shell, and in the subshells under it, are marked at the end.
+  // The index of each segment that is a bare `exec` with a redirection of the output (`exec > f`), in segment order. It moves
+  // the output of its shell, so the segments after it in that shell, and in the subshells under it, are marked at the end.
   const execs: number[] = []
   const cover = (runs: number[], from: number, to: number) => {
     if (from >= to) return
     runs[from] = (runs[from] ?? 0) + 1
     runs[to] = (runs[to] ?? 0) - 1
+  }
+  // The group, subshell or compound that holds the segments from `from` on redirects the output, and closes now. It saves fd 1
+  // and gives it back at its end (`{ exec > f; } > g; a` prints `a`, in bash), so an exec inside it moves the output only up to
+  // here. The range marks those segments already, so the exec has nothing left to mark and is dropped. The execs inside the
+  // range are the last ones of the list, so each exec is dropped once: O(1) amortized, also on a nest of redirected groups.
+  const redirected = (from: number) => {
+    cover(redirRuns, from, out.length)
+    while (execs.length > 0 && execs[execs.length - 1]! >= from) execs.pop()
   }
   // The first segment of the group, subshell or backtick that closed just now, while only redirections have come after
   // it: `{ a; } > f` has the words `> f` after the `}`, and they make no segment. -1: no group closed right before.
@@ -467,7 +477,7 @@ export function splitShell(command: string): Segment[] {
     }
     const { words: clean, heads: cleanHeads, stdout } = dropRedirections(words, heads)
     // The words after the `}` or `)` of a group that only redirect (`{ a; } > f`) make no segment: the group is redirected.
-    if (clean.length === 0 && stdout && closedFrom >= 0) cover(redirRuns, closedFrom, out.length)
+    if (clean.length === 0 && stdout && closedFrom >= 0) redirected(closedFrom)
     if (clean.length > 0) {
       out.push({
         words: clean.map(unmarkDollars),
@@ -507,7 +517,7 @@ export function splitShell(command: string): Segment[] {
           const open = compounds.pop()
           if (open) {
             back(open)
-            if (stdout) cover(redirRuns, open.from, out.length)
+            if (stdout) redirected(open.from)
           }
         }
       }
@@ -862,9 +872,19 @@ const bareExec = (words: readonly string[], typed: readonly Typed[]): boolean =>
  * The redirection sends fd 1 away (issue #231). `fd` is the descriptor in front of the operator: none or `&` for a `>` form
  * (`> f`, `>> f`, `>| f`, `>&2`, `&> f`), or `1` for any operator. A number other than 1 (`2>&1`), a `{name}` and an input
  * redirection with no number (`< f`, `<> f`, `<<< x`) leave the output alone. `>&2` and `>&-` count as one: they move or close it.
+ * `>&1` copies fd 1 onto itself and moves nothing: `dropRedirections` checks it with `COPY_OF_STDOUT`.
  */
 const sendsStdout = (fd: string, op: string): boolean =>
   /^\d+$/.test(fd) ? Number(fd) === 1 : (fd === '' || fd === '&') && op.startsWith('>')
+
+/**
+ * The target of a `>&` or `<&` that copies fd 1 onto itself: `1`, `01`, or `1-` (a move onto itself). Bash then saves nothing and
+ * changes nothing (5.3.20: `echo hi >&1` prints, and `{ exec >/dev/null; } >&1; echo after` prints nothing), so with `>&1`, `1>&1`,
+ * `>& 1` and `1<&1` the redirection sends fd 1 nowhere. Any other target moves it (`>&2`, `>&-`, `>&10`, `>&1x`, which is a file).
+ * `dropRedirections` reads a target only after a `>` or `<` with no `&` in front. `&>&1` and `>>&1` are syntax errors in bash, so
+ * they copy nothing and stay a redirection (the run takes no id, the safe side).
+ */
+const COPY_OF_STDOUT = /^0*1-?$/
 
 /**
  * Drops redirections (`> f`, `2>&1`, `&>f`, `<f`, `<> f`, `<<< word`, `{fd}>f`) and their targets. `typed[i].head` is how
@@ -891,10 +911,20 @@ function dropRedirections(
       continue
     }
     cut = true
-    if (sendsStdout(m.groups!.fd!, m.groups!.op!)) out.stdout = true
-    // `>` alone takes the next word as its target; `>file` and `2>&1` carry it. So does a target that was quoted or
-    // escaped, right behind the typed `>` (`>\>`, `>'f g'`, and an empty quote: `>''`).
-    if (m.groups!.rest === '' && t.whole) i++
+    const { fd, op, rest } = m.groups! as { fd: string; op: string; rest: string }
+    // `>&` and `<&` copy a descriptor (the regex reads the `&` as the start of `rest`). Their target stands behind the `&`, glued
+    // (`>&1`, also quoted: `>&'1'`) or in the next word (`>& 1`, `>& f`), and that word is no word of the command. The target
+    // stays empty for the other operators, so `sendsStdout` alone decides there.
+    let target = ''
+    if (rest.startsWith('&') && fd !== '&' && (op === '>' || op === '<')) {
+      target = rest.slice(1) + word.slice(t.head)
+      if (target === '' && t.whole) target = words[++i] ?? ''
+    } else if (rest === '' && t.whole) {
+      // `>` alone takes the next word as its target; `>file` and `2>&1` carry it. So does a target that was quoted or
+      // escaped, right behind the typed `>` (`>\>`, `>'f g'`, and an empty quote: `>''`).
+      i++
+    }
+    if (sendsStdout(fd, op) && !COPY_OF_STDOUT.test(target)) out.stdout = true
   }
   return out
 }
