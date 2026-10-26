@@ -34,7 +34,8 @@ Example: - [x] Band shows "Processes n" — tests/view.test.ts, "band lists proc
 
 ## Test plan
 
-<!-- Tick what ran and passed. Not applicable: tick it and write "N/A: <reason>". -->
+<!-- Tick what ran and passed. Not applicable: tick it and write "N/A: <reason>".
+After a change to the artifact tracker, run `make e2e` too: AGENTS.md, "Lint and hooks". -->
 
 - [ ] `make verify` (lint with auto-fix, test, e2e-unit)
-- [ ] `make e2e` after a change in `plugins/` or `e2e/`
+- [ ] `make e2e-safe` after a change in `plugins/` or `e2e/`

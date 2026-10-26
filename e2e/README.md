@@ -5,8 +5,9 @@ Gherkin scenarios that drive a real `claude` in tmux. The same harness records t
 | Command | What it does |
 | --- | --- |
 | `make e2e-unit` | Unit tests of the harness. No `claude`. Runs in CI. |
-| `make e2e` | Every scenario against a real `claude`, the `@artifacts` scenario included (`-p all`). Needs a Claude login and tmux. Local only. |
-| `npx cucumber-js` (in `e2e/`) | Every scenario except `@artifacts`. This is the default profile. |
+| `make e2e-safe` | Every scenario against a real `claude`, except `@artifacts`. It runs the default profile. This is the default local run. Needs a Claude login and tmux. Local only. |
+| `make e2e` | Every scenario against a real `claude`, the `@artifacts` scenario included (`-p all`). It publishes a private page to claude.ai with your login. Run it too after a change to the artifact tracker or to the `@artifacts` scenario: that scenario is the only live check of the tracker (`AGENTS.md`, "Lint and hooks"). Needs a Claude login and tmux. Local only. |
+| `npx cucumber-js` (in `e2e/`) | The same selection as `make e2e-safe`: the default profile. Use it to add flags, such as `--tags`. |
 | `make demo` | Records the `@demo` scenario and renders `docs/assets/demo.gif`. |
 
 ## The terminal size
@@ -67,7 +68,7 @@ The copy key of the questions tracker hands its text to the engine (`$.ui.copy`)
 
 ## Run one scenario
 
-`make e2e` runs every scenario. `npx cucumber-js` runs every scenario except `@artifacts`. Pick fewer with a tag, a name or a file position:
+`make e2e-safe` and `npx cucumber-js` run every scenario except `@artifacts`. `make e2e` runs every scenario. Pick fewer with a tag, a name or a file position:
 
 | Goal | Command (from `e2e/`) |
 | --- | --- |
@@ -81,7 +82,7 @@ A positional argument such as `features/pane.feature:42` does not replace the pa
 
 A line number that points at a `Scenario Outline` or at one row of its `Examples` table picks all examples or that one example.
 
-Tags in use: `@demo` marks the scenario that `make demo` records. `@artifacts` publishes a private page to claude.ai with your login and deletes it. The default profile and the profiles `one` and `demo` skip it, so a bare `npx cucumber-js features/pane.feature` is safe. `--tags 'not @artifacts'` still works and means the same. Opt in with `-p artifacts` (that scenario alone) or `-p all` (every scenario, as `make e2e` does). `--tags @artifacts` on the default profile selects nothing: cucumber joins the tag expression of the profile and the one of the command line with `and`, so `(not @artifacts) and @artifacts` is empty. A guard test in `tests/cucumber.test.ts` fails when any other profile can select the `@artifacts` scenario. `@inline-help` is the help view of the inline pane at 100 by 40, with a config file path of 90 cells.
+Tags in use: `@demo` marks the scenario that `make demo` records. `@artifacts` publishes a private page to claude.ai with your login and deletes it. The default profile and the profiles `one` and `demo` skip it, so a bare `npx cucumber-js features/pane.feature` is safe. `--tags 'not @artifacts'` still works and means the same. Opt in with `-p artifacts` (that scenario alone) or `-p all` (every scenario, as `make e2e` does). `make e2e-safe` names no profile, so it takes the default one and never opts in. `--tags @artifacts` on the default profile selects nothing: cucumber joins the tag expression of the profile and the one of the command line with `and`, so `(not @artifacts) and @artifacts` is empty. A guard test in `tests/cucumber.test.ts` fails when any other profile can select the `@artifacts` scenario. Another test there runs `--dry-run` with the recipe of each target and pins the scope: `make e2e-safe` selects every scenario but `@artifacts`, and `make e2e` selects those plus `@artifacts`. `@inline-help` is the help view of the inline pane at 100 by 40, with a config file path of 90 cells.
 
 ## Environment
 

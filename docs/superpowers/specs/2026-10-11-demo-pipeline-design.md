@@ -4,7 +4,7 @@ Status: implemented 2026-10-11. Branch: `feat/demo-pipeline`.
 
 ## 1. Goal
 
-`make demo` records a real Claude Code session that uses the `artifact-tracking` mod. It writes a small animated GIF for the README. The same scenario files also run as local end-to-end (E2E) tests under `make e2e`.
+`make demo` records a real Claude Code session that uses the `artifact-tracking` mod. It writes a small animated GIF for the README. The same scenario files also run as local end-to-end (E2E) tests under `make e2e-safe`. `make e2e` adds the `@artifacts` scenario.
 
 Three parts:
 
@@ -93,7 +93,7 @@ e2e/
   package.json          @cucumber/cucumber, @types/node; npm scripts
   package-lock.json
   tsconfig.json         noEmit, erasableSyntaxOnly, strict
-  cucumber.mjs          profiles: default (every scenario but @artifacts), all (every scenario, make e2e),
+  cucumber.mjs          profiles: default (every scenario but @artifacts, make e2e-safe), all (every scenario, make e2e),
                         artifacts (@artifacts alone), one (no paths: only what the command line names), demo (record, tags @demo)
   features/
     tracking.feature    written by the skill
@@ -180,7 +180,7 @@ sequenceDiagram
 
 ### 4.1 Before
 
-1. Take the run lock in `<os tmpdir>/cc-demo-lock` (one lock for the fixed tmux socket). Only then wipe and make the scenario folder: `e2e/out/<scenario-slug>/` for `make e2e`, `e2e/out/demo/` when recording. It holds `signal`, `timeline.ndjson`, `session.cast` and failure dumps. A second run waits for the lock, one try every 5 s for at most `DEMO_LOCK_WAIT_S` (30 minutes by default), and prints which run holds it. After that it fails with a clear message, and the later scenarios of that run fail at once. It never removes the lock of a live run and touches no file of the first run.
+1. Take the run lock in `<os tmpdir>/cc-demo-lock` (one lock for the fixed tmux socket). Only then wipe and make the scenario folder: `e2e/out/<scenario-slug>/` for `make e2e-safe` and `make e2e`, `e2e/out/demo/` when recording. It holds `signal`, `timeline.ndjson`, `session.cast` and failure dumps. A second run waits for the lock, one try every 5 s for at most `DEMO_LOCK_WAIT_S` (30 minutes by default), and prints which run holds it. After that it fails with a clear message, and the later scenarios of that run fail at once. It never removes the lock of a live run and touches no file of the first run.
 2. `git clone --quiet <repo root> $DEMO_DIR/claude-code-mod-tracking`, after a wipe of the old folder. Set `origin` to the URL of the checkout under test. Check out the current `HEAD` as branch `main`.
 3. Make an empty tracker config folder with `mkdtemp` (`<os tmpdir>/cc-tracker-config-…`). Section 4.2 passes it to `claude`, so no run reads or writes the developer's real `config.json`.
 4. Start the tmux server and session with these options: `status on`, `status-position top`, `status-left ''`, `status-right ''`, `status-format[0] '#[align=centre]#{@caption}'`, `set-titles off`, `allow-rename off`, `allow-set-title off`, `focus-events on` (else Claude Code shows a notice), `default-shell /bin/sh`. The tmux socket is fixed (`cc-demo`). `setUp` kills a server that a crashed run left. Every tmux call uses `-u` for UTF-8. The pane runs `exec env 'PS1=$ ' /bin/sh` in the clone: the non-interactive default shell drops `PS1`, so the command sets it again. No personal shell prompt or rc file shows. Set `TERM=xterm-256color` and `COLORTERM=truecolor`.
@@ -327,10 +327,11 @@ Unit tests cover:
 | --- | --- |
 | `e2e-deps` | `npm ci` in `e2e/` when `package-lock.json` is newer than `node_modules`. |
 | `e2e-unit` | `node --test e2e/tests` (no `claude`, no tmux). |
-| `e2e` | `e2e-deps`, then `cucumber-js -p all`. All scenarios, `@artifacts` included, no recording. The default profile (a bare `cucumber-js`) skips `@artifacts`, which publishes a page to claude.ai. |
+| `e2e-safe` | `e2e-deps`, then a bare `cucumber-js`. The default profile: all scenarios except `@artifacts`, which publishes a page to claude.ai. No recording. This is the default local run. |
+| `e2e` | `e2e-deps`, then `cucumber-js -p all`. All scenarios, `@artifacts` included, no recording. |
 | `demo` | `e2e-deps`, then `cucumber-js -p demo`, then `render.ts` to `docs/assets/demo.gif`. |
 | `typecheck` | Also runs `tsc -p e2e`. |
-| `init` | Also reports `tmux`, `asciinema`, `agg` and `gifsicle`. They are needed by `e2e` and `demo` only. |
+| `init` | Also reports `tmux`, `asciinema`, `agg` and `gifsicle`. They are needed by `e2e-safe`, `e2e` and `demo` only. |
 
 Node runs through `mise exec node@24`, as for the plugin. The Makefile variable `NODE_RUN` holds that prefix. CI sets it empty: `make test … NODE_RUN=` and `make e2e-unit NODE_RUN=`.
 
@@ -344,7 +345,7 @@ Node runs through `mise exec node@24`, as for the plugin. The Makefile variable 
 | `.gitignore` | `e2e/node_modules/`, `e2e/out/`. | Local artifacts. |
 | `.github/workflows/test.yml` | Runs `make e2e-unit`. | The retime is pure and cheap to test in CI. |
 | `README.md` | New "Demo" section near the top: GIF, short narrative, feature list. | The goal of the pipeline. The skill writes it. |
-| `AGENTS.md` | One line: `make e2e` after a change to `plugins/` or `e2e/`, when a Claude login is at hand. | Contributors know the suite exists. |
+| `AGENTS.md` | One line: `make e2e-safe` after a change to `plugins/` or `e2e/`, when a Claude login is at hand. | Contributors know the suite exists. |
 
 ## 9. The `demo-scenario` skill
 
@@ -374,7 +375,7 @@ The skill text does not get markdownlint, because hooks skip `.agents/` and `.cl
 | Layer | What | Where |
 | --- | --- | --- |
 | Unit | `retime`, cast parse and write, ANSI strip, config parsing. | `make e2e-unit`, local and CI. |
-| E2E | All feature files against a real session. | `make e2e`, local only. |
+| E2E | All feature files against a real session. | `make e2e-safe`, or `make e2e` with the `@artifacts` scenario. Local only. |
 | Demo | The `@demo` scenario recorded and rendered, with a size check. | `make demo`, local only. |
 
 ## 11. Risks

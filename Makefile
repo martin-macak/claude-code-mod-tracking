@@ -43,7 +43,7 @@ E2E_STAMP := $(E2E)/node_modules/.package-lock.json
 DEMO_GIF  := docs/assets/demo.gif
 
 .DEFAULT_GOAL := help
-.PHONY: help init build typecheck test coverage test-scripts check verify project-sync e2e-deps e2e-unit e2e demo lint hooks dist release release-dry marketplace-release install uninstall clean
+.PHONY: help init build typecheck test coverage test-scripts check verify project-sync e2e-deps e2e-unit e2e-safe e2e demo lint hooks dist release release-dry marketplace-release install uninstall clean
 
 help: ## List the targets
 	@echo "Targets (PLUGIN=$(PLUGIN)):"
@@ -64,8 +64,8 @@ init: ## Check the tools, print versions, warm the TypeScript cache
 	done; \
 	"$(ROOT)/scripts/dev/gh-check.sh"; \
 	for t in tmux asciinema agg gifsicle; do \
-	  if command -v $$t >/dev/null 2>&1; then printf '%-9s: present (for make e2e / make demo)\n' "$$t"; \
-	  else printf '%-9s: missing (needed by make e2e / make demo, brew install %s)\n' "$$t" "$$t"; fi; \
+	  if command -v $$t >/dev/null 2>&1; then printf '%-9s: present (for make e2e-safe / make e2e / make demo)\n' "$$t"; \
+	  else printf '%-9s: missing (needed by make e2e-safe / make e2e / make demo, brew install %s)\n' "$$t" "$$t"; fi; \
 	done; \
 	if command -v pre-commit >/dev/null 2>&1; then printf 'pre-commit: %s\n' "$$(pre-commit --version)"; \
 	else echo 'pre-commit: missing (needed by make hooks and make lint)'; fi; \
@@ -120,6 +120,7 @@ test-scripts: ## Test the repo scripts (no claude needed)
 	$(NODE_RUN) node --experimental-transform-types --test scripts/coverage/kit-shim.test.ts scripts/coverage/check.test.mjs
 	$(NODE_RUN) node --experimental-transform-types --no-warnings --import $(ROOT)/scripts/coverage/loader.mjs --test scripts/contracts/*.test.mjs
 	scripts/dev/gh-check.test.sh
+	bash scripts/ci/check-pr-body.test.sh
 	bash scripts/release/release.test.sh
 	bash scripts/release/ci-guards.test.sh
 	bash scripts/release/smoke.test.sh
@@ -156,8 +157,12 @@ $(E2E_STAMP): $(E2E)/package-lock.json
 e2e-unit: e2e-deps ## Unit-test the e2e harness (no claude, tmux tests skip without tmux)
 	cd $(E2E) && $(NODE_RUN) node --test 'tests/**/*.test.ts'
 
-# The default profile skips the @artifacts scenario (it publishes a private page to claude.ai). This target runs
-# every scenario, so it names the profile `all`. e2e/cucumber.mjs and e2e/README.md say why.
+# The default profile skips the @artifacts scenario (it publishes a private page to claude.ai). e2e-safe is the
+# default local run: it names no profile, so it runs that default and publishes nothing. e2e runs every scenario, so
+# it names the profile `all`. e2e/cucumber.mjs and e2e/README.md say why. tests/cucumber.test.ts pins both selections.
+e2e-safe: e2e-deps ## Run every Gherkin scenario except @artifacts against a real claude (needs a Claude login, tmux)
+	cd $(E2E) && $(NODE_RUN) npx cucumber-js
+
 e2e: e2e-deps ## Run every Gherkin scenario, @artifacts included, against a real claude (needs a Claude login, tmux)
 	cd $(E2E) && $(NODE_RUN) npx cucumber-js -p all
 
