@@ -1081,6 +1081,12 @@ test('splitShell marks a redirection of the standard output glued to the last wo
   expect(outMarks('docker run -d x &>f')).toEqual(['docker run -d x >'])
   expect(outMarks('docker run -d "nginx">f')).toEqual(['docker run -d nginx >'])
   expect(outMarks("docker run -d 'nginx'>>f")).toEqual(['docker run -d nginx >'])
+  // A number that was quoted or escaped is a word, no file descriptor: only a typed one belongs to the redirection (`2>f`).
+  expect(outMarks('docker run -d "2">f')).toEqual(['docker run -d 2 >'])
+  expect(outMarks("docker run -d '1'>f")).toEqual(['docker run -d 1 >'])
+  expect(outMarks('docker run -d \\2>f')).toEqual(['docker run -d 2 >'])
+  // A `{` inside a word is no `${`: it opens no parameter expansion, so the `>` after it ends the word.
+  expect(outMarks('docker run -d a{b>f')).toEqual(['docker run -d a{b >'])
   expect(outMarks('docker run -d $IMG>f')).toEqual(['docker run -d $IMG >'])
   expect(outMarks('docker run -d -e A=b>f nginx')).toEqual(['docker run -d -e A=b nginx >'])
   // The words after the redirection stay, and the next command is not marked.
@@ -1120,6 +1126,8 @@ test('splitShell keeps a > inside an open parameter expansion as text', () => {
   }
   expect(outMarks('echo ${X}>f c')).toEqual(['echo ${X} c >'])
   expect(outMarks('echo ${X:-a}>f c')).toEqual(['echo ${X:-a} c >'])
+  // An open `${` ends with its word: it does not reach the next command.
+  expect(outMarks('echo ${X; a>f')).toEqual(['echo ${X', 'a >'])
 })
 // biome-ignore-end lint/suspicious/noTemplateCurlyInString: end of the shell texts
 
@@ -1145,6 +1153,11 @@ test('splitShell reads >(...) as a word and > >(...) as a redirection', () => {
   expect(outMarks('cat < <(a)')).toEqual(['cat', 'a $'])
   // A redirection after a process substitution is one of the whole command, so `diff` is marked (the inner marks are not read).
   expect(outMarks('diff <(a) <(b) > f').filter(m => !m.endsWith(' $'))).toEqual(['diff >'])
+  // Only a `(` can open a process substitution. The `>` in front of a `$(` or a backtick is a redirection to the file that the
+  // substitution names (`a > $(echo f)` writes to `f`), and it stays a redirection.
+  expect(outMarks('docker run -d x > $(echo f)')).toEqual(['docker run -d x >', 'echo f $'])
+  expect(outMarks('docker run -d x >$(echo f)')).toEqual(['docker run -d x >', 'echo f $'])
+  expect(outMarks('docker run -d x > `echo f`')).toEqual(['docker run -d x >', 'echo f $'])
 })
 
 // A bare `exec` that redirects its output moves the output of the shell itself, so every later command of that shell prints
@@ -1333,6 +1346,8 @@ test('splitShell marks the head of a command that a substitution split, when a r
   expect(outer('a $(b) c & d > f')).toEqual(['a', 'c', 'd >'])
   expect(outer('a $(b) c; { d; } > f')).toEqual(['a', 'c', 'd >'])
   expect(outer('a $(b) c; ( d ) > f')).toEqual(['a', 'c', 'd >'])
+  // A subshell is no substitution: the keyword in front of it is another command, and the redirection is the subshell's alone.
+  expect(outer('for i in 1; do ( a ) > f; done')).toEqual(['for i in 1', 'do', 'a >', 'done'])
   // A redirection inside the substitution is the inner command's, not the outer one's.
   expect(outer('a $(b > g) c')).toEqual(['a', 'c'])
   expect(outer('a $(b $(c) > g) d')).toEqual(['a', 'd'])
@@ -1384,6 +1399,8 @@ test('splitShell reads the | between the patterns of a case as no pipe', () => {
 test('splitShell marks a segment inside a command substitution, backticks or a process substitution', () => {
   expect(outMarks('echo $(a)')).toEqual(['echo', 'a $'])
   expect(outMarks('echo `a`')).toEqual(['echo', 'a $'])
+  // The text in backticks is a command, no arithmetic: a glued `>` in it is a redirection.
+  expect(outMarks('echo `a>f`')).toEqual(['echo', 'a > $'])
   expect(outMarks('x=$(a; b) c')).toEqual(['x=', 'a $', 'b $', 'c'])
   expect(outMarks('echo $(a $(b) c) d')).toEqual(['echo', 'a $', 'b $', 'c $', 'd'])
   expect(outMarks('echo $( ( a ) )')).toEqual(['echo', 'a $'])

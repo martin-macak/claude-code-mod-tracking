@@ -20,7 +20,7 @@ The types contract names the core fields:
 | Monitor | `tool.call` Monitor result `taskId` | `task-notification` (a `<status>` when the source ends, the `<event>` text at the deadline), `TaskStop`, and the end of a workflow agent that armed it | High | None (event only) |
 | Docker run / compose up | Parse Bash command (`docker run -d`, `docker compose up -d`) and stdout container id | `docker ps -a` (+ compose label filter) | Medium-high (exact when the id is the run's own output: `containerIdExact`, see "Parsing the Bash command"; or when the project is known) | Medium |
 | tmux / screen | Parse Bash command (`tmux new -d -s`, `screen -dmS`) | `tmux ls`, `screen -ls` | Medium-high (exact when session name is explicit) | Low |
-| Detached process | Parse Bash command (a part that ends in `&`, or `setsid -f`) and PID from `echo $!` | `ps -p <pid> -o lstart=,command=`; with no PID, one `ps -A -o pid=,lstart=,command=` lookup by command and start time | Medium (reuse guarded by command fingerprint and start time) | Low-medium |
+| Detached process | Parse Bash command (a part that ends in `&`, or `setsid -f`) and PID from an `echo $!` that prints to the tool result | `ps -p <pid> -o lstart=,command=`; with no PID, one `ps -A -o pid=,lstart=,command=` lookup by command and start time | Medium (reuse guarded by command fingerprint and start time) | Low-medium |
 
 ## What ships now, and what waits
 
@@ -65,7 +65,29 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   no row. `$!` after it is the pid of the loop shell, so no earlier background
   command takes it. A backgrounded builtin (`echo x &`, `cd d &`) is the same:
   its shell makes no row, and the pid line that the next `echo $!` prints is
-  dropped, so the job after it gets its own pid. Every detector reads the
+  dropped, so the job after it gets its own pid. An `echo $!` (or a `printf`
+  of `$!`) takes or drops a pid line only when its output reaches the tool
+  result (`keepsStdout`, the rule of "The id of a container", issue #231).
+  `echo $! > pid.txt` (also `>>`, `1>`, `&>`, `>|`, a glued `>pid.txt`),
+  `echo $! | tee f`, `PID=$(echo $!)`, an `echo $!` in a redirected group and
+  one after `exec > f` print no pid line, so they take none and drop none: in
+  `sleep 90 & echo $! > pid.txt; echo 4242` the line `4242` is the later echo's,
+  and the row gets no pid. A backgrounded `echo $! > f &` is a backgrounded
+  builtin like any other: the `$!` after it names its shell. The pid lines pair
+  with the echoes that print by position, and only when there is one line for
+  each echo (the owner's decision, the same count rule as `pairContainerIds`).
+  Any other count gives no job of the call a pid, and the probe finds the rows
+  by their fingerprint. A pipe is read as no output, as for the id of a
+  container, but `cat` may print the line. In
+  `sleep 100 & echo $! | cat; sleep 101 & echo $!` with the lines `4242` and
+  `4243` the one echo that prints stands against two lines, so neither job gets
+  a pid. Before the rule the line slid onto the next job, and `sleep 101` took
+  `4242`, the pid of `sleep 100`. The same rule drops the pid of a call where
+  another command prints a bare number line (`sleep 90 & echo $!; echo 4243`).
+  An echo counts only when `$!` is set: one before the first `&` prints an empty
+  line, and `setsid -f` forks on its own and sets no `$!`, so neither counts. A
+  second `echo $!` of the same job prints the same line again, counts, and gives
+  its job nothing more. Every detector reads the
   command after these words, not only the detached-process one. A variable set
   in a branch applies in text order: the last write wins, as with `&&` and `||`.
   Evidence (grade: *verified-kit* for the parser, not *verified-live*): the
@@ -382,7 +404,8 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   tests "container id: ..." in `process-parse.test.ts` (the glued forms, the bare
   `exec` and the limits among them), the marks in `shell.test.ts` ("splitShell
   marks ..."), the merge in `process-container-id.test.ts` and the stored row in
-  `processes-tracker.test.ts` ("a second sighting of a named container ...").
+  `processes-tracker.test.ts` ("a second sighting of a named container ..."),
+  and for the pid line of `echo $!` the tests named `echo $!: ...` in `process-parse.test.ts`.
   The wrong pairs were seen in the real parser at `9b5fa44` before the fix: one
   `docker run -d` with four id lines took the last, an older container ([study of
   #123, part 2](https://github.com/martin-macak/claude-code-mod-tracking/issues/123#issuecomment-6412081219),
