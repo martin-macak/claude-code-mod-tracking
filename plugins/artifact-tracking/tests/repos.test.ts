@@ -160,6 +160,9 @@ test('parseRepoHintsFromBash reads a git command after do, then, else, elif, if,
     'if ! git -C /tmp/r push; then :; fi',
     'while ! git -C /tmp/r push; do :; done',
     'time ! git -C /tmp/r push',
+    'time -p git -C /tmp/r push',
+    'time -- git -C /tmp/r push',
+    'time -p ! git -C /tmp/r push',
     '! time git -C /tmp/r push',
     'if time ! git -C /tmp/r push; then :; fi',
   ]) {
@@ -1393,6 +1396,40 @@ test('parseRepoHintsFromBash reads a quoted or escaped reserved word as a comman
   expect(paths('for i in 1; do git -C /x status; done')).toEqual(['/x'])
   expect(paths('if ! git -C /x status; then :; fi')).toEqual(['/x'])
   expect(paths('time ! git -C /x status')).toEqual(['/x'])
+})
+
+// Bash reads an option of `time` only when it was typed whole. `time "-p" git -C /x status` runs a command named `-p`, so
+// no `git` runs and no folder is read (Codex review of the PR).
+test('parseRepoHintsFromBash reads a quoted or escaped option of time as the command', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('time "-p" git -C /x status')).toEqual([])
+  expect(paths("time '-p' git -C /x status")).toEqual([])
+  expect(paths('time \\-p git -C /x status')).toEqual([])
+  expect(paths('time "--" git -C /x status')).toEqual([])
+  expect(paths('time -p "--" git -C /x status')).toEqual([])
+  expect(paths("for i in 1; do time '-p' git -C /x status; done")).toEqual([])
+  // The controls: the same options typed whole are still skipped.
+  expect(paths('time -p -- git -C /x status')).toEqual(['/x'])
+  expect(paths('for i in 1; do time -p git -C /x status; done')).toEqual(['/x'])
+})
+
+// A redirection between `time` and an option ends the options: `time >/dev/null -p git -C /x status` runs a command named
+// `-p` (bash 3.2 and 5.3), so no `git` runs and no folder is read (Codex review of the PR).
+test('parseRepoHintsFromBash reads a word behind a redirection as the command, not as an option of time', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('time >/dev/null -p git -C /x status')).toEqual([])
+  expect(paths('time > /dev/null -p git -C /x status')).toEqual([])
+  expect(paths('time 2>&1 -p git -C /x status')).toEqual([])
+  expect(paths('time </dev/null -- git -C /x status')).toEqual([])
+  expect(paths('time -p >/dev/null -- git -C /x status')).toEqual([])
+  expect(paths('time <<EOF -p git -C /x status\nbody\nEOF')).toEqual([])
+  expect(paths('time -p <<EOF -- git -C /x status\nbody\nEOF')).toEqual([])
+  expect(paths('for i in 1; do time >/dev/null -p git -C /x status; done')).toEqual([])
+  // The controls: a redirection behind the options, in front of the command, is no matter.
+  expect(paths('time -p >/dev/null git -C /x status')).toEqual(['/x'])
+  expect(paths('time -p -- >/dev/null git -C /x status')).toEqual(['/x'])
+  expect(paths('time >/dev/null git -C /x status')).toEqual(['/x'])
+  expect(paths('for i in 1; do time -p >/dev/null git -C /x status; done')).toEqual(['/x'])
 })
 
 // A `<<` in arithmetic is a shift (issue #194). The lines after it run, so the `cd` and the `git` after `x=$((1<<2))` count.

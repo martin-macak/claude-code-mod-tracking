@@ -675,6 +675,8 @@ test('parseBashProcesses keeps the session folder after a cd in a loop that runs
   // `time [-p]` can stand in front of a compound. The loop after it runs in the background as a whole, and its `done`
   // does not close the compound around it.
   expect(composeProject('time -p for d in a; do cd /x; done & docker compose up -d')).toBe('app')
+  expect(composeProject('time -p -- for d in a; do cd /x; done & docker compose up -d')).toBe('app')
+  expect(composeProject('time -- for d in a; do cd /x; done & docker compose up -d')).toBe('app')
   expect(composeProject('if true; then cd /x; time for i in 1; do :; done & docker compose up -d; fi')).toBe('x')
   expect(composeProject('for d in a; do for e in b; do cd /x; done; done & docker compose up -d')).toBe('app')
   expect(composeProject('cd /x && for d in a; do :; done & docker compose up -d')).toBe('app')
@@ -845,6 +847,17 @@ test('loop: the $! line of a backgrounded loop is not the pid of the next backgr
 test('builtin: a backgrounded echo $! after a background job still gives it its pid', () => {
   const [row] = detachedOf('sleep 100 & echo $! & echo $!', undefined, '4242\n4243\n')
   expect(row).toMatchObject({ name: 'sleep 100', pid: 4242 })
+})
+
+test('time: the command after time -p or time -- is read as the command', () => {
+  expect(names('time -p sleep 10 &')).toEqual(['sleep 10'])
+  expect(names('time -- sleep 10 &')).toEqual(['sleep 10'])
+  expect(names('time -p ! sleep 10 &')).toEqual(['sleep 10'])
+  // Only `setsid time -p ...` reaches the second `stripWrappers` call, after `stripSetsid`. `time -p setsid ...` is the
+  // other order.
+  expect(names('setsid time -p sleep 10 &')).toEqual(['sleep 10'])
+  expect(names('time -p setsid sleep 10 &')).toEqual(['sleep 10'])
+  expect(composeProject('time -p docker compose up -d')).toBe('app')
 })
 
 test('if: a background command after ! and time names the command, in either order', () => {
@@ -1084,6 +1097,44 @@ test('parseBashProcesses reads a quoted or escaped reserved word as a command', 
   expect(project('if ! docker compose up -d; then :; fi')).toBe('app')
   expect(project('time ! docker compose up -d')).toBe('app')
   expect(detachedOf('do nohup node srv.js &').map(r => r.name)).toEqual(['node srv.js'])
+})
+
+// Bash reads an option of `time` only when it was typed whole. `time "-p" sleep 10 &` runs a command named `-p` with the
+// arguments `sleep 10`, so the job is not `sleep` and a compose command after it starts no project (Codex review of the
+// PR). `setsid time ...` reaches the second `stripWrappers` call, after `stripSetsid`, and must read the flags too.
+test('parseBashProcesses reads a quoted or escaped option of time as the command', () => {
+  expect(detachedOf('time "-p" sleep 10 &').map(r => r.name)).toEqual(['-p sleep 10'])
+  expect(detachedOf("time '-p' sleep 10 &").map(r => r.name)).toEqual(['-p sleep 10'])
+  expect(detachedOf('time \\-p sleep 10 &').map(r => r.name)).toEqual(['-p sleep 10'])
+  expect(detachedOf('time "--" sleep 10 &').map(r => r.name)).toEqual(['-- sleep 10'])
+  expect(detachedOf('time -p "--" sleep 10 &').map(r => r.name)).toEqual(['-- sleep 10'])
+  expect(detachedOf('setsid time "-p" sleep 10 &').map(r => r.name)).toEqual(['-p sleep 10'])
+  expect(detachedOf('setsid time -p "--" sleep 10 &').map(r => r.name)).toEqual(['-- sleep 10'])
+  expect(composeProject('time "-p" docker compose up -d')).toBeUndefined()
+  expect(composeProject('time -p "--" docker compose up -d')).toBeUndefined()
+  expect(composeProject('setsid time "-p" docker compose up -d')).toBeUndefined()
+  // The controls: the same options typed whole are still skipped.
+  expect(detachedOf('setsid time -p -- sleep 10 &').map(r => r.name)).toEqual(['sleep 10'])
+  expect(composeProject('time -p -- docker compose up -d')).toBe('app')
+})
+
+// A redirection between `time` and an option ends the options: `time >/dev/null -p sleep 10 &` runs a command named `-p`
+// with the arguments `sleep 10` (bash 3.2 and 5.3), so the job is not `sleep` and a compose command after it starts no
+// project (Codex review of the PR). `setsid time ...` reaches the second `stripWrappers` call, which must read the flags too.
+test('parseBashProcesses reads a word behind a redirection as the command, not as an option of time', () => {
+  expect(detachedOf('time >/dev/null -p sleep 10 &').map(r => r.name)).toEqual(['-p sleep 10'])
+  expect(detachedOf('time 2>&1 -p sleep 10 &').map(r => r.name)).toEqual(['-p sleep 10'])
+  expect(detachedOf('time -p >/dev/null -- sleep 10 &').map(r => r.name)).toEqual(['-- sleep 10'])
+  expect(detachedOf('time <<EOF -p sleep 10 &\nbody\nEOF').map(r => r.name)).toEqual(['-p sleep 10'])
+  expect(detachedOf('setsid time >/dev/null -p sleep 10 &').map(r => r.name)).toEqual(['-p sleep 10'])
+  expect(detachedOf('setsid time -p >/dev/null -- sleep 10 &').map(r => r.name)).toEqual(['-- sleep 10'])
+  expect(composeProject('time >/dev/null -p docker compose up -d')).toBeUndefined()
+  expect(composeProject('time -p >/dev/null -- docker compose up -d')).toBeUndefined()
+  expect(composeProject('setsid time >/dev/null -p docker compose up -d')).toBeUndefined()
+  // The controls: a redirection behind the options, in front of the command, is no matter.
+  expect(detachedOf('setsid time -p >/dev/null sleep 10 &').map(r => r.name)).toEqual(['sleep 10'])
+  expect(detachedOf('time -p -- >/dev/null sleep 10 &').map(r => r.name)).toEqual(['sleep 10'])
+  expect(composeProject('time -p >/dev/null docker compose up -d')).toBe('app')
 })
 
 // A `<<` in arithmetic is a shift (issue #194). The lines after it run, so the `cd` and the command after `x=$((1<<2))` count.

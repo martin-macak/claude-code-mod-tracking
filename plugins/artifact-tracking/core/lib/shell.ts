@@ -29,6 +29,13 @@ export type Segment = {
    * and `stripReserved` read this to keep `'done'` as a command (issue #194). Same length and order as `words`.
    */
   whole: boolean[]
+  /**
+   * For each word, `Typed.redir`: a redirection stood right before it in the text, and `words` dropped that redirection.
+   * Bash reads an option of `time` only while nothing stands between it and `time` or the option before it, so a word
+   * behind a redirection is no option: `time >/dev/null -p printf ok` runs a command named `-p` (issue #227). Same length
+   * and order as `words`.
+   */
+  redir: boolean[]
   /** The segment ended with a single `&`: the shell runs it in the background. */
   bg: boolean
   /**
@@ -51,9 +58,25 @@ const COMPOUND_LEAD = new Set(['!', 'do', 'then', 'else', 'elif'])
 /**
  * What `splitShell` knows of a word besides its text. `head`: how many of its first characters were typed, not inside
  * quotes and not after a backslash. `whole`: it holds no quote and no escape at all, so a quote of no length (`esac''`)
- * counts too. A reserved word is one only when it is `whole`: `'case'` and `\if` are commands.
+ * counts too. A reserved word is one only when it is `whole`: `'case'` and `\if` are commands. `redir`: a redirection stood
+ * right before the word, between it and the word before it (or the start of the segment). `dropRedirections` drops the
+ * redirection from the words, and so does the heredoc branch of `splitShell`, so this flag is the only trace of it.
  */
-type Typed = { head: number; whole: boolean }
+type Typed = { head: number; whole: boolean; redir: boolean }
+
+/**
+ * The index after the options that bash gives `time`, from `from`, the word behind it: `-p`, then `--`, each at most
+ * once. Any other word is the command, so `time -x git push` runs a command named `-x` (issue #227). An option counts
+ * only when `plain(i)` says that word `i` was typed whole and that no redirection stands right before it: `time "-p"
+ * printf ok`, `time \-p printf ok` and `time >/dev/null -p printf ok` run a command named `-p`. `compoundLead` and
+ * `stripWrappers` both read the options of `time` here, so the two cannot drift.
+ */
+function skipTimeOptions(words: readonly string[], from: number, plain: (i: number) => boolean): number {
+  let i = from
+  if (words[i] === '-p' && plain(i)) i++
+  if (words[i] === '--' && plain(i)) i++
+  return i
+}
 
 /**
  * The compounds that a segment opens, in order, and the index of the word of the last one. The scan starts at the first
@@ -62,24 +85,24 @@ type Typed = { head: number; whole: boolean }
 function compoundLead(words: readonly string[], typed: readonly Typed[]): { opens: string[]; at: number } {
   const opens: string[] = []
   let at = -1
-  let afterTime = false
   for (let k = 0; k < words.length; k++) {
     const w = words[k]!
     const kw = typed[k]?.whole === true ? w : ''
-    if (COMPOUND_LEAD.has(kw)) afterTime = false
-    else if (kw === 'time') afterTime = true
-    else if (afterTime && w.startsWith('-')) continue
-    else if (COMPOUND_COND.has(kw)) {
+    if (COMPOUND_LEAD.has(kw)) continue
+    if (kw === 'time') {
+      k = skipTimeOptions(words, k + 1, i => typed[i]?.whole === true && typed[i]?.redir === false) - 1
+      continue
+    }
+    if (COMPOUND_COND.has(kw)) {
       opens.push(kw)
       at = k
-      afterTime = false
-    } else {
-      if (COMPOUND_OPEN.has(kw)) {
-        opens.push(kw)
-        at = k
-      }
-      break
+      continue
     }
+    if (COMPOUND_OPEN.has(kw)) {
+      opens.push(kw)
+      at = k
+    }
+    break
   }
   return { opens, at }
 }
@@ -169,6 +192,9 @@ export function splitShell(command: string): Segment[] {
   // Where the last `>` or `<` that was typed (no quote, no backslash) stands. `>|` and the `&` of `>&` and `<&` belong to a
   // redirection only after such a character: after a quoted or escaped one, the `|` is a pipe and the `&` a background.
   let typedRedir = -2
+  // A heredoc operator came and no word since: it leaves no word, so the next word stands behind a redirection. `endWord`
+  // gives that word `Typed.redir`. A redirection that leaves a word (`>f`, `2>&1`) is marked by `dropRedirections`.
+  let afterHeredoc = false
   // A scope opens a list and a pipeline part of its own. Its close gives back the place it sat in.
   const openScope = (tick: boolean, arith = false) => {
     stack.push({ id: `${scope()}.${++scopes}`, tick, saved: here(), compounds: compounds.length, arith })
@@ -331,7 +357,8 @@ export function splitShell(command: string): Segment[] {
           c.fresh = false
         }
         words.push(word)
-        heads.push({ head: typedHead, whole: plain })
+        heads.push({ head: typedHead, whole: plain, redir: afterHeredoc })
+        afterHeredoc = false
       }
     }
     word = ''
@@ -348,6 +375,7 @@ export function splitShell(command: string): Segment[] {
   }
   const endSegment = (bg: boolean) => {
     endWord()
+    afterHeredoc = false // a heredoc at the end of a segment marks no word of the next one
     if (inPattern()) {
       // The words of a pattern are no command: they open or close no compound, and `cd)` moves no folder.
       words = []
@@ -360,6 +388,7 @@ export function splitShell(command: string): Segment[] {
         words: clean.map(unmarkDollars),
         marked: clean,
         whole: cleanHeads.map(h => h.whole),
+        redir: cleanHeads.map(h => h.redir),
         bg,
         scope: scope(),
       })
@@ -460,6 +489,7 @@ export function splitShell(command: string): Segment[] {
         inWord = false
         typedHead = 0
       } else endWord()
+      afterHeredoc = true
       let j = i + 2
       const strip = s[j] === '-'
       if (strip) j++
@@ -627,18 +657,23 @@ const REDIRECT = new RegExp(String.raw`^(?:${FD}?|&)(?:>\||>>?|<>|<<?<?|>&|<&)(.
  * Drops redirections (`> f`, `2>&1`, `&>f`, `<f`, `<> f`, `<<< word`, `{fd}>f`) and their targets. `typed[i].head` is how
  * many of the first characters of `words[i]` were typed. Only that head can hold the redirection: a quoted or escaped `>`
  * is a word (`\>`, `'>'`, `2\>&1`), and so is the word after it (issue #162). Returns the kept words and their `Typed`.
+ * The first word that stays behind a dropped redirection gets `redir` (issue #227).
  */
 function dropRedirections(words: readonly string[], typed: readonly Typed[]): { words: string[]; heads: Typed[] } {
   const out: { words: string[]; heads: Typed[] } = { words: [], heads: [] }
+  // A redirection was dropped since the last word that stayed: the next one stands right behind it.
+  let cut = false
   for (let i = 0; i < words.length; i++) {
     const word = words[i]!
     const t = typed[i]!
     const m = REDIRECT.exec(word.slice(0, t.head))
     if (!m) {
       out.words.push(word)
-      out.heads.push(t)
+      out.heads.push(cut ? { ...t, redir: true } : t)
+      cut = false
       continue
     }
+    cut = true
     // `>` alone takes the next word as its target; `>file` and `2>&1` carry it. So does a target that was quoted or
     // escaped, right behind the typed `>` (`>\>`, `>'f g'`, and an empty quote: `>''`).
     if (m[1] === '' && t.whole) i++
@@ -668,8 +703,20 @@ export function stripReserved(words: readonly string[], whole?: readonly boolean
   return words.slice(i)
 }
 
-/** Strips `VAR=x`, `sudo`, `env`, `time`, `command`, `exec`, `nice`, `nohup` from the front. Returns the env it set. */
-export function stripWrappers(words: readonly string[]): {
+/**
+ * Strips `VAR=x`, `sudo`, `env`, `time`, `command`, `exec`, `builtin`, `nice`, `nohup` from the front. Returns the env
+ * it set. `time` takes its options with it (`time -p`, `time --`), but only the ones that were typed whole and have no
+ * redirection right before them: `time "-p" git` and `time >/dev/null -p git` run a command named `-p`. `command`,
+ * `exec` and `builtin` leave their options in place.
+ * `whole` says for each word that it was typed whole (`Segment.whole`, as for `stripReserved`), and `redir` that a
+ * redirection stood right before it (`Segment.redir`). Without them, every word counts as typed and no redirection stood
+ * anywhere. A caller that has the flags must pass them: `stripLead` does.
+ */
+export function stripWrappers(
+  words: readonly string[],
+  whole?: readonly boolean[],
+  redir?: readonly boolean[],
+): {
   words: string[]
   env: Record<string, string>
   nohup: boolean
@@ -694,7 +741,13 @@ export function stripWrappers(words: readonly string[]): {
       }
       continue
     }
-    if (w === 'time' || w === 'command' || w === 'exec' || w === 'builtin') {
+    // `time` has options of its own: `-p` and `--` belong to it, as `compoundLead` reads them too (issue #227).
+    if (w === 'time') {
+      i = skipTimeOptions(words, i + 1, k => whole?.[k] !== false && redir?.[k] !== true)
+      continue
+    }
+    // The options of these three stay: `command -v git` looks `git` up and runs nothing.
+    if (w === 'command' || w === 'exec' || w === 'builtin') {
       i++
       continue
     }
@@ -713,20 +766,24 @@ export function stripWrappers(words: readonly string[]): {
  * comes before `!`, and `!` comes before `time`: `time ! git push`, `! time git push` and `if time ! git push` are all
  * valid shell. Each round drops the reserved words, then the wrappers, until nothing more goes. The env of every round
  * adds up: a later `VAR=x` wins. A program wrapper such as `sudo` before `!` is no valid shell: it reads the same way.
- * It takes the words with their typed flags (`Segment.whole`, as for `stripReserved`), and has no fallback for a caller that
- * has none: a reader that leaves them out does not compile, so it cannot bring issue #194 back unseen. A `Segment` fits.
+ * It takes the words with their typed flags (`Segment.whole`, as for `stripReserved`) and their redirection flags
+ * (`Segment.redir`). It has no fallback for a caller that has none: a reader that leaves them out does not compile, so it
+ * cannot bring issue #194 or issue #227 back unseen. A `Segment` fits.
  */
 export function stripLead(seg: {
   words: readonly string[]
   whole: readonly boolean[]
+  redir: readonly boolean[]
 }): ReturnType<typeof stripWrappers> {
-  const { words, whole } = seg
+  const { words, whole, redir } = seg
   const env: Record<string, string> = {}
   let nohup = false
   let rest = words
   for (;;) {
     // Both helpers only drop words from the front, so `rest` is always the end of `words`: its flags are the end of `whole`.
-    const got = stripWrappers(stripReserved(rest, whole.slice(words.length - rest.length)))
+    // So are the words that `stripReserved` leaves, and `stripWrappers` reads their flags for the options of `time`.
+    const kept = stripReserved(rest, whole.slice(words.length - rest.length))
+    const got = stripWrappers(kept, whole.slice(words.length - kept.length), redir.slice(words.length - kept.length))
     Object.assign(env, got.env)
     nohup ||= got.nohup
     if (got.words.length === rest.length) return { words: got.words, env, nohup }
