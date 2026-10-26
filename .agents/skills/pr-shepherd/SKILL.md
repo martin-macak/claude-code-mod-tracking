@@ -117,7 +117,7 @@ A stack is a chain of PRs. Each PR is based on the branch of the PR below it. Gi
 - List each requirement and acceptance criterion from the linked issue, plus each change a reviewer asked for and you accepted.
 - For each one, name the test that proves it. A requirement with no test gets a test now.
 - Run `make verify`. Read the output. All hooks pass, all tests pass, with no fixer changes left unstaged.
-- When `plugins/` or `e2e/` changed, run `make e2e` when you have a Claude login and tmux. When you cannot, say so in the Test plan.
+- When `plugins/` or `e2e/` changed, run `make e2e-safe` when you have a Claude login and tmux. When you cannot, say so in the Test plan. A change to the artifact tracker also needs `make e2e`: `AGENTS.md`, "Lint and hooks" says when.
 
 ### 6. Push
 

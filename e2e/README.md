@@ -6,7 +6,7 @@ Gherkin scenarios that drive a real `claude` in tmux. The same harness records t
 | --- | --- |
 | `make e2e-unit` | Unit tests of the harness. No `claude`. Runs in CI. |
 | `make e2e-safe` | Every scenario against a real `claude`, except `@artifacts`. It runs the default profile. This is the default local run. Needs a Claude login and tmux. Local only. |
-| `make e2e` | Every scenario against a real `claude`, the `@artifacts` scenario included (`-p all`). It publishes a private page to claude.ai with your login. Run it only when you want that scenario too. Needs a Claude login and tmux. Local only. |
+| `make e2e` | Every scenario against a real `claude`, the `@artifacts` scenario included (`-p all`). It publishes a private page to claude.ai with your login. Run it too after a change to the artifact tracker or to the `@artifacts` scenario: that scenario is the only live check of the tracker (`AGENTS.md`, "Lint and hooks"). Needs a Claude login and tmux. Local only. |
 | `npx cucumber-js` (in `e2e/`) | The same selection as `make e2e-safe`: the default profile. Use it to add flags, such as `--tags`. |
 | `make demo` | Records the `@demo` scenario and renders `docs/assets/demo.gif`. |
 
