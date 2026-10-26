@@ -45,8 +45,8 @@ export type Segment = {
    */
   scope: string
   /**
-   * Where the standard output of the segment goes (issue #231). A reader that pairs an output line with a command reads
-   * these three: a segment with none of them prints where the shell prints, and in a Bash call that is the tool result.
+   * Where the standard output of the segment goes (issue #231). A segment with none of the three marks below prints where
+   * the shell prints. A reader asks `keepsStdout` and reads none of them itself.
    * `stdoutRedirected`: a typed redirection sends fd 1 away (`>`, `>>`, `>|`, `&>`, `&>>`, `>&word`, `1>`), on the segment
    * or on the group, subshell or compound that holds it (`{ a; } > f`, `for ...; done > f`), or after a substitution that cut
    * the command into segments (`a $(b) c > f` marks `a` and `c`). A redirection of stderr
@@ -57,7 +57,7 @@ export type Segment = {
    * A `|` or `|&` follows the pipeline part that holds the segment (`a | b` marks `a`, `{ a; } | b` marks `a`), so the
    * output goes to the next command. The last part of a pipeline is not marked: its output goes where the shell's goes.
    */
-  piped: boolean
+  stdoutPiped: boolean
   /** The segment runs inside `$(...)`, backticks or a process substitution (`<(...)`, `>(...)`), so the shell takes its output. */
   substituted: boolean
 }
@@ -158,7 +158,7 @@ type Place = {
  * A heredoc tag is the next word with its quotes and backslashes removed, so `<<\EOF` hides its body as `<<'EOF'` does. A
  * file descriptor right before `<<` (`3<<EOF`, `{fd}<<EOF`) is part of the redirection, and so is `{name}` before `<`, `>`
  * or `<>` (issue #194). A `<<` inside `$(( ))` or `(( ))` is a shift, not a heredoc: the scope of that text says so.
- * Each segment says where its standard output goes (issue #231): `stdoutRedirected`, `piped` and `substituted`. A group,
+ * Each segment says where its standard output goes (issue #231): `stdoutRedirected`, `stdoutPiped` and `substituted`. A group,
  * subshell, loop or `case` that is redirected or piped marks every segment in it. The marks are ranges over the segments,
  * summed once at the end, so a redirection on each of a deep nest of groups costs O(n), not O(n^2).
  */
@@ -179,9 +179,8 @@ export function splitShell(command: string): Segment[] {
   // `saved` is the `Place` of the scope that opened it. `compounds` is how many compounds were open then. `arith`: the text
   // in it is an arithmetic expression (`$(( ))`, `(( ))`), where `<<` is a shift (issue #194). `sub`: the shell takes the
   // output of the commands in it: a `$(`, a backtick or a process substitution opened it, or one of its parents did
-  // (`Segment.substituted`). `cont`: it was opened by a substitution of its own, so the simple command around it goes on
-  // after it (`a $(b) c`). `outerHead`: the `cmdHead` of that command, back at the close. `from`: the index of the first
-  // segment in it.
+  // (`Segment.substituted`). `outerHead`: the `cmdHead` of the simple command around it, back at the close (`a $(b) c`).
+  // `from`: the index of the first segment in it.
   const stack: {
     id: string
     tick: boolean
@@ -189,7 +188,6 @@ export function splitShell(command: string): Segment[] {
     compounds: number
     arith: boolean
     sub: boolean
-    cont: boolean
     outerHead: number
     from: number
   }[] = []
@@ -222,7 +220,7 @@ export function splitShell(command: string): Segment[] {
     paren: boolean
     from: number
   })[] = []
-  // Where the output of the segments goes (`Segment.piped`, `Segment.stdoutRedirected`). A pipe or a redirection of a
+  // Where the output of the segments goes (`Segment.stdoutPiped`, `Segment.stdoutRedirected`). A pipe or a redirection of a
   // group covers a range of segments: `cover` puts +1 at its start and -1 at its end, and the sums at the end of the scan
   // say which segments are covered. Marking each segment of the range would cost O(n) for each of a nest of n groups.
   const pipeRuns: number[] = []
@@ -264,7 +262,6 @@ export function splitShell(command: string): Segment[] {
       compounds: compounds.length,
       arith,
       sub: sub || (stack.at(-1)?.sub ?? false),
-      cont: sub,
       outerHead: cmdHead,
       from: out.length,
     })
@@ -469,7 +466,7 @@ export function splitShell(command: string): Segment[] {
         bg,
         scope: scope(),
         stdoutRedirected: stdout,
-        piped: false,
+        stdoutPiped: false,
         substituted: stack.at(-1)?.sub ?? false,
       })
       const lead = compoundLead(clean, cleanHeads)
@@ -646,13 +643,9 @@ export function splitShell(command: string): Segment[] {
       closedFrom = -1 // a redirection counts for the group that closed right before it, and only until the next operator
       // The simple command goes on after a substitution, so it keeps its head: the first segment that the substitution cut off.
       // Any other operator ends the command.
-      const goesOn =
-        op === '$(' ||
-        op === '`' ||
-        (op === '(' && typedRedir === i - 1) ||
-        (op === ')' && !theCase() && stack.at(-1)?.cont === true)
+      const goesOn = op === '$(' || op === '`' || (op === '(' && typedRedir === i - 1)
       if (!goesOn) cmdHead = -1
-      else if (op !== ')' && cmdHead < 0 && out.length > before) cmdHead = out.length - 1
+      else if (cmdHead < 0 && out.length > before) cmdHead = out.length - 1
       if (op === '(') {
         // A `(` in front of the first word of a pattern list is part of the pattern, no subshell. The segment above can have
         // ended the header just now (`case x in(x)`), so the case is read again.
@@ -721,7 +714,7 @@ export function splitShell(command: string): Segment[] {
   out.forEach((seg, k) => {
     piping += pipeRuns[k] ?? 0
     redirecting += redirRuns[k] ?? 0
-    seg.piped = piping > 0
+    seg.stdoutPiped = piping > 0
     if (redirecting > 0) seg.stdoutRedirected = true
   })
   return out
@@ -926,6 +919,14 @@ export function stripLead(seg: {
     rest = got.words
   }
 }
+
+/**
+ * Nothing sends the standard output of the segment away (issue #231): it goes where the shell's own output goes. A reader that
+ * pairs an output line with a command calls this and reads no mark of its own, so it cannot leave one out and bring the bug
+ * of #231 back unseen. A `Segment` fits.
+ */
+export const keepsStdout = (seg: Pick<Segment, 'stdoutRedirected' | 'stdoutPiped' | 'substituted'>): boolean =>
+  !seg.stdoutRedirected && !seg.stdoutPiped && !seg.substituted
 
 /**
  * Joins `p` onto `cwd` and folds `.` and `..` the way a shell does. A relative path with no cwd stays relative.

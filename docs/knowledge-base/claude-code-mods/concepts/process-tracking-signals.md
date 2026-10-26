@@ -329,17 +329,17 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   Bash command").
 - **The id of a container (issue #231).** A row gets an id only when the id is
   the run's own output. The splitter marks each segment with where its standard
-  output goes (`Segment.stdoutRedirected`, `Segment.piped`, `Segment.substituted`).
-  A run *prints* when it has none of the three marks. `stdoutRedirected` is a typed
+  output goes (`Segment.stdoutRedirected`, `Segment.stdoutPiped`, `Segment.substituted`).
+  A run *prints* when it has none of the three marks (`keepsStdout`). `stdoutRedirected` is a typed
   `>`, `>>`, `>|`, `&>`, `&>>`, `>&word` or `1>` form, on the run or on the group,
   subshell, loop or `case` around it (`{ a; } > f`, `done > f`). `2>&1`, `2>`, `<`
-  and `{fd}>` leave the output alone. `piped` is a `|` or `|&` after the
+  and `{fd}>` leave the output alone. `stdoutPiped` is a `|` or `|&` after the
   pipeline part that holds the run (`{ a; } | b` marks `a`; `echo x | a` does not).
   `substituted` is `$(...)`, backticks or a process substitution (`<(...)`,
   `>(...)`). A substitution in the arguments splits the run into segments
   (`docker run -d -e T=$(cat t) nginx > f` is `docker run -d -e T=`, `cat t` and
   `nginx > f`), so a redirection after it marks the first segment too: the splitter
-  keeps the head of the command until an operator ends it. The parser pairs the id lines in order with the runs that print when
+  keeps the head of the command until an operator ends it. `pairContainerIds` pairs the id lines in order with the runs that print when
   the two counts match and no id repeats (two runs never print one id), or when
   one run that prints stands with lines that all say one id (`docker run -d
   --name api nginx && docker inspect -f '{{.Id}}' api`). Any other count says
@@ -362,7 +362,7 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   `process-container-id.test.ts` and the stored row in `processes-tracker.test.ts`
   ("a second sighting of a named container ..."). The wrong pairs were seen in
   the real parser at `9b5fa44` before the fix: one `docker run -d` with four id
-  lines took the last, an older container (study of #123, part 2, L301 to L306),
+  lines took the last, an older container ([study of #123, part 2](https://github.com/martin-macak/claude-code-mod-tracking/issues/123#issuecomment-6412081219), L301 to L306),
   and a run redirected to `/dev/null` or captured by `$(...)` took the one id of
   `docker inspect` or `docker ps` (L401 to L409). No live Docker run repeated
   them after the fix.

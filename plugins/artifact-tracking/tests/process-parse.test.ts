@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import {
+  pairContainerIds,
   parseBashProcesses,
   processUpdateFromNotification,
   processUpdateFromNotificationText,
@@ -157,7 +158,8 @@ test('compound: two detached runs get their own ids in order', () => {
 
 // A row gets a container id only when that id is the run's own output: the id lines pair one to one with the runs whose
 // standard output reaches the tool result, or every id line is one id and there is one such run. The row then has
-// `containerIdExact: true`. Cases of the delta study of #123 (part 2, logs L301 to L312 and L401 to L409).
+// `containerIdExact: true`. Cases of the delta study of #123, part 2 (log lines L301 to L312 and L401 to L409):
+// https://github.com/martin-macak/claude-code-mod-tracking/issues/123#issuecomment-6412081219
 const NEW = 'a'.repeat(64)
 const OLD1 = 'b'.repeat(64)
 const OLD2 = 'c'.repeat(64)
@@ -178,27 +180,30 @@ const unpaired = (id: string, name: string) => ({
   lastSeen: 1,
 })
 
-test('container id: a row keeps its own id and is exact when the run printed it alone (L310 to L312)', () => {
-  expect(containers('docker run -d --name api nginx', idLines(NEW))).toEqual([
+// Study log lines L310 to L312.
+test('container id: a row keeps its own id and is exact when the run printed it alone', () => {
+  expect(containers('docker run -d --name api nginx', idLines(NEW))).toStrictEqual([
     { ...unpaired('docker:ctr:api', 'api'), containerId: NEW, containerIdExact: true },
   ])
-  expect(containers('docker run -d nginx', idLines(NEW))).toEqual([
+  expect(containers('docker run -d nginx', idLines(NEW))).toStrictEqual([
     { ...unpaired(`docker:ctr:${NEW}`, NEW.slice(0, 12)), containerId: NEW, containerIdExact: true },
   ])
 })
 
-test('container id: more id lines than runs give the row no id, with or without --name (L301 to L306)', () => {
+// Study log lines L301 to L306.
+test('container id: more id lines than runs give the row no id, with or without --name', () => {
   const ps = idLines(NEW, NEW, OLD1, OLD2)
-  expect(containers('docker run -d --name api nginx && docker ps -aq --no-trunc', ps)).toEqual([
+  expect(containers('docker run -d --name api nginx && docker ps -aq --no-trunc', ps)).toStrictEqual([
     unpaired('docker:ctr:api', 'api'),
   ])
   // Without --name the row takes its name from the command, not from an older container.
-  expect(containers('docker run -d nginx; docker ps -aq --no-trunc', ps)).toEqual([
+  expect(containers('docker run -d nginx; docker ps -aq --no-trunc', ps)).toStrictEqual([
     unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
   ])
 })
 
-test('container id: one run and a later command that prints the same id pair, and the row is exact (L307 to L309)', () => {
+// Study log lines L307 to L309.
+test('container id: one run and a later command that prints the same id pair, and the row is exact', () => {
   expect(paired('docker run -d --name api nginx && docker inspect -f "{{.Id}}" api', idLines(NEW, NEW))).toEqual([
     ['api', NEW, true],
   ])
@@ -208,7 +213,8 @@ test('container id: one run and a later command that prints the same id pair, an
   ])
 })
 
-test('container id: a run whose standard output goes to a file takes no id from another command (L401 to L406)', () => {
+// Study log lines L401 to L406.
+test('container id: a run whose standard output goes to a file takes no id from another command', () => {
   for (const redir of [
     '> /dev/null',
     '>/dev/null',
@@ -225,7 +231,7 @@ test('container id: a run whose standard output goes to a file takes no id from 
       redir,
       rows: [['api', undefined, undefined]],
     })
-    expect(containers(`docker run -d nginx ${redir}${inspect}`, idLines(OTHER))).toEqual([
+    expect(containers(`docker run -d nginx ${redir}${inspect}`, idLines(OTHER))).toStrictEqual([
       unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
     ])
   }
@@ -235,9 +241,10 @@ test('container id: a run whose standard output goes to a file takes no id from 
   ).toEqual([['api', undefined, undefined]])
 })
 
-test('container id: a run inside a command substitution or backticks takes no id from another command (L407 to L409)', () => {
+// Study log lines L407 to L409.
+test('container id: a run inside a command substitution or backticks takes no id from another command', () => {
   const ps = 'docker ps -aq --no-trunc --filter name=web'
-  expect(containers(`CID=$(docker run -d nginx); ${ps}`, idLines(OTHER))).toEqual([
+  expect(containers(`CID=$(docker run -d nginx); ${ps}`, idLines(OTHER))).toStrictEqual([
     unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
   ])
   expect(paired(`CID=$(docker run -d --name api nginx); ${ps}`, idLines(OTHER))).toEqual([
@@ -367,6 +374,33 @@ test('container id: more runs or more id lines than the other side give no run a
   expect(paired('for i in 1 2; do docker run -d --name w$i img; done', idLines(NEW, OLD1))).toEqual([
     ['w$i', undefined, undefined],
   ])
+})
+
+// The count rule alone, with no shell text: `printed[n]` says that the output of run n reaches the tool result.
+test('pairContainerIds: equal counts with distinct ids pair in order, a run that prints nothing is left out', () => {
+  expect(pairContainerIds([NEW, OLD1], [true, true])).toEqual([NEW, OLD1])
+  expect(pairContainerIds([NEW], [false, true, false])).toEqual([undefined, NEW, undefined])
+  expect(pairContainerIds([NEW, OLD1], [true, false, true])).toEqual([NEW, undefined, OLD1])
+  expect(pairContainerIds([], [false, false])).toEqual([undefined, undefined])
+  expect(pairContainerIds([], [])).toEqual([])
+})
+
+test('pairContainerIds: a repeated id gives no run an id, also with equal counts', () => {
+  expect(pairContainerIds([NEW, NEW], [true, true])).toEqual([undefined, undefined])
+  expect(pairContainerIds([NEW, OLD1, NEW], [true, true, true])).toEqual([undefined, undefined, undefined])
+})
+
+test('pairContainerIds: one printing run takes the lines that all say one id', () => {
+  expect(pairContainerIds([NEW, NEW, NEW], [true])).toEqual([NEW])
+  expect(pairContainerIds([NEW, NEW], [false, true])).toEqual([undefined, NEW])
+  expect(pairContainerIds([NEW, OLD1], [true])).toEqual([undefined])
+})
+
+test('pairContainerIds: any other count gives no run an id', () => {
+  expect(pairContainerIds([NEW, OLD1, OLD2], [true, true])).toEqual([undefined, undefined])
+  expect(pairContainerIds([NEW], [true, true])).toEqual([undefined, undefined])
+  expect(pairContainerIds([NEW, NEW], [true, true, true])).toEqual([undefined, undefined, undefined])
+  expect(pairContainerIds([NEW], [false, false])).toEqual([undefined, undefined])
 })
 
 // ---------------------------------------------------------------- docker run variants
