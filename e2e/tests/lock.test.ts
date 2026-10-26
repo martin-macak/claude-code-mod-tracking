@@ -147,51 +147,57 @@ test('acquireLock clears the guard that a crashed run left', () => {
   }
 })
 
-test('acquireLock waits for the guard of a live run and then takes a stale lock', { timeout: 60_000 }, async t => {
-  const dir = tempDir()
+// A fake guard pause. A try waits for a live guard in 5 ms pauses (synchronous), and the test reads how many it made.
+function fakePause() {
+  const pauses: number[] = []
+  return { pauses, pause: (ms: number) => void pauses.push(ms), total: () => pauses.reduce((a, b) => a + b, 0) }
+}
+
+// A stale lock and the takeover guard of a live run: the parent of this process stands for that run.
+function liveGuard(dir: string) {
   writeFileSync(join(dir, '.lock'), '999999')
-  // This child holds the guard for 300 ms, as a live run in the middle of a takeover does. It
-  // writes the file `released` just before it frees the guard.
-  const script = `
-    const { mkdirSync, rmSync, writeFileSync } = require('node:fs')
-    const { join } = require('node:path')
-    const dir = process.argv[1]
-    const guard = join(dir, '.lock.takeover')
-    mkdirSync(guard)
-    writeFileSync(join(guard, String(process.pid)), '')
-    process.stdout.write('held\\n')
-    setTimeout(() => {
+  mkdirSync(join(dir, '.lock.takeover'))
+  writeFileSync(join(dir, '.lock.takeover', String(process.ppid)), '')
+}
+
+test('acquireLock waits for the guard of a live run and then takes a stale lock', () => {
+  const dir = tempDir()
+  liveGuard(dir)
+  // The live run frees the guard in the third pause. It writes the file `released` just before, as a run
+  // in the middle of a takeover does when it ends. A fake pause does not sleep, so no timer could free the guard.
+  const guard = fakePause()
+  const pause = (ms: number) => {
+    guard.pause(ms)
+    if (guard.pauses.length === 3) {
       writeFileSync(join(dir, 'released'), '')
-      rmSync(guard, { recursive: true })
-    }, 300)`
-  const holder = spawn(process.execPath, ['-e', script, dir], { stdio: ['ignore', 'pipe', 'inherit'] })
-  t.signal.addEventListener('abort', () => holder.kill(), { once: true })
-  try {
-    const lines = createInterface({ input: holder.stdout })[Symbol.asyncIterator]()
-    assert.equal((await lines.next()).value, 'held')
-    const release = acquireLock(dir) // Blocks this process, not the holder.
-    assert.equal(existsSync(join(dir, 'released')), true, 'took the lock before the guard was free')
-    assert.equal(readFileSync(join(dir, '.lock'), 'utf8'), String(process.pid))
-    release()
-  } finally {
-    holder.kill()
+      rmSync(join(dir, '.lock.takeover'), { recursive: true })
+    }
   }
+  const release = acquireLock(dir, { pause })
+  assert.deepEqual(guard.pauses, [5, 5, 5])
+  assert.equal(existsSync(join(dir, 'released')), true, 'took the lock before the guard was free')
+  assert.equal(readFileSync(join(dir, '.lock'), 'utf8'), String(process.pid))
+  release()
 })
 
-test('acquireLock gives up while a live run holds the guard, and names it', { timeout: 60_000 }, () => {
+test('acquireLock gives up while a live run holds the guard, and names it', () => {
   const dir = tempDir()
   writeFileSync(join(dir, '.lock'), '999999')
   mkdirSync(join(dir, '.lock.takeover'))
   // The parent of this process is alive and is not this run, so this guard file is a live holder.
   writeFileSync(join(dir, '.lock.takeover', String(process.ppid)), '')
+  // The try gives up after 1000 pauses of 5 ms. A fake pause counts them, so the test does not wait.
+  const guard = fakePause()
   // The old text stays the prefix. The rest names the guard and its holder, so the user can act.
   assert.throws(
-    () => acquireLock(dir),
+    () => acquireLock(dir, { pause: guard.pause }),
     new RegExp(
       `^Error: lock: could not take .*\\.lock \\(takeover guard .*\\.lock\\.takeover held by pid ${process.ppid}\\)$`,
       'm',
     ),
   )
+  // A try waits 5 s at most for the guard of a live run: 1000 pauses of 5 ms.
+  assert.equal(guard.total(), 5000)
   // A live guard and the stale lock stay as they were.
   assert.deepEqual(readdirSync(join(dir, '.lock.takeover')), [String(process.ppid)])
   assert.equal(readFileSync(join(dir, '.lock'), 'utf8'), '999999')
@@ -475,19 +481,6 @@ test('claimRun does not treat another error as a busy lock', async () => {
   )
   assert.deepEqual(wait.sleeps, [])
 })
-
-// A stale lock and the takeover guard of a live run: the parent of this process stands for that run.
-function liveGuard(dir: string) {
-  writeFileSync(join(dir, '.lock'), '999999')
-  mkdirSync(join(dir, '.lock.takeover'))
-  writeFileSync(join(dir, '.lock.takeover', String(process.ppid)), '')
-}
-
-// A fake guard pause. A try waits for a live guard in 5 ms pauses (synchronous), and the test reads how many it made.
-function fakePause() {
-  const pauses: number[] = []
-  return { pauses, pause: (ms: number) => void pauses.push(ms), total: () => pauses.reduce((a, b) => a + b, 0) }
-}
 
 test('claimRun waits out a live takeover guard and then takes the stale lock', async () => {
   const dir = tempDir()
