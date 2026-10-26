@@ -290,6 +290,11 @@ test('container id: a run after a bare exec that redirects the output takes no i
     'exec >log',
     'exec 3>&1 >/dev/null',
     'exec >&2',
+    // The options of `exec` matter only when a command follows. With none, the shell itself is redirected, as in bash.
+    'exec -c > log',
+    'exec -a name > log',
+    'exec -cl >> log',
+    'exec -- > log',
   ]) {
     expect({ exec, rows: paired(`${exec}; docker run -d --name api nginx${inspect}`, idLines(OTHER)) }).toEqual({
       exec,
@@ -322,7 +327,15 @@ test('container id: a run after a bare exec that redirects the output takes no i
     ['api', undefined, undefined],
   ])
   // An exec that leaves the output where it is changes nothing.
-  for (const exec of ['exec', 'exec 2> err', 'exec 3>&1', 'exec < in', 'exec {fd}> f'])
+  for (const exec of [
+    'exec',
+    'exec 2> err',
+    'exec 3>&1',
+    'exec < in',
+    'exec {fd}> f',
+    'exec -c',
+    'exec -a name 2> err',
+  ])
     expect({ exec, rows: paired(`${exec}; docker run -d --name api nginx`, idLines(NEW)) }).toEqual({
       exec,
       rows: [['api', NEW, true]],

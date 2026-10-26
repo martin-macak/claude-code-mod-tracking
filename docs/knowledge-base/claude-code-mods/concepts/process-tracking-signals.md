@@ -332,12 +332,16 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   around it (`{ a; } > f`, `done > f`). The operator may stand glued to the last
   word: a typed `>` or `<` ends the word in front of it, as in `bash`, so
   `nginx>/dev/null`, `"nginx">f`, `{ a; }>f` and `done>f` are read like their
-  spaced forms. A file descriptor in front (`2>f`, `{fd}>f`), arithmetic text and an
-  open `${ }` keep the character. `2>&1`, `2>`, `<` and `{fd}>` leave the output
-  alone. A bare `exec` with such a redirection (`exec > f`, `exec >> f`,
-  `exec 1> f`, `exec &> f`, `exec 3>&1 >/dev/null`) moves the output of its
-  shell for good, so it marks every later segment of that shell and of the
-  subshells under it. A subshell, a `$(...)`, a background list and a pipeline
+  spaced forms. A file descriptor in front of a `>` or `<` (`2>f`, `{fd}>f`),
+  arithmetic text and an open `${ }` keep the character. The `&` of `&>` has no
+  descriptor form: `12&>f` is the word `12` and the redirection `&>f`. `2>&1`,
+  `2>`, `<` and `{fd}>` leave the output alone. A bare `exec` with such a
+  redirection (`exec > f`, `exec >> f`, `exec 1> f`, `exec &> f`,
+  `exec 3>&1 >/dev/null`) moves the output of its shell for good, so it marks
+  every later segment of that shell and of the subshells under it. The options
+  of `exec` (`-c`, `-l`, `-a name`, `--`) matter only when a command follows:
+  `exec -c > f` and `exec -a name > f` move the shell too, and `exec -c a > f`
+  runs `a`. A subshell, a `$(...)`, a background list and a pipeline
   part are shells of their own: the mark ends with them. `exec >&3`, which puts
   the output back, is read as one more redirection, so the later runs stay
   marked. `stdoutPiped` is a `|` or `|&` after the pipeline part that holds the
@@ -389,7 +393,9 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   that the tests expect: `printf '[%s]' nginx2>f b` writes `[nginx2][b]` to the
   file `f` and prints nothing, `printf '[%s]' x>(cat)` prints one word,
   `[x/dev/fd/63]`, and `exec 3>&1 >/dev/null; echo hidden; echo shown >&3` prints
-  `shown` only. No live Docker run repeated them after the fix.
+  `shown` only. The same probe: `exec -c > f; echo hidden` and
+  `exec -a name > f; echo hidden` write `hidden` to `f`, and `echo a 12&>f`
+  writes `a 12` to `f`. No live Docker run repeated them after the fix.
 - A foreground `nohup cmd` (no `&`) is not a detached process.
 
 Probe facts found in manual tests:

@@ -1070,6 +1070,15 @@ test('splitShell marks a redirection of the standard output glued to the last wo
   // The digit before the `>` is part of the word when the word has text before it: `nginx2>f` is the word `nginx2` and `>f`.
   expect(outMarks('docker run -d nginx2>f')).toEqual(['docker run -d nginx2 >'])
   expect(outMarks('docker run -d nginx 2>f')).toEqual(['docker run -d nginx'])
+  // Bash has no `N&>` form: the number or the `{name}` in front of `&>` is a word of its own, as `echo a 12&>f` shows.
+  expect(outMarks('docker run -d x 12&>f')).toEqual(['docker run -d x 12 >'])
+  expect(outMarks('sleep 1&>>f')).toEqual(['sleep 1 >'])
+  expect(outMarks('echo a {fd}&>f')).toEqual(['echo a {fd} >'])
+  expect(outMarks('echo a {1x}&>f')).toEqual(['echo a {1x} >'])
+  // A number in front of `>` or `>&` belongs to the redirection, and `&>` keeps its `&`.
+  expect(outMarks('docker run -d x 2>&1')).toEqual(['docker run -d x'])
+  expect(outMarks('docker run -d x 12>&1 &>f')).toEqual(['docker run -d x >'])
+  expect(outMarks('docker run -d x &>f')).toEqual(['docker run -d x >'])
   expect(outMarks('docker run -d "nginx">f')).toEqual(['docker run -d nginx >'])
   expect(outMarks("docker run -d 'nginx'>>f")).toEqual(['docker run -d nginx >'])
   expect(outMarks('docker run -d $IMG>f')).toEqual(['docker run -d $IMG >'])
@@ -1100,6 +1109,19 @@ test('splitShell marks the group, subshell or compound that a glued redirection 
   expect(outMarks('{ a; }<f')).toEqual(['a'])
   expect(outMarks('for i in 1; do a; done<f')).toEqual(['for i in 1', 'do a', 'done'])
 })
+
+// A `>` in an open `${ }` is text (`${X:-a>b}`), so the word does not end there and the command is not redirected. A nested `${ }`
+// keeps the outer one open until its own `}`. The word is closed again after the `}`, and then a `>` is a redirection.
+// biome-ignore-start lint/suspicious/noTemplateCurlyInString: the texts are shell commands, and `${X}` is a parameter expansion
+test('splitShell keeps a > inside an open parameter expansion as text', () => {
+  for (const text of ['echo ${X:-a>b} c', 'echo ${X:-${Y}>b} c', 'echo ${X:-a<b} c']) {
+    expect({ text, words: splitShell(text).map(s => s.words.join(' ')) }).toEqual({ text, words: [text] })
+    expect({ text, marks: outMarks(text) }).toEqual({ text, marks: [text] })
+  }
+  expect(outMarks('echo ${X}>f c')).toEqual(['echo ${X} c >'])
+  expect(outMarks('echo ${X:-a}>f c')).toEqual(['echo ${X:-a} c >'])
+})
+// biome-ignore-end lint/suspicious/noTemplateCurlyInString: end of the shell texts
 
 // `done<f` and `}<f` end the loop or the group, so the loop is closed and a `cd` in it does not reach the commands after it.
 test('splitShell closes a loop at a glued input redirection', () => {
@@ -1147,6 +1169,53 @@ test('splitShell marks the commands after a bare exec that redirects the standar
   expect(outMarks('{ exec > f; }; a')).toEqual(['exec >', 'a >'])
   expect(outMarks('for i in 1; do exec > f; a; done; b')).toEqual(['for i in 1', 'do exec >', 'a >', 'done >', 'b >'])
   expect(outMarks('exec > f; ( a; ( b ) ); { c; }')).toEqual(['exec >', 'a >', 'b >', 'c >'])
+  // The first exec of a shell counts for all the later segments, and a second one changes nothing.
+  expect(outMarks('exec > f; a; exec > g; b')).toEqual(['exec >', 'a >', 'exec >', 'b >'])
+  // An exec in a parent shell reaches a subshell that sits two levels down, and the commands after the subshell.
+  expect(outMarks('( exec > f; ( a ) ); b')).toEqual(['exec >', 'a >', 'b'])
+  expect(outMarks('( exec > f; ( ( a ) ) ); b')).toEqual(['exec >', 'a >', 'b'])
+})
+
+// The options of `exec` (`-c`, `-l`, `-a name`) only matter when a command follows. With none, the redirection still moves the
+// shell itself, as in bash 5.3: `exec -c > f; echo hidden` writes `hidden` to `f`. `--` ends the options.
+test('splitShell marks the commands after a bare exec that has only options', () => {
+  for (const [exec, shown] of [
+    ['exec -c > f', 'exec -c'],
+    ['exec -l > f', 'exec -l'],
+    ['exec -a name > f', 'exec -a name'],
+    ['exec -cl > f', 'exec -cl'],
+    ['exec -cla name > f', 'exec -cla name'],
+    ['exec -anm > f', 'exec -anm'],
+    ['exec -c -l > f', 'exec -c -l'],
+    ['exec -c -a name -l >> f', 'exec -c -a name -l'],
+    ['exec -- > f', 'exec --'],
+    ['exec -c -- &> f', 'exec -c --'],
+    ['exec -a n -- > f', 'exec -a n --'],
+    ['exec -a n -c > f', 'exec -a n -c'],
+    ['command exec -c > f', 'command exec -c'],
+  ] as const)
+    expect({ exec, marks: outMarks(`a; ${exec}; b; c`) }).toEqual({ exec, marks: ['a', `${shown} >`, 'b >', 'c >'] })
+  // The options leave the output alone when no redirection of it comes, or when a command follows: `exec -c a > f` runs `a`.
+  for (const exec of [
+    'exec -c',
+    'exec -a name',
+    'exec -c 2> f',
+    'exec -c < f',
+    'exec -c a > f',
+    'exec -a name a > f',
+    'exec -c -- a > f',
+    'exec -- -c > f',
+    'exec - > f',
+    'exec -anm a > f',
+    // The options belong to the wrapper that `exec` runs (`time`, `command`), not to `exec`.
+    'exec time -c > f',
+    'exec command -l > f',
+  ])
+    expect({ exec, later: outMarks(`${exec}; b`).at(-1) }).toEqual({ exec, later: 'b' })
+  // A word that is no option of `exec` is a command, as in bash: `exec -x > f` is an error and moves nothing.
+  expect(outMarks('exec -x > f; b')).toEqual(['exec -x >', 'b'])
+  // `-a` with no name is an error in bash too, and the redirection is not applied. The reader marks it all the same, the safe side.
+  expect(outMarks('exec -a > f; b')).toEqual(['exec -a >', 'b >'])
 })
 
 test('splitShell leaves the commands after an exec that does not move the standard output alone', () => {
@@ -1270,6 +1339,12 @@ test('splitShell marks the head of a command that a substitution split, when a r
   expect(outer('a $(b; c > g) d')).toEqual(['a', 'd'])
   // The part of a command that comes before the substitution is not marked by a redirection of an earlier command.
   expect(outer('x > f; a $(b) c')).toEqual(['x >', 'a', 'c'])
+  // A command that opens with a substitution has no head before it: the redirection marks no earlier command.
+  expect(outer('a; $(b) > f')).toEqual(['a'])
+  expect(outer('a && $(b) > f')).toEqual(['a'])
+  expect(outer('a\n$(b) > f')).toEqual(['a'])
+  // A second substitution does not move the head of the command: it stays at its first segment.
+  expect(outer('a $(b) c $(d) e > f')).toEqual(['a >', 'c >', 'e >'])
 })
 
 test('splitShell marks every part of a pipeline except the last as piped', () => {
