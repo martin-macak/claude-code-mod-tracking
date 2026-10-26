@@ -165,15 +165,17 @@ test('the demo profile still selects the @demo scenario alone', () => {
   )
 })
 
-test('make e2e runs every scenario: the profile of its recipe selects the @artifacts scenario and all the others', () => {
+// The arguments that the recipe of a make target gives to cucumber-js. The tests below select scenarios with them, so
+// they check what the target runs and not what a document says.
+function recipeArgs(target: string): string[] {
   const makefile = readFileSync(join(e2eDir, '..', 'Makefile'), 'utf8').split('\n')
-  const target = makefile.findIndex(line => line.startsWith('e2e:'))
-  assert.notEqual(target, -1, 'the Makefile has an e2e target')
+  const at = makefile.findIndex(line => line.startsWith(`${target}:`))
+  assert.notEqual(at, -1, `the Makefile has a ${target} target`)
   // The recipe is the run of tab-indented lines under the target.
-  const recipeLines = makefile.slice(target + 1)
+  const recipeLines = makefile.slice(at + 1)
   const end = recipeLines.findIndex(line => !line.startsWith('\t'))
   const recipe = recipeLines.slice(0, end).join('\n')
-  assert.match(recipe, /cucumber-js/, 'the e2e target runs cucumber-js')
+  assert.match(recipe, /cucumber-js/, `the ${target} target runs cucumber-js`)
   // Plain words only: the test cannot read a quoted argument, so it cuts the recipe at the first shell operator.
   const args = recipe
     .split('cucumber-js')[1]!
@@ -183,10 +185,26 @@ test('make e2e runs every scenario: the profile of its recipe selects the @artif
     .filter(Boolean)
   assert.ok(
     args.every(arg => !/['"$]/.test(arg)),
-    `the recipe of e2e has an argument this test cannot read: ${args}`,
+    `the recipe of ${target} has an argument this test cannot read: ${args}`,
   )
-  const selected = select(...args)
+  return args
+}
+
+const names = (list: Selected[]) => list.map(s => `${s.uri}: ${s.name}`).sort()
+
+test('make e2e runs every scenario: the profile of its recipe selects the @artifacts scenario and all the others', () => {
+  const selected = select(...recipeArgs('e2e'))
   assert.equal(artifactScenarios(selected).length, artifactScenarios(select('-p', 'artifacts')).length)
-  const names = (list: Selected[]) => list.map(s => `${s.uri}: ${s.name}`).sort()
   assert.deepEqual(names(selected), names([...select(), ...select('-p', 'artifacts')]))
+})
+
+test('make e2e-safe runs the default profile: every scenario except @artifacts, so it publishes nothing', () => {
+  const selected = select(...recipeArgs('e2e-safe'))
+  assert.ok(selected.length > 0, 'the target selects scenarios')
+  assert.deepEqual(artifactScenarios(selected), [])
+  assert.deepEqual(names(selected), names(select()))
+  // It is make e2e without the @artifacts scenario, so the two targets differ by that scenario alone.
+  const everything = select(...recipeArgs('e2e'))
+  assert.deepEqual(names(selected), names(everything.filter(s => !s.tags.includes(ARTIFACTS))))
+  assert.notDeepEqual(names(selected), names(everything))
 })

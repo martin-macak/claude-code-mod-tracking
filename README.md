@@ -50,7 +50,7 @@ The first mod is [`artifact-tracking`](plugins/artifact-tracking/README.md). A s
 
 You mention two PRs, an issue and a docs link in a normal prompt. The mod finds them, and the band above the prompt counts them, with `(1 ✗)` for the PR with failing checks. `/track` opens a pane with the live title, state and checks of each item from `gh`, and a section for web links. Tab moves the selection (a `>` and a highlight), and `1` marks the selected row high: the row moves to the top with `▲` and stays selected. Press `r` to refresh every item and `Esc` to close the pane.
 
-The GIF comes from a Gherkin scenario, [`e2e/features/tracking.feature`](e2e/features/tracking.feature), that `make demo` records. The same scenario runs as a test under `make e2e`.
+The GIF comes from a Gherkin scenario, [`e2e/features/tracking.feature`](e2e/features/tracking.feature), that `make demo` records. The same scenario runs as a test under `make e2e-safe`.
 
 ## Features
 
@@ -142,11 +142,12 @@ make init      # check the tools
 make hooks     # install the git hooks (once per clone)
 make test      # validate, type-check and test the mod
 make install   # load the mod in every session
-make e2e       # run the Gherkin scenarios against a real claude (local only)
+make e2e-safe  # run every Gherkin scenario except @artifacts against a real claude (local only)
+make e2e       # the same, plus the @artifacts scenario (it publishes a private page to claude.ai)
 make demo      # record docs/assets/demo.gif from the @demo scenario
 ```
 
-`make e2e` and `make demo` also need `tmux`, `asciinema`, `agg` and `gifsicle` (`brew install tmux asciinema agg gifsicle`). They use the Claude login and trust store of the calling shell (`CLAUDE_CONFIG_DIR`, else `~/.claude`), and they run real model turns. To refresh the GIF, follow the [`demo-scenario`](.agents/skills/demo-scenario/SKILL.md) skill.
+`make e2e-safe`, `make e2e` and `make demo` also need `tmux`, `asciinema`, `agg` and `gifsicle` (`brew install tmux asciinema agg gifsicle`). They use the Claude login and trust store of the calling shell (`CLAUDE_CONFIG_DIR`, else `~/.claude`), and they run real model turns. To refresh the GIF, follow the [`demo-scenario`](.agents/skills/demo-scenario/SKILL.md) skill.
 
 Run `make help` for every target.
 

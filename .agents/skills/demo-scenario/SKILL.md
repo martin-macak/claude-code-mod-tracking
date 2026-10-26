@@ -16,7 +16,7 @@ Make the README demo GIF from a Gherkin scenario that also runs as an E2E test.
 | Scenarios | `e2e/features/*.feature`. Exactly one scenario has the `@demo` tag. |
 | Steps | `e2e/steps/*.steps.ts`. Reuse before you add. |
 | Live explorer | `cd e2e && mise exec node@24 -- node bin/drive.ts start [prompt] \| type <text> \| key <name> \| wait-turn \| screen \| caption <text> \| stop` |
-| Run as tests | `make e2e` (real model turns, local only). One scenario, the lock and the env vars: `e2e/README.md` |
+| Run as tests | `make e2e-safe`: every scenario except `@artifacts` (real model turns, local only). `make e2e` adds the `@artifacts` scenario. One scenario, the lock and the env vars: `e2e/README.md` |
 | Record | `make demo` writes `docs/assets/demo.gif`, at most 2 MB |
 | Design | `docs/superpowers/specs/2026-10-11-demo-pipeline-design.md` |
 
@@ -61,7 +61,7 @@ Make the README demo GIF from a Gherkin scenario that also runs as an E2E test.
 3. **Pick 3–4 beats** for 30–45 s of play time. One idea per beat.
 4. **Write the scenario.** A caption before each beat. Together the captions tell the story.
 5. **Add a step only if none fits.** It must set a phase: `cut` for setup, `fast` for waits, `normal` for what the viewer must see.
-6. **`make e2e` until it passes.** Do not record before that. `make e2e` also runs the `@artifacts` scenario, which publishes a private page to claude.ai. For a loop on your own scenario run `npx cucumber-js -p one features/x.feature:N` in `e2e/` and add `--dry-run` first to see what runs (see `e2e/README.md`: a bare `features/x.feature:N` also runs every other feature file). Only `-p artifacts` and `-p all` select `@artifacts`. A run that finds the lock of another run waits for it (up to 30 minutes) and prints who holds it. Never remove the lock and never kill the other run.
+6. **`make e2e-safe` until it passes.** Do not record before that. `make e2e-safe` skips the `@artifacts` scenario, which publishes a private page to claude.ai. `make e2e` runs it too: use it only when you want that scenario. For a loop on your own scenario run `npx cucumber-js -p one features/x.feature:N` in `e2e/` and add `--dry-run` first to see what runs (see `e2e/README.md`: a bare `features/x.feature:N` also runs every other feature file). Only `-p artifacts` and `-p all` select `@artifacts`. A run that finds the lock of another run waits for it (up to 30 minutes) and prints who holds it. Never remove the lock and never kill the other run.
 7. **`make demo`, then look at it.** Pull frames and read each one:
    `ffmpeg -loglevel error -i docs/assets/demo.gif -vf "select='not(mod(n\,10))'" -fps_mode vfr <scratchpad>/frame-%02d.png`
    (`-vsync` no longer exists in ffmpeg 8). Check the list in "Frame check". Fix and record again until it passes.
