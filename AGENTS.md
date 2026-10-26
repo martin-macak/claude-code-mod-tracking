@@ -24,7 +24,7 @@ These rules are mandatory for every agent (Claude, Copilot, Codex) and every per
 Enforcement, so a skipped step fails loudly:
 
 - Git hooks: `pre-commit` lints and fixes, `commit-msg` checks the message, `pre-push` runs the tests.
-- Agent hooks: `scripts/hooks/verify-gate.sh` denies `git push`, Copilot's `report_progress` and hook bypasses until `make verify` passes. Copilot calls it from `.github/hooks/verify.json`. It also blocks the end of a Copilot session with red checks or unpushed changes. Claude Code calls it from `.claude/settings.json`.
+- Agent hooks: `scripts/hooks/verify-gate.sh` denies `git push`, `gh stack push`, `submit`, `sync`, `merge` and `link`, and Copilot's `report_progress` until `make verify` passes in the repo the push targets (`git -C <dir>` or a `cd <dir>` in the same command). It gates the session repo when the target is unclear. A target repo without the gate passes. It always denies hook bypasses. Text in a heredoc body or in a quoted string is not a command when a command that only reads text (`cat`, `git commit`) owns it. On `main` the deny names the `no-commit-to-branch` hook. Copilot calls it from `.github/hooks/verify.json`. It also blocks the end of a Copilot session with red checks or unpushed changes. Claude Code calls it from `.claude/settings.json`.
 - CI: `lint.yml` (`pre-commit`), `pr.yml` (`pr-body`, `pr-conventions`) and `test.yml` (`test`). The `main` ruleset requires them, and all review threads must be resolved.
 
 ## Lint and hooks
