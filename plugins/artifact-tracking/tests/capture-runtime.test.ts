@@ -283,7 +283,7 @@ const artifactUse = (shape: { input: unknown; result: unknown }, isError = false
     text: typeof shape.result === 'string' ? shape.result : 'Published.',
   })
 
-// The tool results of Write, Edit and Read as the engine gives them (the kit world has the same three).
+// The tool results of Write, Edit and Read as the engine gives them (the kit world has the same four).
 const writeCreated = (filePath: string) => ({
   type: 'create',
   filePath,
@@ -305,6 +305,8 @@ const readDone = (filePath: string) => ({
   type: 'text',
   file: { filePath, content: '# x', numLines: 1, startLine: 1, totalLines: 1 },
 })
+// The answer of a second Read of a file that did not change (probe P1 of the #57 study, Claude Code 2.1.310).
+const readUnchanged = (filePath: string) => ({ type: 'file_unchanged', file: { filePath } })
 
 const batchOf = (messages: unknown[]) => transcriptItems(messages)
 
@@ -561,6 +563,27 @@ test('file rows come from Write, Edit and Read results and from mentions', async
   }[]
   expect(files.map(f => f.key).sort()).toEqual(['file:/work/README.md', 'file:/work/docs/plan.md'])
   expect(files.find(f => f.key === 'file:/work/docs/plan.md')?.views).toBe(1)
+})
+
+test('a replayed Read of an unchanged file counts a view, as a Read of text does, and never adds a row (issue #245)', async () => {
+  const t = fakeItems()
+  const items = await t.started()
+  await items.replay(
+    batchOf([
+      {
+        role: 'assistant',
+        text: '',
+        toolUses: [
+          use('Read', readUnchanged('/work/docs/lone.md')), // a Read alone adds no row
+          use('Write', writeCreated('/work/docs/plan.md')),
+          use('Read', readDone('/work/docs/plan.md')),
+          use('Read', readUnchanged('/work/docs/plan.md')),
+        ],
+      },
+    ]),
+  )
+  const files = t.list().filter(r => r.category === 'file') as unknown as { key: string; views: number }[]
+  expect(files.map(f => [f.key, f.views])).toEqual([['file:/work/docs/plan.md', 2]])
 })
 
 test('a replayed batch built by hand reaches the same rules', async () => {

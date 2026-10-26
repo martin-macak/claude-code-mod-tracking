@@ -518,6 +518,9 @@ export const readDone = (filePath: string) => ({
   file: { filePath, content: '# x', numLines: 1, startLine: 1, totalLines: 1 },
 })
 
+/** The answer of a second Read of a file that did not change (issue #245). */
+export const readUnchanged = (filePath: string) => ({ type: 'file_unchanged', file: { filePath } })
+
 /** Runs one Write, Edit or Read through the mod with `result` as the tool's answer. Resolves to the reply. */
 export function fileTool(
   $: Engine,
