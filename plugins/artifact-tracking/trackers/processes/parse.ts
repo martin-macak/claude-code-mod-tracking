@@ -2,6 +2,7 @@ import { isRecord } from '../../core/lib/json'
 import {
   keepsStdout,
   resolvePath,
+  type Segment,
   scopedDir,
   scopedVars,
   splitShell,
@@ -250,7 +251,7 @@ export function pairContainerIds(ids: readonly string[], printed: readonly boole
   })
 }
 
-/** Lines that `echo $!` (or `echo "pid: $!"`) prints. */
+/** Lines that `echo $!` (or `echo "pid: $!"`) prints to the tool result. */
 function pidLines(stdout: string): number[] {
   const out: number[] = []
   for (const line of stdout.split('\n')) {
@@ -261,8 +262,13 @@ function pidLines(stdout: string): number[] {
   return out
 }
 
-const echoesPid = (words: readonly string[]): boolean =>
-  (words[0] === 'echo' || words[0] === 'printf') && words.some(w => w.includes('$!'))
+/**
+ * The segment prints `$!` to the tool result. Only then is a pid line of stdout its own. One whose output goes away prints no
+ * line, so it takes none and drops none: `echo $! > pid.txt`, `echo $! | tee f`, `PID=$(echo $!)`, an `echo $!` in a redirected
+ * group and one after `exec > f` (issue #231). `keepsStdout` holds the rule, as for the id of a container.
+ */
+const echoesPid = (seg: Segment, words: readonly string[]): boolean =>
+  (words[0] === 'echo' || words[0] === 'printf') && words.some(w => w.includes('$!')) && keepsStdout(seg)
 
 // ---------------------------------------------------------------- Bash
 
@@ -358,7 +364,7 @@ type Detached = { fingerprint: string; pid?: number; viaShell: boolean }
 /**
  * The last `&` job makes no row: a builtin (`echo x &`), `cd`, a docker call or a backgrounded loop (`done &`). It has
  * a shell of its own, so `$!` names that shell, not an earlier job. The `echo $!` that prints it eats one pid line of
- * stdout: the next `echo $!` must not take that line (issue #132).
+ * stdout: the next `echo $!` must not take that line (issue #132). An `echo $!` that prints elsewhere eats none.
  */
 const NO_ROW: Detached = { fingerprint: '', viaShell: true }
 
@@ -402,6 +408,13 @@ export function parseBashProcesses(
   const detached: Detached[] = []
   let lastBg: Detached | undefined
   const pids = pidLines(stdout)
+  // One entry for each `echo $!` that prints a pid line, in order: the job that takes the line, or none when it names no row.
+  // The lines pair with the entries after the scan, and only when there is one line for each entry (issue #231).
+  const echoed: (Detached | undefined)[] = []
+  const claimed = new Set<Detached>()
+  // A `&` came before the segment, so `$!` is set and an `echo $!` prints a line. Before any `&` it prints an empty line, and
+  // `setsid -f` forks on its own and sets no `$!`.
+  let sawBg = false
   // `export` stays global on purpose: a subshell scope is not tracked for env, only for the directory. The shell variables
   // below follow the scope of the directory, so a variable set in a background list (`D=/x & srv $D/a.js &`) does not
   // reach the commands after the `&`, as in bash.
@@ -419,6 +432,8 @@ export function parseBashProcesses(
   }
 
   for (const seg of splitShell(command)) {
+    const jobBefore = sawBg
+    if (seg.bg) sawBg = true
     // The marked words tell `'$F'` and `\$F` (as typed) from `$F` and `"$F"` (expanded). Only the variables read them.
     const pre = stripLead({ words: seg.marked, whole: seg.whole, redir: seg.redir })
     const ss = stripSetsid(pre.words)
@@ -438,8 +453,9 @@ export function parseBashProcesses(
     }
     const head = words[0]!
     // `echo $! &` prints the pid of the job before it, so it keeps that job. Any other `&` job is a row (the detached
-    // branch below replaces this) or no row: either way `$!` is no longer the job before it.
-    if (seg.bg && !echoesPid(words)) lastBg = NO_ROW
+    // branch below replaces this) or no row: either way `$!` is no longer the job before it. An `echo $! > f &` is one of
+    // them: it prints no line, and the `$!` after it is the pid of its own shell.
+    if (seg.bg && !echoesPid(seg, words)) lastBg = NO_ROW
 
     if (head === 'cd' || head === 'pushd') {
       const target = words.slice(1).find(w => !w.startsWith('-'))
@@ -455,11 +471,13 @@ export function parseBashProcesses(
       }
       continue
     }
-    if (echoesPid(words)) {
-      if (lastBg === NO_ROW) pids.shift()
-      else if (lastBg && lastBg.pid === undefined && !lastBg.viaShell) {
-        const pid = pids.shift()
-        if (pid !== undefined) lastBg.pid = pid
+    if (echoesPid(seg, words)) {
+      if (jobBefore) {
+        // The line names a row only for a job that `&` started (`NO_ROW` and a `setsid -f` job are `viaShell`), and only for the
+        // first echo of it. A later echo prints the same line again, and keeps its place.
+        const job = lastBg && !lastBg.viaShell && !claimed.has(lastBg) ? lastBg : undefined
+        if (job) claimed.add(job)
+        echoed.push(job)
       }
       continue
     }
@@ -513,6 +531,15 @@ export function parseBashProcesses(
       lastBg = d
     }
   }
+
+  // A pid line is the pid of a job only when an `echo $!` printed it (issue #231, the owner's decision). The lines pair with the
+  // echoes by position, and only when there is one line for each echo, as `pairContainerIds` does for the id lines. Any other
+  // count means that a line is another command's, or that an echo's line is missing (a pipe may print it), so a line could slide
+  // onto the next job: then no job of the call gets a pid, and the probe finds the rows by their fingerprint.
+  if (echoed.length === pids.length)
+    echoed.forEach((job, n) => {
+      if (job) job.pid = pids[n]
+    })
 
   // An id line is the id of a run only when the run printed it (issue #231): `pairContainerIds` holds the rule. A paired row is
   // exact (`containerIdExact`). Left over: the limits that the KB page process-tracking-signals lists under "The id of a

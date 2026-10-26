@@ -255,9 +255,14 @@ test('container id: a redirection glued to the last word of the run takes no id 
     expect(containers(`docker run -d nginx${glued}${inspect}`, idLines(OTHER))).toStrictEqual([
       unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
     ])
-  // A quoted last word, a closed group or subshell, a loop, an `if` and a `while` take the same redirection.
+  // A quoted last word, a closed group or subshell, a loop, an `if` and a `while` take the same redirection. So does a quoted
+  // number (`"2">f` is the word `2` and `>f`, not the descriptor 2), and a file that a substitution names, with a space or glued
+  // (`> $(mktemp)`, `>$(mktemp)`). Only the glued form reaches the check of a `>(` opener, so each form needs its own row.
   for (const run of [
     'docker run -d --name api "nginx">/dev/null',
+    'docker run -d --name api "2">f',
+    'docker run -d --name api nginx > $(mktemp)',
+    'docker run -d --name api nginx >$(mktemp)',
     '{ docker run -d --name api nginx; }>/dev/null',
     '( docker run -d --name api nginx )>>log',
     'for i in 1; do docker run -d --name api nginx; done>/dev/null',
@@ -1228,6 +1233,151 @@ test('time: the command after time -p or time -- is read as the command', () => 
   expect(names('setsid time -p sleep 10 &')).toEqual(['sleep 10'])
   expect(names('time -p setsid sleep 10 &')).toEqual(['sleep 10'])
   expect(composeProject('time -p docker compose up -d')).toBe('app')
+})
+
+// An `echo $!` that prints to the tool result gives the pid line. One whose output goes to a file, to a pipe or into a
+// substitution prints none, so a line of stdout is another command's and no row takes it (issue #231, the rule `keepsStdout`).
+// With `echo $! > pid.txt; echo 4242` the line 4242 is the later echo's, not the pid of `sleep 90`.
+test('echo $!: one that prints to the tool result gives the pid line', () => {
+  for (const cmd of [
+    'sleep 90 & echo $!',
+    'sleep 90 & printf "%s\\n" $!',
+    // A redirection of stderr, of the input or of another descriptor leaves the output where it is.
+    'sleep 90 & echo $! 2> err',
+    'sleep 90 & echo $! 2>&1',
+    'sleep 90 & echo $! < /dev/null',
+    // A redirection of the command before it, or after it, is not the echo's.
+    'sleep 90 > /dev/null & echo $!',
+    'sleep 90 & echo $!; echo x > f',
+  ]) {
+    const [row] = detachedOf(cmd, undefined, '4242\n')
+    expect({ cmd, pid: row?.pid }).toEqual({ cmd, pid: 4242 })
+  }
+})
+
+test('echo $!: one whose output goes to a file takes no pid line, with or without a space and a descriptor', () => {
+  for (const redir of [
+    '> pid.txt',
+    '>pid.txt',
+    '>> pid.txt',
+    '>>pid.txt',
+    '1> pid.txt',
+    '1>>pid.txt',
+    '&> pid.txt',
+    '&>pid.txt',
+    '&>> pid.txt',
+    '>| pid.txt',
+    '>&2',
+  ]) {
+    for (const echo of ['echo $!', 'printf "%s\\n" $!']) {
+      const cmd = `sleep 90 & ${echo} ${redir}; echo 4242`
+      const [row] = detachedOf(cmd, undefined, '4242\n')
+      expect({ cmd, name: row?.name, pid: row?.pid }).toEqual({ cmd, name: 'sleep 90', pid: undefined })
+    }
+  }
+  // The operator may stand glued to the `$!` too.
+  expect(detachedOf('sleep 90 & echo $!>pid.txt; echo 4242', undefined, '4242\n')[0]?.pid).toBeUndefined()
+  expect(detachedOf('sleep 90 & echo $!>>pid.txt; echo 4242', undefined, '4242\n')[0]?.pid).toBeUndefined()
+  expect(detachedOf('sleep 90 & echo "$!">pid.txt; echo 4242', undefined, '4242\n')[0]?.pid).toBeUndefined()
+})
+
+test('echo $!: one in a pipe, a substitution, a redirected group or after an exec takes no pid line', () => {
+  for (const cmd of [
+    'sleep 90 & echo $! | tee pid.txt; echo 4242',
+    'sleep 90 & PID=$(echo $!); echo 4242',
+    'sleep 90 & PID=`echo $!`; echo 4242',
+    'sleep 90 & { echo $!; } > pid.txt; echo 4242',
+    'sleep 90 & ( echo $! ) > pid.txt; echo 4242',
+    'sleep 90 & exec > pid.txt; echo $!; echo 4242',
+  ]) {
+    const [row] = detachedOf(cmd, undefined, '4242\n')
+    expect({ cmd, name: row?.name, pid: row?.pid }).toEqual({ cmd, name: 'sleep 90', pid: undefined })
+  }
+})
+
+// The pid line of a redirected echo is not in stdout, so it must not move the next job off its own line.
+test('echo $!: a redirected one leaves the pid line to the job after it', () => {
+  const rows = detachedOf('sleep 100 & echo $! > pid.txt; sleep 101 & echo $!', undefined, '4243\n')
+  expect(rows.map(r => [r.name, r.pid])).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', 4243],
+  ])
+})
+
+// A backgrounded echo runs in a shell of its own, so the `$!` after it is that shell's pid, as for any backgrounded builtin
+// (issue #132). `echo $! &` prints the job before it and keeps it (see above). One that redirects prints nothing, so the job
+// before it has no pid line of its own, and the line of the later `echo $!` is the pid of the echo's shell.
+test('echo $!: a backgrounded one that redirects makes $! the pid of its own shell', () => {
+  const [row] = detachedOf('sleep 100 & echo $! > pid.txt & echo $!', undefined, '4243\n')
+  expect(row).toMatchObject({ name: 'sleep 100' })
+  expect(row?.pid).toBeUndefined()
+})
+
+// The pid lines pair with the `echo $!` that print by position, and only when there is one line for each echo (issue #231, the
+// owner's decision): the same count rule as `pairContainerIds`. A pipe counts as no output, but `cat` may print the line. The
+// echo then takes none, and a line is left that no echo owns. Any other count means a line is another command's or an echo's
+// line is missing, so no job of the call gets a pid. Before, `sleep 101` got 4242, the pid of `sleep 100`.
+test('echo $!: a count of pid lines that differs from the count of echoes gives no job a pid', () => {
+  const pids = (cmd: string, stdout: string) => detachedOf(cmd, undefined, stdout).map(r => [r.name, r.pid])
+  // A piped echo takes no line, and the line it may print is left over.
+  expect(pids('sleep 100 & echo $! | cat; sleep 101 & echo $!', '4242\n4243\n')).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', undefined],
+  ])
+  // A line that no echo prints (another command's number) is left over too, in front of the echo or behind it.
+  expect(pids('sleep 90 & echo $!; echo 4243', '4242\n4243\n')).toEqual([['sleep 90', undefined]])
+  expect(pids('echo 7; sleep 90 & echo $!', '7\n4242\n')).toEqual([['sleep 90', undefined]])
+  // An echo with no line behind it: the output was cut, or it printed elsewhere.
+  expect(pids('sleep 100 & echo $!; sleep 101 & echo $!', '4242\n')).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', undefined],
+  ])
+  expect(pids('sleep 90 & echo $!', '')).toEqual([['sleep 90', undefined]])
+})
+
+test('echo $!: as many pid lines as echoes pair by position', () => {
+  const pids = (cmd: string, stdout: string) => detachedOf(cmd, undefined, stdout).map(r => [r.name, r.pid])
+  expect(pids('sleep 90 & echo $!', '4242\n')).toEqual([['sleep 90', 4242]])
+  expect(pids('sleep 100 & echo $!; sleep 101 & echo $!', '4242\n4243\n')).toEqual([
+    ['sleep 100', 4242],
+    ['sleep 101', 4243],
+  ])
+  // A redirected echo takes no line and is not counted: the line count is the count of the echoes that print.
+  expect(pids('sleep 100 & echo $! > pid.txt; sleep 101 & echo $!', '4243\n')).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', 4243],
+  ])
+  // A second echo of the same job prints its line again, and it keeps its place: the next job takes its own line.
+  expect(pids('sleep 100 & echo $!; echo $!; sleep 101 & echo $!', '4242\n4242\n4243\n')).toEqual([
+    ['sleep 100', 4242],
+    ['sleep 101', 4243],
+  ])
+  // Lines of other text around the pid lines are no pid lines, so they do not count.
+  expect(pids('docker info; sleep 90 & echo $!; echo done', 'Containers: 12\n4242\ndone\n')).toEqual([
+    ['sleep 90', 4242],
+  ])
+})
+
+// An `echo $!` before any background job prints an empty line (`$!` is unset), and so does one after `setsid -f`, which forks on
+// its own and sets no `$!`. Neither prints a pid line, so neither counts.
+test('echo $!: one that has no background job behind it prints no pid line and is not counted', () => {
+  const pids = (cmd: string, stdout: string) => detachedOf(cmd, undefined, stdout).map(r => [r.name, r.pid])
+  expect(pids('echo $!; sleep 90 & echo $!', '\n4242\n')).toEqual([['sleep 90', 4242]])
+  expect(pids('setsid -f node worker.js; echo $!; sleep 90 & echo $!', '\n4242\n')).toEqual([
+    ['node worker.js', undefined],
+    ['sleep 90', 4242],
+  ])
+  // A backgrounded echo reads `$!` before its own `&` starts a job, so the first one prints an empty line too.
+  expect(pids('echo $! & sleep 90 & echo $!', '\n4242\n')).toEqual([['sleep 90', 4242]])
+  // A `&` after a loop or an assignment is a job too: `$!` is set for the echo after it, and its line counts although no row owns it.
+  expect(pids('for i in 1; do :; done & echo $!; sleep 101 & echo $!', '4242\n4243\n')).toEqual([['sleep 101', 4243]])
+  expect(pids('X=1 & echo $!; sleep 101 & echo $!', '4242\n4243\n')).toEqual([['sleep 101', 4243]])
+  // After a `&` job, `$!` is set and `setsid -f` does not change it: the echo prints the pid of `sleep 5`, a line that counts and
+  // that no row takes (the row of `setsid -f` is `viaShell`, and the line is not its pid).
+  expect(pids('sleep 5 & setsid -f foo; echo $!', '4242\n')).toEqual([
+    ['sleep 5', undefined],
+    ['foo', undefined],
+  ])
 })
 
 test('if: a background command after ! and time names the command, in either order', () => {

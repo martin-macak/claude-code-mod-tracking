@@ -264,7 +264,7 @@ export function splitShell(command: string): Segment[] {
   let afterHeredoc = false
   // A scope opens a list and a pipeline part of its own. Its close gives back the place it sat in.
   // `sub`: the shell takes the output of the commands inside (`$(`, a backtick, `<(` and `>(`). A scope inside one keeps it.
-  const openScope = (tick: boolean, arith = false, sub = false) => {
+  const openScope = (tick: boolean, arith: boolean, sub: boolean) => {
     stack.push({
       id: `${scope()}.${++scopes}`,
       tick,
@@ -1011,8 +1011,8 @@ export function stripLead(seg: {
 
 /**
  * Nothing sends the standard output of the segment away (issue #231): it goes where the shell's own output goes. A reader that
- * pairs an output line with a command calls this and reads no mark of its own, so it cannot leave one out and bring the bug
- * of #231 back unseen. A `Segment` fits.
+ * pairs an output line with a command (the id of `docker run -d`, the pid line of `echo $!`) calls this and reads no mark of
+ * its own, so it cannot leave one out and bring the bug of #231 back unseen. A `Segment` fits.
  */
 export const keepsStdout = (seg: Pick<Segment, 'stdoutRedirected' | 'stdoutPiped' | 'substituted'>): boolean =>
   !seg.stdoutRedirected && !seg.stdoutPiped && !seg.substituted
