@@ -42,10 +42,11 @@ export interface PaneHost {
   setPriorities(p: Ports, rowIds: readonly string[], level: Level | undefined): Promise<void>
   refreshManual(p: Ports): Promise<void>
   /**
-   * The dry run of `/track clean` as typed lines: the config file is checked first, then each tracker says what a cleanup
-   * would do (issue #199). It reads only. The host has no way to apply through this contract.
+   * The dry run of `/track clean` as typed lines: the host starts first, the config file is checked, then each tracker says what a
+   * cleanup would do (issue #199). It reads only. The host has no way to apply through this contract. Absent: the item host did not
+   * start (a start that failed), as `/track` answers `not ready`. The plan key answers with a toast and opens no view.
    */
-  cleanPlan(p: Ports): Promise<readonly PlanLine[]>
+  cleanPlan(p: Ports): Promise<readonly PlanLine[] | undefined>
   runAction(p: Ports, owner: string, id: string, rowId: string | null, surface?: string): Promise<void>
   problems(): readonly string[]
   /** The ids of the tools of the trackers that run: the health line of the full status area names them (issue #138). */

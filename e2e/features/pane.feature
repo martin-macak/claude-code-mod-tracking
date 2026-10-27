@@ -400,7 +400,7 @@ Feature: Drive the /track pane with the keys
   # path of the config file on two rows and the footer fill them, so the compact form lists no problem and counts them:
   # `3 problems: /track help`. `Pane keys` and the footer `h: back` are in one frame. The help footer has the core keys only:
   # with a PR row selected it kept the dim `c: resolve  f: files` of that row, wrapped to a second row and pushed `Pane keys`
-  # out of view. Issue #200: the footer also draws `g`, `a`, `t` and `m` dim, which takes a second row at 96 cells. The tracker
+  # out of view. Issue #200: the footer also draws `g`, `a`, `t`, `p` and `m` dim, which takes a second row at 96 cells. The tracker
   # groups share one row of the help view (issue #265), so the view and the 2-row footer still fit. The config has 3 problems:
   # a value below its min (breaker threshold), two above their max (sectionRows and chunkSize). The count line needs the path
   # of the config file to wrap onto two rows. The path is 84 to 96 cells wide for that (the body is 96 cells and
@@ -426,13 +426,13 @@ Feature: Drive the /track pane with the keys
     And the screen stops showing "c: resolve"
     And the fake gh answered no unsupported call
 
-  # Issue #200. The help view has no view line, so its letters `g`, `a`, `t` and `m` had no Button: a press typed the letter into
+  # Issue #200. The help view has no view line, so its letters `g`, `a`, `t`, `p` and `m` had no Button: a press typed the letter into
   # the prompt and took the keyboard from the pane. The footer draws them dim now: a press does nothing and the pane keeps the
-  # keys. The proof is causal: the `h` after the four letters is a pane key. It closes the help view only when the pane still has
+  # keys. The proof is causal: the `h` after the five letters is a pane key. It closes the help view only when the pane still has
   # the keyboard; a keyboard in the prompt would take the `h` as a letter and the help view would stay. The ring stays on the dim
   # Button that had it when `h` opens the help view, and the second `h` leaves it on the same Button of the view line.
   @help-view-keys
-  Scenario Outline: In the help view g, a, t and m keep the keyboard in the pane, and the ring stays on its Button, at <cols>x<rows>
+  Scenario Outline: In the help view g, a, t, p and m keep the keyboard in the pane, and the ring stays on its Button, at <cols>x<rows>
     Given a terminal of <cols> columns by <rows> rows
     And a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
     And the fake gh reports PR #7 "Fix the fake conflict" from "feat/fake-conflict" into "main" as CONFLICTING
@@ -448,6 +448,7 @@ Feature: Drive the /track pane with the keys
     When I press "g"
     And I press "a"
     And I press "t"
+    And I press "p"
     And I press "m"
     Then the screen does not show "Keys go to the prompt."
     When I press "h"
@@ -461,6 +462,37 @@ Feature: Drive the /track pane with the keys
       | cols | rows | placement |
       | 120  | 36   | docked    |
       | 100  | 40   | inline    |
+
+  # Issue #199. `p` shows the plan of `/track clean` in the pane, in the place of the rows, and changes nothing. The session has no
+  # tool, so no task runs and the plan is the empty one: the title and `Nothing to stop or remove.`. The kit cannot show the ring or
+  # the paint, so this run does. The plan view has no view line, so `g` is a dim Button there: the letter must not reach the prompt
+  # and take the keys from the pane. If it did, the next `p` would go to the prompt too and the row would not come back. At 100x40
+  # the pane is inline and its body holds 11 rows, so this also shows the plan view and its footer in that body. Run it alone with
+  # `--tags @plan-view`.
+  @plan-view
+  Scenario: p shows the clean plan with the ring on p: back, g does nothing there, and p again returns to the row
+    Given a terminal of 100 columns by 40 rows
+    And a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
+    And the fake gh reports PR #7 "Fix the fake conflict" from "feat/fake-conflict" into "main" as CONFLICTING
+    And a Claude Code session with the artifact-tracking mod
+    When I type "/track"
+    Then the selected row shows "#7"
+    And the pane is inline
+    And the screen shows "p: clean plan"
+    When I press "p"
+    Then the screen shows "Clean plan. Nothing changed."
+    And the screen shows "Nothing to stop or remove."
+    And the screen shows "p: back"
+    And the pane stops showing "#7"
+    And the focus ring is on "p: back"
+    When I press "g"
+    Then the screen shows "Clean plan. Nothing changed."
+    When I press "p"
+    Then the selected row shows "#7"
+    And the pane stops showing "Clean plan. Nothing changed."
+    And the screen shows "p: clean plan"
+    And the focus ring is on "▸"
+    And the fake gh answered no unsupported call
 
   # Issue #140. `x` on the only row takes the row and every tracker key out of the footer. The ring sat on `c: resolve`, a
   # Button that is gone, so it would land on none. The mod asks for the first footer Button once the drawing without the row

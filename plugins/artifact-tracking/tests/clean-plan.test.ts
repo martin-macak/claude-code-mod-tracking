@@ -6,7 +6,7 @@
 // port, so no real task or worktree is touched.
 import { expect, test } from 'claude-code/testing'
 import { ConfigManager } from '../core/infra/config-manager'
-import type { CleanStep } from '../core/interfaces/clean'
+import type { CleanStep, PlanLine } from '../core/interfaces/clean'
 import type { Tracker } from '../core/interfaces/tracker'
 import type { PaneHost } from '../hooks/pane-text'
 import { processesTracker } from '../trackers/processes'
@@ -56,11 +56,18 @@ function world(trackers: Tracker[]) {
   return { ...w, host }
 }
 
+/** The plan of a host that started: it gives a plan whenever the item host is ready. */
+async function planOf(host: PaneHost, ports: Parameters<PaneHost['cleanPlan']>[0]): Promise<readonly PlanLine[]> {
+  const lines = await host.cleanPlan(ports)
+  if (lines === undefined) throw new Error('the host gave no plan')
+  return lines
+}
+
 test('PaneHost.cleanPlan gives the lines that /track clean prints, in the order of the trackers', async () => {
   const a = stub('a', 1, () => [task('task:1'), tree('wt:/x')])
   const b = stub('b', 2, () => [task('task:2', { skip: 'no task id' })])
   const t = world([b, a])
-  const lines = await t.host.cleanPlan(t.w.ports)
+  const lines = await planOf(t.host, t.w.ports)
   expect(lines.filter(l => l.role === 'step').map(l => l.text)).toEqual([
     '  run task:1: stop',
     '  run task:2: skipped: no task id',
@@ -75,14 +82,14 @@ test('a tracker whose plan throws is a problem line, and the steps of the others
   })
   const good = stub('good', 2, () => [task('task:1')])
   const t = world([bad, good])
-  const lines = await t.host.cleanPlan(t.w.ports)
+  const lines = await planOf(t.host, t.w.ports)
   expect(lines.filter(l => l.role === 'problem').map(l => l.text)).toEqual(['  bad: plan failed: boom'])
   expect(lines.filter(l => l.role === 'step').map(l => l.text)).toEqual(['  run task:1: stop'])
 })
 
 test('with nothing to clean the plan is the empty plan, not an error', async () => {
   const t = world([stub('a', 1, () => [])])
-  const lines = await t.host.cleanPlan(t.w.ports)
+  const lines = await planOf(t.host, t.w.ports)
   expect(lines.map(l => l.role)).toEqual(['title', 'blank', 'head', 'blank', 'hint', 'hint'])
   expect(lines[2]?.text).toBe('Nothing to stop or remove.')
 })
@@ -91,9 +98,25 @@ test('cleanPlan starts the manager itself: it needs no call of the pane before i
   const t = world([stub('a', 1, () => [task('task:1')])])
   // No ensureStarted, no `/track`: the first hook of a load may be the press of a pane key.
   expect(t.m.items.ready).toBe(false)
-  const lines = await t.host.cleanPlan(t.w.ports)
+  const lines = await planOf(t.host, t.w.ports)
   expect(t.m.items.ready).toBe(true) // the entry ran the start sequence
   expect(lines.filter(l => l.role === 'step').map(l => l.text)).toEqual(['  run task:1: stop'])
+})
+
+test('cleanPlan gives no plan when the item host did not start, and reads no tracker', async () => {
+  let planned = 0
+  const t = world([
+    stub('a', 1, () => {
+      planned++
+      return [task('task:1')]
+    }),
+  ])
+  await t.m.ensureStarted(t.w.ports)
+  // A start that failed leaves the flag false, and `/track` answers `not ready`. The guard belongs to the callee, so the pane has none.
+  Object.defineProperty(t.m.items, 'ready', { get: () => false })
+  expect(await t.host.cleanPlan(t.w.ports)).toBeUndefined()
+  expect(planned).toBe(0)
+  expect((await t.m.track(t.w.ports, 'clean')).text).toBe('artifact-tracking: not ready.') // the command says the same
 })
 
 test('cleanPlan makes the whole entry: the session check runs, not only the start', async () => {
@@ -141,8 +164,8 @@ test('cleanPlan over the real processes tracker plans the stop of a running task
   const rows = () => (t.w.state.get('processes') ?? []) as unknown as ProcessRecord[]
   expect(rows().map(r => [r.state, r.taskId])).toEqual([['running', 'task-bg-1']])
   const before = { sets: { ...t.w.stateSets }, store: t.w.storeSets, calls: t.w.calls.length, stops: t.w.stops.length }
-  const first = await t.host.cleanPlan(t.w.ports)
-  const second = await t.host.cleanPlan(t.w.ports)
+  const first = await planOf(t.host, t.w.ports)
+  const second = await planOf(t.host, t.w.ports)
   expect(first.filter(l => l.role === 'step').map(l => l.text)).toEqual(['  sleep 300: stop']) // the plan does see the task
   expect(second).toEqual(first)
   expect(t.w.stops).toHaveLength(before.stops) // no TaskStop
@@ -177,7 +200,7 @@ test('cleanPlan checks the config file first: an edit of a switch just before th
   const host: PaneHost = w.m
   await w.m.ensureStarted(w.w.ports)
   const before = { sets: { ...w.w.stateSets }, store: w.w.storeSets, calls: w.w.calls.length, stops: w.w.stops.length }
-  const steps = async () => (await host.cleanPlan(w.w.ports)).filter(l => l.role === 'step').map(l => l.text)
+  const steps = async () => (await planOf(host, w.w.ports)).filter(l => l.role === 'step').map(l => l.text)
   expect(await steps()).toEqual(['  wt:/x: skipped: not enabled'])
   file.edit(CONFIG_PATH, JSON.stringify({ trackers: { gated: { on: true } } }))
   expect(await steps()).toEqual(['  wt:/x: remove record'])

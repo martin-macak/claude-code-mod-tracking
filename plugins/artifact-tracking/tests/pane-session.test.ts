@@ -172,10 +172,10 @@ test('draw hands the body height to the help view: a short body draws it compact
   const t = setup(webs('a'), { path: '/p/config.json', version: '1.2.3' })
   t.w.state.set('help', true)
   const help = async (rows?: number) => (await t.draw(96, rows)) as unknown as { children: { children: unknown[] }[] }
-  // The full view is 2 titles, 11 keys (g, a and t are pane keys, issue #63, L3; m is a row key, issue #138), the config line and the
-  // version line. The compact view is 8 lines: three keys to a line.
-  expect((await help(undefined)).children[0]?.children).toHaveLength(15)
-  expect((await help(28)).children[0]?.children).toHaveLength(15)
+  // The full view is 2 titles, 12 keys (g, a, t and p are pane keys, issues #63 and #199; m is a row key, issue #138), the config line and
+  // the version line. The compact view is 8 lines: three keys to a line, as the body has the rows for it.
+  expect((await help(undefined)).children[0]?.children).toHaveLength(16)
+  expect((await help(28)).children[0]?.children).toHaveLength(16)
   expect((await help(11)).children[0]?.children).toHaveLength(8)
 })
 
@@ -199,7 +199,20 @@ test('with a tracker row selected the help view still fits the 11-row inline bod
   t.w.state.set('help', true)
   const tree = await t.draw(96, 11)
   expect(leaves(tree)[0]).toBe('Pane keys (Tab, Shift+Tab, Up, Down move between rows)')
-  expect(helpFooterOf(tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'm'])
+  expect(helpFooterOf(tree).map(b => b.props.hotkey)).toEqual([
+    'r',
+    'h',
+    'x',
+    '1',
+    '2',
+    '3',
+    '0',
+    'g',
+    'a',
+    't',
+    'p',
+    'm',
+  ])
   const [body] = (tree as unknown as { children: unknown[] }).children
   const wrapped = 1 // the 86-cell config path takes a second row at 96 cells
   expect((body as { children: unknown[] }).children.length + wrapped + HELP_FOOTER_ROWS).toBeLessThanOrEqual(11) // body, path, footer
@@ -218,7 +231,20 @@ test('the selected row hides while the help view is open: the help footer keeps 
   t.host.setRows(webs('b')) // `a` hides while the person reads the help
   const help = await t.draw(96, 11)
   expect(leaves(help)[0]).toBe('Pane keys (Tab, Shift+Tab, Up, Down move between rows)')
-  expect(helpFooterOf(help).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'm'])
+  expect(helpFooterOf(help).map(b => b.props.hotkey)).toEqual([
+    'r',
+    'h',
+    'x',
+    '1',
+    '2',
+    '3',
+    '0',
+    'g',
+    'a',
+    't',
+    'p',
+    'm',
+  ])
   const [body] = (help as unknown as { children: unknown[] }).children
   const wrapped = 1 // the 86-cell config path takes a second row at 96 cells
   expect((body as { children: unknown[] }).children.length + wrapped + HELP_FOOTER_ROWS).toBeLessThanOrEqual(11) // body, path, footer
@@ -1683,7 +1709,7 @@ test('the frame of a drawing carries the keys of its footer and view line Button
   const waited = refocus.awaitFrame(t.w.ports, () => true)
   const tree = await t.draw()
   const frame = await waited
-  expect(frame?.help).toBe(false)
+  expect(frame?.view).toBe('rows')
   expect(frame?.rows).toEqual(
     new Map([
       ['a', 'r0'],
@@ -1696,12 +1722,25 @@ test('the frame of a drawing carries the keys of its footer and view line Button
   expect(frame?.keys).toContain('view') // `g`, on the view line (issue #63, L3)
 })
 
+// Issue #199: a frame names the view it shows, so a press can wait for the drawing it wrote. The help view draws no row and no view line.
+test('the frame of the help view names the view and holds no row', async () => {
+  const t = await ringOn(undefined, ['a', 'b'], 'a')
+  const refocus = (t.session as unknown as { refocus: Refocus }).refocus
+  t.w.state.set('help', true)
+  const waited = refocus.awaitFrame(t.w.ports, () => true)
+  await t.draw()
+  expect(await waited).toMatchObject({ view: 'help', rows: new Map(), stops: [] })
+})
+
+/** What the next drawing shows (`Refocus.keep`): the rows with `row` selected, the help view or the plan view of issue #199. */
+type Next = { view: 'rows' | 'help' | 'plan'; row: string | null }
+
 /**
  * A bare `Refocus` on ports that hold the clock and `ui.focus` alone, and no host: it reaches for nothing but those. `keep`
  * runs with `next` and `atBound`, the read of the state that only the bound may call. `asked` collects the keys it asked
  * the engine for, `done` ends with `keep`.
  */
-function bareKeep(at: string, next: { help: boolean; row: string | null }, atBound: () => Promise<Frame>) {
+function bareKeep(at: string, next: Next, atBound: () => Promise<Frame>) {
   const w = fakePorts()
   const asked: string[] = []
   const ports = {
@@ -1727,7 +1766,7 @@ const noRead = async (): Promise<Frame> => {
 }
 
 /** `keep` with the frame `frame`, then the pause. Resolves with the keys it asked the engine for. */
-async function keepOn(at: string, next: { help: boolean; row: string | null }, frame: Frame): Promise<string[]> {
+async function keepOn(at: string, next: Next, frame: Frame): Promise<string[]> {
   const k = bareKeep(at, next, noRead)
   k.refocus.frame(frame)
   await turn()
@@ -1744,35 +1783,44 @@ test('keep reads nothing after the frame wait: it chooses from the Button keys a
   const keys = ['refresh', 'help', 'dismiss']
   const none = new Map<string, string>()
   // the ring's Button is in the frame: the ring stays on it
-  expect(await keepOn('dismiss', { help: false, row: 'a' }, { help: false, rows, keys, stops: [] })).toEqual([
+  expect(await keepOn('dismiss', { view: 'rows', row: 'a' }, { view: 'rows', rows, keys, stops: [] })).toEqual([
     'dismiss',
   ])
   // it is not: the selected row takes the ring, by its handle in the frame
-  expect(await keepOn('web.resolve', { help: false, row: 'b' }, { help: false, rows, keys, stops: [] })).toEqual(['r1'])
+  expect(await keepOn('web.resolve', { view: 'rows', row: 'b' }, { view: 'rows', rows, keys, stops: [] })).toEqual([
+    'r1',
+  ])
   // no row is selected: the first Button of the footer
-  expect(await keepOn('web.resolve', { help: false, row: null }, { help: false, rows: none, keys, stops: [] })).toEqual(
-    ['refresh'],
-  )
+  expect(
+    await keepOn('web.resolve', { view: 'rows', row: null }, { view: 'rows', rows: none, keys, stops: [] }),
+  ).toEqual(['refresh'])
   // the help view: h: back
   expect(
     await keepOn(
       'web.resolve',
-      { help: true, row: null },
-      { help: true, rows: none, keys: ['refresh', 'help'], stops: [] },
+      { view: 'help', row: null },
+      { view: 'help', rows: none, keys: ['refresh', 'help'], stops: [] },
     ),
   ).toEqual(['help'])
+  // the plan view (issue #199): p: back, the Button `clean`; a ring on a Button that the plan footer keeps stays there
+  const planKeys = ['refresh', 'help', 'view', 'show-all', 'touched', 'clean', 'mark', 'dismiss']
+  const plan: Frame = { view: 'plan', rows: none, keys: planKeys, stops: [] }
+  expect(await keepOn('web.resolve', { view: 'plan', row: null }, plan)).toEqual(['clean'])
+  expect(await keepOn('r1', { view: 'plan', row: null }, plan)).toEqual(['clean'])
+  expect(await keepOn('refresh', { view: 'plan', row: null }, plan)).toEqual(['refresh'])
+  expect(await keepOn('mark', { view: 'plan', row: null }, plan)).toEqual(['mark']) // a dim Button still holds the ring where the person put it
 })
 
 test('keep with a row that the frame does not hold asks for no ring', async () => {
   const rows = new Map([['a', 'r0']])
   expect(
-    await keepOn('web.resolve', { help: false, row: 'zzz' }, { help: false, rows, keys: ['refresh'], stops: [] }),
+    await keepOn('web.resolve', { view: 'rows', row: 'zzz' }, { view: 'rows', rows, keys: ['refresh'], stops: [] }),
   ).toEqual([])
 })
 
 test('keep at the bound chooses from the frame that the state gives and asks at once, with no pause', async () => {
-  const state: Frame = { help: false, rows: new Map([['a', 'r0']]), keys: ['refresh'], stops: [] }
-  const k = bareKeep('web.resolve', { help: false, row: 'a' }, async () => state)
+  const state: Frame = { view: 'rows', rows: new Map([['a', 'r0']]), keys: ['refresh'], stops: [] }
+  const k = bareKeep('web.resolve', { view: 'rows', row: 'a' }, async () => state)
   await k.w.clock.advance(NEXT_DRAWING_MS)
   await k.done // a pause after the bound would hold it here
   expect(k.asked).toEqual(['r0'])
@@ -1783,7 +1831,7 @@ test('keep at the bound chooses from the frame that the state gives and asks at 
 // the same controls changes nothing ("h: a second drawing inside the pause neither ends it nor moves it"). Restarts end at
 // `NEXT_DRAWING_MS` after the first frame, so a stream of changing drawings cannot hold the press for ever.
 const BEFORE: Frame = {
-  help: false,
+  view: 'rows',
   rows: new Map([
     ['a', 'r0'],
     ['b', 'r1'],
@@ -1791,11 +1839,11 @@ const BEFORE: Frame = {
   keys: ['web.resolve', 'refresh'],
   stops: ['r0', 'r1'],
 }
-const AFTER: Frame = { help: false, rows: new Map([['b', 'r0']]), keys: ['refresh'], stops: ['r0'] } // `a` hid: `b` is r0
+const AFTER: Frame = { view: 'rows', rows: new Map([['b', 'r0']]), keys: ['refresh'], stops: ['r0'] } // `a` hid: `b` is r0
 
 test('a drawing with other controls during the pause restarts it from that frame, and the request chooses from it', async () => {
   // From BEFORE the ring stays on web.resolve, a Button it holds. From AFTER the selected row `b` takes it, as r0.
-  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  const k = bareKeep('web.resolve', { view: 'rows', row: 'b' }, noRead)
   k.refocus.frame(BEFORE)
   await turn()
   await k.w.clock.advance(RING_PAUSE_MS - 1)
@@ -1813,7 +1861,7 @@ test('a drawing with other controls during the pause restarts it from that frame
 })
 
 test('a drawing that returns before the press reaches its pause is the latest frame of the pause', async () => {
-  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  const k = bareKeep('web.resolve', { view: 'rows', row: 'b' }, noRead)
   k.refocus.frame(BEFORE) // ends the frame wait: the press runs on in a microtask
   k.refocus.frame(AFTER) // a second render, before it does
   await turn()
@@ -1826,11 +1874,11 @@ test('a drawing that returns before the press reaches its pause is the latest fr
 })
 
 test('a drawing with the same controls during the pause neither ends it nor moves it, and the frame stays', async () => {
-  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  const k = bareKeep('web.resolve', { view: 'rows', row: 'b' }, noRead)
   k.refocus.frame(BEFORE)
   await turn()
   await k.w.clock.advance(RING_PAUSE_MS - 1)
-  k.refocus.frame({ help: false, rows: new Map(BEFORE.rows), keys: [...BEFORE.keys], stops: [...BEFORE.stops] }) // equal, but another object
+  k.refocus.frame({ view: 'rows', rows: new Map(BEFORE.rows), keys: [...BEFORE.keys], stops: [...BEFORE.stops] }) // equal, but another object
   await turn()
   expect(k.asked).toEqual([])
   await k.w.clock.advance(1) // RING_PAUSE_MS after the first frame
@@ -1840,7 +1888,7 @@ test('a drawing with the same controls during the pause neither ends it nor move
 
 test('a drawing that adds or drops an "N more" Button has other controls, though its keys and rows are the same', async () => {
   // The ring sits on a position among the Buttons: an `m0` before the footer shifts every Button after it.
-  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  const k = bareKeep('web.resolve', { view: 'rows', row: 'b' }, noRead)
   k.refocus.frame(BEFORE)
   await turn()
   await k.w.clock.advance(RING_PAUSE_MS - 1)
@@ -1863,7 +1911,7 @@ test('a drawing that adds or drops an "N more" Button has other controls, though
 })
 
 test('a drawing that holds the same keys and rows in another order has other controls', async () => {
-  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  const k = bareKeep('web.resolve', { view: 'rows', row: 'b' }, noRead)
   const swappedKeys: Frame = { ...BEFORE, keys: ['refresh', 'web.resolve'] }
   const swappedRows: Frame = { ...BEFORE, rows: new Map([...BEFORE.rows].reverse()) }
   k.refocus.frame(BEFORE)
@@ -1880,9 +1928,9 @@ test('a drawing that holds the same keys and rows in another order has other con
 })
 
 test('a stream of drawings with other controls does not hold the request for ever: it goes out with the latest at the bound', async () => {
-  const k = bareKeep('web.resolve', { help: false, row: 'a' }, noRead)
+  const k = bareKeep('web.resolve', { view: 'rows', row: 'a' }, noRead)
   const nth = (n: number): Frame => ({
-    help: false,
+    view: 'rows',
     rows: new Map([['a', `r${n}`]]),
     keys: ['refresh'],
     stops: [`r${n}`],
@@ -1906,7 +1954,7 @@ test('a stream of drawings with other controls does not hold the request for eve
 })
 
 test('a pause whose timer the engine refuses ends with a drawing after its deadline that has other controls, and asks from it', async () => {
-  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  const k = bareKeep('web.resolve', { view: 'rows', row: 'b' }, noRead)
   k.w.clock.refuse('after', RING_PAUSE_MS)
   k.refocus.frame(BEFORE)
   await turn()
@@ -1919,7 +1967,7 @@ test('a pause whose timer the engine refuses ends with a drawing after its deadl
 })
 
 test('a closing ends a pause that a drawing restarted, with no request', async () => {
-  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  const k = bareKeep('web.resolve', { view: 'rows', row: 'b' }, noRead)
   k.refocus.frame(BEFORE)
   await turn()
   await k.w.clock.advance(RING_PAUSE_MS - 1)
@@ -2189,7 +2237,7 @@ test('a closing cancels the wake of the frame wait: no state read and no request
 })
 
 test('a restart of the pause arms a new wake and cancels the old one: the request names a Button of the second frame', async () => {
-  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  const k = bareKeep('web.resolve', { view: 'rows', row: 'b' }, noRead)
   k.w.clock.refuse('after', RING_PAUSE_MS) // both engine timers of the pause are refused
   k.w.clock.refuse('after', RING_PAUSE_MS)
   k.refocus.frame(BEFORE) // at 0: the engine timer is due at RING_PAUSE_MS, its wake after the slack
@@ -2290,7 +2338,7 @@ test('a press that the bound released is no longer asked about the drawings that
   })
   await w.clock.advance(NEXT_DRAWING_MS)
   await waited // the bound released it
-  refocus.frame({ help: false, rows: new Map(), keys: [], stops: [] })
+  refocus.frame({ view: 'rows', rows: new Map(), keys: [], stops: [] })
   expect(asked).toBe(0)
 })
 
@@ -2347,7 +2395,7 @@ test('x on the last row while the ring is on x or r asks for the ring on that Bu
   }
 })
 
-// `g`, `a`, `t` and `m` sit on the view line, not in the footer. A ring on one of them is a ring on a Button that the next drawing
+// `g`, `a`, `t`, `p` and `m` sit on the view line, not in the footer. A ring on one of them is a ring on a Button that the next drawing
 // still holds, so the press that took the last row asks for that Button again (issue #63, L3, review m1).
 test('x on the only row while the ring sits on a view line Button keeps the ring on it: the Button is still drawn', async () => {
   for (const at of VIEW_LINE_KEYS) {
@@ -2373,10 +2421,10 @@ test('x on the only row while the ring sits on a view line Button, with no frame
   }
 })
 
-// Issue #200: the help view has no view line, so it draws `g`, `a`, `t` and `m` as dim Buttons in its footer. The rule for the ring
+// Issue #200: the help view has no view line, so it draws `g`, `a`, `t`, `p` and `m` as dim Buttons in its footer. The rule for the ring
 // is the one of `x` and the digits: it stays on its Button, because the next drawing still holds it (`Refocus.keep`). The second
 // `h` closes the help view, and the Button is on the view line again, so the ring goes back to where the person had it.
-test('h opens the help view while the ring sits on g, a, t or m: the ring stays on that dim Button, and the second h keeps it there', async () => {
+test('h opens the help view while the ring sits on g, a, t, p or m: the ring stays on that dim Button, and the second h keeps it there', async () => {
   for (const at of VIEW_LINE_KEYS) {
     const t = await ringOn(at)
     await pressDraw(t, 'help')
@@ -2389,8 +2437,8 @@ test('h opens the help view while the ring sits on g, a, t or m: the ring stays 
   }
 })
 
-// `frameFromState` reads the footer of the help view, which now names the four Buttons: the bound needs no drawing to know them.
-test('h opens the help view while the ring sits on g, a, t or m, with no frame before the bound: the state read keeps the ring on that Button', async () => {
+// `frameFromState` reads the footer of the help view, which now names the five Buttons: the bound needs no drawing to know them.
+test('h opens the help view while the ring sits on g, a, t, p or m, with no frame before the bound: the state read keeps the ring on that Button', async () => {
   for (const at of VIEW_LINE_KEYS) {
     const t = await ringOn(at)
     press(buttonOf(await t.draw(), 'help'))
@@ -2473,14 +2521,15 @@ async function views(o: Parameters<typeof setup>[1] = {}) {
   return t
 }
 
-test('draw puts the view line above the footer: the view, then g, a, t and m; the footer keeps its keys', async () => {
+test('draw puts the view line above the footer: the view, then g, a, t, p and m; the footer keeps its keys', async () => {
   const t = await views()
   const tree = await t.draw()
   expect(texts(tree).some(([, s]) => s === 'View: list')).toBe(true)
   expect(viewLineOf(tree).map(b => [b.props.hotkey, b.props.label])).toEqual([
     ['g', 'view'],
     ['a', 'show all'],
-    ['t', 'touched only'],
+    ['t', 'touched'],
+    ['p', 'clean plan'],
     ['m', 'mark'],
   ])
   expect(footerOf(tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
@@ -2523,14 +2572,14 @@ test('the view line of the by-list view leaves out the ended count that the sect
   expect(await line()).toBe('View: status · 2 ended hidden')
 })
 
-// Issue #200: with no view line, a press of g, a, t or m would type the letter into the prompt. The help footer holds one dim
-// Button for each: a Button takes the hotkey, so the keyboard stays in the pane.
-test('the help view has no view line, and the help footer holds g, a, t and m as dim Buttons, one Button per hotkey', async () => {
+// Issue #200: with no view line, a press of g, a, t, p or m would type the letter into the prompt. The help footer holds one dim
+// Button for each: a Button takes the hotkey, so the keyboard stays in the pane. The help keys name them too (issue #199).
+test('the help view has no view line, and the help footer holds g, a, t, p and m as dim Buttons, one Button per hotkey', async () => {
   const t = await views()
   t.w.state.set('help', true)
   const tree = await t.draw()
   const hotkeys = helpFooterOf(tree).map(b => String(b.props.hotkey))
-  expect(hotkeys).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'm'])
+  expect(hotkeys).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'p', 'm'])
   expect(hotkeys).toEqual([...new Set(hotkeys)]) // the engine lets the later of two equal hotkeys win in silence
   for (const key of VIEW_LINE_KEYS) expect(buttonOf(tree, key).props.dimColor, key).toBe(true)
   expect(texts(tree).some(([, s]) => s.startsWith('View:'))).toBe(false)
@@ -2538,12 +2587,13 @@ test('the help view has no view line, and the help footer holds g, a, t and m as
   expect(nodes(footer, 'Button').map(b => String(b.props.hotkey))).toEqual(hotkeys) // all of them in the footer Box
   t.w.state.set('help', false)
   const pane = await t.draw()
-  expect(viewLineOf(pane)).toHaveLength(4) // the pane draws them on the view line only
+  expect(viewLineOf(pane)).toHaveLength(5) // the pane draws them on the view line only
   expect(footerOf(pane).map(b => String(b.props.hotkey))).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
   const out = leaves(tree)
   expect(out).toContain('view')
   expect(out).toContain('show all')
-  expect(out).toContain('touched only')
+  expect(out).toContain('touched')
+  expect(out).toContain('clean plan')
 })
 
 test('help titles a tracker by its sections, whatever the view draws: never by Failed or No status', async () => {

@@ -5,11 +5,13 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Selection". Plan: L6 Task 11, G6, G8, G22.
 
 import type { RenderElement } from 'claude-code'
-import { type Bulk, bulkTargets, dismissTargets, route, viewKeys } from '../core/infra/keys'
+import { NOT_READY } from '../core/infra/command-text'
+import { type Bulk, bulkTargets, dismissTargets, planFooter, route, viewKeys } from '../core/infra/keys'
 import { reason } from '../core/infra/steps'
 import { bandSections } from '../core/infra/views'
 import type { Ports } from '../core/interfaces/ports'
 import type { GroupSpec, RowRef } from '../core/interfaces/view'
+import type { PlanLine } from '../core/lib/clean-text'
 import { flipShowAll, flipTouched, listGroups, nextView, resolveView, viewSummary } from '../core/lib/grouping'
 import { healthLine } from '../core/lib/health'
 import { dismissQuestion, markedSummary, pruned, relabelDismiss, rowIdsOf, toggled } from '../core/lib/marks'
@@ -35,7 +37,7 @@ import {
 import { clearMarks, writeMarks } from './pane-marks'
 import { BulkQuestion } from './pane-question'
 import { WorkQueue } from './pane-queue'
-import { frameFromState, type Press, Refocus, unlessClosed } from './pane-refocus'
+import { type Frame, frameFromState, type Press, Refocus, unlessClosed, type ViewKind } from './pane-refocus'
 import { helpOf, type PaneHost, paneGroups, paneModel, problemCount, shownOf } from './pane-text'
 import { openTurn, type TurnPaneHost } from './pane-turn'
 
@@ -84,6 +86,25 @@ export class PaneSession {
   private drawing = 0
   /** The question of a bulk dismiss (issue #138). A press of `x` answers it only from a drawing that showed it. */
   private readonly question = new BulkQuestion()
+  /**
+   * The plan of `/track clean` while the plan view is open (issue #199): the lines that the press of `p` read, once. A drawing
+   * must not run the trackers, so it reads this field and never the plan. `closed` drops it. The help view wins when both are set.
+   */
+  private plan: readonly PlanLine[] | undefined
+  /**
+   * The generation of the plan view and its reads. It moves when the view opens, when it drops its lines (a `p` that closes it, an
+   * `h`, a closing of the pane) and when an `r` starts a read. An `r` read writes its lines only when the generation is still the
+   * one it began with: a read that outlived a close and a new `p`, or that a newer `r` read overtook, is obsolete and its lines go.
+   * The first read of `p` takes the generation too: an `h` and an `h` again while it runs leave the help atom as it was, but the
+   * generation moved, so the read opens no view.
+   */
+  private planGen = 0
+  /**
+   * The press of `p` that reads the plan now. A second press while it is current does nothing, so a double tap does not close the
+   * view it opens. The press holds the guard, not the pane: after a closing the press is no longer current (`Press.still`), so it
+   * does not block the next pane, and its end does not free the guard of a press of the next pane.
+   */
+  private planRead: Press | undefined
 
   /**
    * Reads the state and the groups, and draws. It writes nothing and calls no entry (E9). `focused` is
@@ -102,7 +123,10 @@ export class PaneSession {
     // comment 6412630538 on the issue, linked from tree-table.md, "The adaptive status area"). The help view has no status area.
     // The health line reads the state of the tools here, before the question is read below: nothing may await between that read
     // and the drawing. Its time is the wall clock, as `readView` takes for the section notes: a breaker stamps `openUntil` with it.
-    const full = !help && statusForm(bodyRows) === 'full'
+    const plan = help ? undefined : this.plan
+    const viewKind: ViewKind = help ? 'help' : plan === undefined ? 'rows' : 'plan'
+    const textOnly = viewKind !== 'rows' // the help view and the plan view: no rows, no view line, no status area, no hint
+    const full = !textOnly && statusForm(bodyRows) === 'full'
     const tools = full ? await p.state.tools.get() : undefined
     const now = p.clock.wall()
     const model = await paneModel(p, m, { selected, expanded: new Set(expanded) })
@@ -122,7 +146,7 @@ export class PaneSession {
     this.chosen = { atom: selected, id: chosen }
     // A pane with no keys draws a hint line above the tree (issue #108). The table gets the rows below it, else the tree is
     // taller than the body and the footer drops out of view (issue #109).
-    const hinted = focused === false && !help
+    const hinted = focused === false && !textOnly
     const columns = bodyColumns ?? DEFAULT_BODY_COLUMNS
     // The summary row of the full form wraps the table from above, so its row comes off the room the table gets too.
     const room =
@@ -131,17 +155,20 @@ export class PaneSession {
         : Math.max(0, bodyRows - (hinted ? hintRows(columns) : 0) - (full ? SUMMARY_ROWS : 0))
     // The marked rows that this drawing lays: a row that a cap, a filter or a closed parent leaves out counts nowhere (G7). The
     // keys read them, so the footer is asked for them before the drawing is made.
-    const laid = help ? [] : laidRefs(groups, { expanded: new Set(expanded), shown: id => shown.get(id) ?? 0, limits })
+    const laid = textOnly
+      ? []
+      : laidRefs(groups, { expanded: new Set(expanded), shown: id => shown.get(id) ?? 0, limits })
     const marked = new Set(marks)
     const markedDrawn = laid.filter(r => marked.has(r.id))
-    const row = help ? undefined : findRow(groups, chosen)
-    const footer = await m.footer(p, row, help, markedDrawn)
+    const row = textOnly ? undefined : findRow(groups, chosen)
+    // The plan view works `p` and `r` only; its footer holds every core key, so no letter goes to the prompt (issue #199).
+    const footer = plan === undefined ? await m.footer(p, row, help, markedDrawn) : planFooter(m.keys)
     // No await from here to the drawing: the question is read once, with the number of this drawing (issue #138, G4).
     const drawing = ++this.drawing
     const targets = dismissTargets(markedDrawn)
     // The question stands while the same rows are its targets and the pane has the keys: a drawing without them, the help
     // view and a change of the marked rows withdraw it. The first drawing that reads it notes its number.
-    const asking = this.question.read(drawing, targets, focused !== false && !help)
+    const asking = this.question.read(drawing, targets, focused !== false && !textOnly)
     const view: TableView = {
       bodyColumns,
       bodyRows: room,
@@ -161,9 +188,9 @@ export class PaneSession {
       // keys of the view line as dim Buttons, because the help view has no view line (issue #200). While marked rows are
       // the targets of `x`, its label says how many (`dismiss 3`, and `confirm 3` while the question stands).
       footer: relabelDismiss(footer, targets.length, asking),
-      // The view line above the footer: the view, the filters and the keys `g`, `a`, `t` and `m` (issue #63, L3; issue #138). The
+      // The view line above the footer: the view, the filters and the keys `g`, `a`, `t`, `p` and `m` (issues #63, #138 and #199). The
       // words say how many rows are marked, and the question of a bulk dismiss takes their place. The help view has none.
-      ...(help
+      ...(textOnly
         ? {}
         : {
             viewLine: {
@@ -194,22 +221,23 @@ export class PaneSession {
         : {}),
       // The help titles a tracker's keys by the sections that hold its rows, whatever the view draws (issue #63, L3).
       help: help ? helpOf(m, listGroups(model.sections)) : null,
+      ...(plan === undefined ? {} : { plan }),
     }
     const drawn = TreeDataTable.render(groups, view, el, this.actionsOf(p, m, focused === false, drawing))
     this.refocus.seen(drawn)
     this.drawn = drawn
-    if (!help) this.top = drawn.top // the help view draws no window: its place of 0 would reset the one the rows left
+    if (!textOnly) this.top = drawn.top // a text view draws no window: its place of 0 would reset the one the rows left
     if (drawn.rows.length > 0) this.rows = drawn.rows
-    if (!help) this.laid = laid // the help view lays no row: the rows of the last pane drawing stay
+    if (!textOnly) this.laid = laid // a text view lays no row: the rows of the last pane drawing stay
     this.groups = groups
     // The help view fills the body of a short pane to the row (issue #92): no line is added to it.
     // A press that waits for a frame like this one goes on. The frame names the Buttons the engine got: the press asks for
     // one of them (`Refocus.keep`).
     this.refocus.frame({
-      help,
+      view: viewKind,
       rows: new Map(drawn.rows.map(r => [r.id, r.handle])),
-      // The footer, then the view line: the view line is drawn outside the help view only. The help footer holds its
-      // keys (issue #200).
+      // The footer, then the view line: the view line is drawn outside a text view only, and its keys stay Buttons. The footer of
+      // the help view and of the plan view holds those keys (issue #200, `planFooter`).
       keys: [...view.footer, ...(view.viewLine?.keys ?? [])].map(k => k.buttonKey),
       stops: drawn.stops,
     })
@@ -291,12 +319,13 @@ export class PaneSession {
     return true
   }
 
-  /** The pane closed: no selection, no help view, no marks, no question, no refocus and no window place left over. Each write stands alone: one may fail. */
+  /** The pane closed: no selection, no help view, no plan view, no marks, no question, no refocus and no window place left over. Each write stands alone: one may fail. */
   async closed(p: Ports): Promise<void> {
     this.closings++
     this.refocus.clear()
     this.top = 0
     this.onMore = undefined
+    this.setPlan(undefined)
     this.question.clear()
     for (const write of [
       () => p.state.selected.update(() => null),
@@ -458,7 +487,7 @@ export class PaneSession {
     await this.refocus.askKeys(p, begun)
     const afterAsk: Press = { ...begun, keys: false } // one press asks once: the refocus below must not ask again
     // While a marked row is drawn, `x` and the digits act on the marked rows only, whatever row is selected (issue #138, G2).
-    // Only a core row key reads the marks: `r`, `h`, `g`, `a`, `t` and the keys of a tracker do not wait for the read.
+    // Only a core row key reads the marks: `r`, `h`, `g`, `a`, `t`, `p` and the keys of a tracker do not wait for the read.
     const marked = key.owner === 'core' && key.scope === 'row' ? await this.markedRows(p) : []
     if (!afterAsk.still()) return
     const isItemOwner = (owner: string) => m.isItemOwner(owner)
@@ -475,18 +504,29 @@ export class PaneSession {
       case 'refresh':
         resetWidths()
         await m.refreshManual(p)
+        if (this.plan !== undefined) await this.readPlan(p, m, afterAsk) // `r` in the plan view reads the plan again (issue #199)
         return
       case 'help': {
         // The rows leave with the help view and come back with the next `h`: the engine keeps the ring's position, not its
         // Button, so the press asks for the ring again (issue #140).
         const was = await p.state.help.get()
-        const drawn = this.refocus.awaitFrame(p, frame => frame.help !== was) // armed before the write
+        const drawn = this.refocus.awaitFrame(p, frame => (frame.view === 'help') !== was) // armed before the write
         const open = await p.state.help.update(unlessClosed(afterAsk, v => !v))
         if (!afterAsk.still()) return
-        const next = { help: open, row: open ? null : await this.selectedRow(p) }
+        // The plan view and the help view exclude each other, so every write of the help atom drops the plan lines. An `h` that
+        // reaches the pane while the plan is open (a press from an older drawing) shows the help view and drops the plan. An `h`
+        // that comes while the plan is read, and loses the race with the write of the lines (`togglePlan` reads the atom again),
+        // shows the rows when it goes back.
+        this.setPlan(undefined)
+        const next = {
+          view: open ? ('help' as const) : ('rows' as const),
+          row: open ? null : await this.selectedRow(p),
+        }
         await this.refocus.keep(p, next, afterAsk, drawn, () => frameFromState(p, m, next))
         return
       }
+      case 'clean':
+        return this.planPressed(p, m, afterAsk)
       case 'dismiss':
         return this.dismissRows(p, m, [to.rowId], neighbourOf(this.drawn?.rows ?? [], to.rowId), afterAsk, false)
       case 'priority':
@@ -525,6 +565,77 @@ export class PaneSession {
       case 'none':
         return
     }
+  }
+
+  /**
+   * `p` (issue #199). In the rows it reads the plan of `/track clean` once and opens the plan view. In the plan view it closes the view
+   * and drops the lines, so the next `p` reads the plan again. It changes nothing: the plan is read and never applied (`PaneHost`
+   * has no way to apply). The help view has keys of its own, so `p` does nothing there. Like `h`, it swaps the rows for another
+   * tree, so the press asks for the ring again (issue #140): on `p: back` when the view opens, on the selected row when it closes.
+   *
+   * The host starts itself when it reads the plan, as for a tracker key. A host that did not start gives no plan: the press answers
+   * with a toast and opens no view. A press that began before a closing drops its read, and a press while the read is open does
+   * nothing, so a double tap does not turn the view it opens into a second read.
+   */
+  private async planPressed(p: Ports, m: PaneHost, press: Press): Promise<void> {
+    if (this.planRead?.still() === true) return
+    this.planRead = press
+    let change:
+      | { readonly drawn: Promise<Frame | undefined>; readonly next: { view: ViewKind; row: string | null } }
+      | undefined
+    try {
+      change = await this.togglePlan(p, m, press)
+    } finally {
+      if (this.planRead === press) this.planRead = undefined
+    }
+    if (change === undefined) return
+    const { drawn, next } = change
+    await this.refocus.keep(p, next, press, drawn, () => frameFromState(p, m, next))
+  }
+
+  /** The write of `p`: the view that opened or closed, and the frame the ring request waits for. Absent: nothing changed. */
+  private async togglePlan(p: Ports, m: PaneHost, press: Press) {
+    if (await p.state.help.get()) return undefined
+    if (this.plan !== undefined) {
+      const drawn = this.refocus.awaitFrame(p, frame => frame.view !== 'plan') // armed before the write
+      this.setPlan(undefined)
+      p.ui.invalidate()
+      return { drawn, next: { view: 'rows' as const, row: await this.selectedRow(p) } }
+    }
+    const gen = this.planGen // an `h` or a closing while the plan is read moves it: this opening is then obsolete
+    const lines = await m.cleanPlan(p)
+    if (!press.still()) return undefined // the pane closed while the plan was read: the lines are not for the next pane
+    if (lines === undefined) {
+      p.ui.toast(NOT_READY) // the host did not start (study G5)
+      return undefined
+    }
+    if (await p.state.help.get()) return undefined // an `h` opened the help view while the plan was read: the lines are not for it
+    // Two `h` presses leave the help atom false, as it was at the press, but each moved the generation: the person went to the help
+    // view and back to the rows, so the view that `p` meant to open is gone. The check comes last: the atom read above took time.
+    if (!press.still() || gen !== this.planGen) return undefined
+    const drawn = this.refocus.awaitFrame(p, frame => frame.view === 'plan') // armed before the write
+    this.setPlan(lines)
+    p.ui.invalidate()
+    return { drawn, next: { view: 'plan' as const, row: null } }
+  }
+
+  /** Writes the lines of the plan view, or drops them (`undefined`), and moves the generation: the reads that began before are obsolete. */
+  private setPlan(lines: readonly PlanLine[] | undefined): void {
+    this.plan = lines
+    this.planGen++
+  }
+
+  /**
+   * `r` in the plan view: the plan is read again and the view shows the new lines. A press that outlived the view drops them. So does
+   * a read that began before the view closed and opened again, or before a newer `r` read: the generation it took has moved, and
+   * its lines are older than the ones in the view.
+   */
+  private async readPlan(p: Ports, m: PaneHost, press: Press): Promise<void> {
+    const gen = ++this.planGen
+    const lines = await m.cleanPlan(p)
+    if (lines === undefined || !press.still() || this.plan === undefined || gen !== this.planGen) return
+    this.plan = lines
+    p.ui.invalidate()
   }
 
   /**
@@ -601,14 +712,14 @@ export class PaneSession {
     // Rows that were hidden behind an "N more" can take their place, so the frame need not be empty.
     const drawn =
       next === null
-        ? this.refocus.awaitFrame(p, frame => !frame.help && ids.every(id => !frame.rows.has(id)))
+        ? this.refocus.awaitFrame(p, frame => frame.view === 'rows' && ids.every(id => !frame.rows.has(id)))
         : undefined
     await m.dismiss(p, ids)
     if (endMarks) await this.marksDone(p, press)
     await this.refocus.to(p, m, next, press)
     // The last row went: no row is left to take the ring, and the tracker keys left the footer with it (issue #140).
     if (drawn !== undefined) {
-      const none = { help: false, row: null }
+      const none = { view: 'rows' as const, row: null }
       await this.refocus.keep(p, none, press, drawn, () => frameFromState(p, m, none))
     }
   }

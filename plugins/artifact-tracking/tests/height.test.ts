@@ -35,6 +35,15 @@ test('heightOf: minHeight is the floor of a Box, and height 0 takes no row at al
   expect(heightOf(box({ height: 0 }, text('a')), 40)).toBe(0)
 })
 
+// Issue #199: the plan view draws a blank line of the plan as a childless Box of `height: 1`. How the engine paints that Box was not
+// seen live (the README of the mod lists it), so the oracle encodes an inference: a fixed height is the rows of the Box, children and
+// `minHeight` aside, as it already was for `height: 0`.
+test('heightOf: a Box with a numeric height takes that many rows, children and minHeight aside', () => {
+  expect(heightOf(box({ height: 1 }), 40)).toBe(1) // a blank line of the plan view
+  expect(heightOf(box({ height: 3 }, text('a'), text('b')), 40)).toBe(3)
+  expect(heightOf(box({ height: 1, minHeight: 4 }), 40)).toBe(1) // the early return: the floor is not applied
+})
+
 test('heightOf: a truncating Text takes one row, a plain Text wraps and a null child counts nowhere', () => {
   const long = 'word '.repeat(40).trim()
   expect(heightOf(text(long, { wrap: 'truncate-end' }), 40)).toBe(1)

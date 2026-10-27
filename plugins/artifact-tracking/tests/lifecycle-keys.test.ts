@@ -76,12 +76,12 @@ test('start builds the key registry from the live trackers', async () => {
       .all()
       .slice(0, CORE_KEYS.length)
       .map(k => k.key),
-  ).toEqual(['r', 'h', 'g', 'a', 't', 'm', 'x', '1', '2', '3', '0'])
+  ).toEqual(['r', 'h', 'g', 'a', 't', 'p', 'm', 'x', '1', '2', '3', '0'])
   expect(keysOf(m).at(-1)).toBe('t.open')
 })
 
 test('the tracker keys follow the order of the trackers, not the order of the list', async () => {
-  const late = fake('late', 20, { keys: [{ ...OPEN, id: 'a', key: 'p' }] })
+  const late = fake('late', 20, { keys: [{ ...OPEN, id: 'a', key: 'q' }] })
   const early = fake('early', 10, { keys: [{ ...OPEN, id: 'b', key: 'b' }] })
   const { m } = await started([late, early])
   expect(keysOf(m).slice(CORE_KEYS.length)).toEqual(['early.b', 'late.a'])

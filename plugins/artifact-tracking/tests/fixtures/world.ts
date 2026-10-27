@@ -21,12 +21,13 @@ export const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(res
 
 /**
  * Polls until the condition holds, for work a hook starts and does not return (a tick, a lookup). Throws after `ms`.
+ * The condition may be async: a test that draws again before it looks says so there.
  * The limit is a hang guard, not a speed limit: a busy machine takes seconds for what takes milliseconds on a quiet one
  * (issue #104). 20 s stays inside the 30 s of `test` (fixtures/kit.ts), so the message names the wait, not the kit.
  */
-export async function until(cond: () => boolean, what: string, ms = 20_000): Promise<void> {
+export async function until(cond: () => boolean | Promise<boolean>, what: string, ms = 20_000): Promise<void> {
   const end = Date.now() + ms
-  while (!cond()) {
+  while (!(await cond())) {
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
     await sleep(10)
   }

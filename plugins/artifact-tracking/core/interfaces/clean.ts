@@ -62,3 +62,29 @@ export type LogEntry = {
   /** `done`, or `skipped: <reason>`. */
   outcome: string
 }
+
+/**
+ * What a line of the plan is, so a view can cut a plan without a parse of its words (issue #199).
+ * - `title`: the first line.
+ * - `blank`: a gap between blocks.
+ * - `head`: a line that heads a block: a kind (`Tasks (apply with /track clean --yes tasks)`), `Problems:`, and the one
+ *   sentence of a plan with no step. A cut keeps every head.
+ * - `step`: what a cleanup does to one thing, under the head of its kind. A label with a newline is one line for each row.
+ * - `more`: `and N more.`, the count of the steps of a kind that the plan leaves out.
+ * - `problem`: a tracker whose plan failed, under `Problems:`. A message with a newline is one line for each row.
+ * - `hint`: a line that names another mode of the command.
+ */
+export type PlanRole = 'title' | 'blank' | 'head' | 'step' | 'more' | 'problem' | 'hint'
+
+/**
+ * One line of a plan: its words, with no newline (one row), and its role. A text with a newline is more than one line (`rowsOf`).
+ * The two optional fields let a view cut a plan by steps with no parse of the words (issue #199). Neither one is in the text.
+ */
+export interface PlanLine {
+  readonly text: string
+  readonly role: PlanRole
+  /** A `more` line: how many steps of its kind the plan leaves out. */
+  readonly count?: number
+  /** Set on a row after the first of a step or a problem whose text held a newline: this line goes on with the line above it. */
+  readonly cont?: true
+}

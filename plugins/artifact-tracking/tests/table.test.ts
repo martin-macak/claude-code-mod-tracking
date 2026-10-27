@@ -431,7 +431,7 @@ test('every core key has one footer Button in every state; disabled ones are dim
       footer: footerKeys(reg, item, o => o === 'items', true),
       help: helpModel(reg.all(), sections, undefined, []),
       on: ['refresh', 'help'],
-      hotkeys: [...pane, 'g', 'a', 't', 'm'], // the help view has no view line (issue #200): its footer draws those keys too
+      hotkeys: [...pane, 'g', 'a', 't', 'p', 'm'], // the help view has no view line (issues #200 and #199): its footer draws those keys too
     },
   ]
   for (const c of cases) {
@@ -453,9 +453,9 @@ test('every core key has one footer Button in every state; disabled ones are dim
   }
 })
 
-// Issue #200: in the help view a press of g, a, t or m must not type the letter into the prompt. A Button with that hotkey takes
+// Issue #200: in the help view a press of g, a, t, p or m must not type the letter into the prompt. A Button with that hotkey takes
 // the press and does nothing, as x and the digits do, and asks for the keys, so the keyboard stays in the pane.
-test('the help view draws g, a, t and m as dim footer Buttons, one Button per hotkey, and a press only asks for the keys', () => {
+test('the help view draws g, a, t, p and m as dim footer Buttons, one Button per hotkey, and a press only asks for the keys', () => {
   const reg = new KeyRegistry()
   const sections = [group('web', webRows(2))]
   const { drawn, calls, asks } = draw(sections, {
@@ -463,23 +463,23 @@ test('the help view draws g, a, t and m as dim footer Buttons, one Button per ho
     help: helpModel(reg.all(), sections, '/c/config.json', []),
   })
   const hotkeys = helpFooterOf(drawn.tree).map(b => String(b.props.hotkey))
-  expect(hotkeys).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'm'])
+  expect(hotkeys).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'p', 'm'])
   expect(hotkeys).toEqual([...new Set(hotkeys)]) // the engine lets the later of two equal hotkeys win in silence
-  expect(viewLineOf(drawn.tree)).toHaveLength(4) // the same Buttons: the help view has no view line, so these are its footer
+  expect(viewLineOf(drawn.tree)).toHaveLength(5) // the same Buttons: the help view has no view line, so these are its footer
   expect(footerOf(drawn.tree)).toHaveLength(7)
-  for (const key of ['view', 'show-all', 'touched', 'mark']) {
+  for (const key of ['view', 'show-all', 'touched', 'clean', 'mark']) {
     const b = buttonOf(drawn.tree, key)
     expect(b.props.dimColor, key).toBe(true)
     expect(b.props.plain, key).toBe(true)
     press(b)
   }
   expect(calls).toEqual([]) // no work
-  expect(asks.count).toBe(4) // each press asks for the keys, once
+  expect(asks.count).toBe(5) // each press asks for the keys, once
   const footer = (drawn.tree as unknown as Node).children.at(-1) as Node
   expect(nodes(footer, 'Button').map(b => b.props.hotkey)).toEqual(hotkeys) // all in the footer Box
 })
 
-test('the pane draws g, a, t and m once, on the view line, and the help view draws them once, in the footer', () => {
+test('the pane draws g, a, t, p and m once, on the view line, and the help view draws them once, in the footer', () => {
   const reg = new KeyRegistry()
   const sections = [group('web', webRows(2))]
   const row: RowRef = { id: 'w0', owner: 'items', group: 'web', can: { dismiss: true, priority: true } }
@@ -491,8 +491,8 @@ test('the pane draws g, a, t and m once, on the view line, and the help view dra
     .map(b => b.props.hotkey)
     .filter(k => k !== undefined)
   expect(paneKeys).toEqual([...new Set(paneKeys)])
-  expect(paneKeys.filter(k => ['g', 'a', 't', 'm'].includes(String(k)))).toHaveLength(4)
-  expect(viewLineOf(pane.drawn.tree)).toHaveLength(4)
+  expect(paneKeys.filter(k => ['g', 'a', 't', 'p', 'm'].includes(String(k)))).toHaveLength(5)
+  expect(viewLineOf(pane.drawn.tree)).toHaveLength(5)
   expect(footerOf(pane.drawn.tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
   // The help view takes no view line, whatever the view carries: the keys are in the footer, not twice.
   const help = draw(sections, {
@@ -502,7 +502,7 @@ test('the pane draws g, a, t and m once, on the view line, and the help view dra
   })
   const helpKeys = helpFooterOf(help.drawn.tree).map(b => b.props.hotkey)
   expect(helpKeys).toEqual([...new Set(helpKeys)])
-  expect(helpKeys).toHaveLength(11)
+  expect(helpKeys).toHaveLength(12)
 })
 
 // Issue #108, option 1: the footer says how to move, where that costs no row. The core footer is 79 cells, 92 with the hint.
@@ -539,22 +539,22 @@ test('the footer keeps the move hint where it wraps anyway and the hint fits on 
   expect(leaves(footerAt(78).children.at(-1))).toContain(MOVE)
 })
 
-// The help footer (issue #200) is 127 cells wide with its 11 Buttons and `Esc close` (116 cells for the Buttons alone, 140 with
-// the hint), so the hint fits it only where it adds no row: not at 66 to 69 cells (2 rows without the hint, 3 with it), and not
-// at 127 to 139 cells (1 row without, 2 with). It fits from 70 to 126 cells, where the footer wraps anyway, and from 140.
-test('the help footer of 11 Buttons draws the move hint only where it adds no row', () => {
+// The help footer (issues #200 and #199) is 137 cells wide with its 12 Buttons and `Esc close` (150 cells with the hint), so the
+// hint fits it only where it adds no row: not at 68 to 76 cells (2 rows without the hint, 3 with it), and not at 137 to 149 cells
+// (1 row without, 2 with). It fits from 77 to 136 cells, where the footer wraps anyway, and from 150.
+test('the help footer of 12 Buttons draws the move hint only where it adds no row', () => {
   const draws = (bodyColumns: number) => {
     const help = helpModel([], [], undefined, [])
     const tree = draw([], { footer: HELP_FOOTER, help, bodyColumns }).drawn.tree as unknown as Node
     return leaves(tree.children.at(-1)).includes(MOVE)
   }
-  for (const bodyColumns of [70, 96, 126, 140]) {
+  for (const bodyColumns of [77, 96, 136, 150]) {
     expect(draws(bodyColumns), `${bodyColumns} cells`).toBe(true)
     expect(footerRows(HELP_FOOTER, bodyColumns, true), `${bodyColumns} cells`).toBe(
       footerRows(HELP_FOOTER, bodyColumns, false),
     )
   }
-  for (const bodyColumns of [127, 139, 69, 66]) {
+  for (const bodyColumns of [137, 149, 76, 68]) {
     expect(draws(bodyColumns), `${bodyColumns} cells`).toBe(false)
     expect(footerRows(HELP_FOOTER, bodyColumns, true), `${bodyColumns} cells`).toBeGreaterThan(
       footerRows(HELP_FOOTER, bodyColumns, false),
@@ -614,7 +614,7 @@ test('with help the pane draws the help view and the footer, and no row', () => 
   expect(rowBoxes(drawn.tree)).toHaveLength(0)
   expect(handlesOf(drawn.tree)).toEqual([])
   expect(drawn.handles.size).toBe(0)
-  expect(helpFooterOf(drawn.tree)).toHaveLength(11) // the 7 footer keys and the dim g, a, t and m (issue #200)
+  expect(helpFooterOf(drawn.tree)).toHaveLength(12) // the 7 footer keys and the dim g, a, t, p and m (issues #200 and #199)
 })
 
 // The help view in a short body (issue #92). The engine gives the body height as `scroll.bodyRows`. The full help view
@@ -632,7 +632,7 @@ const FULL_LINES = 11
  * The help view over `bodyRows` rows: its Box, the footer Box and the gap between them. On purpose it takes a registry of the
  * footer keys only (`FOOTER_CORE`), so its footer is the 7 Buttons of 79 cells that took one row before issue #200, and the
  * tests on it are about the mechanics of the guard (a footer that wraps, the hint, the compact form), not about the pane. The
- * 11 Buttons that the pane draws now (`HELP_FOOTER`, 2 rows at 96 cells) are pinned in `problemsIn` below, in `help.test.ts`
+ * 12 Buttons that the pane draws now (`HELP_FOOTER`, 2 rows at 96 cells) are pinned in `problemsIn` below, in `help.test.ts`
  * and in `pane.test.tsx`.
  */
 function helpIn(bodyRows: number | undefined, bodyColumns = 96) {
@@ -709,7 +709,7 @@ function problemsIn(n: number, bodyRows: number | undefined, path = LIVE_PATH) {
 }
 
 test('at 100x40 inline with 3 or more problems the help view shows Pane keys, the count and the footer in the 11-row body', () => {
-  expect(HELP_FOOTER_ROWS).toBe(2) // the 11 Buttons wrap at 96 cells (issue #200)
+  expect(HELP_FOOTER_ROWS).toBe(2) // the 12 Buttons wrap at 96 cells (issues #200 and #199)
   for (const n of [3, 4, 30]) {
     const { tree, body, foot, lines } = problemsIn(n, 11)
     expect(lines[0], `${n} problems`).toBe(PANE_KEYS)
@@ -718,7 +718,7 @@ test('at 100x40 inline with 3 or more problems the help view shows Pane keys, th
     // takes one row of its own (issue #265), and the 2-row footer leaves the body one row fewer than the 1-row footer did.
     expect(body.children).toHaveLength(8)
     expect(tree.props.rowGap).toBe(0)
-    expect(helpFooterOf(foot)).toHaveLength(11)
+    expect(helpFooterOf(foot)).toHaveLength(12)
     // The 86-cell path wraps to a second row: 8 lines, 1 wrapped row and the 2-row footer fill the body.
     expect(body.children.length + 1 + HELP_FOOTER_ROWS).toBe(11)
   }
@@ -730,7 +730,7 @@ test('the help view lists every problem of its model when the body has the rows,
   expect(tall.lines.join('\n')).not.toContain('/track help')
   expect(tall.tree.props.rowGap).toBe(1)
   // The compact form: the footer and a body of 16 rows. The pane keys take two lines (g, a and t, issue #63, L3) and the footer takes
-  // two rows (the dim Buttons of g, a, t and m, issue #200), so 2 of 12 problems fit.
+  // two rows (the dim Buttons of g, a, t, p and m, issues #200 and #199), so 2 of 12 problems fit.
   const room = problemsIn(12, 16, '/c/config.json')
   expect(room.lines.filter(l => /^Problem \d+\.$/.test(l))).toHaveLength(2)
   expect(room.lines.at(-1)).toBe('10 more problems: /track help')

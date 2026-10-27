@@ -203,11 +203,40 @@ test('planLines closes a kind of more than 10 steps with one more line, and the 
   const many = Array.from({ length: 13 }, (_, i) => stop(`task:${i}`, `job ${i}`))
   const plan = planLines(lines(...many, rm('wt:/a', 'a')), [])
   expect(plan.slice(2, 14).map(l => l.role)).toEqual(['head', ...Array(10).fill('step'), 'more'])
-  expect(plan[13]).toEqual(line('more', '  and 3 more.'))
+  expect(plan[13]).toEqual({ ...line('more', '  and 3 more.'), count: 3 })
   expect(plan[14]).toEqual(line('head', 'Worktrees (apply with /track clean --yes worktrees)'))
   expect(plan.filter(l => l.role === 'step')).toHaveLength(11) // 10 tasks and 1 worktree
   // Exactly 10 is not over: no more line.
   expect(planLines(lines(...many.slice(0, 10)), []).some(l => l.role === 'more')).toBe(false)
+})
+
+// The pane view cuts a plan by steps (issue #199), so a line says what it is a part of, and a view needs no parse of its words.
+test('a more line says how many steps it stands for', () => {
+  const count = (n: number) =>
+    planLines(lines(...Array.from({ length: n }, (_, i) => stop(`task:${i}`))), [])
+      .filter(l => l.role === 'more')
+      .map(l => l.count)
+  expect(count(10)).toEqual([])
+  expect(count(11)).toEqual([1])
+  expect(count(40)).toEqual([30])
+})
+
+test('a row after the first of a step or a problem that holds a newline continues the line above it', () => {
+  const plan = planLines(lines(stop('task:1', 'echo one\necho two\necho three'), stop('task:2', 'sleep 1')), [
+    'auto: plan failed: a\nb',
+  ])
+  expect(plan.filter(l => l.role === 'step').map(l => [l.text, l.cont === true])).toEqual([
+    ['  echo one', false],
+    ['echo two', true],
+    ['echo three: stop', true],
+    ['  sleep 1: stop', false],
+  ])
+  expect(plan.filter(l => l.role === 'problem').map(l => [l.text, l.cont === true])).toEqual([
+    ['  auto: plan failed: a', false],
+    ['b', true],
+  ])
+  // Only the lines of a text that held a newline carry the mark: a plan of one-row texts has none.
+  expect(planLines(lines(stop('task:1'), rm('wt:/a')), ['x: plan failed: y']).some(l => 'cont' in l)).toBe(false)
 })
 
 // The one function of the plan: the reply of `/track clean` and the pane read the same lines, so they cannot differ.

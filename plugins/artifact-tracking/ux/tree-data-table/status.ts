@@ -7,7 +7,7 @@ import type { Cell, StatusLine, TreeRow } from '../../core/interfaces/view'
 import { cellWidth, clipTo, normaliseCell } from '../text/cell-width'
 import { cellNode } from './cells'
 import { box, type TableElements, text } from './el'
-import type { TableView } from './shape'
+import { type TableView, textView } from './shape'
 
 /** The body rows (the engine's `bodyRows`) from which the pane draws the full status area. */
 export const FULL_ROWS = 18
@@ -19,14 +19,14 @@ export const STATUS_ROWS = 2
 export const SUMMARY_ROWS = 1
 
 /**
- * The status lines the table draws for a view: none in the help view, which has no status area. The footer draws them and the
+ * The status lines the table draws for a view: none in a text view (the help view and the plan view), which has no status area. The footer draws them and the
  * window budgets them from this one rule, so the drawing and the budget cannot drift apart (the failure of issue #109).
  */
-export const statusOf = (view: Pick<TableView, 'status' | 'help'>): TableView['status'] =>
-  view.help === null ? view.status : undefined
+export const statusOf = (view: Pick<TableView, 'status' | 'help' | 'plan'>): TableView['status'] =>
+  textView(view) ? undefined : view.status
 
 /** The rows the status lines of a view take in the footer Box. */
-export const statusRows = (view: Pick<TableView, 'status' | 'help'>): number =>
+export const statusRows = (view: Pick<TableView, 'status' | 'help' | 'plan'>): number =>
   statusOf(view) === undefined ? 0 : STATUS_ROWS
 
 /** The cells between two items of a line. */

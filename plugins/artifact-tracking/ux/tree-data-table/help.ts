@@ -247,8 +247,8 @@ const holds = (width: number, columns: number): number =>
  * How the keys of a group run when the form asks for `perLine`: the cells of a column, and the keys to a line. Up to what the
  * widest key of the view holds, every group uses that width and takes `perLine`, so the columns of all groups line up. Asked
  * for more, a group takes its own widest key as its column and holds as many as that gives, never more than `perLine`: the
- * row keys (`m  mark`, `x  dismiss`) are shorter than the pane keys (`t  touched only`), so six of them fit a line of the body
- * where five of the pane keys do (issue #138: the sixth row key must not take a second line).
+ * row keys (`m  mark`, `x  dismiss`) are shorter than the widest pane key (`p  clean plan`, issue #199), so six of them fit a
+ * line of a body where fewer than six pane keys do (issue #138: the sixth row key must not take a second line).
  */
 function columnsOf(
   m: HelpModel,

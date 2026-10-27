@@ -11,6 +11,9 @@ import { UNKNOWN } from './manifest'
 /** The toast when the terminal has no room for the pane. */
 export const NO_ROOM = 'Widen the terminal to see the tracking pane'
 
+/** The reply of `/track` and the toast of the plan key (issue #199) while the item host has not started. */
+export const NOT_READY = 'artifact-tracking: not ready.'
+
 export const USAGE =
   'Usage: /track [refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <high|normal|low|auto>]'
 /** The argument hint while no tracker declares a sub-command. */

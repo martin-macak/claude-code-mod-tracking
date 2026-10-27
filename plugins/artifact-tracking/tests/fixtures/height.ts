@@ -27,8 +27,9 @@ export function widthOf(node: unknown): number {
 
 /**
  * The rows of `node` in a body `columns` wide. A column Box adds its children and the `rowGap` between them. A row Box that
- * wraps fills rows as the footer does (`fillRows`). Any other row Box is as tall as its tallest child. A Box with `height: 0`
- * takes none, and `minHeight` is the floor of a Box. A Text with `wrap: 'truncate-end'` takes one row.
+ * wraps fills rows as the footer does (`fillRows`). Any other row Box is as tall as its tallest child. A Box with a `height`
+ * takes that many rows, children and `minHeight` aside (a focus stop 0, a blank line of the plan view 1: the paint of that Box was not
+ * seen live, so the 1 is an inference). Any other Box has `minHeight` as its floor. A Text with `wrap: 'truncate-end'` takes one row.
  */
 export function heightOf(node: unknown, columns: number): number {
   if (typeof node === 'string') return 1
@@ -37,7 +38,7 @@ export function heightOf(node: unknown, columns: number): number {
   if (node.type === 'Text') {
     return node.props.wrap === 'truncate-end' ? 1 : wrapRows(leaves(node).join(''), columns)
   }
-  if (node.props.height === 0) return 0
+  if (typeof node.props.height === 'number') return node.props.height // a fixed height: 0 for a focus stop, 1 for a blank line
   const kids = (node as Node).children.filter(c => c !== null && c !== undefined)
   const gap = typeof node.props.rowGap === 'number' ? node.props.rowGap : 0
   let rows: number

@@ -9,6 +9,7 @@ import {
   footerKeys,
   KeyRegistry,
   PRIO_LEVEL,
+  planFooter,
   route,
   viewButtonKeys,
   viewKeys,
@@ -38,16 +39,17 @@ const core = (id: string) => {
 const FOOTER_CORE = CORE_KEYS.filter(k => k.bar !== 'view').map(k => k.id)
 
 /** The Button keys of the view line. The help view has no view line, so its footer draws them (issue #200). */
-const VIEW_KEYS = ['view', 'show-all', 'touched', 'mark']
+const VIEW_KEYS = ['view', 'show-all', 'touched', 'clean', 'mark']
 
-test("core keys are r h, the view line keys g a t m, then x 1 2 3 0, with today's labels for the footer keys", () => {
-  expect(CORE_KEYS.map(k => k.key)).toEqual(['r', 'h', 'g', 'a', 't', 'm', 'x', '1', '2', '3', '0'])
+test("core keys are r h, the view line keys g a t p m, then x 1 2 3 0, with today's labels for the footer keys", () => {
+  expect(CORE_KEYS.map(k => k.key)).toEqual(['r', 'h', 'g', 'a', 't', 'p', 'm', 'x', '1', '2', '3', '0'])
   expect(CORE_KEYS.map(k => k.label)).toEqual([
     'refresh',
     'help',
     'view',
     'show all',
-    'touched only',
+    'touched', // issue #199, owner decision Q5: the sixth pane key needs the shorter label to keep the compact help view in 11 rows
+    'clean plan',
     'mark',
     'dismiss',
     'high',
@@ -61,6 +63,7 @@ test("core keys are r h, the view line keys g a t m, then x 1 2 3 0, with today'
     'view',
     'show-all',
     'touched',
+    'clean',
     'mark',
     'dismiss',
     'prio-1',
@@ -71,23 +74,23 @@ test("core keys are r h, the view line keys g a t m, then x 1 2 3 0, with today'
   expect(CORE_KEYS.every(k => k.owner === 'core')).toBe(true)
 })
 
-test('g, a, t and m sit on the view line, so the footer keeps its keys and its rows (issue #63, L3; issue #138)', () => {
+test('g, a, t, p and m sit on the view line, so the footer keeps its keys and its rows (issue #63, L3; issues #138 and #199)', () => {
   const bar = CORE_KEYS.filter(k => k.bar === 'view')
-  expect(bar.map(k => k.key)).toEqual(['g', 'a', 't', 'm'])
+  expect(bar.map(k => k.key)).toEqual(['g', 'a', 't', 'p', 'm'])
   // `m` acts on the selected row, so it is a row key: its press waits in the chain beside `x` and the digits.
-  expect(bar.map(k => k.scope)).toEqual(['pane', 'pane', 'pane', 'row'])
+  expect(bar.map(k => k.scope)).toEqual(['pane', 'pane', 'pane', 'pane', 'row'])
   expect(FOOTER_CORE).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
   const reg = new KeyRegistry()
   reg.add('a', [spec('open', 'o')])
   for (const row of [undefined, ref('a'), ref('items')])
-    expect(footerKeys(reg, row, items, false).some(k => ['g', 'a', 't', 'm'].includes(k.key))).toBe(false)
+    expect(footerKeys(reg, row, items, false).some(k => ['g', 'a', 't', 'p', 'm'].includes(k.key))).toBe(false)
 })
 
 test('viewButtonKeys: the Button key of each view line key, in registry order, whatever the state', () => {
   const reg = new KeyRegistry()
   reg.add('a', [spec('open', 'o')])
   const buttons = viewButtonKeys(reg)
-  expect(buttons).toEqual(['view', 'show-all', 'touched', 'mark'])
+  expect(buttons).toEqual(['view', 'show-all', 'touched', 'clean', 'mark'])
   for (const k of buttons) expect(reg.get(k)?.bar).toBe('view')
   // The pane's own keys carry the same Button keys: the refocus compares the two.
   expect(viewKeys(reg, ref('items'), items, false).map(k => k.buttonKey)).toEqual(buttons)
@@ -100,22 +103,23 @@ test('viewKeys: the view line keys, each with its label and the Button key the r
   expect(on.map(k => [k.key, k.label, k.buttonKey, k.enabled])).toEqual([
     ['g', 'view', 'view', true],
     ['a', 'show all', 'show-all', true],
-    ['t', 'touched only', 'touched', true],
+    ['t', 'touched', 'touched', true],
+    ['p', 'clean plan', 'clean', true],
     ['m', 'mark', 'mark', true],
   ])
   for (const k of on) expect(reg.get(k.buttonKey)?.id).toBe(k.id)
 })
 
-test('viewKeys with the selected row: m is live on a row that takes a bulk key, or is marked, else dim; g, a and t stay live', () => {
+test('viewKeys with the selected row: m is live on a row that takes a bulk key, or is marked, else dim; g, a, t and p stay live', () => {
   const reg = new KeyRegistry()
   const live = (row: RowRef | undefined, marked = false) =>
     Object.fromEntries(viewKeys(reg, row, items, marked).map(k => [k.key, k.enabled]))
-  expect(live(ref('items'))).toEqual({ g: true, a: true, t: true, m: true })
+  expect(live(ref('items'))).toEqual({ g: true, a: true, t: true, p: true, m: true })
   expect(live(ref('repos', { dismiss: true }))).toMatchObject({ m: true })
   expect(live(ref('repos', { priority: true }))).toMatchObject({ m: false }) // a digit needs an item owner
-  expect(live(ref('repos', {}))).toEqual({ g: true, a: true, t: true, m: false })
+  expect(live(ref('repos', {}))).toEqual({ g: true, a: true, t: true, p: true, m: false })
   expect(live(ref('repos', {}), true)).toMatchObject({ m: true }) // a marked row can always be unmarked
-  expect(live(undefined)).toEqual({ g: true, a: true, t: true, m: false })
+  expect(live(undefined)).toEqual({ g: true, a: true, t: true, p: true, m: false })
 })
 
 test('a tracker cannot take m: it is a core key', () => {
@@ -124,21 +128,24 @@ test('a tracker cannot take m: it is a core key', () => {
   expect(reg.problems()).toEqual(['keys: x key "m" (mark) is taken by core (mark). The key is off.'])
 })
 
-test('a tracker cannot take g, a or t: the keys are taken by core', () => {
+test('a tracker cannot take g, a, t or p: the keys are taken by core', () => {
   const reg = new KeyRegistry()
-  reg.add('x', [spec('go', 'g'), spec('all', 'A'), spec('tag', 't')])
+  reg.add('x', [spec('go', 'g'), spec('all', 'A'), spec('tag', 't'), spec('plan', 'p')])
   expect(reg.problems()).toEqual([
     'keys: x key "g" (go) is taken by core (view). The key is off.',
     'keys: x key "a" (all) is taken by core (show-all). The key is off.',
     'keys: x key "t" (tag) is taken by core (touched). The key is off.',
+    'keys: x key "p" (plan) is taken by core (clean). The key is off.',
   ])
+  expect(reg.get('x.plan')).toBeUndefined()
 })
 
-test('route: g, a and t route at once, with no row and with any row', () => {
-  for (const row of [undefined, ref('items'), ref('t', {})]) {
+test('route: g, a, t and p route at once, with no row, with a tracker row and with a row that takes no key', () => {
+  for (const row of [undefined, ref('items'), ref('t', {}), ref('github', undefined)]) {
     expect(route(core('view'), row, items)).toEqual({ to: 'view' })
     expect(route(core('show-all'), row, items)).toEqual({ to: 'showAll' })
     expect(route(core('touched'), row, items)).toEqual({ to: 'touched' })
+    expect(route(core('clean'), row, items)).toEqual({ to: 'clean' }) // before the row check: the plan needs no row (issue #199)
   }
 })
 
@@ -179,9 +186,9 @@ test('a key taken by an earlier tracker names that tracker', () => {
 
 test('a repeated key id of one owner is dropped, so a footer Button key stays unique', () => {
   const reg = new KeyRegistry()
-  reg.add('t', [spec('open', 'o'), spec('open', 'p')])
+  reg.add('t', [spec('open', 'o'), spec('open', 'q')])
   expect(reg.get('t.open')?.key).toBe('o')
-  expect(reg.problems()).toEqual(['keys: t key "p" (open) repeats the key id "open" of t. The key is off.'])
+  expect(reg.problems()).toEqual(['keys: t key "q" (open) repeats the key id "open" of t. The key is off.'])
   expect(reg.all().filter(k => k.owner === 't')).toHaveLength(1)
 })
 
@@ -275,7 +282,7 @@ test('route: a tracker key routes to its owner only while one of its rows is sel
 test("footerKeys: core keys first, then the selected row's owner's keys, with enabled from the route and the state", () => {
   const reg = new KeyRegistry()
   reg.add('a', [spec('open', 'o'), spec('kill', 'k', 'section')])
-  reg.add('b', [spec('other', 'p')])
+  reg.add('b', [spec('other', 'q')])
   const keys = footerKeys(reg, ref('a', { dismiss: true }), items, false, (_owner, id) =>
     id === 'kill' ? 'disabled' : 'enabled',
   )
@@ -321,7 +328,7 @@ test('footerKeys in the help view: the keys of the view line follow 0 as dim But
   const reg = new KeyRegistry()
   reg.add('a', [spec('open', 'o')])
   const help = footerKeys(reg, undefined, items, true)
-  expect(help.map(k => k.key)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'm']) // the Tab walk from h reaches x
+  expect(help.map(k => k.key)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'p', 'm']) // the Tab walk from h reaches x
   expect(help.map(k => k.label)).toEqual([
     'refresh',
     'back',
@@ -332,7 +339,8 @@ test('footerKeys in the help view: the keys of the view line follow 0 as dim But
     'auto',
     'view',
     'show all',
-    'touched only',
+    'touched',
+    'clean plan',
     'mark',
   ])
   const viewKeys = help.filter(k => VIEW_KEYS.includes(k.buttonKey))
@@ -344,13 +352,13 @@ test('footerKeys in the help view: the keys of the view line follow 0 as dim But
 })
 
 test('footerKeys in the help view reads bar: view, not a list of letters: a new key of the view line gets a dim Button', () => {
-  const clean: PaneKey = { id: 'clean', key: 'l', label: 'clean', scope: 'pane', owner: 'core', bar: 'view' }
-  const reg = new KeyRegistry([...CORE_KEYS, clean])
+  const extra: PaneKey = { id: 'export', key: 'l', label: 'export', scope: 'pane', owner: 'core', bar: 'view' }
+  const reg = new KeyRegistry([...CORE_KEYS, extra])
   const help = footerKeys(reg, undefined, items, true)
-  expect(help.map(buttonKeyOf)).toEqual([...FOOTER_CORE, ...VIEW_KEYS, 'clean'])
-  expect(help.at(-1)).toMatchObject({ key: 'l', label: 'clean', enabled: false, buttonKey: 'clean' })
+  expect(help.map(buttonKeyOf)).toEqual([...FOOTER_CORE, ...VIEW_KEYS, 'export'])
+  expect(help.at(-1)).toMatchObject({ key: 'l', label: 'export', enabled: false, buttonKey: 'export' })
   expect(footerKeys(reg, undefined, items, false).map(buttonKeyOf)).toEqual(FOOTER_CORE) // the pane draws it on the view line
-  expect(viewButtonKeys(reg)).toEqual([...VIEW_KEYS, 'clean'])
+  expect(viewButtonKeys(reg)).toEqual([...VIEW_KEYS, 'export'])
 })
 
 test('the help footer holds one Button key per hotkey, and the pane footer and view line together hold one too', () => {
@@ -360,6 +368,31 @@ test('the help footer holds one Button key per hotkey, and the pane footer and v
   expect(help).toEqual([...new Set(help)])
   const pane = [...footerKeys(reg, ref('a'), items, false), ...viewKeys(reg, ref('a'), items, false)].map(k => k.key)
   expect(pane).toEqual([...new Set(pane)])
+})
+
+// Issue #199: the plan view has no view line, so the footer holds a Button for every core key, or `g a t p m` would leave the pane for
+// the prompt. Only `p` (back) and `r` (read the plan again) work there.
+test('planFooter: a Button for every core key, p reads back, r and p are live and the rest are dim', () => {
+  const reg = new KeyRegistry()
+  reg.add('a', [spec('open', 'o')])
+  const keys = planFooter(reg)
+  expect(keys.map(buttonKeyOf)).toEqual(CORE_KEYS.map(k => k.id)) // no tracker key: no row is selected in a text view
+  expect(keys.filter(k => k.enabled).map(k => k.key)).toEqual(['r', 'p'])
+  expect(keys.find(k => k.id === 'clean')?.label).toBe('back')
+  expect(keys.find(k => k.id === 'help')?.label).toBe('help') // dim, and no longer `back`: `h` does nothing here
+  expect(keys.find(k => k.id === 'refresh')?.label).toBe('refresh')
+  for (const k of keys) expect(reg.get(k.buttonKey)?.id).toBe(k.id)
+})
+
+test('planFooter: follows the registry, so a new core key gets a dim Button', () => {
+  const keys = planFooter(
+    new KeyRegistry([
+      ...CORE_KEYS,
+      { id: 'extra', key: 'e', label: 'extra', scope: 'pane', owner: 'core', bar: 'view' },
+    ]),
+  )
+  expect(keys.map(k => k.key)).toEqual([...CORE_KEYS.map(k => k.key), 'e'])
+  expect(keys.at(-1)?.enabled).toBe(false)
 })
 
 test('footerKeys: each key carries its footer Button key, the one the registry finds it by', () => {

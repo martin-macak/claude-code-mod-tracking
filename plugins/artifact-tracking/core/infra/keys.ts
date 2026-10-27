@@ -20,16 +20,21 @@ const core = (id: string, key: string, label: string, scope: PaneKey['scope'], b
 /**
  * The keys of the pane, in footer order. `x` and `0`-`3` act on the selected row, or on the marked rows while a marked row is
  * drawn (issue #138). `g`, `a` and `t` (issue #63, L3) work on the whole pane and sit on the view line, not in the footer: the
- * footer keeps the rows it has. `m` marks the selected row and sits there too: on the view line it adds no footer row (issue #138).
- * The help view has no view line, so it draws these four keys in its footer, dim (issue #200, `footerKeys`).
+ * footer keeps the rows it has. `p` (issue #199) shows the plan of `/track clean` in the pane and changes nothing; it sits there
+ * too. `m` marks the selected row and sits there too: on the view line it adds no footer row (issue #138).
+ * The help view has no view line, so it draws these five keys in its footer, dim (issue #200, `footerKeys`).
  * `x` carries `confirm`: on many rows it asks first, and the pane reads the flag, not the id.
+ * The label of `t` is `touched`, not `touched only` (issue #199, owner decision Q5). The case that `tests/help.test.ts` pins (3 config
+ * problems, a 90-cell path, the keys of two trackers) takes 10 rows of the 11-row inline body beside a footer of 1 row, and
+ * 11 beside the footer of 2 rows that issue #200 draws. With `touched only` it takes 11 and 12, so the second would not fit.
  */
 export const CORE_KEYS: readonly PaneKey[] = [
   core('refresh', 'r', 'refresh', 'pane'),
   core('help', 'h', 'help', 'pane'),
   core('view', 'g', 'view', 'pane', 'view'),
   core('show-all', 'a', 'show all', 'pane', 'view'),
-  core('touched', 't', 'touched only', 'pane', 'view'),
+  core('touched', 't', 'touched', 'pane', 'view'),
+  core('clean', 'p', 'clean plan', 'pane', 'view'),
   core('mark', 'm', 'mark', 'row', 'view'),
   { ...core('dismiss', 'x', 'dismiss', 'row'), confirm: true },
   core('prio-1', '1', 'high', 'row'),
@@ -118,6 +123,7 @@ export type Route =
   | { readonly to: 'view' }
   | { readonly to: 'showAll' }
   | { readonly to: 'touched' }
+  | { readonly to: 'clean' }
   | { readonly to: 'mark'; readonly rowId: string }
   | { readonly to: 'dismiss'; readonly rowId: string }
   | { readonly to: 'priority'; readonly rowId: string; readonly level: Level | undefined }
@@ -163,7 +169,8 @@ const ROW_KEYS: Readonly<Record<string, RowKey>> = {
 const rowKeyOf = (id: string): RowKey | undefined => (Object.hasOwn(ROW_KEYS, id) ? ROW_KEYS[id] : undefined)
 
 /**
- * Where a pressed key goes, given the selected row. `refresh`, `help` and the pane view keys (`g`, `a`, `t`) always route. `x` needs
+ * Where a pressed key goes, given the selected row. `refresh`, `help` and the pane keys of the view line (`g`, `a`, `t`, `p`) always route:
+ * `p` shows the plan of `/track clean` and needs no row (issue #199). `x` needs
  * `can.dismiss` on the row: the owner hears the dismiss through the dismiss list (G7). `0`-`3` need an item owner and
  * `can.priority`. `m` needs a row that takes one of those, so a mark always has a bulk key to act with, or a row that is marked
  * already, which `isMarked` says: it can always be unmarked. A tracker key goes to its owner while one of its rows is selected.
@@ -183,6 +190,7 @@ export function route(
   if (k.id === 'view') return { to: 'view' }
   if (k.id === 'show-all') return { to: 'showAll' }
   if (k.id === 'touched') return { to: 'touched' }
+  if (k.id === 'clean') return { to: 'clean' }
   if (row === undefined) return NONE
   if (k.id === 'mark') {
     return isMarked || allowsDismiss(row) || allowsPriority(row, isItemOwner) ? { to: 'mark', rowId: row.id } : NONE
@@ -234,7 +242,7 @@ const onViewLine = (k: PaneKey): boolean => k.bar === 'view'
  * While `markedRows` are drawn, `x` and the digits are live when a marked row allows them, whatever the selected row is,
  * and dim when none does (`bulkTargets`). The keys of a tracker stay on the selected row.
  * In the help view only `r` and `h` work, and `h` reads `back`. The help view has no view line, so its footer also holds
- * every key of the view line (`bar: 'view'`: `g`, `a`, `t` and `m`), last and dim: a press does nothing and takes the keys, so
+ * every key of the view line (`bar: 'view'`: `g`, `a`, `t`, `p` and `m`), last and dim: a press does nothing and takes the keys, so
  * the letter does not type into the prompt (issue #200). The rule reads `bar`, not a list of letters, so a new key of the view
  * line gets its dim Button with no edit here. They come after `0`, so the Tab walk and the first stop do not move.
  */
@@ -261,14 +269,34 @@ export function footerKeys(
   })
 }
 
+/**
+ * The footer of the plan view (issue #199): a Button for every core key, in registry order. The plan view is a text view with no
+ * view line, so a key with no Button would leave the pane for the prompt (`g`, `a`, `t` and `m` would type into it). Only `p` and `r`
+ * work: `p` reads `back` and leaves the view, `r` reads the plan again. Every other key is a dim Button that does no work. It needs no
+ * row, so it holds no key of a tracker, as the footer of the help view holds none. It does not read the help footer, so a change of
+ * that footer cannot change it.
+ */
+export function planFooter(reg: KeyRegistry): readonly FooterKey[] {
+  return reg
+    .all()
+    .filter(k => k.owner === 'core')
+    .map(k => ({
+      ...k,
+      label: k.id === 'clean' ? 'back' : k.label,
+      enabled: k.id === 'clean' || k.id === 'refresh',
+      buttonKey: buttonKeyOf(k),
+    }))
+}
+
 /** The Button keys of the view line, whatever their state: what the refocus compares. */
 export const viewButtonKeys = (reg: KeyRegistry): readonly string[] => reg.all().filter(onViewLine).map(buttonKeyOf)
 
 /**
- * The keys of the view line: `g`, `a`, `t` (issue #63, L3) and `m` (issue #138), in registry order. The line is drawn in the pane
- * only: the help view has none, so its caller does not ask, and its footer draws these keys as dim Buttons (issue #200,
- * `footerKeys`). `buttonKey` is the key of the Button on the line. `g`, `a` and `t` are always live. `m` is live on a row that
- * takes a bulk key, or that is marked (`isMarked`, see `route`), and dim on another row and with no row.
+ * The keys of the view line: `g`, `a`, `t` (issue #63, L3), `p` (issue #199) and `m` (issue #138), in registry order. The line is
+ * drawn in the pane only: the help view and the plan view have none, so their caller does not ask. The help footer draws these keys
+ * as dim Buttons (issue #200, `footerKeys`), and so does the plan footer (`planFooter`). `buttonKey` is the key of the Button on the
+ * line. `g`, `a`, `t` and `p` are always live. `m` is live on a row that takes a bulk key, or that is marked (`isMarked`, see
+ * `route`), and dim on another row and with no row.
  */
 export function viewKeys(
   reg: KeyRegistry,
