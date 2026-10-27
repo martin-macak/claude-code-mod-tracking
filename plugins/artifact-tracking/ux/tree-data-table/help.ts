@@ -4,6 +4,7 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Help view". Plan: L6 Task 7, G14 to G16.
 // Issue #65: the version line. Issue #105: the compact form fits the body (keys to a line from the width, capped problems).
 // Issue #144: the config keeps the first 50 problems and the model counts the rest (`moreProblems`), so every form says how many.
+// Issue #265: neighbouring groups of trackers share one row of the compact form (`sharedRows`), and the fallback reads that form too.
 
 import type { RenderElement } from 'claude-code'
 import type { GroupSpec, HelpGroup, HelpModel, PaneKey, TreeRow } from '../../core/interfaces/view'
@@ -124,9 +125,15 @@ export interface CompactForm {
   readonly problems: number
   /**
    * The width in cells that the groups of the trackers share rows for. Set: a group of a tracker (not of the core) whose title
-   * and keys fit one row of that width is drawn on that row, `Notes  c  copy  f  find`. The search sets it only when no form
-   * with every group on rows of its own fits, so a view that fitted before looks the same (issue #71: the fourth group of keys,
-   * the copy key of the questions tracker, no longer fitted the 11-row body of an inline pane).
+   * and keys fit one row of that width is drawn on that row, `Notes  c  copy  f  find`, and the neighbouring groups of trackers
+   * that fit side by side share the row: `Notes  c  copy  f  find    Links  o  open` (`sharedRows`). The search sets it only when
+   * no form with every group on rows of its own fits, and, for a body too short for any form, when the shared form takes fewer
+   * rows. A view that fitted before looks the same. `compactRows` and `renderHelp` read this field and `columns` alone, so the
+   * rows that a form counts are the rows that it draws, also for a form made by hand. A `merge` wider than `columns` counts as
+   * `columns`: a shared row wider than the body would wrap.
+   *
+   * Issue #71: the fourth group of keys, the copy key of the questions tracker, no longer fitted the 11-row body of an inline
+   * pane, so a group shares a row with its title. Issue #265: the groups of two trackers share one row.
    */
   readonly merge?: number
 }
@@ -162,14 +169,52 @@ const sharedWidth = (g: HelpGroup): number =>
 const sharesRow = (g: HelpGroup, columns: number): boolean =>
   g.keys.length > 0 && g.keys.every(k => k.owner !== 'core') && sharedWidth(g) <= columns
 
+/** The cells between two groups on a shared row: twice the gap between the keys of a group, so the groups read apart. */
+const SHARE_GAP = 2 * KEY_GAP
+
+/** One entry of the compact form: a group on rows of its own, or an array of the groups of trackers that share one row. */
+export type HelpRow = HelpGroup | HelpGroup[]
+
+/**
+ * The groups of the shared form, in the rows they draw. A group of a tracker that fits one row (`sharesRow`) joins the open
+ * shared row while the widths and the `SHARE_GAP` between the groups fit `columns`. Any other group (a group of the core, one
+ * with no key, one too wide for a row) stands alone and ends the open row. A shared row is an array: the groups on it, in
+ * order. `listRows` counts these entries and `renderHelp` draws them, so a drawn row is a counted row (issue #265).
+ */
+export function sharedRows(groups: readonly HelpGroup[], columns: number): HelpRow[] {
+  const rows: HelpRow[] = []
+  let used = 0 // the cells of the open shared row. Read only while the last entry is a shared row
+  for (const g of groups) {
+    const open = rows.at(-1)
+    if (!sharesRow(g, columns)) {
+      rows.push(g)
+    } else if (Array.isArray(open) && used + SHARE_GAP + sharedWidth(g) <= columns) {
+      open.push(g)
+      used += SHARE_GAP + sharedWidth(g)
+    } else {
+      rows.push([g])
+      used = sharedWidth(g)
+    }
+  }
+  return rows
+}
+
+/**
+ * The entries of the compact form in the order they draw: the groups, each on rows of its own,
+ * or with `merge` the rows of `sharedRows`. A shared row never draws wider than the body (`columns`), so a `merge` wider
+ * than the body counts as the body: a row wider than that would wrap, and a drawn row is a counted row.
+ */
+const entriesOf = (m: HelpModel, merge: number | undefined, columns: number): readonly HelpRow[] =>
+  merge === undefined ? m.groups : sharedRows(m.groups, Math.min(merge, columns))
+
 /** The rows of everything but the problems in the compact form: the titles, the lines of keys, the config and version lines. */
-function listRows(m: HelpModel, columns: number, perLine: number, merge = false): number {
-  const groups = m.groups.reduce(
-    (n, g) =>
+function listRows(m: HelpModel, columns: number, perLine: number, merge?: number): number {
+  const groups = entriesOf(m, merge, columns).reduce(
+    (n, entry) =>
       n +
-      (merge && sharesRow(g, columns)
-        ? 1
-        : wrapRows(g.title, columns) + Math.ceil(g.keys.length / columnsOf(m, g, columns, perLine).per)),
+      (Array.isArray(entry)
+        ? 1 // a shared row: the titles and the keys of its groups on one row
+        : wrapRows(entry.title, columns) + Math.ceil(entry.keys.length / columnsOf(m, entry, columns, perLine).per)),
     0,
   )
   const lines =
@@ -185,10 +230,7 @@ function listRows(m: HelpModel, columns: number, perLine: number, merge = false)
 export function compactRows(m: HelpModel, form: CompactForm): number {
   const { columns } = form
   const named = Math.min(form.problems, m.problems.length)
-  return (
-    listRows(m, columns, form.perLine, form.merge !== undefined) +
-    problemRows(m, columns, problemWraps(m, columns), named)
-  )
+  return listRows(m, columns, form.perLine, form.merge) + problemRows(m, columns, problemWraps(m, columns), named)
 }
 
 /** The widest `key  label` text of a group: the cells of one column of its keys. */
@@ -228,8 +270,10 @@ function columnsOf(
  *   width holds for the group of the shortest keys (`columnsOf`: a group never takes more than its own widest key holds).
  * - It names as many problems as the rows left hold and counts the rest. It names all of them when they fit. The cap is
  *   the body, not a number: the /track text names 10 (spec C6), and no body of 11 rows holds 10 with the keys.
- * A body too short for even that takes the form with the fewest rows (the widest line of keys, with the count line), so the
- * least of the top scrolls out: the view opens scrolled to the footer.
+ * - When no form with every group on rows of its own fits, the groups of the trackers share rows (`sharedRows`), with the same
+ *   search over the keys to a line.
+ * A body too short for even that takes the form with the fewest rows, shared or not (the widest line of keys, with the count
+ * line), so the least of the top scrolls out: the view opens scrolled to the footer.
  */
 export function compactForm(
   m: HelpModel,
@@ -247,26 +291,29 @@ export function compactForm(
   // counts them once and the cap loop adds only the rows of the problems (`columnsOf` makes a count of them dear).
   const fits = (list: number, problems: number): boolean =>
     list + problemRows(m, columns, wraps, problems) + footerRows <= bodyRows
-  let tightest = { perLine: first, rows: Number.POSITIVE_INFINITY }
-  for (let perLine = first; perLine <= most; perLine++) {
-    const list = listRows(m, columns, perLine)
-    if (fits(list, 0)) {
-      let problems = m.problems.length
-      while (!fits(list, problems)) problems--
-      return { columns, perLine, problems }
+  // The form with the fewest rows so far, for a body too short for every form. It holds the whole form, so the fallback keeps the
+  // `merge` of a shared form, and a tie keeps the form found first: the one with every group on rows of its own.
+  let tightest: { form: CompactForm; rows: number } = {
+    form: { columns, perLine: first, problems: 0 },
+    rows: Number.POSITIVE_INFINITY,
+  }
+  // Every group on rows of its own first, then the shared rows of the trackers (`merge`). A form that fits ends the search.
+  // Else the form with the fewest rows is the fallback, and a tie keeps the one found first (issue #265).
+  for (const merge of [undefined, columns]) {
+    for (let perLine = first; perLine <= most; perLine++) {
+      const list = listRows(m, columns, perLine, merge)
+      const formOf = (problems: number): CompactForm =>
+        merge === undefined ? { columns, perLine, problems } : { columns, perLine, problems, merge }
+      if (fits(list, 0)) {
+        let problems = m.problems.length
+        while (!fits(list, problems)) problems--
+        return formOf(problems)
+      }
+      const rows = list + problemRows(m, columns, wraps, 0)
+      if (rows < tightest.rows) tightest = { form: formOf(0), rows }
     }
-    const rows = list + problemRows(m, columns, wraps, 0)
-    if (rows < tightest.rows) tightest = { perLine, rows }
   }
-  // No form with every group on rows of its own fits. The groups of the trackers may share their rows with their titles.
-  for (let perLine = first; perLine <= most; perLine++) {
-    const list = listRows(m, columns, perLine, true)
-    if (!fits(list, 0)) continue
-    let problems = m.problems.length
-    while (!fits(list, problems)) problems--
-    return { columns, perLine, problems, merge: columns }
-  }
-  return { columns, perLine: tightest.perLine, problems: 0 }
+  return tightest.form
 }
 
 /**
@@ -319,27 +366,24 @@ export function renderHelp(
   compact: CompactForm | false = false,
 ): readonly RenderElement[] {
   const form = compact === false ? undefined : compact
-  const shared = (g: HelpGroup): boolean => form?.merge !== undefined && sharesRow(g, form.merge)
+  // A group on a shared row: its bold title, then its keys, `KEY_GAP` apart, with no indent.
+  const sharedGroup = (g: HelpGroup): RenderElement =>
+    box(el, { columnGap: KEY_GAP }, text(el, { weight: 'bold' }, g.title), ...g.keys.map(k => text(el, {}, keyText(k))))
   return [
-    ...m.groups.flatMap(g =>
-      shared(g)
-        ? [
-            box(
-              el,
-              { columnGap: KEY_GAP },
-              text(el, { weight: 'bold' }, g.title),
-              ...g.keys.map(k => text(el, {}, keyText(k))),
-            ),
-          ]
-        : [
-            text(el, { weight: 'bold' }, g.title),
-            ...(form
-              ? keyLines(el, g.keys, columnsOf(m, g, form.columns, form.perLine))
-              : g.keys.map(k =>
-                  box(el, { paddingLeft: KEY_INDENT, columnGap: KEY_GAP }, text(el, {}, k.key), text(el, {}, k.label)),
-                )),
-          ],
-    ),
+    ...(form ? entriesOf(m, form.merge, form.columns) : m.groups).flatMap(entry => {
+      if (Array.isArray(entry)) {
+        const groups = entry.map(sharedGroup)
+        return groups.length > 1 ? [box(el, { columnGap: SHARE_GAP }, ...groups)] : groups
+      }
+      return [
+        text(el, { weight: 'bold' }, entry.title),
+        ...(form
+          ? keyLines(el, entry.keys, columnsOf(m, entry, form.columns, form.perLine))
+          : entry.keys.map(k =>
+              box(el, { paddingLeft: KEY_INDENT, columnGap: KEY_GAP }, text(el, {}, k.key), text(el, {}, k.label)),
+            )),
+      ]
+    }),
     text(el, {}, configLine(m.configPath)),
     ...(m.version === undefined ? [] : [text(el, {}, versionLine(m.version))]),
     ...problemLines(el, m, form),
