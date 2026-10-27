@@ -20,6 +20,7 @@ export abstract class PaneApi {
 
   readonly isItemOwner: PaneKeys['isItemOwner'] = (...a) => this.paneKeys.isItemOwner(...a)
   readonly problems: PaneKeys['problems'] = () => this.paneKeys.problems()
+  readonly liveTools: PaneKeys['liveTools'] = () => this.paneKeys.liveTools()
   readonly footer: PaneKeys['footer'] = (...a) => this.paneKeys.footer(...a)
   readonly runAction: PaneKeys['runAction'] = (...a) => this.paneKeys.runAction(...a)
 

@@ -1,7 +1,7 @@
 // The shapes TreeDataTable shares across its files: its constants, the view it reads, the actions it calls and what it
 // drew. Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L6 Task 8.
 import type { RenderElement } from 'claude-code'
-import type { FooterKey, HelpModel, TreeRow } from '../../core/interfaces/view'
+import type { FooterKey, HelpModel, StatusLine, TreeRow } from '../../core/interfaces/view'
 import type { Cost } from './budget'
 import { GLYPH_BOX, INDENT } from './columns'
 
@@ -66,6 +66,12 @@ export interface TableView {
   readonly footer: readonly FooterKey[]
   /** The line above the footer. Absent: none is drawn. The help view never draws it. */
   readonly viewLine?: ViewLine
+  /**
+   * The two lines of the full status area (issue #138): the selected row above the view line, the health below it. Both sit in the
+   * footer Box, so the dock pins them with the keys, and the window takes `STATUS_ROWS` off its budget. Absent: the compact bottom.
+   * The help view never draws them.
+   */
+  readonly status?: { readonly selected: StatusLine; readonly health: StatusLine }
   readonly help: HelpModel | null
   /** Default `BUDGET`. Tests pass a small one. */
   readonly budget?: Cost

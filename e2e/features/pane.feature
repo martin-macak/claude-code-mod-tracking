@@ -154,17 +154,66 @@ Feature: Drive the /track pane with the keys
   # Issue #109, the owner's wish: with fewer rows than the body holds, the footer keys sit at the bottom of the pane, not under
   # the last row. The e2e terminal is 120 columns wide, so the pane is docked and its body has a fixed height. An inline pane
   # is as tall as its tree, so the footer stays under the last row there (README "Known limits"). The regex wants at least ten
-  # blank pane rows between the last link and the footer keys.
+  # blank pane rows between the last link and the bottom area. Issue #138: the docked body has 18 rows or more, so the bottom
+  # area is the selected-row line, the view line (a second row where the keys wrap), the health line and the footer keys.
   Scenario: A short list keeps the footer keys at the bottom of a docked pane
     Given a Claude Code session with the artifact-tracking mod
     When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
     And Claude finishes
     And I type "/track"
     Then the selected row shows "one.example"
-    And the screen matches /│.*three\.example\/c.*\n(.*│ *\n){10,}.*│View: list[^\n]*\n(.*│[^\n]*\n)?.*│r: refresh/
+    And the screen matches /│.*three\.example\/c.*\n(.*│ *\n){10,}.*│Selected: [^\n]*\n.*│View: list[^\n]*\n(.*│[^\n]*\n)?.*│Health: [^\n]*\n.*│r: refresh/
     When I press "Tab"
     Then the selected row shows "two.example"
-    And the screen matches /│.*three\.example\/c.*\n(.*│ *\n){10,}.*│View: list[^\n]*\n(.*│[^\n]*\n)?.*│r: refresh/
+    And the screen matches /│.*three\.example\/c.*\n(.*│ *\n){10,}.*│Selected: [^\n]*\n.*│View: list[^\n]*\n(.*│[^\n]*\n)?.*│Health: [^\n]*\n.*│r: refresh/
+
+  # Issue #138, PR 2: the adaptive status area. With 18 body rows or more the pane draws a summary row above the table (the words of
+  # the band), and the selected-row line and the health line in the footer Box, around the view line. The docked pane of a
+  # 120x36 terminal has about 30 body rows. The selected-row line follows the selection. The health line names the tools of the
+  # trackers that run and counts the problems of the help view. The github and jira trackers are the ones that declare tools (`gh`,
+  # `acli`) and the host decides what those say (installed or not, logged in or not), so the config turns them off: no tool is
+  # live, the line is the problem count alone, and the scenario gives the same answer on every machine. The names of the tools
+  # on the line are a kit test (tests/pane-status-area.test.ts).
+  Scenario: A docked pane shows the summary, the selected row and the health beside the view line and the keys
+    Given the tracker config file:
+      """
+      { "version": 1, "trackers": { "github": { "enabled": false }, "jira": { "enabled": false } } }
+      """
+    And a Claude Code session with the artifact-tracking mod
+    When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "one.example"
+    And the pane is docked
+    And the screen matches /│Links 3\s*$/
+    And the screen matches /│Selected: one\.example/
+    And the screen matches /│Health: no problems\s*$/
+    And the screen shows "View: list"
+    And the screen shows "r: refresh"
+    When I press "Tab"
+    Then the selected row shows "two.example"
+    And the screen matches /│Selected: two\.example/
+
+  # Issue #138, PR 2. The form follows the engine body: 18 rows or more draw the status area, inline as well (a 100x60 terminal
+  # gives the inline pane 18 body rows), and below that the pane keeps the view line and the footer (100x40 gives 11 rows).
+  # At both sizes the footer keys stay in view.
+  Scenario Outline: The status area shows from 18 body rows and not below, at <cols>x<rows>
+    Given a terminal of <cols> columns by <rows> rows
+    And a Claude Code session with the artifact-tracking mod
+    When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "one.example"
+    And the pane is inline
+    And the screen shows "View: list"
+    And the screen shows "r: refresh"
+    And the screen matches /tracking\s+Links 3/
+    And the screen <check> "Health:"
+
+    Examples:
+      | cols | rows | check          |
+      | 100  | 60   | shows          |
+      | 100  | 40   | does not show  |
 
   # Issue #109, review finding m2. The ring sits on a position among the Buttons. Enter on an N more row puts the new rows in
   # before it, so its position holds the stop of a row that the window hides, and no row would show the ring. The pane asks for

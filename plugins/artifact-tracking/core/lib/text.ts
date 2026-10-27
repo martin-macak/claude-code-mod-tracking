@@ -17,18 +17,26 @@ export function ago(ms: number): string {
   return `${Math.floor(ms / DAY)}d`
 }
 
-/** What a section header says about the tool behind it. First match wins. */
-export function toolNote(t: ToolStatus, now: number, lastRefresh?: number): string {
-  if (t.available === false) return 'not installed'
-  if (t.available === null) return 'checking…'
-  if (t.loggedIn === false) return 'not logged in'
-  if (t.breaker === 'open') return `paused ${ago(Math.max(0, (t.openUntil ?? now) - now))}`
+/**
+ * What a section header says about the tool behind it, and whether the person must act (not installed, not logged in, paused by
+ * its breaker). First match wins. The words and the need are one fact, so a line that colors a tool asks here and never repeats
+ * the branches.
+ */
+export function toolState(t: ToolStatus, now: number, lastRefresh?: number): { note: string; needsPerson: boolean } {
+  if (t.available === false) return { note: 'not installed', needsPerson: true }
+  if (t.available === null) return { note: 'checking…', needsPerson: false }
+  if (t.loggedIn === false) return { note: 'not logged in', needsPerson: true }
+  if (t.breaker === 'open') return { note: `paused ${ago(Math.max(0, (t.openUntil ?? now) - now))}`, needsPerson: true }
   if (lastRefresh !== undefined) {
     const age = ago(Math.max(0, now - lastRefresh))
-    return age === 'now' ? 'refreshed just now' : `refreshed ${age} ago`
+    return { note: age === 'now' ? 'refreshed just now' : `refreshed ${age} ago`, needsPerson: false }
   }
-  return 'ready'
+  return { note: 'ready', needsPerson: false }
 }
+
+/** What a section header says about the tool behind it. First match wins. */
+export const toolNote = (t: ToolStatus, now: number, lastRefresh?: number): string =>
+  toolState(t, now, lastRefresh).note
 
 const AGENT_ID = /(agent-)([0-9a-f]{8})[0-9a-f]+/g
 const RUN_ID = /wf_([A-Za-z0-9-]+)-(\d+)(?![\w-])/g

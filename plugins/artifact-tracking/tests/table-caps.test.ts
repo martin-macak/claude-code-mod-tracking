@@ -4,7 +4,7 @@ import { expect, test } from 'claude-code/testing'
 import type { GroupSpec, TreeRow } from '../core/interfaces/view'
 import { BUDGET, fits, measure } from '../ux/tree-data-table/budget'
 import { resetWidths } from '../ux/tree-data-table/columns'
-import { findRow, handleOf, layout, TOO_LARGE, TreeDataTable } from '../ux/tree-data-table/table'
+import { findRow, findTreeRow, handleOf, layout, TOO_LARGE, TreeDataTable } from '../ux/tree-data-table/table'
 import {
   buttonOf,
   footerOf,
@@ -218,4 +218,15 @@ test('findRow finds a hidden child of a closed row, with its section id and can'
   expect(findRow(sections, 'p')?.owner).toBe('web')
   expect(findRow(sections, 'gone')).toBeUndefined()
   expect(findRow(sections, null)).toBeUndefined()
+})
+
+test('findTreeRow gives the whole row, also a hidden child of a closed row: the selected-row line reads its cells (issue #138)', () => {
+  const kid = row('c1', { name: 'kid' }, { can: { dismiss: true } })
+  const parent = row('p', { name: 'p' }, { owner: 'web', children: [kid] })
+  const sections = [group('web', [parent]), group('file', [row('f', { name: 'f' }, { owner: 'file' })])]
+  expect(findTreeRow(sections, 'c1')).toBe(kid)
+  expect(findTreeRow(sections, 'p')).toBe(parent)
+  expect(findTreeRow(sections, 'f')?.owner).toBe('file')
+  expect(findTreeRow(sections, 'gone')).toBeUndefined()
+  expect(findTreeRow(sections, null)).toBeUndefined()
 })

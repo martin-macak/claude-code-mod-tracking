@@ -30,6 +30,19 @@ export function sortSections(list: readonly { s: SectionSpec; order: number }[],
   return [...list].sort((a, b) => place(a) - place(b)).map(x => x.s)
 }
 
+/**
+ * The sections that carry a band part, in the order of the band, from sections that are already read (issue #138): the summary row
+ * of the pane takes the words of the band from the sections a drawing holds, with no second pass over the trackers. The list is in
+ * pane order, so a section with neither a band rank nor a rank takes its place in it, where `bandData` takes the order of its
+ * tracker. Every section with a band part sets both ranks today (see the `sections.ts` of each tracker), so the two never differ.
+ */
+export function bandSections(sections: readonly SectionSpec[]): SectionSpec[] {
+  return sortSections(
+    sections.flatMap((s, order) => (s.band === undefined ? [] : [{ s, order }])),
+    'band',
+  )
+}
+
 /** What every tracker of one call reads alike: one read of the atoms, the dismiss list and the levels. */
 export interface ViewRead {
   /** Epoch ms. */

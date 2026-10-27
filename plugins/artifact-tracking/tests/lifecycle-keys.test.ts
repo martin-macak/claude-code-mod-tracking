@@ -149,6 +149,40 @@ test('problems lists the key problems, then the kind reasons that are off, then 
   ])
 })
 
+// Issue #138, owner decision Q4 of the delta study (https://github.com/martin-macak/claude-code-mod-tracking/issues/138#issuecomment-6412630538):
+// the health line names the tools of the trackers that run. A tool of a tracker that is off is never probed, so it would say
+// `checking…` for good.
+const tool = (id: string) => ({ id, probe: [id, '--version'] })
+const toggled = { defaults: { enabled: true }, normalise: (raw: JsonObject) => ({ enabled: raw.enabled !== false }) }
+
+test('liveTools names the tools of the trackers that run, in the order of the trackers', async () => {
+  const late = fake('late', 20, { tools: [tool('acli'), tool('jq')] })
+  const early = fake('early', 10, { tools: [tool('gh')] })
+  const none = fake('none', 15)
+  const { m } = await started([late, none, early])
+  expect(m.liveTools()).toEqual(['gh', 'acli', 'jq'])
+})
+
+test('liveTools names a tool once when two trackers declare it: the tool runner keeps the first owner', async () => {
+  const a = fake('a', 10, { tools: [tool('gh')] })
+  const b = fake('b', 20, { tools: [tool('gh'), tool('jq')] })
+  const { m } = await started([a, b])
+  expect(m.liveTools()).toEqual(['gh', 'jq'])
+})
+
+test('liveTools leaves out the tools of a tracker that the config turned off, and of one that failed to start', async () => {
+  const off = fake('off', 10, { tools: [tool('acli')], config: toggled })
+  const bad = fake('bad', 20, {
+    tools: [tool('docker')],
+    init: () => {
+      throw new Error('boom')
+    },
+  })
+  const on = fake('on', 30, { tools: [tool('gh')] })
+  const { m } = await started([off, bad, on], { trackers: { off: { enabled: false } } })
+  expect(m.liveTools()).toEqual(['gh'])
+})
+
 test('isItemOwner is true only for a tracker with kinds', () => {
   const kind = { category: 'web' } as unknown as ItemKind
   const { m } = setup([fake('items', 10, { kinds: [kind] }), fake('plain', 20), fake('empty', 30, { kinds: [] })])
