@@ -10,7 +10,7 @@ import type { CleanAction, CleanKind, CleanStep, LogEntry, PlanLine, PlanRole } 
 export type { PlanLine, PlanRole } // the types live in core/interfaces/clean.ts: the pane view (ux/) imports them from there
 
 /** The kinds `--yes` accepts, in the order the plan lists them. */
-export const CLEAN_KINDS: readonly CleanKind[] = ['tasks', 'worktrees']
+export const CLEAN_KINDS: readonly CleanKind[] = ['tasks', 'containers', 'worktrees']
 
 /** `/track clean` with an argument that is no mode. */
 export const CLEAN_USAGE = `Usage: /track clean [--hide|--log|--yes <${CLEAN_KINDS.join('|')}>...]`
@@ -42,12 +42,13 @@ export interface Line {
   readonly outcome?: string
 }
 
-const TITLES: Readonly<Record<CleanKind, string>> = { tasks: 'Tasks', worktrees: 'Worktrees' }
+const TITLES: Readonly<Record<CleanKind, string>> = { tasks: 'Tasks', containers: 'Containers', worktrees: 'Worktrees' }
 /** `remove-worktree` says what git does to the folder: it takes the ignored files with it (owner decision Q2 of issue #123). */
 const ACTION_WORDS: Readonly<Record<CleanAction, string>> = {
   stop: 'stop',
   'remove-record': 'remove record',
   'remove-worktree': 'remove worktree (if clean and merged; deletes ignored files)',
+  'remove-container': 'remove',
 }
 
 /** How many lines of one kind the text shows before it counts the rest. */

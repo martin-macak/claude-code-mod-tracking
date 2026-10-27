@@ -1171,3 +1171,113 @@ test('settle and restore stamp an ended row that has no endedAt with the engine 
   await t.m.entry(t.w.ports) // restore('carry'): the leaving row 'old' joins the live one
   expect(Object.fromEntries(t.rows().map(r => [r.id, r.endedAt]))).toMatchObject({ old: 5_000_000, new: 6_000_000 })
 })
+
+// ---------------------------------------------------------------- containerGone (issue #123, R8)
+// The probe says whether a container still exists: `containerGone` is set when no line of `docker ps -a --no-trunc` has the id
+// of the row, and dropped when one has it again. It is by id only. The name still decides the state, as before.
+
+/** `docker ps -a --no-trunc` lines: `<id>\t<name>\t<status>` for each entry. */
+const psOf = (...entries: [id: string, name: string, status: string][]): string =>
+  entries.map(e => `${e.join('\t')}\n`).join('')
+const dockerPs = (t: ReturnType<typeof setup>, answer: () => RunResult) => {
+  t.w.run = argv => (argvIs(argv, 'docker', 'ps', '-a', '--no-trunc') ? answer() : undefined)
+}
+
+test('containerGone: a container that no ps -a line holds is gone, and the row reads exited', async () => {
+  const t = setup()
+  dockerPs(t, () => res(psOf([CID, 'api', 'Up 3 seconds'])))
+  await t.bash('docker run -d --name api nginx', `${CID}\n`)
+  await t.probe()
+  expect(t.rows()[0]).toMatchObject({ state: 'up' })
+  expect(t.rows()[0]?.containerGone).toBeUndefined()
+  dockerPs(t, () => res('')) // a `--rm` container leaves no line (S1 L110)
+  await t.probe()
+  expect(t.rows()[0]).toMatchObject({ state: 'exited', containerGone: true })
+})
+
+test('containerGone is by id only: a container of the same name with another id is listed, and this one is gone', async () => {
+  const t = setup()
+  await t.bash('docker run -d --name api nginx', `${CID}\n`)
+  dockerPs(t, () => res(psOf(['f'.repeat(64), 'api', 'Up 3 seconds'])))
+  await t.probe()
+  // The name still gives the state, as it did before the mark: the row reads up. The id says the container of the row is gone.
+  expect(t.rows()[0]).toMatchObject({ state: 'up', containerGone: true })
+})
+
+test('containerGone goes when the id is listed again, and a probe that changes nothing writes nothing', async () => {
+  const t = setup()
+  await t.bash('docker run -d --name api nginx', `${CID}\n`)
+  dockerPs(t, () => res(''))
+  await t.probe()
+  expect(t.rows()[0]?.containerGone).toBe(true)
+  t.w.stateSets = {}
+  await t.probe() // the same answer: the same row, so no write
+  expect(t.w.stateSets.processes).toBeUndefined()
+  dockerPs(t, () => res(psOf([CID, 'api', 'Exited (0) 2 seconds ago'])))
+  await t.probe()
+  expect('containerGone' in (t.rows()[0] as ProcessRecord)).toBe(false)
+  expect(t.rows()[0]?.state).toBe('exited')
+  t.w.stateSets = {}
+  await t.probe()
+  expect(t.w.stateSets.processes).toBeUndefined()
+})
+
+// The probe judges the id it read before it asked `docker ps`. A `docker run -d --name api` that ran again while `ps` answered
+// gave the row another container, and the mark of the old one must not land on it (`mergeProcessRows` drops it on a sighting
+// too, but only one that came before the write).
+test('containerGone: a row that a new run gave another container while docker ps answered is not marked by the old id', async () => {
+  const t = setup()
+  await t.bash('docker run -d --name api nginx', `${CID}\n`)
+  const OTHER = 'e'.repeat(64)
+  dockerPs(t, () => {
+    t.w.state.set('processes', [{ ...(t.rows()[0] as ProcessRecord), containerId: OTHER }] as unknown as Json)
+    return res('') // the old container is not listed
+  })
+  await t.probe()
+  expect(t.rows()[0]).toMatchObject({ containerId: OTHER })
+  expect(t.rows()[0]?.containerGone).toBeUndefined()
+  dockerPs(t, () => res('')) // the next probe reads the new id, and finds it gone too
+  await t.probe()
+  expect(t.rows()[0]?.containerGone).toBe(true)
+})
+
+test('containerGone: a row with no container id is never marked, and a probe that fails leaves the mark as it was', async () => {
+  const t = setup()
+  await t.bash('docker run -d --name named nginx', '') // no id line: the row has a name only
+  await t.bash('docker run -d --name api nginx', `${CID}\n`)
+  dockerPs(t, () => res(''))
+  await t.probe()
+  const byName = (name: string) => t.rows().find(r => r.name === name) as ProcessRecord
+  expect(byName('named').containerGone).toBeUndefined()
+  expect(byName('api').containerGone).toBe(true)
+  // The daemon is down: a quick non-zero exit. The probe learns nothing, so nothing changes, not even the mark.
+  dockerPs(t, () => res('', 1, 'Cannot connect to the Docker daemon'))
+  await t.probe()
+  expect(byName('api').containerGone).toBe(true)
+  expect(t.ui()?.dockerIssue).toContain('Cannot connect')
+  dockerPs(t, () => res(psOf([CID, 'api', 'Up 1 second'])))
+  await t.probe()
+  expect(byName('api')).toMatchObject({ state: 'up' })
+  expect('containerGone' in byName('api')).toBe(false)
+})
+
+// A `docker ps -a` listing that the runner cut (`isStdoutTruncated`) may lack the line of a container that exists. A missing line
+// proves nothing then, so the probe infers no absence from it: it sets no `containerGone` and leaves a mark as it was. A
+// complete listing still sets and drops the mark. (The state of a cut row is another matter: it read `exited` before #123.)
+test('containerGone: a truncated ps -a listing infers no absence, and leaves the mark as it was', async () => {
+  const t = setup()
+  await t.bash('docker run -d --name api nginx', `${CID}\n`)
+  const cut = (stdout: string): RunResult => ({ ...res(stdout), isStdoutTruncated: true })
+  dockerPs(t, () => cut('')) // the line of the container was cut away
+  await t.probe()
+  expect(t.rows()[0]?.containerGone).toBeUndefined()
+  dockerPs(t, () => res('')) // a complete listing without the id: the container is gone
+  await t.probe()
+  expect(t.rows()[0]?.containerGone).toBe(true)
+  dockerPs(t, () => cut(psOf(['f'.repeat(64), 'other', 'Up 1 second']))) // cut again: the mark stays
+  await t.probe()
+  expect(t.rows()[0]?.containerGone).toBe(true)
+  dockerPs(t, () => res(psOf([CID, 'api', 'Exited (0) 2 seconds ago']))) // a complete listing with the id drops it
+  await t.probe()
+  expect('containerGone' in (t.rows()[0] as ProcessRecord)).toBe(false)
+})

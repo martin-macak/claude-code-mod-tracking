@@ -14,7 +14,7 @@ import {
   screenLive,
   tmuxLive,
 } from './probe'
-import { readRows, setProcesses, withState } from './rows'
+import { readRows, setProcesses, withContainerGone, withState } from './rows'
 import type { ProcessRecord, ProcessUiState } from './types'
 
 /** The fact that carries the probe's state. */
@@ -58,10 +58,21 @@ export async function probeProcesses(ctx: ProbeCtx, state: ProbeState): Promise<
   const lostRows = of('detached-process').filter(r => r.pid === undefined && r.fingerprint !== undefined)
   const opts = { timeoutMs: ctx.config.slice().probeTimeoutMs }
   const run = (tool: string, ...args: string[]) => ctx.tools.run(tool, [tool, ...args], opts)
-  const updates = new Map<string, { state: ProcessRecord['state']; pid?: number }>()
+  // What a row changes in this probe: its state (and the pid a search found), and whether its container is gone. The mark
+  // names the container that the probe judged: a row that holds another container by the time of the write is not marked.
+  type Update = {
+    state?: ProcessRecord['state']
+    pid?: number
+    gone?: { containerId: string; value: boolean }
+  }
+  const updates = new Map<string, Update>()
   const mark = (r: ProcessRecord, state: ProcessRecord['state'], pid?: number) => {
     if (r.state === state && (pid === undefined || r.pid === pid)) return
-    updates.set(r.id, { state, ...(pid !== undefined ? { pid } : {}) })
+    updates.set(r.id, { ...updates.get(r.id), state, ...(pid !== undefined ? { pid } : {}) })
+  }
+  const markGone = (r: ProcessRecord, containerId: string, value: boolean) => {
+    if ((r.containerGone === true) === value) return
+    updates.set(r.id, { ...updates.get(r.id), gone: { containerId, value } })
   }
   // Each source is probed on its own: a Docker daemon that is down must not stop the tmux probe.
   // A failed source leaves its rows at their last known state. Only a thrown error (timeout, no binary) counts
@@ -93,6 +104,14 @@ export async function probeProcesses(ctx: ProbeCtx, state: ProbeState): Promise<
         found.set(r.id, composeState(listed.stdout))
       }
       for (const r of [...dockerRows, ...composeRows]) mark(r, found.get(r.id) as ProcessRecord['state'])
+      // Whether the container of a row still exists is a question of its id alone (issue #123, R8): a container of the same
+      // name with another id is not it, and `ps -a --no-trunc` prints full ids. A row with no id is never marked. A failed
+      // `ps` threw above, so a probe that learned nothing changes nothing. A listing that the runner cut may lack the line of a
+      // container that exists, so it proves no absence: a cut listing leaves every mark as it was.
+      const psIds = new Set(seen.map(x => x.id.toLowerCase()))
+      if (ps.isStdoutTruncated !== true)
+        for (const r of dockerRows)
+          if (r.containerId !== undefined) markGone(r, r.containerId, !psIds.has(r.containerId.toLowerCase()))
     })
 
   if (tmuxRows.length > 0)
@@ -136,9 +155,13 @@ export async function probeProcesses(ctx: ProbeCtx, state: ProbeState): Promise<
       let changed = false
       const merged = current.map(r => {
         const u = updates.get(r.id)
-        if (u === undefined || (u.state === r.state && (u.pid === undefined || u.pid === r.pid))) return r
-        changed = true
-        return withState(r, u.state, seenNow, u.pid !== undefined ? { pid: u.pid } : {})
+        if (u === undefined) return r
+        let next = r
+        if (u.state !== undefined && (u.state !== r.state || (u.pid !== undefined && u.pid !== r.pid)))
+          next = withState(r, u.state, seenNow, u.pid !== undefined ? { pid: u.pid } : {})
+        if (u.gone !== undefined && r.containerId === u.gone.containerId) next = withContainerGone(next, u.gone.value)
+        if (next !== r) changed = true
+        return next
       })
       return changed ? merged : current
     })

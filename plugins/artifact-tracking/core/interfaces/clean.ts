@@ -8,17 +8,19 @@ import type { TrackerContext } from './tracker'
 import type { ViewContext } from './view'
 
 /**
- * What `--yes` names. `tasks`: background tasks that still run. `worktrees`: git records of worktrees that are gone from
- * disk, and (switch `destroyWorktrees`) clean, merged worktrees that are still there. A kind that joins the list
- * (containers, issue #49 P3) is a compile error in the places that switch over it.
+ * What `--yes` names. `tasks`: background tasks that still run. `containers`: Docker containers of this run that have exited
+ * (switch `destroyContainers`, issue #123). `worktrees`: git records of worktrees that are gone from disk, and (switch
+ * `destroyWorktrees`) clean, merged worktrees that are still there. A kind that joins the list is a compile error in the
+ * places that switch over it.
  */
-export type CleanKind = 'tasks' | 'worktrees'
+export type CleanKind = 'tasks' | 'containers' | 'worktrees'
 
 /**
  * `stop`: stop a background task. `remove-record`: remove the git record of a worktree whose directory is gone.
- * `remove-worktree`: remove a live worktree that is clean and merged (issue #123).
+ * `remove-worktree`: remove a live worktree that is clean and merged. `remove-container`: remove an exited container
+ * (`docker rm`, issue #123).
  */
-export type CleanAction = 'stop' | 'remove-record' | 'remove-worktree'
+export type CleanAction = 'stop' | 'remove-record' | 'remove-worktree' | 'remove-container'
 
 /** One thing a cleanup would do. */
 export interface CleanStep {
