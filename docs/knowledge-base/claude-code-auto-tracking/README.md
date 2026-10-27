@@ -42,7 +42,7 @@ The user's request, in short. The full text sits in [feasibility.md](feasibility
 | [agents-and-sessions.md](agents-and-sessions.md) | `$.agent.list`, `agent.spawn`, worktree and branch per agent, other sessions, `$.store` presence |
 | [pull-requests.md](pull-requests.md) | The "PR opened" signal, polling many branches for 1 rate point, PR body parsing |
 | [open-questions.md](open-questions.md) | Source conflicts, unverified points with recipes, **decisions for the user** |
-| [`sources/`](sources/README.md) | `git-2.56.0/`, `gh-2.102.0/`, `claude-code-2.1.296/`, `live-probe-2026-10-10/` |
+| [`sources/`](sources/README.md) | `git-2.56.0/`, `gh-2.102.0/`, `claude-code-2.1.296/`, `live-probe-2026-10-10/`, `replay-probe-2026-10-26/` |
 
 ## The shape of the feature
 

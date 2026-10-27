@@ -1,0 +1,5 @@
+Copy with the prototype handler, after a cold `claude --resume`, `/track` pane rows:
+
+     Name     Description                        Type   Status
+Pull requests 1 gh · refreshed 6s ago
+>    ▸ #7     demo pr                            feat/x open   ✓ checks

@@ -49,6 +49,31 @@ sequenceDiagram
   Co->>Co: extractRefs(body) and upsert refs with provenance
 ```
 
+### The replayed Bash result after a cold `--resume`
+
+A `claude --resume` in a new process fires no `tool.call` for the old calls. The mod reads them back with `$.session.messages()`: the newest 4096 entries ([d.ts 2.1.302:2802](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L2802)). Each tool use is `{tool_use_id, tool, input, result?, text?, isError?}` ([d.ts 2.1.302:13810](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L13810)). [primary source]
+
+**The replayed Bash `result` carries `gitOperation`.** Seven Bash uses ran in a first process: a create, a view, a list, a failed create, a merge, a chained create and a comment. In a cold-resumed process (a new process, the same session id), `result`, `text` and `isError` of each of the 7 uses deep-equal the values that the live `tool.call` saw. A headless run gave the same log as the TUI run, but for ids and times: the study compared the two with `diff` and did not keep the headless log. The saved evidence is the TUI log. [observed] Claude Code 2.1.310, a fake Messages API, a scratch `gh` that printed the URL, no real PR, a managed machine. The route that the mod reads is the `gitOperation` route. The URL route (read the PR URL from `text`) is not needed for the main loop.
+
+A replayed use of `gh pr create`, as `$.session.messages()` returned it: [observed]
+
+```json
+{"tool_use_id":"toolu_P1","tool":"Bash","input":{"command":"gh pr create --title t --body y","description":"probe 1"},"result":{"stdout":"https://github.com/octo/demo/pull/7","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false,"gitOperation":{"pr":{"number":7,"url":"https://github.com/octo/demo/pull/7","action":"created"}}},"text":"https://github.com/octo/demo/pull/7"}
+```
+
+Saved: [replay-probe-2026-10-26/](sources/replay-probe-2026-10-26/README.md) (probe mod, fake API, scratch `gh`, scripts and scrubbed logs: [TUI log](sources/replay-probe-2026-10-26/logs/ev-6a3ea756.jsonl)). The headless log is not saved: the study found it equal to the TUI log but for ids and times.
+
+Points:
+
+- A use that made no PR gives nothing. A view and a list have no `gitOperation`. A failed create stores a string `result` and `isError: true`. A merge reads `pr.action: "merged"` with no `url`, and a comment reads `"commented"`. Only the action `created` with a URL counts. [observed]
+- A subagent's own transcript (`$.session.messages({ agentId })`) stores `text` and no `result`, so no `gitOperation`. The main transcript holds only the Agent use (`async_launched`), which names no PR. A PR from a subagent does not come back with the `gitOperation` route. The URL route would be a guess, and it is follow-up [#247](https://github.com/martin-macak/claude-code-mod-tracking/issues/247). [observed] one background subagent, headless. A foreground subagent was not run ([N20](open-questions.md#3-not-yet-observed)).
+- After `/compact` the transcript holds 4 messages: the summary, the last assistant message (with no tool use), the `/compact` command and its output. None of the 7 uses stay. A PR created before the last `/compact` is lost. [observed] headless, not in a TUI ([N23](open-questions.md#3-not-yet-observed)). The cap of 4096 entries is [primary source] and was not run ([N22](open-questions.md#3-not-yet-observed)).
+- A workflow-run agent reads `{ deny }` by the types file ([d.ts 2.1.302:11730](../claude-code-mods/sources/claude-code-2.1.302/types/claude-code.d.ts#L11730)). Not run ([N21](open-questions.md#3-not-yet-observed)). [primary source]
+- The types file says that a headless run may store a tool record less its bulk (Bash blanks `stdout`). The headless run kept `stdout` and `gitOperation`. [observed] The saved TUI log shows the same. The headless log is not saved.
+- Not run: a real `gh pr create`, and a real model turn ([N24](open-questions.md#3-not-yet-observed)).
+
+The auto tracker uses this: its `replay` handler reads each replayed `Bash` use with `fromBash` and records the proof of each PR that the use created. When the write added a proof, it kicks `pr-event`: the start round can run before the replay ends. A replay of PRs that the run already holds writes nothing and starts no round.
+
 ## 2. Polling pull requests of tracked branches
 
 The tracked branch set comes from the [worktrees poll](worktrees.md#6-branch-per-worktree): the master session's branch plus the branch of each tracked worktree.
@@ -154,5 +179,6 @@ Limits:
 
 - Stacked PRs (`baseRefName` not `main`): query works, no live data. [N8](open-questions.md#3-not-yet-observed)
 - Real `gh pr create` regex coverage: [N7](open-questions.md#3-not-yet-observed).
+- The replay after a cold `--resume`: a foreground subagent ([N20](open-questions.md#3-not-yet-observed)), a workflow-run agent ([N21](open-questions.md#3-not-yet-observed)), the cap of 4096 entries and the order of the start round and a long replay ([N22](open-questions.md#3-not-yet-observed)), a TUI `/compact` ([N23](open-questions.md#3-not-yet-observed)), a real `gh pr create` ([N24](open-questions.md#3-not-yet-observed)).
 - GitHub Enterprise: the artifact-tracking KB recommends option (b) for D15: refresh a GHE host only after `gh auth status --hostname <host>` exits 0 ([open-questions D15](../claude-code-artifact-tracking/open-questions.md#4-decisions-for-the-user)). Discovery should follow the same rule. [inference]
 - A PR from a fork has a head branch name that may collide with a local branch. Use `headRepositoryOwner` and `isCrossRepository` to check. [inference]

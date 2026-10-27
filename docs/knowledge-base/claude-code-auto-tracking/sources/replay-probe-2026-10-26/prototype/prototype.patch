@@ -1,0 +1,255 @@
+--- a/trackers/auto/index.ts
++++ b/trackers/auto/index.ts
+@@ -12,6 +12,7 @@
+ import type {
+   AgentSpawnEvent,
+   CommandEvent,
++  ReplayItem,
+   StartEvent,
+   TickEvent,
+   ToolCallEvent,
+@@ -222,6 +223,25 @@
+   if (f.kick) kick(ctx, f.kick)
+ })
+ 
++// A `--resume` fires no hook for the old calls: the transcript comes back as one batch (core/infra/replay.ts). The stored
++// result of a Bash call keeps `gitOperation` (observed, issue #202), so `fromBash` reads a replayed use as it reads a live
++// answer, and a PR that the earlier process created is a proof again. The `kick` that `fromBash` gives for an item is not
++// used: a replayed `git worktree` command must not start a round. One `pr-event` follows the write instead. The start round
++// can run before the replay ends (a slow read), and its PR step then has no proof to ask for: this kick makes the next
++// step ask for the created PRs. A call of a subagent is not in this transcript (its own transcript has no result).
++const onReplay: H<readonly ReplayItem[]> = soft('replay', async (ctx, batch) => {
++  const found = batch.flatMap(item => {
++    if (item.kind !== 'toolCall' || item.ev.tool !== 'Bash') return []
++    const command = String(isRecord(item.ev.input) ? (item.ev.input.command ?? '') : '')
++    const { pr } = fromBash(command, item.ev.result)
++    return pr === undefined ? [] : [pr]
++  })
++  if (found.length === 0) return
++  const max = ctx.config.slice().maxProofs
++  await setAuto(ctx, s => found.reduce((acc, pr) => recordPr(acc, pr, max), s))
++  kick(ctx, 'pr-event')
++})
++
+ // Monitor, TaskStop and the file tools only count as a sign of life.
+ const onTouch: H<ToolCallEvent> = soft('touch', (ctx, ev) => touch(ctx, ev.agentId))
+ 
+@@ -309,6 +329,7 @@
+     },
+     agentSpawn: onSpawn,
+     turnComplete: onTurn,
++    replay: onReplay,
+     tick: { run: onTick },
+     command: onCommand,
+   },
+--- a/tests/auto-tracker.test.ts
++++ b/tests/auto-tracker.test.ts
+@@ -6,7 +6,7 @@
+ import { LifecycleManager } from '../core/infra/lifecycle'
+ import type { ToolCallEvent } from '../core/interfaces/events'
+ import type { ItemsHost, Json, StoredItem } from '../core/interfaces/items'
+-import type { RunResult } from '../core/interfaces/ports'
++import type { RunResult, SessionRow } from '../core/interfaces/ports'
+ import { autoConfig, auto as autoTracker } from '../trackers/auto'
+ import { autoDismiss } from '../trackers/auto/dismiss-store'
+ import { emptyAuto } from '../trackers/auto/ledger'
+@@ -489,4 +489,108 @@
+   ])
+   expect(autoConfig.normalise({ enabled: 'yes' }, autoConfig.defaults, warn).enabled).toBe(true)
+   expect(warns).toHaveLength(6)
++})
++
++// Issue #202: a cold `--resume` fires no hook for the old calls, so the transcript is read back and the proofs of the PRs
++// the earlier process created are rebuilt. The shapes are the stored results of a cold-resumed session of Claude Code
++// 2.1.310 (design study of #202, probe S1): `result` is the record of the live call, with its `gitOperation`.
++const USE_AT = 'https://github.com/octo/demo/pull'
++/** An assistant message with one answered Bash use, as `$.session.messages()` gives it after a resume. */
++const bashUse = (
++  id: string,
++  command: string,
++  answer: { result?: unknown; text?: string; isError?: true },
++): SessionRow =>
++  ({
++    role: 'assistant',
++    text: '',
++    toolUses: [{ tool_use_id: id, tool: 'Bash', input: { command, description: 'x' }, ...answer }],
++  }) as SessionRow
++const plain = (stdout: string, gitOperation?: unknown) => ({
++  result: { stdout, stderr: '', interrupted: false, ...(gitOperation !== undefined ? { gitOperation } : {}) },
++  text: stdout,
++})
++const CREATED_7 = plain(`${USE_AT}/7`, { pr: { number: 7, url: `${USE_AT}/7`, action: 'created' } })
++const CREATED_8 = plain(`${USE_AT}/8`, { pr: { number: 8, url: `${USE_AT}/8`, action: 'created' } })
++const NO_PR_USES: SessionRow[] = [
++  bashUse('t_view', 'gh pr view 7', plain('title: demo pr')),
++  bashUse('t_list', 'gh pr list', plain('7  demo pr  feat/x  OPEN')),
++  bashUse('t_fail', 'gh pr create --title x', {
++    result: 'Error: Exit code 1\nfake gh: a pull request for branch already exists',
++    text: 'Exit code 1\nfake gh: a pull request for branch already exists',
++    isError: true,
++  }),
++  bashUse('t_merge', 'gh pr merge 7 --squash', plain('Merged', { pr: { number: 7, action: 'merged' } })),
++  bashUse(
++    't_comment',
++    'gh pr comment 7',
++    plain(`${USE_AT}/7#c1`, { pr: { number: 7, url: `${USE_AT}/7`, action: 'commented' } }),
++  ),
++  bashUse('t_open', 'gh pr create --title y', { text: undefined }), // a call with no stored answer
++  bashUse('t_wt', 'git worktree add -q -b feat/x ../wt', plain('', { branch: { ref: 'x', action: 'merged' } })),
++]
++
++test('a cold resume rebuilds the proof of each PR the transcript shows as created, and no other', async () => {
++  const t = setup()
++  const before = await t.running()
++  t.w.session.messages = [
++    bashUse('t_c7', 'gh pr create --title t --body y', CREATED_7),
++    ...NO_PR_USES,
++    bashUse('t_c8', 'git status --short && gh pr create --title chained', CREATED_8),
++  ]
++  await t.m.replay()
++  const proofs = [
++    { host: 'github.com', owner: 'octo', repo: 'demo', number: 7 },
++    { host: 'github.com', owner: 'octo', repo: 'demo', number: 8 },
++  ]
++  expect(t.auto()?.prs).toEqual(proofs)
++  expect(t.m.facts.read('auto.prs')).toEqual(proofs)
++  await t.settle(WINDOW)
++  expect(t.rounds()).toBe(before + 1) // one pr-event round for the batch, none for the git command or the merge
++  expect(t.branches()?.reasons).toEqual(['pr-event'])
+ })
++
++test('a transcript with no created PR records no proof and starts no round', async () => {
++  const t = setup()
++  const before = await t.running()
++  t.w.session.messages = NO_PR_USES
++  const sets = t.w.stateSets.auto
++  await t.m.replay()
++  expect(t.auto()?.prs).toBeUndefined()
++  expect(t.w.stateSets.auto).toBe(sets)
++  await t.settle(WINDOW)
++  expect(t.rounds()).toBe(before)
++})
++
++test('the replay and the live event of one PR give one proof, in either order', async () => {
++  const t = setup()
++  await t.running()
++  t.w.session.messages = [bashUse('t_c7', 'gh pr create', CREATED_7)]
++  await t.call('Bash', { command: 'gh pr create' }, ev.BASH_PR_RAN)
++  await t.m.replay()
++  expect(t.auto()?.prs).toEqual([{ host: 'github.com', owner: 'octo', repo: 'demo', number: 7 }])
++  const u = setup()
++  await u.running()
++  u.w.session.messages = [bashUse('t_c7', 'gh pr create', CREATED_7)]
++  await u.m.replay()
++  expect(u.auto()?.prs).toHaveLength(1) // the replay alone made the proof
++  await u.call('Bash', { command: 'gh pr create' }, ev.BASH_PR_RAN)
++  await u.m.replay()
++  expect(u.auto()?.prs).toEqual([{ host: 'github.com', owner: 'octo', repo: 'demo', number: 7 }])
++})
++
++test('a replay holds up to maxProofs PRs, the newest of the transcript', async () => {
++  const t = setup()
++  await t.running()
++  const max = autoConfig.defaults.maxProofs
++  t.w.session.messages = Array.from({ length: max + 2 }, (_, i) =>
++    bashUse(
++      `t_${i + 1}`,
++      'gh pr create',
++      plain(`${USE_AT}/${i + 1}`, { pr: { number: i + 1, url: `${USE_AT}/${i + 1}`, action: 'created' } }),
++    ),
++  )
++  await t.m.replay()
++  const numbers = t.auto()?.prs?.map(p => p.number) ?? []
++  expect([numbers.length, numbers[0], numbers.at(-1)]).toEqual([max, 3, max + 2])
++})
+--- a/tests/pr-lane.test.ts
++++ b/tests/pr-lane.test.ts
+@@ -1522,6 +1522,88 @@
+   await t.refresh()
+   expect(t.queries.slice(before).some(q => q.includes('pullRequest(number: 657)'))).toBe(true)
+   expect(t.keys()).toEqual([KIAM])
++})
++
++test('lane: a created PR lists in Pull requests after a cold --resume: the replay rebuilds its proof from the transcript', async () => {
++  // The earlier process ran `gh pr create`, listed the PR and stored the session when it ended.
++  const first = shipped()
++  first.created['verticeone/vertice-iam'] = { 657: iamNode() }
++  await first.start()
++  await first.w.clock.advance(WINDOW)
++  await first.call('Bash', { command: 'gh pr create' }, createdPr(iamNode().url, 657))
++  await first.w.clock.advance(WINDOW)
++  await first.refresh()
++  expect(first.keys()).toEqual([KIAM])
++  await first.m.end(first.w.ports, 'prompt_input_exit', 1500)
++  const stored = first.w.store.get('v2:s:sess-1')
++  expect(stored).toBeDefined()
++  // A new process: a fresh world with the stored copy of the session, the transcript, and no `auto` slot or run copy.
++  const t = shipped()
++  t.created['verticeone/vertice-iam'] = { 657: iamNode() }
++  t.w.store.set('v2:s:sess-1', stored as never)
++  t.w.session.messages = [
++    {
++      role: 'assistant',
++      text: '',
++      toolUses: [
++        { tool_use_id: 'toolu_pr', tool: 'Bash', input: { command: 'gh pr create' }, ...createdPr(iamNode().url, 657) },
++      ],
++    },
++  ] as never
++  await t.start()
++  await t.w.clock.advance(WINDOW)
++  await t.refresh()
++  expect(t.queries.some(q => q.includes('pullRequest(number: 657)'))).toBe(true)
++  expect((t.items() as unknown as GitHubRecord[]).map(r => [r.key, isLanePr(r)])).toEqual([[KIAM, true]])
++  const text = (await t.m.track(t.w.ports, '')).text
++  expect(sectionOf(text, 'Pull requests').some(l => l.includes('VerticeOne/vertice-iam#657'))).toBe(true)
++  expect(sectionOf(text, 'GitHub')).toEqual([])
++})
++
++test('lane: a slow replay lets the start step run with no proof, and the kick of the replay makes the next step ask for the created PR', async () => {
++  const first = shipped()
++  first.created['verticeone/vertice-iam'] = { 657: iamNode() }
++  await first.start()
++  await first.w.clock.advance(WINDOW)
++  await first.call('Bash', { command: 'gh pr create' }, createdPr(iamNode().url, 657))
++  await first.w.clock.advance(WINDOW)
++  await first.refresh()
++  await first.m.end(first.w.ports, 'prompt_input_exit', 1500)
++  const t = shipped()
++  t.created['verticeone/vertice-iam'] = { 657: iamNode() }
++  t.w.store.set('v2:s:sess-1', first.w.store.get('v2:s:sess-1') as never)
++  const transcript = [
++    {
++      role: 'assistant',
++      text: '',
++      toolUses: [
++        { tool_use_id: 'toolu_pr', tool: 'Bash', input: { command: 'gh pr create' }, ...createdPr(iamNode().url, 657) },
++      ],
++    },
++  ]
++  const asksForPr = () => t.queries.some(q => q.includes('pullRequest(number: 657)'))
++  // Hold the read of the transcript open.
++  let release = () => {}
++  const held = new Promise<void>(resolve => {
++    release = resolve
++  })
++  ;(t.w.ports.session as { messages: () => Promise<unknown> }).messages = async () => {
++    await held
++    return transcript
++  }
++  const starting = t.start()
++  // The start handler has run (it pinned the root and kicked the start round). Only now can the clock fire the round.
++  await until(() => t.m.facts.read('auto.root') !== undefined, 'the start handler')
++  await t.w.clock.advance(WINDOW)
++  // The start round and its first PR step run while the transcript is still unread: no proof yet, so no query by number.
++  await until(() => t.queries.length > 0, 'the first PR step, before the replay')
++  expect(asksForPr()).toBe(false)
++  release()
++  await starting
++  // The replay wrote the proof and kicked `pr-event`. One more window fires that round: no refresh, no tick.
++  await t.w.clock.advance(WINDOW)
++  await until(asksForPr, 'the step that asks for the created PR')
++  expect((t.items() as unknown as GitHubRecord[]).map(r => [r.key, isLanePr(r)])).toEqual([[KIAM, true]])
+ })
+ 
+ test('lane: a created PR survives an in-process /resume into a stored session: the proof is carried, so the PR stays in Pull requests', async () => {

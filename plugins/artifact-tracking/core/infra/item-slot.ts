@@ -29,7 +29,11 @@ function due(rec: StoredItem): StoredItem {
   return out
 }
 
-/** A stored copy comes back without what discovery found: a new process has no proofs, so the first complete PR step adds back what is still tracked. */
+/**
+ * A stored copy comes back without what discovery found. A new process starts with no proofs. Only the created PRs of
+ * the main loop come back, from the replay of the transcript (issue #202). The first complete PR step adds back what
+ * is still tracked.
+ */
 function withoutAuto(list: StoredItem[]): StoredItem[] {
   const keys = new Set(list.filter(r => r.via !== undefined || isDiscovered(r)).map(r => r.key))
   return dropAuto(list, keys)

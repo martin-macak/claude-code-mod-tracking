@@ -1,0 +1,53 @@
+{
+ "main": [
+  [
+   {
+    "type": "tool_use",
+    "id": "toolu_A1",
+    "name": "Agent",
+    "input": {
+     "description": "make a pr",
+     "prompt": "SUBMARK run gh pr create --title fromsub",
+     "subagent_type": "general-purpose"
+    }
+   }
+  ],
+  [
+   {
+    "type": "text",
+    "text": "probe sub run done"
+   }
+  ],
+  [
+   {
+    "type": "text",
+    "text": "spare"
+   }
+  ],
+  [
+   {
+    "type": "text",
+    "text": "spare"
+   }
+  ]
+ ],
+ "sub": [
+  [
+   {
+    "type": "tool_use",
+    "id": "toolu_S1",
+    "name": "Bash",
+    "input": {
+     "command": "gh pr create --title fromsub --body y",
+     "description": "sub pr"
+    }
+   }
+  ],
+  [
+   {
+    "type": "text",
+    "text": "sub done"
+   }
+  ]
+ ]
+}

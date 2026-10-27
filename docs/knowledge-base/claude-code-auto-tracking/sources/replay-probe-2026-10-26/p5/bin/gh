@@ -1,0 +1,5 @@
+#!/bin/sh
+# scratch wrapper (final review of #202): gh pr create prints a canned URL, every other call goes to the e2e fake gh
+if [ "$1" = "pr" ] && [ "$2" = "create" ]; then echo "https://github.com/octo/demo/pull/7"; exit 0; fi
+export FAKE_GH_SPEC=<study>/fake-gh-spec.json FAKE_GH_LOG=<scratch>/out/fake-gh-calls.log
+exec <repo>/e2e/fake-gh/bin/gh "$@"
