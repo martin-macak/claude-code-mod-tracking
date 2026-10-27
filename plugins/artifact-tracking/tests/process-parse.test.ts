@@ -453,6 +453,86 @@ test('container id: a run inside a command substitution or backticks takes no id
   ])
 })
 
+// The commands in `>(...)` read the pipe and write where the command around it writes (bash 5.3.20, a fake docker: `cat > >(docker
+// run -d nginx) </dev/null; wait` prints the id). The shell takes no output of them, as it does of `$(...)` and `<(...)`.
+test('container id: a run in >(...) keeps the output of the command around it, a run in <(...) has none', () => {
+  const ps = '; docker inspect -f "{{.Id}}" web'
+  const api = 'docker run -d --name api nginx'
+  // The id is the run's own: it reaches the tool result, and the only id line pairs with the run.
+  for (const form of [
+    `cat > >(${api}) </dev/null; wait`,
+    `cat > >(${api}) < /dev/null`,
+    `cat 2> >(${api}) </dev/null; wait`,
+    `cat &> >(${api}) </dev/null; wait`,
+    `cat 2>err > >(${api}) </dev/null`,
+    `echo x | tee >(${api})`,
+    `tee >(${api}) </dev/null`,
+    `if cat > >(${api}) </dev/null; then :; fi; wait`,
+    `{ cat > >(${api}) </dev/null; } 2>err; wait`,
+    `cat > >(cat > >(${api}) </dev/null) </dev/null; wait`,
+    // A redirection of an earlier command is none of this one.
+    `cat >log; tee >(${api}) </dev/null`,
+    `cat >log && cat > >(${api}) </dev/null`,
+    `cat >log | cat > >(${api}) </dev/null`,
+  ])
+    expect({ form, rows: paired(form, idLines(NEW)) }).toEqual({ form, rows: [['api', NEW, true]] })
+  // Without --name the row is found by its id: the Codex case.
+  expect(containers('cat > >(docker run -d nginx) </dev/null; wait', idLines(NEW))).toStrictEqual([
+    { ...unpaired(`docker:ctr:${NEW}`, NEW.slice(0, 12)), containerId: NEW, containerIdExact: true },
+  ])
+  // With a second id line the counts differ: a line of another command is still no id of the run.
+  expect(paired(`cat > >(${api}) </dev/null${ps}`, idLines(NEW, OTHER))).toEqual([['api', undefined, undefined]])
+  // The output of the run goes away: a redirection or a pipe of its own, a substitution around it, a redirected or piped group,
+  // an `exec` before it, or a redirection of the command around it that comes before the substitution or after it. The
+  // redirection that has the substitution as its target (`> >(...)`) is not one of them.
+  for (const form of [
+    `cat > >(${api} > log) </dev/null`,
+    `cat > >(${api} | cat) </dev/null`,
+    `cat > >({ ${api}; } > log) </dev/null`,
+    `x=$(cat > >(${api}) </dev/null; wait)`,
+    `echo \`cat > >(${api}) </dev/null; wait\``,
+    `echo $(cat > >(${api}) </dev/null; wait)`,
+    `{ cat > >(${api}) </dev/null; } > log`,
+    `( cat > >(${api}) </dev/null ) | cat`,
+    `for i in 1; do cat > >(${api}) </dev/null; done > log`,
+    `cat > >(${api}) </dev/null | cat`,
+    `tee >(${api}) </dev/null | cat`,
+    `exec > log; cat > >(${api}) </dev/null`,
+    `exec > log; tee >(${api}) </dev/null`,
+    // The redirection stands before the substitution: bash applies it first, and the run writes to the file.
+    `cat >log > >(${api}) </dev/null`,
+    `cat > log > >(${api}) </dev/null`,
+    `cat > $(echo log) > >(${api}) </dev/null`,
+    `cat >log $(echo x) > >(${api}) </dev/null`,
+    `cat > >(cat >/dev/null) > >(${api}) </dev/null`,
+    `cat >log > >(tee >(${api}) </dev/null) </dev/null`,
+    `cat >log > >(echo $(${api})) </dev/null`,
+    // The redirection stands after the substitution, or the substitution is an argument that bash expands before the
+    // redirection: bash prints the id, the parser takes none (the safe side).
+    `cat > >(${api}) </dev/null > log`,
+    `tee >(${api}) </dev/null > log`,
+    `tee > log >(${api}) </dev/null`,
+    // `<(...)` and a substitution in it: the commands in them write to the pipe.
+    `cat < <(${api})`,
+    `cat <(${api})`,
+    `diff <(${api}) /dev/null`,
+    `cat <(tee >(${api}) </dev/null >/dev/null)`,
+    `cat < <(cat > >(${api}) </dev/null)`,
+  ])
+    expect({ form, rows: paired(`${form}${ps}`, idLines(OTHER)) }).toEqual({
+      form,
+      rows: [['api', undefined, undefined]],
+    })
+  // Two output substitutions: the second one writes into the first. The `>` before it comes after the first substitution, so it
+  // marks that run too (the safe side: bash prints the id of the first).
+  expect(
+    paired(`cat > >(docker run -d --name a nginx) > >(docker run -d --name b nginx) </dev/null`, idLines(NEW, OLD1)),
+  ).toEqual([
+    ['a', undefined, undefined],
+    ['b', undefined, undefined],
+  ])
+})
+
 test('container id: a substitution inside the arguments of the run does not hide its redirection or pipe', () => {
   // The substitution splits the command into segments. The redirection stands on a later one, and it is the run's all the same.
   const ps = '; docker inspect -f "{{.Id}}" web'
