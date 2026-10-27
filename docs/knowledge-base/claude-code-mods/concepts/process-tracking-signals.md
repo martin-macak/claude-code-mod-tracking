@@ -208,6 +208,14 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
       but the parser lets the job take a line
       (`sleep 100 & { sleep 101 & } | cat; echo $!` gives `sleep 101` the
       line).
+    - A `coproc` inside `( ... )`, `$( ... )` or backticks sets no `$!` in its
+      parent (`sleep 100 & ( coproc sleep 101 ); echo $!` prints the pid of
+      `sleep 100`, bash 5.3.20). The parser clears the job before it for the
+      whole call, so that job gets no pid. This is a safe miss: it loses a pid
+      and gives no wrong one. A skip of the clear in a subshell is no fix: in
+      `( coproc sleep 101; echo $! )` the echo prints the pid of the
+      coprocess, and the earlier job would take it. A fix needs a `$!` per
+      shell (issue #263).
     - `$!` names the subshell that runs the whole list for `a && b &`,
       `time a &`, `f &` (a function) and `eval "a" &`, so the row of the last
       command gets the pid of that shell.
