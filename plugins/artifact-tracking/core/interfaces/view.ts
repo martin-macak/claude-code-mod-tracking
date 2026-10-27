@@ -303,8 +303,9 @@ export interface PaneKey {
   readonly scope: KeyScope
   readonly owner: string
   /**
-   * Where the Button of the key sits. Absent: the footer. `view`: the view line above the footer (issue #63, L3): `g`, `a`
-   * and `t` are there, so the footer does not grow a row. The help view lists the key either way. Only core sets it.
+   * Where the Button of the key sits. Absent: the footer. `view`: the view line above the footer (issue #63, L3): `g`, `a`,
+   * `t` and `m` are there, so the pane footer does not grow a row. The help view has no view line: it lists the key and draws
+   * its Button at the end of its footer, dim (issue #200, `footerKeys`). Only core sets it.
    */
   readonly bar?: 'view'
   /**
@@ -316,7 +317,8 @@ export interface PaneKey {
 
 /**
  * A key as the footer draws it. A disabled key stays on the footer, dim and inert (a letter with no Button leaves the pane).
- * `buttonKey` is the key of the footer Button: the registry finds the key by it, and `ux/` only echoes it.
+ * `buttonKey` is the key of the footer Button: the registry finds the key by it, and `ux/` only echoes it. A key with `bar:
+ * 'view'` is a footer key in the help view only (dim, issue #200); the pane draws it on the view line (`viewKeys`).
  */
 export interface FooterKey extends PaneKey {
   readonly enabled: boolean

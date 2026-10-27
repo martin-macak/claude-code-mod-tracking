@@ -21,6 +21,7 @@ const core = (id: string, key: string, label: string, scope: PaneKey['scope'], b
  * The keys of the pane, in footer order. `x` and `0`-`3` act on the selected row, or on the marked rows while a marked row is
  * drawn (issue #138). `g`, `a` and `t` (issue #63, L3) work on the whole pane and sit on the view line, not in the footer: the
  * footer keeps the rows it has. `m` marks the selected row and sits there too: on the view line it adds no footer row (issue #138).
+ * The help view has no view line, so it draws these four keys in its footer, dim (issue #200, `footerKeys`).
  * `x` carries `confirm`: on many rows it asks first, and the pane reads the flag, not the id.
  */
 export const CORE_KEYS: readonly PaneKey[] = [
@@ -224,12 +225,18 @@ export function bulkTargets(
   return rowKey?.many(idsOf(markedRows, row => rowKey.allows(row, isItemOwner)))
 }
 
+/** True for a key whose Button sits on the view line (`bar: 'view'`): the pane draws it there, the help view in its footer. */
+const onViewLine = (k: PaneKey): boolean => k.bar === 'view'
+
 /**
  * The footer Buttons: the core keys, then the keys of the selected row's owner. Every key stays on the footer. A key
  * with no route, or whose owner says `disabled`, draws dim and does nothing (a letter with no Button leaves the pane).
  * While `markedRows` are drawn, `x` and the digits are live when a marked row allows them, whatever the selected row is,
  * and dim when none does (`bulkTargets`). The keys of a tracker stay on the selected row.
- * In the help view only `r` and `h` work, and `h` reads `back`.
+ * In the help view only `r` and `h` work, and `h` reads `back`. The help view has no view line, so its footer also holds
+ * every key of the view line (`bar: 'view'`: `g`, `a`, `t` and `m`), last and dim: a press does nothing and takes the keys, so
+ * the letter does not type into the prompt (issue #200). The rule reads `bar`, not a list of letters, so a new key of the view
+ * line gets its dim Button with no edit here. They come after `0`, so the Tab walk and the first stop do not move.
  */
 export function footerKeys(
   reg: KeyRegistry,
@@ -241,8 +248,9 @@ export function footerKeys(
 ): readonly FooterKey[] {
   const shown = reg
     .all()
-    .filter(k => k.bar !== 'view' && (k.owner === 'core' || (row !== undefined && k.owner === row.owner)))
-  return shown.map(k => {
+    .filter(k => !onViewLine(k) && (k.owner === 'core' || (row !== undefined && k.owner === row.owner)))
+  const dimmed = help ? reg.all().filter(onViewLine) : [] // the help view has no view line: its keys stay as dim Buttons
+  return [...shown, ...dimmed].map(k => {
     const core = k.owner === 'core'
     const bulk = bulkTargets(k, markedRows, isItemOwner)
     const routed = bulk === undefined ? route(k, row, isItemOwner).to !== 'none' : bulk.rowIds.length > 0
@@ -254,17 +262,13 @@ export function footerKeys(
 }
 
 /** The Button keys of the view line, whatever their state: what the refocus compares. */
-export const viewButtonKeys = (reg: KeyRegistry): readonly string[] =>
-  reg
-    .all()
-    .filter(k => k.bar === 'view')
-    .map(buttonKeyOf)
+export const viewButtonKeys = (reg: KeyRegistry): readonly string[] => reg.all().filter(onViewLine).map(buttonKeyOf)
 
 /**
  * The keys of the view line: `g`, `a`, `t` (issue #63, L3) and `m` (issue #138), in registry order. The line is drawn in the pane
- * only: the help view has none, so its caller does not ask. `buttonKey` is the key of the Button on the line. `g`, `a` and `t`
- * are always live. `m` is live on a row that takes a bulk key, or that is marked (`isMarked`, see `route`), and dim on another
- * row and with no row.
+ * only: the help view has none, so its caller does not ask, and its footer draws these keys as dim Buttons (issue #200,
+ * `footerKeys`). `buttonKey` is the key of the Button on the line. `g`, `a` and `t` are always live. `m` is live on a row that
+ * takes a bulk key, or that is marked (`isMarked`, see `route`), and dim on another row and with no row.
  */
 export function viewKeys(
   reg: KeyRegistry,
@@ -274,7 +278,7 @@ export function viewKeys(
 ): readonly FooterKey[] {
   return reg
     .all()
-    .filter(k => k.bar === 'view')
+    .filter(onViewLine)
     .map(k => ({
       ...k,
       enabled: k.id !== 'mark' || route(k, row, isItemOwner, isMarked).to !== 'none',
