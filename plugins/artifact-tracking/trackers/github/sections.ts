@@ -10,8 +10,9 @@ import type { SectionSpec, ViewContext } from '../../core/interfaces/view'
 import { lastRefreshOf, sortedByLevel } from '../../core/lib/rows'
 import { toolNote } from '../../core/lib/text'
 import type { GithubConfig } from './config'
+import { branchesOf, createdOf, FACT_BRANCHES, FACT_PRS, FACT_REPO_BRANCHES, foreignOf } from './facts'
 import { githubKind } from './kind'
-import { branchesOf, createdOf, EMPTY_LANE } from './lane'
+import { EMPTY_LANE } from './lane'
 import { isLanePr } from './lane-pr'
 import { conflictCount, type MergeEnv, mergeEnvOf } from './merge'
 import { githubRow, prRow } from './rows'
@@ -21,9 +22,6 @@ type Ctx = ViewContext<GithubConfig, LaneState>
 
 /** A `gh` the tools atom does not list reads as not probed. */
 const IDLE: ToolStatus = { name: 'gh', available: null, loggedIn: null, breaker: 'closed' }
-
-const FACT_BRANCHES = 'auto.branches'
-const FACT_PRS = 'auto.prs'
 
 /** The lane's reasons that draw a note on top of an empty section. The others leave the section out. */
 const SKIPS_WITH_HEADER: ReadonlySet<string> = new Set(['no-gh', 'not-logged-in', 'paused', 'host-not-authed'])
@@ -49,6 +47,7 @@ function bandOf(label: string, list: readonly GitHubRecord[], env: MergeEnv, ran
 function prsNote(ctx: Ctx, lane: LaneState, prs: readonly GitHubRecord[]): string {
   const p = lane.prs
   const overflow = branchesOf(ctx.facts.read<Json>(FACT_BRANCHES))?.overflow ?? 0
+  const reposOver = foreignOf(ctx.facts.read<Json>(FACT_REPO_BRANCHES)).overflow
   const repo = ctx.facts.read<Json>('session.repo') as unknown as RepoRef | null | undefined
   // The host that said no, when the step knows it: a created PR may be on another host than the session repo.
   const host = p.host ?? repo?.host ?? 'github.com'
@@ -60,6 +59,7 @@ function prsNote(ctx: Ctx, lane: LaneState, prs: readonly GitHubRecord[]): strin
   else head = `gh · ${toolNote(ctx.tools.gh ?? IDLE, ctx.now, lastRefreshOf(prs))}`
   const tail = [
     ...(overflow > 0 ? [`+${overflow} branches not polled`] : []),
+    ...(reposOver > 0 ? [`+${reposOver} repos not polled`] : []),
     ...(p.untracked ? [`+${p.untracked} not tracked`] : []),
   ]
   return [head, ...tail].join(' · ')
@@ -69,10 +69,12 @@ function prsNote(ctx: Ctx, lane: LaneState, prs: readonly GitHubRecord[]): strin
 function prsSection(ctx: Ctx): SectionSpec | null {
   const lane = ctx.data ?? EMPTY_LANE
   const prs = sortedByLevel(records(ctx).filter(isDiscoveredPr), ctx.levelOf, (a, b) => a.number - b.number)
-  // The lane asks for a tracked branch or for a PR the session created (issue #158): with neither, nothing failed.
+  // The lane asks for a tracked branch, for a PR the session created (issue #158) or for a branch it proved in another repo
+  // (issue #195): with none of them, nothing failed.
   const hasAsked =
     (branchesOf(ctx.facts.read<Json>(FACT_BRANCHES))?.branches.length ?? 0) > 0 ||
-    createdOf(ctx.facts.read<Json>(FACT_PRS)).length > 0
+    createdOf(ctx.facts.read<Json>(FACT_PRS)).length > 0 ||
+    foreignOf(ctx.facts.read<Json>(FACT_REPO_BRANCHES)).repos.length > 0
   const showHeader =
     hasAsked && ((lane.prs.skipped !== undefined && SKIPS_WITH_HEADER.has(lane.prs.skipped)) || !!lane.prs.error)
   if (prs.length === 0 && !showHeader) return null

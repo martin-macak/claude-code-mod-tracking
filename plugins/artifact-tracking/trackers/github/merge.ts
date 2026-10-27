@@ -92,8 +92,8 @@ export type Seen = { key: string; mergeable: Mergeable | undefined; worktree?: s
  * `keepMissing` keeps the notes of the PRs that `seen` does not name: the reply that `seen` comes from was incomplete.
  * A kept CONFLICTING note stays as it is. A kept UNKNOWN note still counts the step, as a PR in the reply would: the
  * lane asked, and an answer that never comes must not call for a retry without end (AC4).
- * `keep` is the same for the keys named in it only: the created PRs that got no sure answer in a reply that is complete
- * for the rest (issue #158).
+ * `keep` is the same for the keys named in it only: the PRs that got no sure answer in a reply that is complete for the
+ * rest (issues #158 and #195).
  */
 export function mergeNotes(
   prev: Readonly<Record<string, MergeNote>> | undefined,
@@ -122,6 +122,21 @@ export function mergeNotes(
   }
   if (JSON.stringify(next) === JSON.stringify(prev ?? {})) return prev
   return Object.keys(next).length > 0 ? next : undefined
+}
+
+/**
+ * The notes without those of the PRs in `gone` (the PR lane dropped them from the list, issue #195). Returns `prev` itself
+ * when none of them has a note (A22), and undefined when no note is left. A note that stays is not counted again: the step
+ * that calls this asked nothing about its PR.
+ */
+export function forgetNotes(
+  prev: Readonly<Record<string, MergeNote>> | undefined,
+  gone: ReadonlySet<string>,
+): Record<string, MergeNote> | undefined {
+  if (prev === undefined) return undefined
+  const left = Object.entries(prev).filter(([key]) => !gone.has(key))
+  if (left.length === Object.keys(prev).length) return prev
+  return left.length > 0 ? Object.fromEntries(left) : undefined
 }
 
 /**

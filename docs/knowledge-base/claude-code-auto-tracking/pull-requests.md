@@ -124,7 +124,33 @@ The existing merge code does not fit polling. [primary source] (codebase analysi
 
 A discovered PR can stay `Category = github`. A worktree and an agent need new categories. [primary source]
 
-## 5. Open points
+## 5. Branches of other repos
+
+The lane polls the branches of the session repo. A PR on a branch of another repo that the session visited, and did not create, is found by the branch too (issue [#195](https://github.com/martin-macak/claude-code-mod-tracking/issues/195), step 2 of the fix direction of [#158](https://github.com/martin-macak/claude-code-mod-tracking/issues/158), and the K12 route of the [auto tracking spec](../../superpowers/specs/2026-10-10-auto-tracking-design.md)).
+
+What proves a branch. The session proves a branch in a repo by standing on it, not by the repo having it. The Repos row of a repo keeps the toplevels the session visited (`roots`, newest first, at most `trackers.repos.maxRepoRoots`, each with its branch at the last visit). Each round, the Repos tracker runs `git -C <git common dir> worktree list --porcelain`. The branch of each visited toplevel that git lists as live is a proof. A visited toplevel that is gone (removed, prunable, not listed) keeps the branch it had at the last visit, as the auto tracker keeps polling the branch of a removed worktree. A detached or bare toplevel adds none. A worktree of the repo that the session never visited adds none: it may belong to another session. [primary source] (`trackers/repos/foreign.ts`)
+
+Why the git common dir. It is the same folder for a repo and every worktree of it, and it outlives each of them. `git worktree list` run there gives the same list, byte for byte, as a run from a linked worktree. So one call per repo serves every visited toplevel, also a toplevel that is gone. The common dir comes from the lookup that made the row (no call), or from one `rev-parse --git-common-dir` for a row restored from the store, once for the load. [observed] (design study of #195, probes P1 and P2)
+
+How it moves. The Repos tracker publishes the fact `repos.branches` (`{ repos: [{ host, owner, repo, branches }], overflow }`), sorted by repo and by branch, so a poll that finds the same branches changes nothing: the fact compares by text. The github tracker reads the fact by name. A change of it, after the first value, starts a lane step. A new proof (a new repo, toplevel or branch) starts a poll at once. Each tick polls too. `init`, a restore and `/track clear` publish from the stored rows with no git call. A repo that git cannot read in one round (a timeout, an open breaker, a repo that moved) keeps the branches that the last poll proved, beside the stored ones: a checkout that the person made outside the session does not drop its PR from the lane for a round. [primary source]
+
+What is asked. One query for each polled repo and step, with an alias for each proven branch and for each PR the session created there. The default branch of a repo gets no alias once its reply named it, and a repo with only that branch is asked once for a run. A PR found this way has `otherRepo` and the lane marker: no resolve and no files key. [primary source]
+
+| Probe of #195 | Result [observed] |
+| --- | --- |
+| Cost of one foreign query | 1 point for 1 to 4 branches, 2 for 6, 4 for 12. 0.6 to 1.7 s a call. |
+| Cost at the 30 s tick | 120 points an hour for each polled repo. The default cap is 3 repos: up to 360 more points an hour for one session, of the 5000 that the token shares with every session. |
+| One `git worktree list` | About 12 ms. |
+
+Limits:
+
+- Only a repo with a `remote:<host>/<owner>/<repo>` key and a visited toplevel is polled, edit before read, then the newest visit, at most `trackers.repos.pollRepos` (3). A remote with sub-groups, the scp path form `git@example.org:8080/o/r` or a `file:` path, and a repo in a temporary folder are no polled repo. A remote of another forge with the same shape (`gitlab.com/o/r`), an ssh host alias (`git@github-work:o/r`) and a URL with a port (the port is dropped) are asked once (`gh auth status --hostname`) and held, with no note, when `gh` refuses their host. Each of them still takes one of the `pollRepos` slots.
+- A Repos row is one remote, so two clones of it share the row and one common dir. The poll lists the worktrees of the first clone that git can enter. A toplevel of the other clone is not in that list: it counts as gone and keeps the branch it had at the last visit. [inference]
+- A repo with no sure answer (a failed query, a host `gh` is not logged in to, `repository: null`, an alias with an error) holds its lane PRs, and the rest of the reply stays complete, so the prune of the other repos runs. A PR of that repo that an answering alias returned was read, so the repo does not hold it: its body still reconciles the refs it names. It is silent: the note does not name the repo ([#222](https://github.com/martin-macak/claude-code-mod-tracking/issues/222) will). When the last repo leaves the fact and nothing else is left to ask about (`no-branches`, or `no-repo` with no foreign proof), the step asks nothing, and the lane still reconciles the lane PRs of other repos (`PrLane.dropUnproven`): each loses its marker, and the refs of its body lose their `via` entry. A lane PR of the session repo stays as it is, and a first step with no branch at all only skips. It is one rule, which `applyDiscovery` applies to every reply: a reply that is not `complete` for the session repo (no GitHub repo for its branches, a session in a repo with no GitHub remote, or an unsure answer) holds each lane PR of the session repo, the ones it returned too, and the refs of their bodies. The prune still runs for the other repos, each by its own answer: a foreign repo that answered with no PR on a branch loses that PR (its worktree moved from `feat/one` to `feat/two`), and a repo with no sure answer keeps its lane PRs. `dropUnproven` is this rule with a reply that names no PR.
+- A repo nested in the launch folder is no Repos row, so it is not polled. That is K12 proper: the follow-up is [#249](https://github.com/martin-macak/claude-code-mod-tracking/issues/249).
+- `/track refresh` polls the repos and waits for the poll. It does not wait for the lane step that the new fact starts: the github tracker (order 30) has answered before the repos tracker (order 50) runs, so the printed list can lack the PR of a branch that just moved.
+
+## 6. Open points
 
 - Stacked PRs (`baseRefName` not `main`): query works, no live data. [N8](open-questions.md#3-not-yet-observed)
 - Real `gh pr create` regex coverage: [N7](open-questions.md#3-not-yet-observed).

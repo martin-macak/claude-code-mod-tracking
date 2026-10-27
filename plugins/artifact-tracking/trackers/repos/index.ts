@@ -1,15 +1,24 @@
 // The repos tracker: the git repositories the session reads from or edits, found from Bash commands, file tools and
 // spawn cwds. It looks each one up off the hook path (a queue, one job at a time) and keeps its rows in its own slot.
-// It reads the session root and the agent labels from the facts `auto.root` and `auto.agents`.
+// It reads the session root and the agent labels from the facts `auto.root` and `auto.agents`. It publishes the fact
+// `repos.branches` for the PR lane (issue #195): the branches the session proved in the repos it visited. The github tracker reads it.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 9.
 
-import type { AgentSpawnEvent, DismissedEvent, ToolCallEvent } from '../../core/interfaces/events'
+import type {
+  AgentSpawnEvent,
+  CommandEvent,
+  DismissedEvent,
+  TickEvent,
+  ToolCallEvent,
+} from '../../core/interfaces/events'
+import type { Json } from '../../core/interfaces/items'
 import type { RepoRef } from '../../core/interfaces/ports'
 import type { Traceable } from '../../core/interfaces/reasons'
 import type { Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import { LoadState } from '../../core/lib/load-state'
 import { type ReposConfig, reposConfig } from './config'
+import { type BranchesOfRepos, FACT_REPO_BRANCHES, pollForeign, pollKey, reposOfFact, storedFact } from './foreign'
 import { extractRepoPathsFromTool, PATH_TOOLS, parseRepoHintsFromBash, type RepoHit, repoBaseDir } from './hints'
 import { repoRowId } from './ids'
 import { RepoQueue } from './queue'
@@ -77,6 +86,31 @@ function rootPath(ctx: Pick<Ctx, 'facts'>): string | undefined {
 type Services = { tracker: RepoTracker; queue: RepoQueue }
 const loads = new LoadState<Services>()
 
+const publishFact = (ctx: Pick<Ctx, 'facts'>, fact: BranchesOfRepos): void =>
+  ctx.facts.publish(FACT_REPO_BRANCHES, fact as unknown as Json)
+
+/** The fact from the stored rows, with no git call: `init`, a restore and `/track clear`. The next poll adds what git says. */
+async function publishStored(ctx: Pick<Ctx, 'data' | 'facts' | 'config'>): Promise<void> {
+  publishFact(ctx, storedFact(asRepoRows(await ctx.data.get()), ctx.config.slice().pollRepos))
+}
+
+/**
+ * Asks for a poll of the foreign repos: one `git worktree list` per polled repo, then the fact. It runs in the queue, off the
+ * hook path, one job at a time. A poll that waits is not queued twice, and one pushed into a full queue is dropped: the next
+ * tick pushes it again. A poll that ends after a session switch or `/track clear` publishes nothing.
+ */
+function requestPoll(ctx: Ctx): void {
+  const live = loads.get(ctx)
+  if (!live) return
+  live.queue.push('poll', async () => {
+    const gen = ctx.generation
+    const rows = asRepoRows(await ctx.data.get())
+    const previous = reposOfFact(ctx.facts.read(FACT_REPO_BRANCHES))
+    const fact = await pollForeign(live.tracker, rows, ctx.config.slice().pollRepos, previous)
+    if (ctx.generation === gen) publishFact(ctx, fact)
+  })
+}
+
 export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> & Traceable<RepoRecord[]> {
   /**
    * Queues a repo lookup and returns at once: a lookup costs several git calls and must not hold a tool result back.
@@ -120,14 +154,19 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> & Traceable<R
               out,
               { ...v, at, ...(turn !== undefined ? { turn: turn.ord } : {}) },
               ctx.config.global().refresh.tickMs,
+              ctx.config.slice().maxRepoRoots,
             )
           return out
         },
         gen,
       )
       // A job that ends after a session switch or `/track clear` wrote nothing, and tells the ledger nothing.
-      if (turn !== undefined && ctx.generation === gen)
-        await turn.note(repoSightings(turn.ord, visits, held, asRepoRows(await ctx.data.get())))
+      if (ctx.generation !== gen) return
+      const now = asRepoRows(await ctx.data.get())
+      // A new repo, a new toplevel or a new branch is a new proof: ask git at once, so the lane need not wait for the tick.
+      const { pollRepos } = ctx.config.slice()
+      if (pollKey(held, pollRepos) !== pollKey(now, pollRepos)) requestPoll(ctx)
+      if (turn !== undefined) await turn.note(repoSightings(turn.ord, visits, held, now))
     })
   }
 
@@ -181,16 +220,28 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> & Traceable<R
   }
 
   // The dismiss list is the choke point: setRepos drops the row now that its id is on the list.
-  const onDismissed: H<DismissedEvent> = (ctx, ev) => {
+  const onDismissed: H<DismissedEvent> = async (ctx, ev) => {
     if (!ev.ids.some(id => id.startsWith(repoRowId('')))) return
-    return setRepos(ctx, rows => rows)
+    await setRepos(ctx, rows => rows)
+    requestPoll(ctx) // the dismissed repo leaves the fact, and the PRs of its branches leave the lane
+  }
+
+  // Each tick polls the foreign repos, as the auto tracker polls its worktrees: the branch of a repo moves with no tool call.
+  const onTick: H<TickEvent> = ctx => requestPoll(ctx)
+
+  // `/track refresh` polls at once; with `wait` the command answers when the queue is empty. The PR step that the fact
+  // starts is not waited for: the github tracker (order 30) has answered before this one runs.
+  const onCommand: H<CommandEvent> = async (ctx, ev) => {
+    if (ev.sub !== 'refresh') return
+    requestPoll(ctx)
+    if (ev.wait) await loads.get(ctx)?.queue.idle()
   }
 
   return {
     id: 'repos',
     order: 50,
     config: reposConfig,
-    init: ctx => {
+    init: async ctx => {
       // `run` is the raw runner of L3: it ignores the tool name, so `sh -c` (the env probe) goes through it too.
       // The queue size and the breaker are read once per load: they size an object at construction (C5). The git
       // timeout and the cache age are read at each use.
@@ -210,17 +261,30 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> & Traceable<R
         }),
         queue: new RepoQueue(ctx.config.slice().maxRepoQueue),
       }))
+      // A hot reload keeps the slot and loses the facts: publish what the slot holds. No git: the first poll adds it.
+      try {
+        await publishStored(ctx)
+      } catch {
+        // The first visit or the first tick publishes it.
+      }
     },
     store: ctx => ctx.config.slice(),
     data: {
       empty: v => !Array.isArray(v) || v.length === 0,
-      settle: async (_ctx, live, stored) => mergeRepoRows(asRepoRows(stored), asRepoRows(live)),
+      // The merge unions the roots of both copies: the cap brings them back to `maxRepoRoots`, as every other write does.
+      settle: async (ctx, live, stored) =>
+        capRepoRows(mergeRepoRows(asRepoRows(stored), asRepoRows(live)), ctx.config.slice()),
       restore: async (ctx, value, how) => {
         const rows = asRepoRows(value)
-        if (rows.length > 0)
+        if (rows.length > 0) {
           await setRepos(ctx, cur => (how === 'carry' ? mergeRepoRows(rows, cur) : mergeRepoRows(cur, rows)))
+          await publishStored(ctx)
+        }
       },
-      clear: ctx => setRepos(ctx, () => []),
+      clear: async ctx => {
+        await setRepos(ctx, () => [])
+        await publishStored(ctx) // an empty list, so the foreign lane PRs go at the next step and not a tick later
+      },
     },
     sections,
     reasonsOf: repoReasonsOf,
@@ -229,6 +293,8 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> & Traceable<R
       toolCall: { Bash: onBash, ...Object.fromEntries(PATH_TOOLS.map(tool => [tool, onPathTool])) },
       agentSpawn: onSpawn,
       dismissed: onDismissed,
+      tick: { run: onTick },
+      command: onCommand,
     },
   }
 }

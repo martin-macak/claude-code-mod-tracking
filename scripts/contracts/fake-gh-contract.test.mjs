@@ -103,10 +103,12 @@ test('the tool reads a PR number and a repo that the fake does not know as not f
 test('the fake gh answers the pullRequest(number:) alias of a created PR, and a missing number as gone (issue #158)', async () => {
   const { tool, kinds } = rig()
   await tool.probe()
-  const out = await discoverPrs(tool, REPO, [], NOW, undefined, undefined, [
-    { ...REPO, number: 7 },
-    { ...REPO, number: 99 },
-  ])
+  const out = await discoverPrs(tool, REPO, [], NOW, undefined, undefined, {
+    created: [
+      { ...REPO, number: 7 },
+      { ...REPO, number: 99 },
+    ],
+  })
   assert.equal(out.ok, true)
   assert.deepEqual(
     out.prs.map(p => [p.number, p.by, p.created, p.mergeable]),
@@ -122,10 +124,12 @@ test('the fake gh answers a created PR of another repo as not found, so the lane
   const { tool } = rig()
   await tool.probe()
   const other = { ...REPO, owner: 'martin-macak', repo: 'claude-code-mod-tracking' }
-  const out = await discoverPrs(tool, REPO, [], NOW, undefined, undefined, [
-    { ...REPO, number: 7 },
-    { ...other, number: 7 },
-  ])
+  const out = await discoverPrs(tool, REPO, [], NOW, undefined, undefined, {
+    created: [
+      { ...REPO, number: 7 },
+      { ...other, number: 7 },
+    ],
+  })
   assert.equal(out.ok, true)
   assert.deepEqual(
     out.prs.map(p => p.number),

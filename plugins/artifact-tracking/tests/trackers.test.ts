@@ -55,7 +55,7 @@ test('trackers: nine trackers in order 10 … 90: auto, jira, github, artifact, 
   }
   const github = list.find(x => x.id === 'github')
   expect(github?.persist).toBe(false)
-  expect(Object.keys(github?.events?.facts ?? {})).toEqual(['auto.branches'])
+  expect(Object.keys(github?.events?.facts ?? {})).toEqual(['auto.branches', 'repos.branches'])
 })
 
 test('the list is a constant: a second manager over it shares no per-load state', async () => {

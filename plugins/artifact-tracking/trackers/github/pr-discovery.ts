@@ -1,6 +1,7 @@
 // PR discovery (spec A8, 8.3, 9.2): one aliased GraphQL query for the PRs whose head or base is a tracked branch, and
 // the PRs the session created by number (issue #158), in the same query for the session repo and in one more for each
-// other repo. Pure around an injected GitHubDiscoveryApi. No `$`.
+// other repo. A foreign repo that the session proved branches in (issue #195) is asked for those branches in that one
+// query too. Pure around an injected GitHubDiscoveryApi. No `$`.
 
 import type { RepoRef } from '../../core/interfaces/ports'
 import { dig, isRecord } from '../../core/lib/json'
@@ -10,12 +11,13 @@ import type {
   DiscoveredPr,
   DiscoveryOutcome,
   DiscoveryTool,
+  ForeignRepo,
   GitHubState,
   GraphqlOutcome,
   GraphqlReply,
   PrRef,
 } from './types'
-import { prKey } from './urls'
+import { prKey, repoKey } from './urls'
 
 /** A branch alias (`h`, `b`) or the alias of a PR the session created (`p`), which holds that one PR of any state. */
 export type Alias = { branch: string; by: 'head' | 'base' } | { number: number; by: 'created' }
@@ -212,10 +214,19 @@ const sameRepo = (a: RepoRef, b: RepoRef): boolean =>
   lower(a.host) === lower(b.host) && lower(a.owner) === lower(b.owner) && lower(a.repo) === lower(b.repo)
 
 /**
- * One query: a repo, and what to ask in it. The session repo takes the branches (in its first query only, `branches`); any
- * repo takes created PRs by number, at most `CREATED_PER_QUERY` of them in a query.
+ * One query: a repo, and what to ask in it. `asks` holds the branches of the query, in the first chunk of the group only
+ * (`first`): the tracked branches of the session repo, or the branches that the session proved in a foreign repo (issue
+ * #195). `defaultBranch` is the one that the repo is known to have: it gets no alias. Any repo takes created PRs by number,
+ * at most `CREATED_PER_QUERY` of them in a query.
  */
-type Group = { repo: RepoRef; session: boolean; branches: boolean; numbers: number[] }
+type Group = {
+  repo: RepoRef
+  session: boolean
+  asks: readonly string[]
+  defaultBranch?: string
+  first: boolean
+  numbers: number[]
+}
 
 /**
  * The created PRs of one repo in one query: 50, the default `chunkSize` of the item refresh. The configured `chunkSize`
@@ -227,28 +238,59 @@ const CREATED_PER_QUERY = 50
 function chunked(g: Group): Group[] {
   const out: Group[] = []
   for (let i = 0; i === 0 || i < g.numbers.length; i += CREATED_PER_QUERY)
-    out.push({ ...g, branches: g.branches && i === 0, numbers: g.numbers.slice(i, i + CREATED_PER_QUERY) })
+    out.push({ ...g, first: i === 0, asks: i === 0 ? g.asks : [], numbers: g.numbers.slice(i, i + CREATED_PER_QUERY) })
   return out
 }
 
 /**
  * The repos to ask. The session repo comes first, with the numbers of the PRs created in it, and only when it has a
  * branch to poll or such a PR. Every other repo of a created PR follows, in the order of the first PR, with the
- * case it came with. A PR is in the session repo when host, owner and repo match in lower case.
+ * case it came with. Then each foreign repo of the fact `repos.branches` that no created PR named: a foreign repo that a
+ * created PR names too is one group, so it is one query (issue #195). A PR is in the session repo when host, owner and
+ * repo match in lower case. `foreign` holds no entry of the session repo and none without a branch.
  */
-function groupsOf(repo: RepoRef | null, hasBranches: boolean, created: readonly PrRef[]): Group[] {
-  const session: Group | null = repo ? { repo, session: true, branches: true, numbers: [] } : null
+function groupsOf(
+  repo: RepoRef | null,
+  polled: readonly string[],
+  defaultBranch: string | undefined,
+  asks: Required<Pick<Asks, 'created' | 'foreign'>> & Pick<Asks, 'foreignDefaults'>,
+): Group[] {
+  const session: Group | null = repo
+    ? {
+        repo,
+        session: true,
+        asks: polled,
+        ...(defaultBranch !== undefined ? { defaultBranch } : {}),
+        first: true,
+        numbers: [],
+      }
+    : null
   const others: Group[] = []
-  for (const pr of created) {
-    let g = session && sameRepo(pr, session.repo) ? session : others.find(o => sameRepo(o.repo, pr))
-    if (!g) {
-      g = { repo: { host: pr.host, owner: pr.owner, repo: pr.repo }, session: false, branches: false, numbers: [] }
-      others.push(g)
+  const find = (r: RepoRef): Group | undefined =>
+    session && sameRepo(r, session.repo) ? session : others.find(o => sameRepo(o.repo, r))
+  const open = (r: RepoRef): Group => {
+    const known = asks.foreignDefaults?.[repoKey(r)]
+    const g: Group = {
+      repo: { host: r.host, owner: r.owner, repo: r.repo },
+      session: false,
+      asks: [],
+      ...(known !== undefined ? { defaultBranch: known } : {}),
+      first: true,
+      numbers: [],
     }
+    others.push(g)
+    return g
+  }
+  for (const pr of asks.created) {
+    const g = find(pr) ?? open(pr)
     if (!g.numbers.includes(pr.number)) g.numbers.push(pr.number)
   }
+  for (const f of asks.foreign) {
+    const g = find(f) ?? open(f)
+    g.asks = [...new Set([...g.asks, ...f.branches])]
+  }
   return [
-    ...(session && (hasBranches || session.numbers.length > 0) ? chunked(session) : []),
+    ...(session && (polled.length > 0 || session.numbers.length > 0) ? chunked(session) : []),
     ...others.flatMap(chunked),
   ]
 }
@@ -273,6 +315,16 @@ function failedOutcome(gh: DiscoveryTool, out: Extract<GraphqlOutcome, { ok: fal
   }
 }
 
+/** What the lane asks beyond the tracked branches of the session repo. */
+export type Asks = {
+  /** The PRs the session created, by repo and number (issue #158). */
+  created?: readonly PrRef[]
+  /** The other repos and the branches the session proved in them (issue #195), from the fact `repos.branches`. */
+  foreign?: readonly ForeignRepo[]
+  /** The default branch that each foreign repo named, by `repoKey`. */
+  foreignDefaults?: Readonly<Record<string, string>>
+}
+
 /**
  * Skip reasons first (spec 8.3 step 1), then one query for the session repo and one for each other repo of a PR the
  * session created (issue #158). A failed outcome becomes a skip or an error.
@@ -288,7 +340,22 @@ function failedOutcome(gh: DiscoveryTool, out: Extract<GraphqlOutcome, { ok: fal
  * alias that is null with no `NOT_FOUND`, or that an error names): a PR that parsed takes its new refs. None of this
  * stops every prune for the run. It fails the step only when nothing else was asked or answered. The tool-wide check
  * `canCall` gates the step only when a group of the home host will be asked. An unsure answer of the session repo makes
- * the whole reply incomplete, as before. So do tracked branches with no session repo: they are not asked.
+ * the reply not `complete`. So do tracked branches with no session repo: they are not asked. `complete` says only that the
+ * reply is sure of the lane PRs of the session repo: `applyDiscovery` holds them when it is false, and still reconciles
+ * each other repo by its own answer, so a foreign repo that answered is pruned also then (issue #195).
+ *
+ * A skip of `no-branches` or `no-repo` asks nothing, and this function has no list to prune. The lane (`PrLane`) reconciles
+ * the lane PRs of other repos that earlier steps found, as the last proof of them may be gone (issue #195).
+ *
+ * `asks.foreign` (issue #195) holds the other repos that the session proved branches in, from the fact `repos.branches`: each
+ * one is asked for those branches in its one query, which also holds the created PRs of that repo. They need neither a
+ * tracked branch nor a session repo. A foreign repo with no sure answer for its branches (a failed query, a host `gh` is not
+ * logged in to, `repository: null`, an alias with an error) is listed in `heldRepos`: the prune leaves its lane PRs alone,
+ * except a PR that the reply returned (it was read, so its body still reconciles its refs and its marker follows the reply),
+ * and the rest of the reply stays `complete`. It is silent: only a failed query that also holds a created PR can be the
+ * failure of the step. `asks.foreignDefaults` holds the default branch that each foreign repo named (by `repoKey`): it gets no alias,
+ * and a repo with only that branch is not asked. The default branch that a reply names goes back in the outcome
+ * (`foreignDefaults`).
  */
 export async function discoverPrs(
   gh: DiscoveryTool,
@@ -297,20 +364,25 @@ export async function discoverPrs(
   now: number,
   defaultBranch?: string,
   lane: PrLane = PR_LANE_DEFAULTS,
-  created: readonly PrRef[] = [],
+  asks: Asks = {},
 ): Promise<DiscoveryOutcome> {
-  if (branches.length === 0 && created.length === 0) return { ok: false, skipped: 'no-branches' }
+  const created = asks.created ?? []
+  // The session repo polls its own tracked branches: a foreign entry that is that repo proves nothing more.
+  const foreign = (asks.foreign ?? []).filter(f => f.branches.length > 0 && !(repo && sameRepo(f, repo)))
+  if (branches.length === 0 && created.length === 0 && foreign.length === 0)
+    return { ok: false, skipped: 'no-branches' }
   if (!gh.isAvailable) return { ok: false, skipped: 'no-gh' }
-  if (!repo && created.length === 0) return { ok: false, skipped: 'no-repo' }
+  if (!repo && created.length === 0 && foreign.length === 0) return { ok: false, skipped: 'no-repo' }
 
   const polled = [...new Set(branches)].slice(0, lane.maxBranches)
   const homeHost = lower(repo?.host ?? 'github.com')
   // What a group asks is what its query holds: `buildDiscoveryQuery` decides (a branch that is the known default branch has no
   // alias), for the gate below and for the loop alike.
-  const queries = groupsOf(repo, polled.length > 0, created).map(g => ({
-    g,
-    ...buildDiscoveryQuery(g.repo, g.branches ? polled : [], g.branches ? defaultBranch : undefined, lane, g.numbers),
-  }))
+  const queries = groupsOf(repo, polled, defaultBranch, {
+    created,
+    foreign,
+    foreignDefaults: asks.foreignDefaults,
+  }).map(g => ({ g, ...buildDiscoveryQuery(g.repo, g.asks, g.defaultBranch, lane, g.numbers) }))
   // `canCall` is the tool-wide check (login flag, breaker), and those stand for the home host. A step that asks foreign
   // hosts only does not wait for it: each foreign host has its own login and breaker (see `GhTool.setHome`). A session
   // group of the known default branch alone asks nothing, so it gates nothing either.
@@ -320,14 +392,17 @@ export async function discoverPrs(
 
   const createdKeys = new Set(created.map(prKey))
   const prs: DiscoveredPr[] = []
-  // With no session repo the branches are never asked: a reply that holds only created PRs of other repos says nothing of
-  // the PRs of the branches, so a prune must leave them be. The default branch is no exception here: with no repo it is
-  // the one that an in-process /resume carried from another session, and it proves nothing about this one.
+  // With no session repo the branches are never asked: a reply that holds only the PRs of other repos says nothing of the PRs
+  // of the branches, so the reply is not `complete` and the prune leaves those be. The PRs of other repos are reconciled all
+  // the same (`applyDiscovery`). The default branch is no exception here: with no repo it is the one that an in-process
+  // /resume carried from another session, and it proves nothing about this one.
   let complete = repo !== null || polled.length === 0
   let answered = 0
   let failure: Failed | undefined
   let defaultName: string | undefined
   const held: string[] = []
+  const heldRepos: string[] = []
+  const learned: Record<string, string> = {}
   /**
    * The created PRs with no sure answer (all of a query that failed): the prune leaves them alone, the rest stays complete.
    * A PR that an earlier query returned (a head or base alias of the session repo) is read, and never held.
@@ -338,6 +413,16 @@ export async function discoverPrs(
       const key = prKey({ ...g.repo, number })
       if (!parsed.has(key)) held.push(key)
     }
+  }
+  /**
+   * A group of another repo with no sure answer: its created PRs are held, and a repo that was asked for branches is held as a
+   * whole (`applyDiscovery` skips a PR of it that the reply returned). A failure is the step's only when a created PR hangs
+   * on it: a foreign repo with branches alone fails silently.
+   */
+  const holdGroup = (g: Group, why: Failed): void => {
+    if (g.numbers.length > 0) failure ??= why
+    hold(g)
+    if (!g.session && g.asks.length > 0) heldRepos.push(repoKey(g.repo))
   }
   for (const { g, query, aliases } of queries) {
     if (aliases.size === 0) {
@@ -355,23 +440,27 @@ export async function discoverPrs(
         gh.isHostAuthed(g.repo.host) === false
           ? { ok: false, skipped: 'host-not-authed', host: g.repo.host }
           : { ok: false, error: `gh could not check the login to ${g.repo.host}` }
-      if (g.session && g.branches) return skip // the first query of the session repo: nothing was read before it
-      failure ??= skip
-      hold(g)
+      if (g.session && g.first) return skip // the first query of the session repo: nothing was read before it
+      holdGroup(g, skip)
       continue
     }
     const out = await gh.graphql(g.repo.host, query)
     if (!out.ok) {
       const failed = failedOutcome(gh, out, g.repo.host)
-      if (g.session && g.branches) return failed // the first query of the session repo fails the step
-      failure ??= failed
-      hold(g)
+      if (g.session && g.first) return failed // the first query of the session repo fails the step
+      holdGroup(g, failed)
       continue
     }
     answered++
     const parsed = parseDiscovery(out.reply, g.repo, aliases, lane.closingRefsPerPr)
     if (g.session) complete &&= parsed.complete
-    else hold(g, parsed.unsure) // only the PRs with no sure verdict: the body of a PR that answered is read
+    else {
+      hold(g, parsed.unsure) // only the PRs with no sure verdict: the body of a PR that answered is read
+      if (g.asks.length > 0) {
+        if (!parsed.complete) heldRepos.push(repoKey(g.repo))
+        if (parsed.defaultBranch !== undefined) learned[repoKey(g.repo)] = parsed.defaultBranch
+      }
+    }
     if (g.session) defaultName = parsed.defaultBranch
     for (const pr of parsed.prs)
       prs.push({
@@ -386,6 +475,8 @@ export async function discoverPrs(
     prs,
     complete,
     ...(held.length > 0 ? { held } : {}),
+    ...(heldRepos.length > 0 ? { heldRepos } : {}),
+    ...(Object.keys(learned).length > 0 ? { foreignDefaults: learned } : {}),
     ...(defaultName !== undefined ? { defaultBranch: defaultName } : {}),
   }
 }

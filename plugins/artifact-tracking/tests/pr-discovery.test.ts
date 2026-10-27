@@ -394,7 +394,7 @@ test('discoverPrs: a created PR of the session repo rides in its query; one more
     },
   })
   const created = [ref(REPO, 12), ref(OTHER, 657), ref({ ...OTHER, owner: 'verticeone' }, 658)]
-  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, created)
+  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created })
   expect(calls.map(c => c.repo)).toEqual([SESSION, FOREIGN]) // two PRs of one repo, in any case, make one query
   expect(calls[0]!.query).toContain('h0: pullRequests(headRefName: "feat/root"')
   expect(calls[0]!.query).toContain('p0: pullRequest(number: 12)')
@@ -416,7 +416,7 @@ test('discoverPrs: a repo with a sure and an unsure created PR holds only the un
     repos: { [SESSION]: { 12: prNode({ number: 12 }) }, [FOREIGN]: { 657: prNode({ number: 657 }) } },
   })
   const created = [ref(REPO, 12), ref(OTHER, 657), ref(OTHER, 658)]
-  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, created)
+  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created })
   expect(r.ok && r.prs.map(p => p.number)).toEqual([12, 657]) // the sure PR is listed, and its body is read
   expect(r).toMatchObject({ ok: true, complete: true, held: [KFOREIGN658] })
   // The unsure PR answers on the next step: nothing is held any more.
@@ -426,7 +426,7 @@ test('discoverPrs: a repo with a sure and an unsure created PR holds only the un
       [FOREIGN]: { 657: prNode({ number: 657 }), 658: prNode({ number: 658 }) },
     },
   })
-  const sure = await discoverPrs(both.gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, created)
+  const sure = await discoverPrs(both.gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created })
   expect(sure.ok && sure.prs.map(p => p.number)).toEqual([12, 657, 658])
   expect(sure).toMatchObject({ ok: true, complete: true })
   expect('held' in sure).toBe(false)
@@ -437,27 +437,29 @@ test('discoverPrs: a PR that a branch found and the session also created is one 
     repos: { [SESSION]: { 7: prNode({ number: 7, headRefName: 'feat/root' }) } },
     heads: { 'head:feat/root': [prNode({ number: 7, headRefName: 'feat/root' })] },
   })
-  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, [ref(REPO, 7)])
+  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created: [ref(REPO, 7)] })
   expect(r.ok && r.prs.map(p => [p.number, p.by, p.created])).toEqual([[7, 'head', true]])
 })
 
 test('discoverPrs: a PR found by a branch alone is not marked created', async () => {
   const { gh } = repoGh({ repos: { [SESSION]: {} }, heads: { 'head:feat/root': [prNode({ number: 7 })] } })
-  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, [])
+  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created: [] })
   expect(r.ok && r.prs.map(p => ['created' in p, 'otherRepo' in p])).toEqual([[false, false]])
 })
 
 test('discoverPrs: created PRs are polled with no branch to poll, and with no session repo', async () => {
   const { gh, calls } = repoGh({ repos: { [FOREIGN]: { 657: prNode({ number: 657 }) } } })
-  const none = await discoverPrs(gh, REPO, [], NOW, undefined, PR_LANE_DEFAULTS, [ref(OTHER, 657)])
+  const none = await discoverPrs(gh, REPO, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] })
   expect(none.ok && none.prs.map(p => p.number)).toEqual([657])
   expect(calls.map(c => c.repo)).toEqual([FOREIGN]) // the session repo has nothing to ask: no query for it
-  const noRepo = await discoverPrs(gh, null, ['feat/root'], NOW, undefined, PR_LANE_DEFAULTS, [ref(OTHER, 657)])
+  const noRepo = await discoverPrs(gh, null, ['feat/root'], NOW, undefined, PR_LANE_DEFAULTS, {
+    created: [ref(OTHER, 657)],
+  })
   expect(noRepo.ok && noRepo.prs.map(p => [p.number, p.otherRepo])).toEqual([[657, true]]) // no session repo: all are another repo's
   // The skips of before stay when no PR was created.
-  const bare = await discoverPrs(gh, null, ['feat/root'], NOW, undefined, PR_LANE_DEFAULTS, [])
+  const bare = await discoverPrs(gh, null, ['feat/root'], NOW, undefined, PR_LANE_DEFAULTS, { created: [] })
   expect(bare).toEqual({ ok: false, skipped: 'no-repo' })
-  expect(await discoverPrs(gh, REPO, [], NOW, undefined, PR_LANE_DEFAULTS, [])).toEqual({
+  expect(await discoverPrs(gh, REPO, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [] })).toEqual({
     ok: false,
     skipped: 'no-branches',
   })
@@ -466,24 +468,30 @@ test('discoverPrs: created PRs are polled with no branch to poll, and with no se
 test('discoverPrs: tracked branches and no session repo make the reply incomplete, whatever a created PR of another repo says', async () => {
   // The branches of the session repo were never asked: a prune must not take their PRs for gone (Codex review of #186).
   const { gh, calls } = repoGh({ repos: { [FOREIGN]: { 657: prNode({ number: 657 }) } } })
-  const r = await discoverPrs(gh, null, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, [ref(OTHER, 657)])
+  const r = await discoverPrs(gh, null, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] })
   expect(calls.map(c => c.repo)).toEqual([FOREIGN])
   expect(r.ok && r.prs.map(p => p.number)).toEqual([657]) // the sure answer of the other repo still lands
   expect(r).toMatchObject({ ok: true, complete: false })
   // No branch to ask, so nothing of the session repo is left unasked: the reply is complete.
-  const none = await discoverPrs(gh, null, [], NOW, 'main', PR_LANE_DEFAULTS, [ref(OTHER, 657)])
+  const none = await discoverPrs(gh, null, [], NOW, 'main', PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] })
   expect(none).toMatchObject({ ok: true, complete: true })
   // A tracked branch that equals the default branch is no exception here. With no session repo the default branch is
   // the one that an in-process /resume carried from another session (the lane state is restored), so it proves nothing
   // about this session: its stored branch PRs and refs are not asked, and a prune must leave them be (Codex review of #186).
-  const onlyDefault = await discoverPrs(gh, null, ['main'], NOW, 'main', PR_LANE_DEFAULTS, [ref(OTHER, 657)])
+  const onlyDefault = await discoverPrs(gh, null, ['main'], NOW, 'main', PR_LANE_DEFAULTS, {
+    created: [ref(OTHER, 657)],
+  })
   expect(onlyDefault.ok && onlyDefault.prs.map(p => p.number)).toEqual([657])
   expect(onlyDefault).toMatchObject({ ok: true, complete: false })
-  const carried = await discoverPrs(gh, null, ['main', 'feat/x'], NOW, 'main', PR_LANE_DEFAULTS, [ref(OTHER, 657)])
+  const carried = await discoverPrs(gh, null, ['main', 'feat/x'], NOW, 'main', PR_LANE_DEFAULTS, {
+    created: [ref(OTHER, 657)],
+  })
   expect(carried).toMatchObject({ ok: true, complete: false })
   // With a session repo the known default branch still needs no query: nothing is left unasked.
   const own = repoGh({ repos: { [SESSION]: {}, [FOREIGN]: { 657: prNode({ number: 657 }) } } })
-  const withRepo = await discoverPrs(own.gh, REPO, ['main'], NOW, 'main', PR_LANE_DEFAULTS, [ref(OTHER, 657)])
+  const withRepo = await discoverPrs(own.gh, REPO, ['main'], NOW, 'main', PR_LANE_DEFAULTS, {
+    created: [ref(OTHER, 657)],
+  })
   expect(withRepo).toMatchObject({ ok: true, complete: true })
 })
 
@@ -493,7 +501,7 @@ test('discoverPrs: a created PR whose repo fails leaves the other repos in a com
     fail: { [FOREIGN]: { ok: false, kind: 'transport' } },
   })
   const created = [ref(REPO, 12), ref(OTHER, 657)]
-  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, created)
+  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created })
   expect(r.ok && r.prs.map(p => p.number)).toEqual([12])
   expect(r).toMatchObject({ ok: true, complete: true, held: [KFOREIGN657] })
 })
@@ -503,7 +511,7 @@ test('discoverPrs: a repo that is gone, or that gh cannot read, holds its PRs an
   const { gh } = repoGh({ repos: { [SESSION]: { 12: prNode({ number: 12 }) } } })
   const created = [ref(REPO, 12), ref(OTHER, 657)]
   for (let step = 0; step < 2; step++) {
-    const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, created)
+    const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created })
     expect(r.ok && r.prs.map(p => p.number)).toEqual([12])
     expect(r).toMatchObject({ ok: true, complete: true, held: [KFOREIGN657] }) // every step: it never comes back
   }
@@ -512,7 +520,9 @@ test('discoverPrs: a repo that is gone, or that gh cannot read, holds its PRs an
 test('discoverPrs: an unsure answer of the session repo still makes the reply incomplete, and holds nothing', async () => {
   // PR 99 of the session repo is null with no NOT_FOUND: the lane cannot say it is gone.
   const { gh } = repoGh({ repos: { [SESSION]: { 12: prNode({ number: 12 }) } } })
-  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, [ref(REPO, 12), ref(REPO, 99)])
+  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, {
+    created: [ref(REPO, 12), ref(REPO, 99)],
+  })
   expect(r.ok && r.prs.map(p => p.number)).toEqual([12])
   expect(r).toMatchObject({ ok: true, complete: false })
   expect('held' in r).toBe(false)
@@ -520,7 +530,7 @@ test('discoverPrs: an unsure answer of the session repo still makes the reply in
 
 test('discoverPrs: a reply that holds no PR has no held list', async () => {
   const { gh } = repoGh({ repos: { [SESSION]: { 12: prNode({ number: 12 }) } } })
-  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, [ref(REPO, 12)])
+  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created: [ref(REPO, 12)] })
   expect(r).toMatchObject({ ok: true, complete: true })
   expect('held' in r).toBe(false)
 })
@@ -529,14 +539,14 @@ test('discoverPrs: a failure of the session repo fails the whole step; one of an
   const created = [ref(REPO, 12), ref(OTHER, 657)]
   const repos = { [SESSION]: { 12: prNode({ number: 12 }) }, [FOREIGN]: { 657: prNode({ number: 657 }) } }
   const run = (fail: Record<string, GraphqlOutcome>) =>
-    discoverPrs(repoGh({ repos, fail }).gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, created)
+    discoverPrs(repoGh({ repos, fail }).gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created })
   const fieldX: GraphqlOutcome = { ok: false, kind: 'query-error', error: 'Field x' }
   expect(await run({ [SESSION]: fieldX })).toEqual({ ok: false, error: 'Field x' })
   expect(await run({ [SESSION]: { ok: false, kind: 'blocked' } })).toEqual({ ok: false, skipped: 'paused' })
   expect(await run({ [SESSION]: { ok: false, kind: 'no-gh' } })).toEqual({ ok: false, skipped: 'no-gh' })
   // Nothing in the session repo to ask, and the one other repo fails: the step has nothing, so it says why.
   const lone = repoGh({ repos: {}, fail: { [FOREIGN]: { ok: false, kind: 'truncated' } } })
-  const only = await discoverPrs(lone.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, [ref(OTHER, 657)])
+  const only = await discoverPrs(lone.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] })
   expect(only).toEqual({ ok: false, error: 'reply over 4 MiB' })
 })
 
@@ -547,13 +557,15 @@ test('discoverPrs: an auth failure of another repo is that host alone: its PRs a
   const created = [ref(ghes, 12), ref(OTHER, 657)]
   const repos = { [SESSION]: { 12: prNode({ number: 12 }) }, [FOREIGN]: { 657: prNode({ number: 657 }) } }
   const fail: Record<string, GraphqlOutcome> = { [FOREIGN]: { ok: false, kind: 'auth' } }
-  const r = await discoverPrs(repoGh({ repos, fail }).gh, ghes, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, created)
+  const r = await discoverPrs(repoGh({ repos, fail }).gh, ghes, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, {
+    created,
+  })
   expect(r.ok && r.prs.map(p => [p.host, p.number])).toEqual([['ghe.corp', 12]])
   expect(r).toMatchObject({ ok: true, complete: true, held: [KFOREIGN657] })
   // Nothing else answered: the step has nothing, so it says why, and names the host that refused.
-  const lone = await discoverPrs(repoGh({ repos: {}, fail }).gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, [
-    ref(OTHER, 657),
-  ])
+  const lone = await discoverPrs(repoGh({ repos: {}, fail }).gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, {
+    created: [ref(OTHER, 657)],
+  })
   expect(lone).toEqual({ ok: false, skipped: 'not-logged-in', host: 'github.com' })
   // The session repo itself refused: the step fails, as before.
   const own = await discoverPrs(
@@ -563,7 +575,7 @@ test('discoverPrs: an auth failure of another repo is that host alone: its PRs a
     NOW,
     'main',
     PR_LANE_DEFAULTS,
-    created,
+    { created },
   )
   expect(own).toEqual({ ok: false, skipped: 'not-logged-in', host: 'ghe.corp' })
 })
@@ -575,7 +587,7 @@ test('discoverPrs: another repo that is blocked or has no gh holds its PRs; the 
   const repos = { [SESSION]: { 12: prNode({ number: 12 }) }, [FOREIGN]: { 657: prNode({ number: 657 }) } }
   for (const kind of ['blocked', 'no-gh'] as const) {
     const gh = repoGh({ repos, fail: { [FOREIGN]: { ok: false, kind } } }).gh
-    const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, created)
+    const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created })
     expect(r.ok && r.prs.map(p => p.number)).toEqual([12])
     expect(r).toMatchObject({ ok: true, complete: true, held: [KFOREIGN657] })
   }
@@ -588,7 +600,7 @@ test('discoverPrs: another repo that is blocked or has no gh holds its PRs; the 
       NOW,
       undefined,
       PR_LANE_DEFAULTS,
-      [ref(OTHER, 657)],
+      { created: [ref(OTHER, 657)] },
     )
   expect(await lone('blocked')).toEqual({ ok: false, skipped: 'paused' })
   expect(await lone('no-gh')).toEqual({ ok: false, skipped: 'no-gh' })
@@ -603,23 +615,25 @@ test('discoverPrs: a step that asks foreign hosts only does not wait for the hom
     repos: { [FOREIGN]: { 657: prNode({ number: 657 }) }, 'team/svc': { 3: prNode({ number: 3 }) } },
   })
   Object.assign(gh, { canCall: () => false })
-  const r = await discoverPrs(gh, ghes, [], NOW, undefined, PR_LANE_DEFAULTS, [ref(OTHER, 657)])
+  const r = await discoverPrs(gh, ghes, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] })
   expect(calls.map(c => c.host)).toEqual(['github.com'])
   expect(r.ok && r.prs.map(p => p.number)).toEqual([657])
   expect(r).toMatchObject({ ok: true, complete: true })
   // No session repo: github.com is the home host, so a GHES PR goes on and a github.com PR waits.
-  const bare = await discoverPrs(gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, [ref(ghe, 3)])
+  const bare = await discoverPrs(gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(ghe, 3)] })
   expect(bare.ok && bare.prs.map(p => [p.host, p.number])).toEqual([['ghe.corp', 3]])
-  expect(await discoverPrs(gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, [ref(OTHER, 657)])).toEqual({
+  expect(await discoverPrs(gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] })).toEqual({
     ok: false,
     skipped: 'paused',
   })
   // A group of the home host waits, as before: a tracked branch of the session repo, or a created PR in it.
-  expect(await discoverPrs(gh, ghes, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, [ref(OTHER, 657)])).toEqual({
+  expect(
+    await discoverPrs(gh, ghes, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] }),
+  ).toEqual({
     ok: false,
     skipped: 'paused',
   })
-  expect(await discoverPrs(gh, ghes, [], NOW, undefined, PR_LANE_DEFAULTS, [ref(ghes, 12)])).toEqual({
+  expect(await discoverPrs(gh, ghes, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(ghes, 12)] })).toEqual({
     ok: false,
     skipped: 'paused',
   })
@@ -637,7 +651,7 @@ test('discoverPrs: a later query of the session repo that fails holds its PRs; t
       graphql: async (host: string, q: string): Promise<GraphqlOutcome> =>
         n++ === failAt ? { ok: false, kind: 'transport', error: 'timeout' } : real(host, q),
     })
-    return discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, created)
+    return discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created })
   }
   // The second query (PRs 51 to 60, no branch) fails: the branch results and the first 50 PRs are kept, the rest held.
   const later = await run(1)
@@ -668,7 +682,7 @@ test('discoverPrs: a PR that the first query returned is not held when a later q
       n++ === 1 ? { ok: false, kind: 'transport', error: 'timeout' } : real(host, q),
   })
   const created = many(60).map(i => ref(REPO, i))
-  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, created)
+  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created })
   expect(r.ok && r.prs.map(p => p.number)).toContain(55)
   expect(r.ok && r.prs.filter(p => p.number === 55)).toHaveLength(1)
   expect(r).toMatchObject({ ok: true, complete: true })
@@ -686,12 +700,12 @@ test('discoverPrs: an unsure created PR in a later query of the session repo mak
   const created = many(60).map(n => ref(REPO, n))
   // #55 is in the second query and has no verdict (null, no NOT_FOUND): no prune may run on the session repo.
   const { gh } = repoGh({ repos: { [SESSION]: nodes(many(60).filter(n => n !== 55)) } })
-  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, created)
+  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created })
   expect(r.ok && r.prs).toHaveLength(59)
   expect(r).toMatchObject({ ok: true, complete: false })
   // The same in the first query.
   const first = repoGh({ repos: { [SESSION]: nodes(many(60).filter(n => n !== 5)) } })
-  expect(await discoverPrs(first.gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, created)).toMatchObject({
+  expect(await discoverPrs(first.gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created })).toMatchObject({
     ok: true,
     complete: false,
   })
@@ -701,12 +715,14 @@ test('discoverPrs: a session group of the known default branch alone asks nothin
   const ghes = { ...REPO, host: 'ghe.corp' }
   const { gh, calls } = repoGh({ repos: { [FOREIGN]: { 657: prNode({ number: 657 }) } } })
   Object.assign(gh, { canCall: () => false })
-  const r = await discoverPrs(gh, ghes, ['main'], NOW, 'main', PR_LANE_DEFAULTS, [ref(OTHER, 657)])
+  const r = await discoverPrs(gh, ghes, ['main'], NOW, 'main', PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] })
   expect(calls.map(c => c.host)).toEqual(['github.com'])
   expect(r.ok && r.prs.map(p => p.number)).toEqual([657])
   expect(r).toMatchObject({ ok: true, defaultBranch: 'main' }) // the group is still counted as answered
   // The default branch is not known yet (a cold start): `main` gets aliases, and the home host is asked, so the gate holds.
-  expect(await discoverPrs(gh, ghes, ['main'], NOW, undefined, PR_LANE_DEFAULTS, [ref(OTHER, 657)])).toEqual({
+  expect(
+    await discoverPrs(gh, ghes, ['main'], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] }),
+  ).toEqual({
     ok: false,
     skipped: 'paused',
   })
@@ -717,29 +733,17 @@ test('discoverPrs: the created PRs of one repo ask at most 50 aliases a query, t
   const nodes = (numbers: number[]) => Object.fromEntries(numbers.map(n => [n, prNode({ number: n })]))
   // Another repo, 120 PRs: 50, 50 and 20.
   const foreign = repoGh({ repos: { [FOREIGN]: nodes(many(120)) } })
-  const r = await discoverPrs(
-    foreign.gh,
-    null,
-    [],
-    NOW,
-    undefined,
-    PR_LANE_DEFAULTS,
-    many(120).map(n => ref(OTHER, n)),
-  )
+  const r = await discoverPrs(foreign.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, {
+    created: many(120).map(n => ref(OTHER, n)),
+  })
   expect(foreign.calls).toHaveLength(3)
   expect(foreign.calls.map(c => (c.query.match(/: pullRequest\(number:/g) ?? []).length)).toEqual([50, 50, 20])
   expect(r.ok && r.prs).toHaveLength(120)
   // The session repo: 60 created PRs and one branch. The branch rides in the first query only.
   const own = repoGh({ repos: { [SESSION]: nodes(many(60)) } })
-  const s = await discoverPrs(
-    own.gh,
-    REPO,
-    ['feat/root'],
-    NOW,
-    'main',
-    PR_LANE_DEFAULTS,
-    many(60).map(n => ref(REPO, n)),
-  )
+  const s = await discoverPrs(own.gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, {
+    created: many(60).map(n => ref(REPO, n)),
+  })
   expect(own.calls.map(c => (c.query.match(/: pullRequest\(number:/g) ?? []).length)).toEqual([50, 10])
   expect(own.calls.map(c => c.query.includes('pullRequests(headRefName'))).toEqual([true, false])
   expect(s.ok && s.prs).toHaveLength(60)
@@ -752,15 +756,9 @@ test('discoverPrs: the created PRs of one repo ask at most 50 aliases a query, t
     graphql: async (host: string, q: string): Promise<GraphqlOutcome> =>
       n++ === 1 ? { ok: false, kind: 'transport', error: 'timeout' } : real(host, q),
   })
-  const f = await discoverPrs(
-    flaky.gh,
-    null,
-    [],
-    NOW,
-    undefined,
-    PR_LANE_DEFAULTS,
-    many(60).map(i => ref(OTHER, i)),
-  )
+  const f = await discoverPrs(flaky.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, {
+    created: many(60).map(i => ref(OTHER, i)),
+  })
   expect(f.ok && f.prs).toHaveLength(50)
   expect(f).toMatchObject({ ok: true, complete: true })
   expect(f.ok && f.held).toEqual(
@@ -776,25 +774,23 @@ test('discoverPrs: a host that is not the home host is checked before it is aske
   // The session repo is on a GHES host, a created PR is on github.com where gh is logged out: the check says no, so
   // github.com is never queried (a refused query would log the whole tool out), and the GHES answers stay.
   const out = repoGh({ repos, authed: host => host !== 'github.com' })
-  const r = await discoverPrs(out.gh, ghes, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, [
-    ref(ghes, 12),
-    ref(OTHER, 657),
-  ])
+  const r = await discoverPrs(out.gh, ghes, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, {
+    created: [ref(ghes, 12), ref(OTHER, 657)],
+  })
   expect(out.checked).toEqual(['ghe.corp', 'github.com'])
   expect(out.calls.map(c => c.host)).toEqual(['ghe.corp'])
   expect(r.ok && r.prs.map(p => [p.host, p.number])).toEqual([['ghe.corp', 12]])
   expect(r).toMatchObject({ ok: true, complete: true, held: [KFOREIGN657] })
   // The session repo is on github.com too: that host is the home host, and it is not checked.
   const same = repoGh({ repos, authed: false })
-  const s = await discoverPrs(same.gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, [
-    ref(REPO, 12),
-    ref(OTHER, 657),
-  ])
+  const s = await discoverPrs(same.gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, {
+    created: [ref(REPO, 12), ref(OTHER, 657)],
+  })
   expect(same.checked).toEqual([])
   expect(s.ok && s.prs.map(p => p.number)).toEqual([12, 657])
   // No session repo: github.com is the home host as well.
   const bare = repoGh({ repos, authed: false })
-  const b = await discoverPrs(bare.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, [ref(OTHER, 657)])
+  const b = await discoverPrs(bare.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] })
   expect(bare.checked).toEqual([])
   expect(b.ok && b.prs.map(p => p.number)).toEqual([657])
 })
@@ -803,33 +799,26 @@ test('discoverPrs: a check that could not run is an error of the step, and only 
   const ghe = { host: 'ghe.corp', owner: 'team', repo: 'svc' }
   // A timeout, a network error or a host at rest: the login is not known, so the pane must not say "log in" (Codex review of #186).
   const lost = repoGh({ repos: {}, unreachable: () => true })
-  expect(await discoverPrs(lost.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, [ref(ghe, 3)])).toEqual({
+  expect(await discoverPrs(lost.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(ghe, 3)] })).toEqual({
     ok: false,
     error: 'gh could not check the login to ghe.corp',
   })
   // The same for the session repo on that host.
-  const own = await discoverPrs(
-    lost.gh,
-    { ...REPO, host: 'ghe.corp' },
-    ['feat/root'],
-    NOW,
-    'main',
-    PR_LANE_DEFAULTS,
-    [],
-  )
+  const own = await discoverPrs(lost.gh, { ...REPO, host: 'ghe.corp' }, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, {
+    created: [],
+  })
   expect(own).toEqual({ ok: false, error: 'gh could not check the login to ghe.corp' })
   // An explicit denial is still "not logged in", and with something answered the PRs of the host are held either way.
   const denied = repoGh({ repos: {}, authed: false })
-  expect(await discoverPrs(denied.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, [ref(ghe, 3)])).toEqual({
+  expect(await discoverPrs(denied.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(ghe, 3)] })).toEqual({
     ok: false,
     skipped: 'host-not-authed',
     host: 'ghe.corp',
   })
   const mixed = repoGh({ repos: { [SESSION]: { 12: prNode({ number: 12 }) } }, unreachable: h => h === 'ghe.corp' })
-  const r = await discoverPrs(mixed.gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, [
-    ref(REPO, 12),
-    ref(ghe, 3),
-  ])
+  const r = await discoverPrs(mixed.gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, {
+    created: [ref(REPO, 12), ref(ghe, 3)],
+  })
   expect(r.ok && r.prs.map(p => p.number)).toEqual([12])
   expect(r).toMatchObject({ ok: true, complete: true, held: ['gh:ghe.corp/team/svc#3'] })
 })
@@ -839,14 +828,16 @@ test('discoverPrs: the skip of a host that gh is not logged in to names that hos
   const ghe = { host: 'ghe.corp', owner: 'team', repo: 'svc' }
   const { gh } = repoGh({ repos: {}, authed: false })
   const created = [ref(ghe, 3)]
-  expect(await discoverPrs(gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, created)).toEqual({
+  expect(await discoverPrs(gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, { created })).toEqual({
     ok: false,
     skipped: 'host-not-authed',
     host: 'ghe.corp',
   })
   // The host that answered `auth` to a query is named too, in any case it was made with.
   const refused = repoGh({ repos: {}, fail: { [FOREIGN]: { ok: false, kind: 'auth' } } })
-  expect(await discoverPrs(refused.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, [ref(OTHER, 657)])).toEqual({
+  expect(
+    await discoverPrs(refused.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] }),
+  ).toEqual({
     ok: false,
     skipped: 'not-logged-in',
     host: 'github.com',
@@ -863,7 +854,9 @@ test('discoverPrs: a created PR on a host that no call asked about yet is asked 
   const { gh, calls, checked } = repoGh({
     repos: { [SESSION]: { 12: prNode({ number: 12 }) }, 'team/svc': { 3: prNode({ number: 3 }) } },
   })
-  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, [ref(REPO, 12), ref(ghe, 3)])
+  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, {
+    created: [ref(REPO, 12), ref(ghe, 3)],
+  })
   expect(checked).toEqual(['ghe.corp'])
   expect(calls.map(c => [c.host, c.repo])).toEqual([
     ['github.com', SESSION],
@@ -880,9 +873,11 @@ test('discoverPrs: a created PR on a host that no call asked about yet is asked 
 test('discoverPrs: a repo on a host that gh is not logged in to is skipped, and its PRs are held', async () => {
   const ghe = { host: 'ghe.corp', owner: 'team', repo: 'svc' }
   const { gh, calls } = repoGh({ repos: { [SESSION]: { 12: prNode({ number: 12 }) } }, authed: false })
-  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, [ref(REPO, 12), ref(ghe, 3)])
+  const r = await discoverPrs(gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, {
+    created: [ref(REPO, 12), ref(ghe, 3)],
+  })
   expect(calls.map(c => c.repo)).toEqual([SESSION])
   expect(r).toMatchObject({ ok: true, complete: true, held: ['gh:ghe.corp/team/svc#3'] })
-  const alone = await discoverPrs(gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, [ref(ghe, 3)])
+  const alone = await discoverPrs(gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(ghe, 3)] })
   expect(alone).toEqual({ ok: false, skipped: 'host-not-authed', host: 'ghe.corp' })
 })
