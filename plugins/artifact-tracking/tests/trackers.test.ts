@@ -55,7 +55,8 @@ test('trackers: nine trackers in order 10 … 90: auto, jira, github, artifact, 
   }
   const github = list.find(x => x.id === 'github')
   expect(github?.persist).toBe(false)
-  expect(Object.keys(github?.events?.facts ?? {})).toEqual(['auto.branches', 'repos.branches'])
+  // The PR of the session branch follows its three inputs: the list (the lane), the branch (`auto.branches`) and the repo (issue #254).
+  expect(Object.keys(github?.events?.facts ?? {})).toEqual(['auto.branches', 'repos.branches', 'session.repo'])
 })
 
 test('the list is a constant: a second manager over it shares no per-load state', async () => {

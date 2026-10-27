@@ -1,10 +1,10 @@
-// The preview of a file row (issue #57, L2): the view mode. The provider reads the file when the person asks, with `head -c` through
-// the tool port (a CLI call, as the issue says: no 4 MiB refusal of a file read, and one path for any size), and gives core blocks to
-// draw: a notice for what cannot be shown (a secret, a folder, an image, a binary file, a file that is gone, a cut), then the
-// source, drawn by `Code` with the language of the path and a line gutter. Nothing is stored: the content goes back to the pane
-// and sits in its module memory. The mode `diff` is the next layer, so a row has `view` alone. The provider never sanitizes: core
+// The preview of a file row (issue #57, L2 and L3): the view mode and the diff mode. The provider reads the file when the person asks,
+// with `head -c` through the tool port (a CLI call, as the issue says: no 4 MiB refusal of a file read, and one path for any size), and
+// gives core blocks to draw: a notice for what cannot be shown (a secret, a folder, an image, a binary file, a file that is gone, a cut),
+// then the source, drawn by `Code` with the language of the path and a line gutter. The diff mode runs `git` instead (`git-diff.ts`) and
+// gives hunks. Nothing is stored: the content goes back to the pane and sits in its module memory. The provider never sanitizes: core
 // draws every string through one rule (`ux/text/sanitize.ts`), so the caps below count the characters as they came.
-// Design study R9, R14, R17 (view part), G3, G9: https://github.com/martin-macak/claude-code-mod-tracking/issues/57#issuecomment-6414682787
+// Design study R9, R14, R15, R16, R17, G3, G9: https://github.com/martin-macak/claude-code-mod-tracking/issues/57#issuecomment-6414682787
 
 import type { Json } from '../../core/interfaces/items'
 import type {
@@ -17,49 +17,33 @@ import type {
 } from '../../core/interfaces/preview'
 import type { TrackerContext } from '../../core/interfaces/tracker'
 import type { ViewContext } from '../../core/interfaces/view'
-import { relativeToRoot } from '../../core/lib/paths'
-import { firstLine, message } from '../../core/lib/text'
+import { dirName, relativeToRoot } from '../../core/lib/paths'
+import { clip, message } from '../../core/lib/text'
 import { type FileConfig, HEAD_BYTES } from './config'
+import { offReason } from './diff-off'
 import { fileTypeOf } from './file-type'
+import { loadDiff, probeLater } from './git-diff'
 import { fileKind } from './kind'
+import { failureOf, kindOf, mimeOf, notice, sizeText } from './notice'
 import { isSecretPath, needsHome } from './secret'
 import type { FileRecord } from './types'
+
+export { sizeText }
 
 /** A file with a NUL in its first 8 KB is binary. */
 const BINARY_SCAN = 8192
 /** `head` of 256 KiB takes milliseconds. A file on a hung mount must not hold the pane. */
 const HEAD_TIMEOUT_MS = 5000
 
-const VIEW: readonly PreviewMode[] = [{ id: 'view', enabled: true }]
-
-const UNITS = ['B', 'KB', 'MB', 'GB'] as const
-
 /**
- * `12 B`, `2.0 KB`, `293 KB`, `1.5 MB`: three digits at most, one decimal below 100. The unit steps up at the rounded value, so
- * 1,048,575 bytes read `1.0 MB` and not `1024 KB`, and 102,350 bytes read `100 KB` and not `100.0 KB`.
+ * The modes of a tracked file, both on. Whether git can diff a file (a repository, a base) is known only when git is asked, and `modes`
+ * is pure and runs at each drawing: git is asked by the diff and by a probe that the view starts (`git-diff.ts`), and `modes` reads
+ * the answer (`diff-off.ts`) and turns the diff off with the reason (R16). Until git has been asked, a press of `d` asks it.
  */
-export function sizeText(bytes: number): string {
-  let n = bytes
-  let unit = 0
-  while (n >= 1023.5 && unit < UNITS.length - 1) {
-    n /= 1024
-    unit++
-  }
-  if (unit === 0) return `${bytes} B`
-  return `${n >= 99.95 ? Math.round(n) : n.toFixed(1)} ${UNITS[unit]}`
-}
-
-const notice = (text: string, tone: 'info' | 'warning' = 'info'): PreviewBlock => ({ kind: 'notice', text, tone })
-
-/** One line of a CLI's stderr, for a notice: the first line, or `exit N` when it said nothing. */
-const failureOf = (stderr: string, exitCode: number): string => firstLine(stderr) || `exit ${exitCode}`
-
-/** The MIME type that `file` answered for the row, or undefined when it did not ask, or answered `unknown`. */
-const mimeOf = (rec: FileRecord): string | undefined =>
-  rec.mime !== undefined && rec.mime !== 'unknown' ? rec.mime : undefined
-
-/** The type word that a notice about a binary file gives: the MIME type when `file` answered one, else the type of the map. */
-const kindOf = (rec: FileRecord): string => mimeOf(rec) ?? fileTypeOf(rec)
+const MODES: readonly PreviewMode[] = [
+  { id: 'view', enabled: true },
+  { id: 'diff', enabled: true },
+]
 
 /**
  * The lines to draw, cut at the caps. A cap of lines and a cap of characters cut at a whole line. A first line over the character cap
@@ -71,10 +55,7 @@ function cutLines(lines: readonly string[], maxLines: number, maxChars: number):
   for (const line of lines.slice(0, maxLines)) {
     if (used + line.length + 1 > maxChars) {
       if (shown.length > 0) break
-      let head = line.slice(0, maxChars)
-      const last = head.charCodeAt(head.length - 1)
-      if (last >= 0xd800 && last <= 0xdbff) head = head.slice(0, -1) // the first half of a pair: it goes whole, or not at all
-      return { shown: [head], partial: true }
+      return { shown: [clip(line, maxChars)], partial: true } // a surrogate pair is never cut in two
     }
     shown.push(line)
     used += line.length + 1
@@ -118,9 +99,20 @@ function viewOf(
   return { blocks, count }
 }
 
-/** The modes of a row of a tracked file: the view. A row that no file record backs has no preview. */
+/**
+ * The modes of a row of a tracked file: the view and the diff. The diff is off, with the reason, when git has said that the folder of
+ * the file has no repo or no base (R16: a dim Button, and a toast at a press). A row that no file record backs has no preview.
+ */
 function modes(ctx: ViewContext<FileConfig, Json>, rowId: string): readonly PreviewMode[] | undefined {
-  return ctx.items.some(item => item.key === rowId && item.category === 'file') ? VIEW : undefined
+  const item = ctx.items.find(i => i.key === rowId && i.category === 'file')
+  if (item === undefined) return undefined
+  const reason = offReason(ctx.facts, dirName((item as FileRecord).url), ctx.now)
+  return reason === undefined
+    ? MODES
+    : [
+        { id: 'view', enabled: true },
+        { id: 'diff', enabled: false, reason },
+      ]
 }
 
 /** The content of one mode of a file row. Rejects only for a failure it did not expect: core turns that into a notice. */
@@ -140,8 +132,8 @@ async function load(
     subtitle: [type, mode, ...subtitle].join(' · '),
     blocks,
   })
-  // The secret rule comes first, before the mode and before any read of content: a mode that shows more than the view (the diff of the
-  // next layer) must meet it too. The path as spelled and as the file landed decide, then the real path of a link as it is now.
+  // The secret rule comes first, before the mode and before any read of content: a mode that shows more than the view (the diff)
+  // must meet it too. The path as spelled and as the file landed decide, then the real path of a link as it is now.
   const config = ctx.config.slice()
   // The home folder only matters for a glob that starts with `~/`. A refused read must not stop the preview of an ordinary file, but it
   // must stop every preview when a glob of the person needs it: the rule cannot say what that glob hides.
@@ -163,18 +155,30 @@ async function load(
   // A stat reads no content. A path that became a link since the row was made may lead to a key: its real path is checked as well.
   const stat = await ctx.fs.stat(rec.url, { resolve: true })
   if (stat?.realPath !== undefined && isSecretPath(stat.realPath, secret)) return done([secretNotice])
-  if (mode !== 'view') return done([notice('This mode is not available for a file yet.')])
+  if (mode !== 'view' && mode !== 'diff') return done([notice('This mode is not available for a file.')])
+  if (stat?.kind === 'dir') return done([notice('A folder, not a file.')])
+  if (stat?.kind === 'other') return done([notice('Not a regular file: a device, a socket or a pipe.')])
+  const caps = {
+    maxLines: Math.min(config.preview.maxLines, limits.maxLines),
+    maxChars: Math.min(config.preview.maxChars, limits.maxChars),
+  }
+  if (mode === 'diff') {
+    // A file that is gone still has a diff: git has its last copy. The diff reads through git, so it needs no `head` and no type check.
+    const diff = await loadDiff({ ctx, rec, path: rec.url, stat, caps })
+    return done(diff.blocks, ...diff.subtitle)
+  }
+  // The view runs no git itself. It starts one probe, after this hook has returned, so that `modes()` can turn `d` off with the
+  // reason when the folder has no repo or no base (R16).
+  probeLater({ ctx, path: rec.url, stat })
   if (stat === null) {
     return done([
       notice(
         rec.deleted === true
-          ? 'Deleted by a Bash command: the file is gone.'
-          : 'The file is not there, or it could not be read: it was moved or deleted, or access was refused.',
+          ? 'Deleted by a Bash command: the file is gone. Press d for the diff.'
+          : 'The file is not there, or it could not be read: it was moved or deleted, or access was refused. Press d for the diff.',
       ),
     ])
   }
-  if (stat.kind === 'dir') return done([notice('A folder, not a file.')])
-  if (stat.kind === 'other') return done([notice('Not a regular file: a device, a socket or a pipe.')])
   if (type === 'image') {
     const mime = mimeOf(rec)
     return done([
@@ -193,10 +197,6 @@ async function load(
   }
   if (out.stdout.slice(0, BINARY_SCAN).includes('\u0000')) {
     return done([notice(`Binary file, ${kindOf(rec)}, ${sizeText(stat.size)}. The preview shows text only.`)])
-  }
-  const caps = {
-    maxLines: Math.min(config.preview.maxLines, limits.maxLines),
-    maxChars: Math.min(config.preview.maxChars, limits.maxChars),
   }
   const cut = stat.size > HEAD_BYTES || out.isStdoutTruncated === true
   const view = viewOf(rec, out.stdout, stat.size, cut, caps)

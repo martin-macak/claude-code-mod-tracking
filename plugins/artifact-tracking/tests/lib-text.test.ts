@@ -1,7 +1,7 @@
 // The text helpers of core/lib/text.ts: ages, the note of a tool, compact ids, first line. Cases moved from the legacy
 // view tests (plan L6, Task 13). Pure.
 import { expect, test } from 'claude-code/testing'
-import { ago, compactIds, firstLine, message, toolNote } from '../core/lib/text'
+import { ago, clip, compactIds, firstLine, message, toolNote } from '../core/lib/text'
 import type { ToolStatus } from './fixtures/contracts'
 
 const NOW = 1_000_000
@@ -68,4 +68,14 @@ test('firstLine and message', () => {
   expect(firstLine('')).toBe('')
   expect(message(new Error('boom'))).toBe('boom')
   expect(message('plain')).toBe('plain')
+})
+
+test('clip: cut to the cap in code units, and a surrogate pair is never split', () => {
+  expect(clip('abcdef', 3)).toBe('abc')
+  expect(clip('abc', 10)).toBe('abc')
+  expect(clip('abc', 0)).toBe('')
+  expect(clip('abc', -4)).toBe('')
+  expect(clip('a😀b', 2)).toBe('a') // the cut falls inside the pair: it goes whole, or not at all
+  expect(clip('a😀b', 3)).toBe('a😀')
+  expect(clip('', 5)).toBe('')
 })

@@ -34,9 +34,8 @@ function titleOf(owner: string, groups: readonly Titled[]): string {
  * Groups: the core pane keys, the core row keys, then one group per tracker that has keys, in order of first key.
  * `moreProblems` says how many problems the config left out of `problems`, with the line that counts them (issue #144).
  *
- * A key of the key line of the preview (`d`) is not listed: core holds it, so no tracker takes it, but no tracker has the mode yet
- * that the key would pick, and a help that names a key which does nothing misleads (issue #57, L2; the diff mode is issue #254).
- * The layer that adds the mode lists it.
+ * `d` (the diff mode of the preview, issue #254) is listed with the row keys, next to `v`. It has a Button on the key line of the preview
+ * only: in the list a press of `d` goes to the prompt, as any letter with no Button does. The README says where each key works.
  */
 export function helpModel(
   keys: readonly PaneKey[],
@@ -46,12 +45,11 @@ export function helpModel(
   version?: string,
   moreProblems?: HelpModel['moreProblems'],
 ): HelpModel {
-  const listed = keys.filter(k => k.bar !== 'preview')
-  const owners = [...new Set(listed.filter(k => k.owner !== 'core').map(k => k.owner))]
+  const owners = [...new Set(keys.filter(k => k.owner !== 'core').map(k => k.owner))]
   const groups: HelpGroup[] = [
-    { title: PANE_KEYS, keys: listed.filter(k => k.owner === 'core' && k.scope === 'pane') },
-    { title: ROW_KEYS, keys: listed.filter(k => k.owner === 'core' && k.scope === 'row') },
-    ...owners.map(owner => ({ title: titleOf(owner, drawn), keys: listed.filter(k => k.owner === owner) })),
+    { title: PANE_KEYS, keys: keys.filter(k => k.owner === 'core' && k.scope === 'pane') },
+    { title: ROW_KEYS, keys: keys.filter(k => k.owner === 'core' && k.scope === 'row') },
+    ...owners.map(owner => ({ title: titleOf(owner, drawn), keys: keys.filter(k => k.owner === owner) })),
   ]
   return { groups: groups.filter(g => g.keys.length > 0), configPath, problems, version, moreProblems }
 }

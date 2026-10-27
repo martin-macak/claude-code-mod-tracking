@@ -22,7 +22,7 @@ const message = (err: unknown): string => (err instanceof Error ? err.message : 
  * the mod does not know any other name. An exit 0 is a merge with no conflict, so the local refs differ from GitHub. An
  * exit 1 with a tree on stdout is a conflict; an exit 1 with none (a ref that is not there) is an error. The names come
  * NUL-separated (`-z`), so a space or a non-ASCII letter stays as written. `head` and `base` must be safe branch names:
- * the caller checks them (`SAFE_REF`), as they reach a command line.
+ * the caller checks them (`isSafeRef` of core), as they reach a command line.
  */
 export async function conflictFiles(
   git: GitRun,

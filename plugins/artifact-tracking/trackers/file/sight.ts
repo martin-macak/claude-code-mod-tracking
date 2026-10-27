@@ -7,6 +7,7 @@ import type { EnvName, FsStat } from '../../core/interfaces/ports'
 import type { FactsPort } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import { normalizePath } from '../../core/lib/paths'
+import { rootOf } from './facts'
 import { type IgnoreContext, isIgnored, pathCandidates, resolvePath } from './files'
 import { fileRecord } from './kind'
 import type { FileActivity, FileRecord, Sighting } from './types'
@@ -60,8 +61,7 @@ export class FileSight {
     this.cache.env ??= readFileEnv(this.d)
     const agents = this.d.facts.read<Json>('auto.agents') as unknown as SpawnProof[] | undefined
     const spawn = agentId === undefined ? undefined : agents?.find(a => a.id === agentId)?.cwd
-    const root = this.d.facts.read<Json>('auto.root')
-    const top = isRecord(root) && typeof root.cwd === 'string' ? root.cwd : undefined
+    const { cwd: top } = rootOf(this.d.facts)
     return { ...(await this.cache.env), cwd: spawn ?? (await this.d.session.cwd()), ...(top ? { root: top } : {}) }
   }
 

@@ -57,10 +57,13 @@ const blocksOf = (c: { blocks: readonly { kind: string }[] }) => c.blocks.map(b 
 const noticesOf = (c: { blocks: readonly { kind: string; text?: string }[] }) =>
   c.blocks.flatMap(b => (b.kind === 'notice' ? [b.text] : []))
 
-test('modes: a tracked file has the view mode and no other (the diff comes in a later layer); a row that is not tracked has no preview', async () => {
+test('modes: a tracked file has the view and the diff (issue #254); a row that is not tracked has no preview', async () => {
   const t = world()
   const key = await t.track('/work/a.ts', 'x')
-  expect(await t.m.previewModes(t.w.ports, 'file', key)).toEqual([{ id: 'view', enabled: true }])
+  expect(await t.m.previewModes(t.w.ports, 'file', key)).toEqual([
+    { id: 'view', enabled: true },
+    { id: 'diff', enabled: true },
+  ])
   expect(await t.m.previewModes(t.w.ports, 'file', 'file:/work/none.ts')).toBeUndefined()
   expect(t.m.keys.hasPreview('file')).toBe(true) // so the rows of the file tracker draw `v`
 })
@@ -102,7 +105,7 @@ test('view: a file that is gone says so, in the words of what happened to it, an
   const t = world()
   const key = await t.track('/work/gone.ts') // tracked, and not on the disk of the world
   expect(noticesOf(await t.load(key))).toEqual([
-    'The file is not there, or it could not be read: it was moved or deleted, or access was refused.',
+    'The file is not there, or it could not be read: it was moved or deleted, or access was refused. Press d for the diff.',
   ])
   await t.call(
     'Bash',
@@ -117,7 +120,7 @@ test('view: a file that is gone says so, in the words of what happened to it, an
       },
     },
   )
-  expect(noticesOf(await t.load(key))).toEqual(['Deleted by a Bash command: the file is gone.'])
+  expect(noticesOf(await t.load(key))).toEqual(['Deleted by a Bash command: the file is gone. Press d for the diff.'])
   expect(t.heads).toEqual([])
 })
 
@@ -245,9 +248,12 @@ test('view: a secret file is a notice in every mode: the secret rule comes befor
   const diff = (key: string) => t.m.loadPreview(t.w.ports, 'file', key, 'diff')
   expect(noticesOf(await diff(secret))).toEqual([SECRET_NOTICE])
   expect(JSON.stringify(await diff(secret))).not.toContain('TOP-SECRET')
-  // A mode that the provider does not have yet says so, for a file that is no secret.
-  expect(noticesOf(await diff(plain))).toEqual(['This mode is not available for a file yet.'])
+  // A mode that the provider does not have says so, for a file that is no secret.
+  const detail = (key: string) => t.m.loadPreview(t.w.ports, 'file', key, 'detail')
+  expect(noticesOf(await detail(plain))).toEqual(['This mode is not available for a file.'])
+  expect(noticesOf(await detail(secret))).toEqual([SECRET_NOTICE])
   expect(t.heads).toEqual([])
+  expect(t.w.calls.filter(c => c[0] === 'git')).toEqual([]) // the diff of a secret file never runs git
 })
 
 test('view: a secretPaths glob that starts with ~/ and a home folder that the engine will not tell: no preview reads a file, and the notice says why (m15)', async () => {
@@ -309,7 +315,7 @@ test('view: a file whose stat fails says that it may be missing or refused (m16)
   const key = await t.track('/work/locked.txt', 'x')
   t.w.ports.fs.stat = async () => null // a stat that fails: a missing file and a refused one look alike
   expect(noticesOf(await t.load(key))).toEqual([
-    'The file is not there, or it could not be read: it was moved or deleted, or access was refused.',
+    'The file is not there, or it could not be read: it was moved or deleted, or access was refused. Press d for the diff.',
   ])
 })
 

@@ -118,6 +118,18 @@ export function prepareClone(repoRoot: string, parent: string): string {
   return clone
 }
 
+/**
+ * Gives a clone from `prepareClone` an `origin/HEAD` at its own HEAD, as the clone of a repo on a branch has. `git clone` sets
+ * `origin/HEAD` only when the source is on a branch (or detached at the tip of its default branch). From a checkout that is detached
+ * anywhere else (a rebase in progress, a bisect, the merge ref of a CI run) the clone has none, and the diff mode of the preview says
+ * that it has no base. The scenarios of that mode pin the base, so they do not depend on how the harness was started.
+ */
+export function pinOriginHead(clone: string): void {
+  const head = gitIn(clone, ['rev-parse', 'HEAD'])
+  gitIn(clone, ['update-ref', 'refs/remotes/origin/main', head])
+  gitIn(clone, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'])
+}
+
 /** The local copy that stands in for the origin of a fake GitHub repo. Beside the clone, so teardown can remove both. */
 export const FAKE_ORIGIN_NAME = 'fake-origin.git'
 

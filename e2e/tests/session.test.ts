@@ -14,6 +14,7 @@ import {
   type LaunchSpec,
   launchCommand,
   listRefs,
+  pinOriginHead,
   prepareClone,
   READY_MARKERS,
   shellQuote,
@@ -252,6 +253,40 @@ test('prepareClone checks out HEAD on main with the real origin', () => {
   writeFileSync(join(clone, 'junk'), 'y')
   prepareClone(repo, parent)
   assert.throws(() => readFileSync(join(clone, 'junk')))
+})
+
+test('pinOriginHead gives a clone of a source that is detached an origin/HEAD at its HEAD (m1 of the review of #289)', () => {
+  const repo = tempDir('repo-')
+  const git = (args: string[], cwd = repo) =>
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf8' }).trim()
+  git(['init', '-q', '-b', 'main'])
+  writeFileSync(join(repo, 'f'), 'x')
+  git(['add', 'f'])
+  git(['commit', '-q', '-m', 'c'])
+  writeFileSync(join(repo, 'f'), 'y')
+  git(['commit', '-q', '-am', 'd'])
+  git(['remote', 'add', 'origin', 'git@github.com:o/r.git'])
+  git(['checkout', '-q', '--detach', 'HEAD~1']) // a checkout in the middle of a rebase or a bisect: on no branch, below the tip of main
+  const head = git(['rev-parse', 'HEAD'])
+
+  const clone = prepareClone(repo, tempDir('parent-'))
+  const originHead = () => {
+    try {
+      return git(['symbolic-ref', '-q', 'refs/remotes/origin/HEAD'], clone)
+    } catch {
+      return ''
+    }
+  }
+  assert.equal(originHead(), '', 'git sets no origin/HEAD for a source that is detached below the tip of main')
+  pinOriginHead(clone)
+  assert.equal(originHead(), 'refs/remotes/origin/main')
+  assert.equal(
+    git(['merge-base', 'HEAD', 'origin/HEAD'], clone),
+    head,
+    'the base of a diff in the clone is its own HEAD',
+  )
+  pinOriginHead(clone) // a second call changes nothing
+  assert.equal(originHead(), 'refs/remotes/origin/main')
 })
 
 test('prepareClone works from a linked worktree on an unpushed branch', () => {

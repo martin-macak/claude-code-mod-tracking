@@ -85,8 +85,27 @@ The preview of a file row is the one place where the mod reads a file. It reads 
 
 The secret rule and the caps are in the [README](../../../../plugins/artifact-tracking/README.md#preview-of-a-file).
 
+## What the diff reads (issue #254)
+
+The diff mode of the preview runs `git` at the press of `d`, in the folder of the file, and keeps the output in module memory only, as the view does. A probe that the view starts when it opens runs the first calls (`rev-parse`, `merge-base`) to learn whether `d` has a diff to show. The answers below are the ones the design study saw in a throwaway clone with `origin/HEAD -> origin/main` (probe P4). `git` ran in a shell, not through `ctx.tools.run`, so the exit codes are `observed` and the call through the tool port is `verified-kit` (a fake git with these answers, `tests/file-diff.test.ts`). The design is in the [tree-table page](../../claude-code-mod-architecture/tree-table.md#the-diff-mode-issue-254).
+
+| Call | Answer | Grade |
+| --- | --- | --- |
+| `git diff <commit> -- <file>`, a changed file | Hunks, exit 0, with the preamble (`diff --git`, `index`, `---`, `+++`). `Code format="diff"` draws the hunks and skips the preamble. | `observed`, `verified-live` (draw, probe P2) |
+| The same, a file with no change | Empty output, exit 0 | `observed` |
+| The same, a deleted file | `deleted file mode`, then a full deletion hunk (`@@ -1 +0,0 @@`), exit 0 | `observed` |
+| The same, a binary file | `Binary files a/x and b/x differ`, exit 0 (`--numstat` gives `-\t-`) | `observed` |
+| The same, a file that git does not track | Empty output, exit 0: a diff against a commit shows no file that git does not know | `observed` |
+| `git diff --no-index -- /dev/null <file>`, an untracked file | The whole file as added (`new file mode`, `@@ -0,0 +1,2 @@`), exit 1: exit 1 is the result of `--no-index` when the two sides differ | `observed` |
+| `git rev-parse` or `git diff` outside a repository | `fatal: not a git repository (or any of the parent directories): .git`, exit 128 | `observed` |
+| `git merge-base HEAD origin/HEAD` with no `origin/HEAD` | `fatal: ambiguous argument` or `Not a valid object name`, exit 128 | `observed` |
+| `git merge-base HEAD feat` and `git merge-base HEAD origin/HEAD` | Two different commits: a stacked branch diffs against its PR base only when the base is known | `observed` |
+
+The mod pins the global options (`--no-optional-locks`, `--literal-pathspecs`, `core.quotePath=false`, `core.fsmonitor=false`, `diff.relative=false`) and the flags of every diff call (`--no-ext-diff`, `--no-textconv`, `--no-color`, `--no-renames`, `--ignore-submodules=dirty`, `--unified=3`), and sets `LC_ALL=C`. The engine's own diff mod pins the same diff flags. A diff over 1,000,000 bytes is a notice and no content: the limit counts bytes, and the engine draws no more than 100,000 characters of a `Code` in all. The mod reads two facts and writes one: `github.branchPr` (the PR of the session branch, from the github tracker) and `auto.root` (the top of the session repo), and `file.diffOff` (the folders where git said that there is no repo or no base, each with the reason and the time, so that `modes()` can turn `d` off with the reason; an answer holds 60 s). The cases, the notices and the cut are in the [README](../../../../plugins/artifact-tracking/README.md#diff-of-a-file).
+
 ## Not tested
 
+- The diff against a real PR base that the PR lane found (`github.branchPr` on a live session with a stacked PR), and a diff on a Linux host.
 - `bashEditDiff` in the default permission mode, with and without `bashEditDiffEnabled`.
 - `bashEditDiff` after a cold resume with no stored copy: the replay reads the field from the stored tool result, and nobody checked that a transcript keeps it.
 - A subagent's Bash call with an `agentId`.
