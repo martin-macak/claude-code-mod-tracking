@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { code } from './errno.ts'
+import { RunQueue } from './lock-queue.ts'
 import { sleep as realSleep } from './wait.ts'
 
 function isAlive(pid: number): boolean {
@@ -8,14 +10,12 @@ function isAlive(pid: number): boolean {
     process.kill(pid, 0)
     return true
   } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'EPERM'
+    return code(err) === 'EPERM'
   }
 }
 
-const code = (err: unknown) => (err as NodeJS.ErrnoException).code
-
 // What kept the lock from a claim:
-// - `lock`: a live run holds the lock file.
+// - `lock`: a live run holds the lock file, or (with a queue) a live run is ahead of this run in the queue.
 // - `guard`: a live run holds the takeover guard of a stale lock, or the rounds ran out.
 // - `self`: this process holds the lock, so waiting could not end.
 // - `timeout`: the claim waited for the bound and gave up.
@@ -32,6 +32,14 @@ export class LockBusyError extends Error {
     this.kind = kind
   }
 }
+
+// A scenario of this process kept the lock, so waiting for it could not end.
+const selfHolds = (file: string) =>
+  new LockBusyError(
+    `lock: this process (pid ${process.pid}) already holds ${file}: a scenario did not release it`,
+    process.pid,
+    'self',
+  )
 
 // The pid in a lock file, or undefined when the file is gone.
 function readPid(file: string): number | undefined {
@@ -197,7 +205,7 @@ export const LOCK_POLL_MS = 5000
 const REMIND_MS = 60_000
 
 export type ClaimOptions = {
-  /** How long to wait for a lock that a live run holds. 0: fail at once. */
+  /** How long to wait for a lock that a live run holds, or for the runs ahead in the queue. 0: fail at once. */
   waitMs: number
   pollMs?: number
   /** The clock and the sleep of the wait. A test passes fakes, so no real time passes. */
@@ -211,6 +219,8 @@ export type ClaimOptions = {
   guardPause?: (ms: number) => void
   /** Gets each note about the wait. The default writes to stderr: the formatter owns stdout. */
   onWait?: (note: string) => void
+  /** The place of this run in the queue of runs (lock-queue.ts). Absent: no queue, and the lock goes to whoever tries first. */
+  queue?: RunQueue
 }
 
 // The pid and, for a live process, the time it runs and its command line, as `ps` tells them. The command
@@ -246,6 +256,14 @@ function seconds(ms: number): string {
 // in that moment would fail the next scenario of that run at once (issue #143). So once a busy answer has named
 // the holder of the lock file, the claim tries again only when no such run lives or the file is there again.
 // The claim of a run that lives on without the lock, and does not take it again, gives up after the bound.
+//
+// With a queue (issue #177) the runs get the lock in the order they came. Each try asks the queue first. A run that is not
+// first does not try the lock, so it cannot take the instant between two scenarios of the run that is first: it waits for the
+// first run (the notes and the timeout say "is ahead of this run in the queue"). A run that is first does what is described
+// above. A holder with no ticket, an older checkout, is waited for as before. A holder with a ticket is not: the queue orders
+// it. Two runs that start at once share a ticket number, and the lower pid is first. If the other run took the lock first, the
+// first run takes it the moment it is free, and the holder waits behind the first run for its next scenarios. The lock still
+// decides who holds it: the queue only orders the runs that wait, and `acquireLock` does not know it.
 async function waitForLock(dir: string, opts: ClaimOptions): Promise<() => void> {
   const {
     waitMs,
@@ -255,18 +273,45 @@ async function waitForLock(dir: string, opts: ClaimOptions): Promise<() => void>
     describeHolder: who = describeHolder,
     isLive = isAlive,
     guardPause,
+    queue,
   } = opts
   const say = opts.onWait ?? ((note: string) => void process.stderr.write(`${note}\n`))
   const file = join(dir, '.lock')
   const start = now()
   let holder: number | undefined // The run that held the lock file when the last try failed.
+  let holderTicketed = false // Whether that run had a ticket when the busy answer named it.
   let waitingFor: number | undefined // The run that the notes and the timeout name.
   let named: number | undefined // The run that the last note named.
+  let namedBehind = false // Whether the last note used the queue wording.
   let said = false
   let notedAt = 0
   for (;;) {
-    const between = holder !== undefined && isLive(holder) && readPid(file) === undefined
-    if (!between) {
+    let behind = false // A live run is ahead of this one in the queue.
+    if (queue !== undefined) {
+      // A scenario of this process that kept the lock: waiting could not end. Fail at once, also for a run that is behind.
+      if (readPid(file) === process.pid) throw selfHolds(file)
+      // Every run is in the queue from its first claim, also a run that does not wait: it keeps its place while it runs.
+      const place = queue.place(isLive)
+      if (!place.first) {
+        if (waitMs <= 0) {
+          throw new LockBusyError(
+            `lock: another demo run (pid ${place.headPid}) is ahead of this run in the queue for ${file}`,
+            place.headPid,
+            'lock',
+          )
+        }
+        behind = true
+        waitingFor = place.headPid
+        holder = undefined
+      }
+    }
+    // A holder with a ticket is ordered by the queue: the run that is first takes the free lock, and the next claim of the holder
+    // waits behind it. Only a holder with no ticket (an older checkout) is waited for by its process. Else two runs that share a
+    // ticket number could wait for each other, with the lock free, until the bound. The ticket is checked when the busy answer
+    // names the holder, not now: a holder that had one and left the queue (the `AfterAll` hook) has no next scenario, and its
+    // process may live on, so waiting for the process could last until the bound.
+    const between = holder !== undefined && isLive(holder) && readPid(file) === undefined && !holderTicketed
+    if (!behind && !between) {
       try {
         // A try that finds the guard of a live run pauses for it, and does not return before. So it pauses for as long as
         // the claim has time left, and not at all with no wait (issue #168 review).
@@ -278,35 +323,38 @@ async function waitForLock(dir: string, opts: ClaimOptions): Promise<() => void>
       } catch (err) {
         if (!(err instanceof LockBusyError)) throw err
         // A run that waits for its own pid would wait for ever: a scenario of this process kept the lock.
-        if (err.kind === 'lock' && err.pid === process.pid) {
-          throw new LockBusyError(
-            `lock: this process (pid ${process.pid}) already holds ${file}: a scenario did not release it`,
-            err.pid,
-            'self',
-          )
-        }
+        if (err.kind === 'lock' && err.pid === process.pid) throw selfHolds(file)
         if (waitMs <= 0) throw err
         waitingFor = err.pid
         holder = err.kind === 'lock' ? err.pid : undefined
+        holderTicketed = holder !== undefined && (queue?.has(holder) ?? false)
       }
     }
     const waited = now() - start
     const describe = () => (waitingFor === undefined ? 'a live run' : who(waitingFor)) // `ps` runs only when a note needs it.
     if (waited >= waitMs) {
+      // The run ahead in the queue does not necessarily hold the lock: it is ahead, and the lock is its to take first.
+      const reason = behind
+        ? `is ahead of this run in the queue for ${file}. Waited ${seconds(waited)} for its turn and gave up. `
+        : `holds ${file}. Waited ${seconds(waited)} for it and gave up. `
       throw new LockBusyError(
-        `lock: another demo run (pid ${waitingFor}) holds ${file}. Waited ${seconds(waited)} for it and gave up. ` +
+        `lock: another demo run (pid ${waitingFor}) ${reason}` +
           `It still runs (${describe()}). Wait for it to end, or set DEMO_LOCK_WAIT_S above ${Math.round(waitMs / 1000)}.`,
         waitingFor,
         'timeout',
       )
     }
-    if (!said || waitingFor !== named) {
+    if (!said || waitingFor !== named || behind !== namedBehind) {
       say(
-        `lock: another demo run holds ${file}: ${describe()}. Waiting for it ` +
-          `(poll every ${seconds(pollMs)}, give up after ${seconds(waitMs)}).`,
+        behind
+          ? `lock: another demo run is ahead of this run in the queue for ${file}: ${describe()}. Waiting for its turn ` +
+              `(poll every ${seconds(pollMs)}, give up after ${seconds(waitMs)}).`
+          : `lock: another demo run holds ${file}: ${describe()}. Waiting for it ` +
+              `(poll every ${seconds(pollMs)}, give up after ${seconds(waitMs)}).`,
       )
       said = true
       named = waitingFor
+      namedBehind = behind
       notedAt = waited
     } else if (waited - notedAt >= REMIND_MS) {
       say(`lock: still waiting after ${seconds(waited)} for ${describe()}.`)
@@ -318,7 +366,8 @@ async function waitForLock(dir: string, opts: ClaimOptions): Promise<() => void>
 
 // Takes the lock first, then wipes and makes the scenario folder, so a second run never
 // touches the files of a run that is still going. A lock that a live run holds is waited for (see
-// waitForLock), not failed on at once.
+// waitForLock), not failed on at once. It knows no tickets: the claimer that owns the queue gives the ticket back when a claim
+// fails (see makeClaimer).
 export async function claimRun(lockDir: string, runDir: string, opts: ClaimOptions): Promise<() => void> {
   const release = await waitForLock(lockDir, opts)
   try {
@@ -333,13 +382,34 @@ export async function claimRun(lockDir: string, runDir: string, opts: ClaimOptio
 
 // A `claimRun` for all the scenarios of one run. A run of 20 scenarios that waits the whole bound for
 // each of them would wait for 20 bounds. So after the first timeout the later scenarios try once and
-// fail at once, unless the lock is free by then.
-export function makeClaimer(opts: ClaimOptions): (lockDir: string, runDir: string) => Promise<() => void> {
+// fail at once, unless the lock is free and no live run is ahead in the queue by then.
+//
+// The claimer also holds the place of its run in the queue of runs (lock-queue.ts), one queue for each lock folder. The
+// run joins at its first claim and keeps its ticket through all its scenarios, so the runs get the lock in the order they
+// came. A claim that fails, for any reason, gives the ticket back: a run that gave up or does not wait holds no one back, and
+// its next scenario joins again at the back. `leave()` gives it back when the run is done: the AfterAll
+// hook of world.ts calls it, so a run whose process lingers after its last scenario holds no one back. The exit of the
+// process gives it back too, but not a signal: the next run removes the ticket of a dead process.
+export type Claimer = ((lockDir: string, runDir: string) => Promise<() => void>) & {
+  /** Leaves the queue of every lock folder. Safe to call twice. The lock that a scenario holds stays. */
+  leave: () => void
+}
+
+export function makeClaimer(opts: Omit<ClaimOptions, 'queue'>): Claimer {
   let gaveUp: string | undefined
-  return async (lockDir, runDir) => {
+  const queues = new Map<string, RunQueue>()
+  const queueOf = (lockDir: string) => {
+    let queue = queues.get(lockDir)
+    if (queue === undefined) {
+      queue = new RunQueue(lockDir)
+      queues.set(lockDir, queue)
+    }
+    return queue
+  }
+  const attempt = async (lockDir: string, runDir: string, queue: RunQueue) => {
     if (gaveUp === undefined) {
       try {
-        return await claimRun(lockDir, runDir, opts)
+        return await claimRun(lockDir, runDir, { ...opts, queue })
       } catch (err) {
         // Only a claim that waited the whole bound says so. A failure at once waited for nothing.
         if (err instanceof LockBusyError && err.kind === 'timeout') gaveUp = seconds(opts.waitMs)
@@ -347,7 +417,7 @@ export function makeClaimer(opts: ClaimOptions): (lockDir: string, runDir: strin
       }
     }
     try {
-      return await claimRun(lockDir, runDir, { ...opts, waitMs: 0 })
+      return await claimRun(lockDir, runDir, { ...opts, waitMs: 0, queue })
     } catch (err) {
       if (!(err instanceof LockBusyError) || err.kind === 'self') throw err
       throw new LockBusyError(
@@ -357,4 +427,18 @@ export function makeClaimer(opts: ClaimOptions): (lockDir: string, runDir: strin
       )
     }
   }
+  const claim = async (lockDir: string, runDir: string) => {
+    const queue = queueOf(lockDir)
+    try {
+      return await attempt(lockDir, runDir, queue)
+    } catch (err) {
+      queue.leave()
+      throw err
+    }
+  }
+  return Object.assign(claim, {
+    leave: () => {
+      for (const queue of queues.values()) queue.leave()
+    },
+  })
 }
