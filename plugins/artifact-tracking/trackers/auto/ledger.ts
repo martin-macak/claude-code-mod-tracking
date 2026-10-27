@@ -2,7 +2,7 @@
 // Pure functions over AutoState. A call that changes nothing returns its input object (A22).
 
 import { normPath } from '../../core/lib/porcelain'
-import { turnSpan } from '../../core/lib/turn-span'
+import { stampedTurn, turnSpan } from '../../core/lib/turn-span'
 import { AUTO_DEFAULTS } from './config'
 import type {
   AgentProof,
@@ -39,9 +39,19 @@ function isRootPath(s: AutoState, path: string): boolean {
   return path === normPath(s.root.cwd) || (typeof s.root.top === 'string' && path === normPath(s.root.top))
 }
 
+/** `s` with proof `i` replaced by `next`, or `s` itself when `next` is the same object (A22). */
+function putWorktree(s: AutoState, i: number, next: WorktreeProof): AutoState {
+  if (next === s.worktrees[i]) return s
+  const worktrees = s.worktrees.slice()
+  worktrees[i] = next
+  return { ...s, worktrees }
+}
+
 /**
- * Adds a proof for `path`, or updates the branch of the one that exists. The root path never becomes a proof. The list
- * keeps the newest `maxProofs`.
+ * Adds a proof for `path`, or updates the one that exists. The root path never becomes a proof. The list keeps the newest
+ * `maxProofs`. `turn` (issue #205) is the turn of the event that names the worktree: a new proof gets it for both stamps, and
+ * a known one gets the span (`stampedTurn`). A known proof that the event changes in neither its branch nor its stamps comes
+ * back as `s`, so a repeat of the turn writes nothing (A22).
  */
 function withProof(
   s: AutoState,
@@ -49,23 +59,27 @@ function withProof(
   make: () => WorktreeProof,
   branch: string | undefined,
   maxProofs: number,
+  turn?: number,
 ): AutoState {
   if (isRootPath(s, path)) return s
   const i = s.worktrees.findIndex(w => w.path === path)
-  if (i < 0) return { ...s, worktrees: [...s.worktrees, make()].slice(-maxProofs) }
+  if (i < 0) {
+    const proof = make()
+    const added = turn === undefined ? proof : stampedTurn(proof, turn)
+    return { ...s, worktrees: [...s.worktrees, added].slice(-maxProofs) }
+  }
   const w = s.worktrees[i]!
-  if (branch === undefined || w.branch === branch) return s
-  const worktrees = s.worktrees.slice()
-  worktrees[i] = { ...w, branch }
-  return { ...s, worktrees }
+  const stamped = turn === undefined ? w : stampedTurn(w, turn)
+  return putWorktree(s, i, branch === undefined || w.branch === branch ? stamped : { ...stamped, branch })
 }
 
-/** Proof 1 (A4): an EnterWorktree result path. */
+/** Proof 1 (A4): an EnterWorktree result path. `turn` (issue #205) is the turn of the call: it stamps the proof. */
 export function recordEnter(
   s: AutoState,
   ev: EnterFacts,
   at: number,
   maxProofs: number = AUTO_DEFAULTS.maxProofs,
+  turn?: number,
 ): AutoState {
   const path = normPath(ev.path)
   return withProof(
@@ -79,7 +93,19 @@ export function recordEnter(
     },
     ev.branch,
     maxProofs,
+    turn,
   )
+}
+
+/**
+ * An `ExitWorktree` result names a worktree again (issue #205): a known proof gets the turn, and no proof is ever made. The
+ * root path, an unknown path and a call with no turn running return `s`.
+ */
+export function recordExit(s: AutoState, path: string, turn?: number): AutoState {
+  if (turn === undefined) return s
+  const p = normPath(path)
+  const i = s.worktrees.findIndex(w => w.path === p)
+  return i < 0 ? s : putWorktree(s, i, stampedTurn(s.worktrees[i]!, turn))
 }
 
 /** The identity of a PR proof: host, owner, repo and number, lower case, as the item key lowers them. */
@@ -184,12 +210,16 @@ export function recordActivity(s: AutoState, agentId: string, at: number): AutoS
   return patchAgent(s, i, { lastActiveAt: at, endedAt: undefined, stale: undefined })
 }
 
-/** Proof 2 (A4): the exact `worktreePath` of an Agent result. Also sets the agent's path and branch. */
+/**
+ * Proof 2 (A4): the exact `worktreePath` of an Agent result. Also sets the agent's path and branch. `turn` (issue #205) is the
+ * turn of the result: it stamps the proof of the path as `recordEnter` does.
+ */
 export function recordAgentResult(
   s: AutoState,
   ev: AgentResultFacts,
   at: number,
   maxProofs: number = AUTO_DEFAULTS.maxProofs,
+  turn?: number,
 ): AutoState {
   if (ev.worktreePath === undefined) return s
   const path = normPath(ev.worktreePath)
@@ -204,6 +234,7 @@ export function recordAgentResult(
     },
     ev.worktreeBranch,
     maxProofs,
+    turn,
   )
   const i = indexOfAgent(next, ev.agentId)
   if (i >= 0) {

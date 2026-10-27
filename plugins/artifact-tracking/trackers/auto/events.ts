@@ -2,7 +2,15 @@
 // An unknown shape gives null or an empty object, so the hooks in register.tsx hold no parsing of their own.
 
 import { isRecord, type Json } from '../../core/lib/json'
-import type { AgentResultFacts, BashFacts, EnterFacts, PrFacts, SpawnFacts, TurnCompleteReason } from './types'
+import type {
+  AgentResultFacts,
+  BashFacts,
+  EnterFacts,
+  ExitFacts,
+  PrFacts,
+  SpawnFacts,
+  TurnCompleteReason,
+} from './types'
 
 /** A shell command that can change worktrees or branches. `echo git` does not match. */
 export const GIT_CMD = /\bgit\s+(?:-C\s+\S+\s+)?(?:worktree|checkout|switch|branch)\b/
@@ -20,6 +28,16 @@ export function fromEnterResult(ran: unknown, agentId?: string): EnterFacts | nu
   if (!r || path === undefined) return null
   const branch = str(r.worktreeBranch)
   return { path, ...(branch !== undefined ? { branch } : {}), ...(agentId !== undefined ? { agentId } : {}) }
+}
+
+/**
+ * ExitWorktree result: `worktreePath`, the same string as the `EnterWorktree` result. null when `ran` has no record with a path.
+ * A refused call (`remove` with uncommitted files and no `discard_changes`) is assumed to answer with an error text, not a
+ * record [inference, not run live] (issue #205).
+ */
+export function fromExitResult(ran: unknown): ExitFacts | null {
+  const path = str(resultOf(ran)?.worktreePath)
+  return path === undefined ? null : { path }
 }
 
 /** Agent result: `completed` has the path and branch, `async_launched` has the id only. */

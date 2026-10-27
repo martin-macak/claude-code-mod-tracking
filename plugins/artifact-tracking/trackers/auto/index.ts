@@ -27,7 +27,7 @@ import { LoadState } from '../../core/lib/load-state'
 import { autoCleanup } from './clean'
 import { type AutoConfig, autoConfig } from './config'
 import { autoIds } from './dismiss'
-import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd } from './events'
+import { fromAgentResult, fromBash, fromEnterResult, fromExitResult, fromSpawn, fromTurnEnd } from './events'
 import { FACT_AGENTS, FACT_BRANCHES, FACT_CHECKED_AT, FACT_PRS, FACT_ROOT } from './facts'
 import { MASTER_ID } from './ids'
 import {
@@ -38,6 +38,7 @@ import {
   recordAgentBranch,
   recordAgentResult,
   recordEnter,
+  recordExit,
   recordPr,
   recordSpawn,
   recordTurnEnd,
@@ -46,7 +47,7 @@ import { autoReasonsOf } from './reasons'
 import { AutoRound } from './round'
 import { AutoScheduler } from './scheduler'
 import { sections } from './sections'
-import { autoTurnsOf, spawnSightings } from './turns'
+import { autoTurnsOf, spawnSightings, worktreeSightings } from './turns'
 import type { AutoReason, AutoState, BranchesFact } from './types'
 
 export { autoDismiss } from './dismiss-store'
@@ -190,15 +191,40 @@ const onStart: H<StartEvent> = soft('start', async (ctx, ev) => {
   }
 })
 
+/**
+ * An event that names the worktree at `path` (issue #205): `change` writes the proof with the turn of the event, and the turn
+ * lists the worktree (`worktreeSightings`). A proof that the event did not make or keep (the root, a path no proof holds) gets
+ * no entry, and a call with no turn running stamps and lists nothing. A round has no turn, so it never comes through here.
+ */
+async function nameWorktree(
+  ctx: Ctx,
+  path: string,
+  change: (s: AutoState, turn: number | undefined) => AutoState,
+): Promise<void> {
+  const turn = ctx.turn
+  let before: AutoState | undefined
+  const after = await setAuto(ctx, s => {
+    before = s // the last run is the one that wrote
+    return change(s, turn?.ord)
+  })
+  if (turn !== undefined && before !== undefined) await turn.note(worktreeSightings(turn.ord, path, before, after))
+}
+
 const onEnter: H<ToolCallEvent> = soft('EnterWorktree', async (ctx, ev) => {
   const f = fromEnterResult(ev.result, ev.agentId)
-  if (f) await setAuto(ctx, s => recordEnter(s, f, ctx.clock.wall(), ctx.config.slice().maxProofs))
+  if (f)
+    await nameWorktree(ctx, f.path, (s, turn) =>
+      recordEnter(s, f, ctx.clock.wall(), ctx.config.slice().maxProofs, turn),
+    )
   await touch(ctx, ev.agentId)
   kick(ctx, 'worktree')
 })
 
-// The next round marks the child removed (remove) or keeps it live (keep).
+// The next round marks the child removed (remove) or keeps it live (keep). The call names a known worktree again, and never
+// makes a proof. A refused call has no path in its result and names nothing.
 const onExit: H<ToolCallEvent> = soft('ExitWorktree', async (ctx, ev) => {
+  const f = fromExitResult(ev.result)
+  if (f) await nameWorktree(ctx, f.path, (s, turn) => recordExit(s, f.path, turn))
   await touch(ctx, ev.agentId)
   kick(ctx, 'worktree')
 })
@@ -206,7 +232,9 @@ const onExit: H<ToolCallEvent> = soft('ExitWorktree', async (ctx, ev) => {
 const onAgent: H<ToolCallEvent> = soft('Agent', async (ctx, ev) => {
   const f = fromAgentResult(ev.result)
   if (f?.worktreePath !== undefined)
-    await setAuto(ctx, s => recordAgentResult(s, f, ctx.clock.wall(), ctx.config.slice().maxProofs))
+    await nameWorktree(ctx, f.worktreePath, (s, turn) =>
+      recordAgentResult(s, f, ctx.clock.wall(), ctx.config.slice().maxProofs, turn),
+    )
   await touch(ctx, ev.agentId)
   kick(ctx, 'agent')
 })

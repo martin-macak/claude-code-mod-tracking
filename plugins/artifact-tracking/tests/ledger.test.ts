@@ -8,6 +8,7 @@ import {
   recordAgentBranch,
   recordAgentResult,
   recordEnter,
+  recordExit,
   recordPr,
   recordSpawn,
   recordTurnEnd,
@@ -63,6 +64,62 @@ test('recordEnter stores the path without a trailing slash and remembers the own
   const a = recordEnter(rooted(), { path: '/r/.claude/worktrees/w/', agentId: 'ag1' }, AT)
   expect(a.worktrees[0]?.path).toBe('/r/.claude/worktrees/w')
   expect(a.worktrees[0]?.owner).toBe('ag1')
+})
+
+const W = '/r/.claude/worktrees/w'
+
+test('recordEnter with a turn stamps a new proof for both stamps; with no turn it stamps nothing (issue #205)', () => {
+  const a = recordEnter(rooted(), { path: W, branch: 'b' }, AT, LIMITS.maxProofs, 3)
+  expect(a.worktrees).toEqual([{ path: W, origin: 'enter', branch: 'b', provenAt: AT, firstTurn: 3, lastTurn: 3 }])
+  expect(recordEnter(rooted(), { path: W, branch: 'b' }, AT).worktrees[0]).not.toHaveProperty('firstTurn')
+})
+
+test('recordEnter of a known path: the same turn is the same object, a later turn moves lastTurn, an older one lowers firstTurn only', () => {
+  const a = recordEnter(rooted(), { path: W, branch: 'b' }, AT, LIMITS.maxProofs, 3)
+  expect(recordEnter(a, { path: W, branch: 'b' }, AT + 1, LIMITS.maxProofs, 3)).toBe(a)
+  expect(recordEnter(a, { path: W, branch: 'b' }, AT + 1)).toBe(a) // no turn running: nothing to stamp
+  const b = recordEnter(a, { path: W, branch: 'b' }, AT + 2, LIMITS.maxProofs, 5)
+  expect(b).not.toBe(a)
+  expect(b.worktrees[0]).toMatchObject({ firstTurn: 3, lastTurn: 5, provenAt: AT })
+  expect(recordEnter(b, { path: W, branch: 'b' }, AT + 3, LIMITS.maxProofs, 5)).toBe(b)
+  expect(recordEnter(b, { path: W, branch: 'b' }, AT + 3, LIMITS.maxProofs, 4)).toBe(b) // inside the span already
+  const c = recordEnter(b, { path: W, branch: 'b' }, AT + 4, LIMITS.maxProofs, 2) // late work of an older turn
+  expect(c.worktrees[0]).toMatchObject({ firstTurn: 2, lastTurn: 5 })
+})
+
+test('recordEnter of a known path with a new branch and a new turn changes both in one step', () => {
+  const a = recordEnter(rooted(), { path: W, branch: 'b' }, AT, LIMITS.maxProofs, 3)
+  const b = recordEnter(a, { path: W, branch: 'renamed' }, AT + 1, LIMITS.maxProofs, 5)
+  expect(b.worktrees[0]).toMatchObject({ branch: 'renamed', firstTurn: 3, lastTurn: 5 })
+})
+
+test('recordEnter gives a proof that no turn stamped (a round made it, or an event with no turn running) both stamps of the turn', () => {
+  const a = recordEnter(rooted(), { path: W, branch: 'b' }, AT)
+  const b = recordEnter(a, { path: W, branch: 'b' }, AT + 1, LIMITS.maxProofs, 4)
+  expect(b.worktrees[0]).toMatchObject({ firstTurn: 4, lastTurn: 4 })
+})
+
+test('recordAgentResult with a turn stamps the proof of its path as recordEnter does; a repeat of the turn is the same object', () => {
+  const s = recordSpawn(rooted(), sp('a1'), AT, '/r')
+  const path = '/r/.claude/worktrees/agent-a1'
+  const t = recordAgentResult(s, { agentId: 'a1', worktreePath: path }, AT + 1, LIMITS.maxProofs, 3)
+  expect(t.worktrees[0]).toMatchObject({ path, origin: 'agent', firstTurn: 3, lastTurn: 3 })
+  expect(recordAgentResult(t, { agentId: 'a1', worktreePath: path }, AT + 2, LIMITS.maxProofs, 3)).toBe(t)
+  const u = recordAgentResult(t, { agentId: 'a1', worktreePath: path }, AT + 2, LIMITS.maxProofs, 6)
+  expect(u.worktrees[0]).toMatchObject({ firstTurn: 3, lastTurn: 6 })
+  expect(recordAgentResult(s, { agentId: 'a1' }, AT, LIMITS.maxProofs, 3)).toBe(s) // no path: nothing to stamp
+  expect(recordAgentResult(s, { agentId: 'a1', worktreePath: '/r/' }, AT, LIMITS.maxProofs, 3)).toBe(s) // the root
+})
+
+test('recordExit stamps the proof of a known path and makes none: an unknown path, the root and no turn return the same object', () => {
+  const a = recordEnter(rooted(), { path: W }, AT, LIMITS.maxProofs, 3)
+  const b = recordExit(a, W, 5)
+  expect(b.worktrees).toEqual([{ path: W, origin: 'enter', provenAt: AT, firstTurn: 3, lastTurn: 5 }])
+  expect(recordExit(b, `${W}/`, 5)).toBe(b) // the same turn again, also with a trailing slash
+  expect(recordExit(a, W, undefined)).toBe(a)
+  expect(recordExit(a, '/r/.claude/worktrees/other', 5)).toBe(a)
+  expect(recordExit(a, '/r', 5)).toBe(a)
+  expect(recordExit(rooted(), W, 5).worktrees).toEqual([])
 })
 
 test('proofs and agents are capped at the newest', () => {

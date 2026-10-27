@@ -29,6 +29,12 @@ export const EXIT_RAN = {
   text: 'Removed worktree',
 }
 
+/** ExitWorktree with `keep`: the shape of `EXIT_RAN` with the other action (types only: the saved run has `remove` only). */
+export const EXIT_KEEP_RAN = {
+  result: { ...EXIT_RAN.result, action: 'keep', message: 'Exited worktree' },
+  text: 'Exited worktree',
+}
+
 /** A background Agent call: the launch result has the id and no path. */
 export const AGENT_ASYNC_RAN = {
   result: {

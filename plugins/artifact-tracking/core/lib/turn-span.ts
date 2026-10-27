@@ -60,7 +60,7 @@ export function sightOf(held: TurnStamps | undefined, turn: number): 'added' | '
 export type RowVisit = {
   /** The id of the row in the pane. */
   readonly id: string
-  /** `process`, `repo`, `agent`, `workflow`, `question` or `plan`: the word of the line when the row is no longer listed. */
+  /** `process`, `repo`, `agent`, `workflow`, `worktree`, `question` or `plan`: the word of the line when the row is no longer listed. */
   readonly category: string
   readonly reason: CoreReason
   /** The row before the event, or undefined when the event added it. */
