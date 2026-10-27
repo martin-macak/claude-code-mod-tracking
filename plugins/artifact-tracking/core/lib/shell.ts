@@ -39,6 +39,22 @@ export type Segment = {
   /** The segment ended with a single `&`: the shell runs it in the background. */
   bg: boolean
   /**
+   * A single `&` ended a group, a subshell, an arithmetic command or a substitution right before this segment (`{ a; } & b`,
+   * `( a ) & b`, `x=$(a) & b`, `sleep $(a) & b`). `}` and `)` make no segment, so that `&` has none to say `bg` on. The
+   * flag tells a reader that this `&` set `$!` to something that is not the job before it (issue #231). What `$!` names
+   * depends on the command. For a group (`{ a; } &`, `{ true; sleep 3; } &`: a group is never run in place), a subshell whose
+   * last command is a builtin or a compound (`( sleep 3; : ) &`, `( : ) &`), `(( ))`, and a command that is only assignments
+   * or a builtin (`x=$(a) &`, `: $(a) &`) it names the shell that runs the list. For a subshell whose last command is an
+   * external simple command (`( sleep 3 ) &`, `( true; sleep 3 ) &`, also with a redirection) bash runs that command in
+   * place, and an external command that ends in a substitution or a process substitution (`sleep $(a) &`, `cat <(a) &`) is a
+   * process: `$!` names that command. The flag is set all the same, and the parser makes no row for it (a limit). A loop, an
+   * `if` or a `case` needs no flag: its closing word is a segment with `bg`. The flag stays in the shell that read the `&`: a
+   * substitution, a subshell and a part of a pipeline run in a shell of their own, so a `&` that ends a group in one of them,
+   * with no segment after it there, flags nothing in the parent (`a & x=$({ :; } &); echo $!` flags no `echo`, as `$!` is still
+   * the pid of `a`).
+   */
+  afterBgShell: boolean
+  /**
    * The subshell the segment runs in. `''` is the top level. `(`, `$(` and a backtick pair open a child scope
    * `${parent}.${n}`. `{ }` is the same shell, so it keeps the scope. A list that ends with `&` runs in a subshell
    * too, and so does each part of a pipeline, so their segments get a child scope of their own (see `splitShell`).
@@ -189,7 +205,7 @@ export function splitShell(command: string): Segment[] {
   // in it is an arithmetic expression (`$(( ))`, `(( ))`), where `<<` is a shift (issue #194). `sub`: the shell takes the
   // output of the commands in it: a `$(`, a backtick or a process substitution opened it, or one of its parents did
   // (`Segment.substituted`). `outerHead`: the `cmdHead` of the simple command around it, back at the close (`a $(b) c`).
-  // `from`: the index of the first segment in it.
+  // `bgPending`: the `bgShellEnded` of the shell around it, back at the close. `from`: the index of the first segment in it.
   const stack: {
     id: string
     tick: boolean
@@ -198,6 +214,7 @@ export function splitShell(command: string): Segment[] {
     arith: boolean
     sub: boolean
     outerHead: number
+    bgPending: boolean
     from: number
   }[] = []
   let scopes = 0
@@ -253,6 +270,13 @@ export function splitShell(command: string): Segment[] {
   // The first segment of the group, subshell or backtick that closed just now, while only redirections have come after
   // it: `{ a; } > f` has the words `> f` after the `}`, and they make no segment. -1: no group closed right before.
   let closedFrom = -1
+  // A `&` with no word came right behind a close (`{ a; } &`, `x=$(a) &`, `sleep $(a) &`): the next segment carries
+  // `Segment.afterBgShell`. The `&` set `$!` in the shell that read it, so the flag stays in that shell. A substitution, a
+  // backtick pair, a subshell and a part of a pipeline run in a shell of their own, and a `&` inside them leaves the `$!` of the
+  // parent alone (`x=$({ :; } &); echo $!` prints the job before). So the flag that is still waiting for a segment when such a
+  // shell ends dies with it: a scope gives back the flag that its parent had (`closeScope`), and a pipeline part drops it
+  // (`endPipe`, the `|` branch). A group is the shell of its parent, and keeps it.
+  let bgShellEnded = false
   // A substitution splits a simple command into segments: `docker run -d $(a) nginx > f` has the segments `docker run -d`,
   // `a` (inside) and `nginx > f`, and the redirection belongs to all of the command. `cmdHead` is the index of the first
   // segment of the simple command that a substitution has split, in the scope that is open now. -1: none. An operator that
@@ -283,6 +307,7 @@ export function splitShell(command: string): Segment[] {
       arith,
       sub: sub || (stack.at(-1)?.sub ?? false),
       outerHead: cmdHead,
+      bgPending: bgShellEnded,
       from: out.length,
     })
     listFrom = partFrom = out.length
@@ -387,6 +412,7 @@ export function splitShell(command: string): Segment[] {
       back(top.saved)
       closedFrom = top.from
       cmdHead = top.outerHead
+      bgShellEnded = top.bgPending
     }
   }
   // The `case` that the reader is in right now: the innermost open compound, when it is a `case` that opened inside the
@@ -424,9 +450,13 @@ export function splitShell(command: string): Segment[] {
       if (seg.scope === parent || seg.scope.startsWith(`${parent}.`)) seg.scope = child + seg.scope.slice(parent.length)
     }
   }
-  // The pipeline ends: its last part runs in a subshell too, and the next part starts after the segments so far.
-  const endPipe = () => {
-    if (piped) moveToChild(partFrom)
+  // The pipeline ends: its last part runs in a subshell too, and the next part starts after the segments so far. A flag that
+  // waits in that part (`cat | { { :; } & }`) ends with it. A `&` that ends the pipeline keeps its own flag (`cat | { :; } &`).
+  const endPipe = (keepBg = false) => {
+    if (piped) {
+      moveToChild(partFrom)
+      if (!keepBg) bgShellEnded = false
+    }
     piped = false
     partFrom = out.length
   }
@@ -478,6 +508,8 @@ export function splitShell(command: string): Segment[] {
     const { words: clean, heads: cleanHeads, stdout } = dropRedirections(words, heads)
     // The words after the `}` or `)` of a group that only redirect (`{ a; } > f`) make no segment: the group is redirected.
     if (clean.length === 0 && stdout && closedFrom >= 0) redirected(closedFrom)
+    // A `&` behind the close, with no word of its own (`{ a; } &`, `( a ) 2>&1 &`, `x=$(a) &`), sends that shell to the background.
+    if (bg && clean.length === 0 && closedFrom >= 0) bgShellEnded = true
     if (clean.length > 0) {
       out.push({
         words: clean.map(unmarkDollars),
@@ -485,11 +517,13 @@ export function splitShell(command: string): Segment[] {
         whole: cleanHeads.map(h => h.whole),
         redir: cleanHeads.map(h => h.redir),
         bg,
+        afterBgShell: bgShellEnded,
         scope: scope(),
         stdoutRedirected: stdout,
         stdoutPiped: false,
         substituted: stack.at(-1)?.sub ?? false,
       })
+      bgShellEnded = false
       if (stdout && bareExec(clean, cleanHeads)) execs.push(out.length - 1)
       const lead = compoundLead(clean, cleanHeads)
       if (lead.opens.length > 0) {
@@ -723,11 +757,12 @@ export function splitShell(command: string): Segment[] {
         }
       } else if (op === '|' || op === '|&') {
         moveToChild(partFrom) // the part before the `|` runs in a subshell
+        bgShellEnded = false // and a flag that waits in it ends with it (`{ { :; } & } | cat`)
         cover(pipeRuns, partFrom, out.length) // and its output feeds the next part
         partFrom = out.length
         piped = true
       } else if (op === '&') {
-        endPipe()
+        endPipe(true)
         moveToChild(listFrom)
         listFrom = out.length
       } else if (op === ';' || op === ';;' || op === ';&' || op === ';;&' || (op === '\n' && !wantsMore)) {
@@ -863,7 +898,7 @@ const execOptionsOnly = (rest: readonly string[]): boolean => {
  */
 const bareExec = (words: readonly string[], typed: readonly Typed[]): boolean => {
   if (!words.includes('exec')) return false
-  const rest = stripLead({ words, whole: typed.map(t => t.whole) }).words
+  const rest = stripLead({ words, whole: typed.map(t => t.whole), redir: typed.map(t => t.redir) }).words
   // `stripLead` stops at the first option of `exec`, so the word right before `rest` is the `exec` that the options belong to.
   return rest.length === 0 || (words[words.length - rest.length - 1] === 'exec' && execOptionsOnly(rest))
 }

@@ -343,7 +343,7 @@ function stripSetsid(words: string[]): { words: string[]; fork: boolean } {
   return { words: words.slice(i), fork }
 }
 
-/** Shell builtins end with the shell: `echo x &` is no process to follow. */
+/** Shell builtins end with the shell: `echo x &` is no process to follow. `[[` is a keyword that works as one. */
 const BUILTINS = new Set([
   'echo',
   'printf',
@@ -354,6 +354,7 @@ const BUILTINS = new Set([
   'read',
   'test',
   '[',
+  '[[',
   'set',
   'unset',
   'export',
@@ -362,9 +363,14 @@ const BUILTINS = new Set([
 type Detached = { fingerprint: string; pid?: number; viaShell: boolean }
 
 /**
- * The last `&` job makes no row: a builtin (`echo x &`), `cd`, a docker call or a backgrounded loop (`done &`). It has
- * a shell of its own, so `$!` names that shell, not an earlier job. The `echo $!` that prints it eats one pid line of
- * stdout: the next `echo $!` must not take that line (issue #132). An `echo $!` that prints elsewhere eats none.
+ * The last job that sets `$!` makes no row. Most of them have a shell of their own, so `$!` names that shell, not an earlier
+ * job: a builtin of `BUILTINS` (`echo x &`), `cd`, a docker call, a backgrounded loop (`done &`), a group (`{ a; } &`), a
+ * subshell whose last command is a builtin or a compound (`( sleep 3; : ) &`, `( : ) &`), or a `coproc` of a group or of a
+ * builtin (`coproc NAME { a; }`, `coproc :`). Two forms make no row although `$!` names a process, because bash runs their
+ * last command in place when it is an external simple command: a subshell (`( sleep 3 ) &`, `( true; sleep 3 ) &`) and a
+ * `coproc` (`coproc sleep 3`). Both are limits, like `sleep $(a) &`. A builtin outside `BUILTINS`
+ * (`pwd &`, `source f &`) does make a row, with the pid of its shell (a limit). The `echo $!` that prints it eats one pid
+ * line of stdout: the next `echo $!` must not take that line (issue #132). An `echo $!` that prints elsewhere eats none.
  */
 const NO_ROW: Detached = { fingerprint: '', viaShell: true }
 
@@ -432,6 +438,14 @@ export function parseBashProcesses(
   }
 
   for (const seg of splitShell(command)) {
+    // A `&` ended a group, subshell or substitution right before this segment (`{ a; } & echo $!`). Like `done &`, that sends a
+    // shell to the background: `$!` names it, and no row has its pid, so no job before it may take the next pid line. For
+    // `sleep $(a) &`, `( sleep 3 ) &` and `( true; sleep 3 ) &` `$!` names the command itself, which has no row either (a limit):
+    // the earlier job must still not take it.
+    if (seg.afterBgShell) {
+      lastBg = NO_ROW
+      sawBg = true
+    }
     const jobBefore = sawBg
     if (seg.bg) sawBg = true
     // The marked words tell `'$F'` and `\$F` (as typed) from `$F` and `"$F"` (expanded). Only the variables read them.
@@ -456,6 +470,12 @@ export function parseBashProcesses(
     // branch below replaces this) or no row: either way `$!` is no longer the job before it. An `echo $! > f &` is one of
     // them: it prints no line, and the `$!` after it is the pid of its own shell.
     if (seg.bg && !echoesPid(seg, words)) lastBg = NO_ROW
+    // `coproc` runs its command as a job of its own and sets `$!`. The parser makes no row for it, so the pid line that an
+    // `echo $!` after it prints is no earlier job's.
+    if (head === 'coproc') {
+      lastBg = NO_ROW
+      sawBg = true
+    }
 
     if (head === 'cd' || head === 'pushd') {
       const target = words.slice(1).find(w => !w.startsWith('-'))
