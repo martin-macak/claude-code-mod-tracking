@@ -1,7 +1,8 @@
 // The turns of the process rows (issue #133, P1b of #69). A row is stamped with the turn of the Bash or Monitor call that
-// started it, or that named it again; `Traceable.turnsOf` hands the stamps to the pane, and the sightings tell the ledger which
-// rows the call added and which it saw again. A state change (a task notice, a TaskStop, the probe) is no sighting: it
-// stamps nothing. The rules of the stamps are in `core/lib/turn-span.ts`.
+// started it or named it again, or of the model's TaskStop that stopped it (issue #204); `Traceable.turnsOf` hands the stamps
+// to the pane, and the sightings tell the ledger which rows the call added and which it saw again. A state change that no
+// action of the turn made (a task notice, the probe, a turn that ends a task, a TaskStop that a plugin raised) is no
+// sighting: it stamps nothing. The rules of the stamps are in `core/lib/turn-span.ts`.
 
 import type { Json } from '../../core/interfaces/items'
 import type { Sightings, TurnSpan } from '../../core/interfaces/turns'

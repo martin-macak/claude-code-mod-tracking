@@ -33,6 +33,12 @@ export interface ToolCallEvent {
   readonly toolUseId?: string
   /** The session cwd read before the tool ran. A persisted `cd` moves it during the run. */
   readonly cwdBefore?: string
+  /**
+   * A plugin raised the call itself, not the engine (the origin of the call is a plugin, not `engine`), the mod's own
+   * `/track clean --yes tasks` among them: no turn of the model made it (issue #204). Absent for a call of the model, and
+   * for an engine that gives no origin.
+   */
+  readonly byPlugin?: true
 }
 
 /** A subagent or workflow agent started. */

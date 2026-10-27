@@ -60,6 +60,14 @@ test('toolCallEvent leaves out what the call did not have', () => {
   expect(ev).toEqual({ tool: 'Monitor', input: { tool: 'Monitor' }, result: null })
 })
 
+test('toolCallEvent marks a call that a plugin raised (byPlugin), and only that (issue #204)', () => {
+  const e = { tool: 'TaskStop' }
+  expect(toolCallEvent(e, null, undefined, { plugin: 'engine' })).not.toHaveProperty('byPlugin')
+  expect(toolCallEvent(e, null, undefined)).not.toHaveProperty('byPlugin') // an engine that gives no origin: as before
+  expect(toolCallEvent(e, null, undefined, { plugin: 'artifact-tracking' })).toMatchObject({ byPlugin: true })
+  expect(toolCallEvent(e, null, undefined, { plugin: 'another-plugin' })).toMatchObject({ byPlugin: true })
+})
+
 test('spawnEvent carries the input, the answer and the cwd read before the spawn', () => {
   const e = { description: 'd', subagentType: 'Explore' }
   expect(spawnEvent(e, { agentId: 'a1' }, '/work')).toEqual({

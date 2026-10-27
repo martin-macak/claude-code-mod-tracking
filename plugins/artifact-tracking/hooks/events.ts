@@ -37,12 +37,14 @@ export function rowEvent(e: AppendIn, stored: AppendOut): RowEvent {
 
 /**
  * One finished tool call. `e` is the whole input (the tool's own arguments sit beside `tool`), `ran` the answer of
- * `next(e)`. `cwdBefore` is the session cwd read before the call ran: a persisted `cd` moves it during the run.
+ * `next(e)`. `cwdBefore` is the session cwd read before the call ran: a persisted `cd` moves it during the run. `origin` is
+ * `next.origin`, who raised the call: any plugin but the engine marks the event `byPlugin` (issue #204). No origin, no mark.
  */
 export function toolCallEvent(
   e: { tool: string; agentId?: string; tool_use_id?: string },
   ran: unknown,
   cwdBefore: string | undefined,
+  origin?: { readonly plugin: string },
 ): ToolCallEvent {
   return {
     tool: e.tool,
@@ -51,6 +53,7 @@ export function toolCallEvent(
     ...(e.agentId !== undefined ? { agentId: e.agentId } : {}),
     ...(e.tool_use_id !== undefined ? { toolUseId: e.tool_use_id } : {}),
     ...(cwdBefore !== undefined ? { cwdBefore } : {}),
+    ...(origin !== undefined && origin.plugin !== 'engine' ? { byPlugin: true as const } : {}),
   }
 }
 

@@ -89,6 +89,21 @@ export const BG_START_MAIN = {
 } as const
 
 /**
+ * The answer of the engine to a TaskStop that stopped a Bash task, as the `tool.call` hook of a plugin sees it: the record
+ * with `message`, `task_id`, `task_type` and `command`, and the text of the answer (Claude Code 2.1.310, design study of
+ * #204, S1; the kit raises the call, a fake API answers it). Use it for every test that needs a stopped task.
+ */
+export const taskStopped = (taskId: string, command = 'sleep 300') => ({
+  result: {
+    message: `Successfully stopped task: ${taskId} (${command})`,
+    task_id: taskId,
+    task_type: 'local_bash',
+    command,
+  },
+  text: JSON.stringify({ message: `Successfully stopped task: ${taskId} (${command})` }),
+})
+
+/**
  * The result for a task of a foreground subagent. The engine sets `backgroundEndsWithFinalResponse`: it ends the task
  * at the agent's final response, and no notice follows.
  */

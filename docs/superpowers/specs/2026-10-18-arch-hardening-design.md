@@ -293,7 +293,7 @@ Hook order inside each hook:
 
 - **Observe-only hooks** (`session.append`, `turn.complete`): `await next(e)`, then the manager call in a `try/catch`, then return the result.
 - **`command.run`**: the hook answers `/track` and never calls `next` (D12). It is the implementation of the command.
-- **Pre-state hooks** (`tool.call`, `agent.spawn`): read `$.session.cwd()` first (a persisted `cd` moves it during the run, `T/register.test.tsx:2021`), then `await next(e)`, then the manager call with `cwdBefore`. `tool.call` reads the cwd only when `wants(tool)` says a tracker declared that tool or a kind reads it (`ItemKind.fromTool`). Any other tool goes straight through with no entry.
+- **Pre-state hooks** (`tool.call`, `agent.spawn`): read `$.session.cwd()` first (a persisted `cd` moves it during the run, `T/register.test.tsx:2021`), then `await next(e)`, then the manager call with `cwdBefore`. The `tool.call` hook also passes `next.origin`, which marks a call of another plugin `byPlugin` (issue #204). `tool.call` reads the cwd only when `wants(tool)` says a tracker declared that tool or a kind reads it (`ItemKind.fromTool`). Any other tool goes straight through with no entry.
 - **`session.end`**: the manager writes first, within the budget, then `next(e)` (§5.6).
 - **`ui.focus`**: `await next(e)`, then write the selection only when the result has no deny (§5.10). The hook starts `entry()` beside the key and does not await it (`void`), then calls `next(e)`. The key does not wait for the entry, because after a `/resume` the entry can load the stored copy and call a tracker's tool. `ui.close` starts the entry the same way, then clears the selection and the help view.
 - **`ui.render`**: reads only, no writes, no SessionWatch, no invalidate (E8, E9).
@@ -303,7 +303,7 @@ Hook order inside each hook:
 | `session.start` | none | `start(ports, { cwd, fromSessionStart })` |
 | `session.end` | none | `end(ports, reason, budgetMs)` |
 | `session.append` | `{ door: [<every door, as a literal>] }` | `row(ports, RowEvent)`, built by `rowEvent(e, stored)` |
-| `tool.call` | none | `toolCall(ports, ToolCallEvent)`, built by `toolCallEvent(e, ran, cwdBefore)` |
+| `tool.call` | none | `toolCall(ports, ToolCallEvent)`, built by `toolCallEvent(e, ran, cwdBefore, next.origin)` |
 | `agent.spawn` | none | `agentSpawn(ports, AgentSpawnEvent)` |
 | `turn.complete` | none | `turnComplete(ports, TurnCompleteEvent)` |
 | `command.run` | `{ command: 'track' }` | `track(ports, args)`: the Commands router (§5.12) runs `entry`, answers a core sub-command, or sends `command(ports, CommandEvent)` to the tracker that declared it. The list text comes from `register.tsx` as `LifecycleDeps.listText` (K19) |
@@ -352,7 +352,7 @@ export interface Ports {
 - `session.repo()` parses the engine's `remote` string into a `RepoRemote` in `portsOf`. `fs.stat` with `resolve: true` also gives the `realPath` of a link.
 - `EnvName` is a closed list in `register.tsx`: `HOME`, `XDG_CONFIG_HOME`, `CLAUDE_TRACKER_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`. Each is a literal `$.env.get` call.
 - `state` holds one closure pair per atom. The family port takes the id as a parameter, with the ref literal inline. This exact form passes `claude plugin validate --strict`, `tsc` and the kit (spike [`g14-ports-family-param`](../../knowledge-base/claude-code-mods/sources/spikes-2026-10-17/g14-ports-family-param/), verified-kit).
-- `tasks.stop` is one literal `$.tool.call` of the engine's TaskStop, narrow on purpose: no other tool and no other input. The engine answers a record on success, `Error: ...` with `isError` for an unknown or a stopped task, and `{ deny }` for a hook that refuses; `stopResultOf` (`core/lib/tasks.ts`) turns each into the reason, without the `Error:` prefix. A record counts as a stop only when its `task_id` is the id that the call asked for: a record that names another task is `skipped: TaskStop named another task`. The mod's own `tool.call` hook may see this call too (the engine skips only the calling hook), and it marks the row the same way, so the caller writes the row itself and does not rely on it. Only a tracker that declares `stopsTasks` gets `ctx.tasks` (§5.8).
+- `tasks.stop` is one literal `$.tool.call` of the engine's TaskStop, narrow on purpose: no other tool and no other input. The engine answers a record on success, `Error: ...` with `isError` for an unknown or a stopped task, and `{ deny }` for a hook that refuses; `stopResultOf` (`core/lib/tasks.ts`) turns each into the reason, without the `Error:` prefix. A record counts as a stop only when its `task_id` is the id that the call asked for: a record that names another task is `skipped: TaskStop named another task`. The mod's own `tool.call` hook sees this call too (the engine skips only the calling hook), as a call of this plugin (`next.origin.plugin` is not `engine`, so the `ToolCallEvent` is `byPlugin`; kit-verified, not yet seen live, #209): the processes tracker ends the row and stamps no turn for it (issue #204). The caller still writes the row itself and does not rely on the hook. Only a tracker that declares `stopsTasks` gets `ctx.tasks` (§5.8).
 - `ui.invalidate` is called from event handlers and the tick only, never from a render (E8). A config or tool-status change needs it, because it is not a state read.
 
 ### 5.5 Event bus
@@ -363,7 +363,7 @@ The bus maps a domain event kind to handlers. TrackerHost fills it at init from 
 | --- | --- | --- |
 | `start` (cwd?, cold) | start sequence (§5.6) | sequential, in `order` |
 | `row` (door, origin, agentId, isMeta, hasMessage, text, task?) | `session.append` | Capture first (§5.9), then the declared handlers, parallel and isolated |
-| `toolCall` (tool, input, result, agentId, toolUseId, cwdBefore) | `tool.call` | parallel, keyed by tool name |
+| `toolCall` (tool, input, result, agentId, toolUseId, cwdBefore, byPlugin) | `tool.call` | parallel, keyed by tool name |
 | `agentSpawn` (input, answer, sessionCwd) | `agent.spawn` | sequential, in `order` |
 | `turnComplete` (input) | `turn.complete` | parallel |
 | `tick` (now) | Scheduler | parallel, per tracker period |
