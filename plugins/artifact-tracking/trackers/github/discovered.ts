@@ -7,7 +7,7 @@ import { addReason, dropReason } from '../../core/lib/reasons'
 import { type BaseRecord, enforceCap, isAutoOnly, isDiscovered } from '../../core/lib/records'
 import { PR_LANE_DEFAULTS } from './config'
 import { githubKind } from './kind'
-import { isLanePr } from './lane-pr'
+import { isHeldLanePr, isLanePr, isSessionLanePr } from './lane-pr'
 import type { DiscoveredPr, DiscoveryApplied, GitHubRecord } from './types'
 import { githubKey, prKey } from './urls'
 
@@ -120,6 +120,12 @@ export function applyDiscovery(
     prs: readonly DiscoveredPr[]
     /** The claims in the body of each PR, by the key of the PR (`prBodyRefs`). */
     refsByPr: ReadonlyMap<string, readonly Claim[]>
+    /**
+     * The reply is sure of the lane PRs of the session repo (issue #195). False: it did not ask the session repo for its
+     * branches (no GitHub repo) or got no sure answer from it. Every lane PR of the session repo is held then, the PRs that
+     * the reply returned too. The prune still runs for the rest: each other repo answers on its own, and `held` and
+     * `heldRepos` name those that did not.
+     */
     complete: boolean
     /**
      * The keys of the created PRs that got no sure answer (issue #158): all of a repo that failed, and the PRs with no
@@ -127,6 +133,12 @@ export function applyDiscovery(
      * marker and its reason, and the refs of its body keep their `via` entry. A PR whose body was read is never held.
      */
     held?: ReadonlySet<string>
+    /**
+     * The repos (by `repoKey`) whose proven branches got no sure answer (issue #195). Each lane PR of such a repo in the list
+     * is held like a key of `held`: the prune leaves its marker alone. The result names them in `held`. A PR of `prs` is not
+     * held by its repo: it was read, so its body reconciles its refs and its marker follows the reply.
+     */
+    heldRepos?: ReadonlySet<string>
     dismissed: ReadonlySet<string>
     at: number
     /** The record a claim of any kind makes (`ItemStorePort.build`). null: the claim adds no record. */
@@ -137,7 +149,20 @@ export function applyDiscovery(
 ): DiscoveryApplied {
   const { refsByPr, complete, dismissed, at, build } = input
   // A dismissed PR is no PR of the lane, held or not: its record is gone, and the refs of its body go as for any dismissed PR.
-  const heldPrs = new Set([...(input.held ?? [])].filter(k => !dismissed.has(k)))
+  const heldRepos = input.heldRepos ?? new Set<string>()
+  // A PR in `prs` was read this round, so a held repo does not hold it: its body still reconciles the refs it names. Only
+  // the lane PRs that the reply did not return are held, as the branch that failed may be theirs.
+  const read = new Set(input.prs.map(prKey))
+  // A reply that is not complete says nothing of the lane PRs of the session repo, returned or not: they are held, so the
+  // prune of the other repos does not touch them or the refs of their bodies.
+  const holdsLanePr = (r: StoredItem): boolean =>
+    (!complete && isSessionLanePr(r)) || (heldRepos.size > 0 && !read.has(r.key) && isHeldLanePr(r, heldRepos))
+  const readInSession = complete ? [] : input.prs.filter(pr => pr.otherRepo !== true).map(prKey)
+  const heldPrs = new Set(
+    [...(input.held ?? []), ...list.filter(holdsLanePr).map(r => r.key), ...readInSession].filter(
+      k => !dismissed.has(k),
+    ),
+  )
   const caps = input.caps ?? {
     staleMs: GLOBAL_DEFAULTS.refresh.staleMs,
     maxAutoItems: PR_LANE_DEFAULTS.maxAutoItems,
@@ -212,38 +237,40 @@ export function applyDiscovery(
     }
   }
 
-  // 3. Prune (A12), only after a complete reply.
+  // 3. Prune (A12). A lane PR that the reply does not return, and that nothing holds, loses its marker, and a `via` entry stays
+  // only while its PR is live or held. It runs whatever `complete` says: that flag only decides whether the lane PRs of the
+  // session repo are held (above), so each other repo is reconciled by its own answer.
   const drop = new Set<number>()
-  if (complete) {
-    // A `via` entry stays only while its PR is live and the body of that PR still lists the ref.
-    const listed = new Map(livePrs.map(pr => [prKey(pr), new Set((refsByPr.get(prKey(pr)) ?? []).map(c => c.key))]))
-    for (let i = 0; i < out.length; i++) {
-      const rec = out[i]!
-      const held = rec.via as string[] | undefined
-      let via = held
-      // The lane marker stays only while the lane still finds the PR, or while it got no sure answer (held).
-      const laneHeld = rec.lane === true
-      const lane = laneHeld && (live.has(rec.key) || heldPrs.has(rec.key))
-      if (via) {
-        // The body of a held PR was not read: its refs keep their entry.
-        const kept = via.filter(k => heldPrs.has(k) || listed.get(k)?.has(rec.key) === true)
-        if (kept.length !== via.length) via = kept.length > 0 ? kept : undefined
-      }
-      // The reason `discovered` stays while the lane finds the record or a body of a live PR still names it.
-      const found = lane || (via !== undefined && via.length > 0)
-      const reasons = isDiscovered(rec) && !found ? dropReason(rec.reasons, 'discovered') : rec.reasons
-      if (lane === laneHeld && via === held && reasons === rec.reasons) continue
-      changed = true
-      if (reasons === undefined) {
-        drop.add(i)
-        continue
-      }
-      const next = { ...rec, reasons } as BaseRecord & Pick<GitHubRecord, 'lane'>
-      if (via === undefined) delete next.via
-      else next.via = via
-      if (!lane) delete next.lane
-      out[i] = next
+  const gone: string[] = []
+  // A `via` entry stays only while its PR is live and the body of that PR still lists the ref.
+  const listed = new Map(livePrs.map(pr => [prKey(pr), new Set((refsByPr.get(prKey(pr)) ?? []).map(c => c.key))]))
+  for (let i = 0; i < out.length; i++) {
+    const rec = out[i]!
+    const held = rec.via as string[] | undefined
+    let via = held
+    // The lane marker stays only while the lane still finds the PR, or while it got no sure answer (held).
+    const laneHeld = rec.lane === true
+    const lane = laneHeld && (live.has(rec.key) || heldPrs.has(rec.key))
+    if (laneHeld && !lane) gone.push(rec.key)
+    if (via) {
+      // The body of a held PR was not read: its refs keep their entry.
+      const kept = via.filter(k => heldPrs.has(k) || listed.get(k)?.has(rec.key) === true)
+      if (kept.length !== via.length) via = kept.length > 0 ? kept : undefined
     }
+    // The reason `discovered` stays while the lane finds the record or a body of a live PR still names it.
+    const found = lane || (via !== undefined && via.length > 0)
+    const reasons = isDiscovered(rec) && !found ? dropReason(rec.reasons, 'discovered') : rec.reasons
+    if (lane === laneHeld && via === held && reasons === rec.reasons) continue
+    changed = true
+    if (reasons === undefined) {
+      drop.add(i)
+      continue
+    }
+    const next = { ...rec, reasons } as BaseRecord & Pick<GitHubRecord, 'lane'>
+    if (via === undefined) delete next.via
+    else next.via = via
+    if (!lane) delete next.lane
+    out[i] = next
   }
 
   // 4. Cap on the non-auto items only.
@@ -252,7 +279,7 @@ export function applyDiscovery(
   if (capped !== kept) changed = true
 
   // 5. Quiet step: the input list itself.
-  return { list: changed ? capped : (list as StoredItem[]), added, untracked: notAdded.size }
+  return { list: changed ? capped : (list as StoredItem[]), added, untracked: notAdded.size, held: [...heldPrs], gone }
 }
 
 /** The keys of the PRs that name this record in their body. */

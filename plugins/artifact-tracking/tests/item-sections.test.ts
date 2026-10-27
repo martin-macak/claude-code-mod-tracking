@@ -558,6 +558,30 @@ test('the Pull requests section: a created PR counts like a tracked branch, so a
   expect(await has()).toBe(false)
 })
 
+test('the Pull requests section: a branch proven in another repo counts like a tracked branch, and the repos over the cap show in the note (issue #195)', async () => {
+  const t = await paneWorld()
+  const items = (t.w.state.get('items') as unknown as { lane?: true }[]).filter(i => i.lane !== true)
+  t.w.state.set('items', items as unknown as Json)
+  const has = async () => ids(await t.m.paneData(t.w.ports, NO_VIEW)).includes('prs')
+  const note = async () => section(await t.m.paneData(t.w.ports, NO_VIEW), 'prs').note?.text
+  setBranches(t.m, { branches: [] }) // no tracked branch, no created PR
+  t.w.state.set('github', { prs: { ok: false, skipped: 'not-logged-in' } })
+  expect(await has()).toBe(false) // nothing was asked, so nothing failed
+  const foreign = { host: 'github.com', owner: 'Acme-Org', repo: 'Foreign-Repo', branches: ['feat/one'] }
+  t.m.facts.publish('repos.branches', { repos: [foreign], overflow: 0 })
+  expect(await has()).toBe(true) // the lane asked for a branch of the other repo
+  expect(await note()).toBe('gh not logged in to github.com')
+  t.w.state.set('github', { prs: { ok: false, error: 'boom' } })
+  expect(await has()).toBe(true)
+  t.m.facts.publish('repos.branches', { repos: [foreign], overflow: 2 })
+  expect(await note()).toBe('gh · discovery failed: boom · +2 repos not polled')
+  // A fact that is no list of repos, or an empty one, counts for nothing.
+  t.m.facts.publish('repos.branches', 'not the fact' as unknown as Json)
+  expect(await has()).toBe(false)
+  t.m.facts.publish('repos.branches', { repos: [], overflow: 0 })
+  expect(await has()).toBe(false)
+})
+
 test('artifact, web and file rows', async () => {
   const t = await paneWorld()
   const sections = await t.m.paneData(t.w.ports, NO_VIEW)

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -8,6 +8,8 @@ import {
   claudeCommand,
   countLines,
   DEMO_SYSTEM_PROMPT,
+  FOREIGN_README,
+  fakeForeignRepo,
   fakeGithubClone,
   type LaunchSpec,
   listRefs,
@@ -280,6 +282,40 @@ test('fakeGithubClone puts the clone on a branch, with an origin that names a fa
   // A second call replaces the old copy.
   fakeGithubClone(prepareClone(repo, parent), parent, { branch: 'feat/fake-conflict', ownerRepo: 'e2e-owner/e2e-repo' })
   assert.throws(() => git(['rev-parse', '--verify', 'refs/heads/pushed'], bare))
+})
+
+test('fakeForeignRepo makes a repo on a feature branch whose origin is the GitHub URL, and whose push goes to a local copy (issue #195)', () => {
+  const base = realpathSync(tempDir('foreign-')) // a tmpdir is a link on a Mac: git prints the real path
+  const git = (args: string[], cwd: string) =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  const made = fakeForeignRepo(base, { branch: 'feat/second', ownerRepo: 'e2e-owner/second' })
+  assert.equal(made.dir, join(base, 'second'))
+  assert.equal(made.readme, join(base, 'second', 'README.md'))
+  assert.equal(readFileSync(made.readme, 'utf8'), FOREIGN_README)
+  assert.equal(git(['branch', '--show-current'], made.dir), 'feat/second')
+  assert.equal(git(['rev-parse', '--show-toplevel'], made.dir), made.dir)
+  // The repos tracker reads the repo from `git remote get-url origin`: it must say GitHub, as a real clone does. A fetch
+  // would go to GitHub, which is why the scenario never fetches; a push goes to the local copy.
+  assert.equal(git(['config', '--get', 'remote.origin.url'], made.dir), 'https://github.com/e2e-owner/second.git')
+  // A global rewrite of the machine may turn https into ssh, which the repos tracker reads as GitHub all the same.
+  assert.match(
+    git(['remote', 'get-url', 'origin'], made.dir),
+    /^(https:\/\/|ssh:\/\/git@)github\.com\/e2e-owner\/second\.git$/,
+  )
+  assert.equal(git(['remote', 'get-url', '--push', 'origin'], made.dir), made.bare)
+  assert.equal(made.bare, join(base, 'second.git'))
+  git(['push', '-q', 'origin', 'HEAD:refs/heads/pushed'], made.dir)
+  assert.match(listRefs(made.bare), /^refs\/heads\/pushed /m)
+  assert.match(listRefs(made.bare), /^refs\/heads\/feat\/second /m)
+  // A second call on the same folder starts afresh.
+  fakeForeignRepo(base, { branch: 'feat/other', ownerRepo: 'e2e-owner/second' })
+  assert.equal(git(['branch', '--show-current'], made.dir), 'feat/other')
+  assert.doesNotMatch(listRefs(made.bare), /pushed/)
+})
+
+test('fakeForeignRepo refuses an owner/repo that is not two plain names', () => {
+  for (const bad of ['no-slash', 'a/b/c', '/b', 'a/', 'a b/c', 'a/b;c'])
+    assert.throws(() => fakeForeignRepo('/x', { branch: 'b', ownerRepo: bad }), /owner\/repo/)
 })
 
 test('fakeGithubClone refuses an owner/repo that is not two plain names', () => {

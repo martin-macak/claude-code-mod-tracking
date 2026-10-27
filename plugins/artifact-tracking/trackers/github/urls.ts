@@ -1,6 +1,7 @@
 // GitHub item keys and URLs. Pure: no state, no I/O. The kind, the lane and the tool build their keys here.
 // Plan: L5 Task 4 (keys move with their kind) and Task 5 (`parseGitHubUrl` moves from `hooks/scan/refs.ts`).
 
+import type { RepoRef } from '../../core/interfaces/ports'
 import type { DiscoveredPr, GitHubRef } from './types'
 
 /** The item key of a resolved GitHub issue or PR (spec 6.2). */
@@ -15,6 +16,9 @@ export function githubKeyOf(ref: Pick<GitHubRef, 'host' | 'owner' | 'repo' | 'nu
 /** The URL of an issue or PR by its parts. An `unknown` type is read as an issue: GitHub redirects it. */
 export const githubUrl = (host: string, owner: string, repo: string, type: string, n: number): string =>
   `https://${host}/${owner}/${repo}/${type === 'pr' ? 'pull' : 'issues'}/${n}`
+
+/** The key of a repo in the lane state and in the held list: `host/owner/repo` in lower case (issue #195). */
+export const repoKey = (r: RepoRef): string => `${r.host}/${r.owner}/${r.repo}`.toLowerCase()
 
 /** The item key of the PR, `gh:<host>/<owner>/<repo>#<n>`. */
 export function prKey(pr: Pick<DiscoveredPr, 'host' | 'owner' | 'repo' | 'number'>): string {

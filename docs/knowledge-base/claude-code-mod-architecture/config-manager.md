@@ -195,7 +195,7 @@ The inventory found these hard-coded values. They are candidates, not a decision
 | `web` | `schemes` (`http`, `https`, `file`), `maxUrlLength` (2048), host allow and deny lists |
 | `artifact` | accepted hosts (`claude.ai`, `www.claude.ai`) |
 | `files` | `extensions` (`.md`), `ignore` globs, `maxMentionsPerRow` (20) |
-| `repos` | `maxRepos` (50), `maxRepoAgents` (8), `maxRepoQueue` (32), `noisePaths`, `editGitSubcommands`, `toolPathFields`, `gitTimeoutMs` (5 s) |
+| `repos` | `maxRepos` (50), `maxRepoAgents` (8), `maxRepoQueue` (32), `noisePaths`, `editGitSubcommands`, `toolPathFields`, `gitTimeoutMs` (5 s), `pollRepos` (3), `maxRepoRoots` (4) |
 | `processes` | `probeKinds` (docker, tmux, screen, ps), `probeIntervalMs`, `discoveryTimeoutMs` (10 s), `cap` (none today), `nameLength` (80) |
 | `auto` | `debounceMs` (750), `workflowIdleMs` (1 h), `maxBranches` (12), `maxProofs` (100), `maxAgents` (200), `agentWorktreePath` convention, `outputs` (worktrees, agents, PRs) |
 | `ui` | pane id and title, columns and widths, hotkeys, colors, glyphs, section order |

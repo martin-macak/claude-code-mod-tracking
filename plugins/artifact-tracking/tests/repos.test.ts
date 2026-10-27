@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { resolvePath } from '../core/lib/shell'
+import { REPOS_DEFAULTS } from '../trackers/repos/config'
 import { extractRepoPathsFromTool, PATH_TOOLS, parseRepoHintsFromBash, repoBaseDir } from '../trackers/repos/hints'
 import { isNoisePath, normalizeRemoteUrl } from '../trackers/repos/identity'
 import { capRepoRows, mergeRepoRows, upsertRepoRows } from '../trackers/repos/rows'
@@ -609,6 +610,155 @@ test('capRepoRows keeps the maxRepos newest rows in order and the first maxRepoA
   expect(capRepoRows([row({ touchedBy: agents })])[0]!.touchedBy).toEqual(agents.slice(0, LIMITS.maxRepoAgents))
   const small = [row()]
   expect(capRepoRows(small)).toBe(small)
+})
+
+// Issue #195. A row keeps the toplevels that the session visited. Each one proves a branch to the PR lane.
+const visitOf = (root: string, branch: string | undefined, at: number) => ({
+  key: SDK,
+  name: 'acme/sdk',
+  root,
+  ...(branch !== undefined ? { branch } : {}),
+  touchedBy: 'main',
+  mode: 'read' as const,
+  at,
+})
+
+test('upsertRepoRows: a visit of another root with no branch does not keep the branch of the old root (issue #195)', () => {
+  const cur = [row({ root: '/x/a', branch: 'feat/a', lastSeen: 1_000_000 })]
+  const [next] = upsertRepoRows(cur, visitOf('/x/b', undefined, 1_000_001))
+  expect(next).toMatchObject({ root: '/x/b' })
+  expect(next!.branch).toBeUndefined()
+  expect(next!.roots).toEqual([{ path: '/x/b' }, { path: '/x/a', branch: 'feat/a' }])
+})
+
+test('upsertRepoRows: a visit puts its root first with its branch, and the row shows that root and branch', () => {
+  const first = upsertRepoRows([], visitOf('/x/a', 'feat/a', 100))
+  expect(first[0]).toMatchObject({ root: '/x/a', branch: 'feat/a', roots: [{ path: '/x/a', branch: 'feat/a' }] })
+  const second = upsertRepoRows(first, visitOf('/x/b', 'feat/b', 100 + LIMITS.tickMs))
+  expect(second[0]).toMatchObject({ root: '/x/b', branch: 'feat/b' })
+  expect(second[0]!.roots).toEqual([
+    { path: '/x/b', branch: 'feat/b' },
+    { path: '/x/a', branch: 'feat/a' },
+  ])
+  // Back to the first root: it moves to the front with the branch it has now.
+  const back = upsertRepoRows(second, visitOf('/x/a', 'feat/a2', 100 + 2 * LIMITS.tickMs))
+  expect(back[0]).toMatchObject({ root: '/x/a', branch: 'feat/a2' })
+  expect(back[0]!.roots).toEqual([
+    { path: '/x/a', branch: 'feat/a2' },
+    { path: '/x/b', branch: 'feat/b' },
+  ])
+})
+
+test('upsertRepoRows: the same root with no branch keeps the branch that root had', () => {
+  const [a] = upsertRepoRows([], visitOf('/x/a', 'feat/a', 100))
+  const [b] = upsertRepoRows([a!], visitOf('/x/b', 'feat/b', 100 + LIMITS.tickMs))
+  const [again] = upsertRepoRows([b!], visitOf('/x/a', undefined, 100 + 2 * LIMITS.tickMs))
+  expect(again).toMatchObject({ root: '/x/a', branch: 'feat/a' })
+  expect(again!.roots).toEqual([
+    { path: '/x/a', branch: 'feat/a' },
+    { path: '/x/b', branch: 'feat/b' },
+  ])
+})
+
+test('upsertRepoRows: a repeat visit of the same root and branch writes nothing, and a legacy row stays one', () => {
+  const [a] = upsertRepoRows([], visitOf('/x/a', 'feat/a', 100))
+  const rows = [a!]
+  expect(upsertRepoRows(rows, visitOf('/x/a', 'feat/a', 101))).toBe(rows)
+  const legacy = [row({ root: '/x/a', branch: 'feat/a', lastSeen: 1_000_000 })]
+  expect(upsertRepoRows(legacy, visitOf('/x/a', 'feat/a', 1_000_001))).toBe(legacy)
+  const [grown] = upsertRepoRows(legacy, visitOf('/x/b', 'feat/b', 1_000_002))
+  expect(grown!.roots).toEqual([
+    { path: '/x/b', branch: 'feat/b' },
+    { path: '/x/a', branch: 'feat/a' },
+  ])
+})
+
+test('upsertRepoRows: an older visit adds its root at the end and moves nothing else', () => {
+  const [a] = upsertRepoRows([], visitOf('/x/a', 'feat/a', 1_000_000))
+  const [older] = upsertRepoRows([a!], visitOf('/x/old', 'feat/old', 5))
+  expect(older).toMatchObject({ root: '/x/a', branch: 'feat/a' })
+  expect(older!.roots).toEqual([
+    { path: '/x/a', branch: 'feat/a' },
+    { path: '/x/old', branch: 'feat/old' },
+  ])
+})
+
+test('upsertRepoRows: a row keeps at most maxRepoRoots roots, the newest', () => {
+  let rows: RepoRecord[] = []
+  const max = REPOS_DEFAULTS.maxRepoRoots
+  for (let i = 0; i <= max; i++)
+    rows = upsertRepoRows(rows, visitOf(`/x/r${i}`, `feat/${i}`, 100 + i * LIMITS.tickMs), LIMITS.tickMs, max)
+  expect(rows[0]!.roots!.map(r => r.path)).toEqual(['/x/r4', '/x/r3', '/x/r2', '/x/r1'])
+})
+
+test('capRepoRows trims the roots of a row to maxRepoRoots', () => {
+  const roots = Array.from({ length: 6 }, (_, i) => ({ path: `/x/r${i}`, branch: `b${i}` }))
+  const caps = { maxRepos: 50, maxRepoAgents: 8, maxRepoRoots: 3 }
+  const out = capRepoRows([row({ roots })], caps)
+  expect(out[0]!.roots).toEqual(roots.slice(0, 3))
+  const small = [row({ roots: roots.slice(0, 2) })]
+  expect(capRepoRows(small, caps)).toBe(small)
+})
+
+test('mergeRepoRows: the roots of both copies, the newer copy first, one entry per path', () => {
+  const stored = row({ lastSeen: 50, root: '/x/c', branch: 'feat/c', roots: [{ path: '/x/c', branch: 'feat/c' }] })
+  const live = row({
+    lastSeen: 90,
+    root: '/x/b',
+    branch: 'feat/b',
+    roots: [
+      { path: '/x/b', branch: 'feat/b' },
+      { path: '/x/c', branch: 'feat/c-newer' },
+      { path: '/x/a', branch: 'feat/a' },
+    ],
+  })
+  for (const [cur, added] of [
+    [[stored], [live]],
+    [[live], [stored]],
+  ] as const) {
+    const [merged] = mergeRepoRows([...cur], [...added])
+    expect(merged).toMatchObject({ root: '/x/b', branch: 'feat/b' })
+    expect(merged!.roots!.map(r => r.path)).toEqual(['/x/b', '/x/c', '/x/a'])
+  }
+  const legacy = row({ lastSeen: 40, root: '/x/old', branch: 'feat/old' })
+  expect(mergeRepoRows([live], [legacy])[0]!.roots!.map(r => r.path)).toEqual(['/x/b', '/x/c', '/x/a', '/x/old'])
+  const plain = [row({ root: '/x/p', branch: 'p' })]
+  expect(mergeRepoRows(plain, [row({ root: '/x/p', branch: 'p' })])).toBe(plain)
+})
+
+test('mergeRepoRows: a newer copy on another root with no branch does not take the branch of the old root (issue #195)', () => {
+  const stored = upsertRepoRows([], visitOf('/x/a', 'feat/a', 1_000_000))
+  const live = upsertRepoRows(stored, visitOf('/x/b', undefined, 1_000_000 + LIMITS.tickMs))
+  const legacyOld = row({ root: '/x/a', branch: 'feat/a', lastSeen: 50 })
+  const legacyNew = row({ root: '/x/b', lastSeen: 90 })
+  for (const [cur, added] of [
+    [stored, live],
+    [live, stored],
+    [[legacyOld], [legacyNew]],
+    [[legacyNew], [legacyOld]],
+  ] as const) {
+    const [merged] = mergeRepoRows([...cur], [...added])
+    expect(merged).toMatchObject({ root: '/x/b' })
+    expect(merged!.branch).toBeUndefined()
+  }
+  // A row with a list shows the same pairs in its list: the old root keeps its branch, the new one has none.
+  expect(mergeRepoRows(stored, live)[0]!.roots).toEqual([{ path: '/x/b' }, { path: '/x/a', branch: 'feat/a' }])
+})
+
+test('mergeRepoRows: the same root with no branch in the newer copy keeps the branch that root had, in the row and in its list', () => {
+  const older = row({ lastSeen: 50, root: '/x/a', branch: 'feat/a', roots: [{ path: '/x/a', branch: 'feat/a' }] })
+  const newer = row({ lastSeen: 90, root: '/x/a', roots: [{ path: '/x/a' }, { path: '/x/b', branch: 'feat/b' }] })
+  for (const [cur, added] of [
+    [[older], [newer]],
+    [[newer], [older]],
+  ] as const) {
+    const [merged] = mergeRepoRows([...cur], [...added])
+    expect(merged).toMatchObject({ root: '/x/a', branch: 'feat/a' })
+    expect(merged!.roots).toEqual([
+      { path: '/x/a', branch: 'feat/a' },
+      { path: '/x/b', branch: 'feat/b' },
+    ])
+  }
 })
 
 function worktreeRunner(calls: string[] = []) {

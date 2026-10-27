@@ -1,7 +1,15 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Given, Then, When } from '@cucumber/cucumber'
-import { callsOf, type FakePr, fakeGhSpec, isQuiet, type Mergeable } from '../support/fake-gh.ts'
+import {
+  callsOf,
+  type FakePr,
+  fakeGhSpec,
+  isQuiet,
+  type Mergeable,
+  parseOwnerRepo,
+  withRepo,
+} from '../support/fake-gh.ts'
 import { FAKE_ORIGIN_NAME, fakeGithubClone, listRefs } from '../support/session.ts'
 import { idleMs, waitUntil } from '../support/wait.ts'
 import type { DemoWorld } from '../support/world.ts'
@@ -11,6 +19,19 @@ import type { DemoWorld } from '../support/world.ts'
 const MERGE_STATUS: Record<Mergeable, string> = { CONFLICTING: 'DIRTY', MERGEABLE: 'CLEAN', UNKNOWN: 'UNKNOWN' }
 
 const isMergeable = (word: string): word is Mergeable => Object.hasOwn(MERGE_STATUS, word)
+
+/** The PR of a step: the word of the step is checked against the states that the fake knows. */
+function fakePr(number: number, title: string, head: string, base: string, mergeable: string): FakePr {
+  if (!isMergeable(mergeable)) throw new Error(`fake gh: ${mergeable} is not one of ${Object.keys(MERGE_STATUS)}`)
+  return {
+    number,
+    title,
+    headRefName: head,
+    baseRefName: base,
+    mergeable,
+    mergeStateStatus: MERGE_STATUS[mergeable],
+  }
+}
 
 // Before the session starts. The clone goes on a feature branch, because PR discovery drops the default branch, and its
 // origin becomes a local copy that stands for the fake repo: nothing the session runs can reach GitHub.
@@ -27,17 +48,40 @@ Given(
   'the fake gh reports PR #{int} {string} from {string} into {string} as {word}',
   function (this: DemoWorld, number: number, title: string, head: string, base: string, mergeable: string) {
     if (this.fakeGh === undefined) throw new Error('fake gh: start with the step "a fake GitHub repo ..."')
-    if (!isMergeable(mergeable)) throw new Error(`fake gh: ${mergeable} is not one of ${Object.keys(MERGE_STATUS)}`)
+    const pr = fakePr(number, title, head, base, mergeable)
     this.tl.phase('cut')
-    const pr: FakePr = {
-      number,
-      title,
-      headRefName: head,
-      baseRefName: base,
-      mergeable,
-      mergeStateStatus: MERGE_STATUS[mergeable],
-    }
     this.setFakeGh({ ...this.fakeGh, prs: [...this.fakeGh.prs, pr] })
+  },
+)
+
+// Issue #195. A second repo that the session reads from: a repo of its own under $HOME/.cache/cc-demo, on a feature branch,
+// whose origin names GitHub. The fake gh answers it as it answers the first repo. Put the step after the one that makes the
+// first repo, and before the step that starts the session.
+Given(
+  'a second fake GitHub repo {string} on the branch {string}',
+  function (this: DemoWorld, ownerRepo: string, branch: string) {
+    if (this.fakeGh === undefined) throw new Error('fake gh: start with the step "a fake GitHub repo ..."')
+    this.tl.phase('cut')
+    this.makeForeignRepo(ownerRepo, branch)
+    this.setFakeGh(withRepo(this.fakeGh, ownerRepo, 'main', []))
+  },
+)
+
+Given(
+  'the fake gh reports PR #{int} {string} in {string} from {string} into {string} as {word}',
+  function (
+    this: DemoWorld,
+    number: number,
+    title: string,
+    ownerRepo: string,
+    head: string,
+    base: string,
+    mergeable: string,
+  ) {
+    if (this.fakeGh === undefined) throw new Error('fake gh: start with the step "a fake GitHub repo ..."')
+    const pr = fakePr(number, title, head, base, mergeable)
+    this.tl.phase('cut')
+    this.setFakeGh(withRepo(this.fakeGh, ownerRepo, 'main', [pr]))
   },
 )
 
@@ -61,6 +105,26 @@ Then('the fake gh answered {string}', async function (this: DemoWorld, call: str
     what: `the fake gh to answer "${call}"`,
     last: () => describe(this),
   })
+  this.tl.phase('normal')
+})
+
+// A discovery query for the repo: the call that the PR lane makes for a repo whose branches the session proved. The log keeps
+// the first 200 characters of the query, which hold the `repository(owner:, name:)` line.
+Then('the fake gh answered a discovery of {string}', async function (this: DemoWorld, ownerRepo: string) {
+  const { owner, repo } = parseOwnerRepo(ownerRepo)
+  const named = `repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(repo)})`
+  this.tl.phase('fast')
+  await waitUntil(
+    () =>
+      log(this).some(c => c.call === 'graphql discovery' && c.exit === 0 && c.argv.some(a => a.includes(named)))
+        ? true
+        : undefined,
+    {
+      timeoutMs: this.config.screenTimeoutMs,
+      what: `the fake gh to answer a discovery of ${ownerRepo}`,
+      last: () => describe(this),
+    },
+  )
   this.tl.phase('normal')
 })
 

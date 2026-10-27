@@ -255,8 +255,9 @@ test('RepoQueue and the row helpers keep today numbers with no argument', async 
       ),
     ])[0]?.touchedBy,
   ).toHaveLength(8)
-  expect(capRepoRows(many, { maxRepos: 5, maxRepoAgents: 1 })).toHaveLength(5)
-  expect(capRepoRows([row('x', 1, ['a', 'b'])], { maxRepos: 5, maxRepoAgents: 1 })[0]?.touchedBy).toEqual(['a'])
+  const caps = { maxRepos: 5, maxRepoAgents: 1, maxRepoRoots: 4 }
+  expect(capRepoRows(many, caps)).toHaveLength(5)
+  expect(capRepoRows([row('x', 1, ['a', 'b'])], caps)[0]?.touchedBy).toEqual(['a'])
 })
 
 test('upsertRepoRows moves lastSeen after tickMs, 30000 by default', () => {

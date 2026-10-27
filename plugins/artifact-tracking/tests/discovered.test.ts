@@ -5,7 +5,7 @@ import { addReason, reasonSet } from '../core/lib/reasons'
 import { foldRecords } from '../core/lib/records'
 import { applyDiscovery, dropAuto } from '../trackers/github/discovered'
 import { githubKind } from '../trackers/github/kind'
-import { isLanePr } from '../trackers/github/lane-pr'
+import { isForeignLanePr, isHeldLanePr, isLanePr, isSessionLanePr } from '../trackers/github/lane-pr'
 import type { GitHubRecord, GitHubRef, ItemRecord, Ref, WebRef } from './fixtures/contracts'
 import { discovered } from './fixtures/gh-discovery'
 import { claimsOf, isAutoOnly, keyOf, prKey } from './fixtures/keys'
@@ -263,7 +263,7 @@ test('a dismissed PR adds nothing, and neither do its refs; a dismissed ref is s
   expect(some.list.map(x => x.key)).toEqual([K7])
 })
 
-test('prune runs only on a complete reply: a PR that left loses the lane marker, and its auto-only refs go', () => {
+test('a complete reply prunes a PR that left, and its auto-only refs; a reply that is not complete holds the lane PRs of the session repo, so the list stays', () => {
   const refsByPr = new Map<string, readonly Claim[]>([[K7, claimsOf([ghRef(1)], 'pr-body', AT)]])
   const first = applyDiscovery([], input({ refsByPr })).list
   const gone = applyDiscovery(first, input({ prs: [], complete: true, at: AT + 1 }))
@@ -315,7 +315,7 @@ test('prune follows the body: a ref that an edited body no longer lists loses di
   const rec = kept.list.find(x => x.key === 'gh:github.com/acme/web#1')!
   expect(rec.sources).toEqual(['prompt'])
   expect(rec.via).toBeUndefined()
-  // A partial reply deletes nothing.
+  // A partial reply holds the lane PRs of the session repo and the refs of their bodies.
   const partial = applyDiscovery(first.list, input({ refsByPr: new Map([[K7, []]]), complete: false }))
   expect(partial.list.find(x => x.key === keyOf(bodyRef(1)))).toMatchObject({ sources: [], via: [K7] })
 })
@@ -393,7 +393,7 @@ test('a lane marker that outlived a load stays off when a body ref or a fold add
   const [stale] = dropAuto([both], new Set([K7])) // the load: the marker stays, `discovered` goes
   expect((stale as GitHubRecord).lane).toBe(true)
   expect(isLanePr(stale as GitHubRecord)).toBe(false)
-  // Another live PR names #7 in its body, and the reply is partial, so no prune clears the marker.
+  // Another live PR names #7 in its body. The reply is partial, so the prune holds the lane PRs of the session repo: the body ref itself must keep the marker off.
   const nine = discovered({ number: 9 })
   const refs = new Map<string, readonly Claim[]>([[prKey(nine), claimsOf([ghRef(7)], 'pr-body', AT)]])
   const rec = applyDiscovery([stale!], input({ prs: [nine], refsByPr: refs, complete: false, at: AT + 1 })).list.find(
@@ -639,4 +639,136 @@ test('a held PR keeps its lane marker, its reasons and the refs of its body over
   const unheld = applyDiscovery(first.list, input({ prs: [], at: AT + 30_000 }))
   expect(unheld.list.map(x => x.key)).toEqual([K657])
   expect(isLanePr(unheld.list[0] as GitHubRecord)).toBe(false)
+})
+
+// Issue #195. A foreign repo with no sure answer holds its lane PRs: `applyDiscovery` finds them in the list.
+const KFOREIGN = 'github.com/acme-org/foreign-repo'
+const KF31 = 'gh:github.com/acme-org/foreign-repo#31'
+const foreign31 = () => discovered({ number: 31, owner: 'Acme-Org', repo: 'Foreign-Repo', otherRepo: true })
+
+test('isHeldLanePr: a lane PR of a held repo, whatever the case of its parts; no other record', () => {
+  const [rec] = applyDiscovery([], input({ prs: [foreign31()] })).list
+  const lane = rec as GitHubRecord
+  expect(isHeldLanePr(lane, new Set([KFOREIGN]))).toBe(true)
+  expect(isHeldLanePr(lane, new Set(['github.com/acme-org/other']))).toBe(false)
+  expect(isHeldLanePr(lane, new Set())).toBe(false)
+  // A PR that the conversation named, or a record of another category, is no lane PR: a held repo does not keep it.
+  const named = { ...lane, lane: undefined } as unknown as GitHubRecord
+  expect(isHeldLanePr(named, new Set([KFOREIGN]))).toBe(false)
+  expect(isHeldLanePr(autoWeb(1), new Set([KFOREIGN]))).toBe(false)
+  expect(isHeldLanePr({ ...lane, host: 3 } as unknown as GitHubRecord, new Set([KFOREIGN]))).toBe(false)
+})
+
+test('isForeignLanePr: a lane PR of another repo; no PR of the session repo, no PR the conversation named, no other record', () => {
+  const [other] = applyDiscovery([], input({ prs: [foreign31()] })).list
+  const [mine] = applyDiscovery([], input({ prs: [discovered({ number: 7 })] })).list
+  expect(isForeignLanePr(other as GitHubRecord)).toBe(true)
+  expect(isForeignLanePr(mine as GitHubRecord)).toBe(false) // a PR of the session repo has no `otherRepo`
+  expect(isForeignLanePr({ ...other, lane: undefined } as unknown as GitHubRecord)).toBe(false) // named, not found by the lane
+  expect(isForeignLanePr({ ...other, otherRepo: undefined } as unknown as GitHubRecord)).toBe(false)
+  expect(isForeignLanePr(autoWeb(1))).toBe(false)
+})
+
+test('isSessionLanePr: a lane PR with no otherRepo; no PR of another repo, no PR the conversation named, no other record', () => {
+  const [other] = applyDiscovery([], input({ prs: [foreign31()] })).list
+  const [mine] = applyDiscovery([], input({ prs: [discovered({ number: 7 })] })).list
+  expect(isSessionLanePr(mine as GitHubRecord)).toBe(true)
+  expect(isSessionLanePr(other as GitHubRecord)).toBe(false) // the PR of another repo has `otherRepo`
+  expect(isSessionLanePr({ ...mine, lane: undefined } as unknown as GitHubRecord)).toBe(false) // named, not found by the lane
+  expect(isSessionLanePr(autoWeb(1))).toBe(false)
+})
+
+test('applyDiscovery: a lane PR of a held repo keeps its marker over a complete reply, and the result names it as held', () => {
+  const first = applyDiscovery([], input({ prs: [discovered({ number: 7 }), foreign31()] }))
+  expect(first.list.map(x => x.key)).toEqual([K7, KF31])
+  expect(first.held).toEqual([])
+  const heldRepos = new Set([KFOREIGN])
+  const held = applyDiscovery(first.list, input({ prs: [], heldRepos, at: AT + 30_000 }))
+  expect(held.list.map(x => x.key)).toEqual([KF31]) // #7 goes, #31 stays
+  expect(isLanePr(held.list[0] as GitHubRecord)).toBe(true)
+  expect(held.held).toEqual([KF31])
+  // The PRs that the caller held by key and the PRs of a held repo are one list.
+  const both = applyDiscovery(first.list, input({ prs: [], held: new Set([K7]), heldRepos, at: AT + 30_000 }))
+  expect(both.list.map(x => x.key)).toEqual([K7, KF31])
+  expect(both.held).toEqual([K7, KF31])
+  // The repo answers and has no such PR: it goes, as any PR that the lane stopped finding.
+  const answered = applyDiscovery(first.list, input({ prs: [], at: AT + 30_000 }))
+  expect(answered.list).toEqual([])
+  expect(answered.held).toEqual([])
+})
+
+test('applyDiscovery: a dismissed PR of a held repo is not held', () => {
+  const first = applyDiscovery([], input({ prs: [foreign31()] }))
+  const dismissed = new Set([KF31])
+  const r = applyDiscovery(first.list, input({ prs: [], heldRepos: new Set([KFOREIGN]), dismissed, at: AT + 30_000 }))
+  expect(r.held).toEqual([])
+})
+
+test('applyDiscovery: a PR of a held repo that was read this round is not held; one that was not read stays held', () => {
+  const KF32 = 'gh:github.com/acme-org/foreign-repo#32'
+  const foreign32 = discovered({ number: 32, owner: 'Acme-Org', repo: 'Foreign-Repo', otherRepo: true })
+  const K1 = keyOf(ghRef(1))
+  const K2 = keyOf(ghRef(2))
+  const refsByPr = new Map<string, readonly Claim[]>([
+    [KF31, claimsOf([ghRef(1)], 'pr-body', AT)],
+    [KF32, claimsOf([ghRef(2)], 'pr-body', AT)],
+  ])
+  const first = applyDiscovery([], input({ prs: [foreign31(), foreign32], refsByPr }))
+  expect(first.list.map(x => x.key)).toEqual([KF31, KF32, K1, K2])
+  // The repo answers for the branch of #31 only: the branch of #32 failed, so the repo is held. The body of #31 was read, and
+  // it names no issue any more. The body of #32 was not read: its issue keeps its entry.
+  const heldRepos = new Set([KFOREIGN])
+  const r = applyDiscovery(first.list, input({ prs: [foreign31()], heldRepos, at: AT + 30_000 }))
+  expect(r.list.map(x => x.key)).toEqual([KF31, KF32, K2]) // the issue of the read body goes, the other stays
+  expect(r.list.find(x => x.key === KF32)).toMatchObject({ lane: true })
+  expect(r.list.find(x => x.key === K2)).toMatchObject({ via: [KF32], reasons: DISCOVERED })
+  expect(r.held).toEqual([KF32]) // the PR that was read is not in it
+})
+
+test('applyDiscovery: a reply that is not complete holds the lane PRs of the session repo and still reconciles those of other repos (issue #195, Codex P2)', () => {
+  const K1 = keyOf(ghRef(1))
+  const K2 = keyOf(ghRef(2))
+  const refsByPr = new Map<string, readonly Claim[]>([
+    [K7, claimsOf([ghRef(2)], 'pr-body', AT)],
+    [KF31, claimsOf([ghRef(1)], 'pr-body', AT)],
+  ])
+  const first = applyDiscovery([], input({ prs: [discovered({ number: 7 }), foreign31()], refsByPr }))
+  expect(first.list.map(x => x.key)).toEqual([K7, KF31, K2, K1])
+  // The session repo got no question (no GitHub repo) or no sure answer. The other repo answered, without #31.
+  const r = applyDiscovery(first.list, input({ prs: [], complete: false, at: AT + 30_000 }))
+  expect(r.list.map(x => x.key)).toEqual([K7, K2]) // #31 and the issue of its body go
+  expect(r.list.find(x => x.key === K7)).toMatchObject({ lane: true })
+  expect(r.list.find(x => x.key === K2)).toMatchObject({ via: [K7], reasons: DISCOVERED })
+  expect(r.gone).toEqual([KF31])
+  expect(r.held).toEqual([K7]) // the lane PR of the session repo is held: the reply says nothing of it
+  // A repo with no sure answer is held, as in a complete reply: #31 keeps its marker and its issue.
+  const heldRepos = new Set([KFOREIGN])
+  const held = applyDiscovery(first.list, input({ prs: [], complete: false, heldRepos, at: AT + 30_000 }))
+  expect(held.list.map(x => x.key)).toEqual([K7, KF31, K2, K1])
+  expect(held.gone).toEqual([])
+  expect(held.held).toEqual([K7, KF31])
+  // A PR of the session repo that the reply returned is held too: the reply is not sure of the session repo.
+  const read = applyDiscovery(
+    first.list,
+    input({ prs: [discovered({ number: 7 })], refsByPr: new Map([[K7, []]]), complete: false, at: AT + 30_000 }),
+  )
+  expect(read.list.map(x => x.key)).toEqual([K7, K2]) // the issue of #7 stays: its body is not reconciled
+  // A PR of the session repo that the reply returned and the list does not hold yet is held too: a ref that names it stays.
+  const early = applyDiscovery([autoWeb(1)], input({ prs: [discovered({ number: 7 })], complete: false }))
+  expect(early.list.map(x => x.key)).toEqual([autoWeb(1).key, K7])
+  // The next step has nothing left to reconcile: it returns its input list (A22).
+  const again = applyDiscovery(r.list, input({ prs: [], complete: false, at: AT + 60_000 }))
+  expect(again.list).toBe(r.list)
+  expect(again.gone).toEqual([])
+})
+
+test('applyDiscovery: `gone` names the lane PRs that lost the marker; a held PR and a PR the reply returned are not in it', () => {
+  const first = applyDiscovery([], input({ prs: [discovered({ number: 7 }), discovered({ number: 9 }), foreign31()] }))
+  expect(first.gone).toEqual([])
+  const r = applyDiscovery(
+    first.list,
+    input({ prs: [discovered({ number: 7 })], held: new Set([K9]), at: AT + 30_000 }),
+  )
+  expect(r.list.map(x => x.key)).toEqual([K7, K9]) // #31 goes, #9 is held, #7 was read
+  expect(r.gone).toEqual([KF31])
 })

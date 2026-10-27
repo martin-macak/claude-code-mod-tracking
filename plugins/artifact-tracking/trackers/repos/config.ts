@@ -11,6 +11,10 @@ export const REPOS_SCHEMA = {
   /** The lookup queue. Read once per load: it sizes an object at construction. */
   maxRepoQueue: int(32, 1, 256),
   gitTimeoutMs: int(5000, 500, 60000),
+  /** How many repos other than the session repo the PR lane polls (issue #195). 0 turns the poll off. */
+  pollRepos: int(3, 0, 10),
+  /** How many visited toplevels one row keeps. Each one proves a branch of its repo. */
+  maxRepoRoots: int(4, 1, 20),
 } as const satisfies Schema
 
 export type ReposConfig = ConfigOf<typeof REPOS_SCHEMA>

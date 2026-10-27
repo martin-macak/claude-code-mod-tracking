@@ -3,6 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   conflictCount,
+  forgetNotes,
   isFresh,
   mergeChip,
   mergeNotes,
@@ -186,6 +187,15 @@ test('mergeNotes: after an incomplete reply the notes of the PRs it left out sta
   expect(mergeNotes(prev, [{ key: 'a', mergeable: 'MERGEABLE' as const }], { keepMissing: true })).toEqual({
     b: { unknown: 3 },
   })
+})
+
+test('forgetNotes: the notes of the gone keys go, the others stay as they are and are not counted again (issue #195)', () => {
+  const prev = { a: { worktree: '/w/a' }, b: { unknown: 2 }, c: {} }
+  expect(forgetNotes(prev, new Set(['a', 'c']))).toEqual({ b: { unknown: 2 } }) // `b` is not counted: nothing was asked
+  expect(forgetNotes(prev, new Set(['x']))).toBe(prev) // no note of a gone key: the input itself (A22)
+  expect(forgetNotes(prev, new Set())).toBe(prev)
+  expect(forgetNotes(prev, new Set(['a', 'b', 'c']))).toBeUndefined()
+  expect(forgetNotes(undefined, new Set(['a']))).toBeUndefined()
 })
 
 test('mergeNotes: in a complete reply the notes of the held keys stay, and the others go (issue #158)', () => {

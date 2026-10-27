@@ -14,8 +14,9 @@ import { parsePorcelain } from '../../core/lib/porcelain'
 import { actions, KEYS } from './actions'
 import { GH_TOOL, ghOf } from './client'
 import { GITHUB_DEFAULTS, type GithubConfig, githubConfig } from './config'
+import { branchesOf, createdOf, FACT_BRANCHES, FACT_PRS, FACT_REPO_BRANCHES, foreignOf } from './facts'
 import { githubKind } from './kind'
-import { branchesOf, createdOf, EMPTY_LANE, PrLane, wantsStep } from './lane'
+import { EMPTY_LANE, PrLane, wantsStep } from './lane'
 import { githubPrompt } from './prompt'
 import { parseRemote } from './remote'
 import { foundRepo } from './repo'
@@ -26,10 +27,6 @@ export { GH_TOOL, type GithubConfig, githubConfig, githubKind, parseRemote }
 
 type Ctx = TrackerContext<GithubConfig, LaneState>
 type H<E> = Handler<GithubConfig, LaneState, E>
-
-/** The facts the auto tracker publishes: the branches after each round, and the PRs the run created. This tracker reads them and imports nothing of auto. */
-const FACT_BRANCHES = 'auto.branches'
-const FACT_PRS = 'auto.prs'
 
 /**
  * Changes the lane state. Every write goes through here. It reads first and stops when the change returns its input
@@ -79,6 +76,7 @@ function laneOf(ctx: Ctx): PrLane {
     save: change => setLane(ctx, change),
     branches: () => branchesOf(ctx.facts.read<Json>(FACT_BRANCHES)),
     created: () => createdOf(ctx.facts.read<Json>(FACT_PRS)),
+    foreign: () => foreignOf(ctx.facts.read<Json>(FACT_REPO_BRANCHES)).repos,
     gh,
     ghReady: async () => {
       const tool = ghOf(ctx.tools, config, () => ctx.clock.wall())
@@ -143,6 +141,16 @@ const onBranches: H<FactEvent> = (ctx, ev) => {
   if (next && wantsStep(next, branchesOf(ev.previous))) loads.get(ctx)?.request()
 }
 
+/**
+ * A new `repos.branches` starts a step, once a value is there to compare with: the first one comes at init (or at the first
+ * visit of a load) and starts nothing, as the first `auto.branches` of a load. Core fires the event on a change of the text
+ * only, and the repos tracker sorts the fact, so a poll that finds what it found before starts no step. A step reads the
+ * last fact whoever started it.
+ */
+const onRepos: H<FactEvent> = (ctx, ev) => {
+  if (ev.previous !== undefined) loads.get(ctx)?.request()
+}
+
 // `/track refresh` waits for the discovery too. Auto, order 10, has run its round by now, and its fact started the lane.
 const onCommand: H<CommandEvent> = async (ctx, ev) => {
   if (ev.sub === 'refresh' && ev.wait) await loads.get(ctx)?.idle()
@@ -169,7 +177,7 @@ export function githubTracker(): Tracker<GithubConfig, LaneState> {
       },
     },
     events: {
-      facts: { [FACT_BRANCHES]: onBranches },
+      facts: { [FACT_BRANCHES]: onBranches, [FACT_REPO_BRANCHES]: onRepos },
       command: onCommand,
     },
     sections,

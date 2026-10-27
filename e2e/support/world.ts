@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   After,
@@ -21,7 +21,7 @@ import { fakeGhEnv } from './fake-gh-env.ts'
 import { makeClaimer } from './lock.ts'
 import { withFocus } from './pane.ts'
 import { Recorder } from './recorder.ts'
-import { countLines, FAKE_ORIGIN_NAME, launchClaude, prepareClone, waitForTurnEnd } from './session.ts'
+import { countLines, FAKE_ORIGIN_NAME, fakeForeignRepo, launchClaude, prepareClone, waitForTurnEnd } from './session.ts'
 import { sizeRefusal } from './size.ts'
 import { slug } from './slug.ts'
 import { Timeline } from './timeline.ts'
@@ -64,6 +64,9 @@ export class DemoWorld extends World {
   fakeHome = ''
   /** The probe plugin that answers `ui.copy` (support/copy-probe.ts). Absent: the copy key writes the real clipboard. */
   copyProbe: CopyProbe | undefined
+  /** The second repo of the scenario (issue #195, `fakeForeignRepo`). Absent: the scenario has none. */
+  foreignRepo: { dir: string; readme: string; bare: string } | undefined
+  private foreignDir = ''
   private probeDir = ''
   private release: (() => void) | undefined
   private launched = false
@@ -99,6 +102,21 @@ export class DemoWorld extends World {
       this.fakeHome = mkdtempSync(join(tmpdir(), 'cc-fake-home-'))
       writeFileSync(homeFile(this.fakeHome), FAKE_HOME_TEXT)
     }
+  }
+
+  /**
+   * Makes a second repo that the session reads from but does not start in, on a feature branch, with a GitHub `origin`
+   * (`fakeForeignRepo`). It lives in `$HOME/.cache/cc-demo/<run>`: a temporary folder would be noise for the repos tracker,
+   * which makes no row of a repo there. The scenario removes the folder at the end (`tearDown`).
+   */
+  makeForeignRepo(ownerRepo: string, branch: string): void {
+    if (this.launched) throw new Error('second repo: make it before the step that starts the session')
+    if (this.foreignDir === '') {
+      const cache = join(homedir(), '.cache', 'cc-demo')
+      mkdirSync(cache, { recursive: true })
+      this.foreignDir = realpathSync(mkdtempSync(join(cache, 'run-')))
+    }
+    this.foreignRepo = fakeForeignRepo(this.foreignDir, { branch, ownerRepo })
   }
 
   /**
@@ -228,6 +246,7 @@ export class DemoWorld extends World {
         rmSync(this.configDir, { recursive: true, force: true })
         if (this.fakeHome !== '') rmSync(this.fakeHome, { recursive: true, force: true })
         if (this.probeDir !== '') rmSync(this.probeDir, { recursive: true, force: true })
+        if (this.foreignDir !== '') rmSync(this.foreignDir, { recursive: true, force: true })
       }
       await this.fakeApi?.close()
       this.release()

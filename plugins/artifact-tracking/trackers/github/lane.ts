@@ -7,16 +7,24 @@
 // One step at a time. A request during a step queues as one more and runs after it. Every step catches its own failure.
 // No `$`: it gets plain closures (`LaneDeps`).
 
-import type { Claim, Json, StoredItem } from '../../core/interfaces/items'
+import type { Claim, StoredItem } from '../../core/interfaces/items'
 import type { Now, RepoRef, Timer } from '../../core/interfaces/ports'
-import { isRecord } from '../../core/lib/json'
 import { type GitWorktree, worktreeOfBranch } from '../../core/lib/porcelain'
 import type { PrLane as LaneCaps } from './config'
 import { applyDiscovery } from './discovered'
-import { mergeNotes, retryDelay, type Seen } from './merge'
+import { forgetNotes, mergeNotes, retryDelay, type Seen } from './merge'
 import { type BodyScan, prBodyRefs } from './pr-body'
 import { discoverPrs } from './pr-discovery'
-import type { BranchesFact, DiscoveredPr, DiscoveryApplied, DiscoveryTool, LaneState, MergeNote, PrRef } from './types'
+import type {
+  BranchesFact,
+  DiscoveredPr,
+  DiscoveryApplied,
+  DiscoveryTool,
+  ForeignRepo,
+  LaneState,
+  MergeNote,
+  PrRef,
+} from './types'
 import { prKey } from './urls'
 
 /** The state of a lane that has not run: a good outcome, which draws nothing. */
@@ -27,42 +35,6 @@ export const PR_REASONS: ReadonlySet<string> = new Set(['start', 'tick', 'manual
 
 const sameList = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((x, i) => x === b[i])
-
-const isStrings = (v: unknown): v is readonly string[] => Array.isArray(v) && v.every(x => typeof x === 'string')
-
-/** The fact `auto.branches` as the lane reads it. A value of another shape is not the fact: undefined. */
-export function branchesOf(v: Json | undefined): BranchesFact | undefined {
-  if (!isRecord(v)) return undefined
-  const { seq, reasons, branches, overflow } = v
-  if (typeof seq !== 'number' || typeof overflow !== 'number' || !isStrings(reasons) || !isStrings(branches))
-    return undefined
-  return { seq, reasons, branches, overflow }
-}
-
-/**
- * The fact `auto.prs` as the lane reads it: the PRs the session created, each as host, owner, repo and number (issue
- * #158). An entry that is not whole is left out. A value of another shape is not the fact: no PRs.
- */
-export function createdOf(v: Json | undefined): PrRef[] {
-  if (!Array.isArray(v)) return []
-  const out: PrRef[] = []
-  for (const e of v) {
-    if (!isRecord(e)) continue
-    const { host, owner, repo, number } = e
-    if (typeof host !== 'string' || typeof owner !== 'string' || typeof repo !== 'string') continue
-    if (
-      host === '' ||
-      owner === '' ||
-      repo === '' ||
-      typeof number !== 'number' ||
-      !Number.isSafeInteger(number) ||
-      number < 1
-    )
-      continue
-    out.push({ host, owner, repo, number })
-  }
-  return out
-}
 
 /**
  * Whether a new `auto.branches` starts a step: it is a new round, and either its reasons name one that opens the lane
@@ -88,6 +60,11 @@ export interface LaneDeps {
    * Absent: none.
    */
   created?(): readonly PrRef[]
+  /**
+   * The repos other than the session repo and the branches the session proved in them, from the fact `repos.branches`
+   * (issue #195). The lane asks each one for those branches, in one query per repo. Absent: none.
+   */
+  foreign?(): readonly ForeignRepo[]
   gh: DiscoveryTool
   /** Waits for the cached `gh --version` probe. */
   ghReady(): Promise<boolean>
@@ -131,15 +108,30 @@ const prsSig = (p: Prs): string =>
   JSON.stringify([p.ok, p.skipped ?? null, p.error ?? null, p.host ?? null, p.untracked ?? 0])
 
 /**
- * The lane state after a step: the note, the default branch the reply named, and the merge notes. `notes` holds the new
- * merge notes, `merge: undefined` meaning none are left. A step with no `notes` (a failed one) keeps what the last good
- * step found.
+ * What a good step adds to the lane state. `merge` holds the new merge notes, `merge: undefined` meaning none are left; no
+ * `merge` key (a failed step) keeps what the last good step found. `foreignDefaults` adds the default branches that foreign
+ * repos named: equal values change nothing (A22).
  */
-function withPrs(cur: LaneState, prs: Prs, defaultBranch?: string, notes?: { merge: LaneState['merge'] }): LaneState {
-  const db = defaultBranch ?? cur.defaultBranch
-  const merge = notes === undefined ? cur.merge : notes.merge
-  if (prsSig(cur.prs) === prsSig(prs) && db === cur.defaultBranch && merge === cur.merge) return cur
-  return { prs, ...(db !== undefined ? { defaultBranch: db } : {}), ...(merge !== undefined ? { merge } : {}) }
+type LanePatch = {
+  defaultBranch?: string
+  merge?: LaneState['merge']
+  foreignDefaults?: Record<string, string>
+}
+
+/** The lane state after a step: the note, and the patch of a good step (the default branch the reply named, the notes). */
+function withPrs(cur: LaneState, prs: Prs, patch: LanePatch = {}): LaneState {
+  const db = patch.defaultBranch ?? cur.defaultBranch
+  const merge = 'merge' in patch ? patch.merge : cur.merge
+  const learned = patch.foreignDefaults
+  const fresh = learned !== undefined && Object.entries(learned).some(([k, v]) => cur.foreignDefaults?.[k] !== v)
+  if (prsSig(cur.prs) === prsSig(prs) && db === cur.defaultBranch && merge === cur.merge && !fresh) return cur
+  const foreignDefaults = fresh ? { ...cur.foreignDefaults, ...learned } : cur.foreignDefaults
+  return {
+    prs,
+    ...(db !== undefined ? { defaultBranch: db } : {}),
+    ...(merge !== undefined ? { merge } : {}),
+    ...(foreignDefaults !== undefined ? { foreignDefaults } : {}),
+  }
 }
 
 export class PrLane {
@@ -201,37 +193,51 @@ export class PrLane {
 
   private async discover(): Promise<void> {
     const { d } = this
-    const defaultBranch = (await d.load()).defaultBranch
+    const loaded = await d.load()
     const branches = d.branches()?.branches ?? []
     await d.ghReady()
     const repo = await d.repo()
     const at = d.now()
     const lane = d.lane()
-    const out = await discoverPrs(d.gh, repo, branches, at, defaultBranch, lane, d.created?.() ?? [])
+    const out = await discoverPrs(d.gh, repo, branches, at, loaded.defaultBranch, lane, {
+      created: d.created?.() ?? [],
+      foreign: d.foreign?.() ?? [],
+      foreignDefaults: loaded.foreignDefaults,
+    })
     if (!out.ok) {
-      await d.save(cur =>
-        withPrs(cur, {
-          at,
-          ok: false,
-          ...(out.skipped ? { skipped: out.skipped } : {}),
-          ...(out.error ? { error: out.error } : {}),
-          ...(out.host ? { host: out.host } : {}),
-        }),
+      // A step that finds nothing to ask is no failure, but it must not keep the PRs of other repos whose proof is gone.
+      const gone = out.skipped === 'no-branches' || out.skipped === 'no-repo' ? await this.dropUnproven(at) : []
+      const saved = await d.save(cur =>
+        withPrs(
+          cur,
+          {
+            at,
+            ok: false,
+            ...(out.skipped ? { skipped: out.skipped } : {}),
+            ...(out.error ? { error: out.error } : {}),
+            ...(out.host ? { host: out.host } : {}),
+          },
+          gone.length > 0 ? { merge: forgetNotes(cur.merge, new Set(gone)) } : {},
+        ),
       )
+      if (gone.length > 0) this.rearm(saved.merge)
       return
     }
     const refsByPr = new Map<string, readonly Claim[]>()
     for (const pr of out.prs) refsByPr.set(prKey(pr), prBodyRefs(pr, d.scanBody, lane.maxBodyRefs))
     const { staleMs, cap } = d.caps()
     let hidden: ReadonlySet<string> = new Set()
-    const held: ReadonlySet<string> = new Set(out.held)
+    // The lane PRs of a foreign repo with no sure answer keep their marker, as a created PR that got none does, except a PR
+    // that the reply returned: it was read, so its marker follows the reply. A reply that is not complete for the session
+    // repo holds its lane PRs, and each other repo is still reconciled by its own answer (issue #195).
     const r = await d.applyItems((list, dismissed) => {
       hidden = dismissed
       return applyDiscovery(list, {
         prs: out.prs,
         refsByPr,
         complete: out.complete,
-        held,
+        held: new Set(out.held),
+        heldRepos: new Set(out.heldRepos),
         dismissed,
         at,
         build: claim => d.build(claim),
@@ -240,14 +246,49 @@ export class PrLane {
     })
     d.onAdded(r.added)
     const seen = await this.seen(out.prs, hidden)
-    // A held PR that the person dismissed is no PR of the lane: it keeps no note (a retry would run on it).
-    const kept = new Set([...held].filter(k => !hidden.has(k)))
+    // `r.held` has no PR that the person dismissed: it is no PR of the lane and keeps no note (a retry would run on it).
+    const kept = new Set(r.held)
     const saved = await d.save(cur =>
-      withPrs(cur, { at, ok: true, ...(r.untracked > 0 ? { untracked: r.untracked } : {}) }, out.defaultBranch, {
-        merge: mergeNotes(cur.merge, seen, { keepMissing: !out.complete, keep: kept }),
-      }),
+      withPrs(
+        cur,
+        { at, ok: true, ...(r.untracked > 0 ? { untracked: r.untracked } : {}) },
+        {
+          ...(out.defaultBranch !== undefined ? { defaultBranch: out.defaultBranch } : {}),
+          // The notes of the PRs that lost the marker go, an incomplete reply or not: the lane lists them no more.
+          merge: forgetNotes(mergeNotes(cur.merge, seen, { keepMissing: !out.complete, keep: kept }), new Set(r.gone)),
+          ...(out.foreignDefaults !== undefined ? { foreignDefaults: out.foreignDefaults } : {}),
+        },
+      ),
     )
     this.rearm(saved.merge)
+  }
+
+  /**
+   * A step that asks nothing (`no-branches`: no tracked branch, no created PR and no proven branch of another repo; or
+   * `no-repo`: no GitHub repo for the branches) says nothing of the PRs that earlier steps found in other repos. Their last
+   * proof may have gone since (issue #195): the last Repos row was dismissed, `trackers.repos.pollRepos` is 0, or the only
+   * visited worktree is detached. It is the rule of every reply that is not complete for the session repo, with a reply that
+   * names no PR (`applyDiscovery`): each lane PR of another repo loses its `lane` marker, and the refs of its body lose
+   * their `via` entry. The lane PRs of the session repo are held, as a PR that got no answer is: the step asked nothing of
+   * the session repo, so it says nothing of its PRs, as before. A list with no PR of another repo does not change (A22), so
+   * a first step with no branch at all only skips. Returns the keys that lost the marker.
+   */
+  private async dropUnproven(at: number): Promise<string[]> {
+    const { d } = this
+    const { staleMs, cap } = d.caps()
+    const { maxAutoItems } = d.lane()
+    const r = await d.applyItems((list, dismissed) =>
+      applyDiscovery(list, {
+        prs: [],
+        refsByPr: new Map(),
+        complete: false,
+        dismissed,
+        at,
+        build: claim => d.build(claim),
+        caps: { staleMs, maxAutoItems, cap },
+      }),
+    )
+    return r.gone
   }
 
   /**

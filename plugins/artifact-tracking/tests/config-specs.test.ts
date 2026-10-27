@@ -147,7 +147,15 @@ test('the slices hold exactly the keys of the Defaults table', () => {
     'mime',
     'prompt',
   ])
-  expect(Object.keys(REPOS_DEFAULTS)).toEqual(['enabled', 'maxRepos', 'maxRepoAgents', 'maxRepoQueue', 'gitTimeoutMs'])
+  expect(Object.keys(REPOS_DEFAULTS)).toEqual([
+    'enabled',
+    'maxRepos',
+    'maxRepoAgents',
+    'maxRepoQueue',
+    'gitTimeoutMs',
+    'pollRepos',
+    'maxRepoRoots',
+  ])
   expect(Object.keys(PROCESSES_DEFAULTS)).toEqual([
     'enabled',
     'probeTimeoutMs',
@@ -244,6 +252,8 @@ const TABLE: readonly (readonly [string, number, number])[] = [
   ['trackers.repos.maxRepoAgents', 1, 50],
   ['trackers.repos.maxRepoQueue', 1, 256],
   ['trackers.repos.gitTimeoutMs', 500, 60000],
+  ['trackers.repos.pollRepos', 0, 10],
+  ['trackers.repos.maxRepoRoots', 1, 20],
   ['trackers.processes.probeTimeoutMs', 1000, 120000],
   ['trackers.processes.endedTtlMs', 0, 86400000],
   ['trackers.processes.failedTtlMs', 0, 86400000],

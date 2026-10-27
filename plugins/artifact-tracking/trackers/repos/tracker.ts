@@ -3,12 +3,13 @@ import type { Breaker } from '../../core/interfaces/tracker'
 import { CircuitBreaker } from '../../core/lib/circuit-breaker'
 import { parseRemote } from '../../core/lib/git'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
-import { normPath } from '../../core/lib/porcelain'
+import { type GitWorktree, normPath, parsePorcelain } from '../../core/lib/porcelain'
 import { resolvePath } from '../../core/lib/shell'
 import { REPOS_DEFAULTS } from './config'
 import type { RepoMode } from './hints'
 import { type Env, isNoisePath, localIdentity, normalizeRemoteUrl, REMOTE_ALIASES, remoteKey } from './identity'
 import { cleanPath, isAbs, maybeDir, within } from './paths'
+import type { RepoRoot } from './types'
 
 type ResolvedRepo = {
   key: string
@@ -69,6 +70,8 @@ export class RepoTracker {
    */
   private readonly branches = new Map<string, { branch?: string; at: number }>()
   private readonly branchPending = new Map<string, Promise<void>>()
+  /** The git common dir of each polled repo, by row key, for the load (issue #195). A list that fails forgets it. */
+  private readonly repoCommons = new Map<string, string>()
   private env: Promise<Env | undefined> | undefined
 
   constructor(private readonly d: TrackerDeps) {
@@ -306,6 +309,69 @@ export class RepoTracker {
     const resolved: ResolvedRepo = { ...id, root, common }
     this.byRoot.set(root, resolved)
     return resolved
+  }
+
+  /**
+   * The git common dir of a toplevel the session visited (issue #195): the folder that outlives every worktree of the repo.
+   * The visit lookup cached it for the toplevels it saw. Another toplevel (a row restored from the store) costs one
+   * `rev-parse`, the same one as a visit (`probeDir`, with its fallback for an old git). null: git cannot enter the folder
+   * (it is gone, or no repo), the breaker is open or git could not run.
+   */
+  private async commonOf(root: string): Promise<string | null> {
+    const top = normPath(root)
+    const known = this.byRoot.get(top)?.common
+    if (known !== undefined) return known
+    const now = this.d.now()
+    if (!this.breaker.allows(now)) return null
+    let probe: Awaited<ReturnType<RepoTracker['probeDir']>>
+    try {
+      probe = await this.probeDir(top)
+    } catch {
+      this.breaker.failure(now)
+      return null
+    }
+    this.breaker.success()
+    return probe === null || probe === 'missing' ? null : probe.common
+  }
+
+  /**
+   * The git common dir of a repo that the poll visits: of the first of its toplevels that git can enter, kept by row `key`
+   * for the load, so a later round asks nothing. A toplevel that is gone costs one lookup in each round until a toplevel
+   * answers. A failed list forgets the dir (`worktreeList`): the repo may have moved. null: no toplevel can be entered.
+   */
+  async commonDir(key: string, roots: readonly RepoRoot[]): Promise<string | null> {
+    const known = this.repoCommons.get(key)
+    if (known !== undefined) return known
+    for (const root of roots) {
+      const dir = await this.commonOf(root.path)
+      if (dir !== null) {
+        this.repoCommons.set(key, dir)
+        return dir
+      }
+    }
+    return null
+  }
+
+  /**
+   * The worktrees of a repo (issue #195): the porcelain list of its common dir, from any folder of the repo and though a
+   * worktree is gone. null: git could not say (the repo is gone, the breaker is open, git could not run), and the repos
+   * found at that common dir are forgotten. Only an execution fault counts against the breaker: a non-zero exit is a
+   * normal answer.
+   */
+  async worktreeList(common: string): Promise<GitWorktree[] | null> {
+    const now = this.d.now()
+    let list: GitWorktree[] | null = null
+    if (this.breaker.allows(now)) {
+      try {
+        const r = await this.git(['git', '-C', common, 'worktree', 'list', '--porcelain'])
+        this.breaker.success()
+        list = r.exitCode === 0 ? parsePorcelain(r.stdout) : null
+      } catch {
+        this.breaker.failure(now)
+      }
+    }
+    if (list === null) for (const [key, dir] of this.repoCommons) if (dir === common) this.repoCommons.delete(key)
+    return list
   }
 
   /**

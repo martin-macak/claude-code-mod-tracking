@@ -66,6 +66,17 @@ The dialog, the key, the hook and the mod are real: only the model is a script. 
 
 The copy key of the questions tracker hands its text to the engine (`$.ui.copy`), and the engine then writes the clipboard of the machine. `Given a plugin that answers ui.copy and logs the text` adds a second plugin to the session (`support/copy-probe.ts`, an extra `--plugin-dir`). It hears the `ui.copy` event, writes the text to a log beside its folder and answers `{ isCopied: true }` without `next`, so the engine writes nothing. `Then the copy log holds "…"` reads the log. Put the step before the step that starts the session. The folder of a plugin is watched, so the log never lies inside it.
 
+## A second repo
+
+The PR lane also polls a branch that the session proved in another repo (issue [#195](https://github.com/martin-macak/claude-code-mod-tracking/issues/195)). `features/foreign-repos.feature` shows it with a fake model and the fake `gh`, so it needs no login. Put the steps after `a fake GitHub repo ...` and before the step that starts the session:
+
+- `a second fake GitHub repo "owner/repo" on the branch "…"` makes the repo with `fakeForeignRepo` (`support/session.ts`): one commit and a README, on that branch, from nothing. Its `origin` is the GitHub URL, and `url.<copy>.pushInsteadOf` sends a push to a bare copy, so a push cannot reach GitHub. The mod reads the repo from `git remote get-url origin`, so `insteadOf` would give a local path and no GitHub repo. The mod never fetches it.
+- `the fake gh reports PR #N "title" in "owner/repo" from "head" into "base" as MERGEABLE` adds a PR to that repo. The spec of the fake has `others`: the discovery and the refresh answer for each repo of it, and `repo view` names the first.
+- `a fake model that reads the README of the second repo` plays a turn that calls `Read` on the README, then says `Read.`. The scenario names the tool in its session step: `and the tools "Read"`.
+- `Then the fake gh answered a discovery of "owner/repo"` polls the log for the discovery query of that repo.
+
+The repo lives in `$HOME/.cache/cc-demo/run-…` and the scenario removes it at the end (`DEMO_KEEP=1` keeps it). It must not be in a temporary folder or in one of Claude's own: the repos tracker treats those as noise and makes no row of a repo there.
+
 ## Run one scenario
 
 `make e2e-safe` and `npx cucumber-js` run every scenario except `@artifacts`. `make e2e` runs every scenario. Pick fewer with a tag, a name or a file position:

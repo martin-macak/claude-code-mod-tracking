@@ -98,6 +98,13 @@ export type PrSkip = 'no-repo' | 'no-gh' | 'not-logged-in' | 'paused' | 'host-no
 /** A PR by repo and number: one the session created (issue #158). Owner and repo keep their case. */
 export type PrRef = { host: string; owner: string; repo: string; number: number }
 
+/**
+ * A repo other than the session repo, and the branches the session proved in it: what the PR lane reads of the fact
+ * `repos.branches` (issue #195). The repos tracker owns the fact and its own type; a tracker imports no other, so the reader
+ * spells what it needs. Owner and repo keep the case of the remote.
+ */
+export type ForeignRepo = RepoRef & { branches: readonly string[] }
+
 export type DiscoveredPr = {
   host: string
   owner: string
@@ -141,15 +148,43 @@ export type ReplyClass =
  * `held` (absent when empty): the keys of the created PRs of another repo that got no sure answer: all of a repo with a
  * failed query, a host `gh` is not logged in to or `repository: null`, and in a repo that did answer only the PRs with
  * no verdict. The reply stays `complete` for the rest, and a prune leaves these alone. A PR that parsed is never held.
+ * `heldRepos` (absent when empty, issue #195): the foreign repos whose proven branches got no sure answer: a failed query, a host
+ * `gh` is not logged in to, `repository: null`, an alias with an error. The prune leaves each lane PR of such a repo alone
+ * that the reply did not return. A PR that the reply returned was read: its body still reconciles its refs and its marker
+ * follows the reply.
+ * `complete` (issue #195): the reply is sure of the lane PRs of the session repo. It is false when the session repo was not
+ * asked for its branches (no GitHub repo) or got no sure answer. The lane PRs of the session repo are then held, and each
+ * other repo is still reconciled by its own answer (`held`, `heldRepos`).
  * `host` (a failed outcome): the host that said no, for the skips `host-not-authed` and `not-logged-in` of a query. The
  * note of the lane names it: the session repo may be on another host (issue #158).
  */
 export type DiscoveryOutcome =
-  | { ok: true; prs: DiscoveredPr[]; complete: boolean; held?: string[]; defaultBranch?: string }
+  | {
+      ok: true
+      prs: DiscoveredPr[]
+      complete: boolean
+      held?: string[]
+      /** The foreign repos (`host/owner/repo` in lower case) that got no sure answer for their branches (issue #195). */
+      heldRepos?: string[]
+      /** The default branch that each foreign repo named, by `host/owner/repo` in lower case (issue #195). */
+      foreignDefaults?: Record<string, string>
+      defaultBranch?: string
+    }
   | { ok: false; skipped?: PrSkip; error?: string; host?: string }
 
-/** What `applyDiscovery` returns. `list` is the input list itself when nothing changed (A22). */
-export type DiscoveryApplied<R extends StoredItem = StoredItem> = { list: R[]; added: string[]; untracked: number }
+/**
+ * What `applyDiscovery` returns. `list` is the input list itself when nothing changed (A22). `held` holds the keys of the
+ * PRs that it kept without a sure answer: those of the caller, those of a held repo and, when the reply is not complete,
+ * the lane PRs of the session repo (issue #195). `gone` holds the keys of the lane PRs that lost their marker: the lane
+ * finds them no more, so the notes of the lane forget them.
+ */
+export type DiscoveryApplied<R extends StoredItem = StoredItem> = {
+  list: R[]
+  added: string[]
+  untracked: number
+  held: string[]
+  gone: string[]
+}
 
 /** A new interface, so the existing GitHubToolApi fakes in tests still compile. */
 export interface GitHubDiscoveryApi extends GitHubToolApi {
@@ -205,6 +240,8 @@ export type LaneState = {
   }
   /** The default branch the last discovery reply named. It gets no alias in the next query. */
   defaultBranch?: string
+  /** The default branch of each foreign repo (issue #195), by `host/owner/repo` in lower case. It gets no alias in the next query. */
+  foreignDefaults?: Record<string, string>
   /** The notes on the open PRs the last discovery found CONFLICTING or UNKNOWN, by PR key. Absent: none. */
   merge?: Record<string, MergeNote>
 }
