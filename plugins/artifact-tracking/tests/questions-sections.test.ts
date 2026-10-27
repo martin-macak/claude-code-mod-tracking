@@ -94,7 +94,7 @@ test('a summary row: the number, the first question and its answer, and how many
   expect(row?.cells.type?.text).toBe('question')
   expect(row?.cells.status).toEqual({ text: 'answered', fg: 'inactive' })
   expect(row?.extras).toEqual([{ text: 'T7', dim: true }])
-  expect(row?.turns).toEqual({ first: 7, last: 7 }) // the core detail line and a by-turn view read this, never the badge
+  expect(row).not.toHaveProperty('turns') // the core puts it there from `turnsOf` (tests/questions-turns.test.ts), never from a cell
   expect(row?.cells.control).toBeUndefined() // nothing to mark
   expect(row?.can).toEqual({ dismiss: false, priority: false })
 })

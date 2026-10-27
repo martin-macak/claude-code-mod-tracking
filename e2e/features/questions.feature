@@ -35,6 +35,21 @@ Feature: The questions that Claude asks are listed with their answers
     And the screen matches /Questions\s+1\s+1 call/
     And the screen matches /Q1\s+Storage → \S+\s+question\s+answered\s+T1/
 
+  # Issue #201. The questions tracker tells the turn ledger about the call, so `/track turn 1` lists it. The model reads the reply
+  # of the command, so the entry holds the key of the call and none of its words: no header, no question, no answer.
+  Scenario: /track turn lists the call by its key and holds no word of it
+    Given a fake model that asks "Where should the records live?" under the header "Storage" with the options "State only" and "State and store"
+    And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
+    When I type "Ask me where"
+    Then the screen shows "Where should the records live?"
+    When I press "Enter"
+    And Claude finishes
+    And I type "/track turn 1"
+    Then the screen matches /Turn 1 · answer · \d\d:\d\d · "Ask me where" · 1 new/
+    And the screen matches /new\s+Q1\s+created/
+    And the screen does not show "question Q1"
+    And the screen does not show "Q1 Storage"
+
   # The copy key `y` hands the call to the engine with `$.ui.copy`. A probe plugin answers that event without `next`, so the
   # engine never writes the clipboard of this machine, and the log holds the text that the key copied.
   Scenario: The copy key hands the selected call to the engine as Markdown

@@ -10,14 +10,16 @@ import type { ReplayItem, TickEvent, ToolCallEvent } from '../../core/interfaces
 import type { Json, JsonObject } from '../../core/interfaces/items'
 import type { Traceable } from '../../core/interfaces/reasons'
 import type { Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
+import type { TurnPort } from '../../core/interfaces/turns'
 import { QUESTION_KEYS, questionActions } from './actions'
 import { QUESTIONS_DEFAULTS, type QuestionsConfig, questionsConfig } from './config'
-import { addCall, asCalls, type Caps, callsWithin, capCalls, mergeCalls, type Stamp } from './log'
+import { addCall, asCalls, type Caps, callsWithin, capCalls, mergeCalls } from './log'
 import { qaText } from './markdown'
 import { askCall, type CallBody, planCall } from './parse'
 import { questionsPrompt } from './prompt'
 import { questionReasonsOf } from './reasons'
 import { sections } from './sections'
+import { questionSightings, questionTurnsOf } from './turns'
 import type { QuestionCall } from './types'
 
 export { type QuestionsConfig, questionsConfig }
@@ -51,10 +53,18 @@ async function setCalls(ctx: Ctx, change: (calls: QuestionCall[]) => QuestionCal
 }
 
 export function questionsTracker(): Tracker<QuestionsConfig, Json> & Traceable<Json> {
-  const keep = (ctx: Ctx, bodies: readonly CallBody[], stamp: Omit<Stamp, 'at'>): Promise<void> | undefined => {
-    if (bodies.length === 0) return undefined
-    const at = ctx.clock.wall()
-    return setCalls(ctx, calls => bodies.reduce((acc, body) => addCall(acc, body, { ...stamp, at }), calls))
+  /**
+   * Keeps the call. With `turn` (issue #201) the call carries its ordinal and the ledger hears that the event added it, so
+   * `/track turn n` lists it by its key. `turnsOf` hands the stamp of the call to the pane.
+   */
+  const keep = async (ctx: Ctx, body: CallBody, turn?: TurnPort): Promise<void> => {
+    const stamp = { at: ctx.clock.wall(), ...(turn !== undefined ? { turn: turn.ord } : {}) }
+    let held: QuestionCall[] = []
+    await setCalls(ctx, calls => {
+      held = calls // the last run is the one that wrote: a write that missed its version runs again
+      return addCall(calls, body, stamp)
+    })
+    if (turn !== undefined) await turn.note(questionSightings(turn.ord, [body], held))
   }
 
   const onTool =
@@ -62,8 +72,7 @@ export function questionsTracker(): Tracker<QuestionsConfig, Json> & Traceable<J
     (ctx, ev) => {
       const body = own(tool)?.(ev)
       // `ctx.turn` is the turn the ledger named for this call (issue #133), read now: the write below runs after this returns.
-      const turn = ctx.turn?.ord
-      return body === undefined ? undefined : keep(ctx, [body], { ...(turn !== undefined ? { turn } : {}) })
+      return body === undefined ? undefined : keep(ctx, body, ctx.turn)
     }
 
   // A `--resume` fires no hook for the old calls: the transcript comes back as one batch, in order, after the stored copy was
@@ -137,5 +146,6 @@ export function questionsTracker(): Tracker<QuestionsConfig, Json> & Traceable<J
     actions: questionActions,
     prompt: questionsPrompt,
     reasonsOf: questionReasonsOf,
+    turnsOf: questionTurnsOf,
   }
 }

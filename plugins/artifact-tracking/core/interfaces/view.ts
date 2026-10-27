@@ -176,7 +176,9 @@ export interface SectionSpec {
    * What the `/track` text prints of the section: `rows` (the default) the title line and every row, `title` the title line
    * only. The rows stay in the pane. The model reads every `/track` reply, so a section whose words are private keeps its
    * rows out of the text (the questions of issue #71). In a view other than by list, whose groups mix the rows of several
-   * sections, the view marks each such row `quiet`: the text prints nothing for it.
+   * sections, the view marks each such row `quiet`: the text prints nothing for it. `/track turn n` still lends the key to
+   * such a row: the label of its entry is the `name` cell and nothing else, no other cell and no child row (issue #201).
+   * The `name` cell of such a row must therefore hold a key, never the words of the person.
    */
   readonly text?: 'rows' | 'title'
   /**
