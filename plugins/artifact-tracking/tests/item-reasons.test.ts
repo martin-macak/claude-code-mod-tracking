@@ -168,8 +168,8 @@ test('repos, processes, questions and auto implement Traceable, and no other tra
   expect(TRACKERS.filter(t => !isTraceable(t)).map(t => t.id)).toEqual(['github', 'jira', 'web', 'artifact', 'file'])
 })
 
-test('repos, processes and auto also answer turnsOf (issue #133); the Traceable guard does not need it', () => {
-  expect(TRACKERS.filter(hasTurns).map(t => t.id)).toEqual(['repos', 'processes', 'auto'])
+test('repos, processes, questions and auto also answer turnsOf (issues #133, #201); the Traceable guard does not need it', () => {
+  expect(TRACKERS.filter(hasTurns).map(t => t.id)).toEqual(['repos', 'processes', 'questions', 'auto'])
 })
 
 test('repos: an edited repo is updated, a read one is read, an older row with no mode reads as read', () => {

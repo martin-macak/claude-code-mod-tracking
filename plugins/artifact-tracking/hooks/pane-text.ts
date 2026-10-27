@@ -139,6 +139,8 @@ const wordsOf = (row: TreeRow): string =>
 /**
  * The words of each row the list shows, by row id (an item's key), for `/track turn` (issue #69). Read from the sections
  * with nothing selected, like the list text. An item with no row left (dismissed, hidden by its TTL) has none.
+ * A section that keeps its rows out of the text (`text: 'title'`, the Questions) lends the key only, the `name` cell, and no
+ * child row: its type, title and child cells hold the words of the person, and the model reads the reply (issue #201).
  */
 export async function turnLabels(p: Ports, m: Pick<PaneHost, 'paneData'>): Promise<ReadonlyMap<string, string>> {
   const out = new Map<string, string>()
@@ -149,7 +151,14 @@ export async function turnLabels(p: Ports, m: Pick<PaneHost, 'paneData'>): Promi
       visit(row.children ?? [])
     }
   }
-  for (const s of await m.paneData(p, TEXT_VIEW)) visit(s.rows)
+  for (const s of await m.paneData(p, TEXT_VIEW)) {
+    if (s.text === 'title') {
+      for (const row of s.rows) {
+        const key = (row.cells.name?.text ?? '').trim()
+        if (key !== '') out.set(row.id, key) // the key only: the other cells and the child rows hold the words of the person (issue #201)
+      }
+    } else visit(s.rows)
+  }
   return out
 }
 

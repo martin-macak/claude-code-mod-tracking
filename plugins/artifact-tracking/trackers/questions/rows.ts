@@ -7,6 +7,7 @@ import type { Cell, DetailLine, RowStatus, TreeRow } from '../../core/interfaces
 import { textCells } from '../../core/lib/rows'
 import {
   answerText,
+  callWord,
   firstLine,
   type Masker,
   type ShownItem,
@@ -134,15 +135,14 @@ export function callRow(call: QuestionCall, m: Masker): TreeRow {
     id: call.id,
     owner: 'questions',
     cells: textCells({
+      // `/track turn` prints this cell to the model (issue #201, `turnLabels`): it must stay a key and never hold a word of the call.
       key: `Q${call.n}`,
       title: summaryOf(call, m),
-      type: call.kind === 'plan' ? 'plan' : 'question',
+      type: callWord(call),
       status,
     }),
-    // The badge is for the eye. `turns` is what the core detail line and a view by turn read, never the text of a cell.
-    ...(call.turn !== undefined
-      ? { extras: [{ text: `T${call.turn}`, dim: true }], turns: { first: call.turn, last: call.turn } }
-      : {}),
+    // The badge is for the eye. The core puts `turns` on the row from `Traceable.turnsOf` (`turns.ts`), never from a cell.
+    ...(call.turn !== undefined ? { extras: [{ text: `T${call.turn}`, dim: true }] } : {}),
     ...(children.length > 0 ? { children } : {}),
     can: { dismiss: false, priority: false },
     reasons: questionReasons(),
@@ -150,7 +150,7 @@ export function callRow(call: QuestionCall, m: Masker): TreeRow {
     facets: {
       status,
       ...(call.replayed ? {} : { firstSeen: call.at }),
-      kind: call.kind === 'plan' ? 'plan' : 'question',
+      kind: callWord(call),
     },
     detail: () => callDetail(call, m),
   }

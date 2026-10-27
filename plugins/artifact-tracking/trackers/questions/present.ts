@@ -109,6 +109,10 @@ export function answerText(s: ShownItem): string {
     .join(', ')
 }
 
+/** The word of a call for its row type and its kind facet, and for the category of its ledger entry: `plan` or `question` (issue #201). */
+export const callWord = (call: Pick<QuestionCall, 'kind'>): 'plan' | 'question' =>
+  call.kind === 'plan' ? 'plan' : 'question'
+
 /** The word of a state on the status cell. A plan is approved or rejected: it has no questions to leave blank. */
 export const stateWord = (call: Pick<QuestionCall, 'kind' | 'state'>): string =>
   call.kind === 'plan' ? (call.state === 'answered' ? 'approved' : 'rejected') : call.state

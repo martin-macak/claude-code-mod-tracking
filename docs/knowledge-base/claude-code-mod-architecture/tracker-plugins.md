@@ -184,6 +184,8 @@ What to copy: one explicit composition root that names every tracker (ESLint con
 - `Traceable.turnsOf(data, rowId)`: the first and the last turn that stamped a row. The view puts it on the pane row.
 - A tracker that does neither works as before (tested in `tests/slot-turns.test.ts`).
 
+**Update (issue [#201](https://github.com/martin-macak/claude-code-mod-tracking/issues/201)):** the questions tracker is the fourth tracker with `turnsOf`. `turnsOf` alone lists nothing in `/track turn n`: the command reads the ledger only (`TurnLedger.text`), and the ledger fills only through `ctx.turn.note`. So the tracker stamps the call (`QuestionCall.turn`), hands the stamp to the pane with `turnsOf`, and notes the call in the ledger after the write (`trackers/questions/turns.ts`). The words of an entry come from `turnLabels` (`hooks/pane-text.ts`), which reads the `name` cell of the row. For a section with `text: 'title'` it reads the `name` cell only and skips the child rows, because the model reads the reply of `/track turn` and the other cells of a Q&A row hold the header and the typed answer. A tracker whose rows hold private words keeps them out of the `name` cell and sets `text: 'title'` (`verified-kit`, `tests/questions-turns.test.ts`).
+
 **Update (issue [#71](https://github.com/martin-macak/claude-code-mod-tracking/issues/71)):** four more optional pieces, all small, each with a test of its own:
 
 - `TrackerContext.ui.copy(text)`: the text goes to the clipboard of the surface that the press came from. The footer Button passes the surface of its press event, the pane hands it to `runAction`, and the host binds it into the context, so a tracker never names a surface. `ctx.ui` also has `toast`.
