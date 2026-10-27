@@ -5,10 +5,13 @@
 import { expect, test } from 'claude-code/testing'
 import type { Json } from '../core/interfaces/items'
 import type { RunResult } from '../core/interfaces/ports'
+import type { Tracker } from '../core/interfaces/tracker'
 import type { TreeRow } from '../core/interfaces/view'
+import { PaneSession } from '../hooks/pane-session'
 import { auto } from '../trackers/auto'
 import { recordSpawn } from '../trackers/auto/ledger'
-import { autoTurnsOf } from '../trackers/auto/turns'
+import { agentsOfRun, autoTurnsOf, runVisit, spawnSightings } from '../trackers/auto/turns'
+import { githubTracker } from '../trackers/github'
 import { processesTracker } from '../trackers/processes'
 import { mergeProcessRows } from '../trackers/processes/rows'
 import { processTurnsOf } from '../trackers/processes/turns'
@@ -16,6 +19,8 @@ import { reposTracker } from '../trackers/repos'
 import { mergeRepoRows, upsertRepoRows } from '../trackers/repos/rows'
 import { repoSightings, repoTurnsOf } from '../trackers/repos/turns'
 import type { AgentProof, ProcessRecord, RepoRecord } from './fixtures/contracts'
+import { detailBoxes, leaves } from './fixtures/drawn'
+import { EL } from './fixtures/elements'
 import { BG_START_ASYNC_AGENT, BG_START_MAIN } from './fixtures/notices'
 import { WORLD_SNAPSHOT } from './fixtures/pane-world'
 import type { FakeWorld } from './fixtures/ports'
@@ -431,12 +436,39 @@ test('repoSightings: the reason is the strongest mode of the visits of the batch
 
 // ---------------------------------------------------------------- agents (auto)
 
-function agents() {
-  const t = turnWorld({ trackers: () => [auto] })
+/** Every row of the tree, depth first: the agents nest under the master. */
+const all = (rs: readonly TreeRow[]): TreeRow[] => rs.flatMap(r => [r, ...all(r.children ?? [])])
+
+/** A row of the snapshot of a round: the template agent of the pane world, with `o` over it. */
+const snapshotAgent = (o: Record<string, unknown>) => ({ ...WORLD_SNAPSHOT.agents[1], ...o })
+
+/** An agent proof of the auto state: a plain subagent, or an agent of workflow run `runId`, with the turn stamps over it. */
+const proofOf = (id: string, runId?: string, stamps: Stamps = {}) =>
+  ({
+    id,
+    kind: runId === undefined ? 'subagent' : 'workflow',
+    label: id,
+    spawnedAt: 1,
+    ...(runId === undefined ? {} : { workflow: { runId, agentIndex: 1 } }),
+    ...stamps,
+  }) as AgentProof & Stamps
+
+/** The auto state that holds `list` as its agent proofs. */
+const autoStateOf = (...list: (AgentProof & Stamps)[]) =>
+  ({ root: null, worktrees: [], agents: list, dismissed: [], snapshot: null }) as never
+
+function agents(trackers: () => readonly Tracker[] = () => [auto]) {
+  const t = turnWorld({ trackers })
   const proofs = () =>
     ((t.w.state.get('auto') as unknown as { agents?: (AgentProof & Stamps)[] } | undefined)?.agents ??
       []) as (AgentProof & Stamps)[]
-  return { ...t, proofs }
+  /** The Agents section draws more than the master row only from a snapshot of a round. A round needs git: seed the snapshot. */
+  const seed = (rows: readonly Record<string, unknown>[]) => {
+    const held = t.w.state.get('auto') as unknown as Record<string, Json>
+    const snapshot = { ...WORLD_SNAPSHOT, agents: [WORLD_SNAPSHOT.agents[0], ...rows] }
+    t.w.state.set('auto', { ...held, snapshot } as unknown as Json)
+  }
+  return { ...t, proofs, seed }
 }
 
 const SPAWN = { description: 'explore the code', subagentType: 'general-purpose' }
@@ -475,15 +507,7 @@ test('the pane row of an agent carries its turns, and /track turn 2 names the ag
   await t.start('turn-2', 'spawn one')
   await t.spawn('agent-7', 'tu_agent2', SPAWN)
   await t.end('turn-2')
-  // The Agents section draws more than the master row only from a snapshot of a round. A round needs git: seed the snapshot.
-  const held = t.w.state.get('auto') as unknown as Record<string, Json>
-  const [master, template] = WORLD_SNAPSHOT.agents
-  const snapshot = {
-    ...WORLD_SNAPSHOT,
-    agents: [master, { ...template, id: 'ag:agent-7', label: 'explore the code', depth: 1 }],
-  }
-  t.w.state.set('auto', { ...held, snapshot } as unknown as Json)
-  const all = (rs: readonly TreeRow[]): TreeRow[] => rs.flatMap(r => [r, ...all(r.children ?? [])]) // agents nest under the master
+  t.seed([snapshotAgent({ id: 'ag:agent-7', label: 'explore the code', depth: 1 })])
   const rows = all(await t.rows())
   expect(rows.find(r => r.id === 'ag:agent-7')?.turns).toEqual({ first: 2, last: 2 })
   expect(rows.find(r => r.id === 'ag:master')?.turns).toBeUndefined() // the master agent has no proof
@@ -492,22 +516,158 @@ test('the pane row of an agent carries its turns, and /track turn 2 names the ag
   expect(text).not.toContain('ag:agent-7') // the label of the row stands in for the raw id
 })
 
-test('a workflow agent is stamped with the turn but adds no entry, so a run of many agents does not fill the list of its turn', async () => {
-  const t = agents()
+// ---------------------------------------------------------------- workflow runs (issue #203)
+
+const RUN = 'wf_a35565d1-fd4'
+const RUN_ROW = `ag:wf:${RUN}`
+const wf = (runId: string, agentIndex: number) => ({ ...SPAWN, workflow: { runId, agentIndex } })
+
+/** The auto tracker beside the processes and github trackers, so a turn can hold a later entry of another kind. */
+function workflows() {
+  const t = agents(() => [githubTracker(), auto, processesTracker()])
+  /** The snapshot of a round: the master and `n` workflow agents of `runId`, all in `state`. `failed` of them failed. */
+  const seedRun = (runId: string, n: number, state: 'ended' | 'running', failed = 0) =>
+    t.seed(
+      Array.from({ length: n }, (_, i) =>
+        snapshotAgent({
+          id: `ag:agent-${i + 1}`,
+          label: `step ${i + 1}`,
+          kind: 'workflow',
+          state: i < failed ? 'failed' : state,
+          workflow: { runId, agentIndex: i + 1 },
+        }),
+      ),
+    )
+  return { ...t, seedRun }
+}
+
+test('a run of 15 workflow agents is one entry of its turn, and every agent is still stamped', async () => {
+  const t = workflows()
   await t.idle(1)
   await t.start('turn-2', 'run the workflow')
-  await t.spawn('agent-1', 'tu_wf1', { ...SPAWN, workflow: { runId: 'run-1', agentIndex: 0 } })
-  await t.spawn('agent-2', 'tu_wf2', { ...SPAWN, workflow: { runId: 'run-1', agentIndex: 1 } })
-  await t.spawn('agent-7', 'tu_agent7', SPAWN) // a plain subagent of the same turn still counts
+  for (let i = 1; i <= 15; i++) await t.spawn(`agent-${i}`, `tu_${i}`, wf(RUN, i))
   await t.end('turn-2')
-  expect(t.proofs()).toMatchObject([
-    { id: 'agent-1', kind: 'workflow', firstTurn: 2, lastTurn: 2 },
-    { id: 'agent-2', kind: 'workflow', firstTurn: 2, lastTurn: 2 },
-    { id: 'agent-7', kind: 'subagent', firstTurn: 2, lastTurn: 2 },
-  ])
-  expect(t.rec(2).new).toEqual([{ k: 'ag:agent-7', c: 'agent', r: 'created' }])
+  expect(t.proofs()).toHaveLength(15)
+  for (const p of t.proofs()) expect(p).toMatchObject({ kind: 'workflow', firstTurn: 2, lastTurn: 2 })
+  expect(t.rec(2).new).toEqual([{ k: RUN_ROW, c: 'workflow', r: 'created' }])
   expect(t.rec(2).seen).toEqual([])
   expect((await t.text('turn 2')).split('\n')[0]).toMatch(/ · 1 new$/)
+})
+
+test('a plain subagent of the turn of a run still takes its own entry beside the one of the run', async () => {
+  const t = workflows()
+  await t.idle(1)
+  await t.start('turn-2', 'run the workflow')
+  await t.spawn('agent-1', 'tu_wf1', wf(RUN, 1))
+  await t.spawn('agent-2', 'tu_wf2', wf(RUN, 2))
+  await t.spawn('agent-7', 'tu_agent7', SPAWN)
+  await t.end('turn-2')
+  expect(t.rec(2).new).toEqual([
+    { k: RUN_ROW, c: 'workflow', r: 'created' },
+    { k: 'ag:agent-7', c: 'agent', r: 'created' },
+  ])
+})
+
+test('a run that turns 2 and 4 spawned in: new in turn 2, seen again in turn 4, and its drawn row shows both turns', async () => {
+  const t = workflows()
+  await t.idle(1)
+  await t.start('turn-2', 'run it')
+  await t.spawn('agent-1', 'tu_1', wf(RUN, 1))
+  await t.spawn('agent-2', 'tu_2', wf(RUN, 2))
+  await t.end('turn-2')
+  await t.idle(3)
+  await t.start('turn-4', 'more')
+  await t.spawn('agent-3', 'tu_3', wf(RUN, 3))
+  await t.end('turn-4')
+  expect(t.rec(2).new).toEqual([{ k: RUN_ROW, c: 'workflow', r: 'created' }])
+  expect(t.rec(4).new).toEqual([])
+  expect(t.rec(4).seen).toEqual([{ k: RUN_ROW, c: 'workflow', r: 'created' }])
+  t.seedRun(RUN, 3, 'ended', 1)
+  // The run row is drawn from its agents: its turns are the span of their stamps, and the open row prints them in its detail.
+  expect(all(await t.rows()).find(r => r.id === RUN_ROW)?.turns).toEqual({ first: 2, last: 4 })
+  t.w.state.set('expanded', [RUN_ROW]) // the master row is open by default, so the run row is drawn
+  const drawn = await new PaneSession().draw(t.w.ports, t.m, EL, { bodyColumns: 120 })
+  expect(detailBoxes(drawn).flatMap(leaves).slice(-2)).toEqual(['turns:', 'first 2 · last 4'])
+  const text = await t.text('turn 2')
+  expect(text).toMatch(/\n {2}new {4}.*wf_a35565.*3 agents · 1 failed/) // the words of the drawn row
+  expect(text).not.toContain(RUN_ROW)
+})
+
+test('a run that still runs is listed once under its id: its agents are rows and no run row is drawn', async () => {
+  const t = workflows()
+  await t.idle(1)
+  await t.start('turn-2', 'run it')
+  await t.spawn('agent-1', 'tu_1', wf(RUN, 1))
+  await t.spawn('agent-2', 'tu_2', wf(RUN, 2))
+  await t.end('turn-2')
+  t.seedRun(RUN, 2, 'running')
+  const rows = all(await t.rows())
+  expect(rows.some(r => r.id === RUN_ROW)).toBe(false)
+  expect(rows.find(r => r.id === 'ag:agent-1')?.turns).toEqual({ first: 2, last: 2 })
+  expect(t.rec(2).new).toEqual([{ k: RUN_ROW, c: 'workflow', r: 'created' }])
+  expect(await t.text('turn 2')).toContain(`workflow ${RUN_ROW}`) // the raw words of an entry with no row
+})
+
+test('a run of one agent is listed once under its id and never folds: its agent row has the turns', async () => {
+  const t = workflows()
+  await t.idle(1)
+  await t.start('turn-2', 'run it')
+  await t.spawn('agent-1', 'tu_1', wf(RUN, 1))
+  await t.end('turn-2')
+  t.seedRun(RUN, 1, 'ended')
+  const rows = all(await t.rows())
+  expect(rows.some(r => r.id === RUN_ROW)).toBe(false)
+  expect(rows.find(r => r.id === 'ag:agent-1')?.turns).toEqual({ first: 2, last: 2 })
+  expect(t.rec(2).new).toEqual([{ k: RUN_ROW, c: 'workflow', r: 'created' }])
+  expect(await t.text('turn 2')).toContain(`workflow ${RUN_ROW}`)
+})
+
+test('the run is one slot of the 50 of its list, so a later entry of the turn is listed and not pushed into N more', async () => {
+  const t = workflows()
+  await t.start('turn-1', 'busy')
+  for (let i = 1; i <= 40; i++) await t.spawn(`sub-${i}`, `tu_s${i}`, SPAWN) // 40 entries
+  for (let i = 1; i <= 15; i++) await t.spawn(`agent-${i}`, `tu_w${i}`, wf(RUN, i)) // one entry, not 15
+  await t.bash('npm run dev', { toolUseId: 'tu_bg' }, bg) // a later entry: a process
+  await t.prompt('review https://github.com/acme/web/pull/12') // a later entry of the kind that the issue names: a PR link
+  await t.end('turn-1')
+  expect(t.rec(1).new).toHaveLength(43)
+  expect(t.rec(1).moreNew).toBeUndefined()
+  expect(t.rec(1).new.slice(-2)).toMatchObject([{ c: 'process' }, { c: 'github', k: 'gh:github.com/acme/web#12' }])
+})
+
+test('band key 9 selects a drawn run row, and passes over a run with no row, with a toast when it is the only entry', async () => {
+  const folded = workflows()
+  await folded.start('turn-1', 'run it')
+  await folded.spawn('agent-1', 'tu_1', wf(RUN, 1))
+  await folded.spawn('agent-2', 'tu_2', wf(RUN, 2))
+  await folded.end('turn-1')
+  folded.seedRun(RUN, 2, 'ended')
+  await new PaneSession().openTurn(folded.w.ports, folded.m)
+  expect(folded.w.state.get('selected')).toBe(RUN_ROW)
+  expect(folded.w.ui.toasts).toEqual([])
+
+  const running = workflows()
+  await running.start('turn-1', 'run it')
+  await running.spawn('agent-1', 'tu_1', wf(RUN, 1))
+  await running.spawn('agent-2', 'tu_2', wf(RUN, 2))
+  await running.end('turn-1')
+  running.seedRun(RUN, 2, 'running') // no run row is drawn: the entry has nothing to select
+  await new PaneSession().openTurn(running.w.ports, running.m)
+  expect(running.w.state.get('selected') ?? null).toBeNull()
+  expect(running.w.ui.toasts).toEqual(['turn 1: its rows are not listed'])
+})
+
+test('a workflow spawn made with no turn running lists nothing, and a later spawn of the run in a turn reads seen again', async () => {
+  const t = workflows()
+  await t.spawn('agent-1', 'tu_1', wf(RUN, 1))
+  expect(t.proofs()).toHaveLength(1)
+  expect(t.proofs()[0]).not.toHaveProperty('firstTurn')
+  expect(await t.text('turn')).toBe('No turn tracked yet.')
+  await t.start('turn-1', 'run it')
+  await t.spawn('agent-2', 'tu_2', wf(RUN, 2))
+  await t.end('turn-1')
+  expect(t.rec(1).new).toEqual([])
+  expect(t.rec(1).seen).toEqual([{ k: RUN_ROW, c: 'workflow', r: 'created' }])
 })
 
 test('a spawn made with no turn running carries no turn and lists in none', async () => {
@@ -531,25 +691,74 @@ test('recordSpawn stamps a new agent with the turn, and a known one with the spa
 })
 
 test('autoTurnsOf answers the span of the row ag:<id> of an agent proof, and nothing for any other row', () => {
-  const proof = (id: string, o: Partial<AgentProof & Stamps> = {}) => ({
-    id,
-    kind: 'subagent',
-    label: id,
-    spawnedAt: 1,
-    ...o,
-  })
-  const state = {
-    root: null,
-    worktrees: [],
-    agents: [proof('a', { firstTurn: 2, lastTurn: 3 }), proof('b')],
-    dismissed: [],
-    snapshot: null,
-  } as never
+  const state = autoStateOf(proofOf('a', undefined, { firstTurn: 2, lastTurn: 3 }), proofOf('b'))
   expect(autoTurnsOf(state, 'ag:a')).toEqual({ first: 2, last: 3 })
   expect(autoTurnsOf(state, 'ag:b')).toBeUndefined() // no turn stamped it
   expect(autoTurnsOf(state, 'ag:master')).toBeUndefined()
   expect(autoTurnsOf(state, 'wt:/x')).toBeUndefined()
   expect(autoTurnsOf(undefined, 'ag:a')).toBeUndefined()
+})
+
+test('autoTurnsOf answers the span of the agents of a run for the row ag:wf:<runId>, and nothing for a run it does not know', () => {
+  const state = autoStateOf(
+    proofOf('a', 'r1', { firstTurn: 2, lastTurn: 2 }),
+    proofOf('b', 'r1', { firstTurn: 3, lastTurn: 5 }),
+    proofOf('c', 'r1'), // no stamp: it adds no turn
+    proofOf('d', 'r2'), // a run whose agents have no stamp
+    proofOf('e', undefined, { firstTurn: 9, lastTurn: 9 }), // a subagent is no part of a run
+  )
+  expect(autoTurnsOf(state, 'ag:wf:r1')).toEqual({ first: 2, last: 5 })
+  expect(autoTurnsOf(state, 'ag:wf:r2')).toBeUndefined()
+  expect(autoTurnsOf(state, 'ag:wf:r3')).toBeUndefined()
+  expect(autoTurnsOf(undefined, 'ag:wf:r1')).toBeUndefined()
+})
+
+test('runVisit: no agent held makes the run new, a held agent makes it a known row with the span of the held stamps', () => {
+  const held = (o: Stamps): AgentProof & Stamps => ({ id: 'a', kind: 'workflow', label: 'a', spawnedAt: 1, ...o })
+  expect(runVisit('r1', [])).toEqual({ id: 'ag:wf:r1', category: 'workflow', reason: 'created', held: undefined })
+  expect(runVisit('r1', [held({ firstTurn: 2, lastTurn: 2 }), held({ firstTurn: 3, lastTurn: 4 })]).held).toEqual({
+    firstTurn: 2,
+    lastTurn: 4,
+  })
+  expect(runVisit('r1', [held({})]).held).toEqual({}) // a held agent that no turn stamped: the run is known, of no turn
+})
+
+test('agentsOfRun picks the agents of one run by its id: no plain subagent, no agent of another run', () => {
+  const list = [proofOf('a', 'r1'), proofOf('b', 'r2'), proofOf('c'), proofOf('d', 'r1')]
+  expect(agentsOfRun(list, 'r1').map(a => a.id)).toEqual(['a', 'd'])
+  expect(agentsOfRun(list, 'r2').map(a => a.id)).toEqual(['b'])
+  expect(agentsOfRun(list, 'r3')).toEqual([])
+})
+
+test('spawnSightings: a plain subagent is its own entry, a run is one entry, each read from the state before the spawn', () => {
+  const sub = (id: string) => ({ agentId: id, description: 'd', subagentType: 't' })
+  const run = (id: string, runId: string) => ({ ...sub(id), workflow: { runId, agentIndex: 2 } })
+  const agent = (id: string) => ({ k: `ag:${id}`, c: 'agent', r: 'created' })
+  const wfRun = (runId: string) => ({ k: `ag:wf:${runId}`, c: 'workflow', r: 'created' })
+
+  // A plain subagent: its own row, `new` when no proof is held, `seen again` for a resumed one.
+  expect(spawnSightings(3, sub('a'), autoStateOf())).toEqual({ added: [agent('a')], seen: [] })
+  expect(spawnSightings(4, sub('a'), autoStateOf(proofOf('a', undefined, { firstTurn: 2, lastTurn: 2 })))).toEqual({
+    added: [],
+    seen: [agent('a')],
+  })
+  // A run: the run row, whatever the agent. The agents of another run and the plain subagents are no part of it.
+  const others = [
+    proofOf('x', 'r2', { firstTurn: 1, lastTurn: 1 }),
+    proofOf('y', undefined, { firstTurn: 1, lastTurn: 1 }),
+  ]
+  expect(spawnSightings(3, run('a', 'r1'), autoStateOf(...others))).toEqual({ added: [wfRun('r1')], seen: [] })
+  // A second agent of the run in the same turn is `repeat`, in a later turn it is `seen again`.
+  const held = [...others, proofOf('a', 'r1', { firstTurn: 2, lastTurn: 3 })]
+  expect(spawnSightings(3, run('b', 'r1'), autoStateOf(...held))).toEqual({
+    added: [],
+    seen: [],
+    repeat: [wfRun('r1')],
+  })
+  expect(spawnSightings(5, run('b', 'r1'), autoStateOf(...held))).toEqual({ added: [], seen: [wfRun('r1')] })
+  // An agent that no turn stamped is a known row of no turn: a resumed subagent and a run read `seen again` alike (G5 of #203).
+  expect(spawnSightings(1, sub('a'), autoStateOf(proofOf('a'))).seen).toEqual([agent('a')])
+  expect(spawnSightings(1, run('b', 'r1'), autoStateOf(proofOf('a', 'r1'))).seen).toEqual([wfRun('r1')])
 })
 
 // ---------------------------------------------------------------- /clear and /resume

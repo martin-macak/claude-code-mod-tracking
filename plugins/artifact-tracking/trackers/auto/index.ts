@@ -24,7 +24,6 @@ import type { Traceable } from '../../core/interfaces/reasons'
 import type { FactsPort, Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import { LoadState } from '../../core/lib/load-state'
-import { rowSightings } from '../../core/lib/turn-span'
 import { autoCleanup } from './clean'
 import { type AutoConfig, autoConfig } from './config'
 import { autoIds } from './dismiss'
@@ -47,8 +46,8 @@ import { autoReasonsOf } from './reasons'
 import { AutoRound } from './round'
 import { AutoScheduler } from './scheduler'
 import { sections } from './sections'
-import { agentVisit, autoTurnsOf } from './turns'
-import type { AgentProof, AutoReason, AutoState, BranchesFact } from './types'
+import { autoTurnsOf, spawnSightings } from './turns'
+import type { AutoReason, AutoState, BranchesFact } from './types'
 
 export { autoDismiss } from './dismiss-store'
 export { type AutoConfig, autoConfig }
@@ -257,14 +256,14 @@ const onSpawn: H<AgentSpawnEvent> = soft('agent.spawn', async (ctx, ev) => {
   const f = fromSpawn(ev.input, ev.answer)
   if (f) {
     const turn = ctx.turn
-    let held: AgentProof | undefined
+    let before: AutoState | undefined
     await setAuto(ctx, s => {
-      held = s.agents.find(a => a.id === f.agentId) // the last run is the one that wrote
+      before = s // the last run is the one that wrote
       return recordSpawn(s, f, ctx.clock.wall(), ev.sessionCwd, ctx.config.slice().maxAgents, turn?.ord)
     })
-    // A workflow run spawns many agents: each is stamped, but none is an entry, or one run would fill the 50 entries of its turn.
-    if (turn !== undefined && f.workflow === undefined)
-      await turn.note(rowSightings(turn.ord, [agentVisit(f.agentId, held)]))
+    // A workflow run spawns many agents: each is stamped, and the run is one entry of its turn (issue #203). A per-agent entry
+    // would fill the 50 entries of the turn.
+    if (turn !== undefined && before !== undefined) await turn.note(spawnSightings(turn.ord, f, before))
   }
   kick(ctx, 'agent')
 })

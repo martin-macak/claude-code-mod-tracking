@@ -12,6 +12,7 @@ import { DEFAULT_BODY_COLUMNS, GUTTER, NOTHING_MORE, TreeDataTable, UNAVAILABLE 
 import { EMPTY_TEXT } from '../ux/tree-data-table/text'
 import {
   buttonOf,
+  detailBoxes,
   footerOf,
   HELP_FOOTER,
   HELP_FOOTER_ROWS,
@@ -49,10 +50,6 @@ const headerBoxes = (tree: unknown): Node[] =>
     const first = b.children[0]
     return isNode(first) && first.type === 'Text' && first.children[0] === ' ' && nodes(b, 'Button').length === 0
   })
-
-/** The Boxes of the detail lines: they hold a Text that wraps. */
-const detailBoxes = (tree: unknown): Node[] =>
-  nodes(tree, 'Box').filter(b => b.children.some(c => isNode(c) && c.type === 'Text' && c.props.wrap === 'wrap'))
 
 /** The Boxes of the cells of one row Box, after the gutter. */
 const cellsOf = (r: Node): Node[] => r.children.slice(1) as Node[]

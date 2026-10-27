@@ -24,6 +24,10 @@ export function leaves(node: unknown): string[] {
   return isNode(node) ? node.children.flatMap(leaves) : []
 }
 
+/** The Boxes of the detail lines of an open row: they hold a Text that wraps. */
+export const detailBoxes = (tree: unknown): Node[] =>
+  nodes(tree, 'Box').filter(b => b.children.some(c => isNode(c) && c.type === 'Text' && c.props.wrap === 'wrap'))
+
 /** The Texts that hold exactly one string child, as `[props, string]`. */
 export const texts = (tree: unknown): [Node['props'], string][] =>
   nodes(tree, 'Text')
