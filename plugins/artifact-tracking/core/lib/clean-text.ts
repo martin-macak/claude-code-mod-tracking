@@ -1,6 +1,8 @@
 // The words and the arguments of `/track clean` (issue #122): the parser of the arguments, the plan by kind with its
 // `skipped: <reason>` lines, the text of an applied cleanup and the text of the audit log. Pure: no ports, no trackers.
 // The plan caps each kind at 10 lines and counts the rest, the C6 rule of `problemsText` (core/infra/command-text.ts).
+// The plan is one list of typed lines (issue #199): `planLines` makes it, `planLinesText` joins it for the reply, and the pane
+// reads the same list.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.12. Design study: issue #49, section 5.5.
 
 import type { CleanAction, CleanKind, CleanStep, LogEntry } from '../interfaces/clean'
@@ -54,6 +56,34 @@ const LOG_SHOWN = 50
 const HIDE_HINT = 'Hide: /track clean --hide hides every ended row now, and /track show-all shows them again.'
 const LOG_HINT = 'Log: /track clean --log'
 
+/**
+ * What a line of the plan is, so a view can cut a plan without a parse of its words (issue #199).
+ * - `title`: the first line.
+ * - `blank`: a gap between blocks.
+ * - `head`: a line that heads a block: a kind (`Tasks (apply with /track clean --yes tasks)`), `Problems:`, and the one
+ *   sentence of a plan with no step. A cut keeps every head.
+ * - `step`: what a cleanup does to one thing, under the head of its kind. A label with a newline is one line for each row.
+ * - `more`: `and N more.`, the count of the steps of a kind that the plan leaves out.
+ * - `problem`: a tracker whose plan failed, under `Problems:`. A message with a newline is one line for each row.
+ * - `hint`: a line that names another mode of the command.
+ */
+export type PlanRole = 'title' | 'blank' | 'head' | 'step' | 'more' | 'problem' | 'hint'
+
+/** One line of a plan: its words, with no newline (one row), and its role. A text with a newline is more than one line (`rowsOf`). */
+export interface PlanLine {
+  readonly text: string
+  readonly role: PlanRole
+}
+
+/** A line from a text of this module: one row, so no newline to split. */
+const plain = (role: PlanRole, text: string): PlanLine => ({ role, text })
+
+/**
+ * The lines of a text that comes from outside the module (a step label, the message of a failure): one line for each row, in
+ * the same role. A line holds one row, so a view can count rows for each line. The joined text keeps its bytes.
+ */
+const rowsOf = (role: PlanRole, text: string): PlanLine[] => text.split('\n').map(row => plain(role, row))
+
 /** The words of one line: `<label>: <action>` in a plan, `<label>: <outcome>` once applied. A step with a reason is skipped. */
 function lineText({ step, outcome }: Line): string {
   const what = outcome ?? (step.skip !== undefined ? `skipped: ${step.skip}` : ACTION_WORDS[step.action])
@@ -61,43 +91,59 @@ function lineText({ step, outcome }: Line): string {
 }
 
 /** The lines by kind, each kind under a head. `head` writes the head of a kind. Over `SHOWN`, the first ones and a count. */
-function sections(lines: readonly Line[], head: (kind: CleanKind) => string, kinds = CLEAN_KINDS): string[] {
-  const out: string[] = []
+function sections(lines: readonly Line[], head: (kind: CleanKind) => string, kinds = CLEAN_KINDS): PlanLine[] {
+  const out: PlanLine[] = []
   for (const kind of kinds) {
     const of = lines.filter(l => l.step.kind === kind)
     if (of.length === 0) continue
-    out.push(head(kind), ...of.slice(0, SHOWN).map(lineText))
-    if (of.length > SHOWN) out.push(`  and ${of.length - SHOWN} more.`)
+    out.push(plain('head', head(kind)), ...of.slice(0, SHOWN).flatMap(l => rowsOf('step', lineText(l))))
+    if (of.length > SHOWN) out.push(plain('more', `  and ${of.length - SHOWN} more.`))
   }
   return out
 }
 
 /** The trackers whose plan failed, one line each, under `Problems:`. */
-const problems = (failed: readonly string[]): string[] =>
-  failed.length === 0 ? [] : ['', 'Problems:', ...failed.map(f => `  ${f}`)]
+const problems = (failed: readonly string[]): PlanLine[] =>
+  failed.length === 0
+    ? []
+    : [plain('blank', ''), plain('head', 'Problems:'), ...failed.flatMap(f => rowsOf('problem', `  ${f}`))]
 
-/** The reply of `/track clean`: what a cleanup would do, by kind. Nothing changed. */
-export function planText(lines: readonly Line[], failed: readonly string[]): string {
+/** The words of each line, without the role. */
+const texts = (lines: readonly PlanLine[]): string[] => lines.map(l => l.text)
+
+/** The text of a list of lines: one row each. The one place that makes the reply of `/track clean` from the lines. */
+export const planLinesText = (lines: readonly PlanLine[]): string => texts(lines).join('\n')
+
+/** What a cleanup would do, by kind, as typed lines. Nothing changes. The reply of `/track clean` and the pane read this list. */
+export function planLines(lines: readonly Line[], failed: readonly string[]): readonly PlanLine[] {
   const body = sections(lines, kind => `${TITLES[kind]} (apply with /track clean --yes ${kind})`)
   return [
-    'Clean plan. Nothing changed.',
-    '',
-    ...(body.length > 0 ? body : ['Nothing to stop or remove.']),
+    plain('title', 'Clean plan. Nothing changed.'),
+    plain('blank', ''),
+    ...(body.length > 0 ? body : [plain('head', 'Nothing to stop or remove.')]),
     ...problems(failed),
-    '',
-    HIDE_HINT,
-    LOG_HINT,
-  ].join('\n')
+    plain('blank', ''),
+    plain('hint', HIDE_HINT),
+    plain('hint', LOG_HINT),
+  ]
+}
+
+/**
+ * The plan as one text, from the steps: the reference that tests and contracts compare with. `/track clean` prints
+ * `planLinesText(await cleanPlan(p))`, the same text.
+ */
+export function planText(lines: readonly Line[], failed: readonly string[]): string {
+  return planLinesText(planLines(lines, failed))
 }
 
 /** The reply of `/track clean --yes <kind>...`: each step of the kinds that ran, with its outcome. */
 export function resultText(kinds: readonly CleanKind[], lines: readonly Line[], failed: readonly string[]): string {
-  const body = sections(lines, kind => TITLES[kind], kinds)
+  const body = texts(sections(lines, kind => TITLES[kind], kinds))
   return [
     `Cleaned: ${kinds.join(', ')}.`,
     '',
     ...(body.length > 0 ? body : ['Nothing to do.']),
-    ...problems(failed),
+    ...texts(problems(failed)),
     '',
     LOG_HINT,
   ].join('\n')

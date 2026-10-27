@@ -17,6 +17,7 @@ import type {
   TreeRow,
   ViewId,
 } from '../core/interfaces/view'
+import type { PlanLine } from '../core/lib/clean-text'
 import { LIST_VIEW, listGroups, resolveView, viewGroups, viewSummary } from '../core/lib/grouping'
 import { namedProblems } from '../core/lib/problems'
 import { helpModel, helpText } from '../ux/tree-data-table/help'
@@ -40,6 +41,11 @@ export interface PaneHost {
   /** The same level on many rows: one write, one rebuild of the prompt (issue #138). */
   setPriorities(p: Ports, rowIds: readonly string[], level: Level | undefined): Promise<void>
   refreshManual(p: Ports): Promise<void>
+  /**
+   * The dry run of `/track clean` as typed lines: the config file is checked first, then each tracker says what a cleanup
+   * would do (issue #199). It reads only. The host has no way to apply through this contract.
+   */
+  cleanPlan(p: Ports): Promise<readonly PlanLine[]>
   runAction(p: Ports, owner: string, id: string, rowId: string | null, surface?: string): Promise<void>
   problems(): readonly string[]
   /** The ids of the tools of the trackers that run: the health line of the full status area names them (issue #138). */
