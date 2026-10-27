@@ -50,7 +50,10 @@ export type FakeOpts = {
 
 export type FakeWorld = {
   ports: Ports
-  /** `now` is engine time. `wall()` answers it too. `advance` fires due timers in time order and awaits each callback. */
+  /**
+   * `now` is engine time. `wall()` answers it too. `advance` fires due timers in time order and awaits each callback. A
+   * `wake` is a timer of the mod's own runtime and shares the order with `after` and `every`; no refusal touches it.
+   */
   clock: {
     now: number
     advance(ms: number): Promise<void>
@@ -114,7 +117,7 @@ export type FakeWorld = {
 
 type Pending = {
   seq: number
-  kind: 'after' | 'every'
+  kind: 'after' | 'every' | 'wake'
   ms: number
   at: number
   fn: () => void
@@ -129,7 +132,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
   const refusals: { kind: 'after' | 'every'; ms: number }[] = []
   const mtimes = new Map<string, number>()
 
-  const arm = (kind: 'after' | 'every', ms: number, fn: () => void): Timer => {
+  const arm = (kind: 'after' | 'every' | 'wake', ms: number, fn: () => void): Timer => {
     const t: Pending = {
       seq: seq++,
       kind,
@@ -164,6 +167,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       wall: () => world.clock.now,
       after: (ms, fn) => arm('after', ms, fn),
       every: (ms, fn) => arm('every', ms, fn),
+      wake: (ms, fn) => arm('wake', ms, fn), // never refused: `refuse` names `after` and `every` only
     },
     run: async (argv, opts) => {
       world.calls.push([...argv])

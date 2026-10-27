@@ -4,7 +4,7 @@ import { expect, test } from 'claude-code/testing'
 import { buttonKeyOf, footerKeys, KeyRegistry } from '../core/infra/keys'
 import type { AtomPort, Ports } from '../core/interfaces/ports'
 import type { FooterKey, PaneView, RowRef, SectionSpec, TreeRow } from '../core/interfaces/view'
-import { type Frame, NEXT_DRAWING_MS, Refocus, RING_PAUSE_MS } from '../hooks/pane-refocus'
+import { type Frame, NEXT_DRAWING_MS, Refocus, RING_PAUSE_MS, WAKE_SLACK_MS } from '../hooks/pane-refocus'
 import { helpTextOf, listText, type PaneHost, PaneSession, TEXT_VIEW } from '../hooks/pane-session'
 import { KEYS as GITHUB_ROW_KEYS } from '../trackers/github/actions'
 import { resetWidths } from '../ux/tree-data-table/columns'
@@ -2015,7 +2015,8 @@ test('a pane that closes and reopens during the pause ends the press at once and
 // The engine can refuse a timer (a hook that denies `clock.after`). The timer never fires and the caller hears nothing: a
 // `Timer` has `cancel` and no more. The press tells by the clock. A drawing that returns after the deadline of its wait
 // ends it as the timer would have: the press must not hang until the pane closes (owner decision on PR #181). Without a
-// drawing, nothing wakes it.
+// drawing, the wake does: a timer of the mod's own runtime, `WAKE_SLACK_MS` behind the engine timer, that no hook refuses
+// (issue #193). Each test below advances less than the wake before it asserts, so the drawing is the one that ends the wait.
 test('a pause whose timer the engine refuses ends with the first drawing after its deadline, and asks then', async () => {
   const t = await ringOn('web.resolve')
   t.w.clock.refuse('after', RING_PAUSE_MS)
@@ -2067,6 +2068,142 @@ test('a frame bound whose timer the engine refuses ends with a wanted frame that
   await t.draw() // the help view, which the press wants, but after the bound
   await t.session.idle() // no pause follows it: it would hang here otherwise
   expect(t.calls).toEqual(['focus help'])
+})
+
+// Issue #193. A refused timer and no drawing: nothing but the wake ends the wait. It is a `setTimeout` of the mod, `WAKE_SLACK_MS`
+// behind the engine timer, so no hook can refuse it. Each test refuses the engine timer, gives no drawing and ends on
+// `idle()`, which hangs without the wake. None reads a wall time: the fake clock only orders the engine timer, the wake and
+// the drawings. The log line says which wait the wake ended and that the engine timer did not fire in time, late or refused:
+// the mod cannot tell the two apart (G10).
+const WAKE_LOG = {
+  pause: (ms: number) =>
+    `pane ring pause: the engine timer of ${ms} ms did not fire in ${ms + WAKE_SLACK_MS} ms (late or refused); the wake ended the wait`,
+  frame: (ms: number) =>
+    `pane frame bound: the engine timer of ${ms} ms did not fire in ${ms + WAKE_SLACK_MS} ms (late or refused); the wake ended the wait`,
+}
+
+test('a pause whose timer the engine refuses ends by the wake with no drawing, and asks for the ring', async () => {
+  const t = await ringOn('web.resolve')
+  t.w.clock.refuse('after', RING_PAUSE_MS)
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.draw() // the frame; no drawing follows it
+  await turn()
+  await t.w.clock.advance(RING_PAUSE_MS) // the engine timer: refused, it never fires
+  await turn()
+  expect(t.calls).toEqual([]) // nothing tells the press yet
+  expect(t.w.logs).toEqual([])
+  await t.w.clock.advance(WAKE_SLACK_MS) // the wake
+  await t.session.idle() // it ended the pause: it would hang here otherwise
+  expect(t.calls).toEqual(['focus help'])
+  expect(t.w.logs).toEqual([WAKE_LOG.pause(RING_PAUSE_MS)])
+})
+
+test('a frame bound whose timer the engine refuses ends by the wake with no drawing, and the press reads the state', async () => {
+  const t = await ringOn('web.resolve')
+  t.w.clock.refuse('after', NEXT_DRAWING_MS)
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.w.clock.advance(NEXT_DRAWING_MS) // the bound: the refused timer never fires
+  await turn()
+  expect(t.calls).toEqual([])
+  expect(t.w.logs).toEqual([])
+  await t.w.clock.advance(WAKE_SLACK_MS) // the wake
+  await t.session.idle() // no drawing came and no pause follows the bound: it would hang here otherwise
+  expect(t.calls).toEqual(['focus help']) // the Button comes from the state read of the bound
+  expect(t.w.logs).toEqual([WAKE_LOG.frame(NEXT_DRAWING_MS)])
+})
+
+test('x on the last row with a refused frame bound and no drawing: the wake ends the wait, and the key behind it runs after', async () => {
+  const t = await ringOn('r0', ['a'])
+  t.w.clock.refuse('after', NEXT_DRAWING_MS)
+  const tree = await t.draw()
+  press(buttonOf(tree, 'dismiss'))
+  press(buttonOf(tree, 'prio-1')) // waits in the chain behind the x
+  await turn()
+  expect(t.selected()).toBeNull() // the write of x is done
+  t.w.state.set('selected', 'a') // the person chooses the row again while x waits: the key behind reads it when it runs
+  await t.w.clock.advance(NEXT_DRAWING_MS) // the bound: the refused timer never fires
+  await turn()
+  expect(t.host.calls).toEqual(['dismiss a']) // the chain is held: `prio-1` has not run
+  expect(t.calls).toEqual([])
+  await t.w.clock.advance(WAKE_SLACK_MS) // the wake
+  await t.session.idle()
+  expect(t.calls[0]).toBe('focus refresh') // x asks from the state read, at once
+  expect(t.host.calls).toEqual(['dismiss a', 'setPriority a high']) // and the key behind it ran after
+})
+
+test('the engine timer that fires first ends the pause once: the wake finds nobody and logs nothing', async () => {
+  const t = await ringOn('web.resolve')
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.draw()
+  await endPause(t) // the engine timer, RING_PAUSE_MS after the frame
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help'])
+  await t.w.clock.advance(WAKE_SLACK_MS) // the time of the wake
+  await turn()
+  expect(t.calls).toEqual(['focus help']) // no second request
+  expect(t.w.logs).toEqual([]) // and no line: the engine timer won
+})
+
+test('a frame that ends the frame wait cancels its wake: no second end at the time of the bound', async () => {
+  const t = await ringOn('web.resolve')
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.draw() // ends the frame wait
+  await endPause(t)
+  await t.session.idle()
+  await t.w.clock.advance(NEXT_DRAWING_MS + WAKE_SLACK_MS) // past the bound of the frame wait and its wake
+  await turn()
+  expect(t.calls).toEqual(['focus help'])
+  expect(t.w.logs).toEqual([])
+})
+
+test('a closing cancels the engine timer and the wake of the pause: no request, and nothing at the time of the wake', async () => {
+  const t = await ringOn('web.resolve')
+  t.w.clock.refuse('after', RING_PAUSE_MS)
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.draw() // the frame: the press is in its pause, whose engine timer is refused
+  await turn()
+  await t.session.closed(t.w.ports)
+  await t.session.idle()
+  await t.w.clock.advance(RING_PAUSE_MS + WAKE_SLACK_MS)
+  await turn()
+  expect(t.calls).toEqual([])
+  expect(t.w.logs).toEqual([])
+})
+
+test('a closing cancels the wake of the frame wait: no state read and no request', async () => {
+  const t = await ringOn('web.resolve')
+  t.w.clock.refuse('after', NEXT_DRAWING_MS)
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.session.closed(t.w.ports)
+  await t.session.idle()
+  await t.w.clock.advance(NEXT_DRAWING_MS + WAKE_SLACK_MS)
+  await turn()
+  expect(t.calls).toEqual([])
+  expect(t.w.logs).toEqual([])
+})
+
+test('a restart of the pause arms a new wake and cancels the old one: the request names a Button of the second frame', async () => {
+  const k = bareKeep('web.resolve', { help: false, row: 'b' }, noRead)
+  k.w.clock.refuse('after', RING_PAUSE_MS) // both engine timers of the pause are refused
+  k.w.clock.refuse('after', RING_PAUSE_MS)
+  k.refocus.frame(BEFORE) // at 0: the engine timer is due at RING_PAUSE_MS, its wake after the slack
+  await turn()
+  await k.w.clock.advance(5)
+  k.refocus.frame(AFTER) // other controls: the pause starts again at 5, its wake is due 5 ms after the first
+  await turn()
+  await k.w.clock.advance(RING_PAUSE_MS + WAKE_SLACK_MS - 5) // the time of the first wake: it would end the pause here
+  await turn()
+  expect(k.asked).toEqual([])
+  await k.w.clock.advance(5) // the wake of the restart
+  await k.done
+  expect(k.asked).toEqual(['r0']) // the Button of AFTER; from BEFORE the ring would stay on web.resolve
+  expect(k.w.logs).toEqual([WAKE_LOG.pause(RING_PAUSE_MS)])
 })
 
 // A drawing that began before the write read the old help state. It returns after the press armed its wait, but it is not

@@ -36,6 +36,8 @@ export type LaunchSpec = {
   pluginDir: string
   /** More plugins, each with a `--plugin-dir` of its own after the mod: a probe of a scenario. */
   extraPluginDirs?: readonly string[]
+  /** The file that claude writes its debug log to (`--debug-file`): the lines a mod writes with `$.ui.log(…, { to: 'debug' })`. */
+  debugFile?: string
   model: string
   signalFile: string
   prompt?: string
@@ -59,6 +61,7 @@ export function claudeCommand(spec: LaunchSpec): string {
     '--plugin-dir',
     spec.pluginDir,
     ...(spec.extraPluginDirs ?? []).flatMap(dir => ['--plugin-dir', dir]),
+    ...(spec.debugFile === undefined ? [] : ['--debug-file', spec.debugFile]),
     '--model',
     spec.model,
     '--append-system-prompt',
@@ -191,35 +194,23 @@ export function trustKey(screen: string): 'Down' | 'Enter' | undefined {
   return TRUST_CHOSEN.test(screen) ? 'Enter' : 'Down'
 }
 
-export type LaunchContext = {
+/** The launch of a session: the spec of the command, and what the launch needs besides: the pane and the time to wait. */
+export type LaunchContext = LaunchSpec & {
   tmux: Tmux
-  signalFile: string
-  pluginDir: string
-  extraPluginDirs?: readonly string[]
-  model: string
   timeoutMs: number
-  tools?: readonly string[]
-  env?: Readonly<Record<string, string>>
-  unset?: readonly string[]
+}
+
+/** The command that starts claude for `ctx`: every field of the spec reaches it, whatever fields the spec gets later. */
+export function launchCommand(ctx: LaunchContext, prompt?: string): string {
+  const { tmux: _tmux, timeoutMs: _timeoutMs, ...spec } = ctx
+  return claudeCommand({ ...spec, prompt })
 }
 
 // Starts claude in the pane. In the trust dialog it moves to "Yes" before Enter. Ends when the
 // prompt box is idle, or, with a first prompt, when that turn ends.
 export async function launchClaude(ctx: LaunchContext, prompt?: string): Promise<void> {
   const before = countLines(ctx.signalFile)
-  const { pluginDir, extraPluginDirs, model, signalFile, tools, env, unset } = ctx
-  ctx.tmux.respawn(
-    claudeCommand({
-      pluginDir,
-      ...(extraPluginDirs ? { extraPluginDirs } : {}),
-      model,
-      signalFile,
-      prompt,
-      ...(tools ? { tools } : {}),
-      ...(env ? { env } : {}),
-      ...(unset ? { unset } : {}),
-    }),
-  )
+  ctx.tmux.respawn(launchCommand(ctx, prompt))
   await waitUntil(
     () => {
       const screen = ctx.tmux.capture()

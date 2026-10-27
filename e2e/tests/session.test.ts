@@ -12,6 +12,7 @@ import {
   fakeForeignRepo,
   fakeGithubClone,
   type LaunchSpec,
+  launchCommand,
   listRefs,
   prepareClone,
   READY_MARKERS,
@@ -120,6 +121,35 @@ test('claudeCommand gives each extra plugin its own --plugin-dir after the mod',
     claudeCommand({ ...spec, extraPluginDirs: [] }),
     claudeCommand({ pluginDir: '/p', model: 'haiku', signalFile: '/s' }),
   )
+})
+
+// Issue #193. The debug file holds what the mod wrote with `$.ui.log(text, { to: 'debug' })`, so a scenario can read it.
+// A session with no debug file has none of the flag: the other scenarios keep their launch.
+test('claudeCommand with a debug file passes --debug-file and its path, and without one passes no flag for it', () => {
+  const argv = argvOf({ prompt: 'go', debugFile: '/o u/debug.log' })
+  assert.equal(argv[argv.indexOf('--debug-file') + 1], '/o u/debug.log')
+  assert.equal(argv.at(-1), 'go') // the prompt stays last
+  assert.ok(!argvOf({ prompt: 'go' }).includes('--debug-file'))
+})
+
+// `launchClaude` once rebuilt the spec by hand and dropped a field it did not know (the debug file of issue #193 never reached
+// claude: the log stayed empty in two live runs). `launchCommand` is what it runs: every field of the launch reaches claude.
+test('launchCommand hands claude every field of the launch: probes, debug file, tools, env, unset and the prompt', () => {
+  const ctx = {
+    tmux: undefined as never,
+    timeoutMs: 1,
+    pluginDir: '/p',
+    extraPluginDirs: ['/probe'],
+    debugFile: '/o/debug.log',
+    model: 'haiku',
+    signalFile: '/s',
+    tools: ['Read'],
+    env: { A: '1' },
+    unset: ['CLAUDECODE'],
+  }
+  const { tmux: _tmux, timeoutMs: _timeoutMs, ...spec } = ctx
+  assert.equal(launchCommand(ctx, 'go'), claudeCommand({ ...spec, prompt: 'go' }))
+  assert.ok(launchCommand(ctx, 'go').includes(shellQuote('/o/debug.log')))
 })
 
 test('claudeCommand with env runs claude through env, variables first', () => {

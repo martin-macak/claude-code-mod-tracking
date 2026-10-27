@@ -61,6 +61,11 @@ async function soft(step: () => unknown): Promise<void> {
 
 // ------------------------------------------------------------------ ports
 
+// The runtime has `setTimeout` and `clearTimeout`, but the plugin's `tsconfig` lists no lib that declares them. `Ports.clock.wake`
+// is the one use: a timer that makes no engine dispatch, so no hook can refuse it (issue #193).
+declare function setTimeout(fn: () => void, ms: number): unknown
+declare function clearTimeout(id: unknown): void
+
 /**
  * The engine as ports (spec 5.4). Built per dispatch, so each `$` call keeps the hook's agent context (E5).
  * Each closure holds a literal `$` call and each state ref is a literal, so `claude plugin validate` lists
@@ -73,6 +78,11 @@ function portsOf($: EngineInterface): Ports {
       wall: Date.now,
       after: (ms, fn) => $.clock.after(ms, fn),
       every: (ms, fn) => $.clock.every(ms, fn),
+      // The mod's own timer, not a call of `$`: it makes no dispatch, so no hook can refuse it (issue #193).
+      wake: (ms, fn) => {
+        const id = setTimeout(fn, ms)
+        return { cancel: () => clearTimeout(id) }
+      },
     },
     run: (argv, opts) => $.process.run(argv, opts),
     fs: {

@@ -84,6 +84,40 @@ test('refuse: a refused every period ends the interval', async () => {
   expect(beats).toBe(2)
 })
 
+test('wake fires in time order with after, and a wake cancelled never fires', async () => {
+  const w = fakePorts()
+  const seen: string[] = []
+  w.ports.clock.after(50, () => void seen.push('after 50'))
+  w.ports.clock.wake(20, () => void seen.push('wake 20'))
+  w.ports.clock.wake(30, () => void seen.push('wake 30')).cancel()
+  w.ports.clock.wake(80, () => void seen.push('wake 80'))
+  await w.clock.advance(60)
+  expect(seen).toEqual(['wake 20', 'after 50'])
+  await w.clock.advance(20)
+  expect(seen).toEqual(['wake 20', 'after 50', 'wake 80'])
+})
+
+test('refuse eats the after and the every of its delay and never the wake of the same delay', async () => {
+  // A wake is a timer of the mod's own runtime. No hook sees it, so none refuses it (issue #193).
+  const w = fakePorts()
+  const seen: string[] = []
+  w.clock.refuse('after', 60)
+  w.ports.clock.wake(60, () => void seen.push('wake'))
+  w.ports.clock.after(60, () => void seen.push('refused after'))
+  await w.clock.advance(60)
+  expect(seen).toEqual(['wake']) // the after is the one the refusal ate
+  w.ports.clock.after(60, () => void seen.push('second after')) // the refusal is spent: this one fires
+  await w.clock.advance(60)
+  expect(seen).toEqual(['wake', 'second after'])
+  w.clock.refuse('every', 40)
+  w.ports.clock.wake(40, () => void seen.push('wake 40'))
+  w.ports.clock.every(40, () => void seen.push('refused every'))
+  await w.clock.advance(40)
+  expect(seen).toEqual(['wake', 'second after', 'wake 40']) // the every period is the one the refusal ate
+  await w.clock.advance(200)
+  expect(seen).toEqual(['wake', 'second after', 'wake 40']) // and the interval ended for good
+})
+
 test('the store clones what it keeps and what it gives, counts sets and lists keys', async () => {
   const w = fakePorts({ store: { seeded: { a: 1 } } })
   const value = { list: [1] }

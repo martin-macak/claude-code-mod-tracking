@@ -199,6 +199,12 @@ export interface Ports {
     after(ms: number, fn: () => void): Timer
     /** A refused period ends the interval (E18). */
     every(ms: number, fn: () => void): Timer
+    /**
+     * A timer of the mod's own runtime, not of the engine. It makes no engine dispatch, so no hook can refuse it: it fires
+     * even when `after` is refused and says nothing (issue #193). Production: `setTimeout`. The fake clock drives it with
+     * `after` and `every`, and no `refuse` touches it.
+     */
+    wake(ms: number, fn: () => void): Timer
   }
   /** The engine's process runner. */
   readonly run: (argv: readonly string[], opts: RunOpts) => Promise<RunResult>

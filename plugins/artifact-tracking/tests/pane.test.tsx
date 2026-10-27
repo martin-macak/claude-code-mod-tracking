@@ -4,6 +4,7 @@
 // reads the tree.
 import type { Engine } from 'claude-code/testing'
 import { expect, mock } from 'claude-code/testing'
+import { RING_PAUSE_MS } from '../hooks/pane-refocus'
 import { wrapRows } from '../ux/text/wrap'
 import { BUDGET, fits, measure } from '../ux/tree-data-table/budget'
 import { footerRows } from '../ux/tree-data-table/footer'
@@ -367,6 +368,30 @@ test('pane: every core key has one footer Button; their hotkeys are r h x 1 2 3 
   const handles = (await ui.findAll({ type: 'Button' })).filter(b => /^r\d+$/.test(b.key ?? ''))
   expect(handles.length).toBe(2)
   for (const b of handles) expect(b.props.hotkey).toBeUndefined()
+  await ui.unmount()
+})
+
+// Issue #193. The wake behind the ring pause must be a timer of the mod's own runtime, not a call of `$`: a hook can refuse
+// the engine clock and no hook can refuse a `setTimeout`. Every other test of the pause runs on `fakePorts`, whose wake is
+// never refused whatever the real port does, and `register.tsx` is outside the node coverage run. This one goes through the
+// real port (`portsOf`): the engine timer of the pause is refused, and the kit clock moves only when a test moves it, so
+// only a wake that is a real timer can end the pause. The pause reads the real wall clock (`wall: Date.now`), and a drawing
+// that returns after its deadline of `RING_PAUSE_MS` ends it too, and cancels the wake: no line is then written. So the test
+// must cause no drawing after the one frame of the press. It adds none, and the press itself draws that frame. A drawing
+// that a test adds there makes the test flaky on a loaded machine, because it may land late. The line that the wake writes
+// when it wins is the proof, and the test waits for it (causality, no wall time). It fails, with a timeout at `until`, when
+// `wake` in `register.tsx` is made a call of `$.clock.after`. The ring request itself is out of reach: the kit cannot show a
+// `$.ui.focus` call of the mod (gotchas.md, row 69), so the log line stands for "the wait ended".
+test('pane: h with the engine timer of the ring pause refused ends its pause by the wake of the runtime', async ($, on) => {
+  const w = world(on, { refuseAfter: RING_PAUSE_MS })
+  await listed($, w, LINKS)
+  const ui = await mountPane($)
+  await focusOn($, 'help') // the person moves the ring onto h: help, so the mod knows where it is and `h` asks for it again
+  const wakeLines = () =>
+    w.fake.logs.filter(l => l.text.startsWith(`pane ring pause: the engine timer of ${RING_PAUSE_MS} ms did not fire`))
+  await ui.press({ key: 'help' }) // draws the help view: the one frame, and no drawing follows it
+  await until(() => wakeLines().length > 0, 'the wake that ends the refused ring pause')
+  expect(wakeLines().map(l => l.to)).toEqual(['debug']) // one line, to the debug log
   await ui.unmount()
 })
 
