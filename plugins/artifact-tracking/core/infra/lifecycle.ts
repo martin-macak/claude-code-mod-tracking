@@ -25,6 +25,7 @@ import type { Ports } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, Tracker } from '../interfaces/tracker'
 import type { DurationStrip, TurnTarget } from '../interfaces/turns'
+import type { PlanLine } from '../lib/clean-text'
 import { EventBus } from './bus'
 import { Cleaner } from './clean'
 import type { Commands } from './commands'
@@ -357,6 +358,16 @@ export class LifecycleManager extends PaneApi {
   /** `/track <args>`: the Commands router answers it. A failure rejects. */
   track(ports: Ports, args: string): Promise<{ text: string }> {
     return this.commands.run(ports, args)
+  }
+
+  /**
+   * The dry run of `/track clean` as typed lines, for the pane (issue #199). It makes the entry first, like the other calls of
+   * the pane that act on the session, then reads the plan through the router: the config file, then what each tracker would do.
+   * It reads only and never applies.
+   */
+  async cleanPlan(ports: Ports): Promise<readonly PlanLine[]> {
+    await this.entry(ports)
+    return this.commands.cleanPlan(ports)
   }
 
   /** A `/track <sub>` for the trackers: the broadcast of the router. Each tracker takes the subs it knows. */

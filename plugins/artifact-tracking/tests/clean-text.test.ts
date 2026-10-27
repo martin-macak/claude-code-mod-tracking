@@ -1,8 +1,20 @@
 // The words and the arguments of `/track clean` (issue #122): the parser, the plan by kind with its `skipped:` lines, the
-// result text, and the log text. Pure: no ports, no trackers.
+// result text, and the log text. The plan is one list of typed lines (issue #199): `planLines` makes it, `planLinesText` joins
+// it for the reply of `/track clean`, and `planText` is the same join made from the steps.
+// Pure: no ports, no trackers.
 import { expect, test } from 'claude-code/testing'
 import type { CleanStep, LogEntry } from '../core/interfaces/clean'
-import { CLEAN_USAGE, type Line, logText, parseClean, planText, resultText } from '../core/lib/clean-text'
+import {
+  CLEAN_USAGE,
+  type Line,
+  logText,
+  type PlanLine,
+  parseClean,
+  planLines,
+  planLinesText,
+  planText,
+  resultText,
+} from '../core/lib/clean-text'
 
 const stop = (id: string, label = id, f: Partial<CleanStep> = {}): CleanStep => ({
   kind: 'tasks',
@@ -102,6 +114,119 @@ test('each kind shows 10 lines and a count of the rest', () => {
 test('a tracker whose plan failed is named under Problems', () => {
   const text = planText(lines(stop('task:1')), ['auto: plan failed: boom'])
   expect(text).toContain('Problems:\n  auto: plan failed: boom')
+})
+
+// ---------------------------------------------------------------- the plan as typed lines (issue #199)
+
+const HIDE = 'Hide: /track clean --hide hides every ended row now, and /track show-all shows them again.'
+const LOG = 'Log: /track clean --log'
+const line = (role: PlanLine['role'], text: string): PlanLine => ({ role, text })
+
+test('planLines types each line of a plan: title, blank, kind head, step, problem head, problem and hints', () => {
+  const plan = planLines(
+    // The worktree comes first in the input: the plan still lists the kinds in the order of CLEAN_KINDS.
+    lines(rm('wt:/a', 'a'), stop('task:1', 'sleep 300'), stop('task:2', 'npm run dev', { skip: 'no task id' })),
+    ['auto: plan failed: boom', 'processes: plan failed: bang'],
+  )
+  expect(plan).toEqual([
+    line('title', 'Clean plan. Nothing changed.'),
+    line('blank', ''),
+    line('head', 'Tasks (apply with /track clean --yes tasks)'),
+    line('step', '  sleep 300: stop'),
+    line('step', '  npm run dev: skipped: no task id'),
+    line('head', 'Worktrees (apply with /track clean --yes worktrees)'),
+    line('step', '  a: remove record'),
+    line('blank', ''),
+    line('head', 'Problems:'),
+    line('problem', '  auto: plan failed: boom'),
+    line('problem', '  processes: plan failed: bang'),
+    line('blank', ''),
+    line('hint', HIDE),
+    line('hint', LOG),
+  ])
+})
+
+test('planLines of an empty plan holds one head that says there is nothing to do, and the hints', () => {
+  expect(planLines([], [])).toEqual([
+    line('title', 'Clean plan. Nothing changed.'),
+    line('blank', ''),
+    line('head', 'Nothing to stop or remove.'),
+    line('blank', ''),
+    line('hint', HIDE),
+    line('hint', LOG),
+  ])
+})
+
+test('planLines of a plan with no step and a failed tracker keeps the empty head and the problems', () => {
+  const plan = planLines([], ['processes: plan failed: boom'])
+  expect(plan.map(l => l.role)).toEqual(['title', 'blank', 'head', 'blank', 'head', 'problem', 'blank', 'hint', 'hint'])
+  expect(plan[2]?.text).toBe('Nothing to stop or remove.')
+  expect(plan[4]?.text).toBe('Problems:')
+  expect(plan[5]?.text).toBe('  processes: plan failed: boom')
+})
+
+// The pane view counts rows for each PlanLine (issue #199), so a line holds one row. A text from outside the module, a failure
+// message or a step label, can hold a newline: it becomes one line for each row, and the joined text stays as it was.
+test('a failed line that holds a newline is one problem line for each row, and the text stays the same', () => {
+  const plan = planLines([], ['auto: plan failed: line one\nline two'])
+  expect(plan.filter(l => l.text.includes('\n'))).toEqual([])
+  expect(plan.filter(l => l.role === 'problem').map(l => l.text)).toEqual(['  auto: plan failed: line one', 'line two'])
+  expect(planLinesText(plan)).toContain('Problems:\n  auto: plan failed: line one\nline two\n')
+  // The result of `--yes` writes the same failure with the same bytes.
+  expect(resultText(['tasks'], [], ['auto: plan failed: line one\nline two'])).toContain(
+    'Problems:\n  auto: plan failed: line one\nline two\n',
+  )
+})
+
+test('a step label that holds a newline is one step line for each row, and the text stays the same', () => {
+  const plan = planLines(lines(stop('task:1', 'echo one\necho two'), rm('wt:/a', 'a')), [])
+  expect(plan.filter(l => l.text.includes('\n'))).toEqual([])
+  expect(plan.filter(l => l.role === 'step').map(l => l.text)).toEqual([
+    '  echo one',
+    'echo two: stop',
+    '  a: remove record',
+  ])
+  expect(planLinesText(plan)).toContain('  echo one\necho two: stop\n')
+  // The cap counts steps, not rows: 10 steps of two rows are not over the cap.
+  const two = Array.from({ length: 10 }, (_, i) => stop(`task:${i}`, `a${i}\nb${i}`))
+  expect(planLines(lines(...two), []).some(l => l.role === 'more')).toBe(false)
+  // All 10 steps show, 2 rows each. A cap on rows would keep 5 steps and drop the rest with no count.
+  expect(planLines(lines(...two), []).filter(l => l.role === 'step')).toHaveLength(20)
+  // Over the cap: the first 10 steps show with their rows, and the count names the 1 left out.
+  const eleven = [...two, stop('task:10', 'a10\nb10')]
+  const over = planLines(lines(...eleven), [])
+  expect(over.filter(l => l.role === 'step')).toHaveLength(20)
+  expect(over.filter(l => l.role === 'more').map(l => l.text)).toEqual(['  and 1 more.'])
+})
+
+test('planLines closes a kind of more than 10 steps with one more line, and the kinds after it follow', () => {
+  const many = Array.from({ length: 13 }, (_, i) => stop(`task:${i}`, `job ${i}`))
+  const plan = planLines(lines(...many, rm('wt:/a', 'a')), [])
+  expect(plan.slice(2, 14).map(l => l.role)).toEqual(['head', ...Array(10).fill('step'), 'more'])
+  expect(plan[13]).toEqual(line('more', '  and 3 more.'))
+  expect(plan[14]).toEqual(line('head', 'Worktrees (apply with /track clean --yes worktrees)'))
+  expect(plan.filter(l => l.role === 'step')).toHaveLength(11) // 10 tasks and 1 worktree
+  // Exactly 10 is not over: no more line.
+  expect(planLines(lines(...many.slice(0, 10)), []).some(l => l.role === 'more')).toBe(false)
+})
+
+// The one function of the plan: the reply of `/track clean` and the pane read the same lines, so they cannot differ.
+test('planText is the lines joined with a newline, and planLinesText joins any list of lines the same way', () => {
+  const cases: [Line[], string[]][] = [
+    [[], []],
+    [lines(stop('task:1', 'sleep 300')), []],
+    [lines(rm('wt:/a', 'a'), stop('task:1')), ['auto: plan failed: boom']],
+    [lines(...Array.from({ length: 12 }, (_, i) => stop(`task:${i}`))), ['x: plan failed: y']],
+  ]
+  for (const [steps, failed] of cases) {
+    const plan = planLines(steps, failed)
+    expect(planText(steps, failed)).toBe(plan.map(l => l.text).join('\n'))
+    expect(planLinesText(plan)).toBe(planText(steps, failed))
+  }
+  // The text of an empty plan, byte for byte (6 rows).
+  expect(planText([], [])).toBe(
+    ['Clean plan. Nothing changed.', '', 'Nothing to stop or remove.', '', HIDE, LOG].join('\n'),
+  )
 })
 
 // ---------------------------------------------------------------- the result

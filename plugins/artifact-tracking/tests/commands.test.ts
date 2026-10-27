@@ -3,11 +3,13 @@
 // register.test.tsx). The cases of the router alone run on a fake CommandHost, so they see the order of the calls.
 // Plan: L3 Task 12 (the moved cases), L5 Task 9 (the router, K15, K19).
 import { expect, test } from 'claude-code/testing'
+import type { CleanRun } from '../core/infra/clean'
 import { CORE_HINT, type CommandHost, Commands, PRIO_WORDS, USAGE } from '../core/infra/commands'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { MoreProblems } from '../core/interfaces/config'
 import type { CommandEvent } from '../core/interfaces/events'
 import type { CommandSpec, Tracker } from '../core/interfaces/tracker'
+import { planLines, planText } from '../core/lib/clean-text'
 import { helpOf } from '../hooks/pane-text'
 import { autoDismiss } from '../trackers/auto/dismiss-store'
 import { helpText } from '../ux/tree-data-table/help'
@@ -129,6 +131,8 @@ function fakeHost(
     noVersion?: boolean
     /** What the list text says. Default `LIST`. */
     listText?: string
+    /** What `cleanup.plan` gives. Default: no step, no failure. */
+    plan?: CleanRun
   } = {},
 ) {
   const calls: string[] = []
@@ -173,7 +177,7 @@ function fakeHost(
     cleanup: {
       plan: async () => {
         note('clean:plan')
-        return { lines: [], failed: [] }
+        return o.plan ?? { lines: [], failed: [] }
       },
       apply: async (_p, kinds) => {
         note(`clean:apply:${kinds.join(',')}`)
@@ -260,6 +264,31 @@ test('clean checks the config file, then prints the plan and nothing else: no li
   const t = fakeHost()
   expect((await t.commands.run(t.ports, 'clean')).text).toContain('Clean plan. Nothing changed.')
   expect(t.calls).toEqual(['entry', 'refreshConfig', 'clean:plan'])
+})
+
+// Issue #199: the pane key reads the plan as typed lines. The reply of the command is the same lines, joined.
+const STEPS: CleanRun = {
+  lines: [
+    { step: { kind: 'tasks', id: 'task:1', label: 'sleep 300', action: 'stop' } },
+    { step: { kind: 'worktrees', id: 'wt:/a', label: '/a', action: 'remove-record', skip: 'not merged' } },
+  ],
+  failed: ['auto: plan failed: boom'],
+}
+
+test('cleanPlan checks the config file, then plans, and gives the typed lines: no entry, no list, no apply', async () => {
+  const t = fakeHost({ plan: STEPS })
+  const plan = await t.commands.cleanPlan(t.ports)
+  expect(plan).toEqual(planLines(STEPS.lines, STEPS.failed))
+  expect(plan.map(l => l.role)).toContain('step')
+  expect(t.calls).toEqual(['refreshConfig', 'clean:plan']) // the caller made the entry; the plan mode of the command does
+})
+
+test('clean prints the lines of cleanPlan joined, and checks the config file once', async () => {
+  const t = fakeHost({ plan: STEPS })
+  const text = (await t.commands.run(t.ports, 'clean')).text
+  expect(t.calls).toEqual(['entry', 'refreshConfig', 'clean:plan']) // the plan mode reads through cleanPlan: no second check
+  expect(text).toBe(planText(STEPS.lines, STEPS.failed))
+  expect(text).toBe((await t.commands.cleanPlan(t.ports)).map(l => l.text).join('\n'))
 })
 
 test('clean --log checks the config file, then prints the log and nothing else', async () => {

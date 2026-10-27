@@ -11,7 +11,15 @@ import type { CommandEvent } from '../interfaces/events'
 import type { ItemsHost, Priority } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
 import type { CommandSpec } from '../interfaces/tracker'
-import { CLEAN_USAGE, logText, parseClean, planText, resultText } from '../lib/clean-text'
+import {
+  CLEAN_USAGE,
+  logText,
+  type PlanLine,
+  parseClean,
+  planLines,
+  planLinesText,
+  resultText,
+} from '../lib/clean-text'
 import { flipShowAll, isViewId } from '../lib/grouping'
 import { TURN_USAGE } from '../lib/turn-text'
 import type { Cleaner } from './clean'
@@ -153,18 +161,16 @@ export class Commands {
    * applies the steps of those kinds, and the audit log keeps what it tried. `--log` prints that log, newest first. In every
    * mode it checks the config file first, like `show-all`: a plan reads the switches of a tracker (`destroyWorktrees`, issue
    * #123), and an edit just before `--yes` must count, while the tick reads the file only every 30 s. An argument that is no
-   * mode prints the usage and reads nothing.
+   * mode prints the usage and reads nothing. The plan goes through `cleanPlan`, which does the check itself, so the plan mode
+   * answers before the shared check (a second check would read the file again).
    */
   private async clean(p: Ports, rest: string): Promise<Reply> {
     const mode = parseClean(rest)
     if (mode === undefined) return { text: CLEAN_USAGE }
+    if (mode.mode === 'plan') return { text: planLinesText(await this.cleanPlan(p)) }
     await this.host.refreshConfig(p)
     const { cleanup } = this.host
     switch (mode.mode) {
-      case 'plan': {
-        const { lines, failed } = await cleanup.plan(p)
-        return { text: planText(lines, failed) }
-      }
       case 'log':
         return { text: logText(await cleanup.history()) }
       case 'hide': {
@@ -186,6 +192,17 @@ export class Commands {
         return { text: `${resultText(mode.kinds, lines, failed)}\n\n${text}` }
       }
     }
+  }
+
+  /**
+   * The dry run of `/track clean` as typed lines (issue #199): the config file first, as every mode of the command does, then
+   * what each live tracker would do. It reads only, and the host has no way to apply through it. The command prints the lines
+   * as text (`planLinesText`). A caller that is no command makes the entry itself (`LifecycleManager.cleanPlan`).
+   */
+  async cleanPlan(p: Ports): Promise<readonly PlanLine[]> {
+    await this.host.refreshConfig(p)
+    const { lines, failed } = await this.host.cleanup.plan(p)
+    return planLines(lines, failed)
   }
 
   private async clear(p: Ports): Promise<Reply> {
