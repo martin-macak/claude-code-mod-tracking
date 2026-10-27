@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import {
+  pairContainerIds,
   parseBashProcesses,
   processUpdateFromNotification,
   processUpdateFromNotificationText,
@@ -147,10 +148,582 @@ test('compound: two detached runs get their own ids in order', () => {
     'docker run -d --name a alpine sleep 9 && docker run -d --name b alpine sleep 9',
     out(`${ID_A}\n${ID_B}\n`),
   )
-  expect(rows.map(r => [r.name, r.containerId])).toEqual([
-    ['a', ID_A],
-    ['b', ID_B],
+  expect(rows.map(r => [r.name, r.containerId, r.containerIdExact])).toEqual([
+    ['a', ID_A, true],
+    ['b', ID_B, true],
   ])
+})
+
+// ---------------------------------------------------------------- the id of a container (issue #231)
+
+// A row gets a container id only when that id is the run's own output: the id lines pair one to one with the runs whose
+// standard output reaches the tool result, or every id line is one id and there is one such run. The row then has
+// `containerIdExact: true`. Cases of the delta study of #123, part 2 (log lines L301 to L312 and L401 to L409):
+// https://github.com/martin-macak/claude-code-mod-tracking/issues/123#issuecomment-6412081219
+const NEW = 'a'.repeat(64)
+const OLD1 = 'b'.repeat(64)
+const OLD2 = 'c'.repeat(64)
+const OTHER = 'd'.repeat(64)
+const idLines = (...ids: string[]) => ids.join('\n') + '\n'
+const containers = (command: string, stdout: string) =>
+  parseBashProcesses(command, out(stdout), { at: 1 }).filter(r => r.kind === 'docker-container')
+/** The name, the id and the mark of each container row. A row with no id has no key for it. */
+const paired = (command: string, stdout: string) =>
+  containers(command, stdout).map(r => [r.name, r.containerId, r.containerIdExact])
+/** The row as `parseBashProcesses` returns it for a run that got no id: no `containerId` and no `containerIdExact` key. */
+const unpaired = (id: string, name: string) => ({
+  id,
+  kind: 'docker-container',
+  name,
+  state: 'running',
+  firstSeen: 1,
+  lastSeen: 1,
+})
+
+// Study log lines L310 to L312.
+test('container id: a row keeps its own id and is exact when the run printed it alone', () => {
+  expect(containers('docker run -d --name api nginx', idLines(NEW))).toStrictEqual([
+    { ...unpaired('docker:ctr:api', 'api'), containerId: NEW, containerIdExact: true },
+  ])
+  expect(containers('docker run -d nginx', idLines(NEW))).toStrictEqual([
+    { ...unpaired(`docker:ctr:${NEW}`, NEW.slice(0, 12)), containerId: NEW, containerIdExact: true },
+  ])
+})
+
+// Study log lines L301 to L306.
+test('container id: more id lines than runs give the row no id, with or without --name', () => {
+  const ps = idLines(NEW, NEW, OLD1, OLD2)
+  expect(containers('docker run -d --name api nginx && docker ps -aq --no-trunc', ps)).toStrictEqual([
+    unpaired('docker:ctr:api', 'api'),
+  ])
+  // Without --name the row takes its name from the command, not from an older container.
+  expect(containers('docker run -d nginx; docker ps -aq --no-trunc', ps)).toStrictEqual([
+    unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
+  ])
+})
+
+// Study log lines L307 to L309.
+test('container id: one run and a later command that prints the same id pair, and the row is exact', () => {
+  expect(paired('docker run -d --name api nginx && docker inspect -f "{{.Id}}" api', idLines(NEW, NEW))).toEqual([
+    ['api', NEW, true],
+  ])
+  // Two different lines are not one id.
+  expect(paired('docker run -d --name api nginx && docker inspect -f "{{.Id}}" web', idLines(NEW, OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+})
+
+// Study log lines L401 to L406.
+test('container id: a run whose standard output goes to a file takes no id from another command', () => {
+  for (const redir of [
+    '> /dev/null',
+    '>/dev/null',
+    '>> log',
+    '>| log',
+    '&> log',
+    '&>> log',
+    '1> log',
+    '1>> log',
+    '>&2',
+  ]) {
+    const inspect = '; docker inspect -f "{{.Id}}" web'
+    expect({ redir, rows: paired(`docker run -d --name api nginx ${redir}${inspect}`, idLines(OTHER)) }).toEqual({
+      redir,
+      rows: [['api', undefined, undefined]],
+    })
+    expect(containers(`docker run -d nginx ${redir}${inspect}`, idLines(OTHER))).toStrictEqual([
+      unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
+    ])
+  }
+  // The same when the redirection stands in front of the arguments, or after a stderr redirection.
+  expect(
+    paired('docker run -d --name api > /dev/null 2>&1 nginx; docker inspect -f "{{.Id}}" web', idLines(OTHER)),
+  ).toEqual([['api', undefined, undefined]])
+})
+
+// Study log lines L401 to L406, with the operator glued to the last word of the run (`nginx>/dev/null`). The splitter ends the
+// word at a typed `>` or `<`, as bash does, so the redirection is seen.
+test('container id: a redirection glued to the last word of the run takes no id from another command', () => {
+  const inspect = '; docker inspect -f "{{.Id}}" web'
+  for (const glued of ['>/dev/null', '>>log', '>|log', '&>log', '&>>log', '>&2', '1>log', '2>log'])
+    expect({ glued, rows: paired(`docker run -d --name api nginx${glued}${inspect}`, idLines(OTHER)) }).toEqual({
+      glued,
+      rows: [['api', undefined, undefined]],
+    })
+  // Without --name the row is named by its command. The digit of `1>` and `2>` belongs to the word, so it is a word of its own.
+  for (const glued of ['>/dev/null', '>>log', '>|log', '&>log', '&>>log', '>&2'])
+    expect(containers(`docker run -d nginx${glued}${inspect}`, idLines(OTHER))).toStrictEqual([
+      unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
+    ])
+  // A quoted last word, a closed group or subshell, a loop, an `if` and a `while` take the same redirection. So does a quoted
+  // number (`"2">f` is the word `2` and `>f`, not the descriptor 2), and a file that a substitution names, with a space or glued
+  // (`> $(mktemp)`, `>$(mktemp)`). Only the glued form reaches the check of a `>(` opener, so each form needs its own row.
+  for (const run of [
+    'docker run -d --name api "nginx">/dev/null',
+    'docker run -d --name api "2">f',
+    'docker run -d --name api nginx > $(mktemp)',
+    'docker run -d --name api nginx >$(mktemp)',
+    '{ docker run -d --name api nginx; }>/dev/null',
+    '( docker run -d --name api nginx )>>log',
+    'for i in 1; do docker run -d --name api nginx; done>/dev/null',
+    'if docker run -d --name api nginx; then :; fi>/dev/null',
+    'while docker run -d --name api nginx; do break; done>log',
+  ])
+    expect({ run, rows: paired(`${run}${inspect}`, idLines(OTHER)) }).toEqual({
+      run,
+      rows: [['api', undefined, undefined]],
+    })
+  // The controls: a glued input redirection, a here-string, and a glued redirection of the next command leave the id.
+  for (const run of [
+    'docker run -d --name api nginx</dev/null',
+    'docker run -d --name api nginx<<<x',
+    'docker run -d --name api nginx; echo x>log',
+    '{ docker run -d --name api nginx; }<in',
+  ])
+    expect({ run, rows: paired(run, idLines(NEW)) }).toEqual({ run, rows: [['api', NEW, true]] })
+})
+
+// A bare `exec` that redirects the output moves the output of the shell itself, so no run after it prints to the tool result. The
+// parser reads the exec and marks every later segment of that shell. The redirection ends with a subshell (`( exec > log )`).
+test('container id: a run after a bare exec that redirects the output takes no id from another command', () => {
+  const inspect = '; docker inspect -f "{{.Id}}" web'
+  for (const exec of [
+    'exec > log',
+    'exec >> log',
+    'exec 1> log',
+    'exec &> log',
+    'exec >log',
+    'exec 3>&1 >/dev/null',
+    'exec >&2',
+    // The options of `exec` matter only when a command follows. With none, the shell itself is redirected, as in bash.
+    'exec -c > log',
+    'exec -a name > log',
+    'exec -cl >> log',
+    'exec -- > log',
+  ]) {
+    expect({ exec, rows: paired(`${exec}; docker run -d --name api nginx${inspect}`, idLines(OTHER)) }).toEqual({
+      exec,
+      rows: [['api', undefined, undefined]],
+    })
+    expect(containers(`${exec}; docker run -d nginx${inspect}`, idLines(OTHER))).toStrictEqual([
+      unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
+    ])
+  }
+  // A run before the exec printed to the tool result, and a run after it does not take that id.
+  expect(paired('docker run -d --name a nginx; exec > log; docker run -d --name b nginx', idLines(NEW))).toEqual([
+    ['a', NEW, true],
+    ['b', undefined, undefined],
+  ])
+  // No run after the exec prints, so no line pairs with any of them.
+  expect(paired('exec > log; docker run -d --name a nginx; docker run -d --name b nginx', idLines(NEW, OLD1))).toEqual([
+    ['a', undefined, undefined],
+    ['b', undefined, undefined],
+  ])
+  // A group, a loop and an `if` around the run are the same shell.
+  expect(paired(`exec > log; { docker run -d --name api nginx; }${inspect}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`if exec > log; then docker run -d --name api nginx; fi${inspect}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  // A subshell is a shell of its own: its exec ends with it, and it moves the output of the run inside it only.
+  expect(paired('( exec > log ); docker run -d --name api nginx', idLines(NEW))).toEqual([['api', NEW, true]])
+  expect(paired(`( exec > log; docker run -d --name api nginx )${inspect}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  // An exec that leaves the output where it is changes nothing.
+  for (const exec of [
+    'exec',
+    'exec 2> err',
+    'exec 3>&1',
+    'exec < in',
+    'exec {fd}> f',
+    'exec -c',
+    'exec -a name 2> err',
+  ])
+    expect({ exec, rows: paired(`${exec}; docker run -d --name api nginx`, idLines(NEW)) }).toEqual({
+      exec,
+      rows: [['api', NEW, true]],
+    })
+})
+
+// A group, loop or `if` that redirects the output gives fd 1 back at its end (bash 5.3.20: `{ exec >/dev/null; } >/dev/null; echo
+// after` prints `after`), so an exec inside it moves no later run. An unredirected group is the shell itself, and a redirection of
+// stderr or of the input saves no fd 1: the exec stays for the later runs there (review of the PR, Codex on `shell.ts`).
+test('container id: an exec inside a redirected group, loop or if ends where that group ends', () => {
+  const inspect = '; docker inspect -f "{{.Id}}" web'
+  for (const closed of [
+    '{ exec >/dev/null; } >/dev/null',
+    '{ exec >/dev/null; } >>log',
+    '{ exec >/dev/null; } &>log',
+    '{ exec >/dev/null; } >&2',
+    '{ { exec >/dev/null; } >log; a; }',
+    '( exec >/dev/null ) >log',
+    'for i in 1; do exec >/dev/null; done >log',
+    'while true; do exec >/dev/null; break; done >log',
+    'if true; then exec >/dev/null; fi >log',
+    'if exec >/dev/null; then :; fi >log',
+    'while exec >/dev/null; do break; done >log',
+    'case x in x) exec >/dev/null;; esac >log',
+    '{ exec -c >/dev/null; } >log',
+  ]) {
+    expect({ closed, rows: paired(`${closed}; docker run -d --name api nginx`, idLines(NEW)) }).toEqual({
+      closed,
+      rows: [['api', NEW, true]],
+    })
+    // Without --name the row is named by its own id, not by its command.
+    expect({ closed, rows: paired(`${closed}; docker run -d nginx`, idLines(NEW)) }).toEqual({
+      closed,
+      rows: [[NEW.slice(0, 12), NEW, true]],
+    })
+  }
+  // The run inside the redirected group still prints nowhere, and the run after the group takes the one line.
+  expect(
+    paired('{ exec >/dev/null; docker run -d --name a nginx; } >log; docker run -d --name b nginx', idLines(NEW)),
+  ).toEqual([
+    ['a', undefined, undefined],
+    ['b', NEW, true],
+  ])
+  // An unredirected group, a group that redirects stderr or the input, and a loop with such a redirection are the shell itself.
+  for (const open of [
+    '{ exec >/dev/null; }',
+    '{ exec >/dev/null; } 2>err',
+    '{ exec >/dev/null; } 2>&1',
+    '{ exec >/dev/null; } <in',
+    '{ exec >/dev/null; } 3>&1',
+    '{ { exec >/dev/null; }; } 2>err',
+    'for i in 1; do exec >/dev/null; done',
+    'for i in 1; do exec >/dev/null; done 2>err',
+    'if true; then exec >/dev/null; fi',
+  ])
+    expect({ open, rows: paired(`${open}; docker run -d --name api nginx${inspect}`, idLines(OTHER)) }).toEqual({
+      open,
+      rows: [['api', undefined, undefined]],
+    })
+  // An exec in front of the redirected group still reaches the run after it. The group does not end it: it came before the group.
+  expect(paired('exec >/dev/null; { :; } >log; docker run -d --name api nginx', idLines(NEW))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  // The same for a loop, an `if` and a `case` that close with a redirection: the exec before them is no part of their range.
+  for (const compound of [
+    'for i in 1; do :; done >log',
+    'while true; do break; done >log',
+    'if true; then :; fi >log',
+    'case x in x) :;; esac >log',
+  ])
+    expect({
+      compound,
+      rows: paired(`exec >/dev/null; ${compound}; docker run -d --name api nginx`, idLines(NEW)),
+    }).toEqual({ compound, rows: [['api', undefined, undefined]] })
+  // A later exec marks again, and the exec of a redirected group inside a subshell reaches no run, in it or after it.
+  expect(paired('{ exec >/dev/null; } >log; exec >/dev/null; docker run -d --name api nginx', idLines(NEW))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(
+    paired(
+      '( { exec >/dev/null; } >log; docker run -d --name a nginx ); docker run -d --name b nginx',
+      idLines(NEW, OLD1),
+    ),
+  ).toEqual([
+    ['a', NEW, true],
+    ['b', OLD1, true],
+  ])
+})
+
+// Study log lines L407 to L409.
+test('container id: a run inside a command substitution or backticks takes no id from another command', () => {
+  const ps = 'docker ps -aq --no-trunc --filter name=web'
+  expect(containers(`CID=$(docker run -d nginx); ${ps}`, idLines(OTHER))).toStrictEqual([
+    unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
+  ])
+  expect(paired(`CID=$(docker run -d --name api nginx); ${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`CID=\`docker run -d --name api nginx\`; ${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`echo $(docker run -d --name api nginx); ${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`docker inspect -f '{{.Id}}' $(docker run -d --name api nginx) && ${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`diff <(docker run -d --name api nginx) /dev/null; ${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+})
+
+// The commands in `>(...)` read the pipe and write where the command around it writes (bash 5.3.20, a fake docker: `cat > >(docker
+// run -d nginx) </dev/null; wait` prints the id). The shell takes no output of them, as it does of `$(...)` and `<(...)`.
+test('container id: a run in >(...) keeps the output of the command around it, a run in <(...) has none', () => {
+  const ps = '; docker inspect -f "{{.Id}}" web'
+  const api = 'docker run -d --name api nginx'
+  // The id is the run's own: it reaches the tool result, and the only id line pairs with the run.
+  for (const form of [
+    `cat > >(${api}) </dev/null; wait`,
+    `cat > >(${api}) < /dev/null`,
+    `cat 2> >(${api}) </dev/null; wait`,
+    `cat &> >(${api}) </dev/null; wait`,
+    `cat 2>err > >(${api}) </dev/null`,
+    `echo x | tee >(${api})`,
+    `tee >(${api}) </dev/null`,
+    `if cat > >(${api}) </dev/null; then :; fi; wait`,
+    `{ cat > >(${api}) </dev/null; } 2>err; wait`,
+    `cat > >(cat > >(${api}) </dev/null) </dev/null; wait`,
+    // A redirection of an earlier command is none of this one.
+    `cat >log; tee >(${api}) </dev/null`,
+    `cat >log && cat > >(${api}) </dev/null`,
+    `cat >log | cat > >(${api}) </dev/null`,
+  ])
+    expect({ form, rows: paired(form, idLines(NEW)) }).toEqual({ form, rows: [['api', NEW, true]] })
+  // Without --name the row is found by its id: the Codex case.
+  expect(containers('cat > >(docker run -d nginx) </dev/null; wait', idLines(NEW))).toStrictEqual([
+    { ...unpaired(`docker:ctr:${NEW}`, NEW.slice(0, 12)), containerId: NEW, containerIdExact: true },
+  ])
+  // With a second id line the counts differ: a line of another command is still no id of the run.
+  expect(paired(`cat > >(${api}) </dev/null${ps}`, idLines(NEW, OTHER))).toEqual([['api', undefined, undefined]])
+  // The output of the run goes away: a redirection or a pipe of its own, a substitution around it, a redirected or piped group,
+  // an `exec` before it, or a redirection of the command around it that comes before the substitution or after it. The
+  // redirection that has the substitution as its target (`> >(...)`) is not one of them.
+  for (const form of [
+    `cat > >(${api} > log) </dev/null`,
+    `cat > >(${api} | cat) </dev/null`,
+    `cat > >({ ${api}; } > log) </dev/null`,
+    `x=$(cat > >(${api}) </dev/null; wait)`,
+    `echo \`cat > >(${api}) </dev/null; wait\``,
+    `echo $(cat > >(${api}) </dev/null; wait)`,
+    `{ cat > >(${api}) </dev/null; } > log`,
+    `( cat > >(${api}) </dev/null ) | cat`,
+    `for i in 1; do cat > >(${api}) </dev/null; done > log`,
+    `cat > >(${api}) </dev/null | cat`,
+    `tee >(${api}) </dev/null | cat`,
+    `exec > log; cat > >(${api}) </dev/null`,
+    `exec > log; tee >(${api}) </dev/null`,
+    // The redirection stands before the substitution: bash applies it first, and the run writes to the file.
+    `cat >log > >(${api}) </dev/null`,
+    `cat > log > >(${api}) </dev/null`,
+    `cat > $(echo log) > >(${api}) </dev/null`,
+    `cat >log $(echo x) > >(${api}) </dev/null`,
+    `cat > >(cat >/dev/null) > >(${api}) </dev/null`,
+    `cat >log > >(tee >(${api}) </dev/null) </dev/null`,
+    `cat >log > >(echo $(${api})) </dev/null`,
+    // The redirection stands after the substitution, or the substitution is an argument that bash expands before the
+    // redirection: bash prints the id, the parser takes none (the safe side).
+    `cat > >(${api}) </dev/null > log`,
+    `tee >(${api}) </dev/null > log`,
+    `tee > log >(${api}) </dev/null`,
+    // `<(...)` and a substitution in it: the commands in them write to the pipe.
+    `cat < <(${api})`,
+    `cat <(${api})`,
+    `diff <(${api}) /dev/null`,
+    `cat <(tee >(${api}) </dev/null >/dev/null)`,
+    `cat < <(cat > >(${api}) </dev/null)`,
+  ])
+    expect({ form, rows: paired(`${form}${ps}`, idLines(OTHER)) }).toEqual({
+      form,
+      rows: [['api', undefined, undefined]],
+    })
+  // Two output substitutions: the second one writes into the first. The `>` before it comes after the first substitution, so it
+  // marks that run too (the safe side: bash prints the id of the first).
+  expect(
+    paired(`cat > >(docker run -d --name a nginx) > >(docker run -d --name b nginx) </dev/null`, idLines(NEW, OLD1)),
+  ).toEqual([
+    ['a', undefined, undefined],
+    ['b', undefined, undefined],
+  ])
+})
+
+test('container id: a substitution inside the arguments of the run does not hide its redirection or pipe', () => {
+  // The substitution splits the command into segments. The redirection stands on a later one, and it is the run's all the same.
+  const ps = '; docker inspect -f "{{.Id}}" web'
+  for (const run of [
+    'docker run -d --name api $(echo nginx) > /dev/null',
+    'docker run -d --name api $(img) nginx > /dev/null',
+    'docker run -d --name api -e T=$(cat t) nginx >/dev/null',
+    'docker run -d --name api `cat x` nginx &> log',
+    'docker run -d --name api $(a) $(b) nginx >> log',
+    'docker run -d --name api -e T=$(cat t) nginx | cat',
+    'docker run -d --name api -e T=$(cat t) nginx > log 2>&1',
+  ])
+    expect({ run, rows: paired(`${run}${ps}`, idLines(OTHER)) }).toEqual({ run, rows: [['api', undefined, undefined]] })
+  // The controls: with no redirection after the substitution, or with one of stderr only, the run prints its id.
+  for (const run of [
+    'docker run -d --name api -e T=$(cat t) nginx',
+    'docker run -d --name api -e T=$(cat t) nginx 2>/dev/null',
+    'docker run -d --name api $(a) $(b) nginx',
+  ])
+    expect({ run, rows: paired(run, idLines(NEW)) }).toEqual({ run, rows: [['api', NEW, true]] })
+  // A redirection of the next command is not the run's.
+  expect(paired('docker run -d --name api -e T=$(cat t) nginx; echo x > log', idLines(NEW))).toEqual([
+    ['api', NEW, true],
+  ])
+})
+
+test('container id: a run in front of a pipe takes no id, a run behind one does', () => {
+  expect(paired('docker run -d --name api nginx | tee /tmp/id; docker ps -aq --no-trunc -n 1', idLines(OTHER))).toEqual(
+    [['api', undefined, undefined]],
+  )
+  expect(paired('docker run -d --name api nginx 2>&1 | tail -1', idLines(NEW))).toEqual([['api', undefined, undefined]])
+  expect(paired('docker run -d --name api nginx |& cat', idLines(NEW))).toEqual([['api', undefined, undefined]])
+  expect(paired('echo go | docker run -d --name api nginx', idLines(NEW))).toEqual([['api', NEW, true]])
+})
+
+test('container id: a group, loop or subshell with the run in it is read like the run itself', () => {
+  const ps = '; docker ps -aq --no-trunc --filter name=web'
+  expect(paired(`{ docker run -d --name api nginx; } > /dev/null${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`( docker run -d --name api nginx ) >> log${ps}`, idLines(OTHER))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  expect(paired(`for i in 1; do docker run -d --name w nginx; done > /dev/null${ps}`, idLines(OTHER))).toEqual([
+    ['w', undefined, undefined],
+  ])
+  expect(paired('{ docker run -d --name api nginx; } | cat', idLines(NEW))).toEqual([['api', undefined, undefined]])
+  expect(paired('if docker run -d --name api nginx; then :; fi | cat', idLines(NEW))).toEqual([
+    ['api', undefined, undefined],
+  ])
+  // A group without a redirection or a pipe prints to the tool result.
+  expect(paired('{ docker run -d --name api nginx; } 2>&1', idLines(NEW))).toEqual([['api', NEW, true]])
+  expect(paired('( docker run -d --name api nginx ) 2> err', idLines(NEW))).toEqual([['api', NEW, true]])
+})
+
+test('container id: a redirection of stderr or of the input leaves the id', () => {
+  for (const redir of ['2>/dev/null', '2>&1', '2>> err', '< /dev/null', '<<< x', '3> f', '{fd}> f'])
+    expect({ redir, rows: paired(`docker run -d --name api nginx ${redir}`, idLines(NEW)) }).toEqual({
+      redir,
+      rows: [['api', NEW, true]],
+    })
+})
+
+// `>&1` copies fd 1 onto itself, so bash changes nothing and the run prints (5.3.20: `echo hi >&1` prints `hi`). A copy of another
+// descriptor onto fd 1 moves it, and so does `>& file`, which sends both outputs to the file. The same holds for `exec` and for
+// the group that ends an exec: `{ exec >/dev/null; } >&1; echo after` prints nothing, so the exec reaches the later runs.
+test('container id: a copy of fd 1 onto itself leaves the id, a copy of another descriptor does not', () => {
+  for (const same of ['>&1', '1>&1', '>& 1', '1>& 1', '>&01', '>&1-', '>&"1"'])
+    for (const run of [`docker run -d --name api nginx ${same}`, `docker run -d --name api nginx${same}`])
+      expect({ run, rows: paired(run, idLines(NEW)) }).toEqual({ run, rows: [['api', NEW, true]] })
+  for (const moved of ['>&2', '1>&2', '>& 2', '>&-', '>&0', '>&10', '>& log', '>&1 >log', '>log >&1'])
+    expect({ moved, rows: paired(`docker run -d --name api nginx ${moved}`, idLines(NEW)) }).toEqual({
+      moved,
+      rows: [['api', undefined, undefined]],
+    })
+  // `exec >&1` puts nothing away: the runs after it print. The target of `>& 1` is no word of the run, so the run keeps its name.
+  for (const exec of ['exec >&1', 'exec 1>&1', 'exec >& 1'])
+    expect({ exec, rows: paired(`${exec}; docker run -d --name api nginx`, idLines(NEW)) }).toEqual({
+      exec,
+      rows: [['api', NEW, true]],
+    })
+  expect(containers('docker run -d nginx >& log', idLines(NEW))).toStrictEqual([
+    unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx'),
+  ])
+  // A group that copies fd 1 onto itself saves nothing, so the exec in it reaches the runs after the group.
+  for (const closed of [
+    '{ exec >/dev/null; } >&1',
+    '{ exec >/dev/null; } 1>& 1',
+    'for i in 1; do exec >/dev/null; done >&1',
+    'if true; then exec >/dev/null; fi >&1',
+    'case x in x) exec >/dev/null;; esac >&1',
+  ])
+    expect({ closed, rows: paired(`${closed}; docker run -d --name api nginx`, idLines(NEW)) }).toEqual({
+      closed,
+      rows: [['api', undefined, undefined]],
+    })
+})
+
+test('container id: a run with the output redirected does not stop the next run from pairing', () => {
+  // The first run prints nothing to the tool result, so the one id line is the second run's own.
+  expect(paired('docker run -d --name a nginx > /dev/null; docker run -d --name b nginx', idLines(NEW))).toEqual([
+    ['a', undefined, undefined],
+    ['b', NEW, true],
+  ])
+  expect(paired('CID=$(docker run -d --name a nginx) && docker run -d --name b nginx', idLines(NEW))).toEqual([
+    ['a', undefined, undefined],
+    ['b', NEW, true],
+  ])
+  // Two runs in the tool result pair in order, and the redirected one between them takes nothing.
+  expect(
+    paired(
+      'docker run -d --name a nginx && docker run -d --name b nginx >/dev/null && docker run -d --name c nginx',
+      idLines(NEW, OLD1),
+    ),
+  ).toEqual([
+    ['a', NEW, true],
+    ['b', undefined, undefined],
+    ['c', OLD1, true],
+  ])
+})
+
+test('container id: more runs or more id lines than the other side give no run an id', () => {
+  const two = 'docker run -d --name a nginx && docker run -d --name b nginx'
+  expect(paired(two, idLines(NEW))).toEqual([
+    ['a', undefined, undefined],
+    ['b', undefined, undefined],
+  ])
+  expect(paired(`${two} && docker ps -aq --no-trunc -n 1`, idLines(NEW, OLD1, OLD2))).toEqual([
+    ['a', undefined, undefined],
+    ['b', undefined, undefined],
+  ])
+  // One id line repeated does not pair with two runs: it cannot be both of their ids. Two runs never print the same id, so
+  // equal counts do not pair either when the lines repeat one.
+  expect(paired(`${two}; docker inspect -f "{{.Id}}" a`, idLines(NEW, NEW, NEW))).toEqual([
+    ['a', undefined, undefined],
+    ['b', undefined, undefined],
+  ])
+  expect(paired(`${two}; docker inspect -f "{{.Id}}" a`, idLines(NEW, NEW))).toEqual([
+    ['a', undefined, undefined],
+    ['b', undefined, undefined],
+  ])
+  // A loop makes one row for the run in it, and its passes print one id each.
+  expect(paired('for i in 1 2; do docker run -d --name w$i img; done', idLines(NEW, OLD1))).toEqual([
+    ['w$i', undefined, undefined],
+  ])
+})
+
+// The limits of the pairing (KB, "The id of a container"): a run that gets an id and the mark `containerIdExact` although the id
+// may be another command's. Each case is pinned so that a later fix, or a regression, changes the test and the docs together.
+// Code that removes a container (the `docker rm` of #123) must not trust the mark alone.
+test('container id: known limits, where a run still pairs and is marked exact', () => {
+  const inspect = '; docker inspect -f "{{.Id}}" web'
+  // A run that failed (a name in use, no image) prints no id. The one id line of the next command pairs with it.
+  expect(paired(`docker run -d --name api nginx${inspect}`, idLines(OTHER))).toEqual([['api', OTHER, true]])
+  // The same for a run that did not run at all: the `&&` stopped before it.
+  expect(paired(`[ -n "$X" ] && docker run -d --name api nginx${inspect}`, idLines(OTHER))).toEqual([
+    ['api', OTHER, true],
+  ])
+  // A trailing `&` leaves the output on the tool result when the run ends before the call does.
+  expect(paired('docker run -d --name api nginx &', idLines(NEW))).toEqual([['api', NEW, true]])
+  // A function body is read as a live command, and the call of the function with a redirection is not read as the run's.
+  expect(paired('f() { docker run -d --name api nginx; }; f > log; docker ps -q --no-trunc', idLines(OTHER))).toEqual([
+    ['api', OTHER, true],
+  ])
+})
+
+// The count rule alone, with no shell text: `printed[n]` says that the output of run n reaches the tool result.
+test('pairContainerIds: equal counts with distinct ids pair in order, a run that prints nothing is left out', () => {
+  expect(pairContainerIds([NEW, OLD1], [true, true])).toEqual([NEW, OLD1])
+  expect(pairContainerIds([NEW], [false, true, false])).toEqual([undefined, NEW, undefined])
+  expect(pairContainerIds([NEW, OLD1], [true, false, true])).toEqual([NEW, undefined, OLD1])
+  expect(pairContainerIds([], [false, false])).toEqual([undefined, undefined])
+  expect(pairContainerIds([], [])).toEqual([])
+})
+
+test('pairContainerIds: a repeated id gives no run an id, also with equal counts', () => {
+  expect(pairContainerIds([NEW, NEW], [true, true])).toEqual([undefined, undefined])
+  expect(pairContainerIds([NEW, OLD1, NEW], [true, true, true])).toEqual([undefined, undefined, undefined])
+})
+
+test('pairContainerIds: one printing run takes the lines that all say one id', () => {
+  expect(pairContainerIds([NEW, NEW, NEW], [true])).toEqual([NEW])
+  expect(pairContainerIds([NEW, NEW], [false, true])).toEqual([undefined, NEW])
+  expect(pairContainerIds([NEW, OLD1], [true])).toEqual([undefined])
+})
+
+test('pairContainerIds: any other count gives no run an id', () => {
+  expect(pairContainerIds([NEW, OLD1, OLD2], [true, true])).toEqual([undefined, undefined])
+  expect(pairContainerIds([NEW], [true, true])).toEqual([undefined, undefined])
+  expect(pairContainerIds([NEW, NEW], [true, true, true])).toEqual([undefined, undefined, undefined])
+  expect(pairContainerIds([NEW], [false, false])).toEqual([undefined, undefined])
 })
 
 // ---------------------------------------------------------------- docker run variants
@@ -628,6 +1201,16 @@ test('builtin: a backgrounded cd, pushd, export, docker, tmux or screen start gi
   }
 })
 
+// A conditional or an arithmetic command is a compound command, not a program: backgrounded, it runs in a shell of its own
+// and `$!` names that shell, as for `echo x &`. `[[ ... ]] &` made a detached row named `[[ -f x ]]` before.
+test('builtin: a backgrounded [[ ]] or (( )) makes no row and gives no pid to the earlier background command', () => {
+  for (const bg of ['[[ -f x ]]', '(( 1 ))', '[ -f x ]']) {
+    const cmd = `sleep 100 & ${bg} & echo $!`
+    const rows = detachedOf(cmd, undefined, '4242\n')
+    expect({ cmd, rows: rows.map(r => [r.name, r.pid]) }).toEqual({ cmd, rows: [['sleep 100', undefined]] })
+  }
+})
+
 // A cd that runs in the background (`cd /x & ...`, or a list that ends with `&`) does not move the folder of the later
 // commands (issue #141): the compose project and the $PWD of a detached command stay the session's.
 const composeProject = (command: string) =>
@@ -843,6 +1426,188 @@ test('loop: the $! line of a backgrounded loop is not the pid of the next backgr
   ])
 })
 
+// A `&` after a group, a subshell, an arithmetic command or a substitution backgrounds the whole list. For a group, a subshell
+// whose last command is a builtin or a compound (`( : ) &`), `(( ))` and `x=$(:) &`, `$!` is then the pid of the shell that
+// runs the list, as after `done &`. For `( sleep 101 ) &` (and `( true; sleep 101 ) &`) the last command is external, and bash
+// runs it in place, so `$!` names `sleep 101`, a process with no row: a limit, like `sleep $(a) &` below. In every case no
+// earlier job takes the line (issue #231, owner decision 2026-10-26). `}` and `)` make no segment, so the `&` behind them was
+// lost, and `sleep 100 & { :; } & echo $!` gave `sleep 100` the pid of the group.
+test('group: echo $! after a backgrounded group, subshell or substitution gives no earlier job its pid', () => {
+  for (const bgShell of [
+    '{ :; } &',
+    '( : ) &',
+    '{ sleep 101; } &',
+    '( sleep 101 ) &',
+    '{ sleep 101 & } &',
+    '( sleep 101 & ) &',
+    '{ :; } > f &',
+    '{ :; } 2>&1 &',
+    '(( 1 )) &',
+    'x=$(:) &',
+    'x=`:` &',
+    ': $(:) &',
+    '{ :; } & { :; } &',
+    'for i in 1; do :; done &',
+    'while :; do break; done &',
+    'if :; then :; fi &',
+    'case x in x) :;; esac &',
+  ]) {
+    const rows = detachedOf(`sleep 100 & ${bgShell} echo $!`, undefined, '4242\n')
+    expect({ bgShell, pids: rows.map(r => r.pid) }).toEqual({ bgShell, pids: rows.map(() => undefined) })
+  }
+})
+
+// A limit, pinned. An external command that ends in a substitution or a process substitution is a process, and `$!` names it
+// (bash 5.3.20: `sleep $(echo 7311) &` gives `sleep 7311`). The parser makes no row for it, because the `&` ends an empty
+// part, so it gets no pid. The flag of the group forms still keeps the earlier job from taking the line. A fix that reads the
+// command as a row changes this test: the row then takes the pid.
+test('group: echo $! after a backgrounded command that ends in a substitution gives no earlier job its pid', () => {
+  for (const proc of [
+    'sleep $(echo 1) &',
+    'sleep $((1)) &',
+    'sleep `echo 1` &',
+    'nohup node server.js --port $(cat p) > log 2>&1 &',
+    'cat <(:) &',
+  ]) {
+    const rows = detachedOf(`sleep 100 & ${proc} echo $!`, undefined, '4242\n')
+    expect({ proc, rows: rows.map(r => [r.name, r.pid]) }).toEqual({ proc, rows: [['sleep 100', undefined]] })
+  }
+})
+
+// Limits, pinned. A builtin outside the set makes a row, with the pid of the subshell that runs it (bash 5.3.20: `pwd &` names
+// a shell). A bare redirection with `&` sets `$!` to a shell, but the parser reads no job and no flag, so the earlier job takes
+// the line. A fix changes these rows.
+test('limits: a builtin outside the set makes a row, and a bare redirection with & leaves the earlier job the line', () => {
+  for (const builtin of [
+    'pwd',
+    'source f',
+    '. ./env',
+    'kill 1',
+    'exit 0',
+    'declare -x A=1',
+    'trap : EXIT',
+    'type ls',
+  ]) {
+    const rows = detachedOf(`${builtin} & echo $!`, undefined, '4242\n')
+    expect({ builtin, rows: rows.map(r => [r.name, r.pid]) }).toEqual({ builtin, rows: [[builtin, 4242]] })
+  }
+  for (const redir of ['> f &', '<f &', '2>/dev/null &']) {
+    const rows = detachedOf(`sleep 100 & ${redir} echo $!`, undefined, '4242\n')
+    expect({ redir, rows: rows.map(r => [r.name, r.pid]) }).toEqual({ redir, rows: [['sleep 100', 4242]] })
+  }
+})
+
+test('group: the job after a backgrounded group or subshell gets its own pid line', () => {
+  for (const bgShell of ['{ :; } &', '( : ) &', '{ sleep 102 & } &', '(( 1 )) &', 'x=$(:) &']) {
+    const rows = detachedOf(`sleep 100 & ${bgShell} echo $!; sleep 101 & echo $!`, undefined, '4242\n4243\n')
+    expect({ bgShell, row: rows.find(r => r.name === 'sleep 101')?.pid }).toEqual({ bgShell, row: 4243 })
+    expect({ bgShell, row: rows.find(r => r.name === 'sleep 100')?.pid }).toEqual({ bgShell, row: undefined })
+  }
+})
+
+// The `$!` of the group counts as a pid line although no row owns it. With no job before it, the echo still counts: the count of
+// echoes and the count of lines stay equal, so the job after it takes its own line, not the line of the group.
+test('group: a backgrounded group with no job before it still counts its echo $! line', () => {
+  for (const bgShell of ['{ :; } &', '( : ) &', '(( 1 )) &', 'x=$(:) &']) {
+    const rows = detachedOf(`${bgShell} echo $!; sleep 101 & echo $!`, undefined, '4242\n4243\n')
+    expect({ bgShell, pids: rows.map(r => [r.name, r.pid]) }).toEqual({ bgShell, pids: [['sleep 101', 4243]] })
+  }
+})
+
+// A `&` that ends a group inside a substitution, a backtick pair, a subshell or a part of a pipeline sets `$!` in that shell only,
+// so the job before keeps the pid (bash 5.3.20: after `sleep 5 &`, `$!` is still `sleep 5` behind each of these forms). The flag
+// of the inner `&` used to reach the parent: `sleep 100 & x=$({ :; } &); echo $!` gave `sleep 100` no pid (Codex, issue #231).
+// A group in the shell of its parent, and a pipeline that a `&` ends, still name a shell, so no earlier job takes the line.
+test('group: a backgrounded group inside a substitution, subshell or pipeline part keeps the pid line of the job before it', () => {
+  const pid = (cmd: string) => detachedOf(`sleep 100 & ${cmd} echo $!`, undefined, '4242\n').map(r => [r.name, r.pid])
+  for (const inner of [
+    'x=$({ :; } &);',
+    'x=`{ :; } &`;',
+    '( { :; } & );',
+    '( ( { :; } & ) );',
+    'x=$( ( : ) & );',
+    '{ { :; } & } | cat;',
+    'cat | { { :; } & };',
+    '{ { :; } & } | { { :; } & };',
+    '( { :; } & ) | cat;',
+    'cat | ( { :; } & );',
+    'x=$({ :; } &) | cat;',
+    '{ x=$({ :; } &); };',
+    'true && x=$({ :; } &);',
+  ])
+    expect({ inner, rows: pid(inner) }).toEqual({ inner, rows: [['sleep 100', 4242]] })
+  // The same group in the shell of its parent, and the `&` of the scope itself, send a shell to the background.
+  for (const bgShell of [
+    '{ { :; } & };',
+    '{ { :; } & } &',
+    '( { :; } & ) &',
+    'x=$({ :; } &) &',
+    'cat | { { :; } & } &',
+    'cat | { :; } &',
+    '{ b | { :; } & };',
+  ])
+    expect({ bgShell, rows: pid(bgShell) }).toEqual({ bgShell, rows: [['sleep 100', undefined]] })
+  // The job after the scope still gets its own line.
+  const rows = detachedOf('sleep 100 & x=$({ :; } &); echo $!; sleep 101 & echo $!', undefined, '4242\n4243\n')
+  expect(rows.map(r => [r.name, r.pid])).toEqual([
+    ['sleep 100', 4242],
+    ['sleep 101', 4243],
+  ])
+})
+
+// What stays: a group or subshell with no `&` of its own does not send itself to the background, so the job before it keeps `$!`.
+// A job in a group sets `$!` for the shell, so the echo after `{ sleep 101 & }` prints its pid, and so does a job that a
+// function starts when it runs.
+test('group: a group or subshell with no & behind it keeps the pid of the job inside it and of the job before it', () => {
+  const pid = (cmd: string, name: string) => detachedOf(cmd, undefined, '4242\n').find(r => r.name === name)?.pid
+  expect(pid('{ sleep 101 & }; echo $!', 'sleep 101')).toBe(4242)
+  expect(pid('{ sleep 101 & } && echo $!', 'sleep 101')).toBe(4242)
+  expect(pid('sleep 100 & { :; }; echo $!', 'sleep 100')).toBe(4242)
+  expect(pid('sleep 100 & ( : ); echo $!', 'sleep 100')).toBe(4242)
+  expect(pid('sleep 100 & { :; } && echo $!', 'sleep 100')).toBe(4242)
+  expect(pid('sleep 100 & ( : ) | cat; echo $!', 'sleep 100')).toBe(4242)
+  // A job after a function definition, and a job that a function starts: the function runs in the shell, so `$!` is the job's.
+  expect(pid('f() { :; }; sleep 101 & echo $!', 'sleep 101')).toBe(4242)
+  expect(pid('f() { sleep 101 & }; f; echo $!', 'sleep 101')).toBe(4242)
+  expect(pid('function f { sleep 101 & }; f; echo $!', 'sleep 101')).toBe(4242)
+})
+
+// `$!` names the last process of a pipeline that `&` backgrounds, so the row of its last part gets the pid. A builtin or a group
+// as the last part has no row, and no earlier job takes the line.
+test('pipeline: echo $! after a backgrounded pipeline gives the pid to the row of its last part', () => {
+  const pids = (cmd: string) => detachedOf(`sleep 100 & ${cmd} echo $!`, undefined, '4242\n').map(r => [r.name, r.pid])
+  expect(pids('true | sleep 101 &')).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', 4242],
+  ])
+  expect(pids('{ :; } | cat &')).toEqual([
+    ['sleep 100', undefined],
+    ['cat', 4242],
+  ])
+  expect(pids('sleep 101 | true &')).toEqual([['sleep 100', undefined]])
+  expect(pids('cat | { :; } &')).toEqual([['sleep 100', undefined]])
+  expect(pids('cat | ( : ) &')).toEqual([['sleep 100', undefined]])
+})
+
+// `coproc` starts a job that sets `$!` (and `COPROC_PID`) in bash 5.3.20. `$!` names a shell for `coproc NAME { ...; }`, and
+// nothing once its shell has exited for `coproc :` (a builtin). For `coproc sleep 101` (an external command) it names that
+// command, which bash runs in place. The parser reads no row for any of them, so no earlier job may take its pid line.
+test('coproc: echo $! after a coproc gives no earlier job its pid', () => {
+  for (const coproc of ['coproc sleep 101;', 'coproc NAME { sleep 101; };', 'coproc NAME { :; };', 'coproc :;']) {
+    const rows = detachedOf(`sleep 100 & ${coproc} echo $!`, undefined, '4242\n')
+    expect({ coproc, pids: rows.map(r => r.pid) }).toEqual({ coproc, pids: rows.map(() => undefined) })
+  }
+  const rows = detachedOf('sleep 100 & coproc sleep 101; echo $!; sleep 102 & echo $!', undefined, '4242\n4243\n')
+  expect(rows.map(r => [r.name, r.pid])).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 102', 4243],
+  ])
+  // With no job before it the coproc is the first job: its echo prints a line that counts, so the job after it gets its own.
+  expect(
+    detachedOf('coproc :; echo $!; sleep 102 & echo $!', undefined, '4242\n4243\n').map(r => [r.name, r.pid]),
+  ).toEqual([['sleep 102', 4243]])
+})
+
 // `echo $! &` prints the pid of the job before it, so it does not clear that job.
 test('builtin: a backgrounded echo $! after a background job still gives it its pid', () => {
   const [row] = detachedOf('sleep 100 & echo $! & echo $!', undefined, '4242\n4243\n')
@@ -858,6 +1623,155 @@ test('time: the command after time -p or time -- is read as the command', () => 
   expect(names('setsid time -p sleep 10 &')).toEqual(['sleep 10'])
   expect(names('time -p setsid sleep 10 &')).toEqual(['sleep 10'])
   expect(composeProject('time -p docker compose up -d')).toBe('app')
+})
+
+// An `echo $!` that prints to the tool result gives the pid line. One whose output goes to a file, to a pipe or into a
+// substitution prints none, so a line of stdout is another command's and no row takes it (issue #231, the rule `keepsStdout`).
+// With `echo $! > pid.txt; echo 4242` the line 4242 is the later echo's, not the pid of `sleep 90`.
+test('echo $!: one that prints to the tool result gives the pid line', () => {
+  for (const cmd of [
+    'sleep 90 & echo $!',
+    'sleep 90 & printf "%s\\n" $!',
+    // A redirection of stderr, of the input or of another descriptor leaves the output where it is.
+    'sleep 90 & echo $! 2> err',
+    'sleep 90 & echo $! 2>&1',
+    'sleep 90 & echo $! < /dev/null',
+    // A copy of fd 1 onto itself puts the output nowhere (bash 5.3.20 `echo hi >&1` prints).
+    'sleep 90 & echo $! >&1',
+    'sleep 90 & echo $! 1>&1',
+    'sleep 90 & echo $! >& 1',
+    // A redirection of the command before it, or after it, is not the echo's.
+    'sleep 90 > /dev/null & echo $!',
+    'sleep 90 & echo $!; echo x > f',
+  ]) {
+    const [row] = detachedOf(cmd, undefined, '4242\n')
+    expect({ cmd, pid: row?.pid }).toEqual({ cmd, pid: 4242 })
+  }
+})
+
+test('echo $!: one whose output goes to a file takes no pid line, with or without a space and a descriptor', () => {
+  for (const redir of [
+    '> pid.txt',
+    '>pid.txt',
+    '>> pid.txt',
+    '>>pid.txt',
+    '1> pid.txt',
+    '1>>pid.txt',
+    '&> pid.txt',
+    '&>pid.txt',
+    '&>> pid.txt',
+    '>| pid.txt',
+    '>&2',
+  ]) {
+    for (const echo of ['echo $!', 'printf "%s\\n" $!']) {
+      const cmd = `sleep 90 & ${echo} ${redir}; echo 4242`
+      const [row] = detachedOf(cmd, undefined, '4242\n')
+      expect({ cmd, name: row?.name, pid: row?.pid }).toEqual({ cmd, name: 'sleep 90', pid: undefined })
+    }
+  }
+  // The operator may stand glued to the `$!` too.
+  expect(detachedOf('sleep 90 & echo $!>pid.txt; echo 4242', undefined, '4242\n')[0]?.pid).toBeUndefined()
+  expect(detachedOf('sleep 90 & echo $!>>pid.txt; echo 4242', undefined, '4242\n')[0]?.pid).toBeUndefined()
+  expect(detachedOf('sleep 90 & echo "$!">pid.txt; echo 4242', undefined, '4242\n')[0]?.pid).toBeUndefined()
+})
+
+test('echo $!: one in a pipe, a substitution, a redirected group or after an exec takes no pid line', () => {
+  for (const cmd of [
+    'sleep 90 & echo $! | tee pid.txt; echo 4242',
+    'sleep 90 & PID=$(echo $!); echo 4242',
+    'sleep 90 & PID=`echo $!`; echo 4242',
+    'sleep 90 & { echo $!; } > pid.txt; echo 4242',
+    'sleep 90 & ( echo $! ) > pid.txt; echo 4242',
+    'sleep 90 & exec > pid.txt; echo $!; echo 4242',
+  ]) {
+    const [row] = detachedOf(cmd, undefined, '4242\n')
+    expect({ cmd, name: row?.name, pid: row?.pid }).toEqual({ cmd, name: 'sleep 90', pid: undefined })
+  }
+})
+
+// The pid line of a redirected echo is not in stdout, so it must not move the next job off its own line.
+test('echo $!: a redirected one leaves the pid line to the job after it', () => {
+  const rows = detachedOf('sleep 100 & echo $! > pid.txt; sleep 101 & echo $!', undefined, '4243\n')
+  expect(rows.map(r => [r.name, r.pid])).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', 4243],
+  ])
+})
+
+// A backgrounded echo runs in a shell of its own, so the `$!` after it is that shell's pid, as for any backgrounded builtin
+// (issue #132). `echo $! &` prints the job before it and keeps it (see above). One that redirects prints nothing, so the job
+// before it has no pid line of its own, and the line of the later `echo $!` is the pid of the echo's shell.
+test('echo $!: a backgrounded one that redirects makes $! the pid of its own shell', () => {
+  const [row] = detachedOf('sleep 100 & echo $! > pid.txt & echo $!', undefined, '4243\n')
+  expect(row).toMatchObject({ name: 'sleep 100' })
+  expect(row?.pid).toBeUndefined()
+})
+
+// The pid lines pair with the `echo $!` that print by position, and only when there is one line for each echo (issue #231, the
+// owner's decision): the same count rule as `pairContainerIds`. A pipe counts as no output, but `cat` may print the line. The
+// echo then takes none, and a line is left that no echo owns. Any other count means a line is another command's or an echo's
+// line is missing, so no job of the call gets a pid. Before, `sleep 101` got 4242, the pid of `sleep 100`.
+test('echo $!: a count of pid lines that differs from the count of echoes gives no job a pid', () => {
+  const pids = (cmd: string, stdout: string) => detachedOf(cmd, undefined, stdout).map(r => [r.name, r.pid])
+  // A piped echo takes no line, and the line it may print is left over.
+  expect(pids('sleep 100 & echo $! | cat; sleep 101 & echo $!', '4242\n4243\n')).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', undefined],
+  ])
+  // A line that no echo prints (another command's number) is left over too, in front of the echo or behind it.
+  expect(pids('sleep 90 & echo $!; echo 4243', '4242\n4243\n')).toEqual([['sleep 90', undefined]])
+  expect(pids('echo 7; sleep 90 & echo $!', '7\n4242\n')).toEqual([['sleep 90', undefined]])
+  // An echo with no line behind it: the output was cut, or it printed elsewhere.
+  expect(pids('sleep 100 & echo $!; sleep 101 & echo $!', '4242\n')).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', undefined],
+  ])
+  expect(pids('sleep 90 & echo $!', '')).toEqual([['sleep 90', undefined]])
+})
+
+test('echo $!: as many pid lines as echoes pair by position', () => {
+  const pids = (cmd: string, stdout: string) => detachedOf(cmd, undefined, stdout).map(r => [r.name, r.pid])
+  expect(pids('sleep 90 & echo $!', '4242\n')).toEqual([['sleep 90', 4242]])
+  expect(pids('sleep 100 & echo $!; sleep 101 & echo $!', '4242\n4243\n')).toEqual([
+    ['sleep 100', 4242],
+    ['sleep 101', 4243],
+  ])
+  // A redirected echo takes no line and is not counted: the line count is the count of the echoes that print.
+  expect(pids('sleep 100 & echo $! > pid.txt; sleep 101 & echo $!', '4243\n')).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', 4243],
+  ])
+  // A second echo of the same job prints its line again, and it keeps its place: the next job takes its own line.
+  expect(pids('sleep 100 & echo $!; echo $!; sleep 101 & echo $!', '4242\n4242\n4243\n')).toEqual([
+    ['sleep 100', 4242],
+    ['sleep 101', 4243],
+  ])
+  // Lines of other text around the pid lines are no pid lines, so they do not count.
+  expect(pids('docker info; sleep 90 & echo $!; echo done', 'Containers: 12\n4242\ndone\n')).toEqual([
+    ['sleep 90', 4242],
+  ])
+})
+
+// An `echo $!` before any background job prints an empty line (`$!` is unset), and so does one after `setsid -f`, which forks on
+// its own and sets no `$!`. Neither prints a pid line, so neither counts.
+test('echo $!: one that has no background job behind it prints no pid line and is not counted', () => {
+  const pids = (cmd: string, stdout: string) => detachedOf(cmd, undefined, stdout).map(r => [r.name, r.pid])
+  expect(pids('echo $!; sleep 90 & echo $!', '\n4242\n')).toEqual([['sleep 90', 4242]])
+  expect(pids('setsid -f node worker.js; echo $!; sleep 90 & echo $!', '\n4242\n')).toEqual([
+    ['node worker.js', undefined],
+    ['sleep 90', 4242],
+  ])
+  // A backgrounded echo reads `$!` before its own `&` starts a job, so the first one prints an empty line too.
+  expect(pids('echo $! & sleep 90 & echo $!', '\n4242\n')).toEqual([['sleep 90', 4242]])
+  // A `&` after a loop or an assignment is a job too: `$!` is set for the echo after it, and its line counts although no row owns it.
+  expect(pids('for i in 1; do :; done & echo $!; sleep 101 & echo $!', '4242\n4243\n')).toEqual([['sleep 101', 4243]])
+  expect(pids('X=1 & echo $!; sleep 101 & echo $!', '4242\n4243\n')).toEqual([['sleep 101', 4243]])
+  // After a `&` job, `$!` is set and `setsid -f` does not change it: the echo prints the pid of `sleep 5`, a line that counts and
+  // that no row takes (the row of `setsid -f` is `viaShell`, and the line is not its pid).
+  expect(pids('sleep 5 & setsid -f foo; echo $!', '4242\n')).toEqual([
+    ['sleep 5', undefined],
+    ['foo', undefined],
+  ])
 })
 
 test('if: a background command after ! and time names the command, in either order', () => {

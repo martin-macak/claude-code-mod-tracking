@@ -187,6 +187,40 @@ test('docker run -d after docker info in one Bash call shows the container as up
   expect(t.rows().map(r => [r.name, r.state])).toEqual([['track-test-sleep', 'up']])
 })
 
+// A row of a name keeps no id that its latest run did not print (issue #231). The id comes from the tool result of each Bash
+// call, and a run whose output went elsewhere makes the row hold none, also when an earlier call gave it an exact one.
+test('a second sighting of a named container replaces the exact id of the first, also with none', async () => {
+  const OTHER = 'd'.repeat(64)
+  const t = setup()
+  await t.bash('docker run -d --name api nginx', `${CID}\n`)
+  expect(t.rows().map(r => [r.name, r.containerId, r.containerIdExact])).toEqual([['api', CID, true]])
+  await t.bash('docker run -d --name api nginx > /dev/null; docker inspect -f "{{.Id}}" web', `${OTHER}\n`)
+  expect(t.rows()).toHaveLength(1)
+  expect(t.rows()[0]?.name).toBe('api')
+  expect('containerId' in (t.rows()[0] as ProcessRecord)).toBe(false)
+  expect('containerIdExact' in (t.rows()[0] as ProcessRecord)).toBe(false)
+  await t.bash('docker run -d --name api nginx', `${OTHER}\n`)
+  expect(t.rows().map(r => [r.name, r.containerId, r.containerIdExact])).toEqual([['api', OTHER, true]])
+})
+
+// A run that got no id (issue #231) is found by its `--name` in `docker ps`, not by the id of another container. A run with no id
+// and no name is named by its command, so the probe finds no container for it and the row reads `exited` (README, "Container ids").
+test('a run that got no id is found by its --name, and an unnamed one reads exited after the probe', async () => {
+  const OTHER = 'd'.repeat(64)
+  const t = setup()
+  t.w.run = argv =>
+    argvIs(argv, 'docker', 'ps', '-a', '--no-trunc')
+      ? res(`${CID}\tapi\tUp 3 seconds\n${OTHER}\tweb\tUp 1 hour\n`)
+      : undefined
+  await t.bash('CID=$(docker run -d --name api nginx); docker ps -aq --no-trunc', `${OTHER}\n`)
+  await t.bash('CID=$(docker run -d nginx); docker ps -aq --no-trunc', `${OTHER}\n`)
+  await t.probe()
+  expect(t.rows().map(r => [r.name, r.containerId, r.state])).toEqual([
+    ['api', undefined, 'up'], // found by its name, not by the id of web
+    ['docker run -d nginx', undefined, 'exited'], // no id and no name: nothing to find
+  ])
+})
+
 test('docker compose up -d at the end of a compound command shows the project', async () => {
   const t = setup()
   t.w.run = argv =>
@@ -1075,6 +1109,53 @@ test("restore('load') over an empty slot keeps the stored endedAt", async () => 
   t.w.session.id = 'sess-2'
   await t.m.entry(t.w.ports)
   expect(t.rows()[0]).toMatchObject({ id: 'a', state: 'exited', endedAt: 100 })
+})
+
+// The container id and its mark go through the store with the row (issue #231). `restore('load')` puts the stored copy on the
+// added side, so it decides the id and the mark: a copy of an older build, with no mark, takes the mark off a live row.
+const exactRow = (id: string, extra: Record<string, unknown> = {}) =>
+  ({
+    id,
+    kind: 'docker-container',
+    name: id,
+    state: 'running',
+    firstSeen: 1,
+    lastSeen: 1,
+    containerId: CID,
+    containerIdExact: true,
+    ...extra,
+  }) as unknown as Json
+
+test("restore('load'): a stored row comes back with its container id and its mark", async () => {
+  const t = setup()
+  t.w.store.set('v2:s:sess-2', { processes: [exactRow('docker:ctr:api')] })
+  await t.m.entry(t.w.ports)
+  await t.m.end(t.w.ports, 'resume', 1500)
+  t.w.session.id = 'sess-2'
+  await t.m.entry(t.w.ports)
+  expect(t.rows().map(r => [r.id, r.containerId, r.containerIdExact])).toEqual([['docker:ctr:api', CID, true]])
+})
+
+test('settle: a row that holds an exact container id stores the id and the mark', async () => {
+  const t = setup()
+  t.w.state.set('processes', [exactRow('docker:ctr:api')] as unknown as Json)
+  await t.m.entry(t.w.ports)
+  await t.m.end(t.w.ports, 'clear', 1500)
+  expect(storedRows(t).map(r => [r.id, r.containerId, r.containerIdExact])).toEqual([['docker:ctr:api', CID, true]])
+})
+
+test("restore('load'): a stored copy with no mark takes the mark off a live exact row, as the stored state wins", async () => {
+  const t = setup()
+  const noMark = exactRow('docker:ctr:api') as unknown as Record<string, unknown>
+  delete noMark.containerIdExact
+  t.w.store.set('v2:s:sess-2', { processes: [noMark as unknown as Json] })
+  await t.m.entry(t.w.ports)
+  await t.m.end(t.w.ports, 'resume', 1500)
+  t.w.session.id = 'sess-2'
+  t.w.state.set('processes', [exactRow('docker:ctr:api')] as unknown as Json)
+  await t.m.entry(t.w.ports)
+  expect(t.rows()[0]?.containerId).toBe(CID)
+  expect('containerIdExact' in (t.rows()[0] as ProcessRecord)).toBe(false)
 })
 
 test('settle and restore stamp an ended row that has no endedAt with the engine clock, not with Date.now()', async () => {

@@ -42,6 +42,20 @@ export type ProcessRecord = {
   endsWithAgent?: true
   /** Docker container id for docker rows. */
   containerId?: string
+  /**
+   * The `containerId` is the id that this row's own `docker run -d` printed (issue #231). The parser sets it only when the id
+   * lines of the tool result pair one to one with the runs whose output reaches it, or every id line is one id and one such run
+   * made it, and the run has no redirection of its output (also after a bare `exec`), no pipe after it and no substitution
+   * around it. Absent: the id is not proven, or the row has none. A row from an older build has no mark. A new sighting of the
+   * row replaces the id and the mark together, also with none (`mergeProcessRows`). Code that acts on the id, such as a
+   * `docker rm`, must trust a row with this mark only.
+   *
+   * The mark means "paired by the rules", not "checked with Docker". The parser has known limits where a row gets an id that
+   * another command printed: a run that failed or never ran, a trailing `&`, and a function called with a redirection (KB page
+   * process-tracking-signals, "The id of a container"). Code that removes a container must also check it, for example with
+   * `docker inspect <id>` and a name or label that equals the row's.
+   */
+  containerIdExact?: true
   /** Docker compose project for compose rows. */
   project?: string
   /** Pid for detached process rows. */

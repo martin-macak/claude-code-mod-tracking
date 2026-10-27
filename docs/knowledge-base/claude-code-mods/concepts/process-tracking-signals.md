@@ -18,9 +18,9 @@ The types contract names the core fields:
 | --- | --- | --- | --- | --- |
 | Background Bash | `tool.call` Bash result `backgroundTaskId` | `task-notification` (`task.status`) and `TaskStop` | High | None (event only) |
 | Monitor | `tool.call` Monitor result `taskId` | `task-notification` (a `<status>` when the source ends, the `<event>` text at the deadline), `TaskStop`, and the end of a workflow agent that armed it | High | None (event only) |
-| Docker run / compose up | Parse Bash command (`docker run -d`, `docker compose up -d`) and stdout container id | `docker ps -a` (+ compose label filter) | Medium-high (exact when id or project is known) | Medium |
+| Docker run / compose up | Parse Bash command (`docker run -d`, `docker compose up -d`) and stdout container id | `docker ps -a` (+ compose label filter) | Medium-high (exact when the id is the run's own output: `containerIdExact`, see "Parsing the Bash command"; or when the project is known) | Medium |
 | tmux / screen | Parse Bash command (`tmux new -d -s`, `screen -dmS`) | `tmux ls`, `screen -ls` | Medium-high (exact when session name is explicit) | Low |
-| Detached process | Parse Bash command (a part that ends in `&`, or `setsid -f`) and PID from `echo $!` | `ps -p <pid> -o lstart=,command=`; with no PID, one `ps -A -o pid=,lstart=,command=` lookup by command and start time | Medium (reuse guarded by command fingerprint and start time) | Low-medium |
+| Detached process | Parse Bash command (a part that ends in `&`, or `setsid -f`) and PID from an `echo $!` that prints to the tool result | `ps -p <pid> -o lstart=,command=`; with no PID, one `ps -A -o pid=,lstart=,command=` lookup by command and start time | Medium (reuse guarded by command fingerprint and start time) | Low-medium |
 
 ## What ships now, and what waits
 
@@ -63,9 +63,50 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   `! time git push` are both valid shell. A part that is only `done`, `fi` or
   `esac` is no command and makes no row, so `done &` (a backgrounded loop) has
   no row. `$!` after it is the pid of the loop shell, so no earlier background
-  command takes it. A backgrounded builtin (`echo x &`, `cd d &`) is the same:
+  command takes it. A `&` behind the `}` of a group or the `)` of a subshell,
+  of `(( ))` or of a substitution (`{ a; } &`, `( a; : ) &`, `x=$(a) &`) is the
+  same, but `}` and `)` make no part of their own, so `splitShell` puts
+  `afterBgShell` on the next part, and the parser reads that as the end of the
+  last job. The flag is set for every `&` right behind a closed group,
+  subshell or substitution, so also for `sleep $(a) &`, `( sleep 101 ) &` and
+  `( true; sleep 101 ) &` (the last command is an external command), where `$!`
+  names that command and not a shell (see "Not read" below): no earlier job
+  takes the line there either. The flag stays in the shell that read the `&`. A
+  substitution, a backtick pair, a subshell and a part of a pipeline are shells
+  of their own, and a `&` that ends a group inside them leaves the `$!` of the
+  parent alone. So `sleep 100 & x=$({ :; } &); echo $!`,
+  `sleep 100 & ( { :; } & ); echo $!`, `sleep 100 & { { :; } & } | cat; echo $!`
+  and `sleep 100 & cat | { { :; } & }; echo $!` print the pid of `sleep 100`
+  (bash 5.3.20 and 3.2.57), and its row keeps it. A scope that closes while the
+  flag still waits for a segment gives back the flag of its parent, and a
+  pipeline part drops it. A group is the shell of its parent, so
+  `{ { :; } & }; echo $!` names the inner shell. A process substitution sets
+  `$!` in its parent whatever it holds, so `cat <({ :; } &) > /dev/null` is the
+  old limit of "Not read" below, not a flag. A backgrounded builtin (`echo x &`, `cd d &`) is the same:
   its shell makes no row, and the pid line that the next `echo $!` prints is
-  dropped, so the job after it gets its own pid. Every detector reads the
+  dropped, so the job after it gets its own pid. An `echo $!` (or a `printf`
+  of `$!`) takes or drops a pid line only when its output reaches the tool
+  result (`keepsStdout`, the rule of "The id of a container", issue #231).
+  `echo $! > pid.txt` (also `>>`, `1>`, `&>`, `>|`, a glued `>pid.txt`),
+  `echo $! | tee f`, `PID=$(echo $!)`, an `echo $!` in a redirected group and
+  one after `exec > f` print no pid line, so they take none and drop none: in
+  `sleep 90 & echo $! > pid.txt; echo 4242` the line `4242` is the later echo's,
+  and the row gets no pid. A backgrounded `echo $! > f &` is a backgrounded
+  builtin like any other: the `$!` after it names its shell. The pid lines pair
+  with the echoes that print by position, and only when there is one line for
+  each echo (the owner's decision, the same count rule as `pairContainerIds`).
+  Any other count gives no job of the call a pid, and the probe finds the rows
+  by their fingerprint. A pipe is read as no output, as for the id of a
+  container, but `cat` may print the line. In
+  `sleep 100 & echo $! | cat; sleep 101 & echo $!` with the lines `4242` and
+  `4243` the one echo that prints stands against two lines, so neither job gets
+  a pid. Before the rule the line slid onto the next job, and `sleep 101` took
+  `4242`, the pid of `sleep 100`. The same rule drops the pid of a call where
+  another command prints a bare number line (`sleep 90 & echo $!; echo 4243`).
+  An echo counts only when `$!` is set: one before the first `&` prints an empty
+  line, and `setsid -f` forks on its own and sets no `$!`, so neither counts. A
+  second `echo $!` of the same job prints the same line again, counts, and gives
+  its job nothing more. Every detector reads the
   command after these words, not only the detached-process one. A variable set
   in a branch applies in text order: the last write wins, as with `&&` and `||`.
   Evidence (grade: *verified-kit* for the parser, not *verified-live*): the
@@ -80,6 +121,104 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   `sleep=96411 builtin=96412`. `zsh 5.9` printed `sleep=98712 builtin=98713`.
   The two pids differ: `$!` after `echo x &` names the echo's shell, not the
   sleep.
+- What `$!` names, and what the parser reads (issue #231). Each form ran in
+  `bash 5.3.20` first. Grade for the bash facts: observed in bash 5.3.20 by a
+  manual probe, not *verified-kit*. It is no `claude plugin test` run, and no
+  committed test runs bash. The probe ran a `sleep` job with `&`, then the
+  form, then printed the command that `ps` shows for `$!`. A form shows one of
+  three things: `bash ...` (a shell that still runs: `bash -c ...`, or the
+  script file), nothing (the shell or the command has exited already), or the
+  external command that bash ran in place (`( sleep 5 ) &` and
+  `( true; sleep 5 ) &` show `sleep 5`). The parser side is *verified-kit*: the
+  tests are `group: ...`, `pipeline: ...`, `coproc: ...` and `builtin: ...` in
+  `process-parse.test.ts`, and the tests `splitShell flags the segment after a
+  & ...` and `splitShell keeps the flag of a & ...` in `shell.test.ts`.
+  - The row gets the pid: a simple command with `&` (also with `VAR=x`,
+    `nohup`, `exec`, `!`, or a redirection), the last part of a pipeline
+    (`true | sleep 101 &` names `sleep 101`), a job in a group with no `&` of
+    its own (`{ sleep 101 & }; echo $!`), and a job that a function starts
+    when it runs (`f() { sleep 101 & }; f; echo $!`).
+  - No row, and no pid for any job: `$!` names a shell, so no earlier job takes
+    the line. A builtin of the set (`echo printf true false : wait read test
+    [ [[ set unset export`), `cd`, `pushd` and `(( ))`, with `&`. A group (a
+    group is never run in place: `{ a; } &`, `{ true; sleep 101; } &`). A
+    subshell whose last command is a builtin or a compound (`( sleep 101; : ) &`,
+    `( sleep 101 && true ) &`, `( sleep 101 | cat ) &`, `( : ) &`). A loop, `if`
+    or `case` with `&` (`done &`). A command that is only assignments or a
+    builtin with a substitution (`x=$(a) &`, `: $(a) &`). A pipeline that ends
+    in a builtin or a group (`sleep 101 | true &`, `cat | { :; } &`). A `coproc`
+    of a group (`coproc NAME { a; }`, `coproc NAME { true; sleep 101; }`) or of
+    a builtin (`coproc :`). A subshell whose last command is an external simple
+    command, and `coproc` of an external simple command, are not here: bash runs
+    that command in place, so `$!` names it (see "Not read").
+  - Not read. These forms are limits of the parser. The row, or an earlier job,
+    can get a wrong pid, or a process has no row.
+    - An external command that ends in a substitution or a process
+      substitution, then `&`, is a process, and `$!` names it. Examples:
+      `sleep $(cat p) &`, `sleep $((n)) &`, `` python -m http.server `cat p` & ``,
+      `nohup node server.js --port $(cat p) > log 2>&1 &` and `cat <(a) &`. In
+      bash 5.3.20 `$!` showed `sleep 7311` for `sleep $(echo 7311) &`, `sleep
+      7312` for `sleep $((7312)) &`, `nohup sleep 7314` for `nohup sleep
+      $(echo 7314) &`, and `cat /dev/fd/63` for `cat <(sleep 1) &`. Only
+      `x=$(a) &` and `: $(a) &` name a shell. The parser makes no row for these
+      commands, because the `&` ends an empty part (old behavior), so they get
+      no pid. Since issue #231 no earlier job takes their line.
+    - A subshell whose last command is an external simple command, then `&`,
+      and a `coproc` of an external simple command. Bash runs that last
+      command in place, with no shell around it, so `$!` is a live process that
+      names that command, and the parser has no row for it. This is the same
+      class as `sleep $(a) &`. Examples: `( sleep 101 ) &`,
+      `( sleep 101 ) 2>&1 &`, `( ( sleep 101 ) ) &`, `( A=1 sleep 101 ) &`,
+      `( true; sleep 101 ) &`, `( true && sleep 101 ) &`,
+      `( false || sleep 101 ) &` and `coproc sleep 101`. In bash 5.3.20 `$!`
+      showed `sleep 5` for each of them (`( sleep 0.1; sleep 5 ) &` and
+      `( true; true; sleep 5 ) &` too). `$!` names a shell, or nothing once the
+      shell has exited, when the last command of the list is a builtin or a
+      compound: `( sleep 5; true ) &`, `( sleep 5; : ) &`,
+      `( sleep 5 && true ) &`, `( sleep 5 | cat ) &`,
+      `( if :; then sleep 5; fi ) &`, `( true; ( sleep 5 ) ) &`,
+      `( true; { sleep 5; } ) &` and `( : ) &`. A group is never run in place:
+      `{ sleep 5; } &`, `{ true; sleep 5; } &`, `coproc N { sleep 5; }` and
+      `coproc N { true; sleep 5; }` name a shell, and `coproc :` shows nothing
+      (its shell has exited). The rule depends on the version: `bash 3.2.57`
+      (macOS `/bin/bash`) runs only a subshell of one simple command in place,
+      so `( true; sleep 5 ) &` shows a shell there (it has no `coproc`). No
+      earlier job takes the line in any of these. These calls give `sleep 100`
+      no pid: `sleep 100 & ( sleep 101 ) & echo $!`,
+      `sleep 100 & ( true; sleep 101 ) & echo $!` and
+      `sleep 100 & coproc sleep 101; echo $!`.
+    - A part of a backgrounded pipeline before the last one
+      (`sleep 101 | true &`, `sleep 101 | sleep 102 &`) is a process too. `$!`
+      names the last part, and the parser makes no row for the parts before it
+      (old behavior).
+    - A builtin that is not in the set above (`source f &`, `. ./env &`,
+      `kill 1 &`, `pwd &`, `exit 0 &`, `declare -x A=1 &`, `local x=1 &`,
+      `trap : EXIT &`, `type ls &`) runs in a subshell, and `$!` names that
+      shell. The parser makes a detached row for the command and gives the row
+      the pid of the shell, not of a process of that command.
+    - A bare redirection with `&` (`> f &`, `<f &`, `2>/dev/null &`) is a
+      shell too. The parser reads no job and sets no flag, so an earlier job
+      takes the line.
+    - A process substitution with no `&` behind it (`exec 3< <(a)`,
+      `cat <(a) > /dev/null`) sets `$!`, and an earlier job takes its line. So
+      does `eval "a &"`, because the parser does not read the text of `eval`.
+    - A `&` job inside `( ... )`, `$( ... )` or a part of a pipeline sets no
+      `$!` in its parent (`( sleep 101 & ); echo $!` prints an empty line, and
+      `sleep 3 & P=$!; { sleep 3 & } | cat; echo $P $!` prints one pid twice),
+      but the parser lets the job take a line
+      (`sleep 100 & { sleep 101 & } | cat; echo $!` gives `sleep 101` the
+      line).
+    - A `coproc` inside `( ... )`, `$( ... )` or backticks sets no `$!` in its
+      parent (`sleep 100 & ( coproc sleep 101 ); echo $!` prints the pid of
+      `sleep 100`, bash 5.3.20). The parser clears the job before it for the
+      whole call, so that job gets no pid. This is a safe miss: it loses a pid
+      and gives no wrong one. A skip of the clear in a subshell is no fix: in
+      `( coproc sleep 101; echo $! )` the echo prints the pid of the
+      coprocess, and the earlier job would take it. A fix needs a `$!` per
+      shell (issue #263).
+    - `$!` names the subshell that runs the whole list for `a && b &`,
+      `time a &`, `f &` (a function) and `eval "a" &`, so the row of the last
+      command gets the pid of that shell.
 - `cd` and `export` move the cwd and env for the parts after them. The Bash
   `tool.call` input has no cwd, so the hook reads `$.session.cwd()`.
 - A `cd` in a list that ends with `&` runs in a background subshell and does
@@ -292,15 +431,11 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   against the arguments that `bash` passes: 0 differences after the fix, 6,171
   before (8,355 ran in `bash`). A mutation run broke one line of the new code at a
   time: the tests killed 28 of 28 mutants.
-  Not covered: a typed `>` or `<` glued to the text before
-  it (`echo hi>f`, `cat<<<hi`) stays in its word, where `bash` splits the word at
-  the operator. A typed `>&` with a space before its target (`cmd >& f`) keeps the
+  Not covered: a typed `>&` with a space before its target (`cmd >& f`) keeps the
   target as a word. An extended glob in a pattern (`+(a|b))`) reads its words as
   commands in a subshell. The readers still apply every `cd` in text order, so a
   `cd` in an arm that does not match, or after a short-circuit `||`, counts.
-  A glued `done<f` is one word, so its loop stays open and a `cd` in it reaches
-  the commands after the loop (`while read l; do cd /x; done<f | cat; git -C . status`
-  puts `cd /x` at the top level). An arithmetic shift in the old `$[ ]` form or in
+  An arithmetic shift in the old `$[ ]` form or in
   a parameter expansion (`echo $[1<<2]`, `${x:1<<2}`) still reads `<<2` as a
   heredoc tag, so the lines after it are lost. A subscript in an assignment
   (`a[1<<2]=1`) reads `<<2` as a heredoc tag too, and so does an arithmetic
@@ -322,7 +457,144 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   v24.21.0, 2026-10-22) gave one segment: its words, as JSON, were `[["cat"]]`.
   There was no segment for `echo after`.
 - The container id is a stdout line of exactly 64 hex characters. Other hex
-  in the output (`docker info` prints commit ids) is not an id.
+  in the output (`docker info` prints commit ids) is not an id. A line of that
+  shape is not always the id of the run: `docker ps -aq --no-trunc` and
+  `docker inspect -f '{{.Id}}'` print such lines too. The parser pairs a line
+  with a run by its own rule (see "The id of a container" under "Parsing the
+  Bash command").
+- **The id of a container (issue #231).** A row gets an id only when the id is
+  the run's own output. The splitter marks each segment with where its standard
+  output goes (`Segment.stdoutRedirected`, `Segment.stdoutPiped`,
+  `Segment.substituted`). A run *prints* when it has none of the three marks
+  (`keepsStdout`). `stdoutRedirected` is a typed `>`, `>>`, `>|`, `&>`, `&>>`,
+  `>&word` or `1>` form, on the run or on the group, subshell, loop or `case`
+  around it (`{ a; } > f`, `done > f`). The operator may stand glued to the last
+  word: a typed `>` or `<` ends the word in front of it, as in `bash`, so
+  `nginx>/dev/null`, `"nginx">f`, `{ a; }>f` and `done>f` are read like their
+  spaced forms. A file descriptor in front of a `>` or `<` (`2>f`, `{fd}>f`),
+  arithmetic text and an open `${ }` keep the character. The `&` of `&>` has no
+  descriptor form: `12&>f` is the word `12` and the redirection `&>f`. `2>&1`,
+  `2>`, `<` and `{fd}>` leave the output alone. So does a copy of fd 1 onto
+  itself (`>&1`, `1>&1`, `>& 1`, `>&01`, `>&1-`, `1<&1`): `bash` saves nothing and
+  changes nothing there. The target of `>& 1` is no word of the run. A copy of
+  another descriptor (`>&2`, `>&-`, `>&0`) and `>& file` move the output.
+  A bare `exec` with such a
+  redirection (`exec > f`, `exec >> f`, `exec 1> f`, `exec &> f`,
+  `exec 3>&1 >/dev/null`) moves the output of its shell for good, so it marks
+  every later segment of that shell and of the subshells under it. The options
+  of `exec` (`-c`, `-l`, `-a name`, `--`) matter only when a command follows:
+  `exec -c > f` and `exec -a name > f` move the shell too, and `exec -c a > f`
+  runs `a`. A subshell, a `$(...)`, a background list and a pipeline
+  part are shells of their own: the mark ends with them. So does a group, loop,
+  `if` or `case` that redirects the output (`{ exec > f; } > g; a`,
+  `for ...; do exec > f; done > g; a`): it saves fd 1 and gives it back at its
+  end, and the exec inside it moves the output only up to there. A group that
+  redirects stderr, the input or fd 3, or that copies fd 1 onto itself (`>&1`),
+  saves no fd 1, and an unredirected group is the shell itself, so
+  `{ exec > f; } 2> g; a`, `{ exec > f; } >&1; a` and `{ exec > f; }; a` stay marked. `exec >&3`, which puts
+  the output back, is read as one more redirection, so the later runs stay
+  marked. `stdoutPiped` is a `|` or `|&` after the pipeline part that holds the
+  run (`{ a; } | b` marks `a`; `echo x | a` does not). `substituted` is `$(...)`,
+  backticks or an input process substitution (`<(...)`): the shell takes the
+  output of the commands in it, or it goes to the pipe that the command reads.
+  An output process substitution `>(...)` is none of that. Its commands read
+  the pipe and write where the command around it writes, so a run in it keeps
+  the output of that command (`cat > >(docker run -d nginx) </dev/null; wait`
+  prints the id). The `>` of `>(...)` is the opener of the substitution, not a
+  redirection of the command around it (`tee >(a) x` redirects nothing;
+  `a > >(b)` does). The commands in a `>(...)` take the marks of the command
+  around it: a redirected or piped group or subshell, an `exec` before it, a
+  `$(...)` around it, and a redirection of fd 1 that stands before the
+  substitution in the same command. When the substitution is the target of a
+  redirection, bash applies the redirections from left to right, so `a` in
+  `cat >f > >(a)` writes to `f`. The `>` whose target is the substitution does
+  not count (`cat > >(a)`: `a` starts before that redirection takes effect). A
+  redirection after the substitution (`cat > >(a) > f`) and a substitution that
+  is an argument (`tee > f >(a)`, `tee >(a) > f`) are the safe side: bash starts
+  the commands in it first, so they still print, but a redirection of the whole
+  command marks them, and the parser takes no id for them. So does a second
+  `> >(b)` after `> >(a)`: it marks `a`. A substitution in the arguments
+  splits the run into segments (`docker run -d -e T=$(cat t) nginx > f` is
+  `docker run -d -e T=`, `cat t` and `nginx > f`), so a redirection after it marks
+  the first segment too: the splitter keeps the head of the command until an
+  operator ends it. `pairContainerIds` pairs the id lines in order with the runs
+  that print when the two counts match and no id repeats (two runs never print
+  one id), or when one run that prints stands with lines that all say one id
+  (`docker run -d --name api nginx && docker inspect -f '{{.Id}}' api`). Any other
+  count says that a line came from another command, so no run takes an id. A run
+  that does not print takes none, and it is left out of the count, so
+  `docker run -d a > /dev/null; docker run -d b` pairs the one id line with `b`.
+  A paired row has `containerIdExact: true`. A new sighting of the same row id
+  replaces `containerId` and `containerIdExact`, also with none: the merge
+  `{ ...old, ...row }` kept the old id before. A row of an older build has no
+  mark. A row with no id and no `--name` is named by its command, so the probe
+  finds no container and shows it `exited`.
+  Limits, where a run still pairs and gets the mark. These are the same four in
+  the README ("Container ids"), in the doc of `containerIdExact` and in the test
+  "container id: known limits ..."; change all of them together. (1) A run that
+  failed and printed no id, in a call where another command printed one id line
+  (`docker run -d --name api nginx; docker inspect -f '{{.Id}}' web`). (2) A run
+  that did not run at all, with the same one id line (`[ -n "$X" ] && docker run -d
+  --name api nginx; docker inspect ...`). (3) A run with a trailing `&`: its output
+  reaches the tool result when the run ends before the call does. (4) A run in a
+  function body that the call runs with a redirection (`f() { docker run -d y; };
+  f > log; docker ps -q --no-trunc`): the parser reads a function body as a live
+  command, and the call of the function is not read as the run's. So the mark is
+  strong evidence, not proof. Code that acts on an id (the `docker rm` of #123)
+  trusts only a row with the mark, and must also check the container by its name
+  or label before it removes it.
+  Evidence (grade: *verified-kit* for the parser, not *verified-live*): the
+  tests "container id: ..." in `process-parse.test.ts` (the glued forms, the bare
+  `exec` and the limits among them), the marks in `shell.test.ts` ("splitShell
+  marks ..."), the merge in `process-container-id.test.ts` and the stored row in
+  `processes-tracker.test.ts` ("a second sighting of a named container ..."),
+  and for the pid line of `echo $!` the tests named `echo $!: ...` in `process-parse.test.ts`.
+  The wrong pairs were seen in the real parser at `9b5fa44` before the fix: one
+  `docker run -d` with four id lines took the last, an older container ([study of
+  #123, part 2](https://github.com/martin-macak/claude-code-mod-tracking/issues/123#issuecomment-6412081219),
+  L301 to L306), and a run redirected to `/dev/null` or captured by `$(...)` took
+  the one id of `docker inspect` or `docker ps` (L401 to L409). The review of the
+  fix saw the glued forms and a run after `exec > file` take a foreign id with the
+  mark, and the tests above pin them. A probe with `bash` 5.3.20 gave the words
+  that the tests expect: `printf '[%s]' nginx2>f b` writes `[nginx2][b]` to the
+  file `f` and prints nothing, `printf '[%s]' x>(cat)` prints one word,
+  `[x/dev/fd/63]`, and `exec 3>&1 >/dev/null; echo hidden; echo shown >&3` prints
+  `shown` only. The same probe: `exec -c > f; echo hidden` and
+  `exec -a name > f; echo hidden` write `hidden` to `f`, and `echo a 12&>f`
+  writes `a 12` to `f`. The end of an exec at a redirected group was probed the
+  same way: `{ exec >/dev/null; } >/dev/null; echo after` prints `after`, as
+  do `for ...; do exec >/dev/null; done >/dev/null`, `if ...; fi >/dev/null`
+  and `case ...; esac >/dev/null` (also an exec in the condition of the `if`).
+  `{ exec >/dev/null; }; echo after`, `{ exec >/dev/null; } 2>&1; echo after`,
+  `{ exec >/dev/null; } <&0; echo after` and `{ exec >/dev/null; } 3>&1; echo after`
+  print nothing. So do `{ exec >/dev/null; } >&1; echo after` and its forms
+  `1>&1`, `>& 1`, `>&01`, `>&1-` and `1<&1`, while `>&2`, `>&-`, `>&0`, `>&10`
+  and `>&1x` (a file) print `after`. `echo hi >&1` and `exec >&1; echo hi` print
+  `hi`, and `&>&1` and `>>&1` are syntax errors. The output substitution was
+  probed with `bash` 5.3.20 (2026-10-27), each form as a script, with a fake
+  `docker` that prints one 64-hex id line and starts nothing. The id reaches the
+  stdout of the script for `cat > >(docker run -d nginx) </dev/null; wait`, and
+  also with `cat 2> >(...)`, `cat &> >(...)`, `cat 2>e > >(...)`,
+  `cat >&1 > >(...)`, `cat 3>f > >(...)`, `cat >f; tee >(...)`,
+  `cat >f | cat > >(...)`, `echo x | tee >(...)`,
+  `if cat > >(...) </dev/null; then :; fi`, `{ cat > >(...) </dev/null; } 2> f`,
+  `( exec > f ); cat > >(...)` and a `>(...)` in a `>(...)`.
+  It does not reach the stdout for `cat >f > >(...)`, `cat >&2 > >(...)`,
+  `cat > $(echo f) > >(...)`, `cat >f $(echo x) > >(...)`,
+  `cat > >(cat >/dev/null) > >(...)`, `exec > f; cat > >(...)`,
+  `exec > f; tee >(...)`, `x=$(cat > >(...) </dev/null; wait)`,
+  `{ cat > >(...) </dev/null; } > f`, `for ...; do cat > >(...); done > f` and
+  a run in the substitution with its own `> f`.
+  It does reach it where the redirection of the command comes later or the
+  substitution is an argument: `cat > >(...) </dev/null > f`,
+  `tee >(...) </dev/null > f` and `tee > f >(...) </dev/null`. The parser takes
+  no id for these, the safe side. A `cat`, an `echo` or a pipe that prints what
+  the substitution wrote also brings the id to the stdout (`cat <(...)`,
+  `{ cat > >(...) </dev/null; } | cat`, `echo $(cat > >(...) ...)`). That id is
+  a line of `cat`, not the output of the run, and the parser takes none. The
+  parser (`parseBashProcesses` at the same commit, 54 forms) gave an id for none
+  of the forms where `bash` printed none. No live Docker run
+  repeated these probes after the fix.
 - A foreground `nohup cmd` (no `&`) is not a detached process.
 
 Probe facts found in manual tests:

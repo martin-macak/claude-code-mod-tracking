@@ -1,6 +1,8 @@
 import { isRecord } from '../../core/lib/json'
 import {
+  keepsStdout,
   resolvePath,
+  type Segment,
   scopedDir,
   scopedVars,
   splitShell,
@@ -230,7 +232,26 @@ const containerIds = (stdout: string): string[] =>
     .map(l => l.trim().toLowerCase())
     .filter(l => /^[a-f0-9]{64}$/.test(l))
 
-/** Lines that `echo $!` (or `echo "pid: $!"`) prints. */
+/**
+ * The id of each run, in order, or undefined (issue #231). `printed[n]`: the output of run n reaches the tool result. The id
+ * lines pair in order with the runs that print when the counts match and no id repeats (two runs never print one id), or
+ * when one run that prints stands with lines that all say one id (a later `docker inspect -f '{{.Id}}'` of it). Any other
+ * count says that a line came from another command (`docker ps -aq`, an `inspect` of another container): no run takes an
+ * id then. A run that does not print takes none, and it is left out of the count.
+ */
+export function pairContainerIds(ids: readonly string[], printed: readonly boolean[]): (string | undefined)[] {
+  const printing = printed.filter(Boolean).length
+  const unique = new Set(ids).size
+  let next = 0
+  return printed.map(p => {
+    if (!p) return undefined
+    const n = next++
+    if (ids.length === printing) return unique === ids.length ? ids[n] : undefined
+    return printing === 1 && unique === 1 ? ids[0] : undefined
+  })
+}
+
+/** Lines that `echo $!` (or `echo "pid: $!"`) prints to the tool result. */
 function pidLines(stdout: string): number[] {
   const out: number[] = []
   for (const line of stdout.split('\n')) {
@@ -241,8 +262,13 @@ function pidLines(stdout: string): number[] {
   return out
 }
 
-const echoesPid = (words: readonly string[]): boolean =>
-  (words[0] === 'echo' || words[0] === 'printf') && words.some(w => w.includes('$!'))
+/**
+ * The segment prints `$!` to the tool result. Only then is a pid line of stdout its own. One whose output goes away prints no
+ * line, so it takes none and drops none: `echo $! > pid.txt`, `echo $! | tee f`, `PID=$(echo $!)`, an `echo $!` in a redirected
+ * group and one after `exec > f` (issue #231). `keepsStdout` holds the rule, as for the id of a container.
+ */
+const echoesPid = (seg: Segment, words: readonly string[]): boolean =>
+  (words[0] === 'echo' || words[0] === 'printf') && words.some(w => w.includes('$!')) && keepsStdout(seg)
 
 // ---------------------------------------------------------------- Bash
 
@@ -317,7 +343,7 @@ function stripSetsid(words: string[]): { words: string[]; fork: boolean } {
   return { words: words.slice(i), fork }
 }
 
-/** Shell builtins end with the shell: `echo x &` is no process to follow. */
+/** Shell builtins end with the shell: `echo x &` is no process to follow. `[[` is a keyword that works as one. */
 const BUILTINS = new Set([
   'echo',
   'printf',
@@ -328,6 +354,7 @@ const BUILTINS = new Set([
   'read',
   'test',
   '[',
+  '[[',
   'set',
   'unset',
   'export',
@@ -336,9 +363,14 @@ const BUILTINS = new Set([
 type Detached = { fingerprint: string; pid?: number; viaShell: boolean }
 
 /**
- * The last `&` job makes no row: a builtin (`echo x &`), `cd`, a docker call or a backgrounded loop (`done &`). It has
- * a shell of its own, so `$!` names that shell, not an earlier job. The `echo $!` that prints it eats one pid line of
- * stdout: the next `echo $!` must not take that line (issue #132).
+ * The last job that sets `$!` makes no row. Most of them have a shell of their own, so `$!` names that shell, not an earlier
+ * job: a builtin of `BUILTINS` (`echo x &`), `cd`, a docker call, a backgrounded loop (`done &`), a group (`{ a; } &`), a
+ * subshell whose last command is a builtin or a compound (`( sleep 3; : ) &`, `( : ) &`), or a `coproc` of a group or of a
+ * builtin (`coproc NAME { a; }`, `coproc :`). Two forms make no row although `$!` names a process, because bash runs their
+ * last command in place when it is an external simple command: a subshell (`( sleep 3 ) &`, `( true; sleep 3 ) &`) and a
+ * `coproc` (`coproc sleep 3`). Both are limits, like `sleep $(a) &`. A builtin outside `BUILTINS`
+ * (`pwd &`, `source f &`) does make a row, with the pid of its shell (a limit). The `echo $!` that prints it eats one pid
+ * line of stdout: the next `echo $!` must not take that line (issue #132). An `echo $!` that prints elsewhere eats none.
  */
 const NO_ROW: Detached = { fingerprint: '', viaShell: true }
 
@@ -377,10 +409,18 @@ export function parseBashProcesses(
       }),
     )
 
-  const runs: { name?: string; text: string }[] = []
+  // `printed`: the standard output of the run reaches the tool result, so an id line can be its own (issue #231).
+  const runs: { name?: string; text: string; printed: boolean }[] = []
   const detached: Detached[] = []
   let lastBg: Detached | undefined
   const pids = pidLines(stdout)
+  // One entry for each `echo $!` that prints a pid line, in order: the job that takes the line, or none when it names no row.
+  // The lines pair with the entries after the scan, and only when there is one line for each entry (issue #231).
+  const echoed: (Detached | undefined)[] = []
+  const claimed = new Set<Detached>()
+  // A `&` came before the segment, so `$!` is set and an `echo $!` prints a line. Before any `&` it prints an empty line, and
+  // `setsid -f` forks on its own and sets no `$!`.
+  let sawBg = false
   // `export` stays global on purpose: a subshell scope is not tracked for env, only for the directory. The shell variables
   // below follow the scope of the directory, so a variable set in a background list (`D=/x & srv $D/a.js &`) does not
   // reach the commands after the `&`, as in bash.
@@ -398,6 +438,16 @@ export function parseBashProcesses(
   }
 
   for (const seg of splitShell(command)) {
+    // A `&` ended a group, subshell or substitution right before this segment (`{ a; } & echo $!`). Like `done &`, that sends a
+    // shell to the background: `$!` names it, and no row has its pid, so no job before it may take the next pid line. For
+    // `sleep $(a) &`, `( sleep 3 ) &` and `( true; sleep 3 ) &` `$!` names the command itself, which has no row either (a limit):
+    // the earlier job must still not take it.
+    if (seg.afterBgShell) {
+      lastBg = NO_ROW
+      sawBg = true
+    }
+    const jobBefore = sawBg
+    if (seg.bg) sawBg = true
     // The marked words tell `'$F'` and `\$F` (as typed) from `$F` and `"$F"` (expanded). Only the variables read them.
     const pre = stripLead({ words: seg.marked, whole: seg.whole, redir: seg.redir })
     const ss = stripSetsid(pre.words)
@@ -417,8 +467,15 @@ export function parseBashProcesses(
     }
     const head = words[0]!
     // `echo $! &` prints the pid of the job before it, so it keeps that job. Any other `&` job is a row (the detached
-    // branch below replaces this) or no row: either way `$!` is no longer the job before it.
-    if (seg.bg && !echoesPid(words)) lastBg = NO_ROW
+    // branch below replaces this) or no row: either way `$!` is no longer the job before it. An `echo $! > f &` is one of
+    // them: it prints no line, and the `$!` after it is the pid of its own shell.
+    if (seg.bg && !echoesPid(seg, words)) lastBg = NO_ROW
+    // `coproc` runs its command as a job of its own and sets `$!`. The parser makes no row for it, so the pid line that an
+    // `echo $!` after it prints is no earlier job's.
+    if (head === 'coproc') {
+      lastBg = NO_ROW
+      sawBg = true
+    }
 
     if (head === 'cd' || head === 'pushd') {
       const target = words.slice(1).find(w => !w.startsWith('-'))
@@ -434,11 +491,13 @@ export function parseBashProcesses(
       }
       continue
     }
-    if (echoesPid(words)) {
-      if (lastBg === NO_ROW) pids.shift()
-      else if (lastBg && lastBg.pid === undefined && !lastBg.viaShell) {
-        const pid = pids.shift()
-        if (pid !== undefined) lastBg.pid = pid
+    if (echoesPid(seg, words)) {
+      if (jobBefore) {
+        // The line names a row only for a job that `&` started (`NO_ROW` and a `setsid -f` job are `viaShell`), and only for the
+        // first echo of it. A later echo prints the same line again, and keeps its place.
+        const job = lastBg && !lastBg.viaShell && !claimed.has(lastBg) ? lastBg : undefined
+        if (job) claimed.add(job)
+        echoed.push(job)
       }
       continue
     }
@@ -446,7 +505,12 @@ export function parseBashProcesses(
     const docker = dockerCall(words)
     if (docker.kind === 'run') {
       const o = runOptions(docker.args)
-      if (o.detach) runs.push({ ...(o.name !== undefined ? { name: o.name } : {}), text: shortCmd(words.join(' ')) })
+      if (o.detach)
+        runs.push({
+          ...(o.name !== undefined ? { name: o.name } : {}),
+          text: shortCmd(words.join(' ')),
+          printed: keepsStdout(seg),
+        })
       continue
     }
     if (docker.kind === 'compose') {
@@ -488,19 +552,33 @@ export function parseBashProcesses(
     }
   }
 
-  // Ids pair with runs in order. With a count mismatch only a single run takes the last id.
-  const ids = containerIds(stdout)
+  // A pid line is the pid of a job only when an `echo $!` printed it (issue #231, the owner's decision). The lines pair with the
+  // echoes by position, and only when there is one line for each echo, as `pairContainerIds` does for the id lines. Any other
+  // count means that a line is another command's, or that an echo's line is missing (a pipe may print it), so a line could slide
+  // onto the next job: then no job of the call gets a pid, and the probe finds the rows by their fingerprint.
+  if (echoed.length === pids.length)
+    echoed.forEach((job, n) => {
+      if (job) job.pid = pids[n]
+    })
+
+  // An id line is the id of a run only when the run printed it (issue #231): `pairContainerIds` holds the rule. A paired row is
+  // exact (`containerIdExact`). Left over: the limits that the KB page process-tracking-signals lists under "The id of a
+  // container" (a run that failed or did not run, a trailing `&`, a function called with a redirection). The test "container
+  // id: known limits" pins them.
+  const paired = pairContainerIds(
+    containerIds(stdout),
+    runs.map(r => r.printed),
+  )
   runs.forEach((run, n) => {
-    const containerId = ids.length === runs.length ? ids[n] : runs.length === 1 ? ids.at(-1) : undefined
-    const name = run.name ?? containerId?.slice(0, 12) ?? run.text
+    const containerId = paired[n]
     rows.push({
       id: `docker:ctr:${run.name ?? containerId ?? run.text}`,
       kind: 'docker-container',
-      name,
+      name: run.name ?? containerId?.slice(0, 12) ?? run.text,
       state: 'running',
       firstSeen: at,
       lastSeen: at,
-      ...(containerId !== undefined ? { containerId } : {}),
+      ...(containerId !== undefined ? { containerId, containerIdExact: true as const } : {}),
     })
   })
 

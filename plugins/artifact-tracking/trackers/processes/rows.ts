@@ -84,9 +84,22 @@ export function overCap(rows: readonly ProcessRecord[], cap: ProcessCap, now: nu
 }
 
 /**
+ * The old row as a new sighting of it leaves it. The new sighting wins field by field, except that the container id and its
+ * mark go together and come from the new row alone (issue #231): a sighting with no id, or with an id that no run proved,
+ * must not keep the old row's proof. `{ ...old, ...row }` alone would keep the old id when the new row has none.
+ */
+function sighted(old: ProcessRecord, row: ProcessRecord, now: number): ProcessRecord {
+  const next: ProcessRecord = { ...old, ...row, firstSeen: old.firstSeen, lastSeen: now }
+  if (row.containerId === undefined) delete next.containerId
+  if (row.containerIdExact === undefined) delete next.containerIdExact
+  return next
+}
+
+/**
  * Folds `added` into `cur` by id. A known row keeps its `firstSeen` and gets a new `lastSeen`. Oldest first. `endedAt`
  * follows `endedBy`: a live copy clears it, and two ended copies keep the first. `now` is the time of the merge: the new
- * `lastSeen`, and the `endedAt` of an ended row that has none. A caller with the engine clock passes it.
+ * `lastSeen`, and the `endedAt` of an ended row that has none. A caller with the engine clock passes it. The container id
+ * and its mark (`containerIdExact`) are the new row's: a sighting that has none removes the old ones.
  *
  * `cap` caps the rows the merge keeps (issue #134): the rows over `maxRows` leave, by `overCap`. A live row never leaves.
  * A caller that stores the result passes the config of the tracker. No `cap`: no cap.
@@ -102,9 +115,7 @@ export function mergeProcessRows(
     const old = byId.get(row.id)
     byId.set(
       row.id,
-      old
-        ? withSpan(endedBy({ ...old, ...row, firstSeen: old.firstSeen, lastSeen: now }, [old, row], now), old, row)
-        : endedBy(row, [row], now),
+      old ? withSpan(endedBy(sighted(old, row, now), [old, row], now), old, row) : endedBy(row, [row], now),
     )
   }
   const rows = [...byId.values()].sort((a, b) => a.firstSeen - b.firstSeen || a.id.localeCompare(b.id))
