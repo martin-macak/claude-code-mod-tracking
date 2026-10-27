@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   After,
+  AfterAll,
   Before,
   type ITestCaseHookParameter,
   Status,
@@ -33,7 +34,8 @@ const STEP_TIMEOUT_MS = 10 * 60 * 1000
 setDefaultTimeout(STEP_TIMEOUT_MS)
 
 // Every scenario takes the lock of the machine in its Before hook, and waits for it while another run holds it
-// (support/lock.ts). After the first timeout the later scenarios do not wait again.
+// (support/lock.ts). After the first timeout the later scenarios do not wait again. The runs get the lock in the order they
+// came: this run joins the queue of runs at its first claim and leaves it in the AfterAll hook below.
 const { lockWaitMs } = loadConfig()
 const claimRun = makeClaimer({ waitMs: lockWaitMs })
 
@@ -264,4 +266,10 @@ Before({ timeout: lockWaitMs + STEP_TIMEOUT_MS }, async function (this: DemoWorl
 
 After(async function (this: DemoWorld, { result }: ITestCaseHookParameter) {
   await this.tearDown(result?.status === Status.FAILED)
+})
+
+// The last scenario is done: leave the queue of runs now, so a run that waits behind this one does not wait for the process
+// to end. A process that lingers after the last scenario (an open handle) would hold the queue until then.
+AfterAll(() => {
+  claimRun.leave()
 })
