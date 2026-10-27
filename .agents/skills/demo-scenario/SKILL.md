@@ -56,6 +56,10 @@ Make the README demo GIF from a Gherkin scenario that also runs as an E2E test.
 | `Given the fake gh reports PR #N "title" in "owner/repo" from "head" into "base" as MERGEABLE` | Hidden. Adds a PR to the second repo of the fake. |
 | `Given a fake model that reads the README of the second repo` | Hidden. The model is a script that calls `Read` on that README, then says `Read.`. The session step needs `and the tools "Read"`. |
 | `Then the fake gh answered a discovery of "owner/repo"` | Polls the fake's log for the discovery query of that repo. |
+| `Given a plugin that refuses clock.after of N ms` | Hidden. Adds a probe plugin to the session (`e2e/support/timer-refuser.ts`) that denies the `clock.after` of exactly N ms and passes every other delay. For a scenario that must show the mod survives a refused engine timer (issue #193). Use a delay that no other timer of the mod shares: 10 ms is the pause of the ring. Put it before the session step. Not for `@demo`. |
+| `Then the timer refuser has refused a timer` | Polls the log of the probe until it refused its first timer. Shows that the refusal took place, so the check after it does not pass in a run where nothing was refused. |
+| `Given the session writes a debug log` | Hidden. The launch passes `--debug-file` with a file in the folder of the scenario, empty at the start (`e2e/support/debug-log.ts`). Put it before the session step. Not for `@demo`. |
+| `Then the debug log shows "text"` | Polls the debug log until a line holds the text, read as it is. Shows what the mod wrote with `$.ui.log(…, { to: 'debug' })`, which the screen does not, for example the line of the wake of the ring pause (issue #193). |
 | `Then the fake model was told "text"` | Polls what the engine told the model about its tools, for example the answer of a dialog. Shows that the dialog of the real session ran. |
 
 ## Loop

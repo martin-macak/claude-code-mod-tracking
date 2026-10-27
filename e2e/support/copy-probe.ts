@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { type ProbePlugin, writeProbePlugin } from './probe-plugin.ts'
 
 // A probe plugin for the copy key of the questions tracker (issue #71, features/questions.feature). The key hands the call
 // to the engine with `$.ui.copy`, and the engine writes the clipboard of the machine. The probe hears that `ui.copy` event
@@ -8,7 +8,7 @@ import { join } from 'node:path'
 // The folder of a plugin is watched, so the log lies beside it, never in it.
 
 /** The files of the probe in a folder: the plugin and, beside it, the log. */
-export type CopyProbe = { readonly pluginDir: string; readonly logFile: string }
+export type CopyProbe = ProbePlugin
 
 /** The module of the probe. The log path is in the text, so the probe reads no environment. */
 export function probeSource(logFile: string): string {
@@ -26,17 +26,12 @@ export function probeSource(logFile: string): string {
 
 /** Writes the probe plugin into `dir`, and says where its log will be. The log does not exist until the probe hears a copy. */
 export function writeCopyProbe(dir: string): CopyProbe {
-  const pluginDir = join(dir, 'plugin')
-  mkdirSync(join(pluginDir, '.claude-plugin'), { recursive: true })
-  mkdirSync(join(pluginDir, 'hooks'), { recursive: true })
-  const logFile = join(dir, 'copy.log')
-  writeFileSync(
-    join(pluginDir, '.claude-plugin', 'plugin.json'),
-    `${JSON.stringify({ name: 'copy-probe', version: '0.0.1', description: 'e2e probe: answers ui.copy', author: { name: 'e2e' } })}\n`,
-  )
-  writeFileSync(join(pluginDir, 'hooks', 'hooks.json'), `${JSON.stringify({ modules: ['./register.ts'] })}\n`)
-  writeFileSync(join(pluginDir, 'hooks', 'register.ts'), probeSource(logFile))
-  return { pluginDir, logFile }
+  return writeProbePlugin(dir, {
+    name: 'copy-probe',
+    description: 'e2e probe: answers ui.copy',
+    logName: 'copy.log',
+    source: probeSource,
+  })
 }
 
 /** The text of the last copy that the probe heard, or undefined while it heard none. */

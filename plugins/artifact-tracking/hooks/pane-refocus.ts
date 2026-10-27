@@ -5,7 +5,9 @@
 // It also knows where the ring is (`noted`): a press that changes the Buttons of the drawing asks for the ring again
 // (`keep`, issue #140). It waits for the drawing (`awaitFrame`), then for a pause (`pause`) that a drawing with other
 // controls starts again, then asks, and it chooses the Button from the latest drawing alone (`Frame`, issue #156). Only a
-// drawing that never comes (the bound) makes it read the state.
+// drawing that never comes (the bound) makes it read the state. Each wait has a second wake-up behind its engine timer, a
+// timer of the mod's own runtime that no hook can refuse (`afterOrWake`, issue #193), so a refused timer with no drawing at
+// all does not hold the press until the pane closes.
 // PaneSession owns one; nothing here touches the engine but the `ui.focus` and `ui.open` ports.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Selection". Plan: L6 Task 11, G8.
 
@@ -28,6 +30,17 @@ export const NEXT_DRAWING_MS = 1000
  * 0 ms fired 4 to 8 ms after the frame. 10 ms keeps room above that and is far below what a person sees.
  */
 export const RING_PAUSE_MS = 10
+
+/**
+ * The wake of `afterOrWake` comes this long after the engine timer. It is the last resort, so it is long: it wins when the
+ * engine timer is refused, and also when that timer is only late, and then the ring request may name a Button of a frame the
+ * engine has not taken yet, the failure of #140 and #156. A 10 ms engine timer fired 23 ms after it was armed in an idle
+ * headless probe (Claude Code 2.1.311, issue #193), and no run has measured a larger pane or a loaded machine, so the slack
+ * leaves room above that. A refused timer costs it in time and no more: the press ends `ms + WAKE_SLACK_MS` after its
+ * arming (260 ms for the pause, 1250 ms for the frame bound), with no drawing at all. A shorter slack is a one-constant
+ * change, to be chosen from a measure of the engine timer on a 30-row pane under load.
+ */
+export const WAKE_SLACK_MS = 250
 
 /**
  * What a press can tell about a drawing: whether it is the help view, the handle of each row it draws (by row id) and the
@@ -62,6 +75,38 @@ function sameControls(a: Frame, b: Frame): boolean {
   if (a.keys.some((key, i) => key !== b.keys[i]) || a.stops.some((key, i) => key !== b.stops[i])) return false
   const rows = [...b.rows]
   return [...a.rows].every(([id, handle], i) => rows[i]?.[0] === id && rows[i]?.[1] === handle)
+}
+
+/**
+ * The engine timer, and behind it a wake that no hook can refuse (`Ports.clock.wake`, a timer of the mod's own runtime). The
+ * first of them to fire runs `fn`, once, and cancels the other. The engine gives no sign of a refused timer (`Timer` has
+ * `cancel` and no more), so the wake is the bound when no drawing comes: `ms + WAKE_SLACK_MS` after the arming at most. When
+ * the wake wins it writes one line to the log, named by `label`, and the line says only what is known: the engine timer did
+ * not fire in time. The mod cannot tell a late timer from a refused one, so a count of the lines counts both, and the
+ * ring request after a late one may name a Button of a frame the engine has not taken yet (issue #140). Cancel stops both.
+ */
+function afterOrWake(p: Ports, ms: number, fn: () => void, label: string): Timer {
+  let done = false
+  const fire = (byWake: boolean): void => {
+    if (done) return
+    done = true
+    engine.cancel()
+    wake.cancel()
+    if (byWake)
+      p.log(
+        `${label}: the engine timer of ${ms} ms did not fire in ${ms + WAKE_SLACK_MS} ms (late or refused); the wake ended the wait`,
+      )
+    fn()
+  }
+  const engine = p.clock.after(ms, () => fire(false))
+  const wake = p.clock.wake(ms + WAKE_SLACK_MS, () => fire(true))
+  return {
+    cancel: () => {
+      done = true
+      engine.cancel()
+      wake.cancel()
+    },
+  }
 }
 
 /**
@@ -164,7 +209,8 @@ export class Refocus {
    * (issue #140). Any drawing that returns after the arming is not enough: live, a draw that the dismissal itself caused
    * still held the row. It resolves with no frame at a closing (`clear`) and after `NEXT_DRAWING_MS`, so a frame that never
    * comes cannot hold the chain of keys. A timer that the engine refuses never fires and says nothing, so the first drawing
-   * after the bound ends the wait too, with no frame, whether or not it is a `wants` drawing. A late frame is not used: it
+   * after the bound ends the wait too, with no frame, whether or not it is a `wants` drawing. With no drawing at all the wake
+   * of `afterOrWake` ends it `WAKE_SLACK_MS` later, also with no frame (issue #193). A late frame is not used: it
    * would start a pause whose timer the engine may refuse as well, and the bound says to fall back at once. The deadline is
    * read from the wall clock, which is the one clock a refused timer does not stop (`Ports.clock.wall`).
    */
@@ -186,7 +232,7 @@ export class Refocus {
         close: () => end(),
       }
       this.waiting.push(waiter)
-      timer = p.clock.after(NEXT_DRAWING_MS, () => end())
+      timer = afterOrWake(p, NEXT_DRAWING_MS, () => end(), 'pane frame bound')
     })
   }
 
@@ -203,7 +249,7 @@ export class Refocus {
   }
 
   /**
-   * The pause between the frame and the ring request: one timer of `RING_PAUSE_MS` on the engine clock. It resolves with the
+   * The pause between the frame and the ring request: one timer of `RING_PAUSE_MS` on the engine clock (`afterOrWake`). It resolves with the
    * latest frame it saw, the one the request chooses from. The render hook has returned a frame by then, and the engine has
    * not taken it yet (`RING_PAUSE_MS` has the evidence). Reads do not make this pause: an atom read answers in the same turn.
    *
@@ -219,7 +265,9 @@ export class Refocus {
    *
    * A closing ends the pause (`clear`), as it ends `awaitFrame`, and `keep` checks the press after it. A timer that the
    * engine refuses never fires: the first drawing after the deadline of the running timer ends the pause then, and the
-   * request follows at once. That drawing counts when its controls differ, as the latest frame.
+   * request follows at once. That drawing counts when its controls differ, as the latest frame. With no drawing at all the
+   * wake of `afterOrWake` ends the pause `WAKE_SLACK_MS` after the engine timer was due (issue #193), and each restart arms a wake
+   * of its own.
    */
   private pause(p: Ports, first: Frame): Promise<Frame> {
     return new Promise<Frame>(resolve => {
@@ -236,7 +284,7 @@ export class Refocus {
         timer?.cancel()
         const ms = Math.min(RING_PAUSE_MS, limit - p.clock.wall()) // positive: `offer` starts it only before its deadline
         deadline = p.clock.wall() + ms
-        timer = p.clock.after(ms, end)
+        timer = afterOrWake(p, ms, end, 'pane ring pause')
       }
       const waiter: Waiter = {
         offer: frame => {

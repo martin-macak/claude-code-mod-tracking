@@ -479,6 +479,46 @@ Feature: Drive the /track pane with the keys
     And the focus ring is on "r: refresh"
     And the fake gh answered no unsupported call
 
+  # Issue #193. A press waits for the drawing and then for a pause of 10 ms on the engine clock (`RING_PAUSE_MS`, issue #156)
+  # before it asks for the ring. A hook of another plugin can refuse that timer: it never fires and the engine says nothing.
+  # The probe plugin denies `clock.after` of 10 ms and passes every other delay, so no other timer of the mod is dropped
+  # (1000 ms is also a default of the mod). With no drawing after the frame, only the wake of the mod (a `setTimeout` 250 ms
+  # behind the engine timer) ends the pause. Without it the press waits until the pane closes and the ring stays where it was.
+  # The step `the timer refuser has refused a timer` proves the refusal took place. The step `the debug log shows` proves that
+  # the wake ended the wait, and not a stray drawing (a tick, a status change): only the wake writes that line. The keys behind
+  # an `x` that waits are a kit test (`pane-session.test.ts`): a key pressed from tmux comes after the wake.
+  Scenario: h moves the ring to h: back although another plugin refuses the timer of the ring pause
+    Given a plugin that refuses clock.after of 10 ms
+    And the session writes a debug log
+    And a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
+    And the fake gh reports PR #7 "Fix the fake conflict" from "feat/fake-conflict" into "main" as CONFLICTING
+    And a Claude Code session with the artifact-tracking mod
+    When I type "/track"
+    Then the screen matches /│[^\n]*#7[^\n]*✗ conflicts/
+    When I press "Tab" until the focus ring is on "c: resolve"
+    And I press "h"
+    Then the screen shows "Row keys (act on the selected or marked rows)"
+    And the timer refuser has refused a timer
+    And the focus ring is on "h: back"
+    And the debug log shows "pane ring pause: the engine timer of 10 ms did not fire"
+    And the fake gh answered no unsupported call
+
+  Scenario: x on the last row puts the ring on r: refresh although another plugin refuses the timer of the ring pause
+    Given a plugin that refuses clock.after of 10 ms
+    And the session writes a debug log
+    And a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
+    And the fake gh reports PR #7 "Fix the fake conflict" from "feat/fake-conflict" into "main" as CONFLICTING
+    And a Claude Code session with the artifact-tracking mod
+    When I type "/track"
+    Then the screen matches /│[^\n]*#7[^\n]*✗ conflicts/
+    When I press "Tab" until the focus ring is on "c: resolve"
+    And I press "x"
+    Then the pane stops showing "#7"
+    And the timer refuser has refused a timer
+    And the focus ring is on "r: refresh"
+    And the debug log shows "pane ring pause: the engine timer of 10 ms did not fire"
+    And the fake gh answered no unsupported call
+
   # Issue #63, L3. The pane opens in the view of `global.ui.view`, by list. `g` takes the next view of `global.ui.views`: by
   # status. The group titles change with the view (a web link has no state, so by status it is the group "No status"), the view
   # line names the view, the row that was selected stays selected, and the ring goes with it to the new handle. A second `g`

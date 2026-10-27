@@ -26,6 +26,7 @@ import { countLines, FAKE_ORIGIN_NAME, fakeForeignRepo, launchClaude, prepareClo
 import { sizeRefusal } from './size.ts'
 import { slug } from './slug.ts'
 import { Timeline } from './timeline.ts'
+import { type TimerRefuser, timerRefuserRefusal, writeTimerRefuser } from './timer-refuser.ts'
 import { Tmux } from './tmux.ts'
 import { waitUntil } from './wait.ts'
 
@@ -66,10 +67,15 @@ export class DemoWorld extends World {
   fakeHome = ''
   /** The probe plugin that answers `ui.copy` (support/copy-probe.ts). Absent: the copy key writes the real clipboard. */
   copyProbe: CopyProbe | undefined
+  /** The probe plugin that denies one `clock.after` delay (support/timer-refuser.ts). Absent: no timer is refused. */
+  timerRefuser: TimerRefuser | undefined
+  /** The file the session writes its debug log to (`--debug-file`, support/debug-log.ts). Absent: the session writes none. */
+  debugLog: string | undefined
   /** The second repo of the scenario (issue #195, `fakeForeignRepo`). Absent: the scenario has none. */
   foreignRepo: { dir: string; readme: string; bare: string } | undefined
   private foreignDir = ''
-  private probeDir = ''
+  /** Every probe plugin of the scenario: its folder (removed at the end) and its plugin folder (loaded by the launch). */
+  private probes: { dir: string; pluginDir: string }[] = []
   private release: (() => void) | undefined
   private launched = false
 
@@ -122,14 +128,53 @@ export class DemoWorld extends World {
   }
 
   /**
+   * Makes the next launch write the debug log of the session to a file in the folder of the scenario, so a step can read what
+   * the mod wrote with `$.ui.log(…, { to: 'debug' })` (issue #193). The file starts empty: a step never passes on a line of an
+   * earlier run. Before the session starts: the flags of a running session cannot change.
+   */
+  enableDebugLog(): void {
+    if (this.launched) throw new Error('debug log: enable it before the step that starts the session')
+    this.debugLog = join(this.outDir, 'debug.log')
+    writeFileSync(this.debugLog, '')
+  }
+
+  /**
+   * Makes a probe plugin in a folder of its own and keeps it for the next launch and for the cleanup (`tearDown`). Before the
+   * session starts: the plugins of a running session cannot change. `label` names the probe in the error and in the folder.
+   */
+  private installProbe<T extends { pluginDir: string }>(label: string, write: (dir: string) => T): T {
+    if (this.launched) throw new Error(`${label}: install it before the step that starts the session`)
+    const dir = mkdtempSync(join(tmpdir(), `cc-${label.replaceAll(' ', '-')}-`))
+    try {
+      const probe = write(dir)
+      this.probes.push({ dir, pluginDir: probe.pluginDir })
+      return probe
+    } catch (error) {
+      rmSync(dir, { recursive: true, force: true }) // a probe that could not be written leaves no folder
+      throw error
+    }
+  }
+
+  /**
    * Adds the copy probe to the next launch: a plugin that answers `ui.copy` without writing the clipboard and logs the text.
    * Before the session starts: the plugins of a running session cannot change. The scenario removes it at the end.
    */
   installCopyProbe(): void {
-    if (this.launched) throw new Error('copy probe: install it before the step that starts the session')
-    if (this.probeDir !== '') return
-    this.probeDir = mkdtempSync(join(tmpdir(), 'cc-copy-probe-'))
-    this.copyProbe = writeCopyProbe(this.probeDir)
+    if (this.copyProbe !== undefined) return
+    this.copyProbe = this.installProbe('copy probe', writeCopyProbe)
+  }
+
+  /**
+   * Adds a probe plugin to the next launch that denies the `clock.after` of `ms` and passes every other delay, and counts what
+   * it refused (issue #193). Before the session starts: the plugins of a running session cannot change. The scenario removes it
+   * at the end. A scenario has one refuser: a second step with another delay throws, a second step with the same delay
+   * changes nothing.
+   */
+  installTimerRefuser(ms: number): void {
+    const refusal = timerRefuserRefusal(this.timerRefuser, ms)
+    if (refusal !== undefined) throw new Error(refusal)
+    if (this.timerRefuser !== undefined) return
+    this.timerRefuser = this.installProbe('timer refuser', dir => writeTimerRefuser(dir, ms))
   }
 
   get tl(): Timeline {
@@ -187,7 +232,8 @@ export class DemoWorld extends World {
         tmux: this.tmux,
         signalFile: this.signalFile,
         pluginDir: PLUGIN_DIR,
-        ...(this.copyProbe ? { extraPluginDirs: [this.copyProbe.pluginDir] } : {}),
+        extraPluginDirs: this.probes.map(probe => probe.pluginDir),
+        ...(this.debugLog === undefined ? {} : { debugFile: this.debugLog }),
         model: this.config.model,
         timeoutMs: this.config.turnTimeoutMs,
         ...(tools ? { tools } : {}),
@@ -247,7 +293,7 @@ export class DemoWorld extends World {
         rmSync(join(this.config.dir, FAKE_ORIGIN_NAME), { recursive: true, force: true })
         rmSync(this.configDir, { recursive: true, force: true })
         if (this.fakeHome !== '') rmSync(this.fakeHome, { recursive: true, force: true })
-        if (this.probeDir !== '') rmSync(this.probeDir, { recursive: true, force: true })
+        for (const probe of this.probes) rmSync(probe.dir, { recursive: true, force: true })
         if (this.foreignDir !== '') rmSync(this.foreignDir, { recursive: true, force: true })
       }
       await this.fakeApi?.close()
