@@ -36,24 +36,25 @@ export type Segment = {
    * and order as `words`.
    */
   redir: boolean[]
-  /** The segment ended with a single `&`: the shell runs it in the background. */
-  bg: boolean
   /**
-   * A single `&` ended a group, a subshell, an arithmetic command or a substitution right before this segment (`{ a; } & b`,
-   * `( a ) & b`, `x=$(a) & b`, `sleep $(a) & b`). `}` and `)` make no segment, so that `&` has none to say `bg` on. The
-   * flag tells a reader that this `&` set `$!` to something that is not the job before it (issue #231). What `$!` names
-   * depends on the command. For a group (`{ a; } &`, `{ true; sleep 3; } &`: a group is never run in place), a subshell whose
-   * last command is a builtin or a compound (`( sleep 3; : ) &`, `( : ) &`), `(( ))`, and a command that is only assignments
-   * or a builtin (`x=$(a) &`, `: $(a) &`) it names the shell that runs the list. For a subshell whose last command is an
-   * external simple command (`( sleep 3 ) &`, `( true; sleep 3 ) &`, also with a redirection) bash runs that command in
-   * place, and an external command that ends in a substitution or a process substitution (`sleep $(a) &`, `cat <(a) &`) is a
-   * process: `$!` names that command. The flag is set all the same, and the parser makes no row for it (a limit). A loop, an
-   * `if` or a `case` needs no flag: its closing word is a segment with `bg`. The flag stays in the shell that read the `&`: a
-   * substitution, a subshell and a part of a pipeline run in a shell of their own, so a `&` that ends a group in one of them,
-   * with no segment after it there, flags nothing in the parent (`a & x=$({ :; } &); echo $!` flags no `echo`, as `$!` is still
-   * the pid of `a`).
+   * The segment ended with a single `&`: the shell runs it in the background. A segment with `bg` and no words is no command. It
+   * stands for a `$!` that no command of its own set, and it sits where that `$!` was set (issue #231). A single `&` ended a group,
+   * a subshell, an arithmetic command or a substitution (`{ a; } &`, `( a ) &`, `x=$(a) &`, `sleep $(a) &`): `}` and `)` make no
+   * segment, so the `&` has none to say `bg` on. A process substitution is the same with no `&` at all (`cat <(a)`,
+   * `exec 3< <(a)`): bash sets `$!` in the shell that runs the command, as the substitution closes. Such a segment has no command
+   * to run. Its `readScope` names the shell whose `$!` it sets, and its `scope` follows the segments of the group, the
+   * substitution or the list that it ends. What `$!` names depends on the command. For a group (`{ a; } &`, `{ true; sleep 3; } &`:
+   * a group is never run in place), a subshell whose last command is a builtin or a compound (`( sleep 3; : ) &`, `( : ) &`),
+   * `(( ))`, and a command that is only assignments or a builtin (`x=$(a) &`, `: $(a) &`) it names the shell that runs the list.
+   * For a subshell whose last command is an external simple command (`( sleep 3 ) &`, `( true; sleep 3 ) &`, also with a
+   * redirection) bash runs that command in place, and an external command that ends in a substitution or a process substitution
+   * (`sleep $(a) &`, `cat <(a) &`) is a process: `$!` names that command. The segment is there all the same, and the parser makes
+   * no row for it (a limit). A loop, an `if` or a `case` needs no such segment: its closing word is a segment with `bg`.
+   * A segment with no words at the end of a subshell, a substitution or a backtick pair sets the `$!` of a shell that ends there,
+   * and no one can read it: it is not made (`( { a; } & )`, `x=$(cat <(a))`). Two in a row that one shell reads are one
+   * (`{ { a; } & } &`, `cat <(a) &`).
    */
-  afterBgShell: boolean
+  bg: boolean
   /**
    * The subshell the segment runs in. `''` is the top level. `(`, `$(` and a backtick pair open a child scope
    * `${parent}.${n}`. `{ }` is the same shell, so it keeps the scope. A list that ends with `&` runs in a subshell
@@ -67,7 +68,8 @@ export type Segment = {
    * too: `{ a & } | b` and `b | { a & }` read the `&` of `a` in the part, not in the shell around it, and `{ a & } &` in the
    * background list. The `&` that ends a list is read by the shell around the list (`true && a | b &` reads it at the top,
    * though `b` sits in a part of a list that runs in the background). `$!` of a shell is set by the segments that name it, and
-   * by no scope below it.
+   * by no scope below it. The same holds for a segment with no words: `x=$( { :; } & )` and `{ { :; } & } | b` are read in the
+   * shell that holds them, and `( a ) &` and `cat <(a) &` are read by the shell around the list.
    */
   readScope: string
   /**
@@ -228,7 +230,8 @@ export function splitShell(command: string): Segment[] {
   // `moved`: the output of the command around a `>(` went away before the substitution (`a >f > >(b)`), so the commands in it
   // write there too, and so do the scopes in it (`Segment.stdoutRedirected`). `outerHead`, `outerOut`: the `cmdHead` and the
   // `cmdOut` of the simple command around it, back at the close (`a $(b) c`).
-  // `bgPending`: the `bgShellEnded` of the shell around it, back at the close. `from`: the index of the first segment in it.
+  // `proc`: a process substitution opened it (`<(`, `>(`): it sets `$!` in the shell around it at its close (`markBang`). `from`: the
+  // index of the first segment in it.
   const stack: {
     id: string
     tick: boolean
@@ -239,7 +242,7 @@ export function splitShell(command: string): Segment[] {
     moved: boolean
     outerHead: number
     outerOut: boolean
-    bgPending: boolean
+    proc: boolean
     from: number
   }[] = []
   let scopes = 0
@@ -295,13 +298,29 @@ export function splitShell(command: string): Segment[] {
   // The first segment of the group, subshell or backtick that closed just now, while only redirections have come after
   // it: `{ a; } > f` has the words `> f` after the `}`, and they make no segment. -1: no group closed right before.
   let closedFrom = -1
-  // A `&` with no word came right behind a close (`{ a; } &`, `x=$(a) &`, `sleep $(a) &`): the next segment carries
-  // `Segment.afterBgShell`. The `&` set `$!` in the shell that read it, so the flag stays in that shell. A substitution, a
-  // backtick pair, a subshell and a part of a pipeline run in a shell of their own, and a `&` inside them leaves the `$!` of the
-  // parent alone (`x=$({ :; } &); echo $!` prints the job before). So the flag that is still waiting for a segment when such a
-  // shell ends dies with it: a scope gives back the flag that its parent had (`closeScope`), and a pipeline part drops it
-  // (`endPipe`, the `|` branch). A group is the shell of its parent, and keeps it.
-  let bgShellEnded = false
+  // A `&` with no word came right behind a close (`{ a; } &`, `x=$(a) &`, `sleep $(a) &`), or a process substitution closed: the
+  // segment of no words says it (`markBang`, `Segment.bg`). It stands where the `&` stands, so it moves with the list and the part
+  // that hold it, as a segment with `a &` does. A substitution, a backtick pair, a subshell and a part of a pipeline run in a
+  // shell of their own, and a `&` inside them leaves the `$!` of the parent alone (`x=$({ :; } &); echo $!` prints the job
+  // before): the segment sits inside, and `moveToChild` keeps it there. Two in a row that one shell reads set the same `$!`: the
+  // second takes the place of the first (`{ { :; } & } &`, `cat <(a) &`), so a nest of them keeps one. It returns false then.
+  const markBang = (): boolean => {
+    const prev = out.at(-1)
+    if (prev !== undefined && prev.words.length === 0 && prev.bg && prev.readScope === scope()) return false
+    out.push({
+      words: [],
+      marked: [],
+      whole: [],
+      redir: [],
+      bg: true,
+      scope: scope(),
+      readScope: scope(),
+      stdoutRedirected: stack.at(-1)?.moved ?? false,
+      stdoutPiped: false,
+      substituted: stack.at(-1)?.sub ?? false,
+    })
+    return true
+  }
   // A substitution splits a simple command into segments: `docker run -d $(a) nginx > f` has the segments `docker run -d`,
   // `a` (inside) and `nginx > f`, and the redirection belongs to all of the command. `cmdHead` is the index of the first
   // segment of the simple command that a substitution has split, in the scope that is open now. -1: none. An operator that
@@ -333,7 +352,7 @@ export function splitShell(command: string): Segment[] {
   // A scope opens a list and a pipeline part of its own. Its close gives back the place it sat in.
   // `sub`: the shell takes the output of the commands inside (`$(`, a backtick and `<(`). A scope inside one keeps it.
   // `moved`: the output of the command around it is redirected before it, and it is a `>(`. A scope inside one keeps it.
-  const openScope = (tick: boolean, arith: boolean, sub: boolean, moved = false) => {
+  const openScope = (tick: boolean, arith: boolean, sub: boolean, moved = false, proc = false) => {
     const parent = stack.at(-1)
     stack.push({
       id: `${scope()}.${++scopes}`,
@@ -345,7 +364,7 @@ export function splitShell(command: string): Segment[] {
       moved: moved || (parent?.moved ?? false),
       outerHead: cmdHead,
       outerOut: cmdOut,
-      bgPending: bgShellEnded,
+      proc,
       from: out.length,
     })
     listFrom = partFrom = out.length
@@ -448,11 +467,24 @@ export function splitShell(command: string): Segment[] {
   const closeScope = () => {
     const top = stack.pop()
     if (top) {
+      // A segment with no words at the end of the scope sets the `$!` of a shell that ends here, and no command runs in it after
+      // it: nothing reads it (`( { a; } & )`, `x=$(cat <(a))`). It goes, so a nest of them (`( ( a ) & ) &`) keeps no list of dead
+      // segments that every outer `&` reads again. The ranges that ended behind it end at the new end.
+      const length = out.length
+      while (out.length > top.from && out.at(-1)!.words.length === 0) out.pop()
+      for (const runs of [pipeRuns, redirRuns])
+        for (let k = out.length + 1; k <= length; k++)
+          if (runs[k] !== undefined) {
+            runs[out.length] = (runs[out.length] ?? 0) + runs[k]!
+            runs[k] = 0
+          }
       back(top.saved)
       closedFrom = top.from
       cmdHead = top.outerHead
       cmdOut = top.outerOut
-      bgShellEnded = top.bgPending
+      // A process substitution sets `$!` in the shell that runs its command, where it closes: the commands in it saw the `$!` from
+      // before (bash 5.3.20: `sleep 5 & cat <(echo $!)` prints the pid of `sleep 5`), and the shell around sees the new one.
+      if (top.proc) markBang()
     }
   }
   // The `case` that the reader is in right now: the innermost open compound, when it is a `case` that opened inside the
@@ -484,28 +516,34 @@ export function splitShell(command: string): Segment[] {
   // in the part is the exception (`{ a & } | b`, `b | { a & }`, `{ a & } &`): the shell that read its `&` is `readScope`, and
   // it is now the wrapper. Without the wrapper the job would name the shell around the part as the one that read its `&`, and
   // the `$!` that a part sets would reach it. `readScope` follows `scope` into the wrapper. `endsHere`: the last segment is the
-  // job whose `&` ends the list that moves now (`b | a &`, `true && b | a &`). The shell that reads this `&` is the one around
-  // the list, so it needs no wrapper, and its `readScope` stays.
+  // one whose `&` ends the list that moves now (`b | a &`, `true && b | a &`, `b | { a; } &`). The shell that reads this `&` is the
+  // one around the list, so it needs no wrapper, and its `readScope` stays.
+  // A segment with no words (`{ { :; } & b; } | c`, `cat <(a) | b`) says that a `&` or a process substitution set `$!`. Such a segment
+  // is no command, so it is no reason to move the part: it moves with the part when a command makes a wrapper, and its
+  // `readScope` then follows.
   const moveToChild = (from: number, endsHere = false) => {
     const parent = scope()
-    const moving = out.slice(from)
-    const last = out.length - 1
+    const end = out.length
+    const last = end - 1
     const inside = (name: string) => name === parent || name.startsWith(`${parent}.`)
     const reads = (seg: Segment, k: number) => !(endsHere && from + k === last) && inside(seg.readScope)
-    if (!moving.some((seg, k) => seg.scope === parent || (seg.bg && reads(seg, k) && seg.readScope === parent))) return
+    // The test that costs nothing goes first: a long run of segments that stay is read at every level of a nest.
+    const moves = (seg: Segment, k: number) =>
+      (seg.words.length > 0 && seg.scope === parent) || (seg.bg && seg.readScope === parent && reads(seg, k))
+    let needs = false
+    for (let k = 0; k < end - from && !needs; k++) needs = moves(out[from + k]!, k)
+    if (!needs) return
     const child = `${parent}.${++scopes}`
-    moving.forEach((seg, k) => {
+    for (let k = 0; k < end - from; k++) {
+      const seg = out[from + k]!
       if (inside(seg.scope)) seg.scope = child + seg.scope.slice(parent.length)
       if (reads(seg, k)) seg.readScope = child + seg.readScope.slice(parent.length)
-    })
-  }
-  // The pipeline ends: its last part runs in a subshell too, and the next part starts after the segments so far. A flag that
-  // waits in that part (`cat | { { :; } & }`) ends with it. A `&` that ends the pipeline keeps its own flag (`cat | { :; } &`).
-  const endPipe = (keepBg = false, endsHere = false) => {
-    if (piped) {
-      moveToChild(partFrom, endsHere)
-      if (!keepBg) bgShellEnded = false
     }
+  }
+  // The pipeline ends: its last part runs in a subshell too, and the next part starts after the segments so far. `endsHere`: a
+  // segment with the `&` that ends the pipeline came last (`cat | { :; } &`).
+  const endPipe = (endsHere = false) => {
+    if (piped) moveToChild(partFrom, endsHere)
     piped = false
     partFrom = out.length
   }
@@ -545,10 +583,14 @@ export function splitShell(command: string): Segment[] {
     inWord = true
     if (headOpen) typedHead = word.length
   }
+  // The segment that `endSegment` closed last carries the `&` that closed it: a command (`a &`), or the segment of no words
+  // behind a close (`{ a; } &`), also when `markBang` let the one before stand in for it.
+  let carriesAmp = false
   const endSegment = (bg: boolean) => {
     endWord()
     afterHeredoc = false // a heredoc at the end of a segment marks no word of the next one
     segOut = segPlaced = false
+    carriesAmp = false
     if (inPattern()) {
       // The words of a pattern are no command: they open or close no compound, and `cd)` moves no folder.
       words = []
@@ -561,22 +603,25 @@ export function splitShell(command: string): Segment[] {
     // The words after the `}` or `)` of a group that only redirect (`{ a; } > f`) make no segment: the group is redirected.
     if (clean.length === 0 && stdout && closedFrom >= 0) redirected(closedFrom)
     // A `&` behind the close, with no word of its own (`{ a; } &`, `( a ) 2>&1 &`, `x=$(a) &`), sends that shell to the background.
-    if (bg && clean.length === 0 && closedFrom >= 0) bgShellEnded = true
+    // It sets `$!` in the shell that reads it, so it makes a segment of its own, here.
+    if (bg && clean.length === 0 && closedFrom >= 0) {
+      markBang()
+      carriesAmp = true
+    }
     if (clean.length > 0) {
+      carriesAmp = true
       out.push({
         words: clean.map(unmarkDollars),
         marked: clean,
         whole: cleanHeads.map(h => h.whole),
         redir: cleanHeads.map(h => h.redir),
         bg,
-        afterBgShell: bgShellEnded,
         scope: scope(),
         readScope: scope(),
         stdoutRedirected: stdout || (stack.at(-1)?.moved ?? false),
         stdoutPiped: false,
         substituted: stack.at(-1)?.sub ?? false,
       })
-      bgShellEnded = false
       if (stdout && bareExec(clean, cleanHeads)) execs.push(out.length - 1)
       const lead = compoundLead(clean, cleanHeads)
       if (lead.opens.length > 0) {
@@ -795,6 +840,7 @@ export function splitShell(command: string): Segment[] {
             inArith() || (s[i + 1] === '(' && !/[<>]/.test(s[i - 1] ?? '') && arithFollows(i + 2)),
             typedRedir === i - 1 && !outputSub,
             outputSub && movedBefore,
+            typedRedir === i - 1, // a process substitution sets `$!` where it closes
           )
       } else if (op === '$(') {
         openScope(false, s[i + 2] === '(' && arithFollows(i + 3), true)
@@ -821,13 +867,12 @@ export function splitShell(command: string): Segment[] {
         }
       } else if (op === '|' || op === '|&') {
         moveToChild(partFrom) // the part before the `|` runs in a subshell
-        bgShellEnded = false // and a flag that waits in it ends with it (`{ { :; } & } | cat`)
         cover(pipeRuns, partFrom, out.length) // and its output feeds the next part
         partFrom = out.length
         piped = true
       } else if (op === '&') {
-        const endsHere = out.length > before // a segment with this `&` came: its `readScope` is the shell around the list
-        endPipe(true, endsHere)
+        const endsHere = carriesAmp // a segment with this `&` came: its `readScope` is the shell around the list
+        endPipe(endsHere)
         moveToChild(listFrom, endsHere)
         listFrom = out.length
       } else if (op === ';' || op === ';;' || op === ';&' || op === ';;&' || (op === '\n' && !wantsMore)) {
@@ -930,26 +975,56 @@ export function scopedVars(): {
   }
 }
 
-/** The scope that holds `scope`: `.1.2` is in `.1`, `.1` is in `''`, and the top level `''` has none (it gives `''` again). */
-const parentScope = (scope: string): string => scope.slice(0, Math.max(scope.lastIndexOf('.'), 0))
-
 /**
  * State per subshell scope that a child copies from its parent when it first appears, and never writes back (`$!` is one:
- * a job, a coprocess and a flag that a subshell, a substitution or a part of a pipeline sets stay in that shell). The result
- * gives the state of a scope: its own, or a copy of the nearest scope above it that has one, taken at that moment. A scope
- * opens, runs its segments and closes before the next scope of its parent opens, so the copy is the state the shell had when
- * the child started. `root` is the state of the top level.
+ * a job, a coprocess and a segment with no words that a subshell, a substitution or a part of a pipeline sets stay in that
+ * shell). The result gives the state of a scope: its own, or a copy of the nearest scope above it that has one, taken at that
+ * moment. A scope opens, runs its segments and closes before the next scope of its parent opens, so the copy is the state the
+ * shell had when the child started. `root` is the state of the top level.
+ *
+ * A scope with no segment of its own (the wrapper of a subshell, `( ( a ) )`) holds no state, and the walk passes it. The scopes
+ * make a tree, read once from the name (`.1.2.3` is `3` in `2` in `1`), and the walk goes up it by links. A walk over the names
+ * cut the name at each step, and read a hash of the whole rest of it: O(d^2) for a leaf in a nest of d subshells, and O(n d^2) for
+ * n leaves (a 17 KB command of 1000 subshells in 1000 subshells took 2.4 s). The links cost O(d) for a leaf at the worst, and each
+ * name is read once. The tree is a map of maps, so a name that no one has asked for yet costs one walk down it.
  */
 export function scopedCopy<T extends object>(root: T): (scope: string) => T {
-  const states = new Map<string, T>([['', root]])
+  type Shell = { up: Shell | undefined; kids: Map<string, Shell>; state: T | undefined }
+  const top: Shell = { up: undefined, kids: new Map(), state: root }
+  const child = (parent: Shell, id: string): Shell => {
+    let kid = parent.kids.get(id)
+    if (!kid) {
+      kid = { up: parent, kids: new Map(), state: undefined }
+      parent.kids.set(id, kid)
+    }
+    return kid
+  }
+  // The shell of a scope name, found once for each name (a name is the same string each time a segment names it). The name of its
+  // parent is kept too: the next scope under that parent finds it with one lookup, and a name that no one named before costs one
+  // walk down the tree, from the parts of the name.
+  const named = new Map<string, Shell>([['', top]])
+  const shellOf = (scope: string): Shell => {
+    let shell = named.get(scope)
+    if (shell) return shell
+    const cut = scope.lastIndexOf('.')
+    const parentName = scope.slice(0, cut)
+    let parent = named.get(parentName)
+    if (!parent) {
+      parent = top
+      for (const id of parentName.slice(1).split('.')) parent = child(parent, id)
+      named.set(parentName, parent)
+    }
+    shell = child(parent, scope.slice(cut + 1))
+    named.set(scope, shell)
+    return shell
+  }
   return scope => {
-    const own = states.get(scope)
-    if (own) return own
-    let up = parentScope(scope)
-    while (!states.has(up)) up = parentScope(up)
-    const copy = { ...states.get(up)! }
-    states.set(scope, copy)
-    return copy
+    const shell = shellOf(scope)
+    if (shell.state) return shell.state
+    let up = shell.up!
+    while (!up.state) up = up.up!
+    shell.state = { ...up.state }
+    return shell.state
   }
 }
 

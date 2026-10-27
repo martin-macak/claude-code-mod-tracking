@@ -419,7 +419,7 @@ test('splitShell takes a stray ) } or done as it comes, with no scope or compoun
 // A `}` right before the closing backtick ends its group, as it does before `;` or `)` (issue #161). Else the group
 // stays open, and the `}` that comes later closes the wrong place.
 test('splitShell ends a group at a } right before a closing backtick', () => {
-  const words = (cmd: string) => splitShell(cmd).map(s => s.words.join(' '))
+  const words = (cmd: string) => splitShell(cmd).flatMap(s => (s.words.length > 0 ? [s.words.join(' ')] : []))
   expect(words('{ echo `cd /x; { a; }`; } & b')).toEqual(['echo', 'cd /x', 'a', 'b'])
   // The `&` backgrounds the whole outer group, so the `cd` in front of the backtick leaves the top scope.
   const t = at('{ cd /y; echo `{ a; }`; } & b')
@@ -492,42 +492,51 @@ test('splitShell reads a & after a quoted or escaped > as a background operator'
   expect(segs('echo a <&0; echo b')).toEqual(['echo a', 'echo b'])
 })
 
-// `}` and `)` are operators, so a `&` right behind them ends a segment with no word, and no segment says that a shell went to
-// the background. `done &`, `fi &` and `esac &` have a segment of their own (the closing word). The next segment carries the
-// news: the `&` set `$!`, and `$!` names the shell that runs the list. Two forms are the exception, and `$!` names a command
-// in both: a subshell whose last command is an external simple command (`( a ) &`, `( true; a ) &`), which bash runs in place,
-// and a command that ends in a substitution (`sleep $(a) &`), which is a process. The parser makes no row for either (issue
-// #231, owner decision 2026-10-26).
-test('splitShell flags the segment after a & that ends a group, subshell, arithmetic command or substitution', () => {
-  const after = (cmd: string) =>
-    splitShell(cmd)
-      .filter(s => s.afterBgShell)
-      .map(s => s.words.join(' '))
-  expect(after('{ a; } & b')).toEqual(['b'])
-  expect(after('( a ) & b')).toEqual(['b'])
-  expect(after('(( 1 )) & b')).toEqual(['b'])
+// `}` and `)` are operators, so a `&` right behind them ends a segment with no word. The `&` still sets `$!`, so it makes a segment
+// of its own, with no words and `bg`, in the shell that read it (issue #231). `done &`, `fi &` and `esac &` have a segment of their
+// own (the closing word). `$!` names the shell that runs the list. Two forms are the exception, and `$!` names a command in both: a
+// subshell whose last command is an external simple command (`( a ) &`, `( true; a ) &`), which bash runs in place, and a command
+// that ends in a substitution (`sleep $(a) &`), which is a process. The parser makes no row for either (issue #231, owner decision
+// 2026-10-26). A process substitution sets `$!` too, where it closes (`cat <(a) b`, `exec 3< <(a)`): it makes the same segment.
+test('splitShell makes a segment with no words of a & that ends a group, subshell, arithmetic command or substitution', () => {
+  // `&` stands for the segment with no words.
+  const shape = (cmd: string) => splitShell(cmd).map(s => (s.words.length === 0 ? '&' : s.words.join(' ')))
+  expect(shape('{ a; } & b')).toEqual(['a', '&', 'b'])
+  expect(shape('( a ) & b')).toEqual(['a', '&', 'b'])
+  expect(shape('(( 1 )) & b')).toEqual(['1', '&', 'b'])
+  // Nothing follows the `&`: the segment is there all the same.
+  expect(shape('{ a; } &')).toEqual(['a', '&'])
   // A redirection of the group does not hide the `&`: it has no word of its own.
-  expect(after('{ a; } > f & b')).toEqual(['b'])
-  expect(after('{ a; } 2>&1 & b')).toEqual(['b'])
-  expect(after('( a ) < f & b')).toEqual(['b'])
+  expect(shape('{ a; } > f & b')).toEqual(['a', '&', 'b'])
+  expect(shape('{ a; } 2>&1 & b')).toEqual(['a', '&', 'b'])
+  expect(shape('( a ) < f & b')).toEqual(['a', '&', 'b'])
   // A substitution that cuts a command ends with `)` or a backtick too: the `&` runs the whole command in the background.
-  expect(after('x=$(a) & b')).toEqual(['b'])
-  expect(after('x=`a` & b')).toEqual(['b'])
-  expect(after('echo $(a) & b')).toEqual(['b'])
-  expect(after('cat <(a) & b')).toEqual(['b'])
-  // Each `&` flags the segment after it, and only that one.
-  expect(after('{ a; } & b; c')).toEqual(['b'])
-  expect(after('{ a; } & { b; } & c')).toEqual(['b', 'c'])
-  expect(after('{ { a; } & b; } & c')).toEqual(['b', 'c'])
-  expect(after('{ a & } & b')).toEqual(['b'])
-  expect(after('a | { b; } & c')).toEqual(['c'])
-  expect(after('{ a; } &\nb')).toEqual(['b'])
-  // No flag: a `&` behind a word, behind a loop, an `if` or a `case` (their closing word is a segment), a close with another
-  // operator, a close with no `&` and a stray `&` with nothing before it.
+  expect(shape('x=$(a) & b')).toEqual(['x=', 'a', '&', 'b'])
+  expect(shape('x=`a` & b')).toEqual(['x=', 'a', '&', 'b'])
+  expect(shape('echo $(a) & b')).toEqual(['echo', 'a', '&', 'b'])
+  // A process substitution closes with `)` and sets `$!` there. The `&` behind it sends the command to the background and sets `$!`
+  // there too: the segment of the `&` takes the place of the one before it, the two being one for the shell that reads them.
+  expect(shape('cat <(a) & b')).toEqual(['cat', 'a', '&', 'b'])
+  // Each `&` makes its own segment, in the place where it stands.
+  expect(shape('{ a; } & b; c')).toEqual(['a', '&', 'b', 'c'])
+  expect(shape('{ a; } & { b; } & c')).toEqual(['a', '&', 'b', '&', 'c'])
+  expect(shape('{ { a; } & b; } & c')).toEqual(['a', '&', 'b', '&', 'c'])
+  expect(shape('{ a & } & b')).toEqual(['a', '&', 'b'])
+  expect(shape('a | { b; } & c')).toEqual(['a', 'b', '&', 'c'])
+  expect(shape('{ a; } &\nb')).toEqual(['a', '&', 'b'])
+  // The segment has no word, no mark and no redirection, and `bg`. It runs in the shell of the group, and its `&` was read outside.
+  const [a, mark, b] = splitShell('{ a; } & b')
+  expect(mark).toMatchObject({ words: [], marked: [], whole: [], redir: [], bg: true, readScope: '' })
+  expect(mark!.scope).toBe(a!.scope)
+  expect(b!.bg).toBe(false)
+  // It is no command, so it makes no wrapper by itself: a subshell or a group of subshells that it ends keeps its own scopes.
+  expect(splitShell('( a ) &').map(s => s.scope)).toEqual(['.1', ''])
+  expect(splitShell('( a ) | ( b ) &').map(s => s.scope)).toEqual(['.1', '.2', ''])
+  // No segment: a `&` behind a word, behind a loop, an `if` or a `case` (their closing word is a segment), a close with another
+  // operator, a close with no `&`, a stray `&` with nothing before it, and a substitution with no `&`.
   for (const cmd of [
     'a & b',
     'a &',
-    '{ a; } &',
     '{ a; }; b',
     '{ a; } && b',
     '( a ) || b',
@@ -539,9 +548,28 @@ test('splitShell flags the segment after a & that ends a group, subshell, arithm
     'case x in x) a & ;; esac; b',
     'a $(b) c & d',
     'a; & b',
+    'a $(b) c',
+    'x=$(a); b',
   ])
-    expect({ cmd, flagged: after(cmd) }).toEqual({ cmd, flagged: [] })
-  // The flag adds to `bg`: it takes none away, so `done &` still backgrounds its loop.
+    expect({ cmd, marks: shape(cmd).filter(w => w === '&') }).toEqual({ cmd, marks: [] })
+  // A process substitution makes the segment where it closes, with `&` or not.
+  expect(shape('cat <(a) b')).toEqual(['cat', 'a', '&', 'b'])
+  expect(shape('diff <(a) <(b)')).toEqual(['diff', 'a', '&', 'b', '&'])
+  expect(shape('cat > >(a)')).toEqual(['cat', 'a', '&'])
+  // The one inside a subshell, a substitution or a process substitution is not made: its shell ends there, and none reads it.
+  expect(shape('cat <(cat <(a))')).toEqual(['cat', 'cat', 'a', '&'])
+  expect(shape('x=$(cat <(a))')).toEqual(['x=', 'cat', 'a'])
+  expect(shape('( { a; } & )')).toEqual(['a'])
+  expect(shape('( { a; } & ) | b')).toEqual(['a', 'b'])
+  expect(shape('( a; { b; } & ); c')).toEqual(['a', 'b', 'c'])
+  // A substitution with nothing in it drops none of the segments of the shell around it.
+  expect(shape('{ a; } & $()')).toEqual(['a', '&'])
+  expect(shape('{ a; } & x=$()')).toEqual(['a', '&', 'x='])
+  // A nest of them keeps one, the outer.
+  expect(shape('{ { { a; } & } & } &')).toEqual(['a', '&'])
+  expect(shape('( ( ( a ) & ) & ) &')).toEqual(['a', '&'])
+  // The segment adds to `bg`: it takes none away, so `done &` still backgrounds its loop.
+  expect(shape('for i in 1; do a; done & b')).toEqual(['for i in 1', 'do a', 'done', 'b'])
   expect(splitShell('for i in 1; do a; done & b').map(s => s.bg)).toEqual([false, false, true, false])
 })
 
@@ -633,50 +661,123 @@ test('scopedCopy gives a scope a copy of its nearest parent when it first appear
   expect(of('.9').n).toBe(3)
 })
 
-// A `&` that ends a group sets `$!` in the shell that reads it. A substitution, a backtick pair, a subshell and a part of a
-// pipeline run in a shell of their own, so their `&` leaves the `$!` of the parent alone (bash 5.3.20: after `sleep 5 &`,
-// `x=$({ :; } &)`, `( { :; } & )`, `{ { :; } & } | cat` and `cat | { { :; } & }` all leave `$!` on `sleep 5`). The news waits for
-// the next segment, and a scope that closes with no segment after the `&` used to hand it on to the parent: the `echo $!`
-// behind `x=$({ :; } &)` was flagged, and the parser took the pid line from `sleep 5` (Codex, issue #231).
-test('splitShell keeps the flag of a & that ends a group inside the scope that read it', () => {
-  const after = (cmd: string) =>
+// A scope that holds no state is only on the way to a parent that has one (the wrapper of a subshell has no segment of its own).
+// A wrapper that gets a state of its own later copies the nearest parent that has one at that time, and a scope under such a
+// wrapper then copies the wrapper.
+test('scopedCopy goes through scopes that hold no state, and a scope that gets one later copies the nearest parent', () => {
+  const root = { n: 1 }
+  const of = scopedCopy(root)
+  expect(of('.1.2.3.4.5')).toEqual({ n: 1 })
+  root.n = 2
+  // `.1`, `.1.2`, `.1.2.3` and `.1.2.3.4` were passed with no state. One of them gets its own now: a copy of the root as it is.
+  expect(of('.1.2.3').n).toBe(2)
+  of('.1.2.3').n = 5
+  // A scope under it copies it. A scope under a passed wrapper that holds none copies the root, and the leaf keeps its copy.
+  expect(of('.1.2.3.9').n).toBe(5)
+  expect(of('.1.2.7').n).toBe(2)
+  expect(of('.1.2.3.4.5').n).toBe(1)
+  expect(root.n).toBe(2)
+  // The top level, and a scope right under it.
+  expect(of('')).toBe(root)
+  expect(of('.4').n).toBe(2)
+})
+
+// A leaf under a deep nest used to cost a walk of the whole nest, with a slice and a hash of the scope name at each step: O(d^2) for
+// one leaf, and O(n d^2) for n leaves under the same nest. The walk goes by links now (`parseBashProcesses` has the same shapes).
+const SCOPE_CHAINS: Record<string, (k: number) => string[]> = {
+  'one leaf at the bottom of a deep chain': k => [Array.from({ length: 4_000 * k }, (_, i) => `.${i + 1}`).join('')],
+  'many leaves under a chain': k => {
+    const chain = Array.from({ length: 250 }, (_, i) => `.${i + 1}`).join('')
+    return Array.from({ length: 3_000 * k }, (_, i) => `${chain}.${i + 251}`)
+  },
+}
+for (const [family, make] of Object.entries(SCOPE_CHAINS)) {
+  test(`scopedCopy stays linear on ${family}`, async () => {
+    await expectLinear({
+      label: family,
+      make,
+      run: scopes => {
+        const of = scopedCopy({ n: 0 })
+        for (const scope of scopes) of(scope)
+      },
+    })
+  })
+}
+
+// The segment of a `&` that ends a group sets `$!` in the shell that reads it: `readScope` names that shell. A substitution, a
+// backtick pair, a subshell and a part of a pipeline run in a shell of their own, so a `&` in them leaves the `$!` of the parent
+// alone (bash 5.3.20: after `sleep 5 &`, `x=$({ :; } &)`, `( { :; } & )`, `{ { :; } & } | cat` and `cat | { { :; } & }` all leave
+// `$!` on `sleep 5`). The segment stands where the `&` stands, so no command after it can change who reads it. The earlier build
+// put a flag on the next segment: a pipe sent that segment to a shell of its own, and the flag followed it (`{ :; } & echo hi |
+// cat; echo $!` prints the pid of the group, and the parent kept the job before it; the audit of 74ec61d). A process substitution
+// sets `$!` in the shell that runs its command, so its segment is read there too. A segment behind the last command of a part or a
+// background list sets the `$!` of a shell that ends there: it is dead, and no reader looks at it.
+test('splitShell gives the segment of a & behind a group, and of a process substitution, the shell that read it', () => {
+  // For each segment with no words: `top` when the top shell reads it, `sub` when a shell of its own does.
+  const kinds = (cmd: string) =>
     splitShell(cmd)
-      .filter(s => s.afterBgShell)
-      .map(s => s.words.join(' '))
-  // A substitution, backticks, a subshell (also one in a subshell) and a part of a pipeline: the parent's `echo $!` stays clean.
+      .filter(s => s.words.length === 0)
+      .map(s => (s.readScope === '' ? 'top' : 'sub'))
+  // The shell of the command reads it: in a group, behind `&&`, in an `if` or a loop, and for the `&` that ends a list that runs in
+  // the background (also when the list ends with a pipeline).
   for (const cmd of [
-    'a & x=$({ :; } &); echo $!',
-    'a & x=`{ :; } &`; echo $!',
-    'a & ( { :; } & ); echo $!',
-    'a & ( ( { :; } & ) ); echo $!',
-    'a & x=$( ( : ) & ); echo $!',
-    'a & { { :; } & } | cat; echo $!',
-    'a & cat | { { :; } & }; echo $!',
-    'a & { { :; } & } | { { :; } & }; echo $!',
-    'a & ( { :; } & ) | cat; echo $!',
-    'a & cat | ( { :; } & ); echo $!',
-    // The scope can sit in a part of a pipeline, in a group or behind an operator.
-    'a & x=$({ :; } &) | cat; echo $!',
-    'a & { x=$({ :; } &); }; echo $!',
-    'a & b && x=$({ :; } &); echo $!',
-    'a & cat <({ :; } &) > /dev/null; echo $!', // `$!` is the process substitution's here: a limit that every `<( )` has
+    '{ a; } &',
+    'x && { a; } &',
+    '{ { a; } & }',
+    '{ x; ( a ) & }',
+    'if x; then ( a ) & fi',
+    'for i in 1; do ( a ) & done',
+    'x | { a; } &',
+    'x && y | ( a ) &',
+    'x=$(a) &',
+    'cat <(a)',
+    '{ cat <(a); }',
+    'if x; then cat <(a); fi',
+    'for i in 1; do cat <(a); done',
+    'exec 3< <(a)',
   ])
-    expect({ cmd, flagged: after(cmd) }).toEqual({ cmd, flagged: [] })
-  // The `&` of the scope itself still flags what comes after the scope, and a pipeline that a `&` ends keeps its flag.
-  expect(after('a & x=$(b) & c')).toEqual(['c'])
-  expect(after('a & ( { :; } & ) & c')).toEqual(['c'])
-  expect(after('a & cat | { { :; } & } & c')).toEqual(['c'])
-  expect(after('a & cat | { :; } & c')).toEqual(['c'])
-  // A group in the shell of its parent keeps the flag over the `}`, with or without a pipeline in front of it.
-  expect(after('a & { { :; } & }; c')).toEqual(['c'])
-  expect(after('a & { { :; } & } && c')).toEqual(['c'])
-  expect(after('a & { b | { :; } & }; c')).toEqual(['c'])
-  // A scope starts with the flag of its parent and gives it back at its close: the segment in it and the segment behind it both
-  // see a `$!` that the group set.
-  expect(after('{ :; } & ( b ); c')).toEqual(['b', 'c'])
-  expect(after('{ :; } & x=$(b); c')).toEqual(['x='])
-  // The flag that a scope sets inside stays inside: a segment behind it in the same scope is flagged, the parent's is not.
-  expect(after('a & x=$({ :; } & b); c')).toEqual(['b'])
+    expect({ cmd, kinds: kinds(cmd) }).toEqual({ cmd, kinds: ['top'] })
+  // A shell of its own reads it: a group in a part of a pipeline (the part is a subshell, which the group joins).
+  for (const cmd of [
+    '{ { a; } & b; } | x',
+    'x | { { a; } & b; }',
+    '{ { a; } & } | x',
+    'x | { { a; } & } | y',
+    '{ x; { a; } & } | y',
+    'cat <(a) | x',
+    'x | cat <(a)',
+    '{ cat <(a); } | x',
+  ])
+    expect({ cmd, kinds: kinds(cmd) }).toEqual({ cmd, kinds: ['sub'] })
+  // No segment: a subshell, a substitution and a backtick pair end the shell that the `&` or the substitution set `$!` in, and no
+  // command runs in it after that.
+  for (const cmd of [
+    '( { a; } & )',
+    '( ( a ) & )',
+    'x=$({ a; } &)',
+    'x=`{ a; } &`',
+    'x=$(cat <(a))',
+    'x=`cat <(a)`',
+    '( cat <(a) )',
+    '( { a; } & ) | x',
+    'x | ( { a; } & )',
+  ])
+    expect({ cmd, kinds: kinds(cmd) }).toEqual({ cmd, kinds: [] })
+  // A `&` that sends the group to the background: the `&` behind the group is read outside, and a nest of them keeps one.
+  expect(kinds('{ { a; } & } &')).toEqual(['top'])
+  expect(kinds('( { a; } & ) &')).toEqual(['top'])
+  expect(kinds('cat <(a) &')).toEqual(['top'])
+  expect(kinds('{ { { a; } & } & } &')).toEqual(['top'])
+  // A command behind the inner `&` in the same group reads the `$!` that it set (`{ { :; } & echo $!; } &` prints the pid of the
+  // inner group), so both stay, and the inner one is read by the shell of the outer group.
+  expect(kinds('{ { a; } & b; } &')).toEqual(['sub', 'top'])
+  // Each part of a pipeline is a shell, so two segments in two parts have two readers.
+  expect(kinds('{ a; } & { b; } | { { c; } & }')).toEqual(['top', 'sub'])
+  // A segment with words keeps its rule: it reads in the scope it runs in, or, with `&`, in the shell that read the `&`. A `&`
+  // that has no command and no close before it (`a && &`, bash calls it an error) ends no segment, so `a` is no job of it.
+  for (const cmd of ['{ a; } & b | c', 'x=$(a) & b', 'cat <(a) & b', 'a && &', 'a | &'])
+    for (const s of splitShell(cmd).filter(s => s.words.length > 0 && !s.bg))
+      expect({ cmd, seg: s.words, reads: s.readScope }).toEqual({ cmd, seg: s.words, reads: s.scope })
 })
 
 // A case pattern is never a command (issue #163). Its words stand in no segment, so `cd)` moves no folder and `if)`,
@@ -1225,11 +1326,14 @@ test('splitShell reads a substitution in a heredoc tag up to the cap, and none p
 // command. `$`: it runs inside `$(...)`, backticks or `<(...)`, so the shell takes its output. A segment with
 // none of the three prints to the tool result. The readers that pair an output line with a command (`docker run -d` and its
 // container id) read the marks.
+// A segment with no words is no command (it says where `$!` was set), so it prints nothing and has no mark to read.
 const outMarks = (cmd: string) =>
-  splitShell(cmd).map(
-    s =>
-      `${s.words.join(' ')}${s.stdoutRedirected ? ' >' : ''}${s.stdoutPiped ? ' |' : ''}${s.substituted ? ' $' : ''}`,
-  )
+  splitShell(cmd)
+    .filter(s => s.words.length > 0)
+    .map(
+      s =>
+        `${s.words.join(' ')}${s.stdoutRedirected ? ' >' : ''}${s.stdoutPiped ? ' |' : ''}${s.substituted ? ' $' : ''}`,
+    )
 
 test('splitShell marks a typed redirection of the standard output', () => {
   for (const redir of [
@@ -1837,6 +1941,15 @@ test('splitShell marks a segment inside a command substitution, backticks or a p
   // A pipe or a redirection inside the substitution marks its own segments too.
   expect(outMarks('x=$(a | b)')).toEqual(['x=', 'a | $', 'b $'])
   expect(outMarks('x=$(a > f)')).toEqual(['x=', 'a > $'])
+})
+
+// A subshell drops the segment of no words at its end (`Segment.bg`). A pipe or a redirection of a group inside it that ended behind
+// that segment now ends at the new end, so the command after the subshell is no part of it: `( cat <(a) | > f ); b` and
+// `( { cat <(a); } > f ); b` print `b` where the shell prints, and a run in `b` keeps its id.
+test('splitShell ends a pipe or a redirection at the new end of a subshell that dropped a segment with no words', () => {
+  expect(outMarks('( cat <(a) | > f ); b')).toEqual(['cat |', 'a | $', 'b'])
+  expect(outMarks('( { cat <(a); } > f ); b')).toEqual(['cat >', 'a > $', 'b'])
+  expect(outMarks('x=$( cat <(a) | > f ); b')).toEqual(['x=', 'cat | $', 'a | $', 'b'])
 })
 
 // One named rule for the three marks, so a reader cannot read two of them and bring the bug of #231 back unseen.

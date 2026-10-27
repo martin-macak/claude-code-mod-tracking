@@ -423,7 +423,9 @@ export function parseBashProcesses(
   // any `&` it prints an empty line, and `setsid -f` forks on its own and sets no `$!`. A subshell, a substitution, backticks and a
   // part of a pipeline are shells of their own: they start with the `$!` of their parent and set none of it (`sleep 100 & ( coproc
   // sleep 101 ); echo $!` prints the pid of `sleep 100`). A `&` sets the `$!` of the shell that read it (`Segment.readScope`),
-  // and the segment itself runs in a background shell of its own (`Segment.scope`).
+  // and the segment itself runs in a background shell of its own (`Segment.scope`). A segment with no words does the same for a
+  // group, a subshell or a substitution that a `&` sent to the background, and for a process substitution that closed: it
+  // stands where bash set `$!`, so nothing that follows it can move that to another shell.
   const bang = scopedCopy<{ last: Detached | undefined; saw: boolean }>({ last: undefined, saw: false })
   // `export` stays global on purpose: a subshell scope is not tracked for env, only for the directory. The shell variables
   // below follow the scope of the directory, so a variable set in a background list (`D=/x & srv $D/a.js &`) does not
@@ -444,14 +446,6 @@ export function parseBashProcesses(
   for (const seg of splitShell(command)) {
     const shell = bang(seg.scope) // `$!` where the segment runs
     const reader = bang(seg.readScope) // `$!` where its `&` is read, and a job is set (the same as `shell` with no `&`)
-    // A `&` ended a group, subshell or substitution right before this segment (`{ a; } & echo $!`). Like `done &`, that sends a
-    // shell to the background: `$!` names it, and no row has its pid, so no job before it may take the next pid line. For
-    // `sleep $(a) &`, `( sleep 3 ) &` and `( true; sleep 3 ) &` `$!` names the command itself, which has no row either (a limit):
-    // the earlier job must still not take it.
-    if (seg.afterBgShell) {
-      shell.last = NO_ROW
-      shell.saw = true
-    }
     const jobBefore = shell.saw
     if (seg.bg) reader.saw = true
     // The marked words tell `'$F'` and `\$F` (as typed) from `$F` and `"$F"` (expanded). Only the variables read them.
@@ -467,7 +461,10 @@ export function parseBashProcesses(
     if (words.length === 0) {
       // A line of assignments only (`L=/x`) sets shell variables. `L=/x cmd` sets them for `cmd` alone.
       if (pre.words.length === 0) for (const [k, v] of Object.entries(pre.env)) setVar(k, v, seg.scope)
-      // `done &` backgrounds the whole loop: `$!` is then the pid of the loop shell, not of an earlier background command.
+      // `done &` backgrounds the whole loop: `$!` is then the pid of the loop shell, not of an earlier background command. A
+      // segment with no words at all is the same: a `&` ended a group, a subshell or a substitution (`{ a; } &`, `x=$(a) &`,
+      // `sleep $(a) &`, `( sleep 3 ) &`), or a process substitution closed (`cat <(a)`). `$!` names a shell or a process that has no
+      // row, so no job before it may take the next pid line. It is set in the shell that read the `&`, where the segment stands.
       if (seg.bg) reader.last = NO_ROW
       continue
     }

@@ -13,6 +13,7 @@ import {
   MONITOR_EXPIRY_NOTICE,
   MONITOR_STREAM_ENDED_NOTICE,
 } from './fixtures/notices'
+import { expectLinear } from './fixtures/scaling'
 
 test('parseBashProcesses tracks background Bash and Monitor-style task ids', () => {
   const rows = parseBashProcesses(
@@ -1733,6 +1734,104 @@ test('scope: a scope reads the pid line of its parent when it opens and gives it
   expect(rows('( coproc sleep 101 ); echo $!; sleep 102 & echo $!', '\n4243\n')).toEqual([['sleep 102', 4243]])
 })
 
+// A `&` behind a group, a subshell or a substitution sets `$!` in the shell that read it, and no command that follows can move that
+// (bash 5.3.20: `{ :; } & echo hi | cat; echo $!` prints the pid of the group). The flag of the earlier build sat on the next
+// segment, which a pipe or a `&` sends to a shell of its own: its `echo` ran in a pipeline part, the shell around kept the job
+// before it, and `sleep 100` took the pid of the group (the audit of 74ec61d). The `&` is a segment of its own now.
+test('scope: a & behind a group sets $! in the shell that read it, whatever command follows', () => {
+  const pid100 = (cmd: string, stdout: string) =>
+    detachedOf(`sleep 100 & ${cmd}`, undefined, stdout).find(r => r.name === 'sleep 100')?.pid
+  for (const [cmd, stdout] of [
+    // The next command is the first part of a pipeline, or a group that holds one.
+    ['{ :; } & echo hi | cat; echo $!', 'hi\n4243\n'],
+    ['( : ) & { coproc sleep 101; } | cat; echo $!', '4243\n'],
+    ['( : ) & cat | { echo $!; }; echo $!', '4243\n4243\n'],
+    ['{ :; } & { ( : ) & echo hi; } | cat; echo $!', 'hi\n4243\n'],
+    ['{ :; } & ( echo hi ) | cat; echo $!', 'hi\n4243\n'],
+    ['{ :; } & { :; } & echo hi | cat; echo $!', 'hi\n4243\n'],
+    // The next command is a job: its `echo $!` is its own, and the echo behind it names the shell of that job.
+    ['{ :; } & echo $! & echo $!', '4243\n4244\n'],
+    // The same, with a substitution or a subshell in front of the `&`.
+    ['x=$(:) & echo hi | cat; echo $!', 'hi\n4243\n'],
+    ['( : ) & echo hi | cat; echo $!', 'hi\n4243\n'],
+    // A group that a `&` sends to the background: the `&` inside it is read by its shell, and the echo behind it prints that line.
+    ['{ { :; } & echo $!; } & echo $!', '4243\n4244\n'],
+    ['{ { :; } & } & echo $!', '4243\n'],
+    ['( { :; } & ) & echo $!', '4243\n'],
+    // A substitution with nothing in it ends a shell with no segment, and takes none of the shell around it.
+    ['{ :; } & $(); echo $!', '4243\n'],
+    ['{ :; } & x=$(); echo $!', '4243\n'],
+  ] as const)
+    expect({ cmd, pid: pid100(cmd, stdout) }).toEqual({ cmd, pid: undefined })
+  // With no job before it the echo still counts: the count of echoes and of lines stay equal, and the job after takes its own.
+  expect(
+    detachedOf('{ :; } & echo hi | cat; echo $!; sleep 103 & echo $!', undefined, 'hi\n4242\n4243\n').map(r => [
+      r.name,
+      r.pid,
+    ]),
+  ).toEqual([['sleep 103', 4243]])
+  // The `&` of a group that a scope holds is read by the scope, whatever follows in it.
+  expect(pid100('x=$( { :; } & echo hi | cat ); echo $!', '4242\n')).toBe(4242)
+  expect(pid100('( { :; } & echo hi | cat ); echo $!', '4242\n')).toBe(4242)
+})
+
+// A process substitution sets `$!` in the shell that runs the command around it, whatever it holds (bash 5.3.20: `cat <(echo hi) >
+// /dev/null; echo $!` prints the pid of the substitution, and `exec 3< <(a)` leaves it in `$!`). The commands in it run in a shell
+// of their own, and set no `$!` above. The scopes had read a job or a coprocess in it as isolated, and `sleep 100` took the line
+// of `cat <(coproc sleep 101) > /dev/null` (the audit of 74ec61d). The same substitution in a subshell, a substitution or a part of a
+// pipeline reaches that shell only.
+test('scope: a process substitution sets $! in the shell that runs its command', () => {
+  const rows = (cmd: string, stdout = '4242\n') =>
+    detachedOf(`sleep 100 & ${cmd} echo $!`, undefined, stdout).map(r => [r.name, r.pid])
+  const pid100 = (cmd: string) => rows(cmd).find(r => r[0] === 'sleep 100')?.[1]
+  for (const own of [
+    'cat <(echo hi) > /dev/null;',
+    'cat <(echo hi) <(echo ho) > /dev/null;',
+    'cat <(cat <(echo hi)) > /dev/null;',
+    ': >(cat > /dev/null);',
+    'exec 3< <(:);',
+    // A job, a coprocess or a flagged group inside: the substitution sets `$!` all the same.
+    'cat <(coproc sleep 101) > /dev/null;',
+    'cat <( sleep 101 & ) > /dev/null;',
+    'cat <( { :; } & echo hi ) > /dev/null;',
+    'cat <( ( : ) & echo hi ) > /dev/null;',
+    'cat <( for i in 1; do :; done & ) > /dev/null;',
+    ': >( sleep 101 & );',
+    // A group, an `if` and a loop are the shell of the command.
+    '{ cat <(:) > /dev/null; };',
+    'if :; then cat <(:) > /dev/null; fi;',
+    'for i in 1; do cat <(:) > /dev/null; done;',
+  ])
+    expect({ own, pid: pid100(own) }).toEqual({ own, pid: undefined })
+  // A subshell, a substitution, backticks and a part of a pipeline are shells of their own: the `$!` of the shell around stays.
+  for (const inner of [
+    'x=$(cat <(echo hi));',
+    'x=`cat <(echo hi)`;',
+    '( cat <(echo hi) > /dev/null );',
+    'cat <(:) | cat;',
+    'cat | cat <(:) > /dev/null;',
+    '{ cat <(:) > /dev/null; } | cat;',
+    'x=$(cat <( sleep 101 & ));',
+  ])
+    expect({ inner, pid: pid100(inner) }).toEqual({ inner, pid: 4242 })
+  // The echo of its line counts, with no job before it: the job after takes its own line, not the line of the substitution.
+  expect(
+    detachedOf('cat <(:) > /dev/null; echo $!; sleep 102 & echo $!', undefined, '4242\n4243\n').map(r => [
+      r.name,
+      r.pid,
+    ]),
+  ).toEqual([['sleep 102', 4243]])
+  expect(
+    detachedOf('exec 3< <(:); echo $!; sleep 102 & echo $!', undefined, '4242\n4243\n').map(r => [r.name, r.pid]),
+  ).toEqual([['sleep 102', 4243]])
+  // A substitution inside a background list sets the `$!` of that list's shell: the `&` of the list reads its own.
+  expect(pid100('cat <(:) &')).toBeUndefined()
+  // Limit, pinned: `cat < <(a)` runs the substitution in the child of an external command, and bash keeps the `$!` of the shell
+  // (`sleep 5 & cat < <(echo hi); echo $!` prints the pid of `sleep 5`). The parser reads it as one that sets `$!`: the earlier job
+  // gets no pid, the safe side. A builtin or a compound runs the redirection in the shell (`exec 3< <(a)`, `done < <(a)`).
+  expect(pid100('cat < <(echo hi);')).toBeUndefined()
+})
+
 // `echo $! &` prints the pid of the job before it, so it does not clear that job.
 test('builtin: a backgrounded echo $! after a background job still gives it its pid', () => {
   const [row] = detachedOf('sleep 100 & echo $! & echo $!', undefined, '4242\n4243\n')
@@ -2187,3 +2286,33 @@ test('parseBashProcesses reads the lines after an arithmetic shift', () => {
   // A heredoc next to it still hides its body.
   expect(project('x=$((1<<2))\ncat <<EOF\ncd /y\nEOF\ncd /x\ndocker compose up -d')).toBe('x')
 })
+
+// The `$!` of each shell is kept per scope, and a scope with no segment of its own (the wrapper of a subshell) holds none. A scope
+// that first appears finds the state of its nearest parent that has one. That walk read each wrapper again at every leaf, with a
+// slice and a hash of the whole scope name at each step, so a nest of d subshells with n leaves cost O(n d^2) (a 17 KB command of
+// 1000 subshells in 1000 subshells took 2.4 s, the audit of 74ec61d). The walk goes by links now, once for each name: the same
+// 17 KB command takes about 50 ms. The names of the scopes still have the length of the nest, so n leaves in a nest of d cost O(n d) to
+// read, which no ratio of two sizes can show. The families below keep d fixed when the leaves grow, and the nest alone when d grows.
+const SCOPE_FAMILIES: Record<string, (k: number) => string> = {
+  // One leaf at the bottom of a nest that grows: the first walk goes up the whole nest once.
+  'a deep nest of subshells': k => `${'( '.repeat(4_000 * k)}sleep 1; echo $!${' )'.repeat(4_000 * k)}`,
+  // Many leaves under a nest of fixed depth. The old walk cut and hashed the whole name of the nest at each step, for every leaf.
+  // That cost grows with the leaves at a fixed depth, so a ratio of two sizes stays flat, and the CPU ceiling of `expectLinear`
+  // is the check that sees it (6.5 s of CPU on the old walk, a few ms now).
+  'a list of subshells under a nest': k => `${'( '.repeat(250)}${'( sleep 1 ); '.repeat(3_000 * k)}${' )'.repeat(250)}`,
+  // A `&` behind a close makes a segment of its own. A nest of them must not read or move the segments of each inner list at each
+  // level: the one inside a subshell is not made, and the one of a group takes the place of the one before it.
+  'a nest of backgrounded subshells': k => `${'( '.repeat(1_000 * k)}a${' ) &'.repeat(1_000 * k)}`,
+  'a nest of backgrounded groups': k => `${'{ '.repeat(1_000 * k)}a;${' } &'.repeat(1_000 * k)}`,
+  // A process substitution makes a segment where it closes.
+  'a list of process substitutions': k => `cat ${'<(a) '.repeat(4_000 * k)}> /dev/null; echo $!`,
+}
+for (const [family, make] of Object.entries(SCOPE_FAMILIES)) {
+  test(`parseBashProcesses stays linear on ${family}`, async () => {
+    await expectLinear({
+      label: family,
+      make,
+      run: text => void parseBashProcesses(text, { result: { stdout: '4242\n' } }, { at: 1 }),
+    })
+  })
+}
