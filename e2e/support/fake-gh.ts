@@ -22,12 +22,19 @@ export type FakePr = {
   isDraft?: boolean
 }
 
-export type FakeGhSpec = {
+/** One repo that the fake answers for: its name, its default branch and its PRs. */
+export type FakeGhRepo = {
   owner: string
   repo: string
   defaultBranch: string
   prs: readonly FakePr[]
 }
+
+/**
+ * What the fake answers. The spec is the repo of the session (`repo view` names it), and `others` adds more repos that the
+ * discovery and the refresh answer for (issue #195: a PR on a branch of a second repo). A repo in neither is not found.
+ */
+export type FakeGhSpec = FakeGhRepo & { others?: readonly FakeGhRepo[] }
 
 /** What one call gets. `call` names the kind of call for the log: `unsupported` for one the fake does not answer. */
 export type FakeGhResult = { exitCode: number; stdout: string; stderr: string; call: string }
@@ -48,6 +55,26 @@ export function fakeGhSpec(ownerRepo: string, defaultBranch: string, prs: readon
   return { ...parseOwnerRepo(ownerRepo), defaultBranch, prs }
 }
 
+/** The spec with one more repo, or with `prs` added to it when the fake answers for that repo already. */
+export function withRepo(
+  spec: FakeGhSpec,
+  ownerRepo: string,
+  defaultBranch: string,
+  prs: readonly FakePr[],
+): FakeGhSpec {
+  const named = parseOwnerRepo(ownerRepo)
+  const same = (r: FakeGhRepo) => r.owner === named.owner && r.repo === named.repo
+  if (same(spec)) return { ...spec, prs: [...spec.prs, ...prs] }
+  const others = spec.others ?? []
+  const known = others.find(same)
+  return {
+    ...spec,
+    others: known
+      ? others.map(r => (r === known ? { ...r, prs: [...r.prs, ...prs] } : r))
+      : [...others, { ...named, defaultBranch, prs }],
+  }
+}
+
 const ok = (call: string, stdout: string): FakeGhResult => ({ exitCode: 0, stdout, stderr: '', call })
 
 const unsupported = (argv: readonly string[]): FakeGhResult => ({
@@ -57,11 +84,11 @@ const unsupported = (argv: readonly string[]): FakeGhResult => ({
   call: 'unsupported',
 })
 
-const prUrl = (spec: FakeGhSpec, number: number): string =>
+const prUrl = (spec: FakeGhRepo, number: number): string =>
   `https://github.com/${spec.owner}/${spec.repo}/pull/${number}`
 
 /** The PR as the `pr` fragment of discovery and the refresh query read it. */
-function node(spec: FakeGhSpec, pr: FakePr) {
+function node(spec: FakeGhRepo, pr: FakePr) {
   return {
     number: pr.number,
     title: pr.title,
@@ -92,7 +119,9 @@ const ITEM_ALIAS = new RegExp(
   'g',
 )
 
-const isHere = (spec: FakeGhSpec, owner: string, repo: string): boolean => owner === spec.owner && repo === spec.repo
+/** The repo the fake answers for under this owner and name, the session repo first. undefined: the fake does not know it. */
+const repoOf = (spec: FakeGhSpec, owner: string, repo: string): FakeGhRepo | undefined =>
+  [spec, ...(spec.others ?? [])].find(r => r.owner === owner && r.repo === repo)
 
 const notFound = (path: string[], what: string) => ({
   type: 'NOT_FOUND',
@@ -115,27 +144,28 @@ function discovery(query: string, spec: FakeGhSpec): FakeGhResult {
   const m = REPOSITORY.exec(query)
   const owner: string = JSON.parse(m?.[1] ?? '""')
   const repo: string = JSON.parse(m?.[2] ?? '""')
-  if (!isHere(spec, owner, repo))
+  const here = repoOf(spec, owner, repo)
+  if (!here)
     return reply('graphql discovery', { repository: null }, [
       notFound(['repository'], `a Repository with the name '${owner}/${repo}'`),
     ])
-  const repository: Record<string, unknown> = { defaultBranchRef: { name: spec.defaultBranch } }
+  const repository: Record<string, unknown> = { defaultBranchRef: { name: here.defaultBranch } }
   for (const [, alias, quoted] of query.matchAll(HEAD_ALIAS)) {
     const branch: string = JSON.parse(quoted ?? '""')
-    repository[alias ?? ''] = { nodes: spec.prs.filter(p => p.headRefName === branch).map(p => node(spec, p)) }
+    repository[alias ?? ''] = { nodes: here.prs.filter(p => p.headRefName === branch).map(p => node(here, p)) }
   }
   for (const [, alias, quoted] of query.matchAll(BASE_ALIAS)) {
     const branch: string = JSON.parse(quoted ?? '""')
     repository[alias ?? ''] = {
-      nodes: spec.prs.filter(p => p.baseRefName === branch && (p.state ?? 'OPEN') === 'OPEN').map(p => node(spec, p)),
+      nodes: here.prs.filter(p => p.baseRefName === branch && (p.state ?? 'OPEN') === 'OPEN').map(p => node(here, p)),
     }
   }
   // A created PR is asked by number, of any state. A number that is not there is `null` with a NOT_FOUND on its alias,
   // which the lane reads as a PR that is gone.
   const errors: unknown[] = []
   for (const [, alias = '', number] of query.matchAll(CREATED_ALIAS)) {
-    const pr = spec.prs.find(p => p.number === Number(number))
-    repository[alias] = pr ? node(spec, pr) : null
+    const pr = here.prs.find(p => p.number === Number(number))
+    repository[alias] = pr ? node(here, pr) : null
     if (!pr) errors.push(notFound(['repository', alias], `a PullRequest with the number of ${number}`))
   }
   return reply('graphql discovery', { repository }, errors)
@@ -147,13 +177,14 @@ function refresh(query: string, spec: FakeGhSpec): FakeGhResult {
   for (const [, alias = '', quotedOwner, quotedRepo, number] of query.matchAll(ITEM_ALIAS)) {
     const owner: string = JSON.parse(quotedOwner ?? '""')
     const repo: string = JSON.parse(quotedRepo ?? '""')
-    if (!isHere(spec, owner, repo)) {
+    const here = repoOf(spec, owner, repo)
+    if (!here) {
       data[alias] = null
       errors.push(notFound([alias], `a Repository with the name '${owner}/${repo}'`))
       continue
     }
-    const pr = spec.prs.find(p => p.number === Number(number))
-    data[alias] = { issueOrPullRequest: pr ? { __typename: 'PullRequest', ...node(spec, pr) } : null }
+    const pr = here.prs.find(p => p.number === Number(number))
+    data[alias] = { issueOrPullRequest: pr ? { __typename: 'PullRequest', ...node(here, pr) } : null }
   }
   return reply('graphql refresh', data, errors)
 }

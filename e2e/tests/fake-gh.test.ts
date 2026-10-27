@@ -12,6 +12,7 @@ import {
   fakeGhSpec,
   isQuiet,
   parseOwnerRepo,
+  withRepo,
 } from '../support/fake-gh.ts'
 import { FAKE_GH_DIR, fakeGhEnv } from '../support/fake-gh-env.ts'
 
@@ -207,6 +208,64 @@ test('a refresh query for a repo the fake does not stand for is a NOT_FOUND on i
 test('a refresh query for a number the fake does not know gets null, as GitHub says for a missing item', () => {
   const reply = body(answer(graphql(refresh('e2e-owner', 'e2e-repo', 99)), SPEC).stdout)
   assert.equal(reply.data.a0.issueOrPullRequest, null)
+})
+
+// Issue #195: the PR lane asks a second repo for the branches that the session proved there. The fake answers the repos of
+// `others` as it answers the session repo, each from its own PRs, and `repo view` still names the session repo.
+const SECOND_PR: FakePr = {
+  number: 9,
+  title: 'A teammate PR',
+  headRefName: 'feat/second',
+  baseRefName: 'main',
+  mergeable: 'MERGEABLE',
+  mergeStateStatus: 'CLEAN',
+}
+const TWO: FakeGhSpec = withRepo(SPEC, 'e2e-owner/second', 'trunk', [SECOND_PR])
+
+test('withRepo adds a repo to others, adds PRs to a repo it has, and leaves the session repo first', () => {
+  assert.deepEqual(TWO.others, [{ owner: 'e2e-owner', repo: 'second', defaultBranch: 'trunk', prs: [SECOND_PR] }])
+  assert.equal(TWO.repo, 'e2e-repo')
+  const more: FakePr = { ...SECOND_PR, number: 10, headRefName: 'feat/more' }
+  assert.deepEqual(withRepo(TWO, 'e2e-owner/second', 'ignored', [more]).others?.[0]?.prs, [SECOND_PR, more])
+  assert.deepEqual(withRepo(TWO, 'e2e-owner/e2e-repo', 'ignored', [more]).prs, [PR, more])
+  assert.equal(withRepo(TWO, 'e2e-owner/e2e-repo', 'ignored', [more]).others?.length, 1)
+  assert.throws(() => withRepo(SPEC, 'no-slash', 'main', []), /owner\/repo/)
+})
+
+test('a discovery query of a second repo gets its own PR and its own default branch, and not the PRs of the session repo', () => {
+  const r = answer(graphql(discovery('e2e-owner', 'second', 'feat/second')), TWO)
+  assert.equal(r.exitCode, 0)
+  assert.equal(r.call, 'graphql discovery')
+  const { repository } = body(r.stdout).data
+  assert.equal(repository.defaultBranchRef.name, 'trunk')
+  assert.deepEqual(
+    repository.h0.nodes.map((n: { number: number; url: string }) => [n.number, n.url]),
+    [[9, 'https://github.com/e2e-owner/second/pull/9']],
+  )
+  // The session repo still answers its own PR, and the branch of the second repo finds nothing there.
+  const own = body(answer(graphql(discovery('e2e-owner', 'e2e-repo', 'feat/fake-conflict')), TWO).stdout).data
+  assert.deepEqual(
+    own.repository.h0.nodes.map((n: { number: number }) => n.number),
+    [7],
+  )
+  const none = body(answer(graphql(discovery('e2e-owner', 'e2e-repo', 'feat/second')), TWO).stdout).data
+  assert.deepEqual(none.repository.h0.nodes, [])
+})
+
+test('a refresh query of a PR in a second repo gets that PR, and a repo of neither is a NOT_FOUND on its alias', () => {
+  const r = answer(graphql(refresh('e2e-owner', 'second', 9)), TWO)
+  assert.equal(r.exitCode, 0)
+  const node = body(r.stdout).data.a0.issueOrPullRequest
+  assert.deepEqual([node.number, node.title, node.mergeable], [9, 'A teammate PR', 'MERGEABLE'])
+  assert.equal(node.url, 'https://github.com/e2e-owner/second/pull/9')
+  const gone = answer(graphql(refresh('e2e-owner', 'third', 9)), TWO)
+  assert.equal(gone.exitCode, 1)
+  assert.deepEqual(body(gone.stdout).errors[0].path, ['a0'])
+})
+
+test('repo view names the session repo, whatever other repos the fake answers for', () => {
+  const r = answer(['repo', 'view', '--json', 'nameWithOwner,url'], TWO)
+  assert.equal(body(r.stdout).nameWithOwner, 'e2e-owner/e2e-repo')
 })
 
 test('any other call is unsupported: exit 1, a message, and a name for the log', () => {

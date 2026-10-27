@@ -27,10 +27,10 @@ const SPEC = { owner: REPO.owner, repo: REPO.repo, defaultBranch: 'main', prs: [
 const pick = (object, expected) => Object.fromEntries(Object.keys(expected).map(key => [key, object[key]]))
 
 /** A GhTool whose runner is the fake. `kinds` lists the name of the fake's answer to each call, in order. */
-function rig() {
+function rig(spec = SPEC) {
   const kinds = []
   const run = async argv => {
-    const r = answer(argv.slice(1), SPEC) // argv[0] is "gh"
+    const r = answer(argv.slice(1), spec) // argv[0] is "gh"
     kinds.push(r.call)
     return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr }
   }
@@ -147,4 +147,67 @@ test('the fake gh answers a discovery query for another repo as not found, so th
   assert.equal(out.ok, true)
   assert.deepEqual(out.prs, [])
   assert.equal(out.complete, false)
+})
+
+// Issue #195: a second repo that the session proved a branch in. The fake answers it from `others`, in the one query per repo
+// that the lane sends, and the item refresh of its PR finds it.
+const SECOND = { host: 'github.com', owner: 'e2e-owner', repo: 'second' }
+const SECOND_PR = {
+  number: 9,
+  title: 'A teammate PR',
+  headRefName: 'feat/second',
+  baseRefName: 'main',
+  mergeable: 'MERGEABLE',
+  mergeStateStatus: 'CLEAN',
+}
+const TWO = { ...SPEC, others: [{ owner: SECOND.owner, repo: SECOND.repo, defaultBranch: 'trunk', prs: [SECOND_PR] }] }
+const foreignOf = branches => [{ ...SECOND, branches }]
+
+test('the fake gh answers the branch query of a second repo, and the lane lists its PR as a PR of another repo (issue #195)', async () => {
+  const { tool, kinds } = rig(TWO)
+  await tool.probe()
+  const out = await discoverPrs(tool, REPO, ['feat/fake-conflict'], NOW, undefined, undefined, {
+    foreign: foreignOf(['feat/second']),
+  })
+
+  assert.equal(out.ok, true)
+  assert.equal(out.complete, true)
+  assert.equal('heldRepos' in out, false)
+  assert.deepEqual(
+    out.prs.map(p => [p.owner, p.repo, p.number, p.by, p.otherRepo, p.mergeable]),
+    [
+      ['e2e-owner', 'e2e-repo', 7, 'head', undefined, 'CONFLICTING'],
+      ['e2e-owner', 'second', 9, 'head', true, 'MERGEABLE'],
+    ],
+  )
+  assert.equal(out.prs[1].url, 'https://github.com/e2e-owner/second/pull/9')
+  // The default branch that the second repo names is learned, so its branch alias is never asked for it.
+  assert.deepEqual(out.foreignDefaults, { 'github.com/e2e-owner/second': 'trunk' })
+  assert.deepEqual(kinds, ['--version', 'graphql discovery', 'graphql discovery'])
+})
+
+test('a second repo that the fake does not stand for is held, silently, and the session repo stays complete', async () => {
+  const { tool } = rig(SPEC)
+  await tool.probe()
+  const out = await discoverPrs(tool, REPO, ['feat/fake-conflict'], NOW, undefined, undefined, {
+    foreign: foreignOf(['feat/second']),
+  })
+  assert.equal(out.ok, true)
+  assert.equal(out.complete, true)
+  assert.deepEqual(out.heldRepos, ['github.com/e2e-owner/second'])
+  assert.deepEqual(
+    out.prs.map(p => p.number),
+    [7],
+  )
+})
+
+test('the fake gh answers the refresh query of a PR in a second repo', async () => {
+  const { tool, kinds } = rig(TWO)
+  await tool.probe()
+  const pr = target(SECOND.owner, SECOND.repo, 9)
+  await tool.refreshItems([pr])
+  assert.equal(pr.error, undefined)
+  const expected = { type: 'pr', state: 'open', mergeable: 'MERGEABLE' }
+  assert.deepEqual(pick(pr, expected), expected)
+  assert.deepEqual(kinds, ['--version', 'graphql refresh'])
 })

@@ -37,6 +37,21 @@ Given(
   },
 )
 
+// Issue #195. The model reads the README of the second repo (`a second fake GitHub repo ...`) with the Read tool, and then
+// says "Read.". The session did not start there, so the repos tracker sees a repo that it did not start in. The session
+// needs the tool: `and the tools "Read"`. Put the step after the one that makes the second repo.
+Given('a fake model that reads the README of the second repo', async function (this: DemoWorld) {
+  const readme = this.foreignRepo?.readme
+  if (readme === undefined) throw new Error('fake model: start with the step "a second fake GitHub repo ..."')
+  await this.startFakeApi([
+    [
+      { type: 'text', text: 'I will read it.' },
+      { type: 'tool_use', id: 'toolu_e2e_read', name: 'Read', input: { file_path: readme } },
+    ],
+    [{ type: 'text', text: 'Read.' }],
+  ])
+})
+
 // What the engine told the model about the tool: the answer of the dialog, as the model reads it. It proves the round trip
 // of the dialog ran in the real session, and that the mod, which only listens, changed nothing in it.
 Then('the fake model was told {string}', async function (this: DemoWorld, text: string) {

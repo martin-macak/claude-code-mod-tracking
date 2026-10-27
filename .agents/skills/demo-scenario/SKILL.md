@@ -52,6 +52,10 @@ Make the README demo GIF from a Gherkin scenario that also runs as an E2E test.
 | `Then the fake gh answered no unsupported call` | Fails when the fake got no call, or one it does not know. |
 | `Then the fake origin got no push` | Fails when a ref of the local copy of the origin changed. Use it after a step that makes the session act on its own. |
 | `Given a fake model that asks "q" under the header "h" with the options "a" and "b"` | Hidden. The model of the session is a script (`e2e/support/fake-api.ts`): Claude asks that one question with `AskUserQuestion`, then says `Noted.`. The session runs in a config folder of its own, with a fake token, so it needs no login. Put it before the step that starts the session. Not for `@demo`. |
+| `Given a second fake GitHub repo "owner/repo" on the branch "…"` | Hidden. Makes a second repo under `$HOME/.cache/cc-demo` on a feature branch, with a GitHub `origin` and a local copy for pushes, and adds it to the fake gh. After the step for the first repo, before the session step. Not for `@demo`. |
+| `Given the fake gh reports PR #N "title" in "owner/repo" from "head" into "base" as MERGEABLE` | Hidden. Adds a PR to the second repo of the fake. |
+| `Given a fake model that reads the README of the second repo` | Hidden. The model is a script that calls `Read` on that README, then says `Read.`. The session step needs `and the tools "Read"`. |
+| `Then the fake gh answered a discovery of "owner/repo"` | Polls the fake's log for the discovery query of that repo. |
 | `Then the fake model was told "text"` | Polls what the engine told the model about its tools, for example the answer of a dialog. Shows that the dialog of the real session ran. |
 
 ## Loop

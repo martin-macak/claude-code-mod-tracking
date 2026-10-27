@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CLONE_NAME } from './config.ts'
 import { parseOwnerRepo } from './fake-gh.ts'
@@ -93,18 +93,25 @@ export async function waitForTurnEnd(
   await waitUntil(() => (countLines(signalFile) > before ? true : undefined), { timeoutMs, what: 'turn end', last })
 }
 
+/** Runs git in `cwd` and gives its trimmed output. Each `config` entry is a `-c` option: a commit needs an author. */
+function gitIn(cwd: string, args: readonly string[], config: readonly string[] = []): string {
+  return execFileSync('git', [...config.flatMap(c => ['-c', c]), ...args], {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim()
+}
+
 // A fresh clone at a neutral path: no home path on screen, same origin, branch main at our HEAD.
 export function prepareClone(repoRoot: string, parent: string): string {
   const clone = join(parent, CLONE_NAME)
-  const git = (args: string[], cwd: string) =>
-    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
-  const head = git(['rev-parse', 'HEAD'], repoRoot)
-  const origin = git(['remote', 'get-url', 'origin'], repoRoot)
+  const head = gitIn(repoRoot, ['rev-parse', 'HEAD'])
+  const origin = gitIn(repoRoot, ['remote', 'get-url', 'origin'])
   rmSync(clone, { recursive: true, force: true })
   mkdirSync(parent, { recursive: true })
-  git(['clone', '--quiet', '--no-checkout', repoRoot, clone], parent)
-  git(['checkout', '--quiet', '-B', 'main', head], clone)
-  git(['remote', 'set-url', 'origin', origin], clone)
+  gitIn(parent, ['clone', '--quiet', '--no-checkout', repoRoot, clone])
+  gitIn(clone, ['checkout', '--quiet', '-B', 'main', head])
+  gitIn(clone, ['remote', 'set-url', 'origin', origin])
   return clone
 }
 
@@ -113,11 +120,7 @@ export const FAKE_ORIGIN_NAME = 'fake-origin.git'
 
 /** The refs of a repo, one `<ref> <sha>` per line. Two lists that differ say that a ref moved, appeared or went. */
 export function listRefs(repo: string): string {
-  return execFileSync('git', ['for-each-ref', '--format=%(refname) %(objectname)'], {
-    cwd: repo,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).trim()
+  return gitIn(repo, ['for-each-ref', '--format=%(refname) %(objectname)'])
 }
 
 /**
@@ -133,16 +136,53 @@ export function listRefs(repo: string): string {
  */
 export function fakeGithubClone(clone: string, parent: string, o: { branch: string; ownerRepo: string }): string {
   parseOwnerRepo(o.ownerRepo)
-  const git = (args: string[], cwd: string) =>
-    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
   const url = `https://github.com/${o.ownerRepo}.git`
   const bare = join(parent, FAKE_ORIGIN_NAME)
-  git(['checkout', '--quiet', '-b', o.branch], clone)
+  gitIn(clone, ['checkout', '--quiet', '-b', o.branch])
   rmSync(bare, { recursive: true, force: true })
-  git(['clone', '--quiet', '--bare', clone, bare], parent)
-  git(['remote', 'set-url', 'origin', url], clone)
-  git(['config', `url.${bare}.insteadOf`, url], clone)
+  gitIn(parent, ['clone', '--quiet', '--bare', clone, bare])
+  gitIn(clone, ['remote', 'set-url', 'origin', url])
+  gitIn(clone, ['config', `url.${bare}.insteadOf`, url])
   return bare
+}
+
+/** What the README of a foreign repo says: the scenario asserts that the fake model read it. */
+export const FOREIGN_README = 'Notes of the second repo.\n'
+
+/**
+ * A second repo for a scenario of the PR lane (issue #195): a repo the session reads from but did not start in, on a feature
+ * branch. It is made in `base/<repo>` with one commit and a README, from nothing: it clones no repo. `origin` is the GitHub
+ * URL that names `ownerRepo`, which is where the repos tracker reads the repo from (`git remote get-url origin`). A rewrite
+ * for pushes only (`url.<copy>.pushInsteadOf`) sends a push to a bare copy beside it, so nothing the session runs can reach
+ * GitHub by a push. `insteadOf` would be wrong here: `get-url` would then give the copy, a local path, and no GitHub repo. The
+ * scenario never fetches it (the mod never does). A second call starts afresh.
+ *
+ * `base` must not be a temporary folder or one of Claude's own: the repos tracker treats those as noise and makes no row of
+ * a repo in them (`isNoisePath`). Returns the work tree, its README and the bare copy.
+ */
+export function fakeForeignRepo(
+  base: string,
+  o: { branch: string; ownerRepo: string },
+): { dir: string; readme: string; bare: string } {
+  const { repo } = parseOwnerRepo(o.ownerRepo)
+  const dir = join(base, repo)
+  const bare = join(base, `${repo}.git`)
+  const readme = join(dir, 'README.md')
+  const git = (cwd: string, args: string[]) =>
+    gitIn(cwd, args, ['user.email=e2e@example.com', 'user.name=e2e', 'commit.gpgsign=false'])
+  rmSync(dir, { recursive: true, force: true })
+  rmSync(bare, { recursive: true, force: true })
+  mkdirSync(dir, { recursive: true })
+  git(dir, ['init', '-q', '-b', 'main'])
+  writeFileSync(readme, FOREIGN_README)
+  git(dir, ['add', 'README.md'])
+  git(dir, ['commit', '-q', '-m', 'Add the README'])
+  git(dir, ['checkout', '-q', '-b', o.branch])
+  git(base, ['clone', '-q', '--bare', dir, bare])
+  const url = `https://github.com/${o.ownerRepo}.git`
+  git(dir, ['remote', 'add', 'origin', url])
+  git(dir, ['config', `url.${bare}.pushInsteadOf`, url])
+  return { dir, readme, bare }
 }
 
 // The key that moves the trust dialog toward "Yes, I trust this folder", or undefined when no dialog shows.
