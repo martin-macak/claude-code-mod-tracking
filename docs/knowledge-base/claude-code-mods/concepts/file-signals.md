@@ -71,6 +71,20 @@ Each file is a row of the Files section, keyed by where the file landed. The row
 
 When a cap drops rows, `ItemKind.capRank` decides: a file that was only read ranks 0, a file that was only named ranks 1, a file that was written ranks 2. The lowest rank goes first, then the oldest. `ItemKind.capOf` gives a kind a limit of its own (`maxFiles`). The record that a call has just added always stays.
 
+## What the preview reads (issue #57, L2)
+
+The preview of a file row is the one place where the mod reads a file. It reads at the press of `v`, with `head -c 262144 -- <path>` through the tool port, and keeps the content in module memory only. The list, the stored copy, the `/track` text and the prompt hold paths. The pieces and the pane are in the [tree-table page](../../claude-code-mod-architecture/tree-table.md#the-preview-body-issue-57-l2).
+
+| Fact | Grade | Source |
+| --- | --- | --- |
+| One control character in a `Code` source or a `Markdown` text (ESC, NUL, FF, DEL, C1) makes the engine refuse the whole tree: the pane is blank and its keys are dead. A `\r` passed on 2.1.310 but draws nothing, and the 2.1.302 types allow tab and newline only. | `verified-kit` (design study probe P3), `types-only` | [claude-code.d.ts `CodeProps.source`](../sources/claude-code-2.1.302/types/claude-code.d.ts#L1659) |
+| `Code.source` and `Markdown.text` count in the 100,000 characters of one drawing: a 120,000 character `Code` drew 100,000, and the Buttons after it were gone. | `verified-kit` (probe P3) | the same type |
+| `Code` takes the language from `path`, a gutter from `startLine`, and `format: 'diff'` reads raw `git diff` hunks. | `verified-live` (probe P2) | the same type |
+| `file` reports a missing file as `cannot open ...` with exit 0, and a host without `file` as exit 127. `head -c` of a path starts with `--` so a name that starts with `-` is no option. | `observed` in a shell (probe P4) | |
+| The mod's own kit run mounts `Code`, the notices and the key line in the real engine tree, with a source that holds control characters made safe, and one over the caps. | `verified-kit` | `tests/preview-wiring.test.tsx` |
+
+The secret rule and the caps are in the [README](../../../../plugins/artifact-tracking/README.md#preview-of-a-file).
+
 ## Not tested
 
 - `bashEditDiff` in the default permission mode, with and without `bashEditDiffEnabled`.
@@ -78,3 +92,4 @@ When a cap drops rows, `ItemKind.capRank` decides: a file that was only read ran
 - A subagent's Bash call with an `agentId`.
 - `file` on a Linux host that has it, and `file` through the tool of the mod in a live session.
 - The rate of false positives for mentions of paths that are not Markdown.
+- The preview of a file on a Linux host, and an inline preview at 100x40 in a live session. (`head -c` through `ctx.tools.run` ran live on Claude Code 2.1.311, `e2e/features/pane.feature:63`: `v` on `/etc/hosts` shows `localhost`.)

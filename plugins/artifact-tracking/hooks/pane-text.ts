@@ -7,6 +7,7 @@ import type { KeyRegistry } from '../core/infra/keys'
 import type { ConfigSource } from '../core/interfaces/config'
 import type { Level } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
+import type { PreviewContent, PreviewMode, PreviewModeId } from '../core/interfaces/preview'
 import type {
   FooterKey,
   GroupSpec,
@@ -48,6 +49,10 @@ export interface PaneHost {
    */
   cleanPlan(p: Ports): Promise<readonly PlanLine[] | undefined>
   runAction(p: Ports, owner: string, id: string, rowId: string | null, surface?: string): Promise<void>
+  /** The modes of a row of the tracker `owner`, or `undefined` for a row with no preview (issue #57, L2). Reads only. */
+  previewModes(p: Ports, owner: string, rowId: string): Promise<readonly PreviewMode[] | undefined>
+  /** The content of one mode of a row, read now. Never rejects: a load that fails gives a notice. Never stored by core. */
+  loadPreview(p: Ports, owner: string, rowId: string, mode: PreviewModeId): Promise<PreviewContent>
   problems(): readonly string[]
   /** The ids of the tools of the trackers that run: the health line of the full status area names them (issue #138). */
   liveTools(): readonly string[]

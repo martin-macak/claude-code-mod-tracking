@@ -8,6 +8,7 @@ import { ConfigManager } from '../core/infra/config-manager'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
+import type { PreviewState } from '../core/interfaces/preview'
 import { stopResultOf } from '../core/lib/tasks'
 import { withLine } from '../core/lib/turn-strip'
 import { emptyLedger } from '../core/lib/turns'
@@ -46,6 +47,9 @@ const filters = atom({ plugin: 'artifact-tracking', key: 'filters' } as const, {
 // Issue #138: the rows the person marked with `m`. Session state like `hidden` and `filters`: the pane clears it at close and
 // `/clear` resets it. The ids only: a render never prunes them (E9), the next mark write does.
 const marks = atom({ plugin: 'artifact-tracking', key: 'marks' } as const, [] as string[])
+// Issue #57, L2: the preview the pane shows in place of the table: a row id, its owner and a mode, never content (the content sits in
+// module memory, `hooks/pane-preview.ts`). Session state like `help`: the pane clears it at close and `/clear` resets it.
+const preview = atom({ plugin: 'artifact-tracking', key: 'preview' } as const, null as PreviewState | null)
 // Issue #69: what each main-loop turn tracked. The module that declares the atoms is the only one that may touch the state
 // keys; the empty ledger is the rule's own, so a field added to it cannot drift from this default.
 const turns = atom({ plugin: 'artifact-tracking', key: 'turns' } as const, emptyLedger() as TurnLedger)
@@ -185,6 +189,7 @@ function portsOf($: EngineInterface): Ports {
       view: { get: () => read($, view), update: fn => update($, view, fn) },
       filters: { get: () => read($, filters), update: fn => update($, filters, fn) },
       marks: { get: () => read($, marks), update: fn => update($, marks, fn) },
+      preview: { get: () => read($, preview), update: fn => update($, preview, fn) },
       turns: { get: () => read($, turns), update: fn => update($, turns, fn) },
       shown: {
         get: async id => (await read($, { plugin: 'artifact-tracking', key: 'shown', id } as const)) ?? 0,
@@ -421,10 +426,15 @@ export const register: Register = on => {
     return {}
   }).catch((_$, e, next) => next(e))
 
-  // The pane closed: no selection, no help view.
+  // The pane closed: no selection, no help view, no preview. While a preview shows, a close by the person (Esc, the close mark,
+  // ctrl+x x) goes back to the list instead (issue #57, L2): the hook answers `{ deny }`, which keeps the pane, and the session has
+  // opened it again with the keys. `{}` is no answer: Claude Code 2.1.310 skips the hook and closes the pane. A close that the
+  // plugin or the engine makes (`unload` too) is never refused. A throw lets the pane close, as every hook here does.
   on('ui.close', { id: PANE }, async ($, e, next) => {
     const p = portsOf($)
     void soft(() => managerOf($).entry(p))
+    const back = await pane.closeOrBack(p, managerOf($), e.origin.kind)
+    if (back !== undefined) return back
     await pane.closed(p)
     return next(e)
   }).catch((_$, e, next) => next(e))

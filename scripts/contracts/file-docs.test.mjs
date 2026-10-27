@@ -11,9 +11,11 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { VIEW_IDS } from '../../plugins/artifact-tracking/core/lib/grouping.ts'
 import { readOnlyLine } from '../../plugins/artifact-tracking/trackers/file/activity.ts'
-import { FILE_DEFAULTS } from '../../plugins/artifact-tracking/trackers/file/config.ts'
+import { FILE_DEFAULTS, HEAD_BYTES } from '../../plugins/artifact-tracking/trackers/file/config.ts'
 import { FILE_TYPES, typeOfName } from '../../plugins/artifact-tracking/trackers/file/file-type.ts'
 import { filePrompt } from '../../plugins/artifact-tracking/trackers/file/prompt.ts'
+import { isSecretPath } from '../../plugins/artifact-tracking/trackers/file/secret.ts'
+import { BUDGET } from '../../plugins/artifact-tracking/ux/tree-data-table/budget.ts'
 
 const path = rel => fileURLToPath(new URL(rel, import.meta.url))
 const read = rel => readFileSync(path(rel), 'utf8')
@@ -40,15 +42,42 @@ function lineOf(text, prefix) {
   return lines[0]
 }
 
+/**
+ * The config keys of a defaults tree as `[path, default]`: a nested block (`preview`) gives one entry for each key under it
+ * (`preview.maxLines`), and a list is kept whole. The `prompt` block has its own table and is left out.
+ */
+function keysOf(defaults, prefix = '') {
+  return Object.entries(defaults).flatMap(([key, value]) => {
+    const path = `${prefix}${key}`
+    if (path === 'enabled' || path === 'prompt') return []
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? keysOf(value, `${path}.`)
+      : [[path, value]]
+  })
+}
+
 test('every key of the file config except `enabled` and `prompt` has a README Configuration row with its default', () => {
-  const keys = Object.keys(FILE_DEFAULTS).filter(k => k !== 'enabled' && k !== 'prompt')
-  for (const key of ['scope', 'maxMentionsPerRow', 'maxFiles', 'bashEdits', 'mime'])
-    assert.ok(keys.includes(key), `the schema has ${key}`)
-  for (const key of keys) {
+  const keys = keysOf(FILE_DEFAULTS)
+  for (const key of [
+    'scope',
+    'maxMentionsPerRow',
+    'maxFiles',
+    'bashEdits',
+    'mime',
+    'secretPaths',
+    'preview.maxLines',
+    'preview.maxChars',
+  ])
+    assert.ok(
+      keys.some(([path]) => path === key),
+      `the schema has ${key}`,
+    )
+  for (const [key, value] of keys) {
     const row = README.split('\n').find(l => l.startsWith(`| \`trackers.file.${key}\` |`))
     assert.ok(row, `the README table has a row for trackers.file.${key}`)
-    // The default is the second cell, in backticks when it is a word.
-    assert.equal(row.split('|')[2].trim().replaceAll('`', ''), String(FILE_DEFAULTS[key]), row)
+    // The default is the second cell, in backticks when it is a word. A list is its JSON text, `[]` when empty.
+    const shown = Array.isArray(value) ? JSON.stringify(value) : String(value)
+    assert.equal(row.split('|')[2].trim().replaceAll('`', ''), shown, row)
   }
 })
 
@@ -100,6 +129,51 @@ test('the code-map row of trackers/file/ names the files that read Bash, type a 
   for (const file of ['activity.ts', 'bash.ts', 'file-type.ts', 'mime.ts'])
     assert.ok(row.includes(file), `${file} is in: ${row}`)
   assert.ok(!row.includes('Markdown path scanner'), 'the tracker takes any file now')
+})
+
+test('the code-map row of trackers/file/ also names the secret rule and the preview', () => {
+  const row = lineOf(README, '| `trackers/file/` |')
+  for (const file of ['secret.ts', 'preview.ts']) assert.ok(row.includes(file), `${file} is in: ${row}`)
+})
+
+test('the Preview section lists the secret files by the names the rule treats as secret, and the templates it lets through', () => {
+  const rule = lineOf(FILES, '- Secret files:')
+  const list = rule.slice(rule.indexOf('The fixed rule'), rule.indexOf('The rule reads'))
+  const tokens = [...list.matchAll(/`([^`]+)`/g)].map(m => m[1])
+  const templates = ['.env.example', '.env.sample', '.env.template']
+  assert.ok(tokens.length >= 16, `the rule lists its names: ${tokens.join(' ')}`)
+  for (const name of templates) assert.ok(tokens.includes(name), `the rule names the template ${name}`)
+  const folders = ['.ssh', '.gnupg', '.aws', '.kube', '.config/gh']
+  for (const token of tokens) {
+    // A folder token is a file below it, a pattern gets a sample name, a plain name is itself.
+    const path = folders.includes(token)
+      ? `/home/u/${token}/x`
+      : token.includes('/')
+        ? `/home/u/${token}`
+        : `/w/${token.replaceAll('*', 'x')}`
+    assert.equal(isSecretPath(path), !templates.includes(token), `${token} (as ${path})`)
+  }
+  assert.ok(rule.includes('trackers.file.secretPaths'), 'the rule names the config key that adds globs')
+})
+
+test('the Preview section and the Keys table name the keys v and r, Esc, the caps and the head call, as the code has them', () => {
+  const preview = between(README, '#### Preview of a file', '#### Types of files')
+  for (const word of [
+    '`v`',
+    '`r`',
+    'Esc',
+    `head -c ${HEAD_BYTES}`,
+    `${FILE_DEFAULTS.preview.maxLines.toLocaleString('en-US')} by default`,
+    `${FILE_DEFAULTS.preview.maxChars.toLocaleString('en-US')} by default`,
+    `${BUDGET.chars.toLocaleString('en-US')} characters`,
+    'NUL',
+    'CRLF',
+  ])
+    assert.ok(preview.includes(word), `the Preview section names ${word}`)
+  const key = README.split('\n').find(l => l.startsWith('| `v` |'))
+  assert.ok(key?.includes('#preview-of-a-file'), 'the Keys table row of v links the Preview section')
+  assert.equal(FILE_DEFAULTS.preview.maxLines, 2000)
+  assert.equal(FILE_DEFAULTS.preview.maxChars, 60000)
 })
 
 test('the Bash rule says when Claude Code records bashEditDiff and what the field leaves out', () => {

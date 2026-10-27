@@ -21,21 +21,29 @@ export const ITEM_GAP = KEY_GAP
 /**
  * The Button of one key, as the footer and the view line draw it. A disabled key stays, dim, and does no work: a letter with
  * no Button leaves the pane. A click on it still gives the pane the keys (`actions.keys`, issue #129), as a click on a live
- * key does: a Button moves no focus, so it would leave the keys in the prompt.
+ * key does: a Button moves no focus, so it would leave the keys in the prompt. `pressOff`: a dim key still goes to the pane as a press,
+ * so the pane can say why it is off (the key line of the preview, issue #57, L2: a mode that is off says its reason in a toast).
  */
-export function keyButton(el: TableElements, k: FooterKey, actions: TableActions): RenderElement {
+export function keyButton(el: TableElements, k: FooterKey, actions: TableActions, pressOff = false): RenderElement {
   return button(el, {
     key: k.buttonKey,
     plain: true,
     hotkey: k.key,
     label: k.label,
     ...(k.enabled ? {} : { dimColor: true }),
-    onPress: k.enabled ? e => actions.press(k.buttonKey, e?.surface) : () => actions.keys(),
+    onPress: k.enabled || pressOff ? e => actions.press(k.buttonKey, e?.surface) : () => actions.keys(),
   })
 }
 
 /** What a plain Button of the key draws: `key: label`. */
 export const keyWidth = (k: FooterKey): number => cellWidth(`${k.key}: ${k.label}`)
+
+/** How a row of keys ends: the words that say how to leave, and whether a dim key still presses (`keyButton`). */
+export interface KeyRowOptions {
+  /** The last words of the row. Default `Esc close`; the key line of the preview says `Esc back`. */
+  readonly close?: string
+  readonly pressOff?: boolean
+}
 
 /**
  * One Button per key, then the hints (the move hint only when `hint`).
@@ -45,13 +53,14 @@ export function footerBox(
   keys: readonly FooterKey[],
   actions: TableActions,
   hint: boolean,
+  { close = ESC_HINT, pressOff = false }: KeyRowOptions = {},
 ): RenderElement {
   return box(
     el,
     { columnGap: KEY_GAP, flexWrap: 'wrap' },
-    ...keys.map(k => keyButton(el, k, actions)),
+    ...keys.map(k => keyButton(el, k, actions, pressOff)),
     ...(hint ? [text(el, { dimColor: true }, MOVE_HINT)] : []),
-    text(el, { dimColor: true }, ESC_HINT),
+    text(el, { dimColor: true }, close),
   )
 }
 

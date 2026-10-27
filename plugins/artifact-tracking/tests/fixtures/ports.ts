@@ -19,6 +19,7 @@ import type {
   StopResult,
   Timer,
 } from '../../core/interfaces/ports'
+import type { PreviewState } from '../../core/interfaces/preview'
 import type { FilterState, HiddenState } from '../../core/interfaces/view'
 import { emptyLedger } from '../../core/lib/turns'
 import type { ToolStatus, TurnLedger } from '../../types'
@@ -244,6 +245,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       view: atom<string | null>('view', () => null),
       filters: atom<FilterState>('filters', () => ({ touchedOnly: false })),
       marks: atom<string[]>('marks', () => []),
+      preview: atom<PreviewState | null>('preview', () => null),
       turns: atom<TurnLedger>('turns', emptyLedger),
       // A family member sits under `shown:<id>`: a bare section id would collide with a tracker slot of the same id.
       shown: {

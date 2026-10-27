@@ -33,6 +33,10 @@ function titleOf(owner: string, groups: readonly Titled[]): string {
 /**
  * Groups: the core pane keys, the core row keys, then one group per tracker that has keys, in order of first key.
  * `moreProblems` says how many problems the config left out of `problems`, with the line that counts them (issue #144).
+ *
+ * A key of the key line of the preview (`d`) is not listed: core holds it, so no tracker takes it, but no tracker has the mode yet
+ * that the key would pick, and a help that names a key which does nothing misleads (issue #57, L2; the diff mode is issue #254).
+ * The layer that adds the mode lists it.
  */
 export function helpModel(
   keys: readonly PaneKey[],
@@ -42,11 +46,12 @@ export function helpModel(
   version?: string,
   moreProblems?: HelpModel['moreProblems'],
 ): HelpModel {
-  const owners = [...new Set(keys.filter(k => k.owner !== 'core').map(k => k.owner))]
+  const listed = keys.filter(k => k.bar !== 'preview')
+  const owners = [...new Set(listed.filter(k => k.owner !== 'core').map(k => k.owner))]
   const groups: HelpGroup[] = [
-    { title: PANE_KEYS, keys: keys.filter(k => k.owner === 'core' && k.scope === 'pane') },
-    { title: ROW_KEYS, keys: keys.filter(k => k.owner === 'core' && k.scope === 'row') },
-    ...owners.map(owner => ({ title: titleOf(owner, drawn), keys: keys.filter(k => k.owner === owner) })),
+    { title: PANE_KEYS, keys: listed.filter(k => k.owner === 'core' && k.scope === 'pane') },
+    { title: ROW_KEYS, keys: listed.filter(k => k.owner === 'core' && k.scope === 'row') },
+    ...owners.map(owner => ({ title: titleOf(owner, drawn), keys: listed.filter(k => k.owner === owner) })),
   ]
   return { groups: groups.filter(g => g.keys.length > 0), configPath, problems, version, moreProblems }
 }
@@ -247,8 +252,9 @@ const holds = (width: number, columns: number): number =>
  * How the keys of a group run when the form asks for `perLine`: the cells of a column, and the keys to a line. Up to what the
  * widest key of the view holds, every group uses that width and takes `perLine`, so the columns of all groups line up. Asked
  * for more, a group takes its own widest key as its column and holds as many as that gives, never more than `perLine`: the
- * row keys (`m  mark`, `x  dismiss`) are shorter than the widest pane key (`p  clean plan`, issue #199), so six of them fit a
- * line of a body where fewer than six pane keys do (issue #138: the sixth row key must not take a second line).
+ * row keys (`m  mark`, `x  dismiss`) are shorter than the widest pane key (`p  clean plan`, issue #199), so seven of them fit a
+ * line of a body (six before `v` of the preview, issue #57) where fewer than six pane keys do (issue #138: the sixth row key must
+ * not take a second line).
  */
 function columnsOf(
   m: HelpModel,

@@ -487,8 +487,8 @@ test('pane: h in a docked pane keeps the full help view, one key to a line', asy
   await ui.press({ key: 'help' })
   const { gap, help } = await helpTree(ui)
   expect(gap).toBe(1)
-  // 4 titles, 15 keys (g, a, t, p and m, the github keys c and f and the questions key y of the started mod), the config line, the version line
-  expect(help).toHaveLength(21)
+  // 4 titles, 16 keys (g, a, t, p and m, v of the preview, the github keys c and f and the questions key y of the started mod), the config line, the version line
+  expect(help).toHaveLength(22)
   expect(JSON.stringify(help[0])).toContain('Pane keys')
   expect(JSON.stringify(help[1])).toContain('refresh')
   await ui.unmount()
@@ -534,7 +534,7 @@ test('pane: a body shorter than the footer plus one line still draws the help vi
   world(on)
   const ui = await mountPane($, { bodyColumns: 96, bodyRows: 1, placement: 'inline' })
   await ui.press({ key: 'help' })
-  // No start: nothing fits, so the fewest rows: 2 titles, 2 lines of keys (the six row keys, m among them, hold one line: each group's columns are as wide as its widest key), the config line
+  // No start: nothing fits, so the fewest rows: 2 titles, 2 lines of keys (the seven row keys, m and v among them, hold one line: each group's columns are as wide as its widest key), the config line
   expect((await helpTree(ui)).help).toHaveLength(5)
   expect(await helpFooterKeys(ui)).toEqual(HELP_FOOTER_KEYS) // the five dim Buttons of g, a, t, p and m too, not only the 7 of the pane
   await ui.unmount()

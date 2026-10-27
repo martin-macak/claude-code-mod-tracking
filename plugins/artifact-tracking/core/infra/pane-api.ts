@@ -23,6 +23,8 @@ export abstract class PaneApi {
   readonly liveTools: PaneKeys['liveTools'] = () => this.paneKeys.liveTools()
   readonly footer: PaneKeys['footer'] = (...a) => this.paneKeys.footer(...a)
   readonly runAction: PaneKeys['runAction'] = (...a) => this.paneKeys.runAction(...a)
+  readonly previewModes: PaneKeys['previewModes'] = (...a) => this.paneKeys.previewModes(...a)
+  readonly loadPreview: PaneKeys['loadPreview'] = (...a) => this.paneKeys.loadPreview(...a)
 
   /** The core keys, then the keys of the live trackers. Each start rebuilds it. */
   get keys(): KeyRegistry {

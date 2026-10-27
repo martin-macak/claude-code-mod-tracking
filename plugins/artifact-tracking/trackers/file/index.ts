@@ -14,6 +14,7 @@ import type { Handler, Tracker } from '../../core/interfaces/tracker'
 import { type FileConfig, fileConfig } from './config'
 import { fileKind, settingsOf, touchesOf } from './kind'
 import { FILE_TOOL, typeUnknownFiles } from './mime'
+import { filePreview } from './preview'
 import { filePrompt } from './prompt'
 import { sections } from './sections'
 
@@ -43,5 +44,6 @@ export function fileTracker(): Tracker<FileConfig, Json> {
     store: ctx => ctx.config.slice(),
     sections,
     prompt: filePrompt,
+    preview: filePreview,
   }
 }

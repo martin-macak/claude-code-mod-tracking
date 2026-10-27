@@ -6,8 +6,10 @@
 
 import type { Json, JsonObject } from '../interfaces/items'
 import type { Ports } from '../interfaces/ports'
+import type { PreviewContent, PreviewMode, PreviewModeId } from '../interfaces/preview'
 import type { Tracker, TrackerContext } from '../interfaces/tracker'
 import type { ActionImpl, ActionImpls, FooterKey, RowRef, ViewContext } from '../interfaces/view'
+import { failedPreview, noPreview, PREVIEW_LIMITS } from '../lib/preview'
 import { footerKeys, KeyRegistry } from './keys'
 import { reason } from './steps'
 import type { TrackerHost } from './tracker-host'
@@ -45,7 +47,11 @@ export class PaneKeys {
   /** A fresh registry from the trackers that are on. A second start leaves no duplicate problem behind. */
   rebuild(): void {
     const next = new KeyRegistry()
-    for (const t of this.ordered) if (t.keys !== undefined && this.d.host.live(t.id)) next.add(t.id, t.keys)
+    for (const t of this.ordered) {
+      if (!this.d.host.live(t.id)) continue
+      if (t.keys !== undefined) next.add(t.id, t.keys)
+      if (t.preview !== undefined) next.addPreview(t.id) // its rows draw `v` (issue #57, L2)
+    }
     this.reg = next
   }
 
@@ -79,7 +85,8 @@ export class PaneKeys {
   /**
    * The footer for the selected row. A tracker key works when the owner's actions have an impl for it, and the impl's
    * `state` does not say `disabled`. Reads only: it runs in a render. `markedRows` are the marked rows that the last drawing laid
-   * (issue #138): `x` and the digits then follow them, and a tracker key stays on the selected row.
+   * (issue #138): `x` and the digits then follow them, and a tracker key stays on the selected row. `v` is live when the provider says the
+   * row has a preview (`previewModes`): a row it skips draws `v` dim (issue #57, L2, R11).
    */
   async footer(
     ports: Ports,
@@ -104,7 +111,11 @@ export class PaneKeys {
         return 'disabled'
       }
     }
-    return footerKeys(this.reg, row, o => this.isItemOwner(o), help, state, markedRows)
+    const previewable =
+      row !== undefined && !help && this.reg.hasPreview(row.owner)
+        ? (await this.previewModes(ports, row.owner, row.id)) !== undefined
+        : true // no `v` is drawn for another row, and the help view works no `v`
+    return footerKeys(this.reg, row, o => this.isItemOwner(o), help, state, markedRows, previewable)
   }
 
   /**
@@ -121,6 +132,42 @@ export class PaneKeys {
       await impl?.run(this.d.host.ctx(owner, pressed) as TrackerContext<JsonObject, Json>, rowId)
     } catch (e) {
       this.d.log(`keys: ${owner}.${id} failed: ${reason(e)}`)
+    }
+  }
+
+  /**
+   * The modes of a row of the tracker `owner` (issue #57, L2): `undefined` for a tracker that is off, has no preview, or says the row
+   * has none. Reads only, so a render may call it. A `modes()` that throws gives none and logs one line.
+   */
+  async previewModes(ports: Ports, owner: string, rowId: string): Promise<readonly PreviewMode[] | undefined> {
+    const spec = this.d.trackers.find(t => t.id === owner)?.preview
+    if (spec === undefined || !this.d.host.live(owner)) return undefined
+    try {
+      return spec.modes(await this.d.views.viewOf(ports, owner, { selected: rowId, expanded: new Set() }), rowId)
+    } catch (e) {
+      this.d.log(`keys: ${owner} preview modes failed: ${reason(e)}`)
+      return undefined
+    }
+  }
+
+  /**
+   * The content of one mode of a row (issue #57, L2), read now: the provider reads the file, the diff or the page when the person
+   * asks, and core keeps nothing. It never rejects: a load that fails, or a row with no preview, gives a notice. The caller draws
+   * it and may keep it in module memory (`hooks/pane-preview.ts`); it never goes to the state, the store or the model.
+   */
+  async loadPreview(ports: Ports, owner: string, rowId: string, mode: PreviewModeId): Promise<PreviewContent> {
+    const spec = this.d.trackers.find(t => t.id === owner)?.preview
+    if (spec === undefined || !this.d.host.live(owner)) return noPreview()
+    try {
+      return await spec.load(
+        this.d.host.ctx(owner, ports) as TrackerContext<JsonObject, Json>,
+        rowId,
+        mode,
+        PREVIEW_LIMITS,
+      )
+    } catch (e) {
+      this.d.log(`keys: ${owner} preview failed: ${reason(e)}`)
+      return failedPreview(reason(e))
     }
   }
 

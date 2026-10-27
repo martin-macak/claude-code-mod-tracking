@@ -6,11 +6,12 @@
 
 import type { RenderElement } from 'claude-code'
 import { NOT_READY } from '../core/infra/command-text'
-import { type Bulk, bulkTargets, dismissTargets, planFooter, route, viewKeys } from '../core/infra/keys'
+import { type Bulk, bulkTargets, dismissTargets, planFooter, previewKeys, route, viewKeys } from '../core/infra/keys'
 import { reason } from '../core/infra/steps'
 import { bandSections } from '../core/infra/views'
 import type { Ports } from '../core/interfaces/ports'
-import type { GroupSpec, RowRef } from '../core/interfaces/view'
+import type { PreviewState } from '../core/interfaces/preview'
+import type { FooterKey, GroupSpec, RowRef } from '../core/interfaces/view'
 import type { PlanLine } from '../core/lib/clean-text'
 import { flipShowAll, flipTouched, listGroups, nextView, resolveView, viewSummary } from '../core/lib/grouping'
 import { healthLine } from '../core/lib/health'
@@ -19,6 +20,7 @@ import { bandText } from '../ux/band'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import type { TableElements } from '../ux/tree-data-table/el'
 import { hintRows, withKeysHint } from '../ux/tree-data-table/hint'
+import { renderPreview } from '../ux/tree-data-table/preview'
 import { SUMMARY_ROWS, selectedLine, statusForm, withSummary } from '../ux/tree-data-table/status'
 import {
   DEFAULT_BODY_COLUMNS,
@@ -35,6 +37,7 @@ import {
   TreeDataTable,
 } from '../ux/tree-data-table/table'
 import { clearMarks, writeMarks } from './pane-marks'
+import { type CloseAnswer, PanePreview } from './pane-preview'
 import { BulkQuestion } from './pane-question'
 import { WorkQueue } from './pane-queue'
 import { type Frame, frameFromState, type Press, Refocus, unlessClosed, type ViewKind } from './pane-refocus'
@@ -105,6 +108,16 @@ export class PaneSession {
    * does not block the next pane, and its end does not free the guard of a press of the next pane.
    */
   private planRead: Press | undefined
+  /**
+   * The preview (issue #57, L2): its content in memory of this load, and the counters of its work. The state names the view and holds
+   * no content, so a hot reload empties this and the next drawing reads again.
+   */
+  private readonly preview = new PanePreview({
+    work: this.work,
+    refocus: this.refocus,
+    selectedRow: p => this.selectedRow(p),
+    pressOf: keysInPrompt => this.pressOf(keysInPrompt),
+  })
 
   /**
    * Reads the state and the groups, and draws. It writes nothing and calls no entry (E9). `focused` is
@@ -112,12 +125,16 @@ export class PaneSession {
    */
   async draw(p: Ports, m: PaneHost, el: TableElements, props: PaneDrawProps = {}): Promise<RenderElement> {
     const { bodyColumns, bodyRows, focused, placement } = props
-    const [expanded, selected, help, marks] = await Promise.all([
+    const [expanded, selected, help, marks, previewing] = await Promise.all([
       p.state.expanded.get(),
       p.state.selected.get(),
       p.state.help.get(),
       p.state.marks.get(),
+      p.state.preview.get(),
     ])
+    // The preview takes the place of the table (issue #57, L2), also when the help view is on: the state holds both, and `Frame.view`
+    // says which one the body draws. The press of `v` opens nothing over the help view, so only a press in flight can have written both.
+    if (previewing !== null) return this.drawPreview(p, m, el, previewing, props)
     // The form of the bottom follows the engine's body, before the keys hint line takes its row: a move of the keys to the prompt and
     // back must not flip it (issue #138, owner decision Q3 of the delta study: the full form from 18 body rows, docked or inline;
     // comment 6412630538 on the issue, linked from tree-table.md, "The adaptive status area"). The help view has no status area.
@@ -247,6 +264,35 @@ export class PaneSession {
   }
 
   /**
+   * The preview body (issue #57, L2). The key line holds the Buttons of the modes of the row and `r: reload`; the content comes from
+   * memory. With none (a hot reload lost it) the drawing says `Loading…` and starts one read that asks for another drawing: it
+   * writes no state (E9). The same hint as the table's goes above it when the pane has no keys.
+   */
+  private async drawPreview(
+    p: Ports,
+    m: PaneHost,
+    el: TableElements,
+    shown: PreviewState,
+    props: PaneDrawProps,
+  ): Promise<RenderElement> {
+    const keys: readonly FooterKey[] = previewKeys(m.keys, (await m.previewModes(p, shown.owner, shown.rowId)) ?? [])
+    const content = this.preview.content(p, m, shown)
+    const tree = renderPreview(
+      el,
+      {
+        title: content?.title ?? 'Preview',
+        subtitle: content?.subtitle,
+        keys,
+        blocks: content?.blocks,
+        columns: props.bodyColumns,
+      },
+      this.actionsOf(p, m, props.focused === false, ++this.drawing),
+    )
+    this.refocus.frame({ view: 'preview', rows: new Map(), keys: keys.map(k => k.buttonKey), stops: [] })
+    return props.focused === false ? withKeysHint(el, tree) : tree
+  }
+
+  /**
    * The engine moved the ring to `element`. A row handle selects its row: the pending refocus answers its own key once,
    * else the last drawing does. The write draws the pane again, and the window follows the selection. An "N more" Button
    * keeps the selection and asks for a draw by itself, so a window that hid it shows it. A footer key, the close mark and
@@ -301,6 +347,8 @@ export class PaneSession {
   async scrolled(p: Ports, m: PaneHost, by: number): Promise<boolean> {
     const moves = Number.isFinite(by) && by !== 0
     if (moves) this.disarm(p)
+    // The preview is one tall tree that the engine scrolls: there is no row to select and no window to move (issue #57, L2).
+    if ((await p.state.preview.get()) !== null) return false
     const rows = this.drawn?.rows ?? []
     const page = this.drawn?.page
     if (page === undefined || rows.length === 0) return false
@@ -319,9 +367,10 @@ export class PaneSession {
     return true
   }
 
-  /** The pane closed: no selection, no help view, no plan view, no marks, no question, no refocus and no window place left over. Each write stands alone: one may fail. */
+  /** The pane closed: no selection, no help view, no plan view, no preview, no marks, no question, no refocus and no window place left over. Each write stands alone: one may fail. */
   async closed(p: Ports): Promise<void> {
     this.closings++
+    this.preview.closed() // the content of a preview never outlives the pane
     this.refocus.clear()
     this.top = 0
     this.onMore = undefined
@@ -330,6 +379,7 @@ export class PaneSession {
     for (const write of [
       () => p.state.selected.update(() => null),
       () => p.state.help.update(() => false),
+      () => p.state.preview.update(() => null),
       () => clearMarks(p),
     ]) {
       try {
@@ -338,6 +388,14 @@ export class PaneSession {
         p.log(`pane: close failed: ${reason(e)}`)
       }
     }
+  }
+
+  /**
+   * The `ui.close` hook (issue #57, L2, G11): `{ deny }` while a preview shows and a person closes the pane, so the pane goes back to
+   * the list instead (`PanePreview.closeOrBack`). Nothing else: the hook then lets the pane close (`closed`).
+   */
+  closeOrBack(p: Ports, m: PaneHost, origin: 'person' | 'plugin' | 'unload'): Promise<CloseAnswer | undefined> {
+    return this.preview.closeOrBack(p, m, origin)
   }
 
   /** The person did something other than answer: the question ends, and the pane draws without it. */
@@ -365,9 +423,13 @@ export class PaneSession {
    * tracked anything. The open Button of a strip names its turn (`ord`, P2). It stands outside the work chain: the press does
    * not read `selected` after a write of another press. Its token is made now, before any wait, and says `keys: false`: the
    * band and the strip are drawn while the pane is closed or beside it, and `ui.open` grants the keys itself.
+   * A preview that shows (issue #57, L2) goes first: the row of the turn is in the list, so the press leaves the preview (`PanePreview.leave`)
+   * before it selects and rings, and no read of the preview brings it back. The token is still made before that wait.
    */
-  openTurn(p: Ports, m: TurnPaneHost, ord?: number): Promise<void> {
-    return openTurn(p, m, this.refocus, this.pressOf(false), ord)
+  async openTurn(p: Ports, m: TurnPaneHost, ord?: number): Promise<void> {
+    const press = this.pressOf(false)
+    await this.preview.leave(p)
+    return openTurn(p, m, this.refocus, press, ord)
   }
 
   /** Resolves when every Button press so far has finished. For tests and for a caller that must not race the work. */
@@ -486,6 +548,10 @@ export class PaneSession {
     if (!begun.still()) return // the read took time: after a closing and a reopening it returns a row of the new pane
     await this.refocus.askKeys(p, begun)
     const afterAsk: Press = { ...begun, keys: false } // one press asks once: the refocus below must not ask again
+    // While a preview shows, the keys of its line are the only ones drawn: `v` and `d` pick a mode, `r` reads again (issue #57, L2).
+    const shown = await p.state.preview.get()
+    if (!afterAsk.still()) return
+    if (shown !== null) return this.preview.key(p, m, key, shown, afterAsk)
     // While a marked row is drawn, `x` and the digits act on the marked rows only, whatever row is selected (issue #138, G2).
     // Only a core row key reads the marks: `r`, `h`, `g`, `a`, `t`, `p` and the keys of a tracker do not wait for the read.
     const marked = key.owner === 'core' && key.scope === 'row' ? await this.markedRows(p) : []
@@ -555,6 +621,11 @@ export class PaneSession {
         await writeMarks(p, afterAsk, cur => pruned(toggled(cur, to.rowId), known))
         return this.redrawn(p, m, selected, afterAsk)
       }
+      // `v` (issue #57, L2). The read may take long, so it runs outside the chain: it must not hold `x` and the digits. The plan view
+      // shows no `v`, so a press from a drawing before `p` opens nothing over it, as with the help view.
+      case 'preview':
+        if (this.plan !== undefined) return
+        return this.preview.open(p, m, { rowId: to.rowId, owner: to.owner, mode: to.mode }, buttonKey, afterAsk)
       case 'owner':
         // A tracker's own work may take long. It must not hold the keys that come after it.
         this.work.detach(p, buttonKey, async () => {
@@ -610,6 +681,7 @@ export class PaneSession {
       return undefined
     }
     if (await p.state.help.get()) return undefined // an `h` opened the help view while the plan was read: the lines are not for it
+    if ((await p.state.preview.get()) !== null) return undefined // a `v` opened the preview while the plan was read: same (issue #57, L2)
     // Two `h` presses leave the help atom false, as it was at the press, but each moved the generation: the person went to the help
     // view and back to the rows, so the view that `p` meant to open is gone. The check comes last: the atom read above took time.
     if (!press.still() || gen !== this.planGen) return undefined
@@ -719,7 +791,7 @@ export class PaneSession {
     await this.refocus.to(p, m, next, press)
     // The last row went: no row is left to take the ring, and the tracker keys left the footer with it (issue #140).
     if (drawn !== undefined) {
-      const none = { view: 'rows' as const, row: null }
+      const none = { view: 'rows', row: null } as const
       await this.refocus.keep(p, none, press, drawn, () => frameFromState(p, m, none))
     }
   }

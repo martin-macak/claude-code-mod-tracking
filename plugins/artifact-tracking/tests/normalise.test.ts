@@ -6,6 +6,8 @@ import {
   deepFreeze,
   defaultsOf,
   enums,
+  GLOB_MAX_LENGTH,
+  globs,
   int,
   movedKeys,
   normaliseWith,
@@ -21,6 +23,7 @@ const S = {
   enabled: bool(true),
   n: int(50, 1, 100),
   w: words(['issue', 'bug'], 3),
+  g: globs(['*.pem'], 3),
   o: obj({ t: int(3, 1, 10) }),
   mode: oneOf('off', ['off', 'text', 'full']),
   picks: enums(['a', 'b'], ['a', 'b', 'c', 'd']),
@@ -35,7 +38,15 @@ function run(raw: unknown, path?: string) {
 
 test('an empty object gives the defaults and no problem', () => {
   const { value, out } = run({})
-  expect(value).toEqual({ enabled: true, n: 50, w: ['issue', 'bug'], o: { t: 3 }, mode: 'off', picks: ['a', 'b'] })
+  expect(value).toEqual({
+    enabled: true,
+    n: 50,
+    w: ['issue', 'bug'],
+    g: ['*.pem'],
+    o: { t: 3 },
+    mode: 'off',
+    picks: ['a', 'b'],
+  })
   expect(out).toEqual([])
 })
 
@@ -117,6 +128,39 @@ test('words: the rule for a word is the WORD pattern', () => {
   expect(WORD.test('a-b-1')).toBe(true)
   expect(WORD.test('Issue')).toBe(false)
   expect(WORD.test('-x')).toBe(false)
+})
+
+// Issue #57, L2: `file.secretPaths` holds globs (`*.vault`, `~/keys/**`), which no `words` rule takes: a glob has dots, stars and slashes.
+test('globs: each string kept as written, case too, each once, in the order given; the default list is a copy', () => {
+  const { value, out } = run({ g: ['*.Vault', '~/keys/**', '*.Vault'] })
+  expect(value.g).toEqual(['*.Vault', '~/keys/**'])
+  expect(out).toEqual([])
+  const defaults = defaultsOf(S)
+  expect(defaults.g).toEqual(['*.pem'])
+  expect(defaults.g).not.toBe((S.g as { def: readonly string[] }).def)
+})
+
+test('globs: an item that is no string, an empty one, a long one and one with a control character are left out, each with a problem', () => {
+  const long = 'x'.repeat(GLOB_MAX_LENGTH + 1)
+  const { value, out } = run({ g: [7, '', long, 'a\u0000b', 'ok'] })
+  expect(value.g).toEqual(['ok'])
+  expect(out).toEqual([
+    'g: 7 is not a valid glob. The mod leaves it out.',
+    'g: "" is not a valid glob. The mod leaves it out.',
+    `g: ${show(long)} is not a valid glob. The mod leaves it out.`,
+    'g: "a\\u0000b" is not a valid glob. The mod leaves it out.',
+  ])
+  expect(run({ g: ['x'.repeat(GLOB_MAX_LENGTH)] }).value.g).toEqual(['x'.repeat(GLOB_MAX_LENGTH)])
+})
+
+test('globs: a string is not a list and gives the default list; an empty list is valid; a list over the cap is cut', () => {
+  const text = run({ g: '*.pem' })
+  expect(text.value.g).toEqual(['*.pem'])
+  expect(text.out).toEqual(['g: "*.pem" is not a list of globs. Using the default list.'])
+  expect(run({ g: [] }).value.g).toEqual([])
+  const many = run({ g: ['a', 'b', 'c', 'd'] })
+  expect(many.value.g).toEqual(['a', 'b', 'c'])
+  expect(many.out).toEqual(['g: the list has more than 3 globs. The mod uses the first 3.'])
 })
 
 test('enums: a list of the listed words, in the order given, each once; the default list is a copy', () => {

@@ -475,6 +475,8 @@ test('config: the keys of the file tracker and their defaults; bad values warn a
     maxFiles: 300,
     bashEdits: true,
     mime: true,
+    secretPaths: [],
+    preview: { maxLines: 2000, maxChars: 60000 },
     prompt: { enabled: false, maxItems: 20 },
   }
   expect(fileConfig.defaults).toEqual(defaults)
@@ -511,6 +513,32 @@ test('config: the keys of the file tracker and their defaults; bad values warn a
     'maxFiles: 5.5 is not a whole number. Using 300.',
     'bashEdits: "yes" is not true or false. Using true.',
     'mime: 0 is not true or false. Using true.',
+  ])
+})
+
+// Issue #57, L2: the preview of a file. `secretPaths` adds globs to the fixed secret rule; `preview` caps what one preview draws.
+test('config: secretPaths takes globs, preview takes two caps inside the limits of the drawing; bad values warn and fall back', () => {
+  const list: string[] = []
+  const warn = (p: string) => void list.push(p)
+  const good = fileConfig.normalise(
+    { secretPaths: ['*.vault', '~/keys/**'], preview: { maxLines: 500, maxChars: 20000 } },
+    fileConfig.defaults,
+    warn,
+  )
+  expect(good.secretPaths).toEqual(['*.vault', '~/keys/**'])
+  expect(good.preview).toEqual({ maxLines: 500, maxChars: 20000 })
+  expect(list).toEqual([])
+  const bad = fileConfig.normalise(
+    { secretPaths: '*.vault', preview: { maxLines: 5, maxChars: 99999999 } },
+    fileConfig.defaults,
+    warn,
+  )
+  expect(bad.secretPaths).toEqual([])
+  expect(bad.preview).toEqual({ maxLines: 100, maxChars: 70000 })
+  expect(list).toEqual([
+    'secretPaths: "*.vault" is not a list of globs. Using the default list.',
+    'preview.maxLines: 5 is below the min 100. Using 100.',
+    'preview.maxChars: 99999999 is above the max 70000. Using 70000.',
   ])
 })
 

@@ -13,4 +13,6 @@ export const EL = {
   Text: plain('Text'),
   Button: plain('Button'),
   Link: plain('Link'),
+  Code: plain('Code'),
+  Markdown: plain('Markdown'),
 } as unknown as TableElements

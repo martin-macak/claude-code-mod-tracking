@@ -44,6 +44,36 @@ test('measure counts a Box key, a Link href and label, not a Button key', () => 
   expect(measure(tree)).toEqual({ values: 4, chars: 3 + 13 + 1 })
 })
 
+// Issue #57, L2: the engine counts the source of a `Code` and the text of a `Markdown` in its 100,000 characters (a 120,000
+// character `Code` drew 100,000 and cut the Buttons after it). The guard must count them, or a big file cuts the keys.
+test('measure counts the source of a Code and the text of a Markdown, as the engine does', () => {
+  const tree = {
+    type: 'Box',
+    props: {},
+    children: [
+      { type: 'Code', props: { source: 'abcde', path: 'a.ts', startLine: 1 } },
+      { type: 'Markdown', props: { text: 'xy', dimColor: true } },
+    ],
+  }
+  expect(measure(tree)).toEqual({ values: 3, chars: 7 })
+  expect(measure({ type: 'Code', props: { source: 'x'.repeat(120_000) } })).toEqual({ values: 1, chars: 120_000 })
+  // The language and the path are drawn nowhere and count nothing; a Code or Markdown with no text counts none.
+  expect(measure({ type: 'Code', props: { language: 'typescript', path: 'long/path/a.ts' } })).toEqual({
+    values: 1,
+    chars: 0,
+  })
+  expect(measure({ type: 'Markdown', props: {} })).toEqual({ values: 1, chars: 0 })
+})
+
+test('a Code over the limit does not fit, so the guard falls back and the keys stay in the footer', () => {
+  const footer = { type: 'Box', props: {}, children: [{ type: 'Button', props: { key: 'r', label: 'r: reload' } }] }
+  const code = (n: number) => ({ type: 'Code', props: { source: 'x'.repeat(n) } })
+  const { body, step } = guard<unknown>(footer, [() => code(120_000), () => code(10)], () => 'too large')
+  expect(step).toBe(1)
+  expect(body).toEqual(code(10))
+  expect(guard<unknown>(footer, [() => code(120_000)], () => 'too large').body).toBe('too large')
+})
+
 test('measure walks lists, numbers and children of a Button', () => {
   const tree = {
     type: 'Box',
