@@ -487,9 +487,25 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   the output back, is read as one more redirection, so the later runs stay
   marked. `stdoutPiped` is a `|` or `|&` after the pipeline part that holds the
   run (`{ a; } | b` marks `a`; `echo x | a` does not). `substituted` is `$(...)`,
-  backticks or a process substitution (`<(...)`, `>(...)`). The `>` of `>(...)`
-  is the opener of the substitution, not a redirection of the command around it
-  (`tee >(a) x` redirects nothing; `a > >(b)` does). A substitution in the arguments
+  backticks or an input process substitution (`<(...)`): the shell takes the
+  output of the commands in it, or it goes to the pipe that the command reads.
+  An output process substitution `>(...)` is none of that. Its commands read
+  the pipe and write where the command around it writes, so a run in it keeps
+  the output of that command (`cat > >(docker run -d nginx) </dev/null; wait`
+  prints the id). The `>` of `>(...)` is the opener of the substitution, not a
+  redirection of the command around it (`tee >(a) x` redirects nothing;
+  `a > >(b)` does). The commands in a `>(...)` take the marks of the command
+  around it: a redirected or piped group or subshell, an `exec` before it, a
+  `$(...)` around it, and a redirection of fd 1 that stands before the
+  substitution in the same command. When the substitution is the target of a
+  redirection, bash applies the redirections from left to right, so `a` in
+  `cat >f > >(a)` writes to `f`. The `>` whose target is the substitution does
+  not count (`cat > >(a)`: `a` starts before that redirection takes effect). A
+  redirection after the substitution (`cat > >(a) > f`) and a substitution that
+  is an argument (`tee > f >(a)`, `tee >(a) > f`) are the safe side: bash starts
+  the commands in it first, so they still print, but a redirection of the whole
+  command marks them, and the parser takes no id for them. So does a second
+  `> >(b)` after `> >(a)`: it marks `a`. A substitution in the arguments
   splits the run into segments (`docker run -d -e T=$(cat t) nginx > f` is
   `docker run -d -e T=`, `cat t` and `nginx > f`), so a redirection after it marks
   the first segment too: the splitter keeps the head of the command until an
@@ -546,8 +562,31 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   print nothing. So do `{ exec >/dev/null; } >&1; echo after` and its forms
   `1>&1`, `>& 1`, `>&01`, `>&1-` and `1<&1`, while `>&2`, `>&-`, `>&0`, `>&10`
   and `>&1x` (a file) print `after`. `echo hi >&1` and `exec >&1; echo hi` print
-  `hi`, and `&>&1` and `>>&1` are syntax errors. No live Docker run repeated
-  them after the fix.
+  `hi`, and `&>&1` and `>>&1` are syntax errors. The output substitution was
+  probed with `bash` 5.3.20 (2026-10-27), each form as a script, with a fake
+  `docker` that prints one 64-hex id line and starts nothing. The id reaches the
+  stdout of the script for `cat > >(docker run -d nginx) </dev/null; wait`, and
+  also with `cat 2> >(...)`, `cat &> >(...)`, `cat 2>e > >(...)`,
+  `cat >&1 > >(...)`, `cat 3>f > >(...)`, `cat >f; tee >(...)`,
+  `cat >f | cat > >(...)`, `echo x | tee >(...)`,
+  `if cat > >(...) </dev/null; then :; fi`, `{ cat > >(...) </dev/null; } 2> f`,
+  `( exec > f ); cat > >(...)` and a `>(...)` in a `>(...)`.
+  It does not reach the stdout for `cat >f > >(...)`, `cat >&2 > >(...)`,
+  `cat > $(echo f) > >(...)`, `cat >f $(echo x) > >(...)`,
+  `cat > >(cat >/dev/null) > >(...)`, `exec > f; cat > >(...)`,
+  `exec > f; tee >(...)`, `x=$(cat > >(...) </dev/null; wait)`,
+  `{ cat > >(...) </dev/null; } > f`, `for ...; do cat > >(...); done > f` and
+  a run in the substitution with its own `> f`.
+  It does reach it where the redirection of the command comes later or the
+  substitution is an argument: `cat > >(...) </dev/null > f`,
+  `tee >(...) </dev/null > f` and `tee > f >(...) </dev/null`. The parser takes
+  no id for these, the safe side. A `cat`, an `echo` or a pipe that prints what
+  the substitution wrote also brings the id to the stdout (`cat <(...)`,
+  `{ cat > >(...) </dev/null; } | cat`, `echo $(cat > >(...) ...)`). That id is
+  a line of `cat`, not the output of the run, and the parser takes none. The
+  parser (`parseBashProcesses` at the same commit, 54 forms) gave an id for none
+  of the forms where `bash` printed none. No live Docker run
+  repeated these probes after the fix.
 - A foreground `nohup cmd` (no `&`) is not a detached process.
 
 Probe facts found in manual tests:
