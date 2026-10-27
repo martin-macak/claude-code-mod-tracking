@@ -165,6 +165,7 @@ test('the slices hold exactly the keys of the Defaults table', () => {
     'endedTtlMs',
     'failedTtlMs',
     'maxRows',
+    'destroyContainers',
   ])
   expect(Object.keys(AUTO_DEFAULTS)).toEqual([
     'enabled',
@@ -192,6 +193,19 @@ test('destroyWorktrees is off by default, and a word where the switch belongs ke
   expect(slice.destroyWorktrees).toBe(false)
   expect(problems).toHaveLength(1)
   expect(autoConfig.normalise({ destroyWorktrees: true }, AUTO_DEFAULTS, () => {}).destroyWorktrees).toBe(true)
+})
+
+// Issue #123: `/track clean --yes containers` removes an exited container of this run only when the person turned the switch
+// on. A word where the switch belongs keeps it off.
+test('destroyContainers is off by default, and a word where the switch belongs keeps it off', () => {
+  expect(PROCESSES_DEFAULTS.destroyContainers).toBe(false)
+  const problems: string[] = []
+  const slice = processesConfig.normalise({ destroyContainers: 'yes' }, PROCESSES_DEFAULTS, p => void problems.push(p))
+  expect(slice.destroyContainers).toBe(false)
+  expect(problems).toHaveLength(1)
+  expect(processesConfig.normalise({ destroyContainers: true }, PROCESSES_DEFAULTS, () => {}).destroyContainers).toBe(
+    true,
+  )
 })
 
 test('every slice has enabled first, on by default', () => {

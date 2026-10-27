@@ -44,6 +44,11 @@ test('--yes needs one kind or more, each named once, and nothing else', () => {
   expect(parseClean('--yes tasks')).toEqual({ mode: 'yes', kinds: ['tasks'] })
   expect(parseClean('--yes worktrees tasks')).toEqual({ mode: 'yes', kinds: ['worktrees', 'tasks'] })
   expect(parseClean('  --yes   tasks   tasks ')).toEqual({ mode: 'yes', kinds: ['tasks'] })
+  expect(parseClean('--yes containers')).toEqual({ mode: 'yes', kinds: ['containers'] })
+  expect(parseClean('--yes worktrees containers tasks')).toEqual({
+    mode: 'yes',
+    kinds: ['worktrees', 'containers', 'tasks'],
+  })
 })
 
 test('anything else is no mode: a bare --yes, an unknown kind or flag, a mix of modes', () => {
@@ -60,7 +65,7 @@ test('anything else is no mode: a bare --yes, an unknown kind or flag, a mix of 
     '--yes tasks --hide',
   ])
     expect(parseClean(rest), rest).toBeUndefined()
-  expect(CLEAN_USAGE).toBe('Usage: /track clean [--hide|--log|--yes <tasks|worktrees>...]')
+  expect(CLEAN_USAGE).toBe('Usage: /track clean [--hide|--log|--yes <tasks|containers|worktrees>...]')
 })
 
 // ---------------------------------------------------------------- the plan
@@ -87,6 +92,27 @@ test('a remove-worktree step reads: remove worktree, if clean and merged, and it
     'Worktrees (apply with /track clean --yes worktrees)\n  /w/a: remove worktree (if clean and merged; deletes ignored files)\n',
   )
   expect(planText(lines({ ...step, skip: 'not enabled' }), [])).toContain('  /w/a: skipped: not enabled\n')
+})
+
+// Issue #123, PR 2: a container is removed with `docker rm`, and the plan line says `remove`. The kinds go in the order of
+// CLEAN_KINDS: tasks, containers, worktrees.
+test('a remove-container step reads: remove, and a kind of its own sits between the tasks and the worktrees', () => {
+  const step: CleanStep = { kind: 'containers', id: 'docker:ctr:api', label: 'api', action: 'remove-container' }
+  expect(planText(lines(rm('wt:/a', 'a'), step, stop('task:1', 'sleep 300')), []).split('\n')).toEqual([
+    'Clean plan. Nothing changed.',
+    '',
+    'Tasks (apply with /track clean --yes tasks)',
+    '  sleep 300: stop',
+    'Containers (apply with /track clean --yes containers)',
+    '  api: remove',
+    'Worktrees (apply with /track clean --yes worktrees)',
+    '  a: remove record',
+    '',
+    'Hide: /track clean --hide hides every ended row now, and /track show-all shows them again.',
+    'Log: /track clean --log',
+  ])
+  expect(planText(lines({ ...step, skip: 'not enabled' }), [])).toContain('  api: skipped: not enabled\n')
+  expect(resultText(['containers'], [{ step, outcome: 'done' }], [])).toContain('Containers\n  api: done\n')
 })
 
 test('a step with a reason is a skipped: line', () => {

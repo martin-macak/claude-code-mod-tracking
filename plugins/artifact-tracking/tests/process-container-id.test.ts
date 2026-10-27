@@ -2,7 +2,7 @@
 // none: the merge `{ ...old, ...row }` used to keep the old id when the new sighting had none, so a row could hold the id
 // of a container that its latest run did not print. The delta study of #123 trusts only a row with `containerIdExact`.
 import { expect, test } from 'claude-code/testing'
-import { mergeProcessRows } from '../trackers/processes/rows'
+import { mergeProcessRows, withContainerGone } from '../trackers/processes/rows'
 import type { ProcessRecord } from '../trackers/processes/types'
 
 const A = 'a'.repeat(64)
@@ -52,6 +52,28 @@ test('a new sighting with an exact id gives an old row with no id its id', () =>
   expect(only(merged)).toMatchObject({ containerId: A, containerIdExact: true })
 })
 
+// `containerRunAlone` goes with the id and `containerIdExact` (issue #123, review of PR 285): the new sighting says whether the run of
+// its call was alone, and a sighting that does not say it removes the old row's mark. A mark of an old call must not vouch for
+// the id that a later call printed.
+test('a new sighting with another id and no containerRunAlone removes the alone mark of the old row', () => {
+  const merged = mergeProcessRows(
+    [row({ containerId: A, containerIdExact: true, containerRunAlone: true })],
+    [row({ containerId: B, containerIdExact: true })],
+  )
+  expect(only(merged)).toMatchObject({ containerId: B, containerIdExact: true })
+  expect('containerRunAlone' in only(merged)).toBe(false)
+})
+
+test('a new sighting with no id removes the alone mark too, and one that has it keeps it', () => {
+  const old = row({ containerId: A, containerIdExact: true, containerRunAlone: true })
+  expect('containerRunAlone' in only(mergeProcessRows([old], [row()]))).toBe(false)
+  const again = mergeProcessRows([old], [row({ containerId: B, containerIdExact: true, containerRunAlone: true })])
+  expect(only(again)).toMatchObject({ containerId: B, containerIdExact: true, containerRunAlone: true })
+  // A row of an older build has no mark, and a new sighting that has it gives it.
+  const older = mergeProcessRows([row({ containerId: A, containerIdExact: true })], [again[0] as ProcessRecord])
+  expect(only(older).containerRunAlone).toBe(true)
+})
+
 test('a merge keeps the id and the mark of rows that no new sighting names', () => {
   const kept = row({ id: 'docker:ctr:db', name: 'db', containerId: A, containerIdExact: true })
   const merged = mergeProcessRows([kept, row()], [row({ containerId: B, containerIdExact: true })])
@@ -94,4 +116,50 @@ test('a carry keeps the id and the mark of the live row that the stored copy nam
   const stored = row({ containerId: B, containerIdExact: true })
   // restore('carry'): the stored rows first, the current rows as the new side.
   expect(only(mergeProcessRows([stored], [live]))).toMatchObject({ containerId: A, containerIdExact: true })
+})
+
+// `containerGone` (issue #123, R8): the container of the id no longer exists. A live sighting is a new `docker run -d` of the
+// same row id, so it makes a new container and drops the mark. An ended copy says nothing new about the container.
+test('a live sighting of a gone row drops containerGone, and takes its own id', () => {
+  const gone = row({ containerId: A, containerIdExact: true, state: 'exited', endedAt: 5, containerGone: true })
+  const merged = mergeProcessRows([gone], [row({ containerId: B, containerIdExact: true })], 100)
+  expect(only(merged)).toMatchObject({ containerId: B, state: 'running' })
+  expect('containerGone' in only(merged)).toBe(false)
+})
+
+test('an ended copy keeps containerGone of the old row, and an old row without it takes the mark of the new side', () => {
+  const base = { containerId: A, containerIdExact: true as const, state: 'exited' as const, endedAt: 5 }
+  const kept = mergeProcessRows([row({ ...base, containerGone: true })], [row(base)], 100)
+  expect(only(kept).containerGone).toBe(true)
+  const taken = mergeProcessRows([row(base)], [row({ ...base, containerGone: true })], 100)
+  expect(only(taken).containerGone).toBe(true)
+})
+
+test('a live copy that carries containerGone keeps it: the new side says what it says (a stored copy, as the probe wrote it)', () => {
+  // The probe can mark a row that is live by name and gone by id (`up`, no line of its id). A load puts the stored copy on the
+  // new side, and the merge must not undo what the copy says.
+  const stored = row({ containerId: A, containerIdExact: true, state: 'up', containerGone: true })
+  const loaded = mergeProcessRows([row({ containerId: A, containerIdExact: true })], [stored])
+  expect(only(loaded)).toMatchObject({ state: 'up', containerGone: true })
+})
+
+test('a row that no sighting names keeps containerGone through a merge', () => {
+  const kept = row({ id: 'docker:ctr:db', name: 'db', containerId: A, containerIdExact: true, containerGone: true })
+  const merged = mergeProcessRows([kept], [row({ containerId: B, containerIdExact: true })], 100)
+  expect(merged.map(r => [r.id, r.containerGone])).toEqual([
+    ['docker:ctr:api', undefined],
+    ['docker:ctr:db', true],
+  ])
+})
+
+test('withContainerGone sets the mark to true or drops it, and gives back the same object when nothing changes', () => {
+  const live = row({ containerId: A })
+  const gone = withContainerGone(live, true)
+  expect(gone).not.toBe(live)
+  expect(gone.containerGone).toBe(true)
+  expect(withContainerGone(gone, true)).toBe(gone)
+  expect(withContainerGone(live, false)).toBe(live)
+  const back = withContainerGone(gone, false)
+  expect('containerGone' in back).toBe(false) // the mark is true or absent, never false
+  expect(gone.containerGone).toBe(true) // the input is not changed
 })

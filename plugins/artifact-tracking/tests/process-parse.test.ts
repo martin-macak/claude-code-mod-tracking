@@ -182,11 +182,17 @@ const unpaired = (id: string, name: string) => ({
 
 // Study log lines L310 to L312.
 test('container id: a row keeps its own id and is exact when the run printed it alone', () => {
+  // A lone `docker run -d` also has `containerRunAlone` (issue #123).
   expect(containers('docker run -d --name api nginx', idLines(NEW))).toStrictEqual([
-    { ...unpaired('docker:ctr:api', 'api'), containerId: NEW, containerIdExact: true },
+    { ...unpaired('docker:ctr:api', 'api'), containerId: NEW, containerIdExact: true, containerRunAlone: true },
   ])
   expect(containers('docker run -d nginx', idLines(NEW))).toStrictEqual([
-    { ...unpaired(`docker:ctr:${NEW}`, NEW.slice(0, 12)), containerId: NEW, containerIdExact: true },
+    {
+      ...unpaired(`docker:ctr:${NEW}`, NEW.slice(0, 12)),
+      containerId: NEW,
+      containerIdExact: true,
+      containerRunAlone: true,
+    },
   ])
 })
 
@@ -478,7 +484,11 @@ test('container id: a run in >(...) keeps the output of the command around it, a
     expect({ form, rows: paired(form, idLines(NEW)) }).toEqual({ form, rows: [['api', NEW, true]] })
   // Without --name the row is found by its id: the Codex case.
   expect(containers('cat > >(docker run -d nginx) </dev/null; wait', idLines(NEW))).toStrictEqual([
-    { ...unpaired(`docker:ctr:${NEW}`, NEW.slice(0, 12)), containerId: NEW, containerIdExact: true },
+    {
+      ...unpaired(`docker:ctr:${NEW}`, NEW.slice(0, 12)),
+      containerId: NEW,
+      containerIdExact: true,
+    }, // no `containerRunAlone`: the `cat` is redirected, and a redirection is no proof that its output goes away
   ])
   // With a second id line the counts differ: a line of another command is still no id of the run.
   expect(paired(`cat > >(${api}) </dev/null${ps}`, idLines(NEW, OTHER))).toEqual([['api', undefined, undefined]])
@@ -697,6 +707,574 @@ test('container id: known limits, where a run still pairs and is marked exact', 
   expect(paired('f() { docker run -d --name api nginx; }; f > log; docker ps -q --no-trunc', idLines(OTHER))).toEqual([
     ['api', OTHER, true],
   ])
+})
+
+// ---------------------------------------------------------------- containerRunAlone
+
+// `containerIdExact` says that the id was paired by the rules, and the known limits above show where it is another command's.
+// `containerRunAlone` is the stricter mark that `/track clean --yes containers` needs (issue #123, review of PR 285). It is
+// granted only when the whole Bash call is one simple command: a detached `docker run` and nothing else (`isLoneRun`). Bash can
+// put any text, an id too, on a bare line of the tool result: a diagnostic of a builtin, of a failed redirection or expansion,
+// a trace, a wrapper. Nine review rounds each closed one such variant and opened the next, so no list of quiet commands can be
+// proven. One narrow rule takes its place, and anything else withholds the mark. The one id line can then be the run's own, even
+// for a row with a `--name`: the name of a container that the run never made can be the name of the row (Docker keeps names
+// unique, so a run that failed because the name is taken pairs with the id of the old container that holds it).
+const alone = (command: string, stdout: string) =>
+  containers(command, stdout).map(r => [r.name, r.containerId, r.containerRunAlone])
+
+test('containerRunAlone: a lone docker run -d with its id line in the result earns the mark', () => {
+  const one = idLines(NEW)
+  const mark = [['api', NEW, true]]
+  expect(alone('docker run -d --name api nginx', one)).toEqual(mark)
+  // A row with no `--name` gets the mark by the same rule: it is a fact of the call, not of the name.
+  expect(alone('docker run -d nginx', one)).toEqual([[NEW.slice(0, 12), NEW, true]])
+  // The same one command, typed in another way: the long flag, `docker container run`, a global option, a path to the binary,
+  // other run options, white space around it, and a long run that a backslash continues over lines (the usual shape of one).
+  for (const lone of [
+    'docker run --detach --name api nginx',
+    'docker container run -d --name api nginx',
+    'docker --context other run -d --name api nginx',
+    '/usr/local/bin/docker run -d --name api nginx',
+    // No `;` in the command of the container (`-g "daemon off;"` would lose the mark, see the shapes test).
+    'docker run -d -p 8080:80 -e A=1 --name api nginx:1.27 nginx -g "daemon off"',
+    'docker run -d --name api nginx\n',
+    '  docker run -d --name api nginx  ',
+    'docker run -d \\\n  --name api \\\n  nginx',
+  ])
+    expect(alone(lone, one), lone).toEqual(mark)
+  // Docker may print more lines than the id (the progress of a pull). The id line is the only bare one.
+  expect(alone('docker run -d --name api nginx', `Unable to find image 'nginx:latest' locally\n${NEW}\n`)).toEqual(mark)
+})
+
+test('containerRunAlone: not set when another command of the call prints, and the row keeps containerIdExact', () => {
+  const one = idLines(OTHER)
+  const exactOnly = [['api', OTHER, undefined]]
+  // The command of the review: the run never ran, and `printf` printed the id of a container that already had the name.
+  expect(alone(`false && docker run -d --name api nginx; printf '%s\\n' ${OTHER}`, one)).toEqual(exactOnly)
+  // The four known limits where a run still pairs: the mark of the id stays, and the stricter mark is missing in all but the
+  // trailing `&`.
+  expect(alone('docker run -d --name api nginx; docker inspect -f "{{.Id}}" web', one)).toEqual(exactOnly)
+  expect(alone('[ -n "$X" ] && docker run -d --name api nginx; docker inspect -f "{{.Id}}" web', one)).toEqual(
+    exactOnly,
+  )
+  expect(alone('f() { docker run -d --name api nginx; }; f > log; docker ps -q --no-trunc', one)).toEqual(exactOnly)
+  // Any other command that may print: echo, a read of a file, a `docker logs`, a command that is no builtin.
+  expect(alone('echo starting; docker run -d --name api nginx', one)).toEqual(exactOnly)
+  expect(alone('docker run -d --name api nginx && docker logs api', one)).toEqual(exactOnly)
+  expect(alone('cat ids.txt; docker run -d --name api nginx', one)).toEqual(exactOnly)
+  expect(alone('docker ps -aq --no-trunc | head -1; docker run -d --name api nginx', one)).toEqual(exactOnly)
+  // A run that is not detached prints what its container prints, and so does a compose project, a tmux session and a job.
+  expect(alone('docker run --rm alpine true; docker run -d --name api nginx', one)).toEqual(exactOnly)
+  expect(alone('docker compose up -d; docker run -d --name api nginx', one)).toEqual(exactOnly)
+  expect(alone('tmux new -d -s s; docker run -d --name api nginx', one)).toEqual(exactOnly)
+  expect(alone('node server.js & docker run -d --name api nginx', one)).toEqual(exactOnly)
+  // `echo $!` prints a line too, and a `printf` may print the id with it.
+  expect(alone(`sleep 9 & printf '%s\\n' $! ${OTHER}; docker run -d --name api nginx`, one)).toEqual(exactOnly)
+  // A redirection is no proof that the output goes away (second review of PR 285, P1): `>&3` after `3>&1` copies the original
+  // standard output, and `/dev/stdout` and `/proc/self/fd/1` name it. The command of the review, and its forms.
+  expect(alone(`false && docker run -d --name api nginx; printf '%s\\n' ${OTHER} 3>&1 >&3`, one)).toEqual(exactOnly)
+  expect(alone(`false && docker run -d --name api nginx; printf '%s\\n' ${OTHER} > /dev/stdout`, one)).toEqual(
+    exactOnly,
+  )
+  expect(alone(`false && docker run -d --name api nginx; printf '%s\\n' ${OTHER} >/proc/self/fd/1`, one)).toEqual(
+    exactOnly,
+  )
+  expect(alone(`false && docker run -d --name api nginx; { printf '%s\\n' ${OTHER}; } 3>&1 >&3`, one)).toEqual(
+    exactOnly,
+  )
+  expect(alone(`false && docker run -d --name api nginx; exec 3>&1; printf '%s\\n' ${OTHER} >&3`, one)).toEqual(
+    exactOnly,
+  )
+  // The same for a pipe and a substitution: `tee /dev/stdout` and a group with `3>&1` write to the original output, and the
+  // last part of the pipe is a builtin that prints nothing.
+  expect(
+    alone(`false && docker run -d --name api nginx; printf '%s\\n' ${OTHER} | tee /dev/stdout | true`, one),
+  ).toEqual(exactOnly)
+  expect(alone(`false && docker run -d --name api nginx; { x=$(printf '%s\\n' ${OTHER} >&3); } 3>&1`, one)).toEqual(
+    exactOnly,
+  )
+  // A redirection to a file or to /dev/null, and a `$(...)`, look harmless, but the parser cannot prove where the output goes, so
+  // the run is not alone. This is the cost of the safe side, and it is pinned on purpose.
+  expect(alone('docker inspect -f "{{.Id}}" web > /dev/null; docker run -d --name api nginx', one)).toEqual(exactOnly)
+  expect(alone('docker ps -aq --no-trunc | wc -l > n.txt; docker run -d --name api nginx', one)).toEqual(exactOnly)
+  expect(alone('x=$(docker inspect -f "{{.Id}}" web); docker run -d --name api nginx', one)).toEqual(exactOnly)
+  // A `set` with a word prints nothing, unless it turns on a trace (fourth review of PR 285, P1). `set -x` prints each command as it runs, with
+  // the text of `PS4` before it, and `BASH_XTRACEFD=1` sends the trace to the tool result (a `2>&1` of the harness would do the same
+  // for stderr). `PS4` can hold an id, so a bare id line reaches the result and the run (which never ran) pairs with it. `set -v`
+  // echoes the input lines as read, a heredoc body too. Bash 5.3.20 printed the id for the first form. The command of the review
+  // first, then the other ways to turn a trace or the echo on.
+  expect(alone(`BASH_XTRACEFD=1; PS4=$'${OTHER}\\n'; set -x; false && docker run -d --name api nginx`, one)).toEqual(
+    exactOnly,
+  )
+  for (const on of [
+    'set -x',
+    'set -ex',
+    'set -xv',
+    'set -v',
+    'set -euxo pipefail',
+    'set -o xtrace',
+    'set -o verbose',
+    'set -e -o xtrace',
+    'set -eo xtrace',
+    'set -x -e',
+    'set -vx',
+    'set -o pipefail -x',
+    'set $FLAGS', // an expansion decides which options turn on
+    'set -$F',
+    // zsh reads an option name with no case and no underscore, and `+o noxtrace` turns the option on.
+    'set -o XTRACE',
+    'set -o X_TRACE',
+    'set +o noxtrace',
+  ])
+    expect(alone(`${on}; false && docker run -d --name api nginx`, one), on).toEqual(exactOnly)
+  // The trace can be turned on after the run, or in a group, and it still counts: no segment is exempt.
+  expect(alone('false && docker run -d --name api nginx; set -x', one)).toEqual(exactOnly)
+  expect(alone('false && docker run -d --name api nginx; { set -x; : ; }', one)).toEqual(exactOnly)
+  // A `set` or an `export` that lists prints too (sixth review of PR 285, P1). A `set` with no word lists every shell variable and
+  // then every function, and bash prints a function body as `: '<newline>id<newline>'`, so a function whose body holds a `$'\nid\n'`
+  // puts a bare id line on the result. The call has no `$(`, no trace and no redirection, and a function definition is no command
+  // that the walk asks. Bash 5.3.20 and 3.2.57 printed the id for the command of the review. `export` with no word, or with an
+  // option (`-p`, `-f`), lists its declarations: bash 3.2.57 (`/bin/bash` of macOS) prints a value with a newline as it stands, and
+  // `export -f` prints the body of an exported function in every bash. `export <name>`, `export <name>=<value>` and `set -- ...`
+  // print nothing and keep the mark. The command of the review first, then the forms.
+  expect(alone(`true() { : $'\\n${OTHER}\\n'; }; false && docker run -d --name api nginx; set`, one)).toEqual(exactOnly)
+  for (const lists of [
+    'set',
+    'export',
+    'export -p',
+    'export -f',
+    'export -fp',
+    'export -p -f',
+    'export --',
+    'export $opt', // an expansion can hold `-p`: `opt=-p; export $opt`
+    'export "$opt"',
+    'export *', // a glob can match a file named `-p`
+  ])
+    expect(alone(`${lists}; false && docker run -d --name api nginx`, one), lists).toEqual(exactOnly)
+  // The listing can stand after the run, in a group, or after an `&&`.
+  expect(alone('false && docker run -d --name api nginx; set', one)).toEqual(exactOnly)
+  expect(alone('false && docker run -d --name api nginx; { set; }', one)).toEqual(exactOnly)
+  expect(alone('set && docker run -d --name api nginx', one)).toEqual(exactOnly)
+  expect(alone('false && docker run -d --name api nginx; export -p', one)).toEqual(exactOnly)
+  // A `set` that turns no trace on, and an `export` that lists nothing, printed nothing and kept the mark while a list of quiet
+  // commands decided. No list decides now: the call is not one command, so each of them withholds as well. The cost, pinned
+  // on purpose.
+  for (const quiet of [
+    'export A',
+    'export A=1',
+    'export A=1 B=$B',
+    'export A="$B:x"', // the value of an assignment is no option
+    'export -- A',
+    'set -e',
+    'set -eu',
+    'set -euo pipefail',
+    'set -o pipefail',
+    'set -o',
+    'set +e',
+    'set +x', // turns a trace off: the line that prints it is `+ set +x`, and no earlier `set` turned one on in this call
+    'set -- a b',
+    'set -- -x', // after `--` the words are positional parameters, not options
+    'set a -x', // the first word that is no option ends the options
+    'set -C -f -u',
+  ])
+    expect(alone(`${quiet}; docker run -d --name api nginx`, one), quiet).toEqual(exactOnly)
+  // A substitution that the splitter cannot read still runs (third review of PR 285, P1): the command around it is `:`, `true`, a
+  // line of assignments or `[[`, which print nothing, and the walk never saw what is inside. Bash 5.3.20 printed the id for
+  // each of these. The command of the review first, then the forms that quotes, a heredoc and a redirection hide.
+  const printId = `printf '%s\\n' ${OTHER} >&3`
+  const lead = 'false && docker run -d --name api nginx; '
+  for (const hidden of [
+    `{ : "$(${printId})"; } 3>&1`,
+    `{ true "$(${printId})"; } 3>&1`,
+    `{ x="$(${printId})"; } 3>&1`,
+    `{ : "\`${printId}\`"; } 3>&1`,
+    `{ : <<EOF\n$(${printId})\nEOF\n} 3>&1`,
+    `{ : > "$(${printId})"; } 3>&1`,
+    // Single quotes pass the text on, and the shell runs it as arithmetic, as a prompt (`PS4` with `set -x`) or with `${x@P}`.
+    `{ [[ 'a[$(${printId})]' -eq 1 ]]; } 3>&1`,
+    `{ PS4='$(${printId})'; set -x; :; } 3>&1`,
+    `x='$(${printId})'; { : "\${x@P}"; } 3>&1`,
+  ])
+    expect(alone(lead + hidden, one)).toEqual(exactOnly)
+  // The cost, pinned on purpose: a `$(` or a backtick anywhere withholds the mark, also one that is harmless (an arithmetic
+  // expansion, a word that the shell passes on, a substitution in the arguments of the run itself).
+  expect(alone('sleep $((1+2)); docker run -d --name api nginx', one)).toEqual(exactOnly)
+  expect(alone("docker run -d --name api nginx sh -c 'echo $(date)'", one)).toEqual(exactOnly)
+  expect(alone('docker run -d --name api -v "$(pwd)":/x nginx', one)).toEqual(exactOnly)
+  expect(alone('D=`pwd`; docker run -d --name api nginx', one)).toEqual(exactOnly)
+  // `cd -` and `pushd -` print the directory they go back to (fifth review of PR 285, P1). The target is `$OLDPWD`, and bash prints
+  // that value as it stands, so a relative `OLDPWD=<id>` prints a bare id line (bash 5.3.20), though the call has no `$(` and
+  // `OLDPWD=<id>` is a line of assignments, which the walk never asks. The command of the review first, then the forms: an option
+  // before the `-`, `--`, a quoted or escaped `-`, and a word that expands (or globs) to `-` after the parser has read it.
+  expect(alone(`false && docker run -d --name api nginx; OLDPWD=${OTHER}; cd -`, one)).toEqual(exactOnly)
+  for (const back of [
+    'cd -',
+    'cd -P -',
+    'cd -L -',
+    'cd -- -',
+    "cd '-'",
+    'cd "-"',
+    'cd \\-',
+    'pushd -',
+    'pushd -n -',
+    'cd $d', // an expansion can hold `-`: `d=-; cd $d`
+    'cd "$d"',
+    `cd \${d}`,
+    'cd [-]', // a glob can match a directory named `-`
+    'cd ?',
+    'cd *',
+    'cd {-,}',
+  ])
+    expect(alone(`false && docker run -d --name api nginx; OLDPWD=${OTHER}; ${back}`, one), back).toEqual(exactOnly)
+  // The back-step can stand anywhere in the call: before the run, in a group, after an `&&`.
+  expect(alone(`OLDPWD=${OTHER}; cd - && docker run -d --name api nginx`, one)).toEqual(exactOnly)
+  expect(alone('false && docker run -d --name api nginx; { cd -; }', one)).toEqual(exactOnly)
+  // A `cd` or a `pushd` to a named directory prints no bare line: bash prints nothing for a plain `cd <dir>` (with `CDPATH` it
+  // prints an absolute path, which holds a `/` and is no id), and `pushd` prints the stack, which holds the absolute current
+  // directory. They kept the mark while a list of quiet commands decided. Now the call is not one command, so they withhold.
+  for (const quiet of [
+    'cd',
+    'cd /x',
+    'cd ..',
+    'cd some-dir',
+    'cd ./-x',
+    'cd -P /x',
+    'cd -- /x',
+    'cd -L -e /x',
+    'pushd /x',
+    'pushd /x -n',
+  ])
+    expect(alone(`${quiet} && docker run -d --name api nginx`, one), quiet).toEqual(exactOnly)
+  // One command that prints marks every run of the call.
+  expect(alone('echo hi; docker run -d --name a x; docker run -d --name b y', idLines(NEW, OLD1))).toEqual([
+    ['a', NEW, undefined],
+    ['b', OLD1, undefined],
+  ])
+})
+
+// The lone-command rule (the decision that ended nine review rounds of PR 285). The mark is granted for one simple command that is a
+// detached `docker run`: no `;`, `&&`, `||`, `|`, `&`, no line break that a backslash does not continue outside single quotes, no
+// redirection of any kind, no `$(`, backtick, `${` or `$'`, no leading assignment and no wrapper before `docker`. Each row below is a shape that a round found, or one
+// that the rule names. The call prints the id of another container in a bare line (`OTHER`), so a mark here would be a removal of a
+// container that the run did not make. No row may carry the mark. Before the rule, the failed redirections and the failed `${y?...}`
+// expansion of a line of assignments, and the wrapper in front of the run, were granted the mark.
+test('containerRunAlone: one test for each shape of the nine rounds, and each withholds the mark', () => {
+  const one = idLines(OTHER)
+  const run = 'false && docker run -d --name api nginx'
+  const nl = `$'\\n${OTHER}\\n'`
+  const shapes: [string, string][] = [
+    ['xtrace with PS4', `BASH_XTRACEFD=1; PS4=$'${OTHER}\\n'; set -x; ${run}`],
+    ['a quoted substitution inside a builtin', `${run}; { : "$(printf '%s\\n' ${OTHER} >&3)"; } 3>&1`],
+    ['sleep with a newline operand', `${run}; sleep ${nl}`],
+    ['a failed input redirection', `${run}; true < ${nl}`],
+    ['a failed output redirection', `${run}; : 2>&1 > $'\\n${OTHER}\\n/absent'`],
+    ['a failed expansion on a line of assignments', `${run}; x=\${y?${nl}}`],
+    ['a wrapper before docker', 'env docker run -d --name api nginx'],
+    ['a command after the run', 'docker run -d --name api nginx && docker logs x'],
+    ['a redirection of the run', 'docker run -d --name api nginx > out'],
+    // The other forms of the rule: a leading assignment, a `;`, a `|`, a trailing `&`, a group, a subshell, a substitution.
+    ['a leading assignment', 'A=1 docker run -d --name api nginx'],
+    ['a list with `;`', 'docker run -d --name api nginx; true'],
+    ['a pipe', 'docker run -d --name api nginx | cat'],
+    ['a trailing &', 'docker run -d --name api nginx &'],
+    ['a subshell', '( docker run -d --name api nginx )'],
+    ['a substitution in the run', 'docker run -d --name api -v "$(pwd)":/x nginx'],
+    ['a ${ expansion in the run', `docker run -d --name api -v "\${PWD}":/x nginx`],
+    // The rule reads the raw text and follows no quote: a `;` or a `&&` inside a quoted word of the run is the cost, on purpose.
+    ['a ; in a quoted word of the run', 'docker run -d --name api nginx nginx -g "daemon off;"'],
+    ['a && in a quoted word of the run', "docker run -d --name api alpine sh -c 'sleep 1 && sleep 1'"],
+    ['an ANSI-C quote in the run', `docker run -d --name api -l x=${nl} nginx`],
+    ['a redirection of the input', 'docker run -d --name api nginx < in'],
+    ['a here-string', 'docker run -d --name api nginx <<< x'],
+    ['a stderr redirection', 'docker run -d --name api nginx 2> err'],
+    // A run that is not first: any command in front of it, also one that is quiet.
+    ['a builtin before the run', 'cd /x && docker run -d --name api nginx'],
+    ['a pull before the run', 'docker pull nginx && docker run -d --name api nginx'],
+    ['two runs', 'docker run -d --name a x; docker run -d --name api nginx'],
+    ['a wrapper that is no command', 'time docker run -d --name api nginx'],
+    // Round ten (P3), each clause that no row above pins alone. A comment ends at its newline, so the backslash at its end continues
+    // nothing and `echo` is a second command: the text has no special character and no line break that the rule sees, so only the
+    // count of segments withholds it. A backtick and a `|` in a quoted word have one segment, so only the text rule sees them.
+    [
+      'a second command after a comment that a backslash seems to continue',
+      `docker run -d --name api nginx # x \\\necho ${OTHER}`,
+    ],
+    ['a backtick in a quoted word', "docker run -d --name api alpine sh -c 'echo `x`'"],
+    ['a pipe in a quoted word', "docker run -d --name api alpine sh -c 'a | b'"],
+  ]
+  for (const [shape, command] of shapes) {
+    const rows = containers(command, one)
+    expect(rows.length, shape).toBeGreaterThan(0)
+    for (const row of rows) expect(row.containerRunAlone, shape).toBeUndefined()
+  }
+  // The same run, with nothing else in the call, earns the mark with the same result.
+  expect(alone('docker run -d --name api nginx', one)).toEqual([['api', OTHER, true]])
+})
+
+// A lone `docker run` can still put an id on a bare line of the result, and the rule has to see how. Docker prints an argument that
+// it cannot parse, with a newline of the argument as it stands: a newline typed in quotes (`--memory "<newline><id><newline>"`)
+// puts the id of another container on a line of its own (Docker 29.9.2). The splitter reads that as one command, so the check is
+// on the text: a line break that no backslash continues withholds the mark, in quotes or not. A backslash that continues the line
+// is no break, and an even run of backslashes before a newline does not continue it. Single quotes are the exception: see the next test.
+test('containerRunAlone: a line break in the call withholds the mark, a backslash continuation does not', () => {
+  const one = idLines(OTHER)
+  // What `docker run --memory` prints for `"\n<id>\n"` (seen with Docker CLI 29.9.2): the id stands on a line of its own.
+  const invalid = `invalid argument "\\n${OTHER}\\n" for "-m, --memory" flag: invalid size: '\n${OTHER}\n'\n\nRun 'docker run --help' for more information\n`
+  expect(alone(`docker run -d --name api --memory "\n${OTHER}\n" nginx`, invalid)).toEqual([['api', OTHER, undefined]])
+  expect(alone(`docker run -d --name api --memory '\n${OTHER}\n' nginx`, invalid)).toEqual([['api', OTHER, undefined]])
+  // A newline between two commands, with the second after it, and an even run of backslashes before the newline.
+  expect(alone('docker run -d --name api nginx\ndocker logs api', one)).toEqual([['api', OTHER, undefined]])
+  expect(alone('docker run -d --name api nginx \\\\\ndocker logs api', one)).toEqual([['api', OTHER, undefined]])
+  expect(alone('docker run -d --name api nginx\n\n', one)).toEqual([['api', OTHER, true]])
+  // An odd run continues the line, also three of them.
+  expect(alone('docker run -d --name api \\\\\\\nnginx', one)).toEqual([['api', OTHER, true]])
+})
+
+// Round ten of PR 285 (P1). Inside single quotes a backslash is a plain character, so `\<newline>` is no continuation there: the word
+// keeps both, and Docker prints the part after the newline on a line of its own. The rule has to follow the single quote for this one
+// case. `refused` is what Docker 29.9.2 prints for such an argument (`docker run -d --name api --dns '\<newline><id>' nginx`, with the
+// id of another container after the newline), seen with the real CLI. Outside single quotes the old reading holds: bash drops
+// `\<newline>` in double quotes and between words, and `\\<newline>` there is a backslash, then a line break.
+const refused = (arg: string) =>
+  `invalid argument ${JSON.stringify(arg)} for "--dns" flag: IP address is not correctly formatted: ${arg}\n\nUsage:  docker run [OPTIONS] IMAGE [COMMAND] [ARG...]\n\nRun 'docker run --help' for more information\n`
+
+test('containerRunAlone: a backslash before a newline in single quotes is no continuation, so the newline withholds the mark', () => {
+  const exactOnly = [['api', OTHER, undefined]]
+  const mark = [['api', OTHER, true]]
+  const attacks: [string, string][] = [
+    // The command of the audit, and the same with three backslashes (an odd run, but literal in single quotes).
+    [`docker run -d --name api --dns '\\\n${OTHER}' nginx`, `\\\n${OTHER}`],
+    [`docker run -d --name api --dns '\\\\\\\n${OTHER}' nginx`, `\\\\\\\n${OTHER}`],
+    // After a double-quoted single quote: that quote opens nothing, and the one after it opens the real single quotes.
+    [`docker run -d --name api --label "'" --dns '\\\n${OTHER}' nginx`, `\\\n${OTHER}`],
+    // After a single-quoted double quote, a word with a quote of the other kind, and a run that earlier lines continued.
+    [`docker run -d --name api --label '"' --dns '\\\n${OTHER}' nginx`, `\\\n${OTHER}`],
+    [`docker run -d --name api -e "A=it's" --dns '\\\n${OTHER}' nginx`, `\\\n${OTHER}`],
+    [`docker run -d \\\n  --name api \\\n  --dns '\\\n${OTHER}' nginx`, `\\\n${OTHER}`],
+    // The same two backslashes in double quotes are one backslash, then a real newline.
+    [`docker run -d --name api --dns "\\\\\n${OTHER}" nginx`, `\\\n${OTHER}`],
+  ]
+  for (const [command, arg] of attacks) expect(alone(command, refused(arg)), command).toEqual(exactOnly)
+  // Bash drops `\<newline>` in double quotes and between words, so these hold no newline and keep the mark. A `'` in double quotes
+  // and a `"` in single quotes open nothing, and a continued run with quoted words is the usual shape of a long one.
+  for (const lone of [
+    `docker run -d \\\n  -e 'A=1' \\\n  -e "A=it's" \\\n  --name api nginx`,
+    `docker run -d --name api -l "k=v\\\nw" nginx`,
+    `docker run -d --name api -l 'k="v"' \\\n  -l "k='v'" nginx`,
+    `docker run -d --name api -l 'one\\two' \\\n  nginx`,
+  ])
+    expect(alone(lone, idLines(OTHER)), lone).toEqual(mark)
+})
+
+// The one attack that a lone command still allows (the narrowing decided for PR 285). `docker run -d --name api nginx` fails when the
+// name is taken, and Docker prints the id of the container that holds it, but in a sentence, not as a bare line. The row of the run
+// must not pair with it, so it has no id, no `containerIdExact` and no mark, and `/track clean` has nothing to remove. The text is
+// the one Docker prints (`docker: Error response from daemon: Conflict. ...`), with and without the lines that go with it.
+test('containerRunAlone: the name-conflict error of a lone run names the id of another container in a sentence, and no row takes it', () => {
+  const sentence = `docker: Error response from daemon: Conflict. The container name "/api" is already in use by container "${OTHER}". You have to remove (or rename) that container to be able to reuse that name.`
+  const bare = [unpaired('docker:ctr:api', 'api')]
+  expect(containers('docker run -d --name api nginx', `${sentence}\n`)).toStrictEqual(bare)
+  expect(
+    containers('docker run -d --name api nginx', `${sentence}\n\nRun 'docker run --help' for more information\n`),
+  ).toStrictEqual(bare)
+  expect(
+    containers('docker run -d --name api nginx', `Unable to find image 'nginx:latest' locally\n${sentence}\n`),
+  ).toStrictEqual(bare)
+  // A row with no `--name` has no conflict to print: the error of a run that did not start has no id line, and the row keeps no id.
+  expect(
+    containers('docker run -d nginx', `docker: Error response from daemon: pull access denied for nginx\n`),
+  ).toStrictEqual([unpaired('docker:ctr:docker run -d nginx', 'docker run -d nginx')])
+})
+
+// Seventh review of PR 285, P1, two threads. (1) `stripLead` drops a wrapper in front of a command, and when no command follows, the
+// segment is empty and the walk skipped it before it asked if the segment prints. `env` with no command prints the environment, and
+// a value with a newline puts a bare id on a line of its own: `export X=$'\n<id>\n'; false && docker run -d --name api nginx; env`
+// (bash 5.3.20 and 3.2.57 printed the id). `sudo -l` and `nice` print too. `time` prints its report, `TIMEFORMAT` shapes it, and the
+// report goes to stderr (a `2>&1` of the harness puts it on the result): `TIMEFORMAT=$'\n<id>\n'; time true` prints the id, with a
+// command or none. (2) `set -?` with a file named `-x` in the directory is `set -x` after the glob: `set` read only the literal
+// letters and the `$` of an option word, so the trace was missed (bash 5.3.20 printed the id for `set -?`, `set *`, `set {-x,}` and
+// `set -o xtr?ce`).
+test('containerRunAlone: a wrapper that prints, and a set word that expands or globs, withhold the mark', () => {
+  const one = idLines(OTHER)
+  const exactOnly = [['api', OTHER, undefined]]
+  const run = 'false && docker run -d --name api nginx'
+  // The command of the first review thread, then the forms: options, assignments, other wrappers in front, a group, after the run.
+  expect(alone(`export X=$'\\n${OTHER}\\n'; ${run}; env`, one)).toEqual(exactOnly)
+  for (const lists of [
+    'env',
+    'env -i',
+    'env -0',
+    'env -u X',
+    'env A=1',
+    'env -i A=1',
+    'A=1 env',
+    'sudo env',
+    'sudo -l',
+    'sudo -u root',
+    'nice',
+    'nice -n 5',
+    'exec env',
+    'command env',
+    'nohup env',
+    'time',
+    'time -p',
+    'time true',
+    'time -p true',
+    'time env',
+    '! time true',
+  ])
+    expect(alone(`${run}; ${lists}`, one), lists).toEqual(exactOnly)
+  expect(alone(`${run}; { env; }`, one)).toEqual(exactOnly)
+  expect(alone(`env; ${run}`, one)).toEqual(exactOnly)
+  expect(alone(`true && env && ${run}`, one)).toEqual(exactOnly)
+  // `time` also wraps the run itself: its report can hold an id, so the run is not alone. The cost, pinned on purpose.
+  expect(alone('time docker run -d --name api nginx', idLines(NEW))).toEqual([['api', NEW, undefined]])
+  // A wrapper that runs a command prints nothing of its own, and `env`, `sudo` and `nice` kept the mark in front of the run while a
+  // list of quiet commands decided, as did a line of assignments. Now the run must be the head of the one command, so a wrapper, an
+  // assignment or another command in front of it withholds the mark. The cost, pinned on purpose.
+  for (const quiet of [
+    'env docker run -d --name api nginx',
+    'env A=1 docker run -d --name api nginx',
+    'env -i A=1 docker run -d --name api nginx',
+    'sudo docker run -d --name api nginx',
+    'sudo -u root docker run -d --name api nginx',
+    'nice docker run -d --name api nginx',
+    'nice -n 5 docker run -d --name api nginx',
+    'A=1 docker run -d --name api nginx',
+    'env true; docker run -d --name api nginx',
+    'env A=1 true; docker run -d --name api nginx',
+    'sudo true; docker run -d --name api nginx',
+    'nice true; docker run -d --name api nginx',
+    'A=1; B=2; docker run -d --name api nginx',
+    'command true; docker run -d --name api nginx',
+    'exec; docker run -d --name api nginx',
+  ])
+    expect(alone(quiet, one), quiet).toEqual(exactOnly)
+  // A `set` word that globs or expands counts, wherever it stands among the options: a file named `-x` or `-v` makes it a trace.
+  // The command of the second thread first.
+  expect(alone(`BASH_XTRACEFD=1; PS4=$'${OTHER}\\n'; set -?; ${run}`, one)).toEqual(exactOnly)
+  for (const globs of [
+    'set -?',
+    'set -[x]',
+    'set -*',
+    'set *',
+    'set ?',
+    'set {-x,}',
+    'set -{x,}',
+    'set -e *',
+    'set -e -?',
+    'set -o xtr?ce',
+    'set -o xtrac[e]',
+    'set -o xtrace*',
+    'set -o {xtrace,}',
+    'set -o $name', // the name of an option can expand too
+    'set +o ?trace',
+  ])
+    expect(alone(`${globs}; ${run}`, one), globs).toEqual(exactOnly)
+  // After `--` and after the first word that is no option the words are positional parameters, and they turn no option on. They
+  // kept the mark while a list of quiet commands decided. Now the call is not one command, so they withhold too.
+  for (const quiet of [
+    'set -- *',
+    'set -e -- ?',
+    'set -e -- {-x,}',
+    'set a *',
+    'set a -?',
+    'set -e a *',
+    'set -o pipefail',
+    'set -o pipefail -e',
+  ])
+    expect(alone(`${quiet}; docker run -d --name api nginx`, one), quiet).toEqual(exactOnly)
+})
+
+// Eighth review of PR 285, P1. A builtin that "prints nothing" prints its operand in a diagnostic when it fails, and the shell prints a
+// bad expansion the same way. `false && docker run -d --name api nginx; [ 0 -eq $'\n<id>\n' ] 2>&1` never runs Docker, and `[` prints
+// `[: <newline><id><newline>: integer expression expected`: the id is a bare line (bash 5.3.20 and 3.2.57). The call has no `$(`, no
+// trace and no listing. `test`, `sleep`, `wait`, `unset`, `true ${x?<msg>}`, `export a$'\n<id>\n'` and `set -o $'\n<id>\n'` do the same,
+// and `cd` and `unset` of bash 3.2.57 print a name with a newline as it stands. The parser cannot tell a failing call from a good one, so
+// an operand that the shell can turn into a value with a newline withholds the mark: a word with `$`, `~`, a glob character, `{`, or a
+// newline typed in quotes. `export` reads the name before the `=` only (the value of an assignment is no operand), `set` the option
+// words before `--`.
+test('containerRunAlone: a quiet builtin whose operand can hold a newline withholds the mark, for its diagnostic', () => {
+  const one = idLines(OTHER)
+  const exactOnly = [['api', OTHER, undefined]]
+  const run = 'false && docker run -d --name api nginx'
+  const nl = `$'\\n${OTHER}\\n'`
+  // The command of the review first, then the forms.
+  expect(alone(`${run}; [ 0 -eq ${nl} ] 2>&1`, one)).toEqual(exactOnly)
+  for (const prints of [
+    `[ 0 -eq ${nl} ]`,
+    `[ x ${nl} y ]`,
+    `[[ ${nl} -eq 0 ]]`,
+    `test 0 -eq ${nl}`,
+    `sleep ${nl}`,
+    `wait ${nl}`,
+    `unset ${nl}`,
+    `true \${x?${nl}}`, // a failing expansion prints its message
+    `: \${x:?${nl}}`,
+    // A newline typed in quotes, a variable, a tilde and a glob.
+    `[ 0 -eq '\n${OTHER}\n' ]`,
+    `unset '\n${OTHER}\n'`,
+    '[ 0 -eq "$X" ]',
+    '[ -n "$X" ]',
+    '[ 0 -eq ~- ]', // `~-` is `$OLDPWD`, and `~+` is `$PWD`
+    'unset ~-',
+    'sleep $n',
+    'wait $!',
+    'sleep *',
+    'wait ?',
+    'sleep {1,2}',
+    'test -f a[1]',
+    // `cd` and `pushd` print a name that does not exist (bash 3.2.57 as it stands), and `~` is `$HOME`.
+    `cd ${nl}`,
+    `cd '\n${OTHER}\n'`,
+    'cd ~',
+    'cd ~/x',
+    'cd ~-',
+    'pushd ~',
+    // An `export` word with a name that is no plain name, and a `set` option name.
+    `export a${nl}`,
+    `export 'a\n${OTHER}\n'`,
+    'export a$b',
+    `set -o ${nl}`,
+    `set -o '\n${OTHER}\n'`,
+    'set -o ~-',
+  ])
+    expect(alone(`${run}; ${prints}`, one), prints).toEqual(exactOnly)
+  // The same command can stand before the run, in a group or after an `&&`.
+  expect(alone(`[ 0 -eq ${nl} ]; ${run}`, one)).toEqual(exactOnly)
+  expect(alone(`${run}; { sleep ${nl}; }`, one)).toEqual(exactOnly)
+  expect(alone(`[ -n "$X" ] && docker run -d --name api nginx`, one)).toEqual(exactOnly)
+  // Operands that hold no newline kept the mark while a list of quiet commands decided: a number, a plain word, a path, a flag, the
+  // name of a variable, the value of an assignment (an `export` and a `set --` print no value), and the builtins with no operand.
+  // Now the call is not one command, so they withhold too. The cost, pinned on purpose.
+  for (const quiet of [
+    '[ -n x ]',
+    '[ -f /tmp/x ]',
+    '[ 1 -eq 1 ]',
+    '[[ -d /x ]]',
+    '[[ a == b ]]',
+    'test -n x',
+    'sleep 2',
+    'sleep 0.5',
+    'wait',
+    'wait 123',
+    'unset FOO',
+    'unset -f f',
+    'true',
+    'false',
+    ':',
+    ': ok',
+    `export A=${nl}`,
+    'export A="$B:x"',
+    'export PATH="$PATH:/x"',
+    'export A=1 B=$B',
+    'export A+=x',
+    'export -- A=1',
+    `set -- ${nl}`,
+    'set -e',
+    'set -o pipefail',
+  ])
+    expect(alone(`${quiet}; docker run -d --name api nginx`, one), quiet).toEqual(exactOnly)
 })
 
 // The count rule alone, with no shell text: `printed[n]` says that the output of run n reaches the tool result.
