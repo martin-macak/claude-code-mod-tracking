@@ -1,4 +1,4 @@
-// Markdown file sightings (issue #28): where a path lands and which sighting it is. The part of `sighting.ts` that a
+// File sightings (issues #28 and #57): where a path lands and which sighting it is. The part of `sighting.ts` that a
 // kind needs, with no join to the item list, so the file kind can import it without a cycle through the registry.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 11, L5 Task 8.
 
@@ -7,7 +7,7 @@ import type { EnvName, FsStat } from '../../core/interfaces/ports'
 import type { FactsPort } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import { normalizePath } from '../../core/lib/paths'
-import { type IgnoreContext, isIgnored, mdCandidates, resolvePath } from './files'
+import { type IgnoreContext, isIgnored, pathCandidates, resolvePath } from './files'
 import { fileRecord } from './kind'
 import type { FileActivity, FileRecord, Sighting } from './types'
 
@@ -65,14 +65,21 @@ export class FileSight {
     return { ...(await this.cache.env), cwd: spawn ?? (await this.d.session.cwd()), ...(top ? { root: top } : {}) }
   }
 
-  /** Where an absolute path lands: the real path from one stat, else the path itself. */
-  private async landed(path: string): Promise<{ path: string; exists: boolean }> {
+  /**
+   * Where an absolute path lands: the real path from one stat, else the path itself. A file that is gone (a Bash delete) has no
+   * real path of its own, so its folder lands instead and the name joins it: the delete then marks the row that an earlier
+   * Write, Edit or Read keyed by the real path, also when the folder is a symlink (`/tmp` to `/private/tmp`). A mention of a
+   * file that is gone adds no row, so it costs the one stat of the file and no more (`folder` false).
+   */
+  private async landed(path: string, folder: boolean): Promise<{ path: string; exists: boolean }> {
     const st = await this.d.fs.stat(path, { resolve: true })
-    if (!st) return { path, exists: false }
-    return { path: st.realPath ? normalizePath(st.realPath) : path, exists: st.kind === 'file' }
+    if (st) return { path: st.realPath ? normalizePath(st.realPath) : path, exists: st.kind === 'file' }
+    const cut = path.lastIndexOf('/')
+    const dir = folder && cut > 0 ? await this.d.fs.stat(path.slice(0, cut), { resolve: true }) : null
+    return { path: dir?.realPath ? normalizePath(`${dir.realPath}${path.slice(cut)}`) : path, exists: false }
   }
 
-  /** One sighting of a Markdown file. null: an ignored path, or a mention of a file that is not there. */
+  /** One sighting of a file. null: an ignored path, or a mention of a file that is not there. */
   async sighting(
     ctx: FileCtx,
     spelled: string,
@@ -82,18 +89,18 @@ export class FileSight {
   ): Promise<FileRecord | null> {
     const label = resolvePath(spelled, ctx.cwd, ctx.home)
     if (label === null || isIgnored(label, ctx)) return null
-    const hit = await this.landed(label)
+    const hit = await this.landed(label, kind !== 'mentioned')
     if (kind === 'mentioned' && !hit.exists) return null
     return fileRecord({ path: hit.path, label, kind, bySubagent }, s)
   }
 
   /**
-   * `.md` paths that a prompt or reply names and that exist: one `mentioned` sighting each (R8). At most `max` paths
+   * Paths that a prompt or reply names and that exist: one `mentioned` sighting each (R8). At most `max` paths
    * are looked at (`maxMentionsPerRow`).
    */
   async mentionRecords(ctx: FileCtx, text: string, s: Sighting, max?: number): Promise<FileRecord[]> {
     const recs: FileRecord[] = []
-    for (const name of mdCandidates(text, max)) {
+    for (const name of pathCandidates(text, max)) {
       const rec = await this.sighting(ctx, name, 'mentioned', false, s)
       if (rec) recs.push(rec)
     }

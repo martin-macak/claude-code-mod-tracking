@@ -22,6 +22,7 @@ export const IDLE_ITEMS: Pick<
   | 'tools'
   | 'scan'
   | 'build'
+  | 'cap'
 > = {
   ready: true,
   capture: async () => NO_SIGHTINGS,
@@ -42,4 +43,5 @@ export const IDLE_ITEMS: Pick<
   tools: () => undefined,
   scan: () => [],
   build: () => null,
+  cap: list => list,
 }

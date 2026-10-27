@@ -166,22 +166,117 @@ test('foldRecords with no kind for the category gives the generic fold', () => {
   expect(out).toMatchObject({ seenCount: 2, sources: ['prompt'], lastSeen: 2 })
 })
 
+/** No kind ranks a record: only the age decides. */
+const noKinds: KindTable = () => undefined
+
 test('enforceCap evicts the smallest lastSeen, never a discovered record, never the newest 100 manual-high records', () => {
   const found = { sources: [], reasons: DISCOVERED }
   const list: StoredItem[] = [rec('t:a', 5), rec('t:b', 1), rec('t:c', 3), rec('t:auto', 0, found)]
-  expect(enforceCap(list, 3)).toBe(list) // the auto-only record does not count
-  expect(enforceCap(list, 2).map(x => x.key)).toEqual(['t:a', 't:c', 't:auto'])
+  expect(enforceCap(list, 3, new Set(), noKinds)).toBe(list) // the auto-only record does not count
+  expect(enforceCap(list, 2, new Set(), noKinds).map(x => x.key)).toEqual(['t:a', 't:c', 't:auto'])
   const manual = (i: number) => rec(`t:m${i}`, i, { priority: 'high' })
   const highs = Array.from({ length: MAX_PINNED + 3 }, (_, i) => manual(i + 10)) // lastSeen 10 to 112
   const all: StoredItem[] = [rec('t:auto2', 0, found), rec('t:old', 1), rec('t:keep', 2), ...highs]
   // 105 records count against a cap of 101: four go. Not the auto-only one, not t:keep, not the newest 100 manual-high.
-  const out = enforceCap(all, MAX_PINNED + 1, new Set(['t:keep']))
+  const out = enforceCap(all, MAX_PINNED + 1, new Set(['t:keep']), noKinds)
   expect(out).toHaveLength(all.length - 4)
   expect(out.map(x => x.key)).toContain('t:auto2')
   expect(out.map(x => x.key)).toContain('t:keep')
   expect(out.map(x => x.key)).not.toContain('t:old')
   for (const gone of ['t:m10', 't:m11', 't:m12']) expect(out.map(x => x.key)).not.toContain(gone)
   for (const stays of highs.slice(3)) expect(out.map(x => x.key)).toContain(stays.key)
+})
+
+// ---------------------------------------------------------------- the per-kind cap and the rank (issue #57, G1)
+
+/** A kind whose records rank by `n`: the cap drops the lowest rank first (a read-only file is 0, a written file 2). */
+const rrec = (key: string, at: number, n?: number): TRec =>
+  ({ ...rec(key, at, n === undefined ? {} : { n }), category: 'r' }) as unknown as TRec
+const ranked: ItemKind<TRec> = {
+  ...tKind,
+  category: 'r',
+  decode: item => (item.category === 'r' ? (item as TRec) : null),
+  merge: (cur, seen) => cur ?? rrec(seen.key, seen.at, typeof seen.fields.n === 'number' ? seen.fields.n : undefined),
+  capRank: r => r.n ?? 2,
+}
+const rankTable: KindTable = c => (c === 'r' ? ranked : c === 't' ? tKind : undefined)
+const keysOf = (list: readonly StoredItem[]): string[] => list.map(x => x.key)
+
+test('enforceCap drops the lowest rank first, also before an older record of a kind with no rank', () => {
+  // The three `r` records rank 0, 1 and 2. The `t` record has no rank (2) and the smallest lastSeen.
+  const list: StoredItem[] = [rec('t:old', 1), rrec('r:read', 9, 0), rrec('r:mention', 8, 1), rrec('r:write', 7, 2)]
+  expect(keysOf(enforceCap(list, 3, new Set(), rankTable))).toEqual(['t:old', 'r:mention', 'r:write'])
+  expect(keysOf(enforceCap(list, 2, new Set(), rankTable))).toEqual(['t:old', 'r:write'])
+  // The same rank: the smallest lastSeen goes, as before.
+  expect(
+    keysOf(enforceCap([rrec('r:a', 5, 0), rrec('r:b', 3, 0), rrec('r:c', 4, 0)], 2, new Set(), rankTable)),
+  ).toEqual(['r:a', 'r:c'])
+  // With no kind table, or a kind with no `capRank`, nothing ranks: the smallest lastSeen goes.
+  expect(keysOf(enforceCap(list, 3, new Set(), noKinds))).toEqual(['r:read', 'r:mention', 'r:write'])
+})
+
+test('a kind cap limits one kind and drops its lowest rank first; the other kinds are untouched', () => {
+  const list: StoredItem[] = [
+    rec('t:a', 1),
+    rec('t:b', 2),
+    rrec('r:read1', 3, 0),
+    rrec('r:read2', 4, 0),
+    rrec('r:write', 1, 2),
+    rrec('r:mention', 2, 1),
+  ]
+  const cap = { total: 100, of: (c: string) => (c === 'r' ? 2 : undefined) }
+  expect(keysOf(enforceCap(list, cap, new Set(), rankTable))).toEqual(['t:a', 't:b', 'r:write', 'r:mention'])
+  // The cap of a kind counts its own records only: a list that fits the kind cap comes back as it is.
+  const few: StoredItem[] = [rec('t:a', 1), rrec('r:a', 2, 0), rrec('r:b', 3, 0)]
+  expect(enforceCap(few, cap, new Set(), rankTable)).toBe(few)
+})
+
+test('a kind cap above the shared cap lifts nothing: the lower of the two applies', () => {
+  const list: StoredItem[] = [rec('t:a', 1), rrec('r:a', 2, 0), rrec('r:b', 3, 1), rrec('r:c', 4, 2), rec('t:b', 5)]
+  const cap = { total: 3, of: () => 50 }
+  expect(keysOf(enforceCap(list, cap, new Set(), rankTable))).toEqual(['t:a', 'r:c', 't:b'])
+  // A plain number is the shared cap alone.
+  expect(enforceCap(list, 3, new Set(), rankTable)).toHaveLength(3)
+})
+
+test('the kind cap keeps the keys of this call and the newest manual-high records, as the shared cap does', () => {
+  const list: StoredItem[] = [
+    rrec('r:new', 1, 0), // the call added it: it stays although it is the lowest rank and the oldest
+    { ...rrec('r:pin', 2, 0), priority: 'high' } as StoredItem,
+    rrec('r:read', 3, 0),
+    rrec('r:write', 4, 2),
+  ]
+  const cap = { total: 100, of: () => 2 }
+  expect(keysOf(enforceCap(list, cap, new Set(['r:new']), rankTable))).toEqual(['r:new', 'r:pin'])
+})
+
+test('the record that this call added stays at a full kind cap, also when it ranks lowest: a written record goes', () => {
+  // README, Files, Cap: a lone Read at a full file cap of written rows replaces the oldest written row.
+  const list: StoredItem[] = [rrec('r:w1', 1, 2), rrec('r:w2', 2, 2), rrec('r:new', 9, 0)]
+  const cap = { total: 100, of: () => 2 }
+  expect(keysOf(enforceCap(list, cap, new Set(['r:new']), rankTable))).toEqual(['r:w2', 'r:new'])
+  // Not added by this call, the same record ranks lowest and goes first.
+  expect(keysOf(enforceCap(list, cap, new Set(), rankTable))).toEqual(['r:w1', 'r:w2'])
+})
+
+test('the kind cap does not count a record that discovery found', () => {
+  const found = { sources: [], reasons: DISCOVERED }
+  const auto = { ...rrec('r:auto', 0, 0), ...found } as StoredItem
+  const list: StoredItem[] = [auto, rrec('r:a', 1, 0), rrec('r:b', 2, 0)]
+  expect(enforceCap(list, { total: 100, of: () => 2 }, new Set(), rankTable)).toBe(list)
+  expect(keysOf(enforceCap(list, { total: 100, of: () => 1 }, new Set(), rankTable))).toEqual(['r:auto', 'r:b'])
+})
+
+test('mergeClaims, unionRecords and carryOver cap by kind and rank; the record a claim adds stays', () => {
+  const cap = { total: 100, of: (c: string) => (c === 'r' ? 2 : undefined) }
+  const list: StoredItem[] = [rrec('r:read', 5, 0), rrec('r:write', 1, 2), rec('t:a', 1)]
+  const added = mergeClaims(list, [claim('r:new', 9, 0, 'r')], rankTable, cap)
+  // The new record ranks 0 like r:read, and r:read is older: r:read goes, and the new record stays.
+  expect(keysOf(added.list)).toEqual(['r:write', 't:a', 'r:new'])
+  expect(added.added).toEqual(['r:new'])
+  const all: StoredItem[] = [rrec('r:a', 1, 0), rrec('r:b', 2, 1)]
+  expect(keysOf(unionRecords(all, [rrec('r:c', 3, 2)], rankTable, cap))).toEqual(['r:b', 'r:c'])
+  expect(keysOf(carryOver(all, [rrec('r:c', 3, 2)], rankTable, cap))).toEqual(['r:b', 'r:c'])
 })
 
 test('isAutoOnly and isDiscovered read the reasons, not the sources (issue #62)', () => {

@@ -242,7 +242,7 @@ export const register: Register = on => {
     await soft(() =>
       $.command.register({
         name: 'track',
-        description: 'Show tracked GitHub, Jira, artifacts, web links and Markdown files',
+        description: 'Show tracked GitHub, Jira, artifacts, web links and files',
         argumentHint: managerOf($).commands.hint(),
       }),
     ) // a refused command: capture and restore still work

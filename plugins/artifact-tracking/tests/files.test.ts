@@ -1,8 +1,9 @@
-// Markdown file facts (issue #28). Pure code, so no `$` is used. The result shapes are the ones the design study
-// observed on Claude Code 2.1.296 (issue #28, study part 1, section 3). The one exception is the `file_unchanged` answer
-// of a Read (issue #245). It comes from probe P1 of the #57 study, on Claude Code 2.1.310.
+// File facts (issues #28 and #57). Pure code, so no `$` is used. The result shapes are the ones the design study
+// observed on Claude Code 2.1.296 (issue #28, study part 1, section 3). The exceptions are the answers of probe P1 of the
+// #57 study, on Claude Code 2.1.310: the `file_unchanged` answer of a Read (issue #245), a Read of an image or a notebook,
+// and NotebookEdit.
 import { expect, test } from 'claude-code/testing'
-import { isIgnored, mdCandidates, resolvePath, touchFromToolResult } from '../trackers/file/files'
+import { isIgnored, isMd, pathCandidates, resolvePath, touchFromToolResult } from '../trackers/file/files'
 import { LIMITS } from './fixtures/limits'
 
 const write = (filePath: string, type: 'create' | 'update' = 'create') => ({
@@ -39,7 +40,60 @@ test('touchFromToolResult: Write create gives created, Write update and Edit giv
 test('touchFromToolResult: a Read of an unchanged file gives viewed with result.file.filePath for a .md path, in any case', () => {
   expect(touchFromToolResult('Read', readUnchanged('/w/a.md'))).toEqual({ spelled: '/w/a.md', kind: 'viewed' })
   expect(touchFromToolResult('Read', readUnchanged('/w/LOUD.MD'))).toEqual({ spelled: '/w/LOUD.MD', kind: 'viewed' })
-  expect(touchFromToolResult('Read', readUnchanged('/w/a.ts'))).toBeNull() // only .md paths count
+})
+
+test('touchFromToolResult: a Read of a file of any type is a view, a .md path or not', () => {
+  expect(touchFromToolResult('Read', read('/w/src/a.ts'))).toEqual({ spelled: '/w/src/a.ts', kind: 'viewed' })
+  expect(touchFromToolResult('Read', readUnchanged('/w/a.ts'))).toEqual({ spelled: '/w/a.ts', kind: 'viewed' })
+  expect(touchFromToolResult('Read', readUnchanged('/w/Makefile'))).toEqual({ spelled: '/w/Makefile', kind: 'viewed' })
+})
+
+test('touchFromToolResult: a Read of a notebook, a PDF or parts names its file in result.file.filePath', () => {
+  const nb = { result: { type: 'notebook', file: { filePath: '/w/nb.ipynb', cells: [] } } }
+  const pdf = { result: { type: 'pdf', file: { filePath: '/w/doc.pdf', base64: '', originalSize: 193 } } }
+  const parts = {
+    result: {
+      type: 'parts',
+      file: { filePath: '/w/big.pdf', originalSize: 4096, count: 2, outputDir: '/tmp/claude-pages/big' },
+    },
+  }
+  expect(touchFromToolResult('Read', nb)).toEqual({ spelled: '/w/nb.ipynb', kind: 'viewed' })
+  expect(touchFromToolResult('Read', pdf)).toEqual({ spelled: '/w/doc.pdf', kind: 'viewed' })
+  expect(touchFromToolResult('Read', parts)).toEqual({ spelled: '/w/big.pdf', kind: 'viewed' })
+})
+
+test('touchFromToolResult: a Read of an image has no path in its result, so the path is the input file_path', () => {
+  const image = { result: { type: 'image', file: { base64: '…', type: 'image/png', originalSize: 70 } } }
+  expect(touchFromToolResult('Read', image, { file_path: '/w/img.png' })).toEqual({
+    spelled: '/w/img.png',
+    kind: 'viewed',
+  })
+  expect(touchFromToolResult('Read', image)).toBeNull() // no input, no path
+  expect(touchFromToolResult('Read', image, { file_path: 3 })).toBeNull()
+  expect(touchFromToolResult('Read', image, 'text')).toBeNull()
+  // A text result names its own file: the input does not matter.
+  expect(touchFromToolResult('Read', read('/w/a.ts'), { file_path: 'other.ts' })).toEqual({
+    spelled: '/w/a.ts',
+    kind: 'viewed',
+  })
+})
+
+test('touchFromToolResult: NotebookEdit edits the notebook, with error "" for a success', () => {
+  const ok = (notebook_path: string, error: unknown = '') => ({
+    result: { cell_type: 'code', edit_mode: 'replace', cell_id: 'c1', error, notebook_path },
+  })
+  expect(touchFromToolResult('NotebookEdit', ok('/w/nb.ipynb'))).toEqual({ spelled: '/w/nb.ipynb', kind: 'edited' })
+  expect(touchFromToolResult('NotebookEdit', { result: { notebook_path: '/w/nb.ipynb' } })).toEqual({
+    spelled: '/w/nb.ipynb',
+    kind: 'edited',
+  })
+  // A failure is a string with isError, and a message in `error` is a failure too.
+  const failed = { isError: true, result: 'Error: Cell with ID "nope" not found in notebook.' }
+  expect(touchFromToolResult('NotebookEdit', failed)).toBeNull()
+  expect(touchFromToolResult('NotebookEdit', ok('/w/nb.ipynb', 'Cell not found'))).toBeNull()
+  expect(touchFromToolResult('NotebookEdit', { result: { error: '' } })).toBeNull()
+  expect(touchFromToolResult('NotebookEdit', { result: { ...ok('/w/nb.ipynb').result, staged: true } })).toBeNull()
+  expect(touchFromToolResult('Edit', ok('/w/nb.ipynb'))).toBeNull() // only NotebookEdit reads notebook_path
 })
 
 test('touchFromToolResult: a file_unchanged answer with source seeded, or as a transcript tool use, gives viewed', () => {
@@ -65,11 +119,18 @@ test('touchFromToolResult: only a Read call reads the file_unchanged type', () =
   expect(touchFromToolResult('Edit', readUnchanged('/w/a.md'))).toBeNull()
 })
 
-test('touchFromToolResult: only .md paths count, in any case', () => {
-  for (const p of ['/w/a.ts', '/w/plan.md.bak', '/w/README', '/w/a.markdown'])
-    expect(touchFromToolResult('Write', write(p))).toBeNull()
-  expect(touchFromToolResult('Write', write('/w/LOUD.MD'))).toEqual({ spelled: '/w/LOUD.MD', kind: 'created' })
-  expect(touchFromToolResult('Read', read('/w/a.ts'))).toBeNull()
+test('touchFromToolResult: a file of any type counts; a call with no path in its result does not', () => {
+  for (const p of ['/w/a.ts', '/w/plan.md.bak', '/w/README', '/w/a.markdown', '/w/LOUD.MD'])
+    expect(touchFromToolResult('Write', write(p))).toEqual({ spelled: p, kind: 'created' })
+  expect(touchFromToolResult('Edit', edit('/w/src/a.ts'))).toEqual({ spelled: '/w/src/a.ts', kind: 'edited' })
+  expect(touchFromToolResult('Write', { result: { type: 'create', filePath: '' } })).toBeNull()
+  expect(touchFromToolResult('Glob', write('/w/a.ts'))).toBeNull() // a search is no read
+  expect(touchFromToolResult('Grep', read('/w/a.ts'))).toBeNull()
+})
+
+test('isMd: a .md path in any case, with a name before the extension', () => {
+  for (const p of ['/w/a.md', '/w/LOUD.MD', 'a.md']) expect(isMd(p)).toBe(true)
+  for (const p of ['/w/a.ts', '/w/plan.md.bak', '/w/.md', '/w/a.markdown', '']) expect(isMd(p)).toBe(false)
 })
 
 test('touchFromToolResult: the observed failure shapes, a deny, a staged change and odd shapes give null', () => {
@@ -87,7 +148,7 @@ test('touchFromToolResult: the observed failure shapes, a deny, a staged change 
   expect(touchFromToolResult('Write', { result: undefined })).toBeNull()
   expect(touchFromToolResult('Write', { result: { type: 'create' } })).toBeNull()
   expect(touchFromToolResult('Read', { result: { type: 'image', file: { base64: '' } } })).toBeNull()
-  expect(touchFromToolResult('Bash', write('/w/a.md'))).toBeNull()
+  expect(touchFromToolResult('Bash', write('/w/a.md'))).toBeNull() // Bash has its own reader (`bash.ts`)
   expect(touchFromToolResult('Write', null)).toBeNull()
 })
 
@@ -154,11 +215,11 @@ test('isIgnored: the Claude scratchpad by its engine shape, outside the session 
 
 // ---------------------------------------------------------------- mentions
 
-test('mdCandidates: the observed reply gives its 8 candidates and skips the URL', () => {
+test('pathCandidates with scope md: the observed reply gives its 8 candidates and skips the URL', () => {
   const reply =
     'Plan: `docs/plan.md`. See [alias](alias.md), ./notes.md, ../probe-repo/docs/sub.md, /repo/docs/after.md, ' +
     '~/x.md, docs/missing.md, README.md. URL <https://github.com/o/r/blob/main/CHANGELOG.md> and docs/plan.md.'
-  expect(mdCandidates(reply)).toEqual([
+  expect(pathCandidates(reply, undefined, 'md')).toEqual([
     'docs/plan.md',
     'alias.md',
     './notes.md',
@@ -170,19 +231,62 @@ test('mdCandidates: the observed reply gives its 8 candidates and skips the URL'
   ])
 })
 
-test('mdCandidates: strips a line or anchor suffix, an @ prefix and trailing punctuation', () => {
-  expect(mdCandidates('See README.md:42, docs/a.md:10:3 and docs/b.md#L7!')).toEqual([
+test('pathCandidates with scope md: strips a line or anchor suffix, an @ prefix and trailing punctuation', () => {
+  expect(pathCandidates('See README.md:42, docs/a.md:10:3 and docs/b.md#L7!', undefined, 'md')).toEqual([
     'README.md',
     'docs/a.md',
     'docs/b.md',
   ])
-  expect(mdCandidates('Read @docs/plan.md? Then "notes.MD";')).toEqual(['docs/plan.md', 'notes.MD'])
-  expect(mdCandidates('no files here, only a.mdx and b.markdown and .md')).toEqual([])
+  expect(pathCandidates('Read @docs/plan.md? Then "notes.MD";', undefined, 'md')).toEqual(['docs/plan.md', 'notes.MD'])
+  expect(pathCandidates('no files here, only a.mdx and b.markdown and .md', undefined, 'md')).toEqual([])
 })
 
-test('mdCandidates: at most maxMentionsPerRow, first ones first', () => {
+test('pathCandidates with scope md: at most maxMentionsPerRow, first ones first', () => {
   const text = Array.from({ length: LIMITS.maxMentionsPerRow + 5 }, (_, i) => `f${i}.md`).join(' ')
-  const got = mdCandidates(text)
+  const got = pathCandidates(text, undefined, 'md')
   expect(got).toHaveLength(LIMITS.maxMentionsPerRow)
   expect(got[0]).toBe('f0.md')
+})
+
+// ---------------------------------------------------------------- mentions of any path (issue #57, R2)
+
+test('pathCandidates: a path, a known extension or a known name is a candidate; prose and repos are not', () => {
+  const text =
+    'Edit src/a.ts and package.json, then Makefile and ./run, ../up/x, ~/y, /etc/hosts, /track and Next.js e.g. 1/2 ' +
+    'v2.1.310 example.com plus .env, src/ and a/b.weird and node.js and/or acme/web#5 src/core 3.14/2 and ./ and /x/ ' +
+    'and bin/deploy but ./bin/deploy'
+  expect(pathCandidates(text)).toEqual([
+    'src/a.ts',
+    'package.json',
+    'Makefile',
+    './run',
+    '../up/x',
+    '~/y',
+    '/etc/hosts',
+    'Next.js', // a known extension: the stat finds no such file
+    '.env',
+    'a/b.weird',
+    'node.js',
+    './bin/deploy', // a relative path with no extension needs a lead: `bin/deploy` is no candidate (README, Mentions)
+  ])
+})
+
+test('pathCandidates: a ratio with a decimal part is no path', () => {
+  expect(pathCandidates('ratio 1/2.5 and 10/3.5 here')).toEqual([])
+})
+
+test('pathCandidates: skips a URL, cuts a line number, an anchor, an @ and punctuation, keeps each path once', () => {
+  expect(
+    pathCandidates('See <https://github.com/o/r/blob/main/a.ts>, src/a.ts:42:7, @src/b.ts#L7! and `src/a.ts`.'),
+  ).toEqual(['src/a.ts', 'src/b.ts'])
+  expect(pathCandidates('x'.repeat(600) + '/a.ts and short/a.ts')).toEqual(['short/a.ts']) // a 600-character word is no path
+})
+
+test('pathCandidates: at most max, and 0 reads none; scope md keeps the .md paths of before', () => {
+  expect(pathCandidates('a.ts b.ts c.ts', 2)).toEqual(['a.ts', 'b.ts'])
+  expect(pathCandidates('a.ts b.ts', 0)).toEqual([])
+  const text = 'src/a.ts docs/plan.md README.md Makefile notes.MD'
+  expect(pathCandidates(text, 20, 'md')).toEqual(['docs/plan.md', 'README.md', 'notes.MD'])
+  expect(pathCandidates(text, undefined, 'md')).toEqual(['docs/plan.md', 'README.md', 'notes.MD'])
+  expect(pathCandidates(text)).toEqual(['src/a.ts', 'docs/plan.md', 'README.md', 'Makefile', 'notes.MD'])
 })

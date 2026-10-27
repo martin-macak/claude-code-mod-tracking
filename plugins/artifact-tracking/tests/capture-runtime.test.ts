@@ -424,7 +424,7 @@ test('a dismissed key never comes back', async () => {
   expect(t.keys()).toEqual(['web:https://b.example/'])
 })
 
-test('replay: a stored key wins, a later artifact publish wins, dismissed and foreign tool-only Jira never return, a lone Read adds no row', async () => {
+test('replay: a stored key wins, a later artifact publish wins, dismissed and foreign tool-only Jira never return, a lone Read adds a row', async () => {
   const t = fakeItems()
   t.w.files['/work/x.md'] = '# x'
   const items = await t.started()
@@ -444,7 +444,8 @@ test('replay: a stored key wins, a later artifact publish wins, dismissed and fo
   expect(t.list().find(r => r.key === 'web:https://a.example/')?.label).toBe('Old') // the stored key wins
   const page = t.list().find(r => r.key === PAGE_KEY) as ArtifactRecord
   expect(page.reasons.all).toContain('published') // the transcript knew the publish
-  expect(t.keys().sort()).toEqual([PAGE_KEY, 'web:https://a.example/'].sort()) // no d.example, no ISS-9, no file row
+  // No d.example, no ISS-9. A lone Read of x.md adds its row (issue #57).
+  expect(t.keys().sort()).toEqual([PAGE_KEY, 'file:/work/x.md', 'web:https://a.example/'].sort())
 })
 
 // A replay runs inside a session load or switch, so it must not wait for a CLI (parent: `ensureRepo` was not awaited and
@@ -535,7 +536,7 @@ test('an empty batch changes nothing', async () => {
   expect(t.w.stateSets.items).toBe(writes)
 })
 
-test('file rows come from Write, Edit and Read results and from mentions', async () => {
+test('file rows come from Write, Edit and Read results, of any type, and from mentions', async () => {
   const t = fakeItems()
   t.w.files['/work/README.md'] = '/work/README.md'
   const items = await t.started()
@@ -552,6 +553,11 @@ test('file rows come from Write, Edit and Read results and from mentions', async
           use('Read', readDone('/work/docs/plan.md')),
           use('Write', 'Error: denied', true),
           use('Write', writeCreated('/work/node_modules/x/a.md')),
+          use('Write', writeCreated('/work/src/a.ts')),
+          use('Read', { type: 'image', file: { base64: '…', type: 'image/png' } }, false, {
+            input: { file_path: '/work/img.png' },
+          }),
+          use('NotebookEdit', { notebook_path: '/work/nb.ipynb', error: '', edit_mode: 'replace' }),
         ],
       },
     ]),
@@ -561,11 +567,45 @@ test('file rows come from Write, Edit and Read results and from mentions', async
     activity?: unknown
     views: number
   }[]
-  expect(files.map(f => f.key).sort()).toEqual(['file:/work/README.md', 'file:/work/docs/plan.md'])
+  expect(files.map(f => f.key).sort()).toEqual([
+    'file:/work/README.md',
+    'file:/work/docs/old.md', // a Read alone adds a row (issue #57)
+    'file:/work/docs/plan.md',
+    'file:/work/img.png', // the path of an image Read is its input
+    'file:/work/nb.ipynb',
+    'file:/work/src/a.ts',
+  ])
   expect(files.find(f => f.key === 'file:/work/docs/plan.md')?.views).toBe(1)
 })
 
-test('a replayed Read of an unchanged file counts a view, as a Read of text does, and never adds a row (issue #245)', async () => {
+test('a replayed Bash use counts the files of its bashEditDiff, and one with none adds nothing', async () => {
+  const t = fakeItems()
+  const items = await t.started()
+  // The shape is taken from the live tool result. A stored transcript may not hold `bashEditDiff`: that is a live check (L4 of the
+  // #57 study) that this test does not make.
+  const diff = {
+    files: [{ filePath: '/work/out.txt', hunks: [], created: true }],
+    moreFiles: 0,
+    changedFiles: ['/work/out.txt'],
+  }
+  await items.replay(
+    batchOf([
+      {
+        role: 'assistant',
+        text: '',
+        toolUses: [
+          use('Bash', { stdout: '', stderr: '', bashEditDiff: diff }, false, {
+            input: { command: 'echo hi > out.txt' },
+          }),
+          use('Bash', { stdout: 'x', stderr: '' }, false, { input: { command: 'ls' } }),
+        ],
+      },
+    ]),
+  )
+  expect(t.keys()).toEqual(['file:/work/out.txt'])
+})
+
+test('a replayed Read of an unchanged file counts a view, as a Read of text does (issue #245)', async () => {
   const t = fakeItems()
   const items = await t.started()
   await items.replay(
@@ -574,7 +614,7 @@ test('a replayed Read of an unchanged file counts a view, as a Read of text does
         role: 'assistant',
         text: '',
         toolUses: [
-          use('Read', readUnchanged('/work/docs/lone.md')), // a Read alone adds no row
+          use('Read', readUnchanged('/work/docs/lone.md')), // a Read alone adds a row (issue #57)
           use('Write', writeCreated('/work/docs/plan.md')),
           use('Read', readDone('/work/docs/plan.md')),
           use('Read', readUnchanged('/work/docs/plan.md')),
@@ -583,7 +623,10 @@ test('a replayed Read of an unchanged file counts a view, as a Read of text does
     ]),
   )
   const files = t.list().filter(r => r.category === 'file') as unknown as { key: string; views: number }[]
-  expect(files.map(f => [f.key, f.views])).toEqual([['file:/work/docs/plan.md', 2]])
+  expect(files.map(f => [f.key, f.views])).toEqual([
+    ['file:/work/docs/lone.md', 1],
+    ['file:/work/docs/plan.md', 2],
+  ])
 })
 
 test('a replayed batch built by hand reaches the same rules', async () => {

@@ -79,7 +79,7 @@ test('two tool calls at once right after /clear both land on the carried row', a
     fileTool($, w.fake, 'Read', readDone('/work/a.md')),
     fileTool($, w.fake, 'Read', readDone('/work/a.md')),
   ])
-  expect((await track($)).text).toBe('Files  1 files\n  a.md  created  viewed 2')
+  expect((await track($)).text).toBe('Files  1 files\n  a.md  docs  created  viewed 2')
 })
 
 const GH5 = {

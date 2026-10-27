@@ -108,8 +108,11 @@ export interface LaneDeps {
   onAdded(keys: readonly string[]): void
   /** The github values of the lane, read at each step: a changed config file shows at the next one. */
   lane(): LaneCaps
-  /** `global.refresh.staleMs` (a discovered record stays current for half of it) and `global.store.maxItems`. */
-  caps(): { staleMs: number; maxItems: number }
+  /**
+   * `global.refresh.staleMs` (a discovered record stays current for half of it), and the cap of the store: the lane writes the
+   * whole list, so it caps it as the store does (`global.store.maxItems`, `file.maxFiles` and the rank of a record).
+   */
+  caps(): { staleMs: number; cap: (list: StoredItem[]) => StoredItem[] }
   /**
    * The worktrees of the session repo (`git worktree list --porcelain`). null: git could not say. Called at most once a
    * step, and only when an open PR is CONFLICTING. Absent: no worktree is found, so no PR can be resolved.
@@ -219,7 +222,7 @@ export class PrLane {
     }
     const refsByPr = new Map<string, readonly Claim[]>()
     for (const pr of out.prs) refsByPr.set(prKey(pr), prBodyRefs(pr, d.scanBody, lane.maxBodyRefs))
-    const { staleMs, maxItems } = d.caps()
+    const { staleMs, cap } = d.caps()
     let hidden: ReadonlySet<string> = new Set()
     const held: ReadonlySet<string> = new Set(out.held)
     const r = await d.applyItems((list, dismissed) => {
@@ -232,7 +235,7 @@ export class PrLane {
         dismissed,
         at,
         build: claim => d.build(claim),
-        caps: { staleMs, maxAutoItems: lane.maxAutoItems, maxItems },
+        caps: { staleMs, maxAutoItems: lane.maxAutoItems, cap },
       })
     })
     d.onAdded(r.added)

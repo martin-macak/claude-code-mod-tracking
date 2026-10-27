@@ -517,13 +517,13 @@ test('G9 files: the Name cell holds the file name and the Description its folder
   expect(
     rows.map(r => [r.cells.name?.text, r.cells.description?.text, r.cells.type?.text, r.cells.status?.text]),
   ).toEqual([
-    ['plan.md', '', 'created', ''],
-    ['spec.md', 'docs', '', 'edited 2'],
-    ['README.md', '', '', ''],
+    ['spec.md', 'docs', 'docs', 'edited 2'],
+    ['plan.md', '', 'docs', 'created'],
+    ['README.md', '', 'docs', ''],
   ])
   // A file name and a folder keep both ends.
-  expect(rows[1]?.cells.name).toEqual({ text: 'spec.md', clip: 'middle' })
-  expect(rows[1]?.cells.description).toEqual({ text: 'docs', clip: 'middle' })
+  expect(rows[0]?.cells.name).toEqual({ text: 'spec.md', clip: 'middle' })
+  expect(rows[0]?.cells.description).toEqual({ text: 'docs', clip: 'middle' })
 })
 
 // ---------------------------------------------------------------- the failing count of a group

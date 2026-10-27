@@ -60,10 +60,10 @@ Web links  2 links
   docs.example/a  ↳#21 docs.example/a
   The B page  docs.example/b
 
-Files  3 files
-  plan.md  created
-  spec.md  docs  edited 2  viewed 1
-  README.md  viewed 3  subagent
+Files  2 files · 1 read
+  spec.md  docs  docs  edited 2  viewed 1
+  plan.md  docs  created
+  1 more file read only
 
 Processes  docker: daemon not running
   npm run dev  background task  running
@@ -81,13 +81,14 @@ test('/track never says marks (issue #138): the text is the same with marked row
   expect(await listText(t.w.ports, t.m)).toBe(GOLDEN)
 })
 
-test('/track turn labels: a file reads its type, name and folder, a process its kind and name (issue #63, L2, G9)', async () => {
+test('/track turn labels: a file reads its type, name and folder, a process its kind and name (issues #63 and #57)', async () => {
   const t = await paneWorld()
   const labels = await turnLabels(t.w.ports, t.m)
-  // The label joins the type, name and description cells. G9 moved the file name to Name and the folder to Description,
-  // and the process name to Name, so the label no longer holds the path or the `bg`, `docker` and `pid` words.
-  expect(labels.get('file:/work/plan.md')).toBe('created plan.md')
-  expect(labels.get('file:/work/docs/spec.md')).toBe('spec.md docs')
+  // The label joins the type, name and description cells, each word once. G9 moved the file name to Name and the folder to
+  // Description, and the process name to Name, so the label no longer holds the path or the `bg`, `docker` and `pid` words.
+  // The type cell of a file holds its type since issue #57 (`created` moved to the status cell, which the label leaves out).
+  expect(labels.get('file:/work/plan.md')).toBe('docs plan.md')
+  expect(labels.get('file:/work/docs/spec.md')).toBe('docs spec.md')
   expect(labels.get('bg:1')).toBe('background task npm run dev')
   expect(labels.get('docker:db')).toBe('docker container db')
 })

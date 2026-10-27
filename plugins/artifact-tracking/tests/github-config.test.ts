@@ -10,7 +10,7 @@ import type { GitHubDiscoveryApi, GitHubTarget, GraphqlReply, ItemRecord, RunIni
 import { discovered, discoveryData, prNode, REPO } from './fixtures/gh-discovery'
 import { reasonsOfSources } from './fixtures/reasons'
 import { extractRefs, scanBody } from './fixtures/refs'
-import { buildRecord } from './fixtures/registry'
+import { buildRecord, capTo } from './fixtures/registry'
 
 const NOW = 1_000_000
 
@@ -164,7 +164,7 @@ test('applyDiscovery caps.maxAutoItems 1 adds one auto item', () => {
     at: NOW,
     build: buildRecord,
   }
-  const caps = { staleMs: 300000, maxAutoItems: 1, maxItems: 500 }
+  const caps = { staleMs: 300000, maxAutoItems: 1, cap: capTo(500) }
   expect(records(applyDiscovery([], { ...input, caps }).list)).toEqual(['gh:github.com/acme/web#7'])
   expect(applyDiscovery([], input).list.length).toBe(2) // the default is 100
 })
@@ -175,7 +175,7 @@ test('applyDiscovery caps.staleMs sets how long a discovered record stays curren
   const first = applyDiscovery([], { ...input, at: 1000 }).list
   // A record is current for half of staleMs. At 1000 + 100000 the default (150000) still says current.
   expect(applyDiscovery(first, { ...input, at: 101_000 }).list).toBe(first)
-  const caps = { staleMs: 100_000, maxAutoItems: 100, maxItems: 500 }
+  const caps = { staleMs: 100_000, maxAutoItems: 100, cap: capTo(500) }
   expect(applyDiscovery(first, { ...input, at: 101_000, caps }).list).not.toBe(first)
 })
 
@@ -201,7 +201,7 @@ test('applyDiscovery caps.maxItems caps the items that are not auto-only', () =>
     at: NOW,
     build: buildRecord,
   }
-  const out = applyDiscovery(list, { ...input, caps: { staleMs: 300000, maxAutoItems: 100, maxItems: 2 } })
+  const out = applyDiscovery(list, { ...input, caps: { staleMs: 300000, maxAutoItems: 100, cap: capTo(2) } })
   expect(records(out.list)).toEqual(['web:https://h2.example/', 'web:https://h3.example/'])
 })
 

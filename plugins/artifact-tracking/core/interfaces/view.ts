@@ -85,7 +85,7 @@ export interface Facets {
   readonly level?: Effective
   /** Epoch ms of the first sighting of the thing the row stands for: the record, the process, the agent or the worktree. Absent: not known. */
   readonly firstSeen?: number
-  /** What kind of thing the row is, in a word that is the same on every surface (`pr`, `issue`, `docker-container`). Absent: no kind. Files get one with issue #57. */
+  /** What kind of thing the row is, in a word that is the same on every surface (`pr`, `issue`, `docker-container`, and for a file its type: `code`, `config`, `docs`, `data`, `markup`, `image`, `other`). Absent: no kind. */
   readonly kind?: string
 }
 
@@ -179,6 +179,23 @@ export interface SectionSpec {
    * sections, the view marks each such row `quiet`: the text prints nothing for it.
    */
   readonly text?: 'rows' | 'title'
+  /**
+   * Rows that the `/track` text leaves out, and the one line that counts them (issue #57: the files that were only read). The
+   * view marks the named rows `quiet`, as it does for `text: 'title'`, so a tracker never sets `quiet` itself, and the text
+   * keeps a trace of the rows it drops. Absent: the section leaves no row out.
+   */
+  readonly textMore?: TextMore
+}
+
+/**
+ * What a section leaves out of the `/track` text. `rows` are the ids of top-level rows of the section (a row that is not there
+ * is ignored). `line` is what the text prints in their place: `188 more files read only`. In the by-list view the line ends
+ * the group. In another view the quiet rows print nothing wherever they sit, so the text prints the line once at the end,
+ * after the title of the section (`moreLines`).
+ */
+export interface TextMore {
+  readonly line: string
+  readonly rows: readonly string[]
 }
 
 /**
@@ -205,6 +222,8 @@ export interface GroupSpec {
   readonly empty?: string
   /** The `text` of the section: `title` keeps the rows out of the `/track` text. Default `rows`. */
   readonly text?: 'rows' | 'title'
+  /** The `textMore` line of the section: it ends the group in the `/track` text (by-list view only). */
+  readonly textMore?: string
 }
 
 /**

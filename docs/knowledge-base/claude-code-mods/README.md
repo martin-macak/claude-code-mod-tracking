@@ -28,6 +28,7 @@ A mod is a Claude Code plugin whose code is a **hooks module**: TypeScript or Ja
 | | [ports-and-injection](concepts/ports-and-injection.md) | Passing `on`, `$` and state references into imported files and classes: what `validate` accepts, the ports pattern |
 | | [turn-strip](concepts/turn-strip.md) | A line under each answer: the `turn.complete` text, the `TurnDuration` line and its Button, clicks, `claude -p`, with the probe logs of issue #69 (spikes S7 to S13) |
 | | [questions-and-plans](concepts/questions-and-plans.md) | What a `tool.call` hook sees of an `AskUserQuestion` call (the questions, the answers, the notes, Esc) and of an `ExitPlanMode` call (the plan, the outcome, a rejection note), with the probe runs of issue #71 |
+| | [file-signals](concepts/file-signals.md) | What a `tool.call` hook sees of `Read`, `Write`, `Edit`, `NotebookEdit` and of a Bash command that changes files (`bashEditDiff`, when Claude Code records it, what it leaves out), what `file --mime-type` answers, and the rows, types, caps and config keys the mod builds from them (issue #57) |
 | | [glossary](concepts/glossary.md) | Terms, with sources |
 | Reference | [events](reference/events.md) | 46 engine events, 62 API-call events, 33 `classic.*` events, telemetry, `session.append` |
 | | [engine-interface](reference/engine-interface.md) | All 21 `$` nouns and their members, `claude-code` module exports |

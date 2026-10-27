@@ -9,7 +9,7 @@ import type { AtomPort } from '../interfaces/ports'
 import type { DismissPort } from '../interfaces/tracker'
 import type { Sightings } from '../interfaces/turns'
 import { withReasons } from '../lib/reasons'
-import { mergeClaims, migrateRecords, unionRecords } from '../lib/records'
+import { type Cap, enforceCap, mergeClaims, migrateRecords, unionRecords } from '../lib/records'
 import { NO_SIGHTINGS, sightingsOf } from '../lib/turn-entries'
 import type { Kinds } from './kinds'
 
@@ -20,8 +20,8 @@ export type StoreDeps = {
   dismiss: DismissPort
   /** The session check. */
   current(): Promise<number>
-  /** `global.store.maxItems`: the cap of every merge into the list. */
-  cap(): number
+  /** `global.store.maxItems`, and the limit of each kind that has one: the cap of every merge into the list. */
+  cap(): Cap
   /** The list changed: Persistence writes the session copy soon. Nobody to tell before the start. */
   persisted(): void
   /** Keys to refresh after the capture debounce. No keys: every item. */
@@ -109,6 +109,11 @@ export class ItemStore {
   /** The record a claim makes, from its kind. null: no such kind, or a claim that adds no item. */
   build(claim: Claim): StoredItem | null {
     return this.d.kinds.table(claim.category)?.merge(null, claim) ?? null
+  }
+
+  /** `list` under the cap of the store: the shared cap, the limit of each kind and the rank of a record. */
+  capped(list: StoredItem[], keep: ReadonlySet<string> = new Set()): StoredItem[] {
+    return enforceCap(list, this.d.cap(), keep, this.d.kinds.table)
   }
 
   /**

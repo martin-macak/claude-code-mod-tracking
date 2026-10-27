@@ -1,6 +1,7 @@
 // The prompt lines of the web, artifact and file trackers: one data line per item, in the order of the pane.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.11. Plan: L7 Task 5 (S5, S9).
 import { expect, test } from 'claude-code/testing'
+import { PromptComposer } from '../core/infra/prompt'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import { hostPath } from '../core/lib/links'
 import { addReason, reasonSet } from '../core/lib/reasons'
@@ -209,8 +210,35 @@ test('file: the line carries the strongest reason, then the counters', () => {
   expect(filePrompt(fileCtx([file({ edits: 2, views: 1 })]))).toEqual([
     'file: "docs/plan.md" (updated, edited 2, viewed 1)',
   ])
-  expect(filePrompt(fileCtx([file({ views: 3 })]))).toEqual(['file: "docs/plan.md" (read, viewed 3)'])
+  // A file that was only read is not listed (issue #57): the first line counts it.
+  expect(filePrompt(fileCtx([file({ views: 3 })]))).toEqual(['file: 1 more file read only'])
+  expect(filePrompt(fileCtx([file({ views: 3 }), file({ views: 1, label: '/work/b.md', key: 'k-b' })]))).toEqual([
+    'file: 2 more files read only',
+  ])
   expect(filePrompt(fileCtx([file({ created: true, edits: 1, views: 1, mentions: 1 })]))).toEqual([
     'file: "docs/plan.md" (created, edited 1, viewed 1)',
+  ])
+})
+
+test('file: the line that counts the files that were only read comes first, so the cap of the composer never cuts it', async () => {
+  const written = Array.from({ length: 6 }, (_, i) => file({ created: true, label: `/work/w${i}.md`, key: `k-w${i}` }))
+  const items = [...written, file({ views: 1, label: '/work/r.md', key: 'k-r' })]
+  expect(filePrompt(fileCtx(items))[0]).toBe('file: 1 more file read only')
+  // The composer keeps `maxItems - 1` lines and says how many it left out; the count of the read files is one of the kept lines.
+  const composer = new PromptComposer({ log: () => {} })
+  await composer.rebuild(async () => [
+    { id: 'file', settings: { enabled: true, maxItems: 5 }, lines: async () => filePrompt(fileCtx(items)) },
+  ])
+  const lines = (composer.text ?? '').split('\n').slice(1)
+  expect(lines).toHaveLength(5)
+  expect(lines[0]).toBe('file: 1 more file read only')
+  expect(lines.at(-1)).toBe('file: and 3 more not listed')
+})
+
+test('file: a file that was only read and that the person marked high is listed, not counted', () => {
+  const marked = file({ views: 1, priority: 'high', label: '/work/p.md', key: 'k-p' })
+  expect(filePrompt(fileCtx([marked, file({ views: 1, label: '/work/r.md', key: 'k-r' })]))).toEqual([
+    'file: 1 more file read only',
+    'file: "p.md" (read, viewed 1)',
   ])
 })

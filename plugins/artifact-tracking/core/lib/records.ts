@@ -103,22 +103,69 @@ function pinnedKeys(list: readonly StoredItem[]): Set<string> {
 }
 
 /**
- * Drops the records with the smallest lastSeen until `cap` is met. Keys in `keep` never go, nor the newest manual-high
- * records (R12). Only records that discovery did not find count against `cap`, and only they are evicted (spec A11):
- * auto-only items have their own cap, `maxAutoItems`, enforced at the source. The input list comes back when it fits.
+ * What the cap keeps. A number is the shared cap alone (`global.store.maxItems`). An object adds a limit for each kind that
+ * has one (issue #57: `file.maxFiles`): `of` answers for a category, or undefined when the kind has none. The limit never
+ * lifts the shared cap: the lower of the two applies to the kind.
  */
-export function enforceCap<R extends StoredItem>(list: R[], cap: number, keep: ReadonlySet<string> = new Set()): R[] {
-  const excess = list.filter(rec => !isDiscovered(rec)).length - cap
-  if (excess <= 0) return list
+export type Cap = number | { readonly total: number; readonly of?: (category: string) => number | undefined }
+
+/** The rank of a record that its kind ranks not: the highest, so a kind with no `capRank` loses a record only by its age. */
+const DEFAULT_RANK = 2
+
+/**
+ * Drops records until `cap` is met: first the records of a kind over its own limit, then the whole list over the shared cap.
+ * Each pass drops the lowest `ItemKind.capRank` first, then the smallest lastSeen. A kind with no `capRank` ranks 2. `kinds`
+ * is required: a caller that forgets it would cap by age alone and ignore the rank (pass `() => undefined` to say that on
+ * purpose). Keys in `keep` never go, so the record a call has just added stays even when it ranks lowest: a full kind of
+ * written records then loses its oldest one to a new read-only record. Nor do the newest manual-high records go (R12). Only
+ * records that discovery did not find count against `cap`, and only they are evicted (spec A11): auto-only items have their
+ * own cap, `maxAutoItems`, enforced at the source. The input list comes back when it fits.
+ */
+export function enforceCap<R extends StoredItem>(
+  list: R[],
+  cap: Cap,
+  keep: ReadonlySet<string>,
+  kinds: KindTable,
+): R[] {
+  const { total, of } = typeof cap === 'number' ? { total: cap, of: undefined } : cap
+  const counted = list.filter(rec => !isDiscovered(rec))
+  const own = of ? limitedKinds(counted, of, total) : []
+  if (counted.length <= total && own.length === 0) return list
   const pinned = pinnedKeys(list)
-  const victims = list
-    .map((rec, i) => ({ rec, i }))
-    .filter(({ rec }) => !isDiscovered(rec) && !keep.has(rec.key) && !pinned.has(rec.key))
-    .sort((x, y) => x.rec.lastSeen - y.rec.lastSeen || x.i - y.i)
-    .slice(0, excess)
-    .map(({ i }) => i)
-  const drop = new Set(victims)
-  return list.filter((_, i) => !drop.has(i))
+  const rankOf = (rec: StoredItem): number => kinds(rec.category)?.capRank?.(rec) ?? DEFAULT_RANK
+  const drop = new Set<StoredItem>()
+  /** Marks the `excess` records of `pool` that go: lowest rank, then smallest lastSeen, then the earlier place. */
+  const evict = (pool: readonly StoredItem[], excess: number): void => {
+    if (excess <= 0) return
+    const order = new Map<StoredItem, number>(list.map((rec, i) => [rec, i]))
+    pool
+      .filter(rec => !drop.has(rec) && !keep.has(rec.key) && !pinned.has(rec.key))
+      .sort((x, y) => rankOf(x) - rankOf(y) || x.lastSeen - y.lastSeen || order.get(x)! - order.get(y)!)
+      .slice(0, excess)
+      .forEach(rec => void drop.add(rec))
+  }
+  for (const { category, limit } of own) {
+    const pool = counted.filter(rec => rec.category === category)
+    evict(pool, pool.length - limit)
+  }
+  evict(counted, counted.length - drop.size - total)
+  return drop.size === 0 ? list : list.filter(rec => !drop.has(rec))
+}
+
+/** The kinds that hold more records than their limit, with the limit that applies (the lower of the kind's and `total`). */
+function limitedKinds(
+  counted: readonly StoredItem[],
+  of: (category: string) => number | undefined,
+  total: number,
+): { category: string; limit: number }[] {
+  const sizes = new Map<string, number>()
+  for (const rec of counted) sizes.set(rec.category, (sizes.get(rec.category) ?? 0) + 1)
+  const out: { category: string; limit: number }[] = []
+  for (const [category, size] of sizes) {
+    const own = of(category)
+    if (own !== undefined && size > Math.min(own, total)) out.push({ category, limit: Math.min(own, total) })
+  }
+  return out
 }
 
 // ---------------------------------------------------------------- fold
@@ -188,7 +235,7 @@ export function mergeClaims(
   list: readonly StoredItem[],
   claims: readonly Claim[],
   kinds: KindTable,
-  cap: number,
+  cap: Cap,
   turn?: number,
 ): { list: StoredItem[]; added: string[]; touched: string[]; repeats: string[]; changed: boolean } {
   const out: StoredItem[] = list.map(cloneRecord)
@@ -228,7 +275,13 @@ export function mergeClaims(
       changed = true
     }
   }
-  return { list: enforceCap(out, cap, new Set(added)), added, touched: [...touched], repeats: [...repeats], changed }
+  return {
+    list: enforceCap(out, cap, new Set(added), kinds),
+    added,
+    touched: [...touched],
+    repeats: [...repeats],
+    changed,
+  }
 }
 
 /** Fold records with the same key (`a` first), then cap. The input records are copied. */
@@ -236,7 +289,7 @@ export function unionRecords(
   a: readonly StoredItem[],
   b: readonly StoredItem[],
   kinds: KindTable,
-  cap: number,
+  cap: Cap,
 ): StoredItem[] {
   const out: StoredItem[] = []
   const index = new Map<string, number>()
@@ -247,7 +300,7 @@ export function unionRecords(
       out.push(cloneRecord(rec))
     } else out[at] = foldRecords(out[at]!, rec, kinds)
   }
-  return enforceCap(out, cap)
+  return enforceCap(out, cap, new Set(), kinds)
 }
 
 /**
@@ -259,7 +312,7 @@ export function carryOver(
   held: readonly StoredItem[],
   stored: readonly StoredItem[],
   kinds: KindTable,
-  cap: number,
+  cap: Cap,
 ): StoredItem[] {
   const live = new Map(held.map(r => [r.key, r]))
   return unionRecords(held, stored, kinds, cap).map(rec => {

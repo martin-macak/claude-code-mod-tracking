@@ -1,7 +1,7 @@
 // The /track text of a list of groups (plan L6 Task 9, decision G2). Pure. One line of text per row, whatever the columns
 // of the pane: the badges of the extras column are cells of their own (issue #63, L1).
 import { expect, test } from 'claude-code/testing'
-import { EMPTY_TEXT, groupsText, quietTitles, titleLine } from '../ux/tree-data-table/text'
+import { EMPTY_TEXT, groupsText, moreLines, quietTitles, titleLine } from '../ux/tree-data-table/text'
 import { group, row, webRows } from './fixtures/sections'
 
 test('no sections gives No tracked items yet.', () => {
@@ -156,4 +156,43 @@ test('a group with text title prints its title line and no row: the model reads 
   expect(groupsText([quiet])).toBe('Questions  1 call')
   expect(groupsText([quiet, plain])).toBe('Questions  1 call\n\nPRs\n  PR 1  Fix it')
   expect(groupsText([{ ...quiet, text: 'rows' }])).toContain('hunter2')
+})
+
+// Issue #57: a section that leaves its read-only rows out of the text says how many in one line (`SectionSpec.textMore`).
+// In the by-list view the line ends the group, indented as a row. In another view it comes once at the end (`moreLines`).
+test('the textMore line of a group ends it, indented as a row, after the rows that print', () => {
+  const files = group('list:file', [row('a', { name: 'a.ts' }), quietRow('q1')], {
+    title: 'Files',
+    note: { text: '1 files · 2 read' },
+    textMore: '2 more files read only',
+  })
+  expect(groupsText([files])).toBe('Files  1 files · 2 read\n  a.ts\n  2 more files read only')
+  // The line comes last, after a child too.
+  const parent = row('p', { name: 'p' }, { children: [row('c', { name: 'c' })] })
+  expect(groupsText([group('x', [parent], { textMore: 'and 3 more' })])).toBe('x\n  p\n    c\n  and 3 more')
+})
+
+test('a group of quiet rows with a textMore line prints its title and the line; with none it prints nothing', () => {
+  const quiet = [quietRow('q1'), quietRow('q2')]
+  const with_ = group('list:file', quiet, {
+    title: 'Files',
+    note: { text: '0 files · 2 read' },
+    textMore: '2 more files read only',
+  })
+  expect(groupsText([with_])).toBe('Files  0 files · 2 read\n  2 more files read only')
+  expect(groupsText([{ ...with_, textMore: undefined }])).toBe('')
+  // A group with text title keeps its title line only, as before.
+  expect(groupsText([{ ...with_, text: 'title' }])).toBe('Files  0 files · 2 read')
+})
+
+test('moreLines gives the title and the more line of each section that has one, never a row', () => {
+  const files = {
+    title: 'Files',
+    textMore: { line: '188 more files read only', rows: ['q1'] },
+    rows: [quietRow('q1')],
+  }
+  const prs = { title: 'PRs', rows: [row('a', { name: 'PR 1' })] }
+  const none = { title: 'Notes', textMore: undefined, rows: [] }
+  expect(moreLines([prs, files, none])).toEqual(['Files  188 more files read only'])
+  expect(moreLines([])).toEqual([])
 })

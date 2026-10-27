@@ -101,8 +101,12 @@ function newPrRecord(pr: DiscoveredPr, at: number): GitHubRecord {
   return { ...base, sources: [], reasons, lane: true, seenCount: 0, ...discoveryFields(pr), refreshedAt: at }
 }
 
-/** The numbers `applyDiscovery` reads: how long a record stays current, and the two item caps. */
-export type DiscoveryCaps = { staleMs: number; maxAutoItems: number; maxItems: number }
+/**
+ * What `applyDiscovery` reads: how long a record stays current, the cap of the auto items, and the cap of the whole list. `cap`
+ * is the cap of the store (`ItemStorePort.cap`): the lane writes the whole list, so it caps it as the store does, with the
+ * limit of each kind and the rank of a record. A cap of its own would let the lane drop a written file before an older read.
+ */
+export type DiscoveryCaps = { staleMs: number; maxAutoItems: number; cap: (list: StoredItem[]) => StoredItem[] }
 
 /**
  * The label of the claim of a ref that a PR body named. `build` gets each claim with it and the time of the step, whatever
@@ -137,7 +141,7 @@ export function applyDiscovery(
   const caps = input.caps ?? {
     staleMs: GLOBAL_DEFAULTS.refresh.staleMs,
     maxAutoItems: PR_LANE_DEFAULTS.maxAutoItems,
-    maxItems: GLOBAL_DEFAULTS.store.maxItems,
+    cap: list => enforceCap(list, GLOBAL_DEFAULTS.store.maxItems, new Set(), () => undefined),
   }
   const out: StoredItem[] = list.slice()
   const index = new Map<string, number>(out.map((r, i) => [r.key, i]))
@@ -244,7 +248,7 @@ export function applyDiscovery(
 
   // 4. Cap on the non-auto items only.
   const kept = drop.size > 0 ? out.filter((_, i) => !drop.has(i)) : out
-  const capped = enforceCap(kept, caps.maxItems)
+  const capped = caps.cap(kept)
   if (capped !== kept) changed = true
 
   // 5. Quiet step: the input list itself.

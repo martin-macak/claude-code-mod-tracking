@@ -113,13 +113,24 @@ export class Kinds {
       ...plain,
       // The slice comes over the defaults of the tracker's spec: a host with no spec for it reads today's numbers.
       config: {
-        slice: () => ({ ...tracker?.config.defaults, ...this.d.config.slice(owner) }) as JsonObject,
+        slice: () => this.sliceOf(owner, tracker),
         global: () => this.d.config.global(),
       },
       tools: this.d.tools(owner) ?? plain.tools,
       // Only the words that passed the check: a kind that lost a clash cannot claim its core reason through its own list.
       kindReasons: this.kindReasons(kind.category),
     }
+  }
+
+  /** The config of a tracker: the file's slice over the defaults of its spec. */
+  private sliceOf(owner: string, tracker: Tracker | undefined): JsonObject {
+    return { ...tracker?.config.defaults, ...this.d.config.slice(owner) } as JsonObject
+  }
+
+  /** The most records the list keeps of a category, from the config of its tracker (`ItemKind.capOf`). undefined: no limit. */
+  limitOf(category: string): number | undefined {
+    const tracker = this.owners.get(category)
+    return tracker ? this.table(category)?.capOf?.(this.sliceOf(tracker.id, tracker)) : undefined
   }
 
   /** A context for no kind in particular (a lookup): the facts and the ports, an empty slice, the raw run. */

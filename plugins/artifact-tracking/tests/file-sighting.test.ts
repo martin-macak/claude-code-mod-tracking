@@ -4,7 +4,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { FsStat } from '../core/interfaces/ports'
 import type { FileRecord, ItemRecord } from './fixtures/contracts'
-import { addFiles, captureFileTouch, captureMentions, FileSight, withoutLoneViews } from './fixtures/file-sighting'
+import { addFiles, captureFileTouch, captureMentions, FileSight } from './fixtures/file-sighting'
 
 type World = {
   env: Record<string, string | undefined>
@@ -154,13 +154,13 @@ test('a subagent path joins its spawn cwd from the auto.agents fact, else the se
   expect((w.list.find(r => r.key === 'file:/wt/a.md') as FileRecord).bySubagent).toBe(true)
 })
 
-test('a Read counts a view on a tracked row and never adds a row', async () => {
+test('a Read alone adds a row, and a later Read counts a view on it (issue #57)', async () => {
   const { w, sight, items } = world()
   await captureFileTouch(sight, items, { spelled: 'a.md', kind: 'viewed' }, undefined)
-  expect(keys(w)).toEqual([])
-  await captureFileTouch(sight, items, { spelled: 'a.md', kind: 'created' }, undefined)
-  await captureFileTouch(sight, items, { spelled: 'a.md', kind: 'viewed' }, undefined)
+  expect(keys(w)).toEqual(['file:/work/a.md'])
   expect((w.list[0] as FileRecord).views).toBe(1)
+  await captureFileTouch(sight, items, { spelled: 'a.md', kind: 'viewed' }, undefined)
+  expect((w.list[0] as FileRecord).views).toBe(2)
 })
 
 test('a dismissed key stays out; a list that would not change is not written', async () => {
@@ -182,17 +182,4 @@ test('a mention adds a row only when the file is there; most texts name no file 
   expect((w.list[0] as FileRecord).mentions).toBe(1)
   await captureMentions(sight, items, 'only MISSING.md here', 'prompt')
   expect(keys(w)).toEqual(['file:/work/README.md'])
-})
-
-test('withoutLoneViews keeps a view only for a key an earlier sighting tracks', () => {
-  const rec = (key: string, views: number) => ({ key, views }) as unknown as FileRecord
-  const known = [{ key: 'file:/a.md' }] as unknown as ItemRecord[]
-  expect(
-    withoutLoneViews(known, [
-      rec('file:/a.md', 1),
-      rec('file:/b.md', 1),
-      rec('file:/c.md', 0),
-      rec('file:/c.md', 1),
-    ]).map(r => r.key),
-  ).toEqual(['file:/a.md', 'file:/c.md', 'file:/c.md'])
 })

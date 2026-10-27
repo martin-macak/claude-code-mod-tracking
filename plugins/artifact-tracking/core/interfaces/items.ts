@@ -210,6 +210,17 @@ export interface ItemKind<T extends StoredItem = StoredItem> {
   setLevel?(item: T, rowId: string, level: Level | undefined): T | null
   /** The row id inside an item that a typed reference names. */
   findRow?(item: T, ref: string): string | undefined
+  /**
+   * The most records of this kind that the list keeps, from the config of the owning tracker (issue #57: `file.maxFiles`).
+   * undefined: no limit of its own. The shared cap (`global.store.maxItems`) still applies, and the lower of the two wins.
+   */
+  capOf?(config: Readonly<JsonObject>): number | undefined
+  /**
+   * How much a record is worth to keep, when a cap drops records: the cap drops the lowest rank first, then the smallest
+   * `lastSeen`. Default: 2, for every kind that sets none. A file that was only read ranks 0, a file that was only named 1,
+   * a file that was written 2 (issue #57).
+   */
+  capRank?(item: T): number
   /** The row of an item in the pane, for the sections of the owning tracker (plan L5, K24). */
   row(item: T, ctx: ViewContext): TreeRow
 }
@@ -244,6 +255,12 @@ export interface ItemStorePort {
   ): readonly Claim[]
   /** The record a claim makes, from its kind. null: no such kind, or a claim that adds no item. */
   build(claim: Claim): StoredItem | null
+  /**
+   * `list` capped as the store caps its own writes: the shared cap (`global.store.maxItems`), the limit of each kind that has
+   * one (`file.maxFiles`) and the rank of a record (`ItemKind.capRank`). For a tracker that writes the whole list through
+   * `update` and so must cap it itself. The keys in `keep` never go. The input list comes back when it fits.
+   */
+  cap(list: StoredItem[], keep?: ReadonlySet<string>): StoredItem[]
 }
 
 /** What an item host gets at start: a tracker context without `items` and `data`, plus a persist signal. */
