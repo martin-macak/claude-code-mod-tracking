@@ -1,0 +1,99 @@
+{
+ "main": [
+  [
+   {
+    "type": "tool_use",
+    "id": "toolu_P1",
+    "name": "Bash",
+    "input": {
+     "command": "gh pr create --title t --body y",
+     "description": "probe 1"
+    }
+   }
+  ],
+  [
+   {
+    "type": "tool_use",
+    "id": "toolu_P2",
+    "name": "Bash",
+    "input": {
+     "command": "gh pr view 7",
+     "description": "probe 2"
+    }
+   }
+  ],
+  [
+   {
+    "type": "tool_use",
+    "id": "toolu_P3",
+    "name": "Bash",
+    "input": {
+     "command": "gh pr list",
+     "description": "probe 3"
+    }
+   }
+  ],
+  [
+   {
+    "type": "tool_use",
+    "id": "toolu_P4",
+    "name": "Bash",
+    "input": {
+     "command": "gh pr create --title FAILME --body y",
+     "description": "probe 4"
+    }
+   }
+  ],
+  [
+   {
+    "type": "tool_use",
+    "id": "toolu_P5",
+    "name": "Bash",
+    "input": {
+     "command": "gh pr merge 7 --squash",
+     "description": "probe 5"
+    }
+   }
+  ],
+  [
+   {
+    "type": "tool_use",
+    "id": "toolu_P6",
+    "name": "Bash",
+    "input": {
+     "command": "git status --short && gh pr create --title chained --body x",
+     "description": "probe 6"
+    }
+   }
+  ],
+  [
+   {
+    "type": "tool_use",
+    "id": "toolu_P7",
+    "name": "Bash",
+    "input": {
+     "command": "gh pr comment 7 --body hi",
+     "description": "probe 7"
+    }
+   }
+  ],
+  [
+   {
+    "type": "text",
+    "text": "probe run 1 done"
+   }
+  ],
+  [
+   {
+    "type": "text",
+    "text": "spare"
+   }
+  ],
+  [
+   {
+    "type": "text",
+    "text": "spare"
+   }
+  ]
+ ]
+}

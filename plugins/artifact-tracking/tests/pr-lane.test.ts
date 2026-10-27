@@ -27,7 +27,7 @@ import type {
   ItemRecord,
   LiveAgent,
 } from './fixtures/contracts'
-import { createdPr } from './fixtures/events'
+import { bashRan, bashUse, createdPr } from './fixtures/events'
 import { discoveryData, prNode } from './fixtures/gh-discovery'
 import { porcelain as gitPorcelain } from './fixtures/git'
 import { res, until } from './fixtures/items'
@@ -1548,6 +1548,117 @@ test('lane: a created PR survives /clear: the proof is carried, so the next step
   await t.refresh()
   expect(t.queries.slice(before).some(q => q.includes('pullRequest(number: 657)'))).toBe(true)
   expect(t.keys()).toEqual([KIAM])
+})
+
+// Issue #202: a cold `--resume` starts a new process. The `auto` slot is empty, and the transcript names the PR the earlier
+// process created. The replay of the auto tracker rebuilds the proof from the stored `gitOperation` of that call.
+/** The stored copy of a session in which `gh pr create` made #657, as the process that ended it left it. */
+async function sessionThatCreatedIam() {
+  const first = shipped()
+  first.created['verticeone/vertice-iam'] = { 657: iamNode() }
+  await first.start()
+  await first.w.clock.advance(WINDOW)
+  await first.call('Bash', { command: 'gh pr create' }, createdPr(iamNode().url, 657))
+  await first.w.clock.advance(WINDOW)
+  await first.refresh()
+  expect(first.keys()).toEqual([KIAM])
+  await first.m.end(first.w.ports, 'prompt_input_exit', 1500)
+  const stored = first.w.store.get('v2:s:sess-1')
+  expect(stored).toBeDefined()
+  return stored as never
+}
+const CREATED_IAM = [bashUse('toolu_pr', 'gh pr create', createdPr(iamNode().url, 657))]
+
+test('lane: a created PR lists in Pull requests after a cold --resume: the replay rebuilds its proof from the transcript', async () => {
+  const stored = await sessionThatCreatedIam()
+  // A new process: a fresh world with the stored copy of the session, the transcript, and no `auto` slot or run copy.
+  const t = shipped()
+  t.created['verticeone/vertice-iam'] = { 657: iamNode() }
+  t.w.store.set('v2:s:sess-1', stored)
+  t.w.session.messages = CREATED_IAM
+  await t.start()
+  await t.w.clock.advance(WINDOW)
+  await t.refresh()
+  expect(t.queries.some(q => q.includes('pullRequest(number: 657)'))).toBe(true)
+  expect((t.items() as unknown as GitHubRecord[]).map(r => [r.key, isLanePr(r)])).toEqual([[KIAM, true]])
+  const text = (await t.m.track(t.w.ports, '')).text
+  expect(sectionOf(text, 'Pull requests').some(l => l.includes('VerticeOne/vertice-iam#657'))).toBe(true)
+  expect(sectionOf(text, 'GitHub')).toEqual([])
+})
+
+test('lane: a cold --resume whose transcript made no PR asks for no created PR and lists none in Pull requests', async () => {
+  const stored = await sessionThatCreatedIam()
+  const t = shipped()
+  t.created['verticeone/vertice-iam'] = { 657: iamNode() }
+  t.w.store.set('v2:s:sess-1', stored)
+  // `gh pr view 657` prints the PR URL and has no `gitOperation` (as the probe saw it). A failed create stores an error.
+  // Neither made the PR.
+  t.w.session.messages = [
+    bashUse('toolu_view', 'gh pr view 657', bashRan(`title: demo pr\nstate: OPEN\nurl: ${iamNode().url}`)),
+    bashUse('toolu_fail', 'gh pr create', { result: 'Error: Exit code 1\nfake gh: failed', isError: true }),
+  ]
+  await t.start()
+  await t.w.clock.advance(WINDOW)
+  await t.refresh()
+  expect(t.queries.some(q => q.includes('pullRequest(number: 657)'))).toBe(false)
+  const text = (await t.m.track(t.w.ports, '')).text
+  expect(sectionOf(text, 'Pull requests')).toEqual([])
+})
+
+test('lane: a slow replay lets the start step run with no proof, and the kick of the replay makes the next step ask for the created PR', async () => {
+  const stored = await sessionThatCreatedIam()
+  const t = shipped()
+  t.created['verticeone/vertice-iam'] = { 657: iamNode() }
+  t.w.store.set('v2:s:sess-1', stored)
+  const asksForPr = () => t.queries.some(q => q.includes('pullRequest(number: 657)'))
+  // Hold the read of the transcript open.
+  let release = () => {}
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  ;(t.w.ports.session as { messages: () => Promise<unknown> }).messages = async () => {
+    await held
+    return CREATED_IAM
+  }
+  const starting = t.start()
+  // The start handler has run (it pinned the root and kicked the start round). Only now can the clock fire the round.
+  await until(() => t.m.facts.read('auto.root') !== undefined, 'the start handler')
+  await t.w.clock.advance(WINDOW)
+  // The start round and its first PR step run while the transcript is still unread: no proof yet, so no query by number.
+  await until(() => t.queries.length > 0, 'the first PR step, before the replay')
+  expect(asksForPr()).toBe(false)
+  release()
+  await starting
+  // The replay wrote the proof and kicked `pr-event`. One more window fires that round: no refresh, no tick.
+  await t.w.clock.advance(WINDOW)
+  await until(asksForPr, 'the step that asks for the created PR')
+  expect((t.items() as unknown as GitHubRecord[]).map(r => [r.key, isLanePr(r)])).toEqual([[KIAM, true]])
+})
+
+test('lane: an in-process /resume into a session whose transcript created a PR that the carry lacks: the next step asks for it with no refresh', async () => {
+  const t = shipped()
+  t.created['verticeone/vertice-iam'] = { 657: iamNode() }
+  await t.start()
+  await t.w.clock.advance(WINDOW)
+  await t.m.end(t.w.ports, 'resume', 1500)
+  // The resumed session is one that an earlier process made: no stored copy here, and the carry holds no proof.
+  t.w.session.id = 'sess-2'
+  t.w.session.messages = CREATED_IAM
+  t.w.state.delete('auto') // the engine resets the state of a resumed session
+  t.w.state.delete('github')
+  t.w.state.delete('items')
+  const before = t.queries.length
+  await t.m.entry(t.w.ports)
+  expect(t.m.facts.read('auto.prs')).toEqual([
+    { host: 'github.com', owner: 'VerticeOne', repo: 'vertice-iam', number: 657 },
+  ])
+  // No tick and no refresh: the kick of the replay is the only thing that starts the step.
+  await t.w.clock.advance(WINDOW)
+  await until(
+    () => t.queries.slice(before).some(q => q.includes('pullRequest(number: 657)')),
+    'the step that asks for the PR',
+  )
+  expect((t.items() as unknown as GitHubRecord[]).map(r => [r.key, isLanePr(r)])).toEqual([[KIAM, true]])
 })
 
 test('lane: a created PR survives an in-process /resume into a stored session: the proof is carried, so the PR stays in Pull requests', async () => {

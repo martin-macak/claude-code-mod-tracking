@@ -259,6 +259,116 @@ test('the proofs of a run hold up to maxProofs PRs, the newest', async () => {
   expect([numbers[0], numbers.at(-1)]).toEqual([3, max + 2])
 })
 
+// Issue #202: a cold `--resume` fires no hook for the old calls, so the transcript is read back and the proofs of the PRs
+// the earlier process created are rebuilt from it. The stored use keeps `gitOperation`, as a live answer has it
+// (docs/knowledge-base/claude-code-auto-tracking/pull-requests.md, "The replayed Bash result after a cold `--resume`").
+const DEMO_7 = { host: 'github.com', owner: 'octo', repo: 'demo', number: 7 }
+const DEMO_8 = { host: 'github.com', owner: 'octo', repo: 'demo', number: 8 }
+const DEMO_9 = { host: 'github.com', owner: 'octo', repo: 'demo', number: 9 }
+
+test('a replay rebuilds the proof of each PR the transcript shows as created, and no other', async () => {
+  const t = setup()
+  const before = await t.running()
+  t.w.session.messages = [
+    ev.bashUse('t_c7', 'gh pr create --title t --body y', ev.createdPr(`${ev.DEMO_PULL}/7`, 7)),
+    ...ev.NO_PR_USES,
+    ev.bashUse('t_c8', 'git status --short && gh pr create --title chained', ev.createdPr(`${ev.DEMO_PULL}/8`, 8)),
+    // A headless transcript may store a Bash result with a blank `stdout`: the proof reads `gitOperation`, not the output.
+    ev.bashUse('t_h9', 'gh pr create --title headless', ev.headlessPr(`${ev.DEMO_PULL}/9`, 9)),
+  ]
+  await t.m.replay()
+  expect(t.auto()?.prs).toEqual([DEMO_7, DEMO_8, DEMO_9])
+  expect(t.m.facts.read('auto.prs')).toEqual([DEMO_7, DEMO_8, DEMO_9])
+  await t.settle(WINDOW)
+  expect(t.rounds()).toBe(before + 1) // one pr-event round for the batch, none for the git command or the merge
+  expect(t.branches()?.reasons).toEqual(['pr-event'])
+})
+
+test('a replay of a transcript with no created PR records no proof and starts no round', async () => {
+  const t = setup()
+  const before = await t.running()
+  // A tool other than Bash never makes a proof, whatever its stored result says.
+  const other = { tool_use_id: 't_other', tool: 'Read', input: {}, ...ev.createdPr(`${ev.DEMO_PULL}/9`, 9) }
+  t.w.session.messages = [...ev.NO_PR_USES, { role: 'assistant', text: '', toolUses: [other] }]
+  const sets = t.w.stateSets.auto
+  await t.m.replay()
+  expect(t.auto()?.prs).toBeUndefined()
+  expect(t.w.stateSets.auto).toBe(sets)
+  await t.settle(WINDOW)
+  expect(t.rounds()).toBe(before)
+})
+
+const CREATED_7 = ev.bashUse('t_c7', 'gh pr create', ev.createdPr(`${ev.DEMO_PULL}/7`, 7))
+const liveCreate7 = (t: ReturnType<typeof setup>) => t.call('Bash', { command: 'gh pr create' }, ev.BASH_PR_RAN)
+/** A switch carries the proofs of the run: the state of the run holds `prs` before the replay of the resumed session. */
+const carry = (t: ReturnType<typeof setup>, prs: (typeof DEMO_7)[]) =>
+  t.w.state.set('auto', { ...emptyAuto(), root: { cwd: ROOT, at: START_AT }, prs } as unknown as Json)
+
+test('a replay after the live event of the same PR keeps one proof and writes nothing', async () => {
+  const t = setup()
+  await t.running()
+  await liveCreate7(t)
+  expect(t.auto()?.prs).toEqual([DEMO_7])
+  const sets = t.w.stateSets.auto
+  t.w.session.messages = [CREATED_7]
+  await t.m.replay()
+  expect(t.auto()?.prs).toEqual([DEMO_7])
+  expect(t.w.stateSets.auto).toBe(sets)
+})
+
+test('a live event after the replay of the same PR keeps one proof, also when the replay repeats', async () => {
+  const t = setup()
+  await t.running()
+  t.w.session.messages = [CREATED_7]
+  await t.m.replay()
+  expect(t.auto()?.prs).toEqual([DEMO_7]) // the replay alone made the proof
+  await liveCreate7(t)
+  expect(t.auto()?.prs).toEqual([DEMO_7])
+  await t.m.replay()
+  expect(t.auto()?.prs).toEqual([DEMO_7])
+})
+
+test('a replay on top of carried proofs adds only the new PR, and starts one round for it', async () => {
+  const t = setup()
+  const before = await t.running()
+  carry(t, [DEMO_7])
+  t.w.session.messages = [CREATED_7, ev.bashUse('t_c8', 'gh pr create', ev.createdPr(`${ev.DEMO_PULL}/8`, 8))]
+  await t.m.replay()
+  expect(t.auto()?.prs).toEqual([DEMO_7, DEMO_8])
+  await t.settle(WINDOW)
+  expect(t.rounds()).toBe(before + 1)
+  expect(t.branches()?.reasons).toEqual(['pr-event'])
+})
+
+// The kick of the replay exists because the start round can run before the proof is there. When the proofs were there
+// already (a carry, or a reload gap before a cold load), the first round has asked for these PRs: a kick would only
+// start a git round and a PR step (a GraphQL query) that find nothing new.
+test('a replay of PRs that the run already proved writes nothing and starts no round', async () => {
+  const t = setup()
+  const before = await t.running()
+  carry(t, [DEMO_7])
+  const sets = t.w.stateSets.auto
+  t.w.session.messages = [CREATED_7]
+  await t.m.replay()
+  expect(t.auto()?.prs).toEqual([DEMO_7])
+  expect(t.w.stateSets.auto).toBe(sets) // the replay itself wrote nothing
+  await t.settle(WINDOW)
+  expect(t.rounds()).toBe(before)
+  expect(t.w.stateSets.auto).toBe(sets) // and no round wrote after it
+})
+
+test('a replay holds up to maxProofs PRs, the newest of the transcript', async () => {
+  const t = setup()
+  await t.running()
+  const max = autoConfig.defaults.maxProofs
+  t.w.session.messages = Array.from({ length: max + 2 }, (_, i) =>
+    ev.bashUse(`t_${i + 1}`, 'gh pr create', ev.createdPr(`https://github.com/o/r/pull/${i + 1}`, i + 1)),
+  )
+  await t.m.replay()
+  const numbers = t.auto()?.prs?.map(p => p.number) ?? []
+  expect([numbers.length, numbers[0], numbers.at(-1)]).toEqual([max, 3, max + 2])
+})
+
 test('Monitor, TaskStop, Write, Edit and Read touch a workflow agent', async () => {
   const t = setup()
   await t.running()

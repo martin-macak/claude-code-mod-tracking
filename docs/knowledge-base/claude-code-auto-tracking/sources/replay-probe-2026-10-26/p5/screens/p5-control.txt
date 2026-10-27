@@ -1,0 +1,5 @@
+Unmodified copy of the mod, after a cold `claude --resume`, `/track` pane rows:
+
+     Name     Description                          Type Status
+GitHub 1 gh · refreshed 3s ago
+>    ▸ #7     demo pr                              PR   open   ✓ checks

@@ -5,6 +5,7 @@
 // It publishes five facts for the readers that cannot wait: `auto.root`, `auto.agents`, `auto.prs`, `auto.checkedAt` and,
 // after each round, `auto.branches`. The github tracker starts the PR lane from the last, and reads the PRs the run
 // created from `auto.prs`, so auto never calls `gh` (plan L5, Task 12; issue #158).
+// A cold `--resume` rebuilds the proofs of the PRs that the main loop created from the replayed transcript (issue #202).
 // The tracker is a module constant. What it builds once per load (the round, the scheduler, the count of rounds) is kept
 // per load, by the facts of the context.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 10.
@@ -12,6 +13,7 @@
 import type {
   AgentSpawnEvent,
   CommandEvent,
+  ReplayItem,
   StartEvent,
   TickEvent,
   ToolCallEvent,
@@ -222,6 +224,32 @@ const onBash: H<ToolCallEvent> = soft('Bash', async (ctx, ev) => {
   if (f.kick) kick(ctx, f.kick)
 })
 
+// A `--resume` fires no hook for the old calls: the transcript comes back as one batch (core/infra/replay.ts). The stored
+// result of a Bash call keeps `gitOperation` (observed, issue #202), so `fromBash` reads a replayed use as it reads a live
+// answer, and a PR that the earlier process created is a proof again. The `kick` that `fromBash` gives for an item is not
+// used: a replayed merge, comment or `git worktree` command must not start a round. One `pr-event` follows a write that
+// added a proof instead. The start round can run before the replay ends (a slow read), and its PR step then has no proof
+// to ask for: this kick makes the next step ask for the created PRs. When the run held every proof already (a carry),
+// the first round asked for them, so there is no kick. A call of a subagent is not in this transcript (its own
+// transcript has no result), and a call from before the last `/compact` or past the newest 4096 messages is gone.
+const onReplay: H<readonly ReplayItem[]> = soft('replay', async (ctx, batch) => {
+  const found = batch.flatMap(item => {
+    if (item.kind !== 'toolCall' || item.ev.tool !== 'Bash') return []
+    // `command` only feeds the `git` kick, which a replay drops. `pr` reads the stored `gitOperation` of the whole use.
+    const { pr } = fromBash('', item.ev.result)
+    return pr === undefined ? [] : [pr]
+  })
+  if (found.length === 0) return
+  const max = ctx.config.slice().maxProofs
+  let grew = false
+  await setAuto(ctx, s => {
+    const next = found.reduce((acc, pr) => recordPr(acc, pr, max), s) // oldest first: the newest `max` stay
+    grew = next !== s // the last run is the one that wrote
+    return next
+  })
+  if (grew) kick(ctx, 'pr-event')
+})
+
 // Monitor, TaskStop and the file tools only count as a sign of life.
 const onTouch: H<ToolCallEvent> = soft('touch', (ctx, ev) => touch(ctx, ev.agentId))
 
@@ -309,6 +337,7 @@ export const auto: Tracker<AutoConfig, AutoState> & Traceable<AutoState> = {
     },
     agentSpawn: onSpawn,
     turnComplete: onTurn,
+    replay: onReplay,
     tick: { run: onTick },
     command: onCommand,
   },

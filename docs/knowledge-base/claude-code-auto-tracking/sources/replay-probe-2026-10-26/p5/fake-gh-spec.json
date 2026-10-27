@@ -1,0 +1,2 @@
+{ "owner": "octo", "repo": "demo", "defaultBranch": "main",
+  "prs": [ { "number": 7, "title": "demo pr", "headRefName": "feat/x", "baseRefName": "main", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN" } ] }

@@ -1,0 +1,17 @@
+#!/bin/sh
+# scratch fake gh for the issue 202 probe: no network, prints canned text
+case "$1 $2" in
+  "pr create")
+    case "$*" in
+      *FAILME*) echo "fake gh: a pull request for branch already exists" >&2; exit 1 ;;
+    esac
+    case "$*" in *fromsub*) echo "https://github.com/octo/demo/pull/9"; exit 0 ;; esac
+    case "$*" in *chained*) echo "https://github.com/octo/demo/pull/8"; exit 0 ;; esac
+    echo "https://github.com/octo/demo/pull/7"; exit 0 ;;
+  "pr view") echo "title: demo pr"; echo "state: OPEN"; echo "url: https://github.com/octo/demo/pull/7"; exit 0 ;;
+  "pr list") echo "7  demo pr  feat/x  OPEN"; exit 0 ;;
+  "pr merge") echo "Merged pull request octo/demo#7"; exit 0 ;;
+  "pr comment") echo "https://github.com/octo/demo/pull/7#issuecomment-1"; exit 0 ;;
+  "pr edit") echo "https://github.com/octo/demo/pull/7"; exit 0 ;;
+esac
+echo "fake gh: unsupported: $*" >&2; exit 1
