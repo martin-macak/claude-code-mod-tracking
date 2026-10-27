@@ -7,15 +7,15 @@ import type { Json, StoredItem } from '../interfaces/items'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort } from '../interfaces/tracker'
 import { withReasons } from '../lib/reasons'
-import { carryOver, dropAuto, isDiscovered, migrateRecords, unionRecords } from '../lib/records'
+import { type Cap, carryOver, dropAuto, isDiscovered, migrateRecords, unionRecords } from '../lib/records'
 import type { ItemStore } from './item-store'
 import type { Kinds } from './kinds'
 
 export type SlotDeps = {
   kinds: Kinds
   dismiss: DismissPort
-  /** `global.store.maxItems`. */
-  cap(): number
+  /** `global.store.maxItems`, and the limit of each kind that has one. */
+  cap(): Cap
   /** A load of a stored copy begins: let the lookups of the kinds start now, so they are ready when the load ends. */
   loading(): void
   /** A load put items in the list: finish what needs the session, then refresh. */

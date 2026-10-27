@@ -228,7 +228,7 @@ test('the merge cap follows the cap argument and MAX_PINNED stays 100', () => {
   expect(merged.list.map(r => r.key)).toContain('web:https://new.example/') // the new record never goes
   // 150 pinned records and a cap of 10: the cap keeps the newest 100 and drops the rest.
   const pinned = Array.from({ length: 150 }, (_, i) => web(i + 1, { priority: 'high' }))
-  const kept = enforceCap(pinned, 10)
+  const kept = enforceCap(pinned, 10, new Set(), () => undefined)
   expect(kept.length).toBe(100)
   expect(kept.map(r => r.lastSeen).sort((a, b) => a - b)[0]).toBe(51)
 })

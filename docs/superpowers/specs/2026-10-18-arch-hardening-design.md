@@ -490,7 +490,7 @@ Each tracker owns the shape of `trackers.<id>`. `enabled` is common to all. `pro
 | `global.ui` | `maxRows` (300; 50 to 1000), `sectionRows` (50; 5 to 300) |
 | `github` | `chunkSize` (50; 1 to 100), `pendingStaleMs` (60000; 10000 to 3600000), `discoveryTimeoutMs` (10000; 1000 to 120000), `closingRefsPerPr` (10; 1 to 50), `headPrsPerBranch` (5; 1 to 50), `basePrsPerBranch` (10; 1 to 50), `maxBodyRefs` (50; 1 to 200), `maxAutoItems` (100; 1 to 200; the cap on the items that only the PR lane found), `shortRefKeywords` (a list of at most 32 words; the six words above) |
 | `jira` | `concurrency` (3; 1 to 10), `epicChildLimit` (50; 1 to 500) |
-| `file` | `maxMentionsPerRow` (20; 0 to 200; 0 turns mentions off) |
+| `file` | `scope` (`all`; `all` or `md`), `maxMentionsPerRow` (20; 0 to 200; 0 turns mentions off), `maxFiles` (300; 50 to 2000), `bashEdits` (true), `mime` (true); `scope`, `maxFiles`, `bashEdits` and `mime` came with issue #57 |
 | `repos` | `maxRepos` (50; 1 to 500), `maxRepoAgents` (8; 1 to 50), `maxRepoQueue` (32; 1 to 256), `gitTimeoutMs` (5000; 500 to 60000) |
 | `processes` | `probeTimeoutMs` (10000; 1000 to 120000), `hideEnded` (true), `endedTtlMs` (1800000; 0 to 86400000), `failedTtlMs` (3600000; 0 to 86400000), `maxRows` (200; 20 to 2000) |
 | `auto` | `debounceMs` (750; 50 to 60000), `gitTimeoutMs` (5000; 500 to 60000), `workflowIdleMs` (3600000; 60000 to 86400000), `maxBranches` (12; 1 to 50), `maxProofs` (100; 10 to 1000), `maxAgents` (200; 10 to 2000), `hideEnded` (true), `endedTtlMs` (600000; 0 to 86400000), `failedTtlMs` (3600000; 0 to 86400000), `removedTtlMs` (600000; 0 to 86400000), `foldWorkflows` (true), `destroyWorktrees` (false) |
@@ -640,6 +640,8 @@ export interface ItemKind<T extends StoredItem = StoredItem> {
   migrate?(item: StoredItem): T | null                      // re-home a record of another kind (R13)
   restore?(items: readonly T[], ctx: KindContext): Promise<readonly T[]>  // filters at load, a batch
   replayWins?(fresh: T, stored: T): boolean                 // the transcript beats the stored copy
+  capOf?(config: Readonly<JsonObject>): number | undefined  // the most records of this kind the list keeps (issue #57); the shared cap still applies
+  capRank?(item: T): number                                 // what a record is worth when a cap drops records: lowest first, default 2 (issue #57)
   readonly refresh?: RefreshSpec<T>                         // { tool, fields, hydrate, refreshItems, apply?, reset?, canCall? }
   readonly rules?: readonly PriorityRule[]                  // { id, stage, level(item, env: RuleEnv) }, run stage by stage; RuleEnv is { facts, items, levelOf }
   setLevel?(item: T, rowId: string, level: Level | undefined): T | null  // the mark of a row inside an item
@@ -657,6 +659,7 @@ Records stay flat, so today's record shapes and most test assertions survive. Th
 - `track(claims)` merges claims into the list through their kinds (`ItemKind.merge`), less the dismissed keys and the claims of a kind that is off. A claim carries its source. The keys it adds queue for refresh.
 - `refresh(keys?)` marks the keys due, or all items when none is named, and kicks the refresh. It does not wait.
 - `scan(text, { mode, purpose, facts? })` gives the claims of the live kinds in a text, with no `prepare` and no `accept`. `build(claim)` gives the record a claim makes. A PR body and a lookup use them.
+- `cap(list, keep?)` gives `list` under the cap of the store: the shared cap, the limit of each kind that has one (`ItemKind.capOf`) and the rank of a record (`ItemKind.capRank`), issue #57. A tracker that writes the whole list through `update` (the PR lane) caps it with this call, so its write obeys the same rule as a merge.
 
 **The item host.** Since L5a the `ItemService` (`core/infra/items.ts`) implements `ItemsHost`, which extends `ItemStorePort` with `slot` (the `items` `DataSlot`), `start(HostContext)`, `capture(RowEvent)`, `toolCall(ev, ctx?)`, `wants(tool)`, `replay(batch)`, `tick()`, `sessionChanged(ev)`, `prepare()`, `settle()`, `kick(reason)`, `refreshAll()`, `setPriority(rowId, level)`, `rowIdOf(ref)`, `levels()`, `port(owner)`, `tools(owner)` and `dispose()`. A `HostContext` is a tracker context without `items` and `data`, plus `persisted()`, which tells Persistence the list changed. The service only wires and delegates (150 lines). Each part is about 150 lines or fewer (`Kinds` is a little over, §12):
 

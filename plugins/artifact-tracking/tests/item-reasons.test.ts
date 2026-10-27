@@ -128,14 +128,16 @@ test('file: a Write that makes it is created, an Edit is updated, a Read is read
   await t.call('Write', { file_path: '/work/a.md' }, { result: made('/work/a.md') })
   await t.call('Edit', { file_path: '/work/b.md' }, { result: edited('/work/b.md') })
   await t.see(responseRow('Notes are in /work/named.md'))
-  // A Read alone adds no row; a Read of a known file adds the reason.
+  // A Read alone adds a row, with the reason read (issue #57); a Read of a known file adds the reason.
   await t.call('Read', { file_path: '/work/lone.md' }, { result: viewed('/work/lone.md') })
   await t.call('Read', { file_path: '/work/a.md' }, { result: viewed('/work/a.md') })
   expect(t.keys().filter(k => k.startsWith('file:'))).toEqual([
     'file:/work/a.md',
     'file:/work/b.md',
     'file:/work/named.md',
+    'file:/work/lone.md',
   ])
+  expect(why(t.record('file:/work/lone.md')?.reasons)).toEqual(['read', ['read'], 'read'])
   expect(why(t.record('file:/work/a.md')?.reasons)).toEqual(['created', ['created', 'read'], 'created'])
   expect(why(t.record('file:/work/b.md')?.reasons)).toEqual(['updated', ['updated'], 'updated'])
   expect(why(t.record('file:/work/named.md')?.reasons)).toEqual(['mentioned', ['mentioned'], 'mentioned'])

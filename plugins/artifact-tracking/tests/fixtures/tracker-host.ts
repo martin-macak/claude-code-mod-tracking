@@ -55,6 +55,7 @@ export function hostWorld(
     refresh: () => {},
     scan: () => [],
     build: () => null,
+    cap: list => list,
   }
   const dues: string[] = []
   const host = new TrackerHost({

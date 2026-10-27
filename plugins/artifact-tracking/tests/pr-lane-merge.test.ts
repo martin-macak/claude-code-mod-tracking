@@ -17,7 +17,7 @@ import type {
 import { discoveryData, prNode } from './fixtures/gh-discovery'
 import { LIMITS } from './fixtures/limits'
 import { scanBody } from './fixtures/refs'
-import { buildRecord } from './fixtures/registry'
+import { buildRecord, capTo } from './fixtures/registry'
 
 const REPO: RepoRef = { host: 'github.com', owner: 'acme', repo: 'web' }
 const K7 = 'gh:github.com/acme/web#7'
@@ -77,7 +77,7 @@ function rig(o: { dismissed?: string[]; porcelain?: string | null | 'throw' } = 
     },
     onAdded: () => {},
     lane: () => PR_LANE_DEFAULTS,
-    caps: () => ({ staleMs: LIMITS.staleMs, maxItems: LIMITS.maxItems }),
+    caps: () => ({ staleMs: LIMITS.staleMs, cap: capTo(LIMITS.maxItems) }),
     worktrees: async () => {
       log.git++
       if (porcelain === 'throw') throw new Error('git broke')

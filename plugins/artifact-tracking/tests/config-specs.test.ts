@@ -138,7 +138,15 @@ test('the slices hold exactly the keys of the Defaults table', () => {
     'prompt',
   ])
   expect(Object.keys(JIRA_DEFAULTS)).toEqual(['enabled', 'concurrency', 'epicChildLimit', 'prompt'])
-  expect(Object.keys(FILE_DEFAULTS)).toEqual(['enabled', 'maxMentionsPerRow', 'prompt'])
+  expect(Object.keys(FILE_DEFAULTS)).toEqual([
+    'enabled',
+    'scope',
+    'maxMentionsPerRow',
+    'maxFiles',
+    'bashEdits',
+    'mime',
+    'prompt',
+  ])
   expect(Object.keys(REPOS_DEFAULTS)).toEqual(['enabled', 'maxRepos', 'maxRepoAgents', 'maxRepoQueue', 'gitTimeoutMs'])
   expect(Object.keys(PROCESSES_DEFAULTS)).toEqual([
     'enabled',
@@ -230,6 +238,7 @@ const TABLE: readonly (readonly [string, number, number])[] = [
   ['trackers.web.prompt.maxItems', 5, 50],
   ['trackers.artifact.prompt.maxItems', 5, 50],
   ['trackers.file.maxMentionsPerRow', 0, 200],
+  ['trackers.file.maxFiles', 50, 2000],
   ['trackers.file.prompt.maxItems', 5, 50],
   ['trackers.repos.maxRepos', 1, 500],
   ['trackers.repos.maxRepoAgents', 1, 50],

@@ -225,7 +225,7 @@ The refs must sit in the tracker file. The manager and the bus cannot touch a tr
 
 | Option | Effect |
 | --- | --- |
-| **Two extension points:** a shared `ItemStore` service with an `ItemKind` plugin per item tracker (key, record codec, merge, refresh, row builder). Tier-2 trackers own their slices. | Smaller change. Cross-kind policy stays central: the `maxItems` cap evicts by `lastSeen` across kinds, and priority rules link a PR's `closes` to issue records. One capture funnel runs once and asks each kind to claim a URL (Rollup `first`). |
+| **Two extension points:** a shared `ItemStore` service with an `ItemKind` plugin per item tracker (key, record codec, merge, refresh, row builder). Tier-2 trackers own their slices. | Smaller change. Cross-kind policy stays central: the `maxItems` cap evicts by `lastSeen` across kinds (issue #57: the cap drops by `ItemKind.capRank` first, then `lastSeen`; `capOf` adds a cap per kind), and priority rules link a PR's `closes` to issue records. One capture funnel runs once and asks each kind to claim a URL (Rollup `first`). |
 | **One extension point:** everything is a Tracker with its own slice. The `items` atom becomes a view-level aggregate. | The cleanest isolation. Cross-kind policies (cap, priority, dismiss, PR-straddle) need new shared services. A larger change. |
 | **Strangler:** wrap each tracker behind the Tracker interface one by one and keep the tiers | The smallest first step. The tiers remain until the last PR. |
 

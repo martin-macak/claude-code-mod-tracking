@@ -156,3 +156,37 @@ test('a section with no text mode, or with text rows, gets no mark, and a view k
   expect(groups.flatMap(g => g.rows).some(r => 'quiet' in r)).toBe(false)
   expect(groups[0]?.count).toBe(3)
 })
+
+test('the by-list group carries the more line of its section (issue #57)', () => {
+  const more = { line: '3 more files read only', rows: ['f2'] }
+  const [files, prs] = listGroups([section('file', [row('f')], { textMore: more }), section('prs', [row('p')])])
+  expect(files?.textMore).toBe('3 more files read only')
+  expect('more' in (prs ?? {})).toBe(false)
+  // The view puts the line on the group of its section too, and marks the rows that the section names `quiet`, with their
+  // children, in every view. A tracker never sets the mark itself. An id that names no row is ignored.
+  const sections = [
+    section('file', [row('f1'), row('f2', [row('f2a')]), row('f3')], { textMore: more }),
+    section('prs', [row('p')]),
+  ]
+  const quiet = (g: { rows: readonly TreeRow[] }): [string, boolean | undefined][] => {
+    const walk = (rows: readonly TreeRow[]): [string, boolean | undefined][] =>
+      rows.flatMap(r => [[r.id, r.quiet] as [string, boolean | undefined], ...walk(r.children ?? [])])
+    return walk(g.rows)
+  }
+  const list = viewGroups(sections, 'list', { touchedOnly: false }).groups
+  expect(list.map(g => g.textMore)).toEqual(['3 more files read only', undefined])
+  expect(quiet(list[0]!)).toEqual([
+    ['f1', undefined],
+    ['f2', true],
+    ['f2a', true],
+    ['f3', undefined],
+  ])
+  expect(quiet(list[1]!)).toEqual([['p', undefined]])
+  const flat = viewGroups(sections, 'flat', { touchedOnly: false }).groups
+  expect(flat.flatMap(g => g.rows.filter(r => r.quiet === true).map(r => r.id))).toEqual(['f2'])
+  // No row named: the rows come back as they are.
+  const none = viewGroups([section('file', [row('f1')], { textMore: { line: 'x', rows: ['nope'] } })], 'list', {
+    touchedOnly: false,
+  })
+  expect(none.groups[0]?.rows[0]?.quiet).toBeUndefined()
+})

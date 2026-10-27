@@ -11,7 +11,7 @@ import { discovered } from './fixtures/gh-discovery'
 import { claimsOf, isAutoOnly, keyOf, prKey } from './fixtures/keys'
 import { LIMITS } from './fixtures/limits'
 import { DISCOVERED, LANE, named, reasonsOfSources } from './fixtures/reasons'
-import { buildRecord } from './fixtures/registry'
+import { buildRecord, capTo } from './fixtures/registry'
 
 const AT = 10_000_000
 const K7 = 'gh:github.com/acme/web#7'
@@ -526,7 +526,7 @@ test('a created PR gets the reasons created and discovered: created is the stron
 })
 
 test('a created PR is no auto-only item: it needs none of the maxAutoItems budget, and the budget does not stop it', () => {
-  const caps = { staleMs: LIMITS.staleMs, maxAutoItems: 1, maxItems: LIMITS.maxItems }
+  const caps = { staleMs: LIMITS.staleMs, maxAutoItems: 1, cap: capTo(LIMITS.maxItems) }
   const full = [autoWeb(1)] // the one auto-only item the budget allows
   const created = applyDiscovery(
     full,

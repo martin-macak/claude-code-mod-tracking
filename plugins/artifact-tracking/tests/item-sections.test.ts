@@ -193,7 +193,7 @@ test('bandData orders by band rank: Jira, GitHub, Artifacts, Links, Files, …, 
     [7, 0], // the items the conversation named: not the ones only the lane found
     [2, 0], // not the deleted one
     [2, 0],
-    [3, 0],
+    [2, 0], // the files that were written or named: not the one that was only read
     [2, 0],
     [2, 0], // the live children of the root
     [2, 0], // the agents that run or wait
@@ -585,7 +585,8 @@ test('artifact, web and file rows', async () => {
   const created = find(sections, 'file', KEYS.created)
   expect(cell(created, 'name')).toEqual({ text: 'plan.md', clip: 'middle' })
   expect(cell(created, 'description').text).toBe('')
-  expect(cell(created, 'type').text).toBe('created')
+  expect(cell(created, 'type').text).toBe('docs') // the type of the file (issue #57)
+  expect(cell(created, 'status').text).toBe('created')
   const edited = find(sections, 'file', KEYS.edited)
   expect([
     cell(edited, 'name').text,
@@ -593,8 +594,11 @@ test('artifact, web and file rows', async () => {
     cell(edited, 'status').text,
     edited?.extras?.[0]?.text,
   ]).toEqual(['spec.md', 'docs', 'edited 2', 'viewed 1'])
-  expect(section(sections, 'file').note).toEqual({ text: '3 files' })
-  // With no root the path shows as written; a mention that nothing else touched reads as mentioned.
+  // The rows are written files first, then the one that was only read (it draws dim); the note counts it apart.
+  expect(section(sections, 'file').rows.map(r => r.id)).toEqual([KEYS.edited, KEYS.created, KEYS.viewed])
+  expect(section(sections, 'file').rows.map(r => r.dim)).toEqual([undefined, undefined, true])
+  expect(section(sections, 'file').note).toEqual({ text: '2 files · 1 read' })
+  // With no root the path shows as written; a mention that nothing else touched has the reason mentioned and no status.
   t.m.facts.publish('auto.root', undefined)
   const mention = {
     ...paneItems().at(-1)!,
@@ -609,13 +613,17 @@ test('artifact, web and file rows', async () => {
     cell(rows[0], 'name').text,
     cell(rows[0], 'description').text,
     cell(rows[0], 'type').text,
+    cell(rows[0], 'status').text,
     rows[0]?.extras,
   ]).toEqual([
     'm.md',
     '/work',
-    'mentioned',
+    'docs',
+    '', // the reason `mentioned` is no cell
     undefined, // nothing viewed and no subagent: no badge
   ])
+  expect(rows[0]?.dim).toBe(true) // a file that was only named is dim, but its row stays in the text
+  expect(rows[0]?.quiet).toBeUndefined()
 })
 
 // Main pinned this on `buildPane` (view.test.ts). A trailing trim that backtracks takes seconds on this input; the tracker

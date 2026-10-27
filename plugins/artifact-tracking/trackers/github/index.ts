@@ -129,7 +129,7 @@ function laneOf(ctx: Ctx): PrLane {
     after: (ms, fn) => ctx.clock.after(ms, fn),
     caps: () => {
       const g = ctx.config.global()
-      return { staleMs: g.refresh.staleMs, maxItems: g.store.maxItems }
+      return { staleMs: g.refresh.staleMs, cap: list => ctx.items.cap(list) }
     },
   })
 }

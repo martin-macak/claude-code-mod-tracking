@@ -12,6 +12,7 @@ import type { StatePorts } from '../interfaces/ports'
 import type { DataSlot } from '../interfaces/slots'
 import type { DismissPort, FactsPort, ToolPort, Tracker } from '../interfaces/tracker'
 import type { Sightings } from '../interfaces/turns'
+import type { Cap } from '../lib/records'
 import { joinSightings, NO_SIGHTINGS } from '../lib/turn-entries'
 import { Capture } from './capture-runtime'
 import { ItemLevels } from './item-levels'
@@ -53,9 +54,10 @@ export class ItemService implements ItemsHost {
   readonly refresh: ItemStorePort['refresh']
   readonly scan: ItemStorePort['scan']
   readonly build: ItemStorePort['build']
+  readonly cap: ItemStorePort['cap']
 
   constructor(private readonly d: ItemServiceDeps) {
-    const cap = () => d.config.global().store.maxItems
+    const cap = (): Cap => ({ total: d.config.global().store.maxItems, of: category => this.kinds.limitOf(category) })
     // The collaborators reach one another through `life` after the construction, so the order here is free.
     this.kinds = new Kinds({
       trackers: d.trackers,
@@ -102,6 +104,7 @@ export class ItemService implements ItemsHost {
       refresh: this.refresh,
       scan: this.scan,
       build: this.build,
+      cap: this.cap,
     } = this.shared)
   }
 

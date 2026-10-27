@@ -15,5 +15,6 @@ export function storePort(d: { store: ItemStore; capture: Capture }): ItemStoreP
     refresh: keys => d.store.refresh(keys),
     scan: (text, o) => d.capture.scan(text, o),
     build: claim => d.store.build(claim),
+    cap: (list, keep) => d.store.capped(list, keep),
   }
 }

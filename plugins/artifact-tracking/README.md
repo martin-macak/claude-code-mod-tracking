@@ -1,8 +1,8 @@
 # artifact-tracking
 
-A Claude Code mod. It tracks the GitHub issues and pull requests, the Jira work items, Claude artifacts and the web links that you or Claude mention in a session, and the Markdown files that Claude writes, edits, reads or names. It shows them in a `/track` pane and in a one-line band above the prompt.
+A Claude Code mod. It tracks the GitHub issues and pull requests, the Jira work items, Claude artifacts and the web links that you or Claude mention in a session, and the files that Claude reads, writes, edits, deletes or names, of any type. It shows them in a `/track` pane and in a one-line band above the prompt.
 
-`gh` and `acli` are optional. With them, the mod also shows live status: title, state, failing checks, Jira status and the Epic tree.
+`gh` and `acli` are optional. With them, the mod also shows live status: title, state, failing checks, Jira status and the Epic tree. `file` is optional too: with it, the mod finds the type of a file whose name it does not know.
 
 Design: [`docs/superpowers/specs/2026-10-10-artifact-tracking-design.md`](../../docs/superpowers/specs/2026-10-10-artifact-tracking-design.md). Evidence: [`docs/knowledge-base/claude-code-artifact-tracking/`](../../docs/knowledge-base/claude-code-artifact-tracking/README.md). Roadmap: the [GitHub Project](https://github.com/users/martin-macak/projects/3) shows the order of work and the status of each item.
 
@@ -40,7 +40,8 @@ claude --plugin-dir plugins/artifact-tracking
 | Tool output | Explicit GitHub issue and PR URLs and Jira URLs only. No bare `#N`, no web links. |
 | Artifact tool call, also from subagents | A publish, a republish, an Artifact made from a type and an asset upload: the artifact, `published`. A delete marks its row `deleted`. An error, a refusal and the other actions add nothing. |
 | Bash, `acli jira workitem` | The Jira item that the command names on acli's active site: `view KEY`, or `--key KEY` of `comment`, `edit`, `assign`, `transition`, `clone`, `archive` and `unarchive`. A reserved word or a wrapper in front of `acli` (`if`, `!`, `time`, also with `-p` or `--`, `sudo`, `VAR=x`) does not hide the call. `search`, `create`, `delete`, `link`, a list of keys, two different `--key` values and a `view` that names two keys add nothing. A denied call, a call that failed and a run with no active site add nothing. |
-| `Write`, `Edit` and `Read` tool calls | A `.md` path: see [Markdown files](#markdown-files). |
+| `Read`, `Write`, `Edit` and `NotebookEdit` tool calls, also from subagents | The file, of any type: see [Files](#files). A `Read` alone adds a row. `Grep` and `Glob` add nothing. |
+| Bash, files that the command changed | Each file that Claude Code reports in `bashEditDiff` (edited, created or deleted): see [Files](#files). |
 | File tools, Bash and `agent.spawn` | Other git repos that the session or subagents touch (`Read`, `Edit`, `Write`, `NotebookEdit`, `Grep`, `Glob`, `cd`, `git -C`, `gh -R`, spawn `cwd`). |
 
 Repo tracking runs in the background, after the tool has returned. One queue runs the git lookups one at a time and drops new ones when 32 wait. A file-tool call that failed or was denied adds nothing. A denied Bash command adds nothing. A Bash command that failed still counts: it touched the repo. A relative path in a Bash command or a file-tool call starts from the session cwd as it was before the call ran. In a subagent the cwd is unknown, so only absolute paths count. A `Glob` with no `path` and an absolute pattern counts for the part of the pattern before the first glob character. A nested subagent with no `cwd` counts with the `cwd` of its parent.
@@ -215,40 +216,63 @@ With 18 body rows or more, the pane draws three more lines: a summary row above 
 
 Each line takes one row at every width. A long name or many badges are cut cell by cell, the first cell that does not fit, and the cells after it are left out. The three lines come off the rows of the window, so a long list shows three rows fewer than it did: an inline pane at 100x60 shows about 8 rows of it, and a docked pane at 120x37 about 20. The selected-row line and the health line sit in the footer, so a docked pane keeps them with the footer on the last rows of its body. The help view draws none of the three. The band above the prompt keeps its own line, with the same words as the summary row.
 
-### Markdown files
+### Files
 
-The Files section has one row per Markdown file (issue #28):
+The Files section has one row per file that Claude read, wrote, edited, created, deleted or named, of any type (issues #28 and #57). A file that was only read or only named draws dim. The `/track` text lists the named ones and counts the read ones in one line:
 
 ```text
-Files  3 files
-  plan.md   docs    created  edited 3  viewed 2
-  README.md                  edited 1  viewed 5
-  notes.md  docs    mentioned          viewed 1  subagent
+Files  3 files · 188 read
+  a.ts  src  code  edited 1
+  old.md  docs  docs  deleted
+  plan.md  docs  docs  created  edited 3 viewed 2
+  188 more files read only
 ```
 
-| Cell | Counts |
+| Cell | Says |
 | --- | --- |
 | name | The name of the file. It keeps its extension when it is cut. |
 | folder | The Description column: the folder of the file, relative to the session root when the file is below it, else absolute. Empty for a file at the root. |
-| `created` | A successful `Write` of type `create` made the file. It stays set. |
-| `mentioned` | Your prompt, your command arguments or Claude's reply named the path, and the file exists. Shown when the file was not created. |
-| `edited N` | Successful `Edit` calls and `Write` calls of type `update`. |
-| `viewed N` | Successful `Read` calls. This includes a `Read` that Claude Code answers with `file_unchanged`: the file did not change since the last `Read`, or since Claude Code loaded it at startup. A `Read` alone never adds a row: it counts only on a row that a write, an edit or a mention made. |
-| `subagent` | A subagent wrote, edited or read the file. |
+| type | The type of the file: `code`, `config`, `docs`, `data`, `markup`, `image` or `other`. See [Types](#types-of-files). No view groups by it yet (follow-up [#248](https://github.com/martin-macak/claude-code-mod-tracking/issues/248)). `facets.kind` holds the same word for such a view. |
+| status | One word, the strongest: `deleted`, `created` or `edited N` (successful `Edit` and `NotebookEdit` calls, `Write` calls of type `update`, and files that a Bash command changed). A file that was only read or only named has none: its reason (`read`, `mentioned`) is in the detail of the row. |
+| badges | `edited N` (when the status says `created` or `deleted`), then `viewed N` as one badge: successful `Read` calls, `file_unchanged` answers too. |
+| `subagent` | A subagent touched the file. |
 
 An empty cell means that activity did not happen. The `/track` text leaves empty cells out.
 
 Rules:
 
-- Only `.md` paths count, in any case. A failed, denied or staged call adds nothing.
+- `Read`, `Write`, `Edit` and `NotebookEdit` count when the call succeeds. A `Read` of a text file, a notebook, a PDF or an image counts, and so does a `Read` that Claude Code answers with `file_unchanged` (the file did not change since the last `Read`). A failed, denied or staged call adds nothing. `Grep` and `Glob` add nothing: they are searches, not reads.
+- A `Read` alone adds a row. The row is dim, and it is the lowest rank when the cap drops rows (see below).
+- Bash: a command that changes files inside a git work tree has a list of the changed files in its result (`bashEditDiff`). Claude Code records the list only in auto mode and in `bypassPermissions` mode, or in any mode when the setting `bashEditDiffEnabled` turns it on (`false` turns it off). It never lists an ignored file or a file in a submodule. The mod counts each file as `created`, `deleted` or edited, as Claude Code says. Only the first 5 files carry the flags `created` and `deleted`, and the list names at most 200 paths: any other changed path shows as edited, so a `git rm -r` of more than 5 files leaves `edited` rows for files that are gone. A command that fails still counts the files that Claude Code names. The list is best effort: a command outside a git work tree, a read (`cat`, `head`), a background command and a git command that moves the work tree (`git checkout`, `git stash`) give no list, and the mod sees no change. The field is an internal one of Claude Code and may change: the mod reads it with guards. `trackers.file.bashEdits: false` turns it off.
+- A delete marks the row `deleted`. A later `Write`, `Edit`, `Read` or mention of the file clears the mark: the file is there again.
 - A relative path joins the cwd: the spawn cwd of a subagent, else the session cwd. `~/` in a mention joins `HOME`.
-- A row is keyed by where the file lands (`file:<real path>`): two spellings of one file, such as `/tmp/a.md` and `/private/tmp/a.md`, are one row. A case alias or a hard link stays a second row. The row keeps the path as first spelled.
-- Mentions: by default at most 20 paths per prompt or reply (`trackers.file.maxMentionsPerRow`), each checked with one stat. A URL, a missing file and tool output are not mentions. A trailing line number (`a.md:42`) or anchor (`a.md#L7`) is cut.
+- A row is keyed by where the file lands (`file:<real path>`): two spellings of one file, such as `/tmp/a.md` and `/private/tmp/a.md`, are one row. A case alias or a hard link stays a second row. The row keeps the path as first spelled. A deleted file has no real path of its own, so the mod takes the real path of its folder and adds the name: a delete through a symlinked folder (`/tmp/w` for `/private/tmp/w`) marks the row that an earlier `Write`, `Edit` or `Read` made, not a second row. When the mod finds no folder either, the row is keyed by the path as spelled.
+- Mentions: by default at most 20 paths per prompt or reply (`trackers.file.maxMentionsPerRow`), each checked with one stat. A word is a path when it ends in a known extension or name (`a.ts`, `Makefile`, `.env`), or when it is written as a path (`./run`, `~/x`, `/etc/hosts`, `src/a.weird`). A relative path with no extension needs a lead: `./bin/deploy` is a mention, `bin/deploy` is not. A URL, a missing file, a folder and tool output are not mentions. Words like `e.g`, `acme/web#5`, `and/or` and `/track` are not paths. A trailing line number (`a.ts:42`) or anchor (`a.md#L7`) is cut.
 - Ignored paths, fixed: a `.git` or `node_modules` folder, auto-memory under `<config dir>/projects/<project>/memory/` or under the `autoMemoryDirectory` setting, and the Claude scratchpad (`claude-<uid>/<project>/<session>/scratchpad/` under any temp folder). The config dir is `CLAUDE_CONFIG_DIR`, else `~/.claude`. Below the session root, only a `.git` or `node_modules` folder below the root counts, so a project inside such a folder keeps its files. `CLAUDE.md`, `AGENTS.md` and plans stay tracked.
-- File rows count against the session item cap (500 by default) like other items. The oldest row goes first.
+- Sort: your priority mark first, then the files that Claude wrote, deleted or created, then the files that were only named, then the files that were only read. Inside each group: the type (`code`, `config`, `docs`, `data`, `markup`, `image`, `other`), then the path. The band counts the written, deleted and named files (`Files 3`). The note adds the read ones (`3 files · 188 read`).
+- The `/track` text lists the rows of the written, deleted and named files, then one line: `188 more files read only`. A file that you marked `high` is never counted in that line: it is pinned, so the text lists it. In a view other than by list, the line comes once at the end, after the title `Files`. The pane still shows every row. The prompt lines (see [Prompt sections](#prompt-sections)) leave out the same files, and list the others in the order the mod first saw them.
+- Cap: the Files section keeps at most `trackers.file.maxFiles` rows (300 by default), and the shared cap (`global.store.maxItems`, 500 by default) still applies: the lower of the two wins. When a cap drops rows, the rows of files that were only read go first, then the rows of files that were only named, then the rows of written files. The oldest row of a group goes first. Rows of other trackers never go for the file cap. The row that a call has just added always stays: when the file cap is full of written rows, a new row of a file that was only read replaces the oldest written row. The PR lane caps its writes the same way.
+- `trackers.file.scope: "md"` goes back to `.md` files only, as before issue #57. A `Read` alone still adds a row.
 - Select a file row and press `x` to hide it for the run. A later write, edit, read or mention of the same file does not bring it back.
-- A resume restores file rows from the stored copy, then from the `Write`, `Edit` and `Read` results and the mentions in the transcript. A subagent's writes come back from the stored copy only: its transcript holds no results.
-- Paths only. The mod never reads or stores file contents.
+- A resume restores file rows from the stored copy, then from the `Read`, `Write`, `Edit` and `NotebookEdit` results and the mentions in the transcript. A subagent's writes come back from the stored copy only: its transcript holds no results. A Bash change comes back from the transcript only when its stored result holds `bashEditDiff`: it was not checked.
+- Paths only. The mod never reads or stores file contents. The only thing it asks about a file is its type (see below).
+- The knowledge base has the shapes of the tool results, when Claude Code records `bashEditDiff` and what `file --mime-type` answers: [File signals as a hook sees them](../../docs/knowledge-base/claude-code-mods/concepts/file-signals.md).
+
+#### Types of files
+
+The type of a file comes from a fixed map of names and extensions. The name wins over the extension, and an extension is read in lower case:
+
+| Type | Names and extensions |
+| --- | --- |
+| `code` | `ts tsx mts cts js jsx mjs cjs py rb go rs java kt kts swift c h cc cpp hpp cs php sh bash zsh fish ps1 lua pl r scala clj ex exs erl hs ml sql dart vue svelte ipynb`, `Makefile`, `Justfile`, `Rakefile` |
+| `config` | `yaml yml toml ini cfg conf properties lock editorconfig npmrc nvmrc tf tfvars hcl`, `Dockerfile` (also `Dockerfile.dev`), `Containerfile`, `Gemfile`, `Procfile`, `CODEOWNERS`, `package.json`, `package-lock.json`, `composer.json`, `deno.json`, `biome.json`, `yarn.lock`, `.gitignore`, `.gitattributes`, `.env` and `.env.*`, `tsconfig*.json`, `*.config.*`, `.<name>rc` |
+| `docs` | `md mdx markdown rst txt adoc org tex pdf`, `README`, `LICENSE` |
+| `data` | `json json5 jsonc csv tsv jsonl ndjson parquet sqlite db xlsx xls avro proto graphql gql` |
+| `markup` | `html htm xml xhtml css scss sass less svg` |
+| `image` | `png jpg jpeg gif webp bmp ico tiff avif heic` |
+| `other` | everything else |
+
+A name that the map does not know gets one call of `file -b --mime-type` for the file (`image/*` is `image`, `text/x-*` and JavaScript are `code`, JSON and CSV are `data`, HTML and XML are `markup`, PDF and Markdown are `docs`, the rest is `other`). The call runs in the background, after the tool call returned, and the answer is kept on the row, so a row is asked once. A row that `/track clear` or the cap removed has its answer gone: when the file comes back, it is asked again. The row says `other` until then. A tick looks again for rows that a restore or a replay brought back with no answer. A host with no `file`, a failed call and `trackers.file.mime: false` leave the type `other`. A failed call is not repeated until `/track clear` or a session switch. A file that a Bash command deleted is not asked.
 
 ## Priority
 
@@ -282,7 +306,7 @@ An open row says why the mod tracks it. A reason is one word of a closed list. A
 
 | Reason | Claude or you did this |
 | --- | --- |
-| `deleted` | Claude deleted it (an artifact). |
+| `deleted` | Claude deleted it: an artifact, or a file that a Bash command removed. |
 | `created` | Claude made it: a file, a pull request that this session opened, or a process, worktree or agent that this session started. |
 | `updated` | Claude changed it: a file, a repo that Claude edited, or a Jira item that an `acli` command changed. |
 | `published` | Claude published it with the Artifact tool. |
@@ -296,9 +320,10 @@ Which signal gives which reason:
 
 | Tracker | Signal | Reason |
 | --- | --- | --- |
-| file | A Write that makes the file | `created` |
-| file | A Write that updates it, or an Edit | `updated` |
-| file | A Read (a Read alone adds no row) | `read` |
+| file | A Write that makes the file, or a file that a Bash command created | `created` |
+| file | A Write that updates it, an Edit, a NotebookEdit, or a file that a Bash command changed | `updated` |
+| file | A Bash command that deleted it | `deleted` |
+| file | A Read, also a Read that answers `file_unchanged` (a Read alone adds a row) | `read` |
 | file | The path in a prompt, a command or a reply | `mentioned` |
 | artifact | A publish with the Artifact tool | `published` |
 | artifact | A delete with the Artifact tool | `deleted` |
@@ -603,6 +628,7 @@ The extras column is the first to drop in a narrow pane, after the type. `tracke
 - Claude Code with mods (2.1.295 or newer).
 - Optional: `gh` 2.102 or newer, logged in. It refreshes GitHub items with one GraphQL call for each host. A GitHub Enterprise host works when `gh auth status --hostname <host>` succeeds.
 - Optional: `acli` 1.3.19 or newer, logged in. It refreshes Jira items on its active site.
+- Optional: `file` (any version that knows `--mime-type`; macOS and most Linux hosts have it). It gives the type of a file whose name the mod does not know.
 - Without a tool, its section says `not installed` or `not logged in`. The items stay in the list.
 
 By default, a tool that fails three times in a row is paused for 5 minutes (circuit breaker, see [Configuration](#configuration)). The section says `paused 4m`. `/track refresh` lifts the pause.
@@ -716,7 +742,11 @@ Every key. Time values are in milliseconds.
 | `trackers.github.shortRefKeywords` | `["github", "bug", "issue", "issues", "enhancement", "chore"]` | | 32 words | Lead words that make a bare `#N` in the conversation an issue. A word has 1 to 32 characters: a letter, then letters, digits or `-`. The mod lowercases it. |
 | `trackers.jira.concurrency` | 3 | 1 | 10 | Parallel `acli` calls. |
 | `trackers.jira.epicChildLimit` | 50 | 1 | 500 | Children read for one Epic. |
-| `trackers.file.maxMentionsPerRow` | 20 | 0 | 200 | `.md` paths read from one prompt or reply. 0 reads none. |
+| `trackers.file.scope` | `all` | | | `all` tracks every file. `md` tracks `.md` files only, as before issue #57. Any other value is a config problem and reads as `all`. |
+| `trackers.file.maxMentionsPerRow` | 20 | 0 | 200 | Paths read from one prompt or reply. 0 reads none. |
+| `trackers.file.maxFiles` | 300 | 50 | 2000 | File rows kept. The shared cap `global.store.maxItems` still applies, and the lower of the two wins. Read-only rows go first. |
+| `trackers.file.bashEdits` | true | | | Count the files that a Bash command changed (`bashEditDiff`). |
+| `trackers.file.mime` | true | | | Ask `file --mime-type` once for a file whose name the type map does not know. |
 | `trackers.repos.maxRepos` | 50 | 1 | 500 | Repositories listed. |
 | `trackers.repos.maxRepoAgents` | 8 | 1 | 50 | Agents named on one repository. |
 | `trackers.repos.maxRepoQueue` | 32 | 1 | 256 | Repository lookups that wait in the queue. |
@@ -766,7 +796,7 @@ The `questions` tracker lists the calls of the Questions section, newest first, 
 
 Rules for the lines:
 
-- Items come in the order of the pane: your priority mark first (see [Priority](#priority)), then the order in which the mod first saw them. Items that you dismissed are left out. Jira children are not listed.
+- Items come in the order of the pane: your priority mark first (see [Priority](#priority)), then the order in which the mod first saw them. Items that you dismissed are left out. Jira children are not listed. The file lines start with one line that counts the files that were only read, `file: 188 more files read only`, then list the files that Claude wrote, deleted or named. The count comes first, so the cap of `prompt.maxItems` cuts file lines and never the count.
 - A tracker lists at most `prompt.maxItems` lines. The value is a whole number from 5 to 50. The default is 20. With more items, the last line reads `<id>: and N more not listed`. It counts toward the cap.
 - A line holds at most 200 characters. The mod removes control, invisible and ANSI characters from it. A title, summary, label or file path is put in double quotes. It is data, and the frame says so. A long reference leaves the quoted text less room, so the closing quote stays. A fact in parentheses, such as a Jira status, is cut at 30 characters and loses its parentheses and quotes.
 - The first fact of a line is the strongest reason of the item (see [Why an item is tracked](#why-an-item-is-tracked)): `mentioned`, `read`, `discovered`, `created`, `updated`, `published` or `deleted`. A deleted artifact adds how it was found: `(deleted, published)`. A file adds how often Claude edited and viewed it.
@@ -790,7 +820,8 @@ Cost. A block is short: 134 characters for one link, 164 for two (about 34 and 4
 
 ## Known limits
 
-- **False positives.** `rank #1` counts as issue 1 of the session repo. The scanner cannot tell it from `fixed in #1`.
+- **False positives.** `rank #1` counts as issue 1 of the session repo. The scanner cannot tell it from `fixed in #1`. A word in a reply that looks like a path and names a file that exists (`index.ts` in prose) adds a `mentioned` row.
+- **Files.** A Bash change shows only inside a git work tree, and only when Claude Code records it: in auto mode and `bypassPermissions` mode, or in any mode with the setting `bashEditDiffEnabled` (`bashEditDiff` is an internal field of Claude Code, in public beta). Only the first 5 changed files carry `created` or `deleted`, and at most 200 paths are named, so a command that removes or moves more files shows `edited` rows for files that are gone. A relative path with no extension in a reply is no mention unless it starts with `./`, `../` or `~/`. The `cat`, `head`, `tail` and `less` reads of Bash are not seen. A file outside the work tree that a Bash command writes is not seen. The type of a file that the map does not know is `other` until `file` has answered, and `other` when `file` is missing. The cap `maxFiles` drops the oldest rows of files that were only read: a long session shows the newest reads. The file kinds, the cap and the `bashEditDiff` read were run against the fake engine and the real hooks of the test kit, not yet in a live session.
 - **Hidden rows.** A row leaves the view up to one tick (30 s) after its TTL. A workflow agent that finished can look running for up to `trackers.auto.workflowIdleMs` (60 min), so its TTL starts late. The `/track` text prints every child of a row, so it does not fold a workflow run. An ended process row that an older version stored has no end time. It gets one when the session is restored, and hides after its TTL from then. The process row cap counts that time as its end too, so such a row can outlive a row that ended earlier. The process row cap also bounds the stored process rows (see [Ended rows](#ended-rows)): a row it drops is gone, and `/track show-all` cannot show it.
 - **Clean up.** `/track clean --yes tasks` was run against the fake engine and the real hooks of the test kit, not yet against a live background task in auto permission mode (the design study of #49 ran TaskStop in manual mode only). It stops Bash tasks only: a Monitor task, Docker, tmux, screen and detached processes are left to you. It removes git records. With `trackers.auto.destroyWorktrees` on, it also removes a live worktree of this run that is clean and merged, and never the branch. "Merged" means every commit of `HEAD` is on a base ref (the branch of the main worktree, or the target of `origin/HEAD`). A branch that was squash- or rebase-merged has new commits, so its tree is skipped. The mod never runs `git fetch`: a branch merged on a remote counts only after a fetch brought the merge into a base ref. Git deletes the ignored files of a removed tree. A person's own shell inside a tree is not seen. A remove that runs past 120 s is killed and can leave a half-removed folder: the branch and its commits stay. The removal of live worktrees was run against the fake engine and a fake git, not yet in a live session. `--hide` hides rows for the session only and `/clear` forgets it.
 - **Focus after a background change.** A row that appears or leaves above the focus ring moves the ring onto another row: the ring sits on a position, not on a row. The `>` and the highlight stay on your row, and `x` and the digits act on it, not on the ring. Tab moves the ring again. After `x` or a digit, the ring goes back to the selected row. `h` and the `x` that removes the last row take the rows away, and every footer Button changes its place, so the pane asks for the ring on its own Button again. A ring on a Button that the next view has not (a row, `N more`, a tracker key) goes to `h: back`, and the second `h` puts it back on the selected row. After the last `x`, such a ring goes to `r: refresh`. After a `ctrl+x Tab` chord or a second `/track` gives the keys back to the pane, the ring starts on the selected row (on the first row when none is selected). `r` leaves the ring where it was. When the row you selected hides, the selection moves to a shown row (see [Ended rows](#ended-rows)).
@@ -844,7 +875,7 @@ claude plugin test .
 | `trackers/jira/` | Jira items and `AcliTool`. |
 | `trackers/web/` | Web links. |
 | `trackers/artifact/` | Artifact items, the Artifact tool call as an event (for the hook and the resume backfill) and artifact URLs and ids. |
-| `trackers/file/` | File items and the Markdown path scanner. |
+| `trackers/file/` | File items: the tool and Bash readers (`files.ts`, `bash.ts`), the path scanner for mentions of any type, the type map (`file-type.ts`), the `file --mime-type` call (`mime.ts`), what counts as written, named or read (`activity.ts`), the cap rank, rows and sections. |
 | `trackers/repos/` | Repository hints, identity, paths, queue, rows, tracker and view. |
 | `trackers/processes/` | Process parsing, probing and view. |
 | `trackers/questions/` | The calls of AskUserQuestion and ExitPlanMode: parsing, the log and its caps, masking, the rows, the Markdown export, the copy key and the prompt lines. |

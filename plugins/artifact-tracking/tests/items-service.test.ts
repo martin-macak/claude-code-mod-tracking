@@ -630,7 +630,7 @@ test('sessionChanged resets the repo and publishes the statuses again', async ()
   expect(t.facts.read('session.repo')).toBeUndefined()
   expect(t.facts.read('github.hosts')).toBeUndefined()
   const tools = t.w.state.get('tools') as unknown as Record<string, unknown>
-  expect(Object.keys(tools)).toEqual(['gh', 'acli'])
+  expect(Object.keys(tools)).toEqual(['gh', 'acli', 'file'])
   await items.prepare() // looked up again for the new session
   expect((t.facts.read('session.repo') as { repo: string } | undefined)?.repo).toBe('web')
 })

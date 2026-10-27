@@ -9,6 +9,7 @@ import type { PendingEnd } from '../core/interfaces/slots'
 import { autoIds, dismiss } from '../trackers/auto/dismiss'
 import { emptyAuto, pinRoot, recordEnter } from '../trackers/auto/ledger'
 import { AutoRound, type RoundDeps } from '../trackers/auto/round'
+import { fileRecord } from '../trackers/file/kind'
 import { githubTracker } from '../trackers/github'
 import { PR_LANE_DEFAULTS } from '../trackers/github/config'
 import { dropAuto } from '../trackers/github/discovered'
@@ -33,7 +34,7 @@ import { LIMITS } from './fixtures/limits'
 import { managerWorld } from './fixtures/manager'
 import { reasonsOfSources } from './fixtures/reasons'
 import { scanBody } from './fixtures/refs'
-import { buildRecord } from './fixtures/registry'
+import { buildRecord, capTo } from './fixtures/registry'
 import { hostWorld } from './fixtures/tracker-host'
 
 declare function setTimeout(fn: () => void, ms: number): unknown
@@ -189,7 +190,7 @@ function rig(setup: Setup = {}) {
     },
     onAdded: keys => void log.added.push([...keys]),
     lane: () => PR_LANE_DEFAULTS,
-    caps: () => ({ staleMs: LIMITS.staleMs, maxItems: LIMITS.maxItems }),
+    caps: () => ({ staleMs: LIMITS.staleMs, cap: capTo(LIMITS.maxItems) }),
   }
   const prLane = new PrLane(deps)
   const hold = () => {
@@ -513,7 +514,7 @@ function laneRig(
     },
     onAdded: () => {},
     lane: () => PR_LANE_DEFAULTS,
-    caps: () => ({ staleMs: LIMITS.staleMs, maxItems: LIMITS.maxItems }),
+    caps: () => ({ staleMs: LIMITS.staleMs, cap: capTo(LIMITS.maxItems) }),
   }
   const lane = new PrLane(deps)
   const hold = () => {
@@ -641,7 +642,7 @@ test('lane: the github maxAutoItems reaches the apply step', async () => {
 test('lane: global.refresh.staleMs reaches the apply step', async () => {
   const t = laneRig()
   t.nodes['head:feat/x'] = [prNode({ number: 7, headRefName: 'feat/x' })]
-  Object.assign(t.deps, { caps: () => ({ staleMs: 1000, maxItems: LIMITS.maxItems }) })
+  Object.assign(t.deps, { caps: () => ({ staleMs: 1000, cap: capTo(LIMITS.maxItems) }) })
   const step = async () => {
     t.lane.request()
     await t.lane.idle()
@@ -679,7 +680,7 @@ test('lane: global.store.maxItems reaches the apply step', async () => {
   const seed = [mention(1), mention(2), mention(3)]
   const capped = laneRig({ items: seed })
   capped.nodes['head:feat/x'] = [prNode({ number: 7, headRefName: 'feat/x' })]
-  Object.assign(capped.deps, { caps: () => ({ staleMs: LIMITS.staleMs, maxItems: 2 }) })
+  Object.assign(capped.deps, { caps: () => ({ staleMs: LIMITS.staleMs, cap: capTo(2) }) })
   capped.lane.request()
   await capped.lane.idle()
   expect(capped.items().filter(r => r.category === 'web')).toHaveLength(2) // the oldest mention goes
@@ -1064,6 +1065,30 @@ test('lane: global.store.maxItems reaches the shipped lane: the oldest mention g
   }
   expect(await run({ global: { store: { maxItems: 200 } } })).toBe(200) // the cap is 200: one mention goes
   expect(await run({})).toBe(201) // the default cap is 500
+})
+
+test('lane: the file cap and the rank reach the shipped lane: the written file stays, the oldest reads go (issue #57)', async () => {
+  const file = (path: string, kind: 'viewed' | 'created', at: number): StoredItem =>
+    fileRecord({ path, label: path, kind, bySubagent: false }, { source: 'tool', at }) as unknown as StoredItem
+  const run = async (slice: JsonObject) => {
+    const t = shipped({ file: { trackers: { file: slice } } })
+    // One written file, the oldest, then 70 read files: over maxFiles 50, far under the shared cap of 500.
+    const held = [
+      file('/work/keep.ts', 'created', 1),
+      ...Array.from({ length: 70 }, (_, i) => file(`/work/r${i}.txt`, 'viewed', 10 + i)),
+    ]
+    t.w.state.set('items', held as unknown as Json)
+    t.nodes[`head:${BRANCH}`] = [prNode({ number: 7, headRefName: BRANCH })]
+    await t.start()
+    await t.enter()
+    await t.w.clock.advance(WINDOW)
+    await t.refresh()
+    expect(t.keys()).toContain(K7)
+    const files = t.items().filter(r => r.category === 'file')
+    return [files.length, files.some(r => r.key === 'file:/work/keep.ts')]
+  }
+  expect(await run({ maxFiles: 50 })).toEqual([50, true])
+  expect(await run({})).toEqual([71, true]) // the default file cap is 300
 })
 
 test('lane: a PR body ref of a kind that is off makes no item', async () => {

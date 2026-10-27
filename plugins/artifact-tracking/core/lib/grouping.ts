@@ -80,6 +80,7 @@ export function listGroups(sections: readonly SectionSpec[]): readonly GroupSpec
     failing: countFailed(s.rows),
     ...(s.empty !== undefined ? { empty: s.empty } : {}),
     ...(s.text !== undefined ? { text: s.text } : {}),
+    ...(s.textMore !== undefined ? { textMore: s.textMore.line } : {}),
   }))
 }
 
@@ -156,6 +157,11 @@ const quietTree = (r: TreeRow): TreeRow => ({
   quiet: true as const,
   ...(r.children !== undefined ? { children: r.children.map(quietTree) } : {}),
 })
+
+/** The rows of `ids`, each marked `quiet` with its children. The same array comes back when no row is named. */
+function quietRows(rows: readonly TreeRow[], ids: ReadonlySet<string>): readonly TreeRow[] {
+  return rows.some(r => ids.has(r.id)) ? rows.map(r => (ids.has(r.id) ? quietTree(r) : r)) : rows
+}
 
 /** The rows with every `lift` row stripped of its children and followed by them, which lift in their turn. */
 function lifted(rows: readonly TreeRow[]): TreeRow[] {
@@ -241,8 +247,14 @@ export function viewGroups(sections: readonly SectionSpec[], view: ViewId, optio
   const kept = sections.map(s => {
     const before = tally.rows
     const shown = options.touchedOnly ? touchedRows(s.rows, tally) : s.rows
-    // A section whose text is its title only (`text: 'title'`) keeps its rows out of the `/track` text in every view.
-    const rows = s.text === 'title' ? shown.map(quietTree) : shown
+    // A section whose text is its title only (`text: 'title'`) keeps its rows out of the `/track` text in every view. A section
+    // with a `textMore` keeps the rows it names out, and counts them in a line.
+    const rows =
+      s.text === 'title'
+        ? shown.map(quietTree)
+        : s.textMore === undefined
+          ? shown
+          : quietRows(shown, new Set(s.textMore.rows))
     return { s, rows, gone: tally.rows - before }
   })
   const make = (key: string, title: string, rows: readonly TreeRow[]): GroupSpec => ({

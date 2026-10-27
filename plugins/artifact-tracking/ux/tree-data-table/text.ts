@@ -30,21 +30,31 @@ export const quietTitles = (sections: readonly Pick<SectionSpec, 'title' | 'note
   sections.filter(s => s.text === 'title' && s.rows.length > 0).map(titleLine)
 
 /**
+ * The title line and the `textMore` line of each section that leaves rows out of the text (`SectionSpec.textMore`): `Files  188
+ * more files read only`. A view other than by list prints no row marked `quiet`, so these lines, at the end of its text, say
+ * how many rows the text left out. The by-list view says it in the group (`GroupSpec.textMore`).
+ */
+export const moreLines = (sections: readonly Pick<SectionSpec, 'title' | 'textMore'>[]): string[] =>
+  sections.flatMap(s => (s.textMore === undefined ? [] : [`${s.title}  ${s.textMore.line}`]))
+
+/**
  * A title line (the title, two spaces, the note), then one line per row, indented two spaces a level from the first.
  * The lead is the non-empty cells of the columns up to and including the tree column (the control and the name), joined
  * by one space. The other non-empty cells follow, joined by two spaces: the description, the type, the status, then
  * each badge as a cell of its own. Groups are separated by one empty line. The counts of a group are not printed. A group
  * with `text: 'title'` prints its title line only, and a `quiet` row prints nothing, with its children, in any group: the
  * model reads every `/track` reply. A group of a view that holds quiet rows only prints no title line either (the caller
- * names the quiet section once, at the end: `quietTitles`). With no group at all it says `EMPTY_TEXT`; with groups that all
- * print nothing it is empty.
+ * names the quiet section once, at the end: `quietTitles`). A group with a `textMore` line prints it last, indented as a row,
+ * and keeps its title line even when every row is quiet (the files that were only read, issue #57). With no group at all it
+ * says `EMPTY_TEXT`; with groups that all print nothing it is empty.
  */
 export function groupsText(groups: readonly GroupSpec[]): string {
   if (groups.length === 0) return EMPTY_TEXT
   const treeAt = SHARED_COLUMNS.findIndex(c => c.role === 'tree')
   const lines: string[] = []
   for (const g of groups) {
-    if (g.text !== 'title' && g.rows.length > 0 && g.rows.every(r => r.quiet === true)) continue
+    if (g.text !== 'title' && g.textMore === undefined && g.rows.length > 0 && g.rows.every(r => r.quiet === true))
+      continue
     if (lines.length > 0) lines.push('')
     lines.push(titleLine(g))
     if (g.text === 'title') continue
@@ -58,6 +68,7 @@ export function groupsText(groups: readonly GroupSpec[]): string {
       }
     }
     walk(g.rows, 0)
+    if (g.textMore !== undefined) lines.push(`  ${g.textMore}`)
   }
   return lines.join('\n')
 }

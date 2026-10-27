@@ -32,6 +32,12 @@ export { enforceCap, KINDS, MAX_PINNED, markArtifactDeleted }
 const byCategory = new Map(KINDS.map(k => [k.category, k]))
 const table: KindTable = category => byCategory.get(category)
 
+/** The cap of the store, as a function of a list (`ItemStorePort.cap`): `max` records, no limit of a kind, every record ranks alike. */
+export const capTo =
+  (max: number) =>
+  (list: StoredItem[]): StoredItem[] =>
+    enforceCap(list, max, new Set(), () => undefined)
+
 /** A ref as the kinds see it: the category, the key, where and when it was seen, and the ref fields. */
 function claimOf(ref: Ref, s: Sighting): Claim {
   const { category, ...fields } = ref
@@ -107,7 +113,7 @@ export function mergeFiles(
     const old = out[at]!
     if (old.category === 'file') out[at] = foldRecords(old, rec, table) as unknown as ItemRecord
   }
-  return enforceCap(out, cap, added)
+  return enforceCap(out, cap, added, table)
 }
 
 export function mergeResults(list: readonly ItemRecord[], refreshed: readonly ItemRecord[]): ItemRecord[] {

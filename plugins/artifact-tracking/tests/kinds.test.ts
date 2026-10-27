@@ -7,6 +7,7 @@ import type { ToolHandle } from '../core/interfaces/tracker'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { scanContext } from '../core/lib/kind-context'
 import { reasonSet } from '../core/lib/reasons'
+import { foldRecords } from '../core/lib/records'
 import { CliTool } from '../core/lib/tool'
 import { artifactKeyOf, artifactKind } from '../trackers/artifact/kind'
 import { artifactFromWeb, artifactOrigin, markArtifactDeleted } from '../trackers/artifact/records'
@@ -111,11 +112,69 @@ test('kinds: ranks follow the claim order github, jira, artifact, file, web', ()
   expect([githubKind, jiraKind, artifactKind, fileKind, webKind].map(k => k.rank)).toEqual([10, 20, 30, 80, 90])
 })
 
-test('file: a lone view makes no record; a view of a tracked file counts', () => {
-  expect(fileKind.merge(null, fileClaim('viewed'))).toBeNull()
+test('file: a lone view makes a record (issue #57); a view of a tracked file counts', () => {
+  expect(fileKind.merge(null, fileClaim('viewed'))).toMatchObject({
+    views: 1,
+    edits: 0,
+    created: false,
+    reasons: { first: 'read', all: ['read'], strongest: 'read' },
+  })
   const created = made(fileKind, fileClaim('created'))
   expect(fileKind.merge(created, fileClaim('viewed', 4))?.views).toBe(1)
   expect(fileKind.merge(null, fileClaim('mentioned'))).toMatchObject({ mentions: 1, created: false })
+})
+
+test('file: a delete makes a record that says deleted; a later sighting of the file puts it back', () => {
+  const gone = made(fileKind, fileClaim('deleted', 2))
+  expect(gone).toMatchObject({ deleted: true, created: false, edits: 0, views: 0, mentions: 0 })
+  expect(gone.reasons).toEqual({ first: 'deleted', all: ['deleted'], strongest: 'deleted' })
+  expect(fileReason('deleted')).toBe('deleted')
+  // Made, then removed: the later sighting decides, and the file stays `created`.
+  const made1 = made(fileKind, fileClaim('created', 1))
+  const removed = fileKind.merge(made1, fileClaim('deleted', 5))!
+  expect(removed).toMatchObject({ deleted: true, created: true, lastSeen: 5 })
+  expect(removed.reasons.strongest).toBe('deleted')
+  // Removed, then made again (a Write, an edit, a read or a mention): the file is there.
+  for (const again of ['created', 'edited', 'viewed', 'mentioned'] as const) {
+    const back = fileKind.merge(removed, fileClaim(again, 9))!
+    expect(back.deleted).toBeUndefined()
+    expect('deleted' in back).toBe(false)
+    expect(back.reasons.all).not.toContain('deleted')
+  }
+  // An edit before the delete stays an edit and the file stays deleted.
+  const edited = fileKind.merge(made(fileKind, fileClaim('edited', 1)), fileClaim('deleted', 3))!
+  expect(edited).toMatchObject({ deleted: true, edits: 1 })
+})
+
+test('file: two records of one key fold by the later lastSeen for deleted, and keep a cached MIME type', () => {
+  const rec = (over: Partial<FileRecord>): FileRecord => ({ ...made(fileKind, fileClaim('edited', 1)), ...over })
+  const older = rec({ lastSeen: 2 })
+  const newer = rec({ lastSeen: 8, deleted: true, mime: 'text/plain' })
+  // Whichever is `a`: the record seen last decides, and the answer of `file` is kept from either.
+  for (const [a, b] of [
+    [older, newer],
+    [newer, older],
+  ] as const) {
+    const out = foldRecords(a, b, k => (k === 'file' ? fileKind : undefined)) as FileRecord
+    expect(out).toMatchObject({ deleted: true, mime: 'text/plain', edits: 2, lastSeen: 8 })
+  }
+  const restored = foldRecords(rec({ lastSeen: 2, deleted: true }), rec({ lastSeen: 8 }), k =>
+    k === 'file' ? fileKind : undefined,
+  ) as FileRecord
+  expect('deleted' in restored).toBe(false)
+})
+
+test('file: capOf reads maxFiles, with the default for no number; capRank is 0 read, 1 named, 2 written', () => {
+  expect(fileKind.capOf?.({ maxFiles: 120 })).toBe(120)
+  expect(fileKind.capOf?.({})).toBe(300)
+  expect(fileKind.capOf?.({ maxFiles: 'many' })).toBe(300)
+  const rank = (a: FileActivity) => fileKind.capRank?.(made(fileKind, fileClaim(a)))
+  expect(['viewed', 'mentioned', 'created', 'edited', 'deleted'].map(a => rank(a as FileActivity))).toEqual([
+    0, 1, 2, 2, 2,
+  ])
+  const viewedAndNamed = fileKind.merge(made(fileKind, fileClaim('viewed', 1)), fileClaim('mentioned', 2))!
+  expect(fileKind.capRank?.(viewedAndNamed)).toBe(1)
+  expect(fileKind.capRank?.(fileKind.merge(viewedAndNamed, fileClaim('edited', 3))!)).toBe(2)
 })
 
 test('file: counters add up, created and bySubagent never go back, the first label stays', () => {
@@ -407,9 +466,15 @@ test('artifact: a delete claim marks a known row once, and adds no row for an un
   expect(artifactKind.merge(marked, del)).toBe(marked) // already marked: the kind gives cur back
 })
 
-test('kinds: the file kind reads Write, Edit and Read; artifact reads Artifact; jira reads Bash', () => {
+test('kinds: the file kind reads Bash, Edit, NotebookEdit, Read and Write; artifact reads Artifact; jira reads Bash', () => {
   const reads = (k: ItemKind) => Object.keys(k.fromTool ?? {}).sort()
-  expect(SHIPPED.map(reads)).toEqual([[], ['Bash'], ['Artifact'], ['Edit', 'Read', 'Write'], []])
+  expect(SHIPPED.map(reads)).toEqual([
+    [],
+    ['Bash'],
+    ['Artifact'],
+    ['Bash', 'Edit', 'NotebookEdit', 'Read', 'Write'],
+    [],
+  ])
 })
 
 test('file: a lookup scan names no file; a conversation scan does', () => {

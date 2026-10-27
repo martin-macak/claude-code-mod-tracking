@@ -125,7 +125,11 @@ A pane is a framed region. It is docked beside the transcript in a wide fullscre
 
 `focus`, `closeOnEscape` and `holdToasts` accept only `true`. Passing `false` throws `ui.open: focus is true or left out`. Add the field only when the condition holds ([docs: interface:323-328](../sources/code-claude-com-2026-10-09/mods/interface.md#L323-L328)).
 
-`$.ui.close({ id })` closes a pane. Every close raises `ui.close` with `origin.kind` of `plugin`, `person` or `unload` ([d.ts:7353](../sources/claude-code-2.1.295/types/claude-code.d.ts#L7353)). A hook that answers without `next` keeps the pane open, except on `unload`. `$.ui.panes()` lists your own open panes ([d.ts:2527](../sources/claude-code-2.1.295/types/claude-code.d.ts#L2527)).
+`$.ui.close({ id })` closes a pane. Every close raises `ui.close` with `origin.kind` of `plugin`, `person` or `unload` ([d.ts:7353](../sources/claude-code-2.1.295/types/claude-code.d.ts#L7353)). A `ui.close` hook keeps the pane open when it answers `{ deny: 'reason' }`. It cannot refuse an `unload` close. `$.ui.panes()` lists your own open panes ([d.ts:2527](../sources/claude-code-2.1.295/types/claude-code.d.ts#L2527)).
+
+- `{ deny }` is the only answer that keeps the pane. An answer of `{}` does not: it has neither `{ value }` nor `{ deny }`, so the engine skips the hook and closes the pane. *verified-live* on Claude Code 2.1.310 (a probe mod in tmux against a fake API, design study of issue #57, probe P2). The transcript says `ui.close hook skipped: returned the wrong shape (neither { value } nor { deny })`. *types-only*: the 2.1.302 types give `ui.close` the result `ValueOrDeny<void>` ([d.ts:7345](../sources/claude-code-2.1.302/types/claude-code.d.ts#L7345), [d.ts:7414](../sources/claude-code-2.1.302/types/claude-code.d.ts#L7414)), and `tsc` 7.0.2 rejects `return {}` from a `ui.close` hook with `Type '{}' is not assignable to type 'OpEventResult<"ui.close">'`.
+- `{ deny }` alone leaves the pane open but moves the keys to the prompt (`isFocused` went `false`: *verified-live*, same probe). To keep the keys in the pane, call `$.ui.open({ id, focus: true, closeOnEscape: true })` inside the hook, do not await it, and answer `{ deny }`. The pane then stays with the keys, and the next Esc closes it when the hook answers `next(e)`.
+- A hook that always calls `next(e)` is not affected: it never refuses a close.
 
 ### Seating: `isPlaced`
 
