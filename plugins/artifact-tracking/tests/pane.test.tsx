@@ -423,7 +423,7 @@ test('pane: h shows the help view with every key and the config path; h again re
 const MANIFEST = JSON.stringify({ name: 'artifact-tracking', version: '1.2.3' })
 // The body of the inline pane at 100x40: 11 rows for the help lines and the footer, with no gap. The help lines: Pane keys
 // (title, one line of keys), Row keys (title, one line of keys), the groups of the trackers on one row, the config line and the
-// version line. The footer takes two rows since issue #200: the four dim Buttons of g, a, t and m wrap it.
+// version line. The footer takes two rows since issue #200: the five dim Buttons of g, a, t, p and m wrap it.
 const SHORT_ROWS = 11
 // The help view of the live screen of issue #92: the config path of the e2e world, in the temp folder of macOS.
 const LIVE_DIR = '/var/folders/sn/0_q8tr7x4vv44d69rbtyckwr0000gn/T/cc-tracker-config-SAq3DF'
@@ -441,7 +441,7 @@ test('pane: h in a short inline pane draws the compact help view, so Pane keys a
   const ui = await mountPane($, { bodyColumns: 96, bodyRows: 11, placement: 'inline' })
   await ui.press({ key: 'help' })
   const { gap, help, footer } = await helpTree(ui)
-  // The footer holds the four dim Buttons of g, a, t and m since issue #200, so it takes two rows at 96 cells, not one: the view
+  // The footer holds the five dim Buttons of g, a, t, p and m since issue #200, so it takes two rows at 96 cells, not one: the view
   // is 9 rows beside it (it was 10 beside a 1-row footer) and the two fill the body to the row.
   expect(await drawnHelpFooter(ui)).toEqual(modelHelpFooter)
   expect(HELP_FOOTER_ROWS).toBe(2)
@@ -466,7 +466,7 @@ test('pane: h in a short inline pane with a started mod, the version and the liv
   await ui.press({ key: 'help' })
   const { gap, help, footer } = await helpTree(ui)
   const wrapped = 1 // `Config file: <86 cells>` does not fit 96 cells: the path takes its own row
-  expect(await drawnHelpFooter(ui)).toEqual(modelHelpFooter) // two rows since issue #200: the four dim Buttons of g, a, t and m wrap the footer
+  expect(await drawnHelpFooter(ui)).toEqual(modelHelpFooter) // two rows since issue #200: the five dim Buttons of g, a, t, p and m wrap the footer
   expect(HELP_FOOTER_ROWS).toBe(2)
   expect(gap + help.length + wrapped + HELP_FOOTER_ROWS).toBeLessThanOrEqual(11) // the help lines, the wrapped row and the footer fit
   expect(JSON.stringify(help.at(-2))).toContain(`Config file: ${LIVE_PATH}`)
@@ -476,7 +476,7 @@ test('pane: h in a short inline pane with a started mod, the version and the liv
   expect(JSON.stringify(help)).toContain('files')
   expect(footer).toBeDefined()
   expect(await helpFooterKeys(ui)).toEqual(HELP_FOOTER_KEYS)
-  for (const b of (await helpFooterOf(ui)).slice(7)) expect(b.props.dimColor, String(b.key)).toBe(true) // g, a, t and m draw dim
+  for (const b of (await helpFooterOf(ui)).slice(7)) expect(b.props.dimColor, String(b.key)).toBe(true) // g, a, t, p and m draw dim
   await ui.unmount()
 })
 
@@ -487,8 +487,8 @@ test('pane: h in a docked pane keeps the full help view, one key to a line', asy
   await ui.press({ key: 'help' })
   const { gap, help } = await helpTree(ui)
   expect(gap).toBe(1)
-  // 4 titles, 14 keys (g, a, t and m, the github keys c and f and the questions key y of the started mod), the config line, the version line
-  expect(help).toHaveLength(20)
+  // 4 titles, 15 keys (g, a, t, p and m, the github keys c and f and the questions key y of the started mod), the config line, the version line
+  expect(help).toHaveLength(21)
   expect(JSON.stringify(help[0])).toContain('Pane keys')
   expect(JSON.stringify(help[1])).toContain('refresh')
   await ui.unmount()
@@ -536,7 +536,7 @@ test('pane: a body shorter than the footer plus one line still draws the help vi
   await ui.press({ key: 'help' })
   // No start: nothing fits, so the fewest rows: 2 titles, 2 lines of keys (the six row keys, m among them, hold one line: each group's columns are as wide as its widest key), the config line
   expect((await helpTree(ui)).help).toHaveLength(5)
-  expect(await helpFooterKeys(ui)).toEqual(HELP_FOOTER_KEYS) // the four dim Buttons of g, a, t and m too, not only the 7 of the pane
+  expect(await helpFooterKeys(ui)).toEqual(HELP_FOOTER_KEYS) // the five dim Buttons of g, a, t, p and m too, not only the 7 of the pane
   await ui.unmount()
 })
 
@@ -641,7 +641,7 @@ test('pane: inline 100x40 with 12 links shows the title, the header and the foot
   expect(await ui.find({ text: '▼ 7 more below' })).toBeDefined()
   expect(await ui.find({ text: /more above/ })).toBeUndefined()
   expect(await ui.find({ text: 'View: list' })).toBeDefined()
-  expect((await viewLineOf(ui)).map(b => b.props.hotkey)).toEqual(['g', 'a', 't', 'm'])
+  expect((await viewLineOf(ui)).map(b => b.props.hotkey)).toEqual(['g', 'a', 't', 'p', 'm'])
   await ui.unmount()
 })
 

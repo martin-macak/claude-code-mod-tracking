@@ -1,6 +1,7 @@
 // The shapes TreeDataTable shares across its files: its constants, the view it reads, the actions it calls and what it
 // drew. Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L6 Task 8.
 import type { RenderElement } from 'claude-code'
+import type { PlanLine } from '../../core/interfaces/clean'
 import type { FooterKey, HelpModel, StatusLine, TreeRow } from '../../core/interfaces/view'
 import type { Cost } from './budget'
 import { GLYPH_BOX, INDENT } from './columns'
@@ -25,7 +26,7 @@ export const indentOf = (columnWidth: number, depth: number): number =>
 
 /**
  * The view line (issue #63, L3): one line above the footer. `text` says the view, the filters and the rows they hid. `keys` are
- * the Buttons of `g`, `a`, `t` and `m`: they sit here and not in the footer, so the footer keeps its rows. The line is clipped to
+ * the Buttons of `g`, `a`, `t`, `p` and `m`: they sit here and not in the footer, so the footer keeps its rows. The line is clipped to
  * the width, and its Buttons wrap like the footer's.
  */
 export interface ViewLine {
@@ -73,9 +74,22 @@ export interface TableView {
    */
   readonly status?: { readonly selected: StatusLine; readonly health: StatusLine }
   readonly help: HelpModel | null
+  /**
+   * The plan of `/track clean` as typed lines (issue #199): the plan view, drawn in the slot of the help view and cut to the body
+   * (`shapePlan`). Absent: no plan view. The help view wins when both are set. It is a text view like the help view: no rows, no view
+   * line and no status area.
+   */
+  readonly plan?: readonly PlanLine[]
   /** Default `BUDGET`. Tests pass a small one. */
   readonly budget?: Cost
 }
+
+/**
+ * Whether the view is a text view: the help view or the plan view. A text view draws no rows, no view line and no status area, and
+ * its footer is the keys that work there. One predicate for the table, the status area and the budget, so they cannot disagree.
+ */
+export const textView = (view: Pick<TableView, 'help' | 'plan'>): boolean =>
+  view.help !== null || view.plan !== undefined
 
 export interface TableActions {
   toggle(rowId: string): void

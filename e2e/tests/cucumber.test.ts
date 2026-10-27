@@ -88,6 +88,12 @@ test('the tag @inline-help selects the inline help scenario alone', () => {
   assert.match(selected[0]!.name, /3 config problems the inline help view/)
 })
 
+test('the tag @plan-view selects the plan view scenario alone', () => {
+  const selected = select('--tags', '@plan-view')
+  assert.equal(selected.length, 1)
+  assert.match(selected[0]!.name, /^p shows the clean plan/)
+})
+
 test('the h scenario of issue #140 runs docked at 120x36 and inline at 100x40, and each example checks its placement', () => {
   const examples = select('-p', 'one', PANE).filter(s =>
     s.name.startsWith('h moves the ring from a tracker key to h: back'),
@@ -115,10 +121,11 @@ test('the tag @help-view-keys selects the scenario of issue #200 docked at 120x3
     const steps = scenario.steps
     const ring = steps.indexOf('I press "Tab" until the focus ring is on "g: view"')
     const open = steps.indexOf('I press "h"')
+    const clean = steps.indexOf('I press "p"')
     const letters = steps.indexOf('I press "m"')
     const close = steps.lastIndexOf('I press "h"')
     assert.ok(ring !== -1 && ring < open, 'the ring is on g before the help view opens')
-    assert.ok(open < letters && letters < close, 'the four letters come between the two presses of h')
+    assert.ok(open < clean && clean < letters && letters < close, 'the five letters come between the two presses of h')
     // The proof that the pane kept the keyboard is that the second h closes the help view: a keyboard in the prompt would type it.
     assert.ok(steps.indexOf('the screen stops showing "Row keys"') > close, 'the help view closes after the second h')
   }

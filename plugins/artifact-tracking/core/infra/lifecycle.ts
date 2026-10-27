@@ -363,11 +363,12 @@ export class LifecycleManager extends PaneApi {
   /**
    * The dry run of `/track clean` as typed lines, for the pane (issue #199). It makes the entry first, like the other calls of
    * the pane that act on the session, then reads the plan through the router: the config file, then what each tracker would do.
-   * It reads only and never applies.
+   * It reads only and never applies. Absent: the item host did not start, the case where `/track` answers `not ready`. The guard
+   * is here, with the entry, so every caller of the plan has it.
    */
-  async cleanPlan(ports: Ports): Promise<readonly PlanLine[]> {
+  async cleanPlan(ports: Ports): Promise<readonly PlanLine[] | undefined> {
     await this.entry(ports)
-    return this.commands.cleanPlan(ports)
+    return this.items.ready ? this.commands.cleanPlan(ports) : undefined
   }
 
   /** A `/track <sub>` for the trackers: the broadcast of the router. Each tracker takes the subs it knows. */

@@ -5,7 +5,9 @@
 // reads the same list.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.12. Design study: issue #49, section 5.5.
 
-import type { CleanAction, CleanKind, CleanStep, LogEntry } from '../interfaces/clean'
+import type { CleanAction, CleanKind, CleanStep, LogEntry, PlanLine, PlanRole } from '../interfaces/clean'
+
+export type { PlanLine, PlanRole } // the types live in core/interfaces/clean.ts: the pane view (ux/) imports them from there
 
 /** The kinds `--yes` accepts, in the order the plan lists them. */
 export const CLEAN_KINDS: readonly CleanKind[] = ['tasks', 'worktrees']
@@ -56,33 +58,16 @@ const LOG_SHOWN = 50
 const HIDE_HINT = 'Hide: /track clean --hide hides every ended row now, and /track show-all shows them again.'
 const LOG_HINT = 'Log: /track clean --log'
 
-/**
- * What a line of the plan is, so a view can cut a plan without a parse of its words (issue #199).
- * - `title`: the first line.
- * - `blank`: a gap between blocks.
- * - `head`: a line that heads a block: a kind (`Tasks (apply with /track clean --yes tasks)`), `Problems:`, and the one
- *   sentence of a plan with no step. A cut keeps every head.
- * - `step`: what a cleanup does to one thing, under the head of its kind. A label with a newline is one line for each row.
- * - `more`: `and N more.`, the count of the steps of a kind that the plan leaves out.
- * - `problem`: a tracker whose plan failed, under `Problems:`. A message with a newline is one line for each row.
- * - `hint`: a line that names another mode of the command.
- */
-export type PlanRole = 'title' | 'blank' | 'head' | 'step' | 'more' | 'problem' | 'hint'
-
-/** One line of a plan: its words, with no newline (one row), and its role. A text with a newline is more than one line (`rowsOf`). */
-export interface PlanLine {
-  readonly text: string
-  readonly role: PlanRole
-}
-
 /** A line from a text of this module: one row, so no newline to split. */
 const plain = (role: PlanRole, text: string): PlanLine => ({ role, text })
 
 /**
  * The lines of a text that comes from outside the module (a step label, the message of a failure): one line for each row, in
- * the same role. A line holds one row, so a view can count rows for each line. The joined text keeps its bytes.
+ * the same role. A line holds one row, so a view can count rows for each line. The rows after the first say that they go on
+ * with the row above (`cont`), so a view still counts one step. The joined text keeps its bytes.
  */
-const rowsOf = (role: PlanRole, text: string): PlanLine[] => text.split('\n').map(row => plain(role, row))
+const rowsOf = (role: PlanRole, text: string): PlanLine[] =>
+  text.split('\n').map((row, i) => (i === 0 ? plain(role, row) : { ...plain(role, row), cont: true }))
 
 /** The words of one line: `<label>: <action>` in a plan, `<label>: <outcome>` once applied. A step with a reason is skipped. */
 function lineText({ step, outcome }: Line): string {
@@ -97,7 +82,7 @@ function sections(lines: readonly Line[], head: (kind: CleanKind) => string, kin
     const of = lines.filter(l => l.step.kind === kind)
     if (of.length === 0) continue
     out.push(plain('head', head(kind)), ...of.slice(0, SHOWN).flatMap(l => rowsOf('step', lineText(l))))
-    if (of.length > SHOWN) out.push(plain('more', `  and ${of.length - SHOWN} more.`))
+    if (of.length > SHOWN) out.push({ ...plain('more', `  and ${of.length - SHOWN} more.`), count: of.length - SHOWN })
   }
   return out
 }

@@ -25,3 +25,14 @@ export function wrapRows(line: string, columns: number): number {
   }
   return rows
 }
+
+/**
+ * `wrapRows` for a line that starts with spaces: the indent is cells of the first row. `wrapRows` skips empty words, so it loses
+ * a leading indent. The indent counts here as the start of the first word, as the engine draws it. A line with no indent takes
+ * the rows that `wrapRows` gives.
+ */
+export const wrapRowsIndented = (line: string, columns: number): number =>
+  wrapRows(
+    line.replace(/^ +/, indent => 'x'.repeat(indent.length)),
+    columns,
+  )

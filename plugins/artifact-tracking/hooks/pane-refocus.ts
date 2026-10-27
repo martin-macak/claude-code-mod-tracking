@@ -11,7 +11,7 @@
 // PaneSession owns one; nothing here touches the engine but the `ui.focus` and `ui.open` ports.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Selection". Plan: L6 Task 11, G8.
 
-import { viewButtonKeys } from '../core/infra/keys'
+import { planFooter, viewButtonKeys } from '../core/infra/keys'
 import { reason } from '../core/infra/steps'
 import type { Ports, Timer } from '../core/interfaces/ports'
 import { type Drawn, findRow, handleOf } from '../ux/tree-data-table/table'
@@ -31,6 +31,9 @@ export const NEXT_DRAWING_MS = 1000
  */
 export const RING_PAUSE_MS = 10
 
+/** What the pane shows: the rows, the help view (`h`) or the plan view of `/track clean` (`p`, issue #199). */
+export type ViewKind = 'rows' | 'help' | 'plan'
+
 /**
  * The wake of `afterOrWake` comes this long after the engine timer. It is the last resort, so it is long: it wins when the
  * engine timer is refused, and also when that timer is only late, and then the ring request may name a Button of a frame the
@@ -43,18 +46,18 @@ export const RING_PAUSE_MS = 10
 export const WAKE_SLACK_MS = 250
 
 /**
- * What a press can tell about a drawing: whether it is the help view, the handle of each row it draws (by row id) and the
- * keys of its Buttons outside the rows: the footer in drawing order, then the view line (`g`, `a`, `t` and `m`, issues
- * #63 and #138). The help view has no view line, and its footer holds those four keys as dim Buttons (issue #200).
- * `keep` chooses the Button for its ring request from this alone. A press whose drawing never came gets one from the
- * state instead (`frameFromState`).
+ * What a press can tell about a drawing: whether it shows the rows, the help view or the plan view of issue #199, the handle of
+ * each row it draws (by row id) and the keys of its Buttons outside the rows: the footer in drawing order, then the view line (`g`,
+ * `a`, `t`, `p` and `m`, issues #63, #138 and #199). The help view and the plan view have no view line, and their footers hold
+ * those five keys as dim Buttons (issue #200 for the help view, `planFooter` for the plan view). `keep` chooses the Button for its
+ * ring request from this alone. A press whose drawing never came gets one from the state instead (`frameFromState`).
  *
  * `stops` is the key of every focus stop of the body in drawing order, the row handles and the `m<n>` Buttons (`Drawn.stops`).
  * The pause compares drawings by it, and `keep` chooses from none of it: the ring sits on a position among the Buttons, so an
  * `m<n>` that appears or goes moves the Buttons after it, though no row handle or footer key changes.
  */
 export type Frame = {
-  readonly help: boolean
+  readonly view: ViewKind
   readonly rows: ReadonlyMap<string, string>
   readonly keys: readonly string[]
   readonly stops: readonly string[]
@@ -142,20 +145,24 @@ async function handleFromState(p: Ports, m: PaneHost, id: string): Promise<strin
 export async function frameFromState(
   p: Ports,
   m: PaneHost,
-  next: { help: boolean; row: string | null },
+  next: { view: ViewKind; row: string | null },
 ): Promise<Frame> {
   const expanded = new Set(await p.state.expanded.get())
   const groups = await paneGroups(p, m, { selected: next.row, expanded })
-  const footer = await m.footer(p, next.help ? undefined : findRow(groups, next.row), next.help)
-  const row = next.help ? null : next.row // the help view draws no row
+  const text = next.view !== 'rows' // the help view and the plan view draw no row and no view line
+  const footer =
+    next.view === 'plan'
+      ? planFooter(m.keys)
+      : await m.footer(p, text ? undefined : findRow(groups, next.row), next.view === 'help')
+  const row = text ? null : next.row
   const handle = row === null ? undefined : await handleFromState(p, m, row)
   return {
-    help: next.help,
+    view: next.view,
     rows: row === null || handle === undefined ? new Map() : new Map([[row, handle]]),
-    // The view line holds `g`, `a`, `t` and `m` outside the footer, and a ring on one of them stays on it. The help view
-    // has no view line: its footer holds the four keys (issue #200), so `footer` names them there and a ring on one stays
-    // on it too.
-    keys: [...footer.map(k => k.buttonKey), ...(next.help ? [] : viewButtonKeys(m.keys))],
+    // The view line holds `g`, `a`, `t`, `p` and `m` outside the footer, and a ring on one of them stays on it. A text view (the
+    // help view, the plan view) has no view line: its footer holds the five keys (issue #200, `planFooter`), so `footer` names them
+    // there and a ring on one stays on it too.
+    keys: [...footer.map(k => k.buttonKey), ...(text ? [] : viewButtonKeys(m.keys))],
     stops: [], // no pause follows the bound, so nothing compares this frame
   }
 }
@@ -345,13 +352,14 @@ export class Refocus {
    * `h` and the last `x` change which Buttons the pane draws, and the ring sits on a position among the Buttons, not on a
    * key (verified live). The engine keeps the position and lands the ring on whatever Button holds it now, with no
    * `ui.focus` word to the mod, or on none when the position is past the last Button (issue #140). So the press asks for the
-   * ring again. `next` is what the next drawing reads: the help view (no rows, the core footer), or the rows with `row`
-   * selected (no row: nothing selected, so no tracker keys).
+   * ring again. `next` is what the next drawing reads: the help view (no rows, the core footer), the plan view of issue #199 (no
+   * rows, a footer of every core key), or the rows with `row` selected (no row: nothing selected, so no tracker keys).
    *
    * - The ring's Button is in the next footer: the ring is asked for that Button again, so it stays where the person put it.
-   * - It is not (a row, an "N more", a tracker key): the help view puts the ring on `h: back`. The rows put it on `row`, as
-   *   after `x`, or with no row on the first footer Button.
-   * - Closing the help view sends a ring that this put on `h: back` home, to `row`, whichever Button it left.
+   * - It is not (a row, an "N more", a tracker key): the help view puts the ring on `h: back`, the plan view on `p: back`. The
+   *   rows put it on `row`, as after `x`, or with no row on the first footer Button.
+   * - Closing the help view or the plan view sends a ring that this put on `h: back` or `p: back` home, to `row`, whichever Button
+   *   it left.
    *
    * A ring that is not reported (`at` absent) is left alone: the pane cannot tell where it is. A footer Button selects
    * nothing, so no row follows it. `x` calls it only when no row is left to take the ring (`neighbourOf` is null).
@@ -368,7 +376,7 @@ export class Refocus {
    */
   async keep(
     p: Ports,
-    next: { help: boolean; row: string | null },
+    next: { view: ViewKind; row: string | null },
     press: Press,
     drawn: Promise<Frame | undefined>,
     atBound: () => Promise<Frame>,
@@ -380,7 +388,7 @@ export class Refocus {
     if (at === undefined || !press.still()) return // or the pane closed
     const frame = drawing ?? (await atBound())
     if (!press.still()) return // the read took time: the pane may have closed
-    const toRow = !next.help && next.row !== null
+    const toRow = next.view === 'rows' && next.row !== null
     const home = this.displaced !== undefined && toRow
     this.displaced = undefined
     if (frame.keys.includes(at) && !home) {
@@ -389,9 +397,9 @@ export class Refocus {
       const key = frame.rows.get(next.row as string)
       if (key !== undefined) await this.request(p, key, next.row as string, press)
     } else {
-      const key = next.help ? 'help' : frame.keys[0] // the help footer always holds `h`
+      const key = next.view === 'help' ? 'help' : next.view === 'plan' ? 'clean' : frame.keys[0] // these footers always hold `h` and `p`
       if (key === undefined) return
-      if (next.help) this.displaced = key
+      if (next.view !== 'rows') this.displaced = key
       if (!(await this.request(p, key, undefined, press))) this.displaced = undefined
     }
   }

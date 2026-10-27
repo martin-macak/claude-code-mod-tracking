@@ -23,7 +23,16 @@ import {
 import { flipShowAll, isViewId } from '../lib/grouping'
 import { TURN_USAGE } from '../lib/turn-text'
 import type { Cleaner } from './clean'
-import { CORE_HINT, CORE_SUBS, PRIO_WORDS, problemsText, USAGE, VIEW_USAGE, versionText } from './command-text'
+import {
+  CORE_HINT,
+  CORE_SUBS,
+  NOT_READY,
+  PRIO_WORDS,
+  problemsText,
+  USAGE,
+  VIEW_USAGE,
+  versionText,
+} from './command-text'
 
 export { CORE_HINT, PRIO_WORDS, problemsText, USAGE, VIEW_USAGE, versionText } from './command-text'
 
@@ -81,7 +90,7 @@ export class Commands {
     const arg = args.trim().toLowerCase()
     // Before the ready check: a report from a mod that failed to start must still name its version. The entry has run.
     if (arg === 'version') return { text: versionText(this.host.version()) }
-    if (!this.host.items.ready) return { text: 'artifact-tracking: not ready.' }
+    if (!this.host.items.ready) return { text: NOT_READY }
     if (arg === '') return this.open(p)
     if (arg === 'refresh') return this.refresh(p)
     if (arg === 'help') return this.help(p)

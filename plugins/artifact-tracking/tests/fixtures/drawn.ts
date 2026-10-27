@@ -50,10 +50,10 @@ export const handlesOf = (tree: unknown): string[] =>
     .filter(k => /^r\d+$/.test(k))
 
 /**
- * The Button keys of `g`, `a`, `t` (issue #63, L3) and `m` (issue #138). In the pane they sit on the view line and are no footer
- * keys. The help view has no view line: it draws the same Buttons in its footer, dim (issue #200, `helpFooterOf`).
+ * The Button keys of `g`, `a`, `t` (issue #63, L3), `p` (issue #199) and `m` (issue #138). In the pane they sit on the view line and
+ * are no footer keys. The help view has no view line: it draws the same Buttons in its footer, dim (issue #200, `helpFooterOf`).
  */
-export const VIEW_LINE_KEYS: readonly string[] = ['view', 'show-all', 'touched', 'mark']
+export const VIEW_LINE_KEYS: readonly string[] = ['view', 'show-all', 'touched', 'clean', 'mark']
 
 /** The keys of the view line as the pane draws them on a row that takes every bulk key: all of them live. */
 export const LIVE_VIEW_KEYS = viewKeys(
@@ -71,8 +71,8 @@ export const footerOf = (tree: unknown): Node[] =>
   nodes(tree, 'Button').filter(b => b.props.hotkey !== undefined && !VIEW_LINE_KEYS.includes(String(b.props.key)))
 
 /**
- * The footer Buttons of the help view: every Button with a hotkey. The help view has no view line (issue #200), so `g`, `a`, `t`
- * and `m` are footer Buttons there, after `0`.
+ * The footer Buttons of the help view: every Button with a hotkey. The help view has no view line (issue #200), so `g`, `a`, `t`,
+ * `p` and `m` are footer Buttons there, after `0`.
  */
 export const helpFooterOf = (tree: unknown): Node[] => nodes(tree, 'Button').filter(b => b.props.hotkey !== undefined)
 
@@ -94,7 +94,7 @@ export const press = (b: Node, surface?: string): void =>
 /** The footer of a pane with no row selected. */
 export const NO_ROW_FOOTER = footerKeys(new KeyRegistry(), undefined, () => false, false)
 
-/** The footer of the help view with no row selected: 11 Buttons since issue #200, the last four dim (`g`, `a`, `t` and `m`). */
+/** The footer of the help view with no row selected: 12 Buttons since issue #199, the last five dim (`g`, `a`, `t`, `p` and `m`). */
 export const HELP_FOOTER = footerKeys(new KeyRegistry(), undefined, () => false, true)
 
 /**

@@ -1,5 +1,5 @@
 // TreeDataTable: the one component that draws the pane from the groups of the view (today one per section of a tracker).
-// One header row for the whole table, a title row per group, one focus Button per row, a sticky selected row, caps with an "N more" row, a footer of keys, a help view, a budget
+// One header row for the whole table, a title row per group, one focus Button per row, a sticky selected row, caps with an "N more" row, a footer of keys, a help view, a plan view (issue #199), a budget
 // guard that keeps the footer and a window over the rows that keeps the title, the header and the footer in view when
 // the body is shorter than the tree, and on a docked pane a footer pinned to the last row of the body. Pure: it calls the
 // global `h` through the typed wrappers and touches no state.
@@ -11,6 +11,7 @@ import { box, type TableElements, text } from './el'
 import { footerBox, footerRows, moveHintFits } from './footer'
 import { compactForm, renderHelp } from './help'
 import { type LaidGroup, layout, refOf } from './layout'
+import { renderPlan, shapePlan } from './plan'
 import { type Draw, drawGroups } from './rows'
 import {
   DEFAULT_BODY_COLUMNS,
@@ -20,6 +21,7 @@ import {
   type TableActions,
   type TableView,
   TOO_LARGE,
+  textView,
   UNAVAILABLE,
 } from './shape'
 import { statusLineBox, statusOf } from './status'
@@ -77,7 +79,7 @@ export const TreeDataTable = {
     // The full status area (issue #138) puts the selected-row line above the view line and the health line below it: all of it
     // in the Box of the footer, so the dock pins it and the budget guard keeps it. The help view has none.
     const lines = statusOf(view)
-    const viewLine = view.help === null ? view.viewLine : undefined
+    const viewLine = textView(view) ? undefined : view.viewLine
     const footer =
       viewLine === undefined && lines === undefined
         ? keys
@@ -95,6 +97,11 @@ export const TreeDataTable = {
       view.help === null
         ? undefined
         : compactForm(view.help, footerRows(view.footer, columns, hint), columns, view.bodyRows)
+    // The plan view (issue #199) is one tree too, cut to the body under the footer: a plan that fits whole keeps the gap, a cut plan has none.
+    const planned =
+      view.help !== null || view.plan === undefined
+        ? undefined
+        : shapePlan(view.plan, footerRows(view.footer, columns, hint), columns, view.bodyRows)
     const laids: (readonly LaidGroup[])[] = []
     const windows: (Windowed | undefined)[] = []
     const attempt = (halve: number, detail: boolean) => (): RenderElement[] => {
@@ -102,6 +109,11 @@ export const TreeDataTable = {
         laids.push([])
         windows.push(undefined)
         return [box(el, { flexDirection: 'column' }, ...renderHelp(el, view.help, compact ?? false))]
+      }
+      if (planned !== undefined) {
+        laids.push([])
+        windows.push(undefined)
+        return [box(el, { flexDirection: 'column' }, ...renderPlan(el, planned.lines))]
       }
       if (groups.length === 0) {
         laids.push([])
@@ -121,7 +133,7 @@ export const TreeDataTable = {
       return win === undefined ? drawGroups(draw, laid) : drawWindowed(draw, laid, win)
     }
     const attempts =
-      view.help !== null || groups.length === 0
+      textView(view) || groups.length === 0
         ? [attempt(0, true)]
         : [
             attempt(0, true),
@@ -139,7 +151,7 @@ export const TreeDataTable = {
     const pinned = view.placement === 'dock' && view.bodyRows !== undefined
     const root = {
       flexDirection: 'column',
-      rowGap: compact === undefined ? ROW_GAP : 0,
+      rowGap: compact === undefined && planned?.gap !== false ? ROW_GAP : 0,
       ...(pinned ? { minHeight: view.bodyRows } : {}),
     } as const
     const end = { flexDirection: 'column', flexGrow: 1, flexShrink: 0, justifyContent: 'flex-end' } as const
