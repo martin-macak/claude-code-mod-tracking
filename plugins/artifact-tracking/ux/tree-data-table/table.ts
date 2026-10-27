@@ -72,7 +72,8 @@ export const TreeDataTable = {
     const hint = moveHintFits(view.footer, columns)
     const keys = footerBox(el, view.footer, actions, hint)
     // The view line sits right above the keys, in the same Box, so the gap above the bottom is one and the window counts the
-    // rows of both. The help view has no view line: its keys are `r` and `h`, and the compact form is budgeted to the row.
+    // rows of both. The help view has no view line: its footer draws the keys of the view line as dim Buttons (issue #200), so
+    // a letter of it does not reach the prompt. Only `r` and `h` work, and the compact form is budgeted to the footer rows.
     // The full status area (issue #138) puts the selected-row line above the view line and the health line below it: all of it
     // in the Box of the footer, so the dock pins it and the budget guard keeps it. The help view has none.
     const lines = statusOf(view)

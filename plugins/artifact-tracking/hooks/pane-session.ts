@@ -157,7 +157,8 @@ export class PaneSession {
       shown: id => shown.get(id) ?? 0,
       limits,
       // The help view works only `r` and `h`, so its footer is drawn as with no row selected: a tracker's dim, inert keys
-      // would wrap the footer to a second row and push `Pane keys` out of the body again (issue #105). While marked rows are
+      // would wrap the footer further and push `Pane keys` out of the body again (issue #105). The footer holds the four
+      // keys of the view line as dim Buttons, because the help view has no view line (issue #200). While marked rows are
       // the targets of `x`, its label says how many (`dismiss 3`, and `confirm 3` while the question stands).
       footer: relabelDismiss(footer, targets.length, asking),
       // The view line above the footer: the view, the filters and the keys `g`, `a`, `t` and `m` (issue #63, L3; issue #138). The
@@ -207,7 +208,8 @@ export class PaneSession {
     this.refocus.frame({
       help,
       rows: new Map(drawn.rows.map(r => [r.id, r.handle])),
-      // The footer, then the view line: the view line is drawn outside the help view only, and its keys stay Buttons.
+      // The footer, then the view line: the view line is drawn outside the help view only. The help footer holds its
+      // keys (issue #200).
       keys: [...view.footer, ...(view.viewLine?.keys ?? [])].map(k => k.buttonKey),
       stops: drawn.stops,
     })

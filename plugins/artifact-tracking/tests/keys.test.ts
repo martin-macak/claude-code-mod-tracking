@@ -14,7 +14,7 @@ import {
   viewKeys,
 } from '../core/infra/keys'
 import type { KeySpec } from '../core/interfaces/tracker'
-import type { RowRef } from '../core/interfaces/view'
+import type { PaneKey, RowRef } from '../core/interfaces/view'
 import { TRACKERS } from '../trackers'
 
 const spec = (id: string, key: string, scope: KeySpec['scope'] = 'row'): KeySpec => ({ id, key, label: id, scope })
@@ -36,6 +36,9 @@ const core = (id: string) => {
 
 /** The core keys that have a Button in the footer: all but the view line keys. */
 const FOOTER_CORE = CORE_KEYS.filter(k => k.bar !== 'view').map(k => k.id)
+
+/** The Button keys of the view line. The help view has no view line, so its footer draws them (issue #200). */
+const VIEW_KEYS = ['view', 'show-all', 'touched', 'mark']
 
 test("core keys are r h, the view line keys g a t m, then x 1 2 3 0, with today's labels for the footer keys", () => {
   expect(CORE_KEYS.map(k => k.key)).toEqual(['r', 'h', 'g', 'a', 't', 'm', 'x', '1', '2', '3', '0'])
@@ -311,7 +314,52 @@ test('footerKeys in the help view: only r and h are enabled and h is labelled ba
   expect(keys.filter(k => k.enabled).map(k => k.key)).toEqual(['r', 'h'])
   expect(keys.find(k => k.id === 'help')?.label).toBe('back')
   expect(keys.find(k => k.id === 'refresh')?.label).toBe('refresh')
-  expect(keys.map(buttonKeyOf)).toEqual([...FOOTER_CORE, 'a.open'])
+  expect(keys.map(buttonKeyOf)).toEqual([...FOOTER_CORE, 'a.open', ...VIEW_KEYS])
+})
+
+test('footerKeys in the help view: the keys of the view line follow 0 as dim Buttons, and the pane footer has none of them', () => {
+  const reg = new KeyRegistry()
+  reg.add('a', [spec('open', 'o')])
+  const help = footerKeys(reg, undefined, items, true)
+  expect(help.map(k => k.key)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'm']) // the Tab walk from h reaches x
+  expect(help.map(k => k.label)).toEqual([
+    'refresh',
+    'back',
+    'dismiss',
+    'high',
+    'normal',
+    'low',
+    'auto',
+    'view',
+    'show all',
+    'touched only',
+    'mark',
+  ])
+  const viewKeys = help.filter(k => VIEW_KEYS.includes(k.buttonKey))
+  expect(viewKeys.map(k => k.buttonKey)).toEqual(VIEW_KEYS)
+  expect(viewKeys.every(k => k.enabled === false)).toBe(true)
+  expect(help.filter(k => k.enabled).map(k => k.key)).toEqual(['r', 'h'])
+  for (const row of [undefined, ref('a'), ref('items')])
+    expect(footerKeys(reg, row, items, false).some(k => VIEW_KEYS.includes(k.buttonKey))).toBe(false)
+})
+
+test('footerKeys in the help view reads bar: view, not a list of letters: a new key of the view line gets a dim Button', () => {
+  const clean: PaneKey = { id: 'clean', key: 'l', label: 'clean', scope: 'pane', owner: 'core', bar: 'view' }
+  const reg = new KeyRegistry([...CORE_KEYS, clean])
+  const help = footerKeys(reg, undefined, items, true)
+  expect(help.map(buttonKeyOf)).toEqual([...FOOTER_CORE, ...VIEW_KEYS, 'clean'])
+  expect(help.at(-1)).toMatchObject({ key: 'l', label: 'clean', enabled: false, buttonKey: 'clean' })
+  expect(footerKeys(reg, undefined, items, false).map(buttonKeyOf)).toEqual(FOOTER_CORE) // the pane draws it on the view line
+  expect(viewButtonKeys(reg)).toEqual([...VIEW_KEYS, 'clean'])
+})
+
+test('the help footer holds one Button key per hotkey, and the pane footer and view line together hold one too', () => {
+  const reg = new KeyRegistry()
+  reg.add('a', [spec('open', 'o')])
+  const help = footerKeys(reg, undefined, items, true).map(k => k.key)
+  expect(help).toEqual([...new Set(help)])
+  const pane = [...footerKeys(reg, ref('a'), items, false), ...viewKeys(reg, ref('a'), items, false)].map(k => k.key)
+  expect(pane).toEqual([...new Set(pane)])
 })
 
 test('footerKeys: each key carries its footer Button key, the one the registry finds it by', () => {

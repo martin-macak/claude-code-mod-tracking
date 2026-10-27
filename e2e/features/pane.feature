@@ -400,10 +400,12 @@ Feature: Drive the /track pane with the keys
   # path of the config file on two rows and the footer fill them, so the compact form lists no problem and counts them:
   # `3 problems: /track help`. `Pane keys` and the footer `h: back` are in one frame. The help footer has the core keys only:
   # with a PR row selected it kept the dim `c: resolve  f: files` of that row, wrapped to a second row and pushed `Pane keys`
-  # out of view. The config has 3 problems: a value below its min (breaker threshold), two above their max (sectionRows and
-  # chunkSize). The count line needs the path of the config file to wrap onto two rows. The path is 84 to 96 cells wide for
-  # that (the body is 96 cells and `Config file: ` takes 13). The step sets it to 90 whatever the temporary folder of the
-  # system is, `/var/folders/...` of a Mac or `/tmp`. Run it alone with `--tags @inline-help`.
+  # out of view. Issue #200: the footer also draws `g`, `a`, `t` and `m` dim, which takes a second row at 96 cells. The tracker
+  # groups share one row of the help view (issue #265), so the view and the 2-row footer still fit. The config has 3 problems:
+  # a value below its min (breaker threshold), two above their max (sectionRows and chunkSize). The count line needs the path
+  # of the config file to wrap onto two rows. The path is 84 to 96 cells wide for that (the body is 96 cells and
+  # `Config file: ` takes 13). The step sets it to 90 whatever the temporary folder of the system is, `/var/folders/...` of a
+  # Mac or `/tmp`. Run it alone with `--tags @inline-help`.
   @inline-help
   Scenario: With 3 config problems the inline help view shows the pane keys, the count and the footer together
     Given a terminal of 100 columns by 40 rows
@@ -420,9 +422,45 @@ Feature: Drive the /track pane with the keys
     And the pane is inline
     And the screen shows "c: resolve"
     When I press "h"
-    Then the screen matches /Pane keys[\s\S]*3 problems: \/track help[\s\S]*h: back/
+    Then the screen matches /Pane keys[\s\S]*3 problems: \/track help[\s\S]*h: back[\s\S]*m: mark/
     And the screen stops showing "c: resolve"
     And the fake gh answered no unsupported call
+
+  # Issue #200. The help view has no view line, so its letters `g`, `a`, `t` and `m` had no Button: a press typed the letter into
+  # the prompt and took the keyboard from the pane. The footer draws them dim now: a press does nothing and the pane keeps the
+  # keys. The proof is causal: the `h` after the four letters is a pane key. It closes the help view only when the pane still has
+  # the keyboard; a keyboard in the prompt would take the `h` as a letter and the help view would stay. The ring stays on the dim
+  # Button that had it when `h` opens the help view, and the second `h` leaves it on the same Button of the view line.
+  @help-view-keys
+  Scenario Outline: In the help view g, a, t and m keep the keyboard in the pane, and the ring stays on its Button, at <cols>x<rows>
+    Given a terminal of <cols> columns by <rows> rows
+    And a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
+    And the fake gh reports PR #7 "Fix the fake conflict" from "feat/fake-conflict" into "main" as CONFLICTING
+    And a Claude Code session with the artifact-tracking mod
+    When I type "/track"
+    Then the selected row shows "#7"
+    And the pane is <placement>
+    When I press "Tab" until the focus ring is on "g: view"
+    And I press "h"
+    Then the screen shows "Row keys (act on the selected or marked rows)"
+    And the screen shows "m: mark"
+    And the focus ring is on "g: view"
+    When I press "g"
+    And I press "a"
+    And I press "t"
+    And I press "m"
+    Then the screen does not show "Keys go to the prompt."
+    When I press "h"
+    Then the screen stops showing "Row keys"
+    And the selected row shows "#7"
+    And the focus ring is on "g: view"
+    And the screen does not show "Keys go to the prompt."
+    And the fake gh answered no unsupported call
+
+    Examples:
+      | cols | rows | placement |
+      | 120  | 36   | docked    |
+      | 100  | 40   | inline    |
 
   # Issue #140. `x` on the only row takes the row and every tracker key out of the footer. The ring sat on `c: resolve`, a
   # Button that is gone, so it would land on none. The mod asks for the first footer Button once the drawing without the row

@@ -31,9 +31,10 @@ export const RING_PAUSE_MS = 10
 
 /**
  * What a press can tell about a drawing: whether it is the help view, the handle of each row it draws (by row id) and the
- * keys of its Buttons outside the rows: the footer in drawing order, then the view line (`g`, `a`, `t` and `m`, issues #63 and #138; the help
- * view has none). `keep` chooses the Button for its ring request from this alone. A press whose drawing never came gets one
- * from the state instead (`frameFromState`).
+ * keys of its Buttons outside the rows: the footer in drawing order, then the view line (`g`, `a`, `t` and `m`, issues
+ * #63 and #138). The help view has no view line, and its footer holds those four keys as dim Buttons (issue #200).
+ * `keep` chooses the Button for its ring request from this alone. A press whose drawing never came gets one from the
+ * state instead (`frameFromState`).
  *
  * `stops` is the key of every focus stop of the body in drawing order, the row handles and the `m<n>` Buttons (`Drawn.stops`).
  * The pause compares drawings by it, and `keep` chooses from none of it: the ring sits on a position among the Buttons, so an
@@ -106,7 +107,9 @@ export async function frameFromState(
   return {
     help: next.help,
     rows: row === null || handle === undefined ? new Map() : new Map([[row, handle]]),
-    // The view line holds `g`, `a`, `t` and `m` outside the footer, and a ring on one of them stays on it (not in the help view).
+    // The view line holds `g`, `a`, `t` and `m` outside the footer, and a ring on one of them stays on it. The help view
+    // has no view line: its footer holds the four keys (issue #200), so `footer` names them there and a ring on one stays
+    // on it too.
     keys: [...footer.map(k => k.buttonKey), ...(next.help ? [] : viewButtonKeys(m.keys))],
     stops: [], // no pause follows the bound, so nothing compares this frame
   }

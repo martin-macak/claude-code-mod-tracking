@@ -180,9 +180,20 @@ test('the Buttons carry the key, the label and the hotkey of the registry', () =
   ])
 })
 
-test('the help view draws no view line: its keys are off there and its rows are counted for the compact form', () => {
-  const help = helpModel([], [], undefined, [])
-  const { drawn } = draw(web(2), { ...INLINE, help, viewLine: LINE })
-  expect(hotkeys(drawn.tree)).toEqual(NO_ROW_FOOTER.map(k => k.key))
+// Issue #200: the help view has no view line, so its footer holds the four keys as dim Buttons, and each hotkey has one Button:
+// a second one (the view line of the view, if the help view drew it) would win in silence and the dim one would take the press.
+test('the help view draws no view line: its footer holds the four keys as dim Buttons, once, and its rows are counted for the compact form', () => {
+  const reg = new KeyRegistry()
+  const help = helpModel(reg.all(), [], undefined, [])
+  const footer = footerKeys(reg, undefined, () => false, true)
+  const { drawn } = draw(web(2), { ...INLINE, help, footer, viewLine: LINE })
+  expect(hotkeys(drawn.tree)).toEqual(footer.map(k => k.key)) // the footer, in order, and no Button of the view line on top
+  expect(hotkeys(drawn.tree)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'm'])
   expect(texts(drawn.tree).some(([, s]) => s.startsWith('View:'))).toBe(false)
+  const footerBox = (drawn.tree as unknown as Node).children.at(-1) as Node
+  expect(
+    nodes(footerBox, 'Button')
+      .filter(b => b.props.dimColor === true)
+      .map(b => b.props.hotkey),
+  ).toEqual(['x', '1', '2', '3', '0', 'g', 'a', 't', 'm'])
 })

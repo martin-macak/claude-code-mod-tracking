@@ -103,6 +103,27 @@ test('the h scenario of issue #140 runs docked at 120x36 and inline at 100x40, a
   assert.ok(inline.steps.includes('the pane is inline'))
 })
 
+test('the tag @help-view-keys selects the scenario of issue #200 docked at 120x36 and inline at 100x40, each checking its placement', () => {
+  const selected = select('--tags', '@help-view-keys')
+  assert.equal(selected.length, 2)
+  const docked = selected.find(s => s.name.endsWith('at 120x36'))
+  const inline = selected.find(s => s.name.endsWith('at 100x40'))
+  assert.ok(docked !== undefined && inline !== undefined, 'one example for each size')
+  assert.ok(docked.steps.includes('the pane is docked'))
+  assert.ok(inline.steps.includes('the pane is inline'))
+  for (const scenario of selected) {
+    const steps = scenario.steps
+    const ring = steps.indexOf('I press "Tab" until the focus ring is on "g: view"')
+    const open = steps.indexOf('I press "h"')
+    const letters = steps.indexOf('I press "m"')
+    const close = steps.lastIndexOf('I press "h"')
+    assert.ok(ring !== -1 && ring < open, 'the ring is on g before the help view opens')
+    assert.ok(open < letters && letters < close, 'the four letters come between the two presses of h')
+    // The proof that the pane kept the keyboard is that the second h closes the help view: a keyboard in the prompt would type it.
+    assert.ok(steps.indexOf('the screen stops showing "Row keys"') > close, 'the help view closes after the second h')
+  }
+})
+
 test('the inline help scenario sets the width of the config file path before it writes the config file', () => {
   const [scenario] = select('--tags', '@inline-help')
   const steps = scenario!.steps

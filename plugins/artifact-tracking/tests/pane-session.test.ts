@@ -13,7 +13,9 @@ import { fakeConfig } from './fixtures/config-fs'
 import {
   buttonOf,
   footerOf,
+  HELP_FOOTER_ROWS,
   handlesOf,
+  helpFooterOf,
   leaves,
   nodes,
   press,
@@ -197,9 +199,10 @@ test('with a tracker row selected the help view still fits the 11-row inline bod
   t.w.state.set('help', true)
   const tree = await t.draw(96, 11)
   expect(leaves(tree)[0]).toBe('Pane keys (Tab, Shift+Tab, Up, Down move between rows)')
-  expect(footerOf(tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
+  expect(helpFooterOf(tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'm'])
   const [body] = (tree as unknown as { children: unknown[] }).children
-  expect((body as { children: unknown[] }).children.length + 1 + 1).toBeLessThanOrEqual(11) // body, the wrapped path, the footer
+  const wrapped = 1 // the 86-cell config path takes a second row at 96 cells
+  expect((body as { children: unknown[] }).children.length + wrapped + HELP_FOOTER_ROWS).toBeLessThanOrEqual(11) // body, path, footer
 })
 
 test('the selected row hides while the help view is open: the help footer keeps the core keys, and the row the selection fell to has its keys back after', async () => {
@@ -215,9 +218,10 @@ test('the selected row hides while the help view is open: the help footer keeps 
   t.host.setRows(webs('b')) // `a` hides while the person reads the help
   const help = await t.draw(96, 11)
   expect(leaves(help)[0]).toBe('Pane keys (Tab, Shift+Tab, Up, Down move between rows)')
-  expect(footerOf(help).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
+  expect(helpFooterOf(help).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'm'])
   const [body] = (help as unknown as { children: unknown[] }).children
-  expect((body as { children: unknown[] }).children.length + 1 + 1).toBeLessThanOrEqual(11)
+  const wrapped = 1 // the 86-cell config path takes a second row at 96 cells
+  expect((body as { children: unknown[] }).children.length + wrapped + HELP_FOOTER_ROWS).toBeLessThanOrEqual(11) // body, path, footer
   t.w.state.set('help', false)
   const rows = await t.draw(96, 11)
   expect(footerOf(rows).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'c', 'f'])
@@ -2232,11 +2236,33 @@ test('x on the only row while the ring sits on a view line Button, with no frame
   }
 })
 
-test('h opens the help view while the ring sits on g: the help view has no view line, so the ring goes to h: back', async () => {
-  const t = await ringOn('view')
-  await pressDraw(t, 'help')
-  expect(t.w.state.get('help')).toBe(true)
-  expect(t.calls).toEqual(['focus help'])
+// Issue #200: the help view has no view line, so it draws `g`, `a`, `t` and `m` as dim Buttons in its footer. The rule for the ring
+// is the one of `x` and the digits: it stays on its Button, because the next drawing still holds it (`Refocus.keep`). The second
+// `h` closes the help view, and the Button is on the view line again, so the ring goes back to where the person had it.
+test('h opens the help view while the ring sits on g, a, t or m: the ring stays on that dim Button, and the second h keeps it there', async () => {
+  for (const at of VIEW_LINE_KEYS) {
+    const t = await ringOn(at)
+    await pressDraw(t, 'help')
+    expect(t.w.state.get('help'), at).toBe(true)
+    expect(t.calls, at).toEqual([`focus ${at}`]) // not `focus help`: the ring stays on its dim Button
+    expect(buttonOf(await t.draw(), at).props.dimColor, at).toBe(true) // and the Button is a dim footer Button in the help view
+    await pressDraw(t, 'help')
+    expect(t.w.state.get('help'), at).toBe(false)
+    expect(t.calls, at).toEqual([`focus ${at}`, `focus ${at}`]) // back on the view line: the same Button
+  }
+})
+
+// `frameFromState` reads the footer of the help view, which now names the four Buttons: the bound needs no drawing to know them.
+test('h opens the help view while the ring sits on g, a, t or m, with no frame before the bound: the state read keeps the ring on that Button', async () => {
+  for (const at of VIEW_LINE_KEYS) {
+    const t = await ringOn(at)
+    press(buttonOf(await t.draw(), 'help'))
+    await turn()
+    await t.w.clock.advance(NEXT_DRAWING_MS) // no frame comes
+    await t.session.idle()
+    expect(t.w.state.get('help'), at).toBe(true)
+    expect(t.calls, at).toEqual([`focus ${at}`])
+  }
 })
 
 test('x on a row that has a neighbour asks for the ring on the neighbour only', async () => {
@@ -2360,12 +2386,23 @@ test('the view line of the by-list view leaves out the ended count that the sect
   expect(await line()).toBe('View: status · 2 ended hidden')
 })
 
-test('the help view has no view line, and the help keys name g, a and t', async () => {
+// Issue #200: with no view line, a press of g, a, t or m would type the letter into the prompt. The help footer holds one dim
+// Button for each: a Button takes the hotkey, so the keyboard stays in the pane.
+test('the help view has no view line, and the help footer holds g, a, t and m as dim Buttons, one Button per hotkey', async () => {
   const t = await views()
   t.w.state.set('help', true)
   const tree = await t.draw()
-  expect(viewLineOf(tree)).toEqual([])
+  const hotkeys = helpFooterOf(tree).map(b => String(b.props.hotkey))
+  expect(hotkeys).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'm'])
+  expect(hotkeys).toEqual([...new Set(hotkeys)]) // the engine lets the later of two equal hotkeys win in silence
+  for (const key of VIEW_LINE_KEYS) expect(buttonOf(tree, key).props.dimColor, key).toBe(true)
   expect(texts(tree).some(([, s]) => s.startsWith('View:'))).toBe(false)
+  const footer = (tree as unknown as { children: unknown[] }).children.at(-1)
+  expect(nodes(footer, 'Button').map(b => String(b.props.hotkey))).toEqual(hotkeys) // all of them in the footer Box
+  t.w.state.set('help', false)
+  const pane = await t.draw()
+  expect(viewLineOf(pane)).toHaveLength(4) // the pane draws them on the view line only
+  expect(footerOf(pane).map(b => String(b.props.hotkey))).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
   const out = leaves(tree)
   expect(out).toContain('view')
   expect(out).toContain('show all')
