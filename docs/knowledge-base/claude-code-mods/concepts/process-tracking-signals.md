@@ -63,7 +63,26 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   `! time git push` are both valid shell. A part that is only `done`, `fi` or
   `esac` is no command and makes no row, so `done &` (a backgrounded loop) has
   no row. `$!` after it is the pid of the loop shell, so no earlier background
-  command takes it. A backgrounded builtin (`echo x &`, `cd d &`) is the same:
+  command takes it. A `&` behind the `}` of a group or the `)` of a subshell,
+  of `(( ))` or of a substitution (`{ a; } &`, `( a; : ) &`, `x=$(a) &`) is the
+  same, but `}` and `)` make no part of their own, so `splitShell` puts
+  `afterBgShell` on the next part, and the parser reads that as the end of the
+  last job. The flag is set for every `&` right behind a closed group,
+  subshell or substitution, so also for `sleep $(a) &`, `( sleep 101 ) &` and
+  `( true; sleep 101 ) &` (the last command is an external command), where `$!`
+  names that command and not a shell (see "Not read" below): no earlier job
+  takes the line there either. The flag stays in the shell that read the `&`. A
+  substitution, a backtick pair, a subshell and a part of a pipeline are shells
+  of their own, and a `&` that ends a group inside them leaves the `$!` of the
+  parent alone. So `sleep 100 & x=$({ :; } &); echo $!`,
+  `sleep 100 & ( { :; } & ); echo $!`, `sleep 100 & { { :; } & } | cat; echo $!`
+  and `sleep 100 & cat | { { :; } & }; echo $!` print the pid of `sleep 100`
+  (bash 5.3.20 and 3.2.57), and its row keeps it. A scope that closes while the
+  flag still waits for a segment gives back the flag of its parent, and a
+  pipeline part drops it. A group is the shell of its parent, so
+  `{ { :; } & }; echo $!` names the inner shell. A process substitution sets
+  `$!` in its parent whatever it holds, so `cat <({ :; } &) > /dev/null` is the
+  old limit of "Not read" below, not a flag. A backgrounded builtin (`echo x &`, `cd d &`) is the same:
   its shell makes no row, and the pid line that the next `echo $!` prints is
   dropped, so the job after it gets its own pid. An `echo $!` (or a `printf`
   of `$!`) takes or drops a pid line only when its output reaches the tool
@@ -102,6 +121,96 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   `sleep=96411 builtin=96412`. `zsh 5.9` printed `sleep=98712 builtin=98713`.
   The two pids differ: `$!` after `echo x &` names the echo's shell, not the
   sleep.
+- What `$!` names, and what the parser reads (issue #231). Each form ran in
+  `bash 5.3.20` first. Grade for the bash facts: observed in bash 5.3.20 by a
+  manual probe, not *verified-kit*. It is no `claude plugin test` run, and no
+  committed test runs bash. The probe ran a `sleep` job with `&`, then the
+  form, then printed the command that `ps` shows for `$!`. A form shows one of
+  three things: `bash ...` (a shell that still runs: `bash -c ...`, or the
+  script file), nothing (the shell or the command has exited already), or the
+  external command that bash ran in place (`( sleep 5 ) &` and
+  `( true; sleep 5 ) &` show `sleep 5`). The parser side is *verified-kit*: the
+  tests are `group: ...`, `pipeline: ...`, `coproc: ...` and `builtin: ...` in
+  `process-parse.test.ts`, and the tests `splitShell flags the segment after a
+  & ...` and `splitShell keeps the flag of a & ...` in `shell.test.ts`.
+  - The row gets the pid: a simple command with `&` (also with `VAR=x`,
+    `nohup`, `exec`, `!`, or a redirection), the last part of a pipeline
+    (`true | sleep 101 &` names `sleep 101`), a job in a group with no `&` of
+    its own (`{ sleep 101 & }; echo $!`), and a job that a function starts
+    when it runs (`f() { sleep 101 & }; f; echo $!`).
+  - No row, and no pid for any job: `$!` names a shell, so no earlier job takes
+    the line. A builtin of the set (`echo printf true false : wait read test
+    [ [[ set unset export`), `cd`, `pushd` and `(( ))`, with `&`. A group (a
+    group is never run in place: `{ a; } &`, `{ true; sleep 101; } &`). A
+    subshell whose last command is a builtin or a compound (`( sleep 101; : ) &`,
+    `( sleep 101 && true ) &`, `( sleep 101 | cat ) &`, `( : ) &`). A loop, `if`
+    or `case` with `&` (`done &`). A command that is only assignments or a
+    builtin with a substitution (`x=$(a) &`, `: $(a) &`). A pipeline that ends
+    in a builtin or a group (`sleep 101 | true &`, `cat | { :; } &`). A `coproc`
+    of a group (`coproc NAME { a; }`, `coproc NAME { true; sleep 101; }`) or of
+    a builtin (`coproc :`). A subshell whose last command is an external simple
+    command, and `coproc` of an external simple command, are not here: bash runs
+    that command in place, so `$!` names it (see "Not read").
+  - Not read. These forms are limits of the parser. The row, or an earlier job,
+    can get a wrong pid, or a process has no row.
+    - An external command that ends in a substitution or a process
+      substitution, then `&`, is a process, and `$!` names it. Examples:
+      `sleep $(cat p) &`, `sleep $((n)) &`, `` python -m http.server `cat p` & ``,
+      `nohup node server.js --port $(cat p) > log 2>&1 &` and `cat <(a) &`. In
+      bash 5.3.20 `$!` showed `sleep 7311` for `sleep $(echo 7311) &`, `sleep
+      7312` for `sleep $((7312)) &`, `nohup sleep 7314` for `nohup sleep
+      $(echo 7314) &`, and `cat /dev/fd/63` for `cat <(sleep 1) &`. Only
+      `x=$(a) &` and `: $(a) &` name a shell. The parser makes no row for these
+      commands, because the `&` ends an empty part (old behavior), so they get
+      no pid. Since issue #231 no earlier job takes their line.
+    - A subshell whose last command is an external simple command, then `&`,
+      and a `coproc` of an external simple command. Bash runs that last
+      command in place, with no shell around it, so `$!` is a live process that
+      names that command, and the parser has no row for it. This is the same
+      class as `sleep $(a) &`. Examples: `( sleep 101 ) &`,
+      `( sleep 101 ) 2>&1 &`, `( ( sleep 101 ) ) &`, `( A=1 sleep 101 ) &`,
+      `( true; sleep 101 ) &`, `( true && sleep 101 ) &`,
+      `( false || sleep 101 ) &` and `coproc sleep 101`. In bash 5.3.20 `$!`
+      showed `sleep 5` for each of them (`( sleep 0.1; sleep 5 ) &` and
+      `( true; true; sleep 5 ) &` too). `$!` names a shell, or nothing once the
+      shell has exited, when the last command of the list is a builtin or a
+      compound: `( sleep 5; true ) &`, `( sleep 5; : ) &`,
+      `( sleep 5 && true ) &`, `( sleep 5 | cat ) &`,
+      `( if :; then sleep 5; fi ) &`, `( true; ( sleep 5 ) ) &`,
+      `( true; { sleep 5; } ) &` and `( : ) &`. A group is never run in place:
+      `{ sleep 5; } &`, `{ true; sleep 5; } &`, `coproc N { sleep 5; }` and
+      `coproc N { true; sleep 5; }` name a shell, and `coproc :` shows nothing
+      (its shell has exited). The rule depends on the version: `bash 3.2.57`
+      (macOS `/bin/bash`) runs only a subshell of one simple command in place,
+      so `( true; sleep 5 ) &` shows a shell there (it has no `coproc`). No
+      earlier job takes the line in any of these. These calls give `sleep 100`
+      no pid: `sleep 100 & ( sleep 101 ) & echo $!`,
+      `sleep 100 & ( true; sleep 101 ) & echo $!` and
+      `sleep 100 & coproc sleep 101; echo $!`.
+    - A part of a backgrounded pipeline before the last one
+      (`sleep 101 | true &`, `sleep 101 | sleep 102 &`) is a process too. `$!`
+      names the last part, and the parser makes no row for the parts before it
+      (old behavior).
+    - A builtin that is not in the set above (`source f &`, `. ./env &`,
+      `kill 1 &`, `pwd &`, `exit 0 &`, `declare -x A=1 &`, `local x=1 &`,
+      `trap : EXIT &`, `type ls &`) runs in a subshell, and `$!` names that
+      shell. The parser makes a detached row for the command and gives the row
+      the pid of the shell, not of a process of that command.
+    - A bare redirection with `&` (`> f &`, `<f &`, `2>/dev/null &`) is a
+      shell too. The parser reads no job and sets no flag, so an earlier job
+      takes the line.
+    - A process substitution with no `&` behind it (`exec 3< <(a)`,
+      `cat <(a) > /dev/null`) sets `$!`, and an earlier job takes its line. So
+      does `eval "a &"`, because the parser does not read the text of `eval`.
+    - A `&` job inside `( ... )`, `$( ... )` or a part of a pipeline sets no
+      `$!` in its parent (`( sleep 101 & ); echo $!` prints an empty line, and
+      `sleep 3 & P=$!; { sleep 3 & } | cat; echo $P $!` prints one pid twice),
+      but the parser lets the job take a line
+      (`sleep 100 & { sleep 101 & } | cat; echo $!` gives `sleep 101` the
+      line).
+    - `$!` names the subshell that runs the whole list for `a && b &`,
+      `time a &`, `f &` (a function) and `eval "a" &`, so the row of the last
+      command gets the pid of that shell.
 - `cd` and `export` move the cwd and env for the parts after them. The Bash
   `tool.call` input has no cwd, so the hook reads `$.session.cwd()`.
 - A `cd` in a list that ends with `&` runs in a background subshell and does
