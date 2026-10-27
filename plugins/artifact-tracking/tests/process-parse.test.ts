@@ -1608,6 +1608,131 @@ test('coproc: echo $! after a coproc gives no earlier job its pid', () => {
   ).toEqual([['sleep 102', 4243]])
 })
 
+// `$!` belongs to a shell. A subshell, a substitution, a backtick pair and a part of a pipeline are shells of their own: a
+// coprocess or a `&` job in one sets `$!` there, and the `$!` of the parent stays on the job before (bash 5.3.20 and 3.2.57,
+// after `sleep 5 &`: each form below leaves `$!` on `sleep 5`). The parser kept one `$!` for the whole command, so the `coproc`
+// in `sleep 100 & ( coproc sleep 101 ); echo $!` took the pid line away from `sleep 100` (Codex P2 on b7967c0).
+test('scope: a coproc in a subshell, substitution or pipeline part leaves the pid line of the job before it', () => {
+  const rows = (cmd: string) => detachedOf(`sleep 100 & ${cmd} echo $!`, undefined, '4242\n').map(r => [r.name, r.pid])
+  for (const inner of [
+    '( coproc sleep 101 );',
+    'x=$(coproc sleep 101);',
+    'x=`coproc sleep 101`;',
+    '( coproc NAME { :; } );',
+    '( ( coproc sleep 101 ) );',
+    '{ coproc sleep 101; } | cat;',
+    'cat | { coproc sleep 101; };',
+    'true && x=$(coproc sleep 101);',
+    'x=$( ( coproc sleep 101 ) );',
+  ])
+    expect({ inner, rows: rows(inner) }).toEqual({ inner, rows: [['sleep 100', 4242]] })
+  // The same coproc in the shell of the command, also in a group, behind `&&` or in an `if`, sets `$!` there.
+  for (const own of [
+    'coproc sleep 101;',
+    '{ coproc sleep 101; };',
+    'true && coproc sleep 101;',
+    'if :; then coproc sleep 101; fi;',
+  ])
+    expect({ own, rows: rows(own) }).toEqual({ own, rows: [['sleep 100', undefined]] })
+})
+
+// The `&` of a job in a scope sets `$!` in the shell that read it, so it reaches no parent (issue #263). `( sleep 101 & )` and
+// `{ sleep 101 & } | cat` left the pid line to `sleep 101`, and a flagged segment in a substitution (`x=$( { :; } & echo hi )`)
+// took it away from `sleep 100`. The jobs keep their rows, with no pid.
+test('scope: a & job in a subshell, substitution or pipeline part leaves the pid line of the job before it', () => {
+  const rows = (cmd: string) => detachedOf(`sleep 100 & ${cmd} echo $!`, undefined, '4242\n').map(r => [r.name, r.pid])
+  for (const inner of [
+    '( sleep 101 & );',
+    'x=$( sleep 101 & );',
+    'x=`sleep 101 &`;',
+    '( ( sleep 101 & ) );',
+    '( sleep 101 & ) | cat;',
+    'true && x=$( sleep 101 & );',
+    // A group is the shell of its parent, but a pipe sends it to a subshell, and so does a `&`.
+    '{ sleep 101 & } | cat;',
+    'cat | { sleep 101 & };',
+    'cat | { sleep 101 & } | cat;',
+  ])
+    expect({ inner, rows: rows(inner) }).toEqual({
+      inner,
+      rows: [
+        ['sleep 100', 4242],
+        ['sleep 101', undefined],
+      ],
+    })
+  // A flagged segment in a scope sets `$!` there too: the `&` that ends the group inside is read by the scope.
+  for (const inner of [
+    'x=$( { :; } & echo hi );',
+    'x=`{ :; } & echo hi`;',
+    '( { :; } & echo hi );',
+    '( ( : ) & echo hi );',
+    // A loop or a builtin with `&` in a scope sets `$!` there as well.
+    '( for i in 1; do :; done & );',
+    'x=$( while :; do break; done & );',
+    '( echo x & );',
+    '( cd d & ) | cat;',
+  ])
+    expect({ inner, rows: rows(inner) }).toEqual({ inner, rows: [['sleep 100', 4242]] })
+  // In the shell of the command a job sets `$!`.
+  for (const own of ['sleep 101 &', '{ sleep 101 & };', 'if :; then sleep 101 & fi;'])
+    expect({ own, rows: rows(own) }).toEqual({
+      own,
+      rows: [
+        ['sleep 100', undefined],
+        ['sleep 101', 4242],
+      ],
+    })
+  // The `&` that ends a list is read by the shell around the list, also when the list ends with a pipeline and runs in the
+  // background (`true && sleep 101 | cat &`): `$!` is then new, and the job before it takes no line.
+  for (const bgList of ['true && sleep 101 | cat &', 'true && cat | sleep 101 &', 'true; sleep 101 | cat &'])
+    expect({ bgList, pid: rows(bgList).find(r => r[0] === 'sleep 100')?.[1] }).toEqual({ bgList, pid: undefined })
+})
+
+// A scope reads the `$!` of its parent when it opens (`sleep 100 & ( echo $! )` prints the pid of `sleep 100`) and writes none
+// back. The job after the scope takes its own line, and a second scope reads the `$!` of the parent, not the one of the first.
+test('scope: a scope reads the pid line of its parent when it opens and gives its own back to no parent', () => {
+  const rows = (cmd: string, stdout: string) => detachedOf(cmd, undefined, stdout).map(r => [r.name, r.pid])
+  expect(rows('sleep 100 & ( echo $! )', '4242\n')).toEqual([['sleep 100', 4242]])
+  // A scope that sets `$!` itself reads its own: the echo in it counts, with no job before the scope.
+  expect(rows('( sleep 101 & echo $! )', '4243\n')).toEqual([['sleep 101', 4243]])
+  expect(rows('( coproc sleep 101; echo $! ); sleep 102 & echo $!', '4243\n4244\n')).toEqual([['sleep 102', 4244]])
+  expect(rows('sleep 100 & ( ( echo $! ) )', '4242\n')).toEqual([['sleep 100', 4242]])
+  // A job in the scope takes the line of an echo in it, and the echo behind the scope still names the job before.
+  expect(rows('sleep 100 & ( sleep 101 & echo $! ); echo $!', '4243\n4242\n')).toEqual([
+    ['sleep 100', 4242],
+    ['sleep 101', 4243],
+  ])
+  expect(rows('sleep 100 & ( coproc sleep 101; echo $! ); echo $!', '4243\n4242\n')).toEqual([['sleep 100', 4242]])
+  // A scope in a scope: the inner job stays in the inner shell.
+  expect(rows('sleep 100 & ( ( sleep 101 & ); echo $! )', '4242\n')).toEqual([
+    ['sleep 100', 4242],
+    ['sleep 101', undefined],
+  ])
+  // The second scope reads the `$!` of the parent, not the one that the first scope set.
+  expect(rows('sleep 100 & ( sleep 101 & ); ( echo $! )', '4242\n')).toEqual([
+    ['sleep 100', 4242],
+    ['sleep 101', undefined],
+  ])
+  // The job after the scope takes its own line.
+  expect(rows('sleep 100 & ( sleep 101 & ); echo $!; sleep 102 & echo $!', '4242\n4243\n')).toEqual([
+    ['sleep 100', 4242],
+    ['sleep 101', undefined],
+    ['sleep 102', 4243],
+  ])
+  // `setsid -f` in a scope sets no `$!` there, and none of the parent's.
+  expect(rows('sleep 100 & ( setsid -f sleep 101 ); echo $!', '4242\n')).toEqual([
+    ['sleep 100', 4242],
+    ['sleep 101', undefined],
+  ])
+  // With no job before it, `$!` of the parent is unset: its echo prints an empty line (bash 5.3.20), counts for no job, and the
+  // job after takes its own line. The `&` in the scope set a `$!` in the scope only.
+  expect(rows('( sleep 101 & ); echo $!; sleep 102 & echo $!', '\n4243\n')).toEqual([
+    ['sleep 101', undefined],
+    ['sleep 102', 4243],
+  ])
+  expect(rows('( coproc sleep 101 ); echo $!; sleep 102 & echo $!', '\n4243\n')).toEqual([['sleep 102', 4243]])
+})
+
 // `echo $! &` prints the pid of the job before it, so it does not clear that job.
 test('builtin: a backgrounded echo $! after a background job still gives it its pid', () => {
   const [row] = detachedOf('sleep 100 & echo $! & echo $!', undefined, '4242\n4243\n')

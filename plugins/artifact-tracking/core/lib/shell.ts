@@ -61,6 +61,16 @@ export type Segment = {
    */
   scope: string
   /**
+   * The scope of the shell that read the segment (issue #231). For a segment with no `&` it is `scope`. For a segment with `bg`
+   * it is the shell that read the `&` and so sets `$!`, and `scope` is a child scope of it: the subshell that runs the job.
+   * A pipeline part or a list that a later `|` or `&` sends to a subshell makes the shell of an earlier `&` in it a subshell
+   * too: `{ a & } | b` and `b | { a & }` read the `&` of `a` in the part, not in the shell around it, and `{ a & } &` in the
+   * background list. The `&` that ends a list is read by the shell around the list (`true && a | b &` reads it at the top,
+   * though `b` sits in a part of a list that runs in the background). `$!` of a shell is set by the segments that name it, and
+   * by no scope below it.
+   */
+  readScope: string
+  /**
    * Where the standard output of the segment goes (issue #231). A segment with none of the three marks below prints where
    * the shell prints. A reader asks `keepsStdout` and reads none of them itself.
    * `stdoutRedirected`: a typed redirection sends fd 1 away (`>`, `>>`, `>|`, `&>`, `&>>`, `>&word`, `1>`), on the segment
@@ -470,21 +480,30 @@ export function splitShell(command: string): Segment[] {
   // The segments from `from` run in a subshell of their own: a background list or a pipeline part. They move to a child
   // of the current scope. Every segment of them sits in that scope or in a scope under it. A part that holds only
   // subshells has scopes of its own already, and a wrapper scope with no segment changes nothing. So it moves nothing:
-  // else each `)` of a deep `( a | ( b | ... ) )` would relabel every inner segment again.
-  const moveToChild = (from: number) => {
+  // else each `)` of a deep `( a | ( b | ... ) )` would relabel every inner segment again. A job with `&` that a group holds
+  // in the part is the exception (`{ a & } | b`, `b | { a & }`, `{ a & } &`): the shell that read its `&` is `readScope`, and
+  // it is now the wrapper. Without the wrapper the job would name the shell around the part as the one that read its `&`, and
+  // the `$!` that a part sets would reach it. `readScope` follows `scope` into the wrapper. `endsHere`: the last segment is the
+  // job whose `&` ends the list that moves now (`b | a &`, `true && b | a &`). The shell that reads this `&` is the one around
+  // the list, so it needs no wrapper, and its `readScope` stays.
+  const moveToChild = (from: number, endsHere = false) => {
     const parent = scope()
     const moving = out.slice(from)
-    if (!moving.some(seg => seg.scope === parent)) return
+    const last = out.length - 1
+    const inside = (name: string) => name === parent || name.startsWith(`${parent}.`)
+    const reads = (seg: Segment, k: number) => !(endsHere && from + k === last) && inside(seg.readScope)
+    if (!moving.some((seg, k) => seg.scope === parent || (seg.bg && reads(seg, k) && seg.readScope === parent))) return
     const child = `${parent}.${++scopes}`
-    for (const seg of moving) {
-      if (seg.scope === parent || seg.scope.startsWith(`${parent}.`)) seg.scope = child + seg.scope.slice(parent.length)
-    }
+    moving.forEach((seg, k) => {
+      if (inside(seg.scope)) seg.scope = child + seg.scope.slice(parent.length)
+      if (reads(seg, k)) seg.readScope = child + seg.readScope.slice(parent.length)
+    })
   }
   // The pipeline ends: its last part runs in a subshell too, and the next part starts after the segments so far. A flag that
   // waits in that part (`cat | { { :; } & }`) ends with it. A `&` that ends the pipeline keeps its own flag (`cat | { :; } &`).
-  const endPipe = (keepBg = false) => {
+  const endPipe = (keepBg = false, endsHere = false) => {
     if (piped) {
-      moveToChild(partFrom)
+      moveToChild(partFrom, endsHere)
       if (!keepBg) bgShellEnded = false
     }
     piped = false
@@ -552,6 +571,7 @@ export function splitShell(command: string): Segment[] {
         bg,
         afterBgShell: bgShellEnded,
         scope: scope(),
+        readScope: scope(),
         stdoutRedirected: stdout || (stack.at(-1)?.moved ?? false),
         stdoutPiped: false,
         substituted: stack.at(-1)?.sub ?? false,
@@ -806,8 +826,9 @@ export function splitShell(command: string): Segment[] {
         partFrom = out.length
         piped = true
       } else if (op === '&') {
-        endPipe(true)
-        moveToChild(listFrom)
+        const endsHere = out.length > before // a segment with this `&` came: its `readScope` is the shell around the list
+        endPipe(true, endsHere)
+        moveToChild(listFrom, endsHere)
         listFrom = out.length
       } else if (op === ';' || op === ';;' || op === ';&' || op === ';;&' || (op === '\n' && !wantsMore)) {
         endPipe()
@@ -906,6 +927,29 @@ export function scopedVars(): {
       }
     },
     set: (scope, name, value) => void vars.set(key(scope, name), value),
+  }
+}
+
+/** The scope that holds `scope`: `.1.2` is in `.1`, `.1` is in `''`, and the top level `''` has none (it gives `''` again). */
+const parentScope = (scope: string): string => scope.slice(0, Math.max(scope.lastIndexOf('.'), 0))
+
+/**
+ * State per subshell scope that a child copies from its parent when it first appears, and never writes back (`$!` is one:
+ * a job, a coprocess and a flag that a subshell, a substitution or a part of a pipeline sets stay in that shell). The result
+ * gives the state of a scope: its own, or a copy of the nearest scope above it that has one, taken at that moment. A scope
+ * opens, runs its segments and closes before the next scope of its parent opens, so the copy is the state the shell had when
+ * the child started. `root` is the state of the top level.
+ */
+export function scopedCopy<T extends object>(root: T): (scope: string) => T {
+  const states = new Map<string, T>([['', root]])
+  return scope => {
+    const own = states.get(scope)
+    if (own) return own
+    let up = parentScope(scope)
+    while (!states.has(up)) up = parentScope(up)
+    const copy = { ...states.get(up)! }
+    states.set(scope, copy)
+    return copy
   }
 }
 

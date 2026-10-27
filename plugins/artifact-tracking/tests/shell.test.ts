@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { keepsStdout, splitShell, stripLead, stripReserved, stripWrappers } from '../core/lib/shell'
+import { keepsStdout, scopedCopy, splitShell, stripLead, stripReserved, stripWrappers } from '../core/lib/shell'
 import { expectLinear } from './fixtures/scaling'
 
 /**
@@ -402,6 +402,15 @@ test('splitShell adds no scope level for a pipeline part that holds only a subsh
   expect(depth).toBeLessThanOrEqual(n + 1)
 })
 
+// The same holds with a job that ends with `&` inside: the part holds a subshell, which is the shell that read the `&`, so it
+// needs no wrapper either. Only a job in a group in the part (`{ a & } | b`) does.
+test('splitShell adds no scope level for a pipeline part that holds only a subshell with a job in it', () => {
+  const n = 12
+  const segs = splitShell('( cat | '.repeat(n) + '( a & )' + ' )'.repeat(n))
+  const depth = Math.max(...segs.map(s => s.scope.split('.').length - 1))
+  expect(depth).toBeLessThanOrEqual(n + 2)
+})
+
 test('splitShell takes a stray ) } or done as it comes, with no scope or compound open', () => {
   expect(Object.keys(at(') a } | b ) c; done; d'))).toEqual(['a', 'b', 'c', 'done', 'd'])
   expect(Object.values(at('a ) b; done'))).toEqual(['', '', ''])
@@ -534,6 +543,94 @@ test('splitShell flags the segment after a & that ends a group, subshell, arithm
     expect({ cmd, flagged: after(cmd) }).toEqual({ cmd, flagged: [] })
   // The flag adds to `bg`: it takes none away, so `done &` still backgrounds its loop.
   expect(splitShell('for i in 1; do a; done & b').map(s => s.bg)).toEqual([false, false, true, false])
+})
+
+// A segment with `&` runs in a child scope of the shell that read the `&`, and `readScope` names that shell: the `&` sets the
+// `$!` of it (issue #231). A group is the shell of its parent, so a pipe or a `&` behind it makes it a subshell of its own, and
+// the job in it still reads its `&` there (`{ a & } | b`, `b | { a & }`, `{ a & } &`): bash 5.3.20 leaves the `$!` of the outer
+// shell alone, and so must a reader of the scopes. A subshell, a substitution and backticks hold the job in a scope of their
+// own already. The `&` that ends a list is read by the shell around the list, also when the job is the last part of a pipeline
+// in a list that runs in the background (`x && y | a &`).
+test('splitShell gives a job with & the shell that read the &, also for a group in a pipeline part or a background list', () => {
+  const reader = (cmd: string, name: string): string => {
+    const hit = splitShell(cmd).find(s => s.words.join(' ') === name)
+    expect(hit).toBeDefined()
+    expect(hit!.bg).toBe(true)
+    return hit!.readScope
+  }
+  // The shell of the command reads the `&`: a job after `&&`, in a group, in an `if`, in a loop, and the last part of a pipeline.
+  for (const [cmd, name] of [
+    ['a &', 'a'],
+    ['x && a &', 'a'],
+    ['x; a & y', 'a'],
+    ['{ a & }', 'a'],
+    ['{ x; { a & }; }', 'a'],
+    ['if x; then a & fi', 'then a'],
+    ['for i in 1; do a & done', 'do a'],
+    ['x | a &', 'a'],
+    // The list runs in the background, and its last part is a part of a pipeline: the `&` is still read at the top.
+    ['x && y | a &', 'a'],
+    ['x && y | z | a &', 'a'],
+    ['x | y | a &', 'a'],
+  ] as const)
+    expect({ cmd, reader: reader(cmd, name) }).toEqual({ cmd, reader: '' })
+  // A subshell of its own reads it: a subshell, a substitution, backticks, and a group that a pipe or a `&` sends to one.
+  for (const [cmd, name] of [
+    ['( a & )', 'a'],
+    ['( ( a & ) )', 'a'],
+    ['x=$(a &)', 'a'],
+    ['x=`a &`', 'a'],
+    ['( a & ) | x', 'a'],
+    ['{ a & } | x', 'a'],
+    ['x | { a & }', 'a'],
+    ['x | { a & } | y', 'a'],
+    ['{ x; a & } | y', 'a'],
+    ['{ a & } &', 'a'],
+    ['{ { a & } & } | x', 'a'],
+    ['x && { a & } | y', 'a'],
+  ] as const)
+    expect({ cmd, reader: reader(cmd, name) }).not.toEqual({ cmd, reader: '' })
+  // The reader is a scope above the job, on its way to the top: the job runs in a child of it.
+  for (const cmd of ['a &', '{ a & } | x', 'x | { a & }', 'x && y | a &', '{ a & } &', '( a & )', 'x=$(a &)']) {
+    const job = splitShell(cmd).find(s => s.bg)
+    expect(job).toBeDefined()
+    expect({ cmd, below: job!.scope.startsWith(`${job!.readScope}.`) }).toEqual({ cmd, below: true })
+  }
+  // Each part of a pipeline is a shell, so two jobs in two parts have two readers, and a job in a group in a part reads it with
+  // the commands of that part.
+  expect(reader('{ a & } | { b & }', 'a')).not.toBe(reader('{ a & } | { b & }', 'b'))
+  const part = splitShell('{ x; a & } | y')
+  expect(part[1]!.readScope).toBe(part[0]!.scope)
+  // A segment with no `&` reads in the scope it runs in, also after a move.
+  for (const cmd of ['a | b', '{ a; } | b', 'x && a | b &', '( a ) &', 'x=$(a) | b', '{ a & x; } | b'])
+    for (const s of splitShell(cmd).filter(s => !s.bg))
+      expect({ cmd, seg: s.words, reads: s.readScope }).toEqual({ cmd, seg: s.words, reads: s.scope })
+})
+
+// `scopedCopy` holds state per shell, as `$!` needs it: a child copies the state of its nearest parent when it first appears, and
+// its writes stay in it. The top level has the state that was passed in.
+test('scopedCopy gives a scope a copy of its nearest parent when it first appears and keeps its writes in the scope', () => {
+  const root = { n: 0 }
+  const of = scopedCopy(root)
+  expect(of('')).toBe(root)
+  root.n = 1
+  // No state at `.1` yet: the copy is the state of the top level.
+  const child = of('.1.2')
+  expect(child).toEqual({ n: 1 })
+  expect(child).not.toBe(root)
+  expect(of('.1.2')).toBe(child)
+  child.n = 2
+  expect(root.n).toBe(1)
+  // The parent moves on: a child that opened before keeps what it copied, and a scope that opens now copies the new state.
+  root.n = 3
+  expect(of('.1.2').n).toBe(2)
+  const middle = of('.1')
+  expect(middle.n).toBe(3)
+  middle.n = 4
+  expect(of('.1.2').n).toBe(2)
+  expect(of('.1.5').n).toBe(4)
+  expect(root.n).toBe(3)
+  expect(of('.9').n).toBe(3)
 })
 
 // A `&` that ends a group sets `$!` in the shell that reads it. A substitution, a backtick pair, a subshell and a part of a

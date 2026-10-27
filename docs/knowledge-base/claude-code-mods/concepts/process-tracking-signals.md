@@ -80,9 +80,31 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   (bash 5.3.20 and 3.2.57), and its row keeps it. A scope that closes while the
   flag still waits for a segment gives back the flag of its parent, and a
   pipeline part drops it. A group is the shell of its parent, so
-  `{ { :; } & }; echo $!` names the inner shell. A process substitution sets
-  `$!` in its parent whatever it holds, so `cat <({ :; } &) > /dev/null` is the
-  old limit of "Not read" below, not a flag. A backgrounded builtin (`echo x &`, `cd d &`) is the same:
+  `{ { :; } & }; echo $!` names the inner shell. The parser keeps `$!` per
+  shell, by `Segment.scope`: the last job and whether a `&` came. A scope
+  starts with a copy of the `$!` of its parent and sets none of it, so a
+  coprocess, a job or a flagged part in a scope names only that scope.
+  `sleep 100 & ( coproc sleep 101 ); echo $!`,
+  `sleep 100 & x=$(coproc sleep 101); echo $!`,
+  `sleep 100 & ( sleep 101 & ); echo $!`,
+  `sleep 100 & { sleep 101 & } | cat; echo $!` and
+  `sleep 100 & x=$( { :; } & echo hi ); echo $!` print the pid of `sleep 100`
+  (bash 5.3.20), and the job in the scope keeps its row, with no pid. Bash
+  prints an empty line for `( sleep 101 & ); echo $!`, and one pid twice for
+  `sleep 3 & P=$!; { sleep 3 & } | cat; echo $P $!`. A `&` sets the `$!` of the
+  shell that read it, which `Segment.readScope` names. `splitShell` gives a
+  group that a pipe or a `&` sends to a subshell (`{ a & } | b`, `b | { a & }`,
+  `{ a & } &`) a scope of its own, so the job in it does not name the shell
+  around it. The `&` that ends a list is read by the shell around the list,
+  also for a list that ends with a pipeline (`true && a | b &` reads it at the
+  top, as the new `$!` is the pid of the list). An `echo $!` in a scope prints the `$!`
+  of its parent: `sleep 100 & ( echo $! )` prints the pid of `sleep 100`. A
+  process substitution sets `$!` in its parent whatever it holds (bash 5.3.20:
+  `cat <(coproc sleep 101) > /dev/null` names a new process). The parser reads
+  it as a scope like the others, so what it holds sets no `$!`, and
+  `cat <({ :; } &) > /dev/null` and `cat <(coproc sleep 101) > /dev/null` give
+  the earlier job the line. That is the limit of "Not read" below, not a flag.
+  A backgrounded builtin (`echo x &`, `cd d &`) is the same:
   its shell makes no row, and the pid line that the next `echo $!` prints is
   dropped, so the job after it gets its own pid. An `echo $!` (or a `printf`
   of `$!`) takes or drops a pid line only when its output reaches the tool
@@ -130,9 +152,11 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   script file), nothing (the shell or the command has exited already), or the
   external command that bash ran in place (`( sleep 5 ) &` and
   `( true; sleep 5 ) &` show `sleep 5`). The parser side is *verified-kit*: the
-  tests are `group: ...`, `pipeline: ...`, `coproc: ...` and `builtin: ...` in
-  `process-parse.test.ts`, and the tests `splitShell flags the segment after a
-  & ...` and `splitShell keeps the flag of a & ...` in `shell.test.ts`.
+  tests are `group: ...`, `pipeline: ...`, `coproc: ...`, `scope: ...` and
+  `builtin: ...` in `process-parse.test.ts`, and the tests `splitShell flags the
+  segment after a & ...`, `splitShell keeps the flag of a & ...` and
+  `splitShell gives a job with & the shell that read the & ...` in
+  `shell.test.ts`.
   - The row gets the pid: a simple command with `&` (also with `VAR=x`,
     `nohup`, `exec`, `!`, or a redirection), the last part of a pipeline
     (`true | sleep 101 &` names `sleep 101`), a job in a group with no `&` of
@@ -201,13 +225,9 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
       takes the line.
     - A process substitution with no `&` behind it (`exec 3< <(a)`,
       `cat <(a) > /dev/null`) sets `$!`, and an earlier job takes its line. So
-      does `eval "a &"`, because the parser does not read the text of `eval`.
-    - A `&` job inside `( ... )`, `$( ... )` or a part of a pipeline sets no
-      `$!` in its parent (`( sleep 101 & ); echo $!` prints an empty line, and
-      `sleep 3 & P=$!; { sleep 3 & } | cat; echo $P $!` prints one pid twice),
-      but the parser lets the job take a line
-      (`sleep 100 & { sleep 101 & } | cat; echo $!` gives `sleep 101` the
-      line).
+      does one with a job or a coprocess inside (`cat <(coproc sleep 101) >/dev/null`
+      and `cat <({ :; } &) >/dev/null`). So does `eval "a &"`, because the
+      parser does not read the text of `eval`.
     - `$!` names the subshell that runs the whole list for `a && b &`,
       `time a &`, `f &` (a function) and `eval "a" &`, so the row of the last
       command gets the pid of that shell.
