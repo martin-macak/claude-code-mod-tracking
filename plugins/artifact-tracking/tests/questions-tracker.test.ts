@@ -139,6 +139,14 @@ test('a plugin that asks with $.ui.ask reaches the same hook, and its call says 
   expect(t.calls()[0]).toMatchObject({ id: 'toolu_plugin_01x', plugin: true })
 })
 
+test('a question that another plugin asks (byPlugin, id toolu_plugin_) keeps the turn of the call (issue #204)', async () => {
+  const t = setup()
+  await t.start('turn-1')
+  await t.hear({ ...ANSWERED_ASK, toolUseId: 'toolu_plugin_01x', byPlugin: true })
+  await t.end('turn-1')
+  expect(t.calls()[0]).toMatchObject({ id: 'toolu_plugin_01x', plugin: true, turn: 1 })
+})
+
 test('a plan the person approved and a plan the person rejected are kept, with the plan and the words of the person', async () => {
   const t = setup()
   await t.hear(LIVE_PLAN_APPROVED)

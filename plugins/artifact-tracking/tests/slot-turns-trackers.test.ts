@@ -143,6 +143,158 @@ test('a Monitor started in a turn is stamped too', async () => {
   expect(t.rec(1).new.map(e => e.k)).toEqual(['monitor:mon1'])
 })
 
+// ---------------------------------------------------------------- processes: TaskStop (issue #204)
+
+const TASK = 'task:butoa45ib'
+
+/** Turns 1 and 2 are empty, turn 3 starts the background task `butoa45ib`, turn 4 is empty. */
+async function startedInTurn3(t: ReturnType<typeof processes>): Promise<void> {
+  await t.idle(1)
+  await t.idle(2)
+  await t.start('turn-3', 'run it')
+  await t.bash('npm run dev', { toolUseId: 'tu_bg3' }, bg)
+  await t.end('turn-3')
+  await t.idle(4)
+}
+
+/** How often the processes slot and the ledger were written. */
+const writes = (t: ReturnType<typeof processes>) => ({
+  processes: t.w.stateSets.processes ?? 0,
+  turns: t.w.stateSets.turns ?? 0,
+})
+
+test('a TaskStop in turn 5 that stops the process of turn 3 moves lastTurn to 5 and lists the row as seen again', async () => {
+  const t = processes()
+  await startedInTurn3(t)
+  await t.start('turn-5', 'stop it')
+  await t.stop('butoa45ib', { toolUseId: 'tu_stop5' })
+  await t.end('turn-5')
+  expect(t.procs()).toMatchObject([{ id: TASK, state: 'killed', firstTurn: 3, lastTurn: 5 }])
+  expect(t.rec(5).seen).toEqual([{ k: TASK, c: 'process', r: 'created' }])
+  expect(t.rec(5).new).toEqual([])
+  expect(await t.text('turn 5')).toMatch(/ · 1 seen again\n {2}again {2}.*npm run dev.* {2}created$/)
+  expect(await t.text('turn 3')).toMatch(/\n {2}new {4}.*npm run dev.* {2}created$/)
+  expect((await t.rows()).find(r => r.id === TASK)?.turns).toEqual({ first: 3, last: 5 })
+})
+
+test('a TaskStop for a task that no row owns stamps nothing, adds no entry and writes neither the slot nor the ledger', async () => {
+  const t = processes()
+  await startedInTurn3(t)
+  await t.start('turn-5', 'stop it')
+  const before = writes(t)
+  const row = { ...t.procs()[0] }
+  await t.stop('nobody', { toolUseId: 'tu_stop5' })
+  expect(writes(t)).toEqual(before)
+  expect(t.procs()).toEqual([row])
+  await t.end('turn-5')
+  expect(t.rec(5)).toMatchObject({ new: [], seen: [] })
+  expect(await t.text('turn 5')).toMatch(/nothing tracked$/)
+})
+
+test('a second TaskStop of the same task in turn 5 is a repeat: the ledger is not written, one entry, the stamps stay', async () => {
+  const t = processes()
+  await startedInTurn3(t)
+  await t.start('turn-5', 'stop it')
+  await t.stop('butoa45ib', { toolUseId: 'tu_stop5a' })
+  const before = writes(t)
+  const stamps = { firstTurn: t.procs()[0]?.firstTurn, lastTurn: t.procs()[0]?.lastTurn }
+  await t.stop('butoa45ib', { toolUseId: 'tu_stop5b' })
+  expect(writes(t).turns).toBe(before.turns) // no new ledger write
+  expect(t.rec(5).seen).toEqual([{ k: TASK, c: 'process', r: 'created' }]) // no new entry
+  expect(t.procs()[0]).toMatchObject({ ...stamps, state: 'killed' })
+})
+
+// The two answers come from two engine paths: a run that failed, and a hook that refused the call.
+const NOT_STOPPED: [string, Json][] = [
+  [
+    'an error answer (isError)',
+    { result: 'Error: Task butoa45ib is not running (status: killed)', isError: true } as Json,
+  ],
+  ['a call that a hook refused ({ deny })', { deny: 'refused by a hook' } as Json],
+]
+for (const [name, answer] of NOT_STOPPED) {
+  test(`a TaskStop with ${name} names no row and changes nothing`, async () => {
+    const t = processes()
+    await startedInTurn3(t)
+    await t.start('turn-5', 'stop it')
+    const before = writes(t)
+    await t.stop('butoa45ib', {}, answer)
+    expect(writes(t)).toEqual(before)
+    expect(t.procs()).toMatchObject([{ state: 'running', firstTurn: 3, lastTurn: 3 }])
+    await t.end('turn-5')
+    expect(t.rec(5)).toMatchObject({ new: [], seen: [] })
+  })
+}
+
+test('a process that turn 3 starts and stops is listed once, as new, and not as seen again', async () => {
+  const t = processes()
+  await t.idle(1)
+  await t.idle(2)
+  await t.start('turn-3', 'run it, then stop it')
+  await t.bash('npm run dev', { toolUseId: 'tu_bg3' }, bg)
+  await t.stop('butoa45ib', { toolUseId: 'tu_stop3' })
+  await t.end('turn-3')
+  expect(t.procs()).toMatchObject([{ id: TASK, state: 'killed', firstTurn: 3, lastTurn: 3 }])
+  expect(t.rec(3).new).toEqual([{ k: TASK, c: 'process', r: 'created' }])
+  expect(t.rec(3).seen).toEqual([])
+})
+
+test('a Monitor row is stamped by the TaskStop of its task id', async () => {
+  const t = processes()
+  await t.idle(1)
+  await t.start('turn-2', 'watch')
+  await t.m.toolCall(t.w.ports, {
+    tool: 'Monitor',
+    input: { tool: 'Monitor' } as Json,
+    result: { result: { taskId: 'mon1' } } as Json,
+    toolUseId: 'tu_mon1',
+  })
+  await t.end('turn-2')
+  await t.start('turn-3', 'stop it')
+  await t.stop('mon1', { toolUseId: 'tu_stop3' })
+  await t.end('turn-3')
+  expect(t.procs()).toMatchObject([{ id: 'monitor:mon1', state: 'killed', firstTurn: 2, lastTurn: 3 }])
+  expect(t.rec(3).seen).toEqual([{ k: 'monitor:mon1', c: 'process', r: 'created' }])
+})
+
+test('a row that no turn stamped gets the turn of the TaskStop for both stamps and lists as seen again', async () => {
+  const t = processes()
+  await t.bash('npm run dev', { toolUseId: 'tu_bg0' }, bg) // no turn running: the row has no stamps
+  expect(t.procs()[0]).not.toHaveProperty('firstTurn')
+  await t.start('turn-1', 'stop it')
+  await t.stop('butoa45ib', { toolUseId: 'tu_stop1' })
+  await t.end('turn-1')
+  expect(t.procs()).toMatchObject([{ id: TASK, state: 'killed', firstTurn: 1, lastTurn: 1 }])
+  expect(t.rec(1).seen).toEqual([{ k: TASK, c: 'process', r: 'created' }])
+  expect(t.rec(1).new).toEqual([])
+})
+
+test("a subagent's TaskStop, made after its turn ended, belongs to the turn that spawned the agent and is late", async () => {
+  const t = processes()
+  await t.start('turn-1', 'run it')
+  await t.bash('npm run dev', { toolUseId: 'tu_bg1' }, bg)
+  await t.end('turn-1')
+  await t.start('turn-2', 'spawn')
+  await t.spawn('agent-1', 'tu_agent2')
+  await t.end('turn-2')
+  await t.start('turn-3', 'something else')
+  await t.stop('butoa45ib', { agentId: 'agent-1', toolUseId: 'tu_sub' })
+  expect(t.procs()).toMatchObject([{ id: TASK, state: 'killed', firstTurn: 1, lastTurn: 2 }])
+  expect(t.rec(2).seen).toEqual([{ k: TASK, c: 'process', r: 'created', late: true }])
+  expect(t.rec(3)).toMatchObject({ new: [], seen: [] })
+})
+
+test('a TaskStop that a plugin raised (byPlugin) ends the row but stamps no turn and adds no entry', async () => {
+  const t = processes()
+  await startedInTurn3(t)
+  await t.start('turn-5', 'clean up')
+  await t.stop('butoa45ib', { byPlugin: true })
+  await t.end('turn-5')
+  expect(t.procs()).toMatchObject([{ id: TASK, state: 'killed', firstTurn: 3, lastTurn: 3 }])
+  expect(t.rec(5)).toMatchObject({ new: [], seen: [] })
+  expect(await t.text('turn 5')).toMatch(/nothing tracked$/)
+})
+
 const proc = (id: string, o: Partial<ProcessRecord & Stamps> = {}): ProcessRecord & Stamps => ({
   id,
   kind: 'background-task',

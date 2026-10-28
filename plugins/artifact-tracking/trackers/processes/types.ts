@@ -63,8 +63,9 @@ export type ProcessRecord = {
   /** Command fingerprint to defend against PID reuse. */
   fingerprint?: string
   /**
-   * The first and the last turn whose Bash or Monitor call started or named the row (issue #133). Absent: no turn stamped it
-   * (a row from before the lineage, or one started outside a turn). A state change stamps nothing.
+   * The first and the last turn whose Bash or Monitor call started or named the row, or whose TaskStop stopped it (issues
+   * #133, #204). Absent: no turn stamped it (a row from before the lineage, or one started outside a turn). A state change
+   * that no action of the turn made (a task notice, the probe, a TaskStop that a plugin raised) stamps nothing.
    */
   firstTurn?: number
   lastTurn?: number

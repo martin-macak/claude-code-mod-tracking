@@ -6,10 +6,11 @@
 // the LifecycleManager (tests/slot-turns.test.ts). A repo's lookup runs in a queue after the hook returned, so its turn is
 // read when the visit is queued, not when the row is written.
 
+import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-import { expect } from 'claude-code/testing'
+import { expect, mock } from 'claude-code/testing'
 import { test } from './fixtures/kit'
-import { BG_START_MAIN } from './fixtures/notices'
+import { BG_START_MAIN, taskStopped } from './fixtures/notices'
 import { prompt, quiet, res, START, track, world } from './fixtures/world'
 
 const start = ($: Engine, turnId: string, text = 'go') => $.turn.start({ turnId, text } as never)
@@ -100,4 +101,61 @@ test('spike: an agent that turn 2 spawned carries both turns as 2 and is listed 
   const text = await turnText($, 2)
   expect(text.split('\n')[0]).toMatch(/ · 1 new$/)
   expect(text).toMatch(/\n {2}new {4}agent ag:agent-7 {2}created$/) // the round has drawn no row yet: the ledger words it
+})
+
+// ---------------------------------------------------------------- a TaskStop (issue #204)
+
+/** A background task that turn 3 started, and an empty turn 4. */
+async function startedInTurn3($: Engine, on: On) {
+  const w = world(on, { isolateState: true })
+  mock.env(on, { HOME: '/home/u' })
+  await $.session.start(START)
+  await empty($, 1)
+  await empty($, 2)
+  await $.session.append(prompt('run it'))
+  await start($, 'turn-3', 'run it')
+  w.fake.tools.Bash = { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'task-bg-1' }
+  await $.tool.call({ tool: 'Bash', command: 'sleep 300', tool_use_id: 'toolu_bg_1' } as never)
+  await end($, 'turn-3')
+  await empty($, 4)
+  await quiet(w.calls)
+  return w
+}
+
+test("the model's TaskStop in turn 5 stamps the row: lastTurn 5, and /track turn 5 lists it as seen again", async ($, on) => {
+  const w = await startedInTurn3($, on)
+  w.fake.toolAnswers.TaskStop = taskStopped('task-bg-1')
+  await $.session.append(prompt('stop it'))
+  await start($, 'turn-5', 'stop it')
+  await $.tool.call({ tool: 'TaskStop', task_id: 'task-bg-1' } as never) // the kit raises it as the engine does: origin engine
+  await end($, 'turn-5')
+  await quiet(w.calls)
+  expect(rowsOf(w.states, 'processes')[0]).toMatchObject({
+    id: 'task:task-bg-1',
+    state: 'killed',
+    firstTurn: 3,
+    lastTurn: 5,
+  })
+  const text = await turnText($, 5)
+  expect(text.split('\n')[0]).toMatch(/ · 1 seen again$/)
+  expect(text).toMatch(/\n {2}again {2}.*sleep 300.* {2}created$/)
+})
+
+test('/track clean --yes tasks run inside turn 5 kills the row but is no sighting: lastTurn stays 3 and turn 5 lists nothing', async ($, on) => {
+  const w = await startedInTurn3($, on)
+  w.fake.toolAnswers.TaskStop = taskStopped('task-bg-1')
+  await $.session.append(prompt('clean up'))
+  await start($, 'turn-5', 'clean up') // an immediate command or a pane key runs while a turn is in flight
+  const out = (await track($, 'clean --yes tasks')).text ?? ''
+  await end($, 'turn-5')
+  await quiet(w.calls)
+  expect(out).toContain('sleep 300: done')
+  expect(w.fake.toolRuns.TaskStop).toBe(1) // one stop reached the engine; the byPlugin guard shows in lastTurn 3 below
+  expect(rowsOf(w.states, 'processes')[0]).toMatchObject({
+    id: 'task:task-bg-1',
+    state: 'killed',
+    firstTurn: 3,
+    lastTurn: 3,
+  })
+  expect(await turnText($, 5)).toMatch(/nothing tracked$/)
 })

@@ -1,8 +1,9 @@
 // `/track clean` for background tasks (issue #122): the cleanup of the processes tracker. The plan lists each running
 // background Bash task for a TaskStop. `--yes tasks` stops them one by one through the narrow `tasks.stop` port and marks
-// the row `killed` itself: the mod's own TaskStop hook may see the call too, but nothing proves it from inside a `/track` run, and the two writes are the same (the first end time stays). A Monitor task is
-// listed and skipped: its stop is not tested (design study of #49, R11b). Docker, tmux, screen and detached processes are not
-// touched: the study found no proof of who owns them.
+// the row `killed` itself: the mod's own `tool.call` hook hears the call too, as a call that a plugin raised (design study
+// of #204, S2: kit-verified, not yet seen live, #209), so it stamps no turn, and the two writes are the same (the first end
+// time stays). A Monitor task is listed and skipped: its stop is not tested (design study of #49, R11b). Docker, tmux,
+// screen and detached processes are not touched: the study found no proof of who owns them.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.12. Design study: issue #49, R11a.
 
 import type { CleanResult, CleanStep, Cleanup } from '../../core/interfaces/clean'

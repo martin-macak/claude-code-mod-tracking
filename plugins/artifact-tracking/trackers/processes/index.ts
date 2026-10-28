@@ -114,11 +114,15 @@ export function processesTracker(): Tracker<ProcessesConfig, Json> & Traceable<J
     if (id !== undefined) workflowAgents.of(ctx, () => new Set()).add(id)
   }
 
+  // The TaskStop of the model is a sighting of the row it stops (issue #204). A TaskStop that a plugin raised (the mod's own
+  // `/track clean --yes tasks`) reaches this hook too, but no turn of the model made it: it ends the row and stamps no turn.
+  // A task notice is no sighting either: it is the engine's state change, not an action of the turn.
   const onTaskStop: H<ToolCallEvent> = (ctx, ev) =>
     applyTaskUpdate(
       ctx,
       processUpdateFromTaskStop(isRecord(ev.result) ? ev.result.result : undefined),
       ctx.clock.wall(),
+      ev.byPlugin === true ? undefined : ctx.turn,
     )
 
   // A loop ended: its tasks that end with it get no notice. `agentId` is absent for the main loop. An id that is not a

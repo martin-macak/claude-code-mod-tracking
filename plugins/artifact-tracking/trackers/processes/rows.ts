@@ -137,6 +137,27 @@ export async function setProcesses(ctx: RowsCtx, change: (rows: ProcessRecord[])
 }
 
 /**
+ * Writes the rows that `change` gives and, with `turn`, tells the ledger which of the `named` rows the call saw again (issue
+ * #133). `held` is the slot as the write that stuck read it: a write that missed its version runs `change` again, so the
+ * last run is the one that counts. With no `turn`, or no named row, the ledger hears nothing.
+ */
+async function setSighted(
+  ctx: RowsCtx,
+  turn: TurnPort | undefined,
+  change: (cur: ProcessRecord[]) => { next: ProcessRecord[]; named: ProcessRecord[] },
+): Promise<void> {
+  let held: ProcessRecord[] = []
+  let named: ProcessRecord[] = []
+  await setProcesses(ctx, cur => {
+    held = cur
+    const out = change(cur)
+    named = out.named
+    return out.next
+  })
+  if (turn !== undefined && named.length > 0) await turn.note(processSightings(turn.ord, named, held))
+}
+
+/**
  * Adds rows a Bash or Monitor call found. `cap` is the config of the tracker: the slot keeps no more rows than `maxRows` (see
  * `mergeProcessRows`). With `turn` (issue #133) the rows are stamped with its ordinal, and the ledger hears which rows the
  * call added and which it named again.
@@ -150,12 +171,7 @@ export async function addProcessRows(
   if (rows.length === 0) return
   if (turn === undefined) return setProcesses(ctx, cur => mergeProcessRows(cur, rows, undefined, cap))
   const marked = rows.map(r => stampedTurn(r, turn.ord))
-  let held: ProcessRecord[] = []
-  await setProcesses(ctx, cur => {
-    held = cur // the last run is the one that wrote: a write that missed its version runs again
-    return mergeProcessRows(cur, marked, undefined, cap)
-  })
-  await turn.note(processSightings(turn.ord, marked, held))
+  await setSighted(ctx, turn, cur => ({ next: mergeProcessRows(cur, marked, undefined, cap), named: marked }))
 }
 
 /**
@@ -169,18 +185,26 @@ export async function applyAgentEnd(ctx: RowsCtx, agentId: string | undefined, a
   await setProcesses(ctx, rows => rows.map(r => (ends(r) ? withState(r, 'killed', at) : r)))
 }
 
-/** Sets the state of the rows a task id or a tool use id names. Writes nothing when no row matches. */
-export async function applyTaskUpdate(ctx: RowsCtx, u: TaskUpdate | null, at: number): Promise<void> {
+/**
+ * Sets the state of the rows a task id or a tool use id names. Writes nothing when no row matches: the rows are read first,
+ * as `applyAgentEnd` does, for a TaskStop of a task no row owns is common (issue #204). With `turn` the rows it names are
+ * stamped with its ordinal, and the ledger hears which of them the call saw again. Only the TaskStop of the model passes it:
+ * a task notice and the TaskStop that a plugin raised (`/track clean`) pass none, so they stamp nothing.
+ */
+export async function applyTaskUpdate(ctx: RowsCtx, u: TaskUpdate | null, at: number, turn?: TurnPort): Promise<void> {
   if (!u) return
-  await setProcesses(ctx, rows => {
-    let changed = false
+  const names = (r: ProcessRecord) =>
+    (u.taskId !== undefined && r.taskId === u.taskId) || (u.toolUseId !== undefined && r.toolUseId === u.toolUseId)
+  if (!(await readRows(ctx)).some(names)) return
+  await setSighted(ctx, turn, rows => {
+    const named: ProcessRecord[] = []
     const next = rows.map(r => {
-      const byTask = u.taskId !== undefined && r.taskId === u.taskId
-      const byToolUse = u.toolUseId !== undefined && r.toolUseId === u.toolUseId
-      if (!byTask && !byToolUse) return r
-      changed = true
-      return withState(r, u.state, at)
+      if (!names(r)) return r
+      const row = withState(r, u.state, at)
+      const out = turn === undefined ? row : stampedTurn(row, turn.ord)
+      named.push(out)
+      return out
     })
-    return changed ? next : rows
+    return { next: named.length > 0 ? next : rows, named }
   })
 }

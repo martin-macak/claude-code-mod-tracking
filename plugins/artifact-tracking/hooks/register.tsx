@@ -160,7 +160,9 @@ function portsOf($: EngineInterface): Ports {
     },
     // TaskStop for `/track clean --yes tasks` (issue #122): one literal call, so `claude plugin validate` lists it. The engine
     // answers `{ deny }` for a hook that refuses it and `isError` for a task it does not know or that is not running; none
-    // of them throws. The mod's own `tool.call` hook may see this call too (the engine skips only the calling hook), and it marks the row the same way; the caller writes the row itself and does not rely on that.
+    // of them throws. The mod's own `tool.call` hook sees this call too (the engine skips only the calling hook), with
+    // `next.origin` naming this plugin (kit-verified; not yet seen live, #209): the event is `byPlugin`, so the processes
+    // tracker ends the row and stamps no turn (issue #204). The caller writes the row itself and does not rely on that.
     tasks: {
       stop: async taskId => {
         try {
@@ -304,7 +306,7 @@ export const register: Register = on => {
     if (!m.wants(e.tool)) return next(e)
     const cwdBefore = (await $.session.cwd().catch(() => undefined)) ?? undefined
     const ran = await next(e)
-    await soft(() => m.toolCall(portsOf($), toolCallEvent(e, ran, cwdBefore)))
+    await soft(() => m.toolCall(portsOf($), toolCallEvent(e, ran, cwdBefore, next.origin)))
     return ran
   }).catch((_$, e, next) => next(e))
 

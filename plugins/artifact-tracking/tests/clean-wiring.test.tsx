@@ -6,16 +6,8 @@
 import type { On } from 'claude-code'
 import { type Engine, expect, mock } from 'claude-code/testing'
 import { test } from './fixtures/kit'
+import { taskStopped } from './fixtures/notices'
 import { quiet, START, track, world } from './fixtures/world'
-
-const STOPPED = {
-  result: {
-    message: 'Successfully stopped task: task-bg-1 (sleep 300)',
-    task_id: 'task-bg-1',
-    task_type: 'local_bash',
-  },
-  text: '{"message":"Successfully stopped task: task-bg-1 (sleep 300)"}',
-}
 
 /** A session with one background task running: `sleep 300 --token=abc`, task id `task-bg-1`. */
 async function started($: Engine, on: On) {
@@ -30,7 +22,7 @@ async function started($: Engine, on: On) {
 
 test('a dry run raises no TaskStop and writes no log; --yes tasks raises one with the task id, and the row reads killed', async ($, on) => {
   const w = await started($, on)
-  w.fake.toolAnswers.TaskStop = STOPPED
+  w.fake.toolAnswers.TaskStop = taskStopped('task-bg-1')
   const plan = (await track($, 'clean')).text ?? ''
   expect(plan).toContain('sleep 300 --token=abc: stop')
   expect(w.fake.toolRuns.TaskStop).toBeUndefined()
@@ -92,7 +84,7 @@ test('/track clean --log prints the entries, newest first', async ($, on) => {
   const w = await started($, on)
   w.fake.toolAnswers.TaskStop = { result: 'Error: Task task-bg-1 is not running (status: killed)', isError: true }
   await track($, 'clean --yes tasks')
-  w.fake.toolAnswers.TaskStop = STOPPED
+  w.fake.toolAnswers.TaskStop = taskStopped('task-bg-1')
   await track($, 'clean --yes tasks')
   const text = (await track($, 'clean --log')).text ?? ''
   expect(text).toContain('Clean log, newest first (2 entries):')
