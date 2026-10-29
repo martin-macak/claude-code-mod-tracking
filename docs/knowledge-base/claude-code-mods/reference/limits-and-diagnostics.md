@@ -63,7 +63,8 @@ Sources: the types file (d.ts), the bundled long form ([reference.md:130](../sou
 | Tool `inputSchema` | Whole; a line past 65,536 characters says it rides on every request | | [reference.md:130](../sources/claude-code-2.1.295/reference.md#L130) |
 | One-line hook answers | 4,096 characters kept, ellipsis after | `command.describe`/`config.describe` fields, a `config.set` deny, a `prompt.submit` drop, a `turn.complete` text. The drop or deny still applies. The cut needs 2.1.292; earlier the hook failed. | [reference.md:130](../sources/claude-code-2.1.295/reference.md#L130), [docs: reference:284](../sources/code-claude-com-2026-10-09/mods/reference.md#L284) |
 | `$.audio.speak` text | First 4,096 characters spoken | | [d.ts:11942](../sources/claude-code-2.1.295/types/claude-code.d.ts#L11942), [reference.md:130](../sources/claude-code-2.1.295/reference.md#L130) |
-| `$.ui.log`, `$.ui.toast`, `$.ui.status` text | 2,000 characters on the terminal, 10,000 on a remote surface | An unpaired surrogate half draws as U+FFFD. The debug log holds a `$.ui.log` line to 10,000. | [d.ts:2407](../sources/claude-code-2.1.295/types/claude-code.d.ts#L2407), [d.ts:2441](../sources/claude-code-2.1.295/types/claude-code.d.ts#L2441), [d.ts:2472](../sources/claude-code-2.1.295/types/claude-code.d.ts#L2472), [reference.md:130](../sources/claude-code-2.1.295/reference.md#L130) |
+| `$.ui.log`, `$.ui.toast`, `$.ui.status` text | 2,000 characters on the terminal, 10,000 on a remote surface | An unpaired surrogate half draws as U+FFFD. The debug log holds a `$.ui.log` line to 10,000. Seen on 2.1.310 (*verified-kit*): a joined text of about 36,000 characters kept 10,000 in its one entry, and newlines are escaped as `\n` ([burst study](#cost-of-the-config-problem-burst-issue-219)). | [d.ts:2407](../sources/claude-code-2.1.295/types/claude-code.d.ts#L2407), [d.ts:2441](../sources/claude-code-2.1.295/types/claude-code.d.ts#L2441), [d.ts:2472](../sources/claude-code-2.1.295/types/claude-code.d.ts#L2472), [reference.md:130](../sources/claude-code-2.1.295/reference.md#L130) |
+| Debug log file | Rotates at about 10 MiB | The older part moves to `<file>.1` (`--debug-file <file>`) or `<session>.1.txt` (`--debug`), and `debug/latest` then links to the newest part. At 40000 keys (one rotation) the two parts held all 40000 problem lines. A second rotation was not run, so what happens to the older part then is not known. Seen on 2.1.310 (*verified-kit*, managed machine). | [rotation table](../sources/spikes-2026-10-26/config-log-burst/evidence.md#the-debug-file-rotates-at-about-10-mib) |
 | `$.ui.notice` text | 2,000 characters | | [reference.md:130](../sources/claude-code-2.1.295/reference.md#L130) |
 | `$.ui.notify` text | Any length, sent as given | | [d.ts:2465](../sources/claude-code-2.1.295/types/claude-code.d.ts#L2465) |
 | `prompt.submit` `context` | Past 100,000 characters (200,000 together) the model reads a head and a path | | [d.ts:9066](../sources/claude-code-2.1.295/types/claude-code.d.ts#L9066) |
@@ -187,6 +188,38 @@ hooks module first-mod@inline loaded (worker, environment 2, tier user); events:
 ```
 
 While you edit a `--plugin-dir` mod, the transcript shows a line per reload naming the mod and listing its hooks. If a save breaks the module the line says `reload failed, the previous version stays loaded: <reason>`. The last working version keeps running until the next reload, such as `/reload-plugins` ([docs: troubleshoot:264](../sources/code-claude-com-2026-10-09/mods/troubleshoot.md#L264)).
+
+### Cost of the config problem burst (issue #219)
+
+The artifact-tracking mod sends one `$.ui.log(text, { to: 'debug' })` call for each bad config key when the session starts. The kit pays for that burst in time that grows faster than its size. The real engine does not. Seen on Claude Code **2.1.310** (the types snapshot is 2.1.302), macOS, Apple M5 Pro, 18 cores, load average 18 to 60. A fake Messages API played one text turn: no model, no login, and the model plays no part in `session.start`. The metric is the engine's own debug line `hooks module artifact-tracking@inline session.start settled in <ms> (worker hop, next() included)`. The mod loaded unchanged from `--plugin-dir`, and the config file held N unknown keys in `global`.
+
+**Managed machine.** Every number below is observed on a managed machine. The guard `cc-plugin-sec-default` is seated outermost and sees every `ui.log` call. Nobody could switch it off. A machine without it may be faster (*inference*: the guard makes each call 3 debug entries).
+
+Each row has the grade of its run. The interactive runs are *verified-live* (an interactive session in tmux, a fake API behind it, as in [spikes-2026-10-21](../sources/spikes-2026-10-21/README.md#runs)). The headless series is *verified-kit*: a `claude -p` run never earns the live grade. A headless run writes its log with `--debug-file`, except the row marked `--debug`.
+
+| Keys | Run | Grade | Runs | `session.start` settled, median (min to max) | Extra over 0 keys |
+| --- | --- | --- | --- | --- | --- |
+| 0 | interactive | *verified-live* | 2 | 294 ms (151 to 437) | 0 |
+| 5000 | interactive | *verified-live* | 3 | 366 ms (275 to 687) | not clean: the two 0-key interactive runs took 151 and 437 ms |
+| 10000 | interactive | *verified-live* | 1 | 681 ms | not clean |
+| 0 | headless | *verified-kit* | 22 | 39 ms (31 to 477) | 0 |
+| 2500 | headless | *verified-kit* | 3 | 168 ms (158 to 220) | 129 ms |
+| 5000 | headless | *verified-kit* | 22 | 263 ms (233 to 5087) | 224 ms |
+| 10000 | headless | *verified-kit* | 3 | 696 ms (549 to 1639) | 656 ms |
+| 20000 | headless | *verified-kit* | 2 | 1733 ms (859 to 2606) | 1693 ms |
+| 40000 | headless | *verified-kit* | 2 | 4220 ms (3169 to 5271) | 4181 ms |
+| 40000 | headless, `--debug` | *verified-kit* | 1 | 1603 ms | 1564 ms |
+
+- **Not slow.** The owner's rule for slow is a median extra above 1000 ms over at least 10 alternating runs, or an extra at 5000 keys above 3 times the extra at 2500 keys, or a budget cut. The result is 224 ms, 1.7 times, and no cut. So the mod sends its lines one by one and keeps doing so.
+- **Linear work.** The CPU the engine spends is linear in the keys: the process CPU minus the 0-key median is 0.08 to 0.11 ms per key at every size from 2500 to 40000 (*verified-kit*). The wall time of `session.start` is a median 224 ms above the 0-key median at 5000 keys. Above 10000 keys each size has 3 runs or fewer, so its wall time is noisy and 3 runs a size cannot say whether it rises faster than the keys. The kit needs 4.1 to 4.5 s for 5000 keys (3 runs, load 48 to 55, *verified-kit*), where the engine adds a median 0.22 s for the same 5000 keys.
+- **Tail.** Some runs are far slower than the median. With one cut-off for both sizes, more than 3 times the median, the tail holds 2 of the 22 headless runs at 0 keys (142 and 477 ms) and 4 of the 22 at 5000 keys (895, 1124, 1773 and 5087 ms). The cause is not attributed.
+- **Every problem arrives.** 5000 of 5000 problem lines reached the debug log in all 22 headless and 3 interactive runs at 5000 keys. In 20 of the 22 headless runs the last problem line came 24 to 105 ms before the settle line. In the other two it came 712 ms and 4190 ms before it: those are the two slowest settles (1773 and 5087 ms). The gaps of every run are in [evidence.md](../sources/spikes-2026-10-26/config-log-burst/evidence.md#the-last-problem-line-against-the-settle-line-at-5000-keys). *Inference:* the mod does more work after it reports the problems (the rest of its start sequence, `core/infra/start-sequence.ts`), so its settle line comes after the last problem line. No log of the 75 runs held an `overran`, `lingering` or `budget` line, and the highest settle was 5.3 s (40000 keys), under the 10 s hook budget.
+- **No promise.** `$.ui.log` returns `void` ([d.ts 302:2447](../sources/claude-code-2.1.302/types/claude-code.d.ts#L2447)), so a mod cannot await its lines. The engine drains its queue after the hook returns. The isolated probe is the opposite case from the mod: its hook does nothing after the loop, it settled first, and the last line came 141 to 148 ms after the settle line, with nothing lost.
+- **Three entries a call.** The guard turns each call into 3 debug entries: 396 bytes for each problem. The mod line alone is 142 bytes.
+- **Rotation at about 10 MiB.** The row "Debug log file" in [Text and size](#text-and-size) holds the rule. On this machine the debug file rotates at about 26,400 bad keys. At 40000 keys (one rotation) the older part held 26,429 problem lines and the newest 13,571. The count line of the mod names `debug/latest`, which holds only the newest part. The mod does not change for this (owner decision of 2026-10-26). Without the guard the rotation would come near 74,000 keys (*inference*: 142 bytes a problem).
+- **Cut at 10,000 characters.** The `$.ui.log` row of [Text and size](#text-and-size) holds the rule. A call that joined 50 problem lines (about 3,700 characters) kept 5000 of 5000 texts. A call that joined 500 lines (about 36,000 characters) kept 1,497 of 5000 texts. So the mod does not batch: one entry for each problem stays.
+
+The probe scripts and the tables are in [sources/spikes-2026-10-26/config-log-burst](../sources/spikes-2026-10-26/config-log-burst/README.md). The raw logs stayed in the scratch folder of the study. The cost of the mod's own side of the burst (read the file, report each problem once, cap the list) is pinned by the `expectLinear` test in `plugins/artifact-tracking/tests/problems-cap.test.ts`. It runs in the kit once and under node with a ratio and a CPU ceiling.
 
 ## 3. Message formats
 

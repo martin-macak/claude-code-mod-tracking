@@ -157,9 +157,10 @@ const UNKNOWN_KEY = ': unknown key. The mod keeps it and ignores it.'
 // The wiring test needs more problems than the cap of the mod (`MAX_PROBLEMS`, 50), which is also more than the 10 that
 // /track prints. 120 does. Do not raise it to thousands (issue #216): the mod logs each problem with one `$.ui.log` call,
 // all of them in flight at once, and the kit takes such a burst in time that grows faster than its size: above 2000 keys,
-// twice the keys cost about four times the time. The 5000 case sits in problems-cap.test.ts, where the ConfigManager takes
-// it with no kit in the way. The title and the expected text keep 120, 110 and 70 as literals on purpose: they check
-// `MANY_KEYS` and the caps from outside.
+// twice the keys cost about four times the time. That is a limit of the kit: the real engine takes 5000 keys in a median
+// extra 0.22 s of `session.start` (KB, issue #219). The 5000 case sits in problems-cap.test.ts, where the ConfigManager
+// takes it with no kit in the way, and its cost is pinned there with `expectLinear`. The title and the expected text
+// keep 120, 110 and 70 as literals on purpose: they check `MANY_KEYS` and the caps from outside.
 const MANY_KEYS = 120
 
 test('120 unknown keys: /track lists ten problems and counts the other 110, and the debug log holds all 120', async ($, on) => {

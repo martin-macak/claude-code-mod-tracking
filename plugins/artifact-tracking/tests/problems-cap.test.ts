@@ -9,6 +9,7 @@ import { capProblems, MAX_PROBLEMS, moreLine, namedProblems } from '../core/lib/
 import { helpOf, helpTextOf, type PaneHost } from '../hooks/pane-text'
 import { GITHUB_DEFAULTS, githubConfig } from '../trackers/github/config'
 import { fakeConfigFs } from './fixtures/config-fs'
+import { expectLinear } from './fixtures/scaling'
 
 const P = '/h/.config/claude-code/mods/tracker/config.json'
 const SPECS: readonly DocSpec[] = [{ id: 'github', config: githubConfig }]
@@ -90,6 +91,29 @@ test('a config with 5000 unknown keys gives 50 problems and one count line, and 
   expect(logged[0]).toBe(`config: global.k0${UNKNOWN}`)
   expect(logged[4999]).toBe(`config: global.k4999${UNKNOWN}`)
   expect(log.some(l => l.includes('more problems'))).toBe(false) // the count line is no problem: the log has the real ones
+})
+
+// The cost of the problem path (issue #219): refresh() reads and normalises the file, reports every problem once, and
+// problems() caps the list. Each step grows with the number of bad keys, so 4 times the keys must cost less than 12 times
+// the time. The base is 10000 keys, so the big input is 40000 (fixtures/scaling.ts, "Pick a base size"). At 5000 a plain
+// quadratic step (an array `includes` in report()) stays under the ratio of 12 (10.4 to 11.8 measured) and only the CPU
+// ceiling fires, with a 1.6 times margin. The `log` port only pushes each line to an array: what the real engine does
+// with the lines is the engine's cost, measured live (KB, issue #219).
+const BASE_KEYS = 10_000
+
+test('refresh, problems and the log of the problems grow linearly with the number of unknown keys', async () => {
+  await expectLinear({
+    label: 'config problems',
+    make: k => ({ n: BASE_KEYS * k, text: unknownKeys(BASE_KEYS * k) }),
+    run: async ({ n, text }) => {
+      const { manager, log } = make(text)
+      await manager.refresh()
+      const list = manager.problems()
+      expect(list).toHaveLength(MAX_PROBLEMS + 1) // the work ran: 50 problems and one count line
+      expect(manager.moreProblems()?.count).toBe(n - MAX_PROBLEMS)
+      expect(log).toHaveLength(n) // every problem went to the log port, once
+    },
+  })
 })
 
 test('exactly 50 problems show no count line, 51 show 50 and a count of one', async () => {
