@@ -420,6 +420,9 @@ What the kit does show for a table:
 
 Other kit facts (*verified-kit*):
 
+- A hook that reads `$.session.surfaces()` needs a stub beneath it: `on('session.surfaces', () => ({ value: [] }))` (or `['terminal']`). With none, the call rejects with `HooksError: no implementation for session.surfaces`. The surface of `$.session.start({ surface })` does not feed it. A mod that treats a failed read as "a surface draws" takes the screen branch in every test that forgot the stub (issue #246). `plugins/artifact-tracking/tests/fixtures/world.ts` answers it, default `[]`.
+- A rewrite of a `CommandOutput` row shows in a kit test: `$.ui.mount({ plugin, component: 'CommandOutput', requestId, surface: 'terminal', viewport, props: { command, args, text, isErrored } })` with `on('ui.render', …)` beneath the plugin. The stub receives the props that the hook passed to `next`. The kit cannot read a model request, so a claim about the request needs an e2e check with a fake API (`e2e/support/fake-api.ts`, `commandReplies()`).
+
 - The kit runs the same static scan as `claude plugin validate`. A rule violation shows as `HooksError: <plugin>: hooks module did not load: ...` and fails every test in the file. Run `claude plugin validate` first. Treat that prefix as a scan error, not a test error. The scan rules are in [validate-test-debug](../workflow/validate-test-debug.md).
 - `test(name, { options }, body)` toggles a conditional install such as `if (options.withB === true) installB(on)`. Validate lists the hooks whatever the option says.
 - A test file needs `declare const console: { log: (...a: unknown[]) => void }` (and `performance` if used) to type-check, because the declared libs have no DOM or Node types. `console.log` output does appear in the `claude plugin test` output, although the types give only a surface module a `console` ([d.ts 302:15450-15460](../sources/claude-code-2.1.302/types/claude-code.d.ts#L15450-L15460)).

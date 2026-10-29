@@ -1,0 +1,4 @@
+[
+  [{ "type": "tool_use", "id": "toolu_p196q1", "name": "AskUserQuestion", "input": { "questions": [ { "question": "Where should the probe records live?", "header": "Storage", "multiSelect": false, "options": [ { "label": "QREAL196 state", "description": "Keep them in state" }, { "label": "Store", "description": "Persist them" } ] } ] } }],
+  [{ "type": "text", "text": "noted the answer" }]
+]

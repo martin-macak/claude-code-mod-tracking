@@ -103,6 +103,9 @@ Sources for the `requestId` column and the surface list: the "Raised on" lines i
 
 - A command that answers `command.run` with `{ text, context? }` prints `text` in the transcript. Hook the row with `{ component: 'CommandOutput', props: { command: 'mine' } }` and draw `text` as a tree ([reference.md:133](../sources/claude-code-2.1.295/reference.md#L133), [d.ts:10035](../sources/claude-code-2.1.295/types/claude-code.d.ts#L10035)).
 - `text` is what the model also reads. `context` is only for the model. A tree you draw changes the row, not the stored message.
+- A `ui.render` rewrite of `text` is drawn as Markdown, and the stored row keeps what the command answered, so the next request holds the reply and not the rewrite (*verified-live*, 2.1.310 to 2.1.312; see [questions-and-plans](../concepts/questions-and-plans.md#keeping-track-qa-from-the-model)). The rewrite replaces the whole drawn text, the `<plugin>:` prefix included. A hook must carry every other prop on as received (`onScreen` is set in the fullscreen layout).
+- `requestId` is the uuid of the stored stdout row. `args` is all that follows the command name. `text` is `<plugin>: <reply>`: the engine puts the plugin name in front, and Markdown starts after it on the same line. A reply that starts with a title draws a literal `#`. One leading line break draws the title as a heading (*verified-live*, 2.1.311).
+- The row draws 100 000 characters of `text` at most, then `… N more characters, not drawn`. The engine adds a notice row that no request holds (*verified-live*, 2.1.310). A text that must fit keeps whole units and names the rest.
 - A `UserMessage` rewrite of `text` is drawn up to 100,000 characters ([d.ts:9800](../sources/claude-code-2.1.295/types/claude-code.d.ts#L9800)).
 
 ## 3. Panes
