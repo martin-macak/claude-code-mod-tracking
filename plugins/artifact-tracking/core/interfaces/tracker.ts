@@ -159,6 +159,12 @@ export interface ToolHandle {
   raw(argv: readonly string[], init?: RunOpts): Promise<RunResult>
   /** Feeds one outcome to the breaker and the login flag. */
   record(outcome: ToolOutcome, detail?: string): void
+  /**
+   * Feeds one outcome to the breaker alone: the login flag and the last error stay. For a call whose answer is out of date
+   * (it ended after the account may have changed): it must not set the state of the account, but it still ends the
+   * half-open probe it may be.
+   */
+  recordBreaker(outcome: ToolOutcome): void
   /** A new breaker with the numbers of this tool, for a part of it that must not share the breaker of the tool (a host). */
   spare(): Breaker
   /** The site or account the tool acts on, when it has one. */

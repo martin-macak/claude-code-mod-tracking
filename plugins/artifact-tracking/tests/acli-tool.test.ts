@@ -148,6 +148,226 @@ test('reset after not logged in loads the site again', async () => {
   expect(it.issueType).toBe('Task')
 })
 
+/** A fake acli whose active site the test changes. The answer is read when the call starts, as acli reads its profile. */
+function switching(first = 'a.atlassian.net') {
+  const w = { site: first }
+  return { w, ...setup(a => (isAuth(a) ? res(`Site: ${w.site}\n`) : res(fx.TASK_VIEW_JSON))) }
+}
+
+test('forgetSite: a known site becomes unknown, shows no site, and the next refresh reads the new one', async () => {
+  const { tool, calls, w } = switching()
+  const it = item('PROJ-200', { site: 'b.atlassian.net', key: 'jira:b.atlassian.net/PROJ-200' })
+  expect(await tool.loadActiveSite()).toBe('a.atlassian.net')
+  w.site = 'b.atlassian.net'
+  tool.forgetSite()
+  expect(tool.activeSite).toBeUndefined()
+  expect(tool.status().site).toBeUndefined()
+  await tool.refreshItems([it])
+  expect(tool.activeSite).toBe('b.atlassian.net')
+  expect(calls.filter(isAuth).length).toBe(2)
+  expect(it.issueType).toBe('Task') // the refresh used the new site
+})
+
+test('reset forgets a known site, so a manual refresh reads the site again', async () => {
+  const { tool, calls, w } = switching()
+  await tool.loadActiveSite()
+  w.site = 'b.atlassian.net'
+  tool.reset()
+  expect(tool.activeSite).toBeUndefined()
+  expect(tool.status().site).toBeUndefined()
+  expect(await tool.loadActiveSite()).toBe('b.atlassian.net')
+  expect(calls.filter(isAuth).length).toBe(2)
+})
+
+/** A promise that the test settles by hand. */
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>(r => (resolve = r))
+  return { promise, resolve }
+}
+
+/**
+ * Holds the first `acli jira auth status` open until `release()`. It answers `firstAnswer` with the site of the moment it
+ * started (default: that site). Every later lookup answers that site at once.
+ */
+function heldFirstLookup(firstAnswer: (site: string) => RunResult = site => res(`Site: ${site}\n`)) {
+  const w = { site: 'a.atlassian.net' }
+  const held = deferred()
+  const started = deferred()
+  let n = 0
+  const t = setup(async a => {
+    if (!isAuth(a)) return res(fx.TASK_VIEW_JSON)
+    n += 1
+    const mine = w.site
+    if (n > 1) return res(`Site: ${mine}\n`)
+    started.resolve()
+    await held.promise
+    return firstAnswer(mine)
+  })
+  return { ...t, w, release: held.resolve, firstStarted: started.promise }
+}
+
+/**
+ * Holds every `acli jira auth status` open until the test lets it end. Lookup `i` (from 0) answers `answer(i)`. `began[i]`
+ * settles when it starts and `held[i]` lets it end. A lookup beyond `count` ends at once, so a test that starts one too many
+ * fails on its answer instead of hanging. Order and causality only: no tick, no timer.
+ */
+function heldLookups(answer: (i: number) => RunResult, count = 2) {
+  const began = Array.from({ length: count }, deferred)
+  const held = Array.from({ length: count }, deferred)
+  let n = 0
+  const t = setup(async a => {
+    if (!isAuth(a)) return res(fx.TASK_VIEW_JSON)
+    const i = n++
+    began[i]?.resolve()
+    await held[i]?.promise
+    return answer(i)
+  })
+  return { ...t, began, held }
+}
+
+test('a lookup in flight when the site is forgotten answers its caller but never caches the old site', async () => {
+  const { tool, calls, w, release, firstStarted } = heldFirstLookup()
+  const first = tool.loadActiveSite()
+  await firstStarted
+  w.site = 'b.atlassian.net' // the person switched while the lookup ran
+  tool.forgetSite()
+  const second = tool.loadActiveSite() // a new lookup, not the held one
+  release()
+  expect(await first).toBe('a.atlassian.net')
+  expect(await second).toBe('b.atlassian.net')
+  expect(calls.filter(isAuth).length).toBe(2)
+  expect(tool.activeSite).toBe('b.atlassian.net')
+  expect(tool.status().site).toBe('b.atlassian.net')
+})
+
+test('a forgotten site stays unknown when the lookup in flight ends, and the next lookup asks again', async () => {
+  const { tool, calls, w, release, firstStarted } = heldFirstLookup()
+  const first = tool.loadActiveSite()
+  await firstStarted
+  w.site = 'b.atlassian.net'
+  tool.forgetSite()
+  release()
+  await first
+  expect(tool.activeSite).toBeUndefined()
+  expect(await tool.loadActiveSite()).toBe('b.atlassian.net')
+  expect(calls.filter(isAuth).length).toBe(2)
+})
+
+test('a "not logged in" answer of a lookup in flight at the forget is not cached either', async () => {
+  const { tool, w, release, firstStarted } = heldFirstLookup(() => authNo())
+  const first = tool.loadActiveSite()
+  await firstStarted
+  w.site = 'b.atlassian.net'
+  tool.forgetSite()
+  release()
+  expect(await first).toBe(null)
+  expect(tool.activeSite).toBeUndefined() // not null: the "no site" answer belongs to the forgotten era
+  expect(tool.status().loggedIn).toBe(null) // the old answer does not set the login flag either
+  expect(tool.status().lastError).toBeUndefined()
+  expect(await tool.loadActiveSite()).toBe('b.atlassian.net')
+  expect(tool.status().loggedIn).toBe(true)
+})
+
+test('a lookup that ends after the forget does not clear the newer lookup: a third caller joins it', async () => {
+  const { tool, calls, began, held } = heldLookups(i => res(`Site: s${i + 1}.atlassian.net\n`))
+  const first = tool.loadActiveSite()
+  await began[0]?.promise
+  tool.forgetSite()
+  const second = tool.loadActiveSite() // a new lookup, held open
+  await began[1]?.promise
+  held[0]?.resolve() // the old lookup ends while the newer one is still open
+  await first
+  const third = tool.loadActiveSite() // must join the newer lookup, not start a third
+  held[1]?.resolve()
+  expect(await second).toBe('s2.atlassian.net')
+  expect(await third).toBe('s2.atlassian.net')
+  expect(calls.filter(isAuth).length).toBe(2)
+})
+
+test('an old "not logged in" answer that ends after a newer site answer leaves the tool logged in', async () => {
+  const { tool, began, held } = heldLookups(i => (i === 0 ? authNo() : res('Site: b.atlassian.net\n')))
+  const first = tool.loadActiveSite()
+  await began[0]?.promise
+  tool.forgetSite() // a login
+  const second = tool.loadActiveSite()
+  await began[1]?.promise
+  held[1]?.resolve()
+  await second
+  held[0]?.resolve()
+  expect(await first).toBe(null)
+  expect(tool.activeSite).toBe('b.atlassian.net')
+  expect(tool.status().loggedIn).toBe(true)
+  expect(tool.status().lastError).toBeUndefined()
+})
+
+test('an old site answer that ends after a newer "not logged in" answer leaves the tool logged out', async () => {
+  const { tool, began, held } = heldLookups(i => (i === 0 ? res('Site: a.atlassian.net\n') : authNo()))
+  const first = tool.loadActiveSite()
+  await began[0]?.promise
+  tool.forgetSite() // a logout
+  const second = tool.loadActiveSite()
+  await began[1]?.promise
+  held[1]?.resolve()
+  await second
+  held[0]?.resolve()
+  expect(await first).toBe('a.atlassian.net')
+  expect(tool.activeSite).toBe(null)
+  expect(tool.status().loggedIn).toBe(false)
+})
+
+// An old answer must not set the account state, but it still ends the half-open probe it may be: a breaker that keeps
+// `probing` refuses every call for the rest of the session. A fix that only skips `record` fails here.
+test('an old lookup that was the half-open probe still ends the probe and closes the breaker', async () => {
+  let mode: 'fail' | 'hold' = 'fail'
+  const began = deferred()
+  const held = deferred()
+  const { tool, clock } = setup(async a => {
+    if (!isAuth(a)) return res(fx.TASK_VIEW_JSON)
+    if (mode === 'fail') return res('', 1, 'dial tcp: i/o timeout')
+    began.resolve()
+    await held.promise
+    return authOk()
+  })
+  for (let i = 0; i < 3; i++) await tool.loadActiveSite() // three failures open the breaker
+  expect(tool.status().breaker).toBe('open')
+  clock.t = tool.status().openUntil ?? 0
+  mode = 'hold'
+  const probe = tool.loadActiveSite() // the one call of the half-open breaker
+  await began.promise
+  tool.forgetSite()
+  held.resolve()
+  expect(await probe).toBe(SITE)
+  expect(tool.status().breaker).toBe('closed')
+  expect(tool.activeSite).toBeUndefined() // the old answer set no site
+})
+
+// The same for an "Unauthorized" answer: it feeds the breaker as a failure, so the probe ends and the breaker opens again.
+// A fix that drops the breaker feed of a stale "auth" answer leaves the breaker half-open, and it refuses every call.
+test('an old "not logged in" lookup that was the half-open probe still ends the probe and opens the breaker again', async () => {
+  let mode: 'fail' | 'hold' = 'fail'
+  const began = deferred()
+  const held = deferred()
+  const { tool, clock } = setup(async a => {
+    if (!isAuth(a)) return res(fx.TASK_VIEW_JSON)
+    if (mode === 'fail') return res('', 1, 'dial tcp: i/o timeout')
+    began.resolve()
+    await held.promise
+    return authNo()
+  })
+  for (let i = 0; i < 3; i++) await tool.loadActiveSite() // three failures open the breaker
+  expect(tool.status().breaker).toBe('open')
+  clock.t = tool.status().openUntil ?? 0
+  mode = 'hold'
+  const probe = tool.loadActiveSite() // the one call of the half-open breaker
+  await began.promise
+  tool.forgetSite()
+  held.resolve()
+  expect(await probe).toBe(null)
+  expect(tool.status().breaker).toBe('open') // the probe ended; a skipped feed leaves it half-open
+  expect(tool.status().loggedIn).toBe(null) // and the old answer set no login flag
+})
+
 test('loadActiveSite: a network failure leaves the site unknown and counts as a failure', async () => {
   const { tool } = setup(() => res('', 1, '✗ Error: failed to retrieve authenticated status'))
   expect(await tool.loadActiveSite()).toBe(null)

@@ -1,4 +1,5 @@
-// The Jira work items that a Bash command names through `acli jira workitem <sub>`. Pure.
+// The Jira work items that a Bash command names through `acli jira workitem <sub>`, and the commands that may change the
+// active acli account (`acli jira auth` and `acli auth`: login, logout, switch). Pure.
 // Only a key that stands as an argument counts: `view KEY`, or the value of `--key`/`-k` of the sub-commands that change an item.
 // Not a key: a list (`--key A-1,B-2`), a JQL query, `search`, `create`, `delete` and `link` (two keys, no `--key`).
 
@@ -49,8 +50,11 @@ function keyFlag(args: readonly string[]): string | undefined {
   return values.size === 1 ? [...values][0] : undefined
 }
 
+/** True when the words run acli. The binary may carry a path. */
+const isAcli = (words: readonly string[]): boolean => words[0]?.split('/').pop() === 'acli'
+
 function one(words: readonly string[]): AcliWorkitem | undefined {
-  if (words[0]?.split('/').pop() !== 'acli' || words[1] !== 'jira' || words[2] !== 'workitem') return undefined
+  if (!isAcli(words) || words[1] !== 'jira' || words[2] !== 'workitem') return undefined
   const sub = words[3] ?? ''
   const args = words.slice(4)
   if (sub === 'view') {
@@ -72,4 +76,25 @@ function one(words: readonly string[]): AcliWorkitem | undefined {
  */
 export function acliWorkitems(command: string): AcliWorkitem[] {
   return splitShell(command).flatMap(seg => one(stripLead(seg).words) ?? [])
+}
+
+/** The `acli ... auth` sub-commands that change which account is active. `status` changes nothing. */
+const AUTH_CHANGES: ReadonlySet<string> = new Set(['login', 'logout', 'switch'])
+
+/**
+ * `acli jira auth <sub>` or the global `acli auth <sub>`, with a sub-command that changes the account. `acli admin auth` and
+ * `acli rovodev auth` are other families (organization admin and Rovo Dev accounts): they change no Jira site.
+ */
+function authChange(words: readonly string[]): boolean {
+  if (!isAcli(words)) return false
+  const sub = words[1] === 'jira' && words[2] === 'auth' ? words[3] : words[1] === 'auth' ? words[2] : undefined
+  return sub !== undefined && AUTH_CHANGES.has(sub)
+}
+
+/**
+ * True when `command` runs an `acli jira auth` or `acli auth` login, logout or switch: the active site may be another one
+ * after it (issue #225). Read as `acliWorkitems` reads: the words of each command, behind the same wrappers.
+ */
+export function acliAuthChange(command: string): boolean {
+  return splitShell(command).some(seg => authChange(stripLead(seg).words))
 }

@@ -66,7 +66,10 @@ export class Capture {
    * (explicit URLs only, as for a live tool-result row). A use carries its whole self as `ev.result`. The kinds prepare
    * quickly: a replay runs inside a session load or switch and must not wait for a CLI. One exception: a kind may need
    * the answer of its tool to accept a claim (`accept`) or to read a tool use (`fromTool`), and a transcript with such a
-   * use waits for it. The kind that does it shares one lookup between the callers that ask at once and bounds it by the tool timeout and the breaker. A site or a "not logged in" answer is cached; a lookup that fails for another reason is asked again until the breaker opens.
+   * use waits for it. The kind that does it shares one lookup between the callers that ask at once and bounds it by the tool
+   * timeout and the breaker. A site or a "not logged in" answer is cached; a lookup that fails for another reason is asked
+   * again until the breaker opens. A replayed command that may change the account makes the kind forget its answer, so a
+   * later use in the same transcript asks again.
    */
   async replay(batch: readonly ReplayItem[]): Promise<Claim[]> {
     const claims: Claim[] = []
