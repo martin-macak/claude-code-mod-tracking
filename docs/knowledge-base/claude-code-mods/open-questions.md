@@ -88,6 +88,15 @@ Left open by the questions tracker of issue [#71](https://github.com/martin-maca
 | 48 | What does `ExitPlanMode` give for a teammate that awaits its leader (`awaitingLeaderApproval`), and for a plan edited with `Ctrl+G` (`planWasEdited`)? | Open. The questions tracker keeps no call with `awaitingLeaderApproval`. |
 | 49 | Does `ui.copy` reach the clipboard when a press of a pane key calls it? | **Partly answered 2026-10-22.** Live (Claude Code 2.1.307, fake API, tmux): a press of `y` on a call raises `ui.copy`, and a hook of another plugin hears it with the Markdown of the call as `text`. That probe answered `{ value: { isCopied: true } }` without `next`, so the engine wrote nothing and the toast said `Copied Q1 as Markdown`; the clipboard of the machine did not change (`e2e/features/questions.feature`, "The copy key hands the selected call to the engine as Markdown"). Open: the real write by the engine (a clipboard tool or OSC 52) with no probe, which would overwrite the clipboard. |
 
+Left open by `/track qa` on the screen only, issues [#196](https://github.com/martin-macak/claude-code-mod-tracking/issues/196) and [#246](https://github.com/martin-macak/claude-code-mod-tracking/issues/246). The page [questions-and-plans](concepts/questions-and-plans.md#keeping-track-qa-from-the-model) holds the evidence.
+
+| # | Question | Status |
+| --- | --- | --- |
+| 50 | Do the desktop app and the mobile app draw a `text` rewrite of a `CommandOutput` row, and keep the stored row as it is? The types say the event is raised on every attached surface and a `text` rewrite draws there (*types-only*). A surface that does not draw it shows the stub: the person loses the view and nothing leaks. | Open. Run `/track qa` in each app and read the next request. |
+| 51 | Does the result hold on a machine without managed settings (no `cc-plugin-sec-default` guard)? Every run had the guard loaded and did not bypass it. The guard lists neither `ui.render` nor `command.run` (2.1.310, 2.1.311). | Open. Same run on a machine with no managed settings (issue [#91](https://github.com/martin-macak/claude-code-mod-tracking/issues/91)). |
+| 52 | Does a real model, asked to quote any `/track qa` text of its context, answer none? Every run used a fake Messages API that scans the request. | Open. One run with a real model, after a `/track qa` and a prompt. |
+| 53 | What does the VS Code host print for `/track qa`? It attaches no surface, so the mod answers the whole text (*types-only*, [d.ts 302:10796-10798](sources/claude-code-2.1.302/types/claude-code.d.ts#L10796-L10798)). | Open. Run it in the VS Code extension. |
+
 ## See also
 
 - [gotchas](gotchas.md)

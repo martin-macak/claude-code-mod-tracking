@@ -58,8 +58,27 @@ export interface CommandSpec {
    * Present: the sub-command answers with this text, in place of the tracking list (issue #71, `/track qa`). `args` is what
    * follows the sub, as typed. The router runs no `command` event for it and opens no pane. A throw rejects, as any failure
    * of a command does. Absent: the first tracker's `command` handler runs, and the reply is the list.
+   * The reply is a transcript line, so the model reads it in its next request. Where the model should not read the text, add
+   * `screen`.
    */
   text?(ctx: TrackerContext, args: string): string | Promise<string>
+  /**
+   * The text of a sub-command that a surface draws and the model does not read (issue #246, `/track qa`). It counts only with
+   * `text`. Where a surface draws, the router answers `stub` in place of `text`: the engine stores the stub, and the next
+   * request holds it. A `CommandOutput` rewrite then draws `draw` in the row. Where no surface draws (`claude -p`, the SDK, the
+   * VS Code host) and for `--send` (a word the router takes off the arguments of a sub that has `screen`), the reply is `text`.
+   * `undefined` from `stub` keeps the plain `text` (a usage line, nothing to show).
+   */
+  readonly screen?: {
+    /** The short reply for a surface that draws. It names what the row will draw, with no private word. `args` as for `text`. */
+    stub(ctx: TrackerContext, args: string): string | undefined | Promise<string | undefined>
+    /**
+     * The text that the row draws for a stub. `args` is what followed the sub when the command ran, `shown` the text of the row
+     * as the engine stores it (the plugin prefix and the stub). A render only reads: no write, no start. Called again on each
+     * redraw, and for an old row, so it must name its calls by the stub and not by "the newest". `undefined` leaves the stub.
+     */
+    draw(ctx: TrackerContext, args: string, shown: string): string | undefined | Promise<string | undefined>
+  }
 }
 
 /**

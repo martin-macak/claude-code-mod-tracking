@@ -64,6 +64,9 @@ export class SwitchRunner {
     }
     // The transcript fills in what the stored copy lacks, whether or not there was a copy (D7).
     await this.guarded('replay', () => this.replay(), where)
+    // A row that drew before the data was here (the stub of `/track qa` after a resume: its calls were not in the slot) draws
+    // again only at a redraw, and the tick is the next one, up to 30 s away (issue #246). One call, after the replay.
+    this.d.ports.ui.invalidate()
   }
 
   /**

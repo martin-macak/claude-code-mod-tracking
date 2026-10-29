@@ -194,6 +194,7 @@ What to copy: one explicit composition root that names every tracker (ESLint con
 
 - `TrackerContext.ui.copy(text)`: the text goes to the clipboard of the surface that the press came from. The footer Button passes the surface of its press event, the pane hands it to `runAction`, and the host binds it into the context, so a tracker never names a surface. `ctx.ui` also has `toast`.
 - `CommandSpec.text(ctx, args)`: a declared sub-command that answers with its own text, with no pane and no list. The router checks the config file first, because the text may hang on a toggle.
+- `CommandSpec.screen { stub, draw }`: for a sub-command that has `text`. Where a surface draws, the router answers `stub(ctx, args)` and a `CommandOutput` hook draws `draw(ctx, args, shown)`: the stored row and the next model request hold the stub only. A sub-command that has `screen` takes the word `--send` off its arguments and answers `text` for it. `draw` reads only and must name its data by the stub, because an old row draws again.
 - `SectionSpec.text` (`'rows'` by default, `'title'`): the `/track` text keeps the rows of a private section out. `GroupSpec.text` carries it by list, and a view marks the rows `quiet` (`TreeRow.quiet`), because the groups of a view mix sections. A tracker never sets `quiet`.
 - Every tracker key runs after the config file was checked, so a key reads a toggle that was edited since the last tick.
 

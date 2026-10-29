@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { FakeApi, type FakeTurn, streamOf, toolResultsOf } from '../support/fake-api.ts'
+import { commandRepliesOf, FakeApi, type FakeTurn, streamOf, toolResultsOf } from '../support/fake-api.ts'
 import { fakeApiEnv, PARENT_SESSION_VARS } from '../support/fake-api-env.ts'
 
 const ASK: FakeTurn = [
@@ -85,6 +85,65 @@ test('toolResultsOf reads the tool_result blocks of every message, as a string o
   ])
   assert.deepEqual(toolResultsOf({}), [])
   assert.deepEqual(toolResultsOf({ messages: [{ role: 'user', content: 'plain' }] }), [])
+})
+
+// Issue #246. The engine puts the reply of a slash command in the next request as a user message that holds
+// `<local-command-stdout>...</local-command-stdout>`. It is not a tool result, so toolResultsOf cannot see it.
+test('commandRepliesOf reads every <local-command-stdout> block of the messages, as a string or as text parts, and nothing else', () => {
+  const body = {
+    messages: [
+      { role: 'user', content: '<command-name>/track</command-name> <command-args>qa</command-args>' },
+      {
+        role: 'user',
+        content: '<local-command-stdout>artifact-tracking: Questions and answers Q1 (1 call)</local-command-stdout>',
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'before <local-command-stdout>one\nline two</local-command-stdout> and <local-command-stdout>three</local-command-stdout>',
+          },
+          {
+            type: 'tool_result',
+            tool_use_id: 'a',
+            content: '<local-command-stdout>in a tool result</local-command-stdout>',
+          },
+          { type: 'text', text: 'no block here' },
+        ],
+      },
+    ],
+  }
+  assert.deepEqual(commandRepliesOf(body), [
+    'artifact-tracking: Questions and answers Q1 (1 call)',
+    'one\nline two',
+    'three',
+  ])
+  assert.deepEqual(commandRepliesOf({}), [])
+  assert.deepEqual(
+    commandRepliesOf({ messages: [{ role: 'user', content: [{ type: 'text', text: '<local-command-stdout>open' }] }] }),
+    [],
+  )
+})
+
+test('the fake keeps the command replies that the engine sent the model, each once: a later request repeats the history', async () => {
+  const api = await FakeApi.start([DONE])
+  try {
+    const reply = { role: 'user', content: '<local-command-stdout>artifact-tracking: the stub</local-command-stdout>' }
+    await post(api, { stream: true, tools: [{ name: 'x' }], messages: [reply] })
+    await post(api, {
+      stream: true,
+      tools: [{ name: 'x' }],
+      messages: [reply, { role: 'user', content: '<local-command-stdout>a later reply</local-command-stdout>' }],
+    })
+    assert.deepEqual(api.commandReplies(), ['artifact-tracking: the stub', 'a later reply'])
+    assert.deepEqual(
+      api.requests.map(r => r.commandReplies.length),
+      [1, 2],
+    )
+  } finally {
+    await api.close()
+  }
 })
 
 test('the fake plays one turn for each request with tools, in order, and the last turn repeats', async () => {

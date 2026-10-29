@@ -1,0 +1,60 @@
+# Runs (Claude Code 2.1.311, fake Messages API, tmux)
+
+E0  Guard on 2.1.311 (final review, `claude -p "/p246s" --debug-file`, same scratch plugin, a fresh config folder):
+      [DEBUG] cc-plugin-sec-default@builtin seated outermost: this machine has managed settings
+      [DEBUG] hooks module cc-plugin-sec-default@builtin loaded (native, environment 1, tier prepend); events: classic.*,prompt.section,
+        prompt.context,prompt.attachment,prompt.compose,skill.prompt,attribution.text,session.append,session.compact,settings.read,
+        tool.describe,command.describe,agent.offer,agent.spawn,tool.register,tool.list,tool.check,ui.log,env.get,env.set,plugin.register
+      [DEBUG] hooks module p246-probe@inline loaded (worker, environment 2, tier user); events: session.start,command.run,ui.render
+    The guard has neither `ui.render` nor `command.run`. The tmux runs set `--permission-mode bypassPermissions` (no permission prompts);
+    the probe calls no tool, and no run switched the guard off. The final-review runs set no permission flag.
+
+E1  session.start log of the probe in the tmux REPL: {"surface":"terminal","isInteractive":true,"surfaces":["terminal"]}
+E1b session.start log of the probe under `claude -p` (three runs of the study, and five of the final review):
+    {"surface":null,"isInteractive":false,"surfaces":[]}
+
+E2  main screen (CLAUDE_CODE_NO_FLICKER=0), 150x50. No leading line break draws a literal "#":
+    ❯ /p246b
+      ⎿  p246-probe: # Questions and answers B-NO-LEADING-NL
+         Q1 · turn 1 · answered · 2026-10-27 10:00 UTC
+         ...
+E3  Same screen. One leading line break draws the heading (no "#"); the prefix stays alone on its line:
+    ❯ /p246a
+      ⎿  p246-probe:
+         Questions and answers A-LEADING-NL
+         Q1 · turn 1 · answered · 2026-10-27 10:00 UTC
+         ...
+E4  Fullscreen layout (CLAUDE_CODE_NO_FLICKER=1): the same two screens as E2 and E3.
+
+E5  /p246c (leading line break, then "## Q3 ..."): the "##" is gone, the heading draws:
+      ⎿  p246-probe:
+         Q3 · turn 1 · answered · 2026-10-27 10:00 UTC
+         Storage
+         ...
+
+E6  /p246s (stub, row rewritten). The row draws the rewrite with no prefix:
+    ❯ /p246s
+      ⎿  Questions and answers S-REWRITE
+         Q1 · turn 1 · answered · 2026-10-27 10:00 UTC
+         ...
+E7  The next request (the prompt "hello" after E2, E3 and E6). Its <local-command-stdout> blocks are:
+      "p246-probe: # Questions and answers B-NO-LEADING-NL\n\n## Q1 ..."
+      "p246-probe: \n# Questions and answers A-LEADING-NL\n\n## Q1 ..."
+      "p246-probe: STUB246: Questions and answers Q1 are shown on the screen only."
+    The messages hold no "S-REWRITE". The fake API scans the `messages` array of each request (not the system prompt) for
+    "Questions and answers [A-Z-]+", STUB246, QA246 and SECRET246, and `S-REWRITE` would match the first pattern. SECRET246 is
+    in the messages only because the controls E2 and E3 hold it in their replies.
+
+E8  claude -p "/p246a" --output-format text, the first bytes:   p246-probe: \n# Questions and answers A-LEADING-NL\n\n## Q1 ...
+    (the prefix, a space, one line break, then the Markdown source). No render, as in #196 L11.
+E9  claude -p "/p246s" --output-format text:                    p246-probe: STUB246: Questions and answers Q1 are shown on the screen only.
+
+# Kit runs (claude plugin test, the kit of 2.1.311)
+
+K0   session.start {surface:null, isInteractive:false}: the hook's $.session.surfaces() rejects:
+     "HooksError: no implementation for session.surfaces"
+K0b  session.start {surface:'terminal', isInteractive:true}: it rejects the same way. The surface of the start does not feed it.
+K1   a test that answers on('session.surfaces', () => ({ value: [] })): the hook reads [].
+K3   $.ui.mount({ plugin, component: 'CommandOutput', requestId, surface: 'terminal', viewport, props: { command: 'p246s',
+     args: '', text: 'p246-probe: STUB246', isErrored: false } }) with on('ui.render') beneath the plugin: the engine stub
+     receives { command, args, text: '# Questions and answers S-REWRITE\n\n## Q1 ...' }, the rewrite of the hook.

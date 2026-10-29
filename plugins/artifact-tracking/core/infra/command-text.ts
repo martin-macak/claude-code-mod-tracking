@@ -59,3 +59,14 @@ export function problemsText(path: string | undefined, problems: readonly string
     ...(rest > 0 ? [`  and ${rest} more ${rest === 1 ? 'problem' : 'problems'}: see /track help.`] : []),
   ].join('\n')
 }
+
+/**
+ * `--send` as a whole word, in any case, before or after the other words: the person asks for the whole text on purpose
+ * (issue #246). The router takes it off the arguments of a sub that has a `screen` spec. `rest` is the other words, one space
+ * apart. A word that only starts with `--send` is no `--send`.
+ */
+export function takeSend(args: string): { send: boolean; rest: string } {
+  const words = args.split(/\s+/).filter(w => w !== '')
+  const rest = words.filter(w => w.toLowerCase() !== '--send')
+  return { send: rest.length !== words.length, rest: rest.join(' ') }
+}

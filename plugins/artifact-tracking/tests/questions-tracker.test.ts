@@ -11,7 +11,7 @@ import type { RowRef } from '../core/interfaces/view'
 import { reasonSet } from '../core/lib/reasons'
 import { questionsTracker } from '../trackers/questions'
 import { asCalls } from '../trackers/questions/log'
-import { callMarkdown } from '../trackers/questions/markdown'
+import { callMarkdown, qaMarkdown } from '../trackers/questions/markdown'
 import type { QuestionCall } from '../trackers/questions/types'
 import { fakeConfig } from './fixtures/config-fs'
 import { managerWorld } from './fixtures/manager'
@@ -36,6 +36,8 @@ type Setup = {
   messages?: ReturnType<typeof messageOf>[]
   store?: Record<string, Json>
   session?: string
+  /** What `$.session.surfaces()` answers. Default `[]`: nothing draws, so `/track qa` answers its whole text. */
+  surfaces?: readonly string[]
 }
 
 /**
@@ -79,6 +81,7 @@ function setup(o: Setup = {}) {
         cwd: '/work',
         ...(o.session ? { id: o.session } : {}),
         ...(o.messages ? { messages: o.messages } : {}),
+        ...(o.surfaces ? { surfaces: o.surfaces } : {}),
       },
       ...(o.store ? { store: o.store } : {}),
     },
@@ -90,7 +93,9 @@ function setup(o: Setup = {}) {
     t.m.turnComplete(t.w.ports, { input: { turnId, reason: 'answer', durationMs: 1, answer: '' } as Json })
   const qa = async (args = '') => (await t.m.track(t.w.ports, `qa ${args}`.trim())).text
   const begin = () => t.m.start(t.w.ports, { cwd: '/work', fromSessionStart: true })
-  return { ...t, calls, hear, start, end, qa, begin }
+  /** What the `CommandOutput` row of `/track <args>` draws, when the text of the row is `shown`. */
+  const screen = (args: string, shown: string) => t.m.commands.screenText(t.w.ports, args, shown)
+  return { ...t, calls, hear, start, end, qa, begin, screen }
 }
 
 // ---------------------------------------------------------------- capture
@@ -541,12 +546,107 @@ test('/track qa prints every call as Markdown, and /track qa n one call, masked 
   await t.hear({ ...ANSWERED_ASK, toolUseId: 'a' })
   await t.hear({ ...LIVE_ESC, toolUseId: 'b' })
   const all = await t.qa()
-  expect(all.startsWith('# Questions and answers\n\n## Q1 · answered')).toBe(true)
+  expect(all.startsWith('\n# Questions and answers\n\n## Q1 · answered')).toBe(true) // a line break after the plugin prefix (#246)
   expect(all).toContain('\n\n## Q2 · declined')
-  expect(await t.qa('2')).toBe(callMarkdown(t.calls()[1]!, true))
+  expect(await t.qa('2')).toBe(`\n${callMarkdown(t.calls()[1]!, true)}`)
   expect(await t.qa('3')).toBe('No call 3. Calls kept: 1, 2.')
-  expect(await t.qa('x')).toBe('Usage: /track qa [n]')
+  expect(await t.qa('x')).toBe('Usage: /track qa [--send] [n]')
   expect(t.w.ui.opened).toBe(0) // no pane, no list
+})
+
+// ---------------------------------------------------------------- /track qa on the screen only (issue #246)
+
+test('where a surface draws, /track qa answers a stub that names the call numbers and holds no word of a call', async () => {
+  const t = setup({ surfaces: ['terminal'] })
+  await t.hear({ ...ANSWERED_ASK, toolUseId: 'a' })
+  await t.hear({ ...LIVE_ESC, toolUseId: 'b' })
+  const stub = await t.qa()
+  expect(stub).toBe(
+    'Questions and answers Q1–Q2 (2 calls): drawn on the screen only. /track qa --send puts them in the context of the model.',
+  )
+  expect(await t.qa('2')).toContain('Questions and answers Q2 (1 call): drawn on the screen only.')
+  for (const call of t.calls()) for (const q of call.items ?? []) expect(stub).not.toContain(q.question)
+  expect(t.w.ui.opened).toBe(0)
+})
+
+test('/track qa --send, with no surface, and the plain replies answer the text, whatever the surface', async () => {
+  const drawn = setup({ surfaces: ['terminal'] })
+  await drawn.hear({ ...ANSWERED_ASK, toolUseId: 'a' })
+  expect(await drawn.qa('--send')).toBe(`\n${qaMarkdown(drawn.calls(), true)}`)
+  expect(await drawn.qa('--SEND 1')).toBe(`\n${callMarkdown(drawn.calls()[0]!, true)}`)
+  expect(await drawn.qa('9')).toBe('No call 9. Calls kept: 1.')
+  expect(await drawn.qa('x')).toBe('Usage: /track qa [--send] [n]')
+  expect(await drawn.qa('--send x')).toBe('Usage: /track qa [--send] [n]')
+  const none = setup({ surfaces: [] })
+  await none.hear({ ...ANSWERED_ASK, toolUseId: 'a' })
+  expect((await none.qa()).startsWith('\n# Questions and answers\n\n## Q1 · answered')).toBe(true)
+  const empty = setup({ surfaces: ['terminal'] })
+  expect(await empty.qa()).toBe('No questions asked in this session.')
+})
+
+test('the row of the stub draws the Markdown of exactly the calls it names, also after more calls came', async () => {
+  const t = setup({ surfaces: ['terminal'] })
+  await t.hear({ ...ANSWERED_ASK, toolUseId: 'a' })
+  await t.hear({ ...LIVE_ESC, toolUseId: 'b' })
+  const stub = await t.qa()
+  const row = `artifact-tracking: ${stub}`
+  const first = await t.screen('qa', row)
+  expect(first).toBe(qaMarkdown(t.calls(), true))
+  await t.hear({ ...ANSWERED_ASK, toolUseId: 'c' })
+  expect(t.calls()).toHaveLength(3)
+  expect(await t.screen('qa', row)).toBe(first) // the old row draws the same two calls: Q3 came after it
+  const one = await t.qa('2')
+  expect(await t.screen('qa 2', `artifact-tracking: ${one}`)).toBe(callMarkdown(t.calls()[1]!, true))
+})
+
+test('the row of a --send reply, of the usage line and of a row with no call to draw is left to the engine', async () => {
+  const t = setup({ surfaces: ['terminal'] })
+  expect(
+    await t.screen('qa', 'artifact-tracking: Questions and answers Q1–Q2 (2 calls): drawn on the screen only. x'),
+  ).toBeUndefined() // no calls yet: the slot has not loaded
+  await t.hear({ ...ANSWERED_ASK, toolUseId: 'a' })
+  const whole = `artifact-tracking: ${await t.qa('--send')}`
+  expect(await t.screen('qa --send', whole)).toBeUndefined()
+  expect(await t.screen('qa', whole)).toBeUndefined() // no stub in the text: the whole text is the row
+  expect(await t.screen('qa x', 'artifact-tracking: Usage: /track qa [--send] [n]')).toBeUndefined()
+  expect(await t.screen('', 'artifact-tracking: No tracked items yet.')).toBeUndefined()
+})
+
+test('the row takes the mask and the caps of the config as they are now (an old row redraws with the new mask)', async () => {
+  const file = (mask: boolean, maxCalls = 100): JsonObject => ({ trackers: { questions: { mask, maxCalls } } })
+  const cfgs: ReturnType<typeof lagging>[] = []
+  const t = setup({
+    surfaces: ['terminal'],
+    config: specs => {
+      const c = lagging(specs, file(true))
+      cfgs.push(c)
+      return c
+    },
+  })
+  const KEY = `ghp_${'a1b2c3d4e5'.repeat(4)}`
+  await t.hear({
+    ...ANSWERED_ASK,
+    result: {
+      result: {
+        questions: LIVE_QUESTIONS,
+        answers: { 'Where should the records live?': `in ${KEY}`, 'Which checks should run?': 'Lint' },
+      },
+    } as unknown as Json,
+  })
+  await t.hear({ ...ANSWERED_ASK, toolUseId: 'b' })
+  const row = `artifact-tracking: ${await t.qa()}`
+  expect(await t.screen('qa', row)).not.toContain(KEY)
+  cfgs[0]?.edit(file(false))
+  await t.m.refreshConfig(t.w.ports)
+  expect(await t.screen('qa', row)).toContain(KEY) // the new mask, at the next redraw
+  cfgs[0]?.edit(file(true, 1))
+  await t.m.refreshConfig(t.w.ports)
+  // Q1 is over the new limit of one call: the old row names it in one line, and still draws Q2.
+  const drawn = (await t.screen('qa', row)) ?? ''
+  expect(drawn).toContain('_Q1 is no longer kept._')
+  expect(drawn).toContain('## Q2 ')
+  expect(drawn).not.toContain('## Q1 ')
+  expect(drawn).not.toContain(KEY)
 })
 
 test('/track qa with no call says so', async () => {

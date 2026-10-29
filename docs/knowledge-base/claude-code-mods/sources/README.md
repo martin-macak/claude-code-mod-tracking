@@ -82,7 +82,34 @@ Captured on 2026-10-26 from the real artifact-tracking mod and one throwaway pro
 | `config-log-burst/evidence.md`, `excerpts/` | The tables of the study and the debug entries of one call. The raw logs and request logs are not kept. |
 | `config-log-burst/README.md` | The question, the grade of each run type and how to redo a run. |
 
-Absolute scratch paths are replaced with `<SCRATCH>` and `<REPO>`. Do not edit it. To add more evidence, make a new dated folder.
+Absolute scratch paths are replaced with `<SCRATCH>` and `<REPO>`.
+
+The same folder holds a second probe, `p196-probe/`, captured on 2026-10-26 from the throwaway probe mod of [issue #196](https://github.com/martin-macak/claude-code-mod-tracking/issues/196), Claude Code 2.1.310 (macOS), against a fake Messages API in tmux and under `claude -p`. Not a primary source: it is the evidence behind the section [Keeping `/track qa` from the model](../concepts/questions-and-plans.md#keeping-track-qa-from-the-model).
+
+| Content | Origin |
+| --- | --- |
+| `p196-probe/probe/` | The probe mod: eight commands and one `ui.render` hook on `CommandOutput`. |
+| `p196-probe/fake/`, `run.sh`, `run-mod.sh`, `drive.sh`, `build-evidence.mjs` | The fake Messages API, the launchers, the tmux driver and the script that builds the log. |
+| `p196-probe/evidence-log.txt` | The numbered, scrubbed evidence log (runs H1 to H7, T1 to T9, B1). |
+| `README.md` | What `p196-probe/` is, what it showed and how to redo it. |
+
+Rebuilt from the three comments of the issue. Its `README.md` describes this probe only. Left out: the request bodies (they hold the system prompt), the scratch config folders and the tracker config. Absolute scratch paths are `<SCRATCH>`.
+
+Do not edit the folder. To add more evidence, make a new dated folder.
+
+## `spikes-2026-10-27/`
+
+Captured on 2026-10-27 from the throwaway probe mod of [issue #246](https://github.com/martin-macak/claude-code-mod-tracking/issues/246), Claude Code 2.1.311 (macOS), against a fake Messages API in tmux and under `claude -p`, with a kit probe. Not a primary source: it is the evidence behind the same section.
+
+| Content | Origin |
+| --- | --- |
+| `p246-probe/probe/` | The probe mod (three commands and one render hook) and the kit probe `tests/surfaces.test.ts`. |
+| `p246-probe/fake/fake246.mjs`, `run.sh` | The fake Messages API and the launcher. |
+| `p246-probe/evidence-log.txt` | The runs E0 to E9 and the kit runs K0 to K3. |
+| `p246-probe/headless-real-mod.log` | The real mod under `claude -p --continue` on 2.1.312, with a Q&A call read back from the transcript. |
+| `README.md` | What each part is and what it showed. |
+
+Do not edit it. To add more evidence, make a new dated folder.
 
 ## `code-claude-com-2026-10-09/`
 

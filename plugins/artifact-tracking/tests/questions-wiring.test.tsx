@@ -17,7 +17,7 @@ test('an AskUserQuestion call through the hook is kept with its tool_use_id, and
   await $.session.start(START)
   await $.tool.call(argsOf(LIVE_ASK.input) as never)
   const text = (await track($, 'qa')).text ?? ''
-  expect(text.startsWith('# Questions and answers\n\n## Q1 · partial')).toBe(true)
+  expect(text.startsWith('\n# Questions and answers\n\n## Q1 · partial')).toBe(true) // the break after the plugin prefix (#246)
   for (const q of LIVE_QUESTIONS) expect(text).toContain(q.question)
   expect(text).toContain(
     [

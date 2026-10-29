@@ -133,6 +133,12 @@ function fakeHost(
     listText?: string
     /** What `cleanup.plan` gives. Default: no step, no failure. */
     plan?: CleanRun
+    /** Whether a surface draws (`$.session.surfaces()` is not empty). Default: none draws, as in `claude -p`. */
+    draws?: boolean
+    /** What the stub of a `screen` spec answers for `args`. Default: `STUB <owner>:<sub>:<args>`. */
+    stub?: (args: string) => string | undefined
+    /** What the draw of a `screen` spec answers. Default: `DRAW <owner>:<sub>:<args>|<shown>`. */
+    draw?: (args: string, shown: string) => string | undefined
   } = {},
 ) {
   const calls: string[] = []
@@ -157,6 +163,18 @@ function fakeHost(
     textOf: async (_p, owner, spec, args) => {
       note(`textOf:${owner}:${spec.sub}:${args}`)
       return `TEXT ${owner}:${spec.sub}:${args}`
+    },
+    drawsOnScreen: async () => {
+      note('drawsOnScreen')
+      return o.draws ?? false
+    },
+    stubOf: async (_p, owner, spec, args) => {
+      note(`stubOf:${owner}:${spec.sub}:${args}`)
+      return o.stub ? o.stub(args) : `STUB ${owner}:${spec.sub}:${args}`
+    },
+    drawOf: async (_p, owner, spec, args, shown) => {
+      note(`drawOf:${owner}:${spec.sub}:${args}`)
+      return o.draw ? o.draw(args, shown) : `DRAW ${owner}:${spec.sub}:${args}|${shown}`
     },
     openPane: async () => note('openPane'),
     clear: async () => note('clear'),
@@ -496,9 +514,9 @@ function noter(id: string, order: number, log: string[]): Tracker {
 test('a declared command of a live tracker runs through the manager: its first owner only, no broadcast', async () => {
   const log: string[] = []
   const t = managerWorld({ extra: [noter('second', 7, log), noter('first', 6, log)] })
-  // The questions tracker declares `qa [n]` (issue #71); it sits last, at order 90.
+  // The questions tracker declares `qa [--send] [n]` (issues #71 and #246); it sits last, at order 90.
   expect(t.m.commands.hint()).toBe(
-    '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>|notes <id>|qa [n]]',
+    '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>|notes <id>|qa [--send] [n]]',
   )
   expect((await t.m.track(t.w.ports, 'notes 7')).text).toBe('No tracked items yet.')
   expect(log).toEqual(['first:notes:7:true'])
@@ -511,7 +529,7 @@ test('a tracker the config turned off declares no command', async () => {
     config: specs => fakeConfig({ specs, file: { trackers: { first: { enabled: false } } } }),
   })
   await t.m.entry(t.w.ports) // the start reads the toggles
-  expect(t.m.commands.hint()).toBe(`${CORE_HINT.slice(0, -1)}|qa [n]]`) // the questions tracker is on
+  expect(t.m.commands.hint()).toBe(`${CORE_HINT.slice(0, -1)}|qa [--send] [n]]`) // the questions tracker is on
   expect((await t.m.track(t.w.ports, 'notes 7')).text).toBe(USAGE)
   expect(log).toEqual([])
 })
@@ -613,6 +631,104 @@ test('a declared command that has a text answers with it: the router runs no com
   expect(t.calls).toEqual(['entry', 'refreshConfig', 'textOf:a:qa:3', 'entry', 'refreshConfig', 'textOf:a:qa:'])
 })
 
+// ---------------------------------------------------------------- a text that a surface draws and the model does not read (issue #246)
+
+/** `qa` with a text and a screen spec: the stub is the reply where a surface draws. */
+const screened: Declared = {
+  owner: 'a',
+  spec: {
+    sub: 'qa',
+    hint: '[--send] [n]',
+    text: () => 'not called by the fake host',
+    screen: { stub: () => 'not called', draw: () => 'not called' },
+  },
+}
+
+test('a surface draws: the reply is the stub, and the whole text is never built', async () => {
+  const t = fakeHost({ declared: [screened], draws: true })
+  expect((await t.commands.run(t.ports, 'qa 3')).text).toBe('STUB a:qa:3')
+  expect((await t.commands.run(t.ports, 'QA')).text).toBe('STUB a:qa:')
+  expect(t.calls).toEqual([
+    'entry',
+    'refreshConfig',
+    'drawsOnScreen',
+    'stubOf:a:qa:3',
+    'entry',
+    'refreshConfig',
+    'drawsOnScreen',
+    'stubOf:a:qa:',
+  ])
+})
+
+test('no surface draws (claude -p, the SDK, the VS Code host): the reply is the whole text, as before', async () => {
+  const t = fakeHost({ declared: [screened], draws: false })
+  expect((await t.commands.run(t.ports, 'qa 3')).text).toBe('TEXT a:qa:3')
+  expect(t.calls).toEqual(['entry', 'refreshConfig', 'drawsOnScreen', 'textOf:a:qa:3'])
+})
+
+test('--send answers the whole text on purpose, in any case and before or after the rest, and passes no --send on', async () => {
+  const t = fakeHost({ declared: [screened], draws: true })
+  expect((await t.commands.run(t.ports, 'qa --send')).text).toBe('TEXT a:qa:')
+  expect((await t.commands.run(t.ports, 'QA --SEND 3')).text).toBe('TEXT a:qa:3')
+  expect((await t.commands.run(t.ports, 'qa 3 --Send')).text).toBe('TEXT a:qa:3')
+  // A surface that draws is not asked: the person chose the text. No stub is built either.
+  expect(t.calls.filter(c => c === 'drawsOnScreen' || c.startsWith('stubOf'))).toEqual([])
+  expect(t.calls.filter(c => c.startsWith('textOf'))).toEqual(['textOf:a:qa:', 'textOf:a:qa:3', 'textOf:a:qa:3'])
+})
+
+test('--send is a whole word: a longer word is the rest of the arguments, and the usage answers it', async () => {
+  const t = fakeHost({ declared: [screened], draws: true, stub: () => undefined })
+  expect((await t.commands.run(t.ports, 'qa --sender')).text).toBe('TEXT a:qa:--sender')
+  expect((await t.commands.run(t.ports, 'qa send')).text).toBe('TEXT a:qa:send')
+})
+
+test('a stub the tracker does not make (the usage line, no call, no such call) falls back to the plain text', async () => {
+  const t = fakeHost({ declared: [screened], draws: true, stub: () => undefined })
+  expect((await t.commands.run(t.ports, 'qa x')).text).toBe('TEXT a:qa:x')
+  expect(t.calls).toEqual(['entry', 'refreshConfig', 'drawsOnScreen', 'stubOf:a:qa:x', 'textOf:a:qa:x'])
+})
+
+test('a spec with no screen keeps its --send word, and asks no surface', async () => {
+  const plain: Declared = { owner: 'a', spec: { sub: 'qa', hint: '[n]', text: () => 'not called' } }
+  const t = fakeHost({ declared: [plain], draws: true })
+  expect((await t.commands.run(t.ports, 'qa --send 3')).text).toBe('TEXT a:qa:--send 3')
+  expect(t.calls).toEqual(['entry', 'refreshConfig', 'textOf:a:qa:--send 3'])
+})
+
+test('a screen spec with no text counts for nothing: the tracker handles the command and the reply is the list', async () => {
+  const draw: Declared = {
+    owner: 'a',
+    spec: { sub: 'qa', hint: '', screen: { stub: () => 'not called', draw: () => 'not called' } },
+  }
+  const t = fakeHost({ declared: [draw], draws: true })
+  expect((await t.commands.run(t.ports, 'qa --send')).text).toBe('LIST')
+  expect(t.calls).toContain('run:a:qa:--send:true')
+  expect(t.calls).not.toContain('drawsOnScreen')
+})
+
+test('screenText: the draw of a stub row gets the arguments after the sub and the text of the row', async () => {
+  const t = fakeHost({ declared: [screened] })
+  expect(await t.commands.screenText(t.ports, 'qa 3', 'artifact-tracking: STUB')).toBe(
+    'DRAW a:qa:3|artifact-tracking: STUB',
+  )
+  expect(await t.commands.screenText(t.ports, ' QA ', 'S')).toBe('DRAW a:qa:|S')
+  // A render only reads: no entry, no config check, no stub, no text.
+  expect(t.calls).toEqual(['drawOf:a:qa:3', 'drawOf:a:qa:'])
+})
+
+test('screenText: a --send row, a sub with no screen, another word and a draw that answers nothing leave the row alone', async () => {
+  const plain: Declared = { owner: 'b', spec: { sub: 'notes', hint: '', text: () => 'x' } }
+  const t = fakeHost({ declared: [screened, plain], draw: () => undefined })
+  expect(await t.commands.screenText(t.ports, 'qa 3', 'S')).toBeUndefined() // the draw has nothing for it
+  const u = fakeHost({ declared: [screened, plain] })
+  expect(await u.commands.screenText(u.ports, 'qa --send 3', 'S')).toBeUndefined()
+  expect(await u.commands.screenText(u.ports, 'notes 3', 'S')).toBeUndefined()
+  expect(await u.commands.screenText(u.ports, 'turn 3', 'S')).toBeUndefined() // a core word
+  expect(await u.commands.screenText(u.ports, '', 'S')).toBeUndefined()
+  expect(await u.commands.screenText(u.ports, 'bogus', 'S')).toBeUndefined()
+  expect(u.calls).toEqual([]) // none of them reached the tracker
+})
+
 test('a declared command with no text checks no config of its own: the tracker handles the command', async () => {
   const t = fakeHost({ declared: [notes('a')] })
   await t.commands.run(t.ports, 'notes 3')
@@ -629,6 +745,49 @@ test('a declared command with a text prints that text through the manager, built
   expect((await t.m.track(t.w.ports, 'say hello there')).text).toBe('first says hello there')
   expect((await t.m.track(t.w.ports, 'SAY')).text).toBe('first says nothing')
   expect(t.w.ui.opened).toBe(0)
+})
+
+/** A tracker whose `say` has a text and a screen spec: the stub names the words, the draw gives the text of the row. */
+function screener(): Tracker {
+  return {
+    ...noter('first', 6, []),
+    commands: [
+      {
+        sub: 'say',
+        hint: '[word]',
+        text: (ctx, args) => `${ctx.id} says ${args || 'nothing'}`,
+        screen: {
+          stub: (ctx, args) => (args === 'x' ? undefined : `${ctx.id} stub ${args || 'nothing'}`),
+          draw: (ctx, args, shown) => `${ctx.id} draws ${args || 'nothing'} for [${shown}]`,
+        },
+      },
+    ],
+  }
+}
+
+test('the manager answers the stub where a surface draws, the text where none does, and the text for --send', async () => {
+  const drawn = managerWorld({ extra: [screener()], fake: { session: { surfaces: ['terminal'] } } })
+  expect((await drawn.m.track(drawn.w.ports, 'say hi')).text).toBe('first stub hi')
+  expect((await drawn.m.track(drawn.w.ports, 'say --send hi')).text).toBe('first says hi')
+  expect((await drawn.m.track(drawn.w.ports, 'say x')).text).toBe('first says x') // no stub: the plain text
+  const none = managerWorld({ extra: [screener()] }) // the fake answers [] by default: nothing draws
+  expect((await none.m.track(none.w.ports, 'say hi')).text).toBe('first says hi')
+})
+
+test('a read of the surfaces that fails counts as "a surface draws": the stub, never the whole text', async () => {
+  const t = managerWorld({ extra: [screener()] })
+  ;(t.w.ports.session as { surfaces: () => Promise<readonly string[]> }).surfaces = () =>
+    Promise.reject(new Error('no implementation for session.surfaces'))
+  expect((await t.m.track(t.w.ports, 'say hi')).text).toBe('first stub hi')
+})
+
+test('the manager draws the text of a stub row from the context of its tracker, with no entry and no config check', async () => {
+  const t = managerWorld({ extra: [screener()] })
+  expect(await t.m.commands.screenText(t.w.ports, 'say hi', 'artifact-tracking: first stub hi')).toBe(
+    'first draws hi for [artifact-tracking: first stub hi]',
+  )
+  expect(await t.m.commands.screenText(t.w.ports, 'say --send hi', 'x')).toBeUndefined()
+  expect(await t.m.commands.screenText(t.w.ports, 'notes 1', 'x')).toBeUndefined() // a sub with no screen spec
 })
 
 test('a text that throws rejects, as any failure of a command does, and prints no list', async () => {

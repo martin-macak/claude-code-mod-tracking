@@ -273,6 +273,40 @@ test('a resume switch replays the transcript once, after the stored copy loads',
   ])
 })
 
+// Issue #246. A row that drew before the data loaded (the stub of `/track qa` after a resume: its text is in the transcript, its
+// calls are not in the slot yet) draws again only at a redraw. The tick is the only other one, every 30 s by default. So the load
+// asks one redraw once the stored copy and the replay are in, and a clear, which loads nothing, asks none.
+test('a resume switch asks one redraw after the stored copy loads and the transcript is replayed', async () => {
+  const t = setup({ seed: { 'v2:s:sess-b': { items: ['b-item'] } } })
+  await t.m.entry(t.w.ports)
+  await leave(t, 'sess-b', 'resume')
+  t.items.live = []
+  const asked: number[] = []
+  t.host.replay = async () => void asked.push(t.w.ui.invalidated)
+  const before = t.w.ui.invalidated
+  await t.m.entry(t.w.ports)
+  expect(asked).toEqual([before]) // the replay ran, and no redraw had been asked yet
+  expect(t.items.live).toEqual(['b-item'])
+  expect(t.w.ui.invalidated).toBe(before + 1) // one redraw, after the replay
+})
+
+test('a redraw is asked even when the replay fails, and a clear switch asks none', async () => {
+  const t = setup()
+  await t.m.entry(t.w.ports)
+  await leave(t, 'sess-new', 'resume')
+  t.items.live = []
+  t.host.replay = async () => {
+    throw new Error('merge failed')
+  }
+  const before = t.w.ui.invalidated
+  await t.m.entry(t.w.ports)
+  expect(t.w.ui.invalidated).toBe(before + 1)
+  await leave(t, 'sess-2', 'clear')
+  const cleared = t.w.ui.invalidated
+  await t.m.entry(t.w.ports)
+  expect(t.w.ui.invalidated).toBe(cleared)
+})
+
 test('a resume switch replays even when the new id has no stored copy', async () => {
   const t = setup()
   await t.m.entry(t.w.ports)
@@ -658,8 +692,9 @@ test('start runs run load, init, start event, the cold load and replay, tick and
     'repos:load',
     'replay',
     'replay:a:0',
+    'invalidate', // the cold load asks a redraw once the data is in (issue #246)
     'every:30000',
-    'invalidate',
+    'invalidate', // the pane that the engine kept
   ])
 })
 
