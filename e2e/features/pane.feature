@@ -39,12 +39,16 @@ Feature: Drive the /track pane with the keys
     And the screen stops showing "marked"
     And the selected row shows "two.example"
 
+  # Issue #276: the docked pane shows the quick view of the selected row by default, and it has the link of the row too. `e` hides it
+  # first, so the `link:` line that the scenario waits for can only be the detail under the open row.
   Scenario: Enter expands a leaf into its detail, and h shows the help view
     Given a Claude Code session with the artifact-tracking mod
     When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
     And Claude finishes
     And I type "/track"
     Then the selected row shows "one.example"
+    When I press "e"
+    Then the screen stops showing "link: https://one.example/a"
     When I press "Enter"
     Then the screen matches /│.*link: https:\/\/one\.example\/a/
     When I press "Enter"
@@ -175,7 +179,9 @@ Feature: Drive the /track pane with the keys
     When I press "Up"
     Then the selected row shows "two.example"
 
-  # Issue #108. A click is a press: a click on the arrow of a row selects the row and opens it.
+  # Issue #108. A click is a press: a click on the arrow of a row selects the row and opens it. Issue #276: the quick view shows the
+  # link of the selected row too, two cells in from the border. The detail under the open row sits further in, so the pattern of the
+  # link line wants four spaces at least and the scenario cannot pass on the quick view alone.
   Scenario: A click on the arrow of a row selects the row and opens it
     Given a Claude Code session with the artifact-tracking mod
     When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
@@ -184,7 +190,7 @@ Feature: Drive the /track pane with the keys
     Then the selected row shows "one.example"
     When I click the arrow of the row showing "three.example"
     Then the selected row shows "three.example"
-    And the screen matches /│.*link: https:\/\/three\.example\/c/
+    And the screen matches /│ {4,}link: https:\/\/three\.example\/c/
     And the focus ring is on "▾"
     When I press "Up"
     Then the selected row shows "two.example"
@@ -226,22 +232,22 @@ Feature: Drive the /track pane with the keys
     And Claude finishes
     And I type "/track"
     Then the selected row shows "one.example"
-    And the screen matches /│.*three\.example\/c.*\n(.*│ *\n){10,}.*│Selected: [^\n]*\n.*│View: list[^\n]*\n(.*│[^\n]*\n)?.*│Health: [^\n]*\n.*│r: refresh/
+    And the screen matches /│.*three\.example\/c.*\n(.*│ *\n){10,}.*│Selected: [^\n]*\n(.*│  [^\n]*\n)*.*│View: list[^\n]*\n(.*│[^\n]*\n)?.*│Health: [^\n]*\n.*│r: refresh/
     When I press "Tab"
     Then the selected row shows "two.example"
-    And the screen matches /│.*three\.example\/c.*\n(.*│ *\n){10,}.*│Selected: [^\n]*\n.*│View: list[^\n]*\n(.*│[^\n]*\n)?.*│Health: [^\n]*\n.*│r: refresh/
+    And the screen matches /│.*three\.example\/c.*\n(.*│ *\n){10,}.*│Selected: [^\n]*\n(.*│  [^\n]*\n)*.*│View: list[^\n]*\n(.*│[^\n]*\n)?.*│Health: [^\n]*\n.*│r: refresh/
 
   # Issue #138, PR 2: the adaptive status area. With 18 body rows or more the pane draws a summary row above the table (the words of
   # the band), and the selected-row line and the health line in the footer Box, around the view line. The docked pane of a
   # 120x36 terminal has about 30 body rows. The selected-row line follows the selection. The health line names the tools of the
-  # trackers that run and counts the problems of the help view. The github and jira trackers are the ones that declare tools (`gh`,
-  # `acli`) and the host decides what those say (installed or not, logged in or not), so the config turns them off: no tool is
-  # live, the line is the problem count alone, and the scenario gives the same answer on every machine. The names of the tools
-  # on the line are a kit test (tests/pane-status-area.test.ts).
+  # trackers that run and counts the problems of the help view. The github, jira and file trackers are the ones that declare tools
+  # (`gh`, `acli` and the file tool of issue #262) and the host decides what those say (installed or not, logged in or not), so the
+  # config turns them off: no tool is live, the line is the problem count alone, and the scenario gives the same answer on every
+  # machine. The names of the tools on the line are a kit test (tests/pane-status-area.test.ts).
   Scenario: A docked pane shows the summary, the selected row and the health beside the view line and the keys
     Given the tracker config file:
       """
-      { "version": 1, "trackers": { "github": { "enabled": false }, "jira": { "enabled": false } } }
+      { "version": 1, "trackers": { "github": { "enabled": false }, "jira": { "enabled": false }, "file": { "enabled": false } } }
       """
     And a Claude Code session with the artifact-tracking mod
     When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
@@ -257,6 +263,67 @@ Feature: Drive the /track pane with the keys
     When I press "Tab"
     Then the selected row shows "two.example"
     And the screen matches /│Selected: two\.example/
+
+  # Issue #276 (L1 of #275, criterion A10). The docked pane of a 120x36 terminal has the full form, so the quick view of the selected
+  # row shows by default: the `Selected:` line, then the lines the row cannot show, above the view line. It follows Tab. `e` hides it
+  # down to the one-row `Selected:` line, and a second `e` shows it again. The health line stays under the view line all the while.
+  # The config turns the github and jira trackers off, so their tools are not on the line.
+  Scenario: A docked pane shows the quick view of the selected row, which follows Tab, and e hides it and shows it again
+    Given the tracker config file:
+      """
+      { "version": 1, "trackers": { "github": { "enabled": false }, "jira": { "enabled": false } } }
+      """
+    And a Claude Code session with the artifact-tracking mod
+    When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "one.example"
+    And the pane is docked
+    And the screen matches /│Selected: one\.example/
+    And the screen matches /│  link: https:\/\/one\.example\/a/
+    And the screen matches /│  reasons: mentioned/
+    And the screen matches /│  turns: first \d+ · last \d+/
+    When I press "Tab"
+    Then the selected row shows "two.example"
+    And the screen matches /│Selected: two\.example/
+    And the screen matches /│  link: https:\/\/two\.example\/b/
+    And the screen stops showing "link: https://one.example/a"
+    When I press "e"
+    Then the screen stops showing "reasons:"
+    And the screen matches /│Selected: two\.example/
+    And the screen matches /│Health: .*no problems\s*$/
+    And the selected row shows "two.example"
+    When I press "e"
+    Then the screen matches /│  reasons: mentioned/
+    And the screen matches /│  link: https:\/\/two\.example\/b/
+    And the screen matches /│Health: .*no problems\s*$/
+
+  # Issue #276 (A10, inline). An inline pane at 100x40 has 11 body rows, so it keeps the compact form: no quick view, no `Selected:`
+  # line. `e` shows a small one above the view line, two rows with the room of this body: the `Selected:` line and the first line of
+  # the detail, which ends with the dim `+2 more`. The list keeps 3 rows (the selection is the first row, so one hint shows); a second
+  # `e` gives the rows back. The footer keys stay on the screen.
+  Scenario: An inline pane at 100x40 hides the quick view, and e shows a small one of two rows
+    Given a terminal of 100 columns by 40 rows
+    And a Claude Code session with the artifact-tracking mod
+    When I type "Note https://a1.io/x, https://a2.io/x, https://a3.io/x, https://a4.io/x, https://a5.io/x, https://a6.io/x, https://a7.io/x, https://a8.io/x, https://a9.io/x, https://a10.io/x, https://a11.io/x, https://a12.io/x for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "a1.io/x"
+    And the pane is inline
+    And the screen stops showing "Selected:"
+    And the screen matches /│ +▸ a5\.io\/x/
+    When I press "e"
+    Then the screen matches /│ +Selected: a1\.io\/x/
+    And the screen matches /│ +link: https:\/\/a1\.io\/x · \+2 more/
+    And the screen matches /│ +▸ a3\.io\/x/
+    And the pane stops showing "a4.io/x"
+    And the screen stops showing "Health:"
+    And the screen shows "View: list"
+    And the screen shows "r: refresh"
+    When I press "e"
+    Then the screen stops showing "Selected:"
+    And the screen matches /│ +▸ a5\.io\/x/
+    And the screen shows "r: refresh"
 
   # Issue #138, PR 2. The form follows the engine body: 18 rows or more draw the status area, inline as well (a 100x60 terminal
   # gives the inline pane 18 body rows), and below that the pane keeps the view line and the footer (100x40 gives 11 rows).
@@ -334,7 +401,7 @@ Feature: Drive the /track pane with the keys
     Then the screen shows "Keys go to the prompt."
     When I click the arrow of the row showing "three.example"
     Then the selected row shows "three.example"
-    And the screen matches /│.*link: https:\/\/three\.example\/c/
+    And the screen matches /│ {4,}link: https:\/\/three\.example\/c/
     And the screen shows "Keys go to the prompt."
     And the screen matches /^❯\s+j\s*$/
 
@@ -464,7 +531,7 @@ Feature: Drive the /track pane with the keys
   # path of the config file on two rows and the footer fill them, so the compact form lists no problem and counts them:
   # `3 problems: /track help`. `Pane keys` and the footer `h: back` are in one frame. The help footer has the core keys only:
   # with a PR row selected it kept the dim `c: resolve  f: files` of that row, wrapped to a second row and pushed `Pane keys`
-  # out of view. Issue #200: the footer also draws `g`, `a`, `t`, `p` and `m` dim, which takes a second row at 96 cells. The tracker
+  # out of view. Issue #200: the footer also draws `g`, `a`, `t`, `p`, `m` and `e` dim (issue #276 added `e`), which takes a second row at 96 cells. The tracker
   # groups share one row of the help view (issue #265), so the view and the 2-row footer still fit. The config has 3 problems:
   # a value below its min (breaker threshold), two above their max (sectionRows and chunkSize). The count line needs the path
   # of the config file to wrap onto two rows. The path is 84 to 96 cells wide for that (the body is 96 cells and
@@ -490,13 +557,14 @@ Feature: Drive the /track pane with the keys
     And the screen stops showing "c: resolve"
     And the fake gh answered no unsupported call
 
-  # Issue #200. The help view has no view line, so its letters `g`, `a`, `t`, `p` and `m` had no Button: a press typed the letter into
+  # Issue #200. The help view has no view line, so its letters `g`, `a`, `t`, `p`, `m` and `e` had no Button: a press typed the letter into
   # the prompt and took the keyboard from the pane. The footer draws them dim now: a press does nothing and the pane keeps the
-  # keys. The proof is causal: the `h` after the five letters is a pane key. It closes the help view only when the pane still has
+  # keys. The proof is causal: the `h` after the six letters is a pane key. It closes the help view only when the pane still has
   # the keyboard; a keyboard in the prompt would take the `h` as a letter and the help view would stay. The ring stays on the dim
   # Button that had it when `h` opens the help view, and the second `h` leaves it on the same Button of the view line.
+  # Issue #276 added the dim `e: quick view` to that footer, so the scenario presses `e` too, after `m`, with the same causal check.
   @help-view-keys
-  Scenario Outline: In the help view g, a, t, p and m keep the keyboard in the pane, and the ring stays on its Button, at <cols>x<rows>
+  Scenario Outline: In the help view g, a, t, p, m and e keep the keyboard in the pane, and the ring stays on its Button, at <cols>x<rows>
     Given a terminal of <cols> columns by <rows> rows
     And a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
     And the fake gh reports PR #7 "Fix the fake conflict" from "feat/fake-conflict" into "main" as CONFLICTING
@@ -508,12 +576,14 @@ Feature: Drive the /track pane with the keys
     And I press "h"
     Then the screen shows "Row keys (act on the selected or marked rows)"
     And the screen shows "m: mark"
+    And the screen shows "e: quick view"
     And the focus ring is on "g: view"
     When I press "g"
     And I press "a"
     And I press "t"
     And I press "p"
     And I press "m"
+    And I press "e"
     Then the screen does not show "Keys go to the prompt."
     When I press "h"
     Then the screen stops showing "Row keys"

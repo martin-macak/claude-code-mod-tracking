@@ -192,6 +192,11 @@ declare module 'claude-code' {
       view: string | null
       /** Issue #63, L3. The filters of the pane: `t` hides the rows nobody touched. Session scope, reset by `/clear`. */
       filters: { touchedOnly: boolean }
+      /**
+       * Issue #276. `e` (quick view): one flag for each form of the pane. The full form shows the quick view by default, the compact
+       * form hides it. Session scope: a close and a reopen keep it, `/clear` resets it.
+       */
+      quick: { full: boolean; compact: boolean }
       /** Issue #138. The ids of the rows the person marked with `m`. Session scope: the pane clears it at close, `/clear` resets it. */
       marks: string[]
       /** Issue #57, L2. The preview the pane shows: a row id, its owner and a mode, never content. Session scope, reset by `/clear`. */

@@ -146,9 +146,10 @@ test('the selected-row line shows the status in its color, the badges and the st
   const t = setup([pr])
   t.w.state.set('selected', 'pr')
   const tree = await t.draw(96, 31, { placement: 'dock' })
-  // The words between the label and the view line: the cells of the row, joined by dim dots, the reason last.
+  // The words of the first line: the cells of the row, joined by dim dots, the reason last. The quick view (issue #276) is shown by
+  // default in the full form, and its first line is this one: the lines below it begin with their labels (`reasons:`).
   const after = words(tree).slice(words(tree).indexOf('Selected:'))
-  const line = after.slice(0, after.indexOf('View: list'))
+  const line = after.slice(0, after.indexOf('reasons:'))
   expect(line.filter(s => s !== '·')).toEqual(['Selected:', '#142', 'open', '✓ 3/3', 'conflict', 'created'])
   // The table draws the same row, with the same status cell, above the footer: look in the part of the tree after the label.
   const inLine = texts(tree).slice(texts(tree).findIndex(([, s]) => s === 'Selected:'))
@@ -361,4 +362,263 @@ test('marked rows keep the view line words and the status area together', async 
   expect(words(tree)).toContain('View: list · 2 marked')
   expect(showsStatus(tree)).toBe(true)
   expect(heightOf(tree, 96)).toBe(31)
+})
+
+// ---- the quick view (issue #276, L1 of #275) ---------------------------------------------------------------------------------------
+//
+// The quick view shows the detail of the selected row in the footer Box, below the `Selected:` line. The full form shows it by default,
+// the compact form hides it, and `e` flips the flag of the form that the pane draws (the atom `quick`). The rows that it takes in a body
+// are in status-area.test.ts; the lines of a row are in quick-view.test.ts. Here the session reads the atom and the selected row.
+
+const PULL = 'https://github.com/martin-macak/claude-code-mod-tracking/pull/262'
+const TITLE = 'feat(track): Track every file Claude reads or writes, with its type'
+/** A PR row that a docked pane of 49 cells cuts: the description, the type and the link have lines in the quick view. */
+const pull = (extra: Partial<TreeRow> = {}): TreeRow =>
+  web('pr', {
+    cells: {
+      control: { text: '' },
+      name: { text: '#262', href: PULL },
+      description: { text: TITLE },
+      type: { text: 'feat/track-all-files' },
+      status: { text: 'open', fg: 'success' },
+    },
+    extras: [{ text: '✓ checks', fg: 'success' }, { text: 'mergeable' }],
+    reasons: { first: 'created', all: ['created', 'updated'], strongest: 'created' },
+    turns: { first: 3, last: 9 },
+    ...extra,
+  })
+const LABELS = ['description:', 'type:', 'link:', 'reasons:', 'turns:']
+/** The words from the `Selected:` label to the view line. */
+const quickPart = (tree: unknown): string[] => {
+  const all = words(tree)
+  return all.slice(all.indexOf('Selected:'), all.indexOf('View: list'))
+}
+
+test('in the full form the quick view shows by default: the Selected: line, then the lines the row cannot show, above the view line', async () => {
+  const t = setup([pull(), ...webs(3)], LINKS)
+  t.w.state.set('selected', 'pr')
+  const tree = await t.draw(49, 31, { placement: 'dock' })
+  const part = quickPart(tree)
+  expect(part.filter(s => LABELS.includes(s))).toEqual(LABELS)
+  expect(part.some(s => s.startsWith('feat(track): Track every') && s.endsWith('…'))).toBe(true) // a line is cut to the width
+  expect(part.some(s => s.startsWith('https://github.com/') && s.includes('…') && s.endsWith('/pull/262'))).toBe(true) // a link, in the middle
+  expect(part).toContain('created, updated')
+  expect(part).toContain('first 3 · last 9')
+  // A badge line is not there: the first line has the badges, whole.
+  expect(part.filter(s => s === '✓ checks')).toHaveLength(1)
+  expect(heightOf(tree, 49)).toBe(31)
+})
+
+test('the first line of the quick view is the Selected: line of the status area, as it was', async () => {
+  const t = setup([pull(), ...webs(3)], LINKS)
+  t.w.state.set('selected', 'pr')
+  t.w.state.set('quick', { full: false, compact: false })
+  const hidden = quickPart(await t.draw(96, 31, { placement: 'dock' }))
+  t.w.state.set('quick', { full: true, compact: false })
+  const shown = quickPart(await t.draw(96, 31, { placement: 'dock' }))
+  // The name is a Link (the cell has an href), so it is no Text of its own: the words are the status, the badges and the reason.
+  expect(hidden).toEqual(['Selected:', '·', 'open', '·', '✓ checks', '·', 'mergeable', '·', 'created'])
+  expect(shown.slice(0, hidden.length)).toEqual(hidden)
+  expect(shown.length).toBeGreaterThan(hidden.length)
+})
+
+test('e hides the quick view in the full form: the Selected: line stays, and the rows come back to the list', async () => {
+  const t = setup([pull(), ...webs(30)], LINKS)
+  t.w.state.set('selected', 'pr')
+  const shown = await t.draw(49, 31, { placement: 'dock' })
+  t.w.state.set('quick', { full: false, compact: false })
+  const hidden = await t.draw(49, 31, { placement: 'dock' })
+  expect(quickPart(shown).some(s => LABELS.includes(s))).toBe(true)
+  expect(quickPart(hidden).some(s => LABELS.includes(s))).toBe(false)
+  expect(quickPart(hidden)[0]).toBe('Selected:')
+  expect(words(hidden)).toContain('Health:')
+  expect(rowBoxes(hidden).length).toBeGreaterThan(rowBoxes(shown).length)
+  expect(heightOf(shown, 49)).toBe(31)
+  expect(heightOf(hidden, 49)).toBe(31)
+})
+
+test('in the compact form the quick view is hidden by default, and e shows it with no health line and no summary row', async () => {
+  const t = setup([pull(), ...webs(30)], LINKS)
+  t.w.state.set('selected', 'pr')
+  const plain = await t.draw(96, 11)
+  expect(words(plain)).not.toContain('Selected:')
+  t.w.state.set('quick', { full: true, compact: true })
+  const tree = await t.draw(96, 11)
+  expect(words(tree)).toContain('Selected:')
+  expect(words(tree)).not.toContain('Health:')
+  expect(words(tree)).not.toContain('Links 30') // the summary row belongs to the full form
+  expect(quickPart(tree).filter(s => s.endsWith(':')).length).toBeGreaterThan(1) // the label of the first line and one more at least
+  expect(heightOf(tree, 96)).toBe(11)
+  expect(rowBoxes(tree).length).toBeGreaterThanOrEqual(2) // the list keeps its floor
+  expect(t.host.asked).toBe(0) // the compact form reads no tool state, with the quick view too
+})
+
+// A known limit (review of PR #284): with one row of room the quick view is its first line and the tail `+N more`. `wholeCellsOf` asks
+// `fitLine` without the tail, so a name that fits whole has no line of its own, and the tail then takes room from it. The lines that
+// would show it are cut with the rest, so the full text shows nowhere until the room is more than one row (L2 of #275 adds the view).
+test('a quick view cut to its first line has its tail on that line: the tail takes room from a long name, and no line shows the name', async () => {
+  const NAME = 'n'.repeat(80) // 10 cells of label and gap, so 90 of the 96: whole alone, and cut once the tail of 10 cells takes its room
+  const long = row(
+    'long',
+    { control: '', name: NAME, description: 'https://long.example/' },
+    { owner: 'web', turns: { first: 3, last: 9 } }, // a line of its own below the first, so the room can be too short for it
+  )
+  const t = setup([long, ...webs(5)], LINKS)
+  t.w.state.set('selected', 'long')
+  t.w.state.set('quick', { full: true, compact: true })
+  const roomy = quickPart(await t.draw(96, 11)) // room for two rows: the first line has no tail and shows the name whole
+  expect(roomy).toContain(NAME)
+  expect(roomy).toContain('turns:')
+  const tree = await t.draw(96, 11, { focused: false }) // the keys hint line takes a row, so the room is one row
+  const part = quickPart(tree)
+  expect(part[0]).toBe('Selected:')
+  expect(part.some(s => s.startsWith('nnn') && s.endsWith('…'))).toBe(true) // the name, cut
+  expect(part.at(-1)).toMatch(/^\+\d+ more$/) // the tail ends the first line
+  expect(part.filter(s => s.endsWith(':'))).toEqual(['Selected:']) // no other line: the name has none, nor has anything else
+  expect(part).not.toContain(NAME)
+  expect(part).not.toContain('turns:') // the line that the room has no row for
+  expect(heightOf(tree, 96)).toBe(11)
+})
+
+// The wiring of M1 (review of PR #284): `draw` hands the width of the body to `quickLines`, and that width tells it which cells the first
+// line draws whole. The pure tests of quick-view.test.ts pass a width of their own, so they cannot see a draw that hands a wider one.
+test('a name that the first line cuts at the width of a docked pane has its own line: draw hands the body width to quickLines', async () => {
+  const NAME = 'n'.repeat(70) // whole in a body of 96 cells, cut by the first line in one of 49
+  const long = row(
+    'long',
+    { control: '', name: NAME, description: 'https://long.example/' },
+    { owner: 'web', turns: { first: 3, last: 9 } },
+  )
+  const t = setup([long, ...webs(5)], LINKS)
+  t.w.state.set('selected', 'long')
+  const part = quickPart(await t.draw(49, 31, { placement: 'dock' }))
+  expect(part.slice(0, 2)).toEqual(['Selected:', expect.stringMatching(/^nnn.*…$/)]) // the first line cuts the name
+  expect(part).toContain('name:') // so the name has a line of its own below it
+  expect(part[part.indexOf('name:') + 1]).toMatch(/^nnn/)
+  const wide = quickPart(await t.draw(96, 31, { placement: 'inline' })) // a body of 96 cells shows it whole on the first line
+  expect(wide).toContain(NAME)
+  expect(wide).not.toContain('name:')
+})
+
+test('one flag for each form: the same atom hides the quick view of the full form and shows that of the compact form', async () => {
+  const t = setup([pull(), ...webs(30)], LINKS)
+  t.w.state.set('selected', 'pr')
+  t.w.state.set('quick', { full: false, compact: true })
+  expect(quickPart(await t.draw(96, 31, { placement: 'dock' })).some(s => LABELS.includes(s))).toBe(false)
+  expect(quickPart(await t.draw(96, 11)).some(s => s.endsWith(':') && s !== 'Selected:')).toBe(true)
+  t.w.state.set('quick', { full: true, compact: false })
+  expect(quickPart(await t.draw(96, 31, { placement: 'dock' })).some(s => LABELS.includes(s))).toBe(true)
+  expect(words(await t.draw(96, 11))).not.toContain('Selected:')
+})
+
+test('the tree is as tall as the body with the quick view on, in both forms and for the selection at the top, the middle and the end', async () => {
+  const t = setup([pull(), ...webs(40)], LINKS)
+  t.w.state.set('quick', { full: true, compact: true })
+  for (const [cols, rows, placement] of [
+    [96, 11, 'inline'],
+    [96, 17, 'inline'],
+    [96, 18, 'inline'],
+    [49, 30, 'dock'],
+    [49, 31, 'dock'],
+  ] as const) {
+    for (const id of ['pr', 'w10', 'w39']) {
+      t.w.state.set('selected', id)
+      const tree = await t.draw(cols, rows, { placement })
+      expect(heightOf(tree, cols), `${cols}x${rows} ${id}`).toBe(rows)
+    }
+  }
+})
+
+// Review of PR #284 (Codex P2): an open selected row keeps its detail lines in the list, so the quick view leaves them. The pane with
+// the quick view on is never taller than the pane with the Selected: line alone, and the footer stays in view.
+test('an open selected row with a long detail: the tree is as tall as with the quick view hidden, the footer in view, in both forms', async () => {
+  const note = (n: number) => ({ label: `note ${n}`, cell: { text: `text of note ${n}` } })
+  const open = web('open', { detail: () => [1, 2, 3, 4, 5, 6, 7, 8].map(note) })
+  const t = setup([open, ...webs(10)], LINKS)
+  t.w.state.set('selected', 'open')
+  t.w.state.set('expanded', ['open'])
+  for (const [cols, rows, placement, form] of [
+    [96, 18, 'inline', 'full'],
+    [49, 30, 'dock', 'full'],
+    [96, 11, 'inline', 'compact'],
+  ] as const) {
+    t.w.state.set('quick', { full: false, compact: false })
+    const hidden = heightOf(await t.draw(cols, rows, { placement }), cols)
+    t.w.state.set('quick', { full: true, compact: true })
+    const tree = await t.draw(cols, rows, { placement })
+    const at = `${cols}x${rows} ${form}`
+    // With the quick view hidden the tree is the body (or taller, where the open row alone is taller than the body: the window limit).
+    // The compact form has no `Selected:` line while the quick view is hidden: `e` adds that one row, which it cannot give back.
+    expect(heightOf(tree, cols), at).toBeLessThanOrEqual(Math.max(rows, hidden + (form === 'compact' ? 1 : 0)))
+    expect(footerOf(tree).length, at).toBeGreaterThan(0)
+    expect(words(tree), at).toContain('text of note 1') // the open row shows its own detail lines
+  }
+})
+
+test('with no row selected the quick view is the one dim line, No row selected, as the status area was', async () => {
+  const t = setup(webs(5), LINKS)
+  const tree = await t.draw(96, 31, { placement: 'dock' })
+  const [props] = texts(tree).find(([, s]) => s === 'No row selected') as [Node['props'], string]
+  expect(props.dimColor).toBe(true)
+  expect(words(tree).filter(s => s === 'No row selected')).toHaveLength(1)
+  expect(words(tree).some(s => LABELS.includes(s))).toBe(false) // one line, no more
+  expect(heightOf(tree, 96)).toBe(31)
+})
+
+test('the help view draws no quick view, in either form, and asks for no detail() that nobody would see', async () => {
+  const seen: string[] = []
+  const spy = pull({
+    detail: () => {
+      seen.push('pr')
+      return [{ label: 'note', cell: { text: 'note of pr' } }]
+    },
+  })
+  const t = setup([spy, ...webs(3)], LINKS)
+  t.w.state.set('selected', 'pr')
+  t.w.state.set('help', true)
+  t.w.state.set('quick', { full: true, compact: true })
+  for (const rows of [31, 11]) {
+    const tree = await t.draw(96, rows, { placement: 'dock' })
+    expect(
+      words(tree).some(s => LABELS.includes(s)),
+      String(rows),
+    ).toBe(false)
+    expect(words(tree), String(rows)).not.toContain('Selected:')
+    expect(words(tree), String(rows)).not.toContain('note of pr')
+  }
+  // The help view lays no row and builds no quick view: the `detail()` of the selected row is not called, though both flags are on.
+  expect(seen).toEqual([])
+})
+
+// A9: the draw calls `detail()` of the selected row and no other, and writes nothing.
+test('a draw calls detail() of the selected row only, once, and writes nothing', async () => {
+  const seen: string[] = []
+  const spy = (id: string): TreeRow =>
+    web(id, {
+      detail: () => {
+        seen.push(id)
+        return [{ label: 'note', cell: { text: `note of ${id}` } }]
+      },
+    })
+  const t = setup([spy('a'), spy('b'), spy('c')], LINKS)
+  t.w.state.set('selected', 'b')
+  t.w.stateSets = {}
+  const tree = await t.draw(96, 31, { placement: 'dock' })
+  expect(seen).toEqual(['b'])
+  expect(quickPart(tree)).toContain('note of b')
+  expect(t.w.stateSets).toEqual({})
+  seen.length = 0
+  t.w.state.set('quick', { full: false, compact: false })
+  await t.draw(96, 31, { placement: 'dock' })
+  expect(seen).toEqual([]) // hidden: the draw asks for no detail at all
+})
+
+test('the quick view follows the row the selection falls to when the selected row hides', async () => {
+  const t = setup([pull(), ...webs(3)], LINKS)
+  t.w.state.set('selected', 'pr')
+  await t.draw(96, 31, { placement: 'dock' })
+  t.host.sections = [section('web', webs(3))] // `pr` hid: no key from the person
+  const tree = await t.draw(96, 31, { placement: 'dock' })
+  expect(quickPart(tree)[1]).toBe('w0')
+  expect(quickPart(tree).includes('turns:')).toBe(false)
 })

@@ -316,6 +316,99 @@ test('a read of the plan that ends after v opened the preview opens no plan view
   expect(handlesOf(await t.draw())).toEqual(['r0', 'r1', 'r2']) // the list, not the plan view
 })
 
+// ---------------------------------------------------------------- the quick view (issue #276, L1 of #275)
+
+// The quick view belongs to the list. The preview, the help view and the plan view are other views of the one body, and none of them
+// draws `e` as a live Button, so a press of `e` from a drawing before the view changed flips nothing: the person would find a flipped
+// flag on the way back. In this layer the two stay apart: `v` leaves the quick view alone, `e` leaves the preview alone, and both
+// come back as they were (the preview and the quick view share one body in L2, issue #277). Each test ends with a control: the same
+// press from a fresh list drawing flips the flag, so the guard does not hold `e` for good.
+const QUICK_DEFAULT = { full: true, compact: false }
+/** After one `e` in a draw with no body height, which is the compact form: its flag turns on. */
+const QUICK_COMPACT_ON = { full: true, compact: true }
+/** After one `e` in a body of 30 rows, which is the full form: its flag turns off. */
+const QUICK_FULL_OFF = { full: false, compact: false }
+
+test('a press of e from a drawing before v changes nothing over the preview, and e works again on the way back', async () => {
+  const t = setup()
+  t.w.state.set('selected', 'a.ts')
+  const list = await t.draw()
+  press(buttonOf(list, 'preview')) // `v` came first
+  await t.session.idle()
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'view' })
+  const loads = [...t.host.loads]
+  press(buttonOf(list, 'quick'))
+  await t.session.idle()
+  expect(t.w.stateSets.quick).toBeUndefined() // no write at all
+  expect(await t.w.ports.state.quick.get()).toEqual(QUICK_DEFAULT)
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'view' }) // the preview stays
+  expect(t.host.loads).toEqual(loads) // and reads nothing again
+  expect(t.w.ui.toasts).toEqual([])
+  const tree = await t.draw()
+  expect(handlesOf(tree)).toEqual([]) // still the preview, and no `e` in its key line
+  expect(nodes(tree, 'Button').map(b => b.props.hotkey)).toEqual(['v', 'r'])
+  // Control: Esc goes back to the list, and `e` there flips the flag as it always did.
+  expect(await t.session.closeOrBack(t.w.ports, t.m, 'person')).toEqual({ deny: 'back to the list' })
+  await t.session.idle()
+  press(buttonOf(await t.draw(), 'quick'))
+  await t.session.idle()
+  expect(t.w.state.get('quick')).toEqual(QUICK_COMPACT_ON)
+})
+
+test('a press of e from a drawing before p changes nothing over the plan view, and e works again after p', async () => {
+  const t = setup()
+  t.w.state.set('selected', 'a.ts')
+  const list = await t.draw()
+  press(buttonOf(list, 'clean')) // `p` came first
+  await t.session.idle()
+  expect(handlesOf(await t.draw())).toEqual([]) // the plan view shows
+  press(buttonOf(list, 'quick'))
+  await t.session.idle()
+  expect(t.w.stateSets.quick).toBeUndefined()
+  expect(await t.w.ports.state.quick.get()).toEqual(QUICK_DEFAULT)
+  expect(t.w.ui.toasts).toEqual([])
+  expect(handlesOf(await t.draw())).toEqual([]) // still the plan view
+  // Control: `p` again shows the list, and `e` there flips the flag.
+  press(buttonOf(await t.draw(), 'clean'))
+  await t.session.idle()
+  expect(handlesOf(await t.draw())).toEqual(['r0', 'r1', 'r2'])
+  press(buttonOf(await t.draw(), 'quick'))
+  await t.session.idle()
+  expect(t.w.state.get('quick')).toEqual(QUICK_COMPACT_ON)
+})
+
+test('a press of e from a drawing before h changes nothing over the help view, and e works again after h', async () => {
+  const t = setup()
+  t.w.state.set('selected', 'a.ts')
+  const list = await t.draw()
+  t.w.state.set('help', true) // `h` came first
+  press(buttonOf(list, 'quick'))
+  await t.session.idle()
+  expect(t.w.stateSets.quick).toBeUndefined()
+  expect(await t.w.ports.state.quick.get()).toEqual(QUICK_DEFAULT)
+  // Control: with the help view off again, `e` flips the flag.
+  t.w.state.set('help', false)
+  press(buttonOf(await t.draw(), 'quick'))
+  await t.session.idle()
+  expect(t.w.state.get('quick')).toEqual(QUICK_COMPACT_ON)
+})
+
+test('v from the list with the quick view hidden opens the preview, and the flag of e is what it was when the list comes back', async () => {
+  const t = setup()
+  t.w.state.set('selected', 'a.ts')
+  press(buttonOf(await t.draw(96, 30), 'quick')) // `e` hides the quick view of the full form
+  await t.session.idle()
+  expect(t.w.state.get('quick')).toEqual(QUICK_FULL_OFF)
+  press(buttonOf(await t.draw(96, 30), 'preview'))
+  await t.session.idle()
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'view' })
+  expect(t.w.state.get('quick')).toEqual(QUICK_FULL_OFF) // `v` writes no flag
+  expect(await t.session.closeOrBack(t.w.ports, t.m, 'person')).toEqual({ deny: 'back to the list' })
+  await t.session.idle()
+  expect(t.w.state.get('quick')).toEqual(QUICK_FULL_OFF) // Esc writes none either: the list comes back as it was
+  expect(handlesOf(await t.draw(96, 30))).toEqual(['r0', 'r1', 'r2'])
+})
+
 // ---------------------------------------------------------------- scroll, hint, close
 
 test('while the preview shows the pane leaves the scroll to the engine: the mod moves no selection', async () => {

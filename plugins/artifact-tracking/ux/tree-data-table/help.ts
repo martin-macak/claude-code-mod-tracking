@@ -242,6 +242,10 @@ const widestOf = (g: HelpGroup): number => Math.max(0, ...g.keys.map(k => cellWi
 /** The widest `key  label` text of the help view: the cells of one column of keys. */
 const widestKey = (m: HelpModel): number => Math.max(0, ...m.groups.map(widestOf))
 
+/** The cells of a group's keys on one row at their own widths: the indent, the keys and the gaps between them. */
+const naturalWidth = (g: HelpGroup): number =>
+  KEY_INDENT + g.keys.reduce((n, k) => n + cellWidth(keyText(k)), 0) + KEY_GAP * Math.max(0, g.keys.length - 1)
+
 /** How many keys a line of `columns` cells holds, with columns `width` cells wide. */
 const holds = (width: number, columns: number): number =>
   Math.max(1, Math.floor((columns - KEY_INDENT + KEY_GAP) / (width + KEY_GAP)))
@@ -253,17 +257,28 @@ const holds = (width: number, columns: number): number =>
  * row keys (`m  mark`, `x  dismiss`) are shorter than the widest pane key (`p  clean plan`, issue #199), so seven of them fit a
  * line of a body (six before `v` of the preview, issue #57) where fewer than six pane keys do (issue #138: the sixth row key must
  * not take a second line).
+ *
+ * A group that these columns would split over two lines, but whose keys fit one row at their own widths, takes that one row, and so
+ * more keys to a line than `perLine` or than its columns hold: it has no `width`, and the keys are not in columns. The pane keys are
+ * seven with `p` and `e` (issues #199 and #276) and the widest, `p  clean plan` and `e  quick view`, would make a column of 13
+ * cells, so six fit a line of 96 cells and the seventh takes a second one. At their own widths the seven take 85 cells. A group of a
+ * narrower body, or a group that the columns hold, is drawn in columns, as before.
  */
 function columnsOf(
   m: HelpModel,
   g: HelpGroup,
   columns: number,
   perLine: number,
-): { readonly width: number; readonly per: number } {
+): { readonly width: number | undefined; readonly per: number } {
   const all = widestKey(m)
-  if (perLine <= holds(all, columns)) return { width: all, per: perLine }
   const own = widestOf(g)
-  return { width: own, per: Math.min(perLine, holds(own, columns)) }
+  const aligned =
+    perLine <= holds(all, columns)
+      ? { width: all, per: perLine }
+      : { width: own, per: Math.min(perLine, holds(own, columns)) }
+  // Only when the width limits the columns, not the request: a form that asks for three keys to a line gets three.
+  const limited = aligned.per < perLine && g.keys.length > aligned.per
+  return limited && naturalWidth(g) <= columns ? { width: undefined, per: g.keys.length } : aligned
 }
 
 /**
@@ -271,7 +286,8 @@ function columnsOf(
  * full form (`compactHelp`). The compact form must fit, so `Pane keys` and the footer stay in view:
  * - It starts with `PER_LINE` keys to a line, fewer when a longer key would wrap a narrow body.
  * - When the keys, the config lines and one count line do not fit, it takes one more key to a line, up to as many as the
- *   width holds for the group of the shortest keys (`columnsOf`: a group never takes more than its own widest key holds).
+ *   width holds for the group of the shortest keys (`columnsOf`: a group never takes more than its own widest key holds, except a
+ *   group whose keys fit one row at their own widths, issue #276).
  * - It names as many problems as the rows left hold and counts the rest. It names all of them when they fit. The cap is
  *   the body, not a number: the /track text names 10 (spec C6), and no body of 11 rows holds 10 with the keys.
  * - When no form with every group on rows of its own fits, the groups of the trackers share rows (`sharedRows`), with the same
@@ -327,14 +343,16 @@ export function compactForm(
 function keyLines(
   el: TableElements,
   keys: readonly PaneKey[],
-  { width, per: perLine }: { readonly width: number; readonly per: number },
+  { width, per: perLine }: { readonly width: number | undefined; readonly per: number },
 ): RenderElement[] {
   const lines: RenderElement[] = []
   for (let i = 0; i < keys.length; i += perLine) {
     const cells = keys
       .slice(i, i + perLine)
       .map((k, column) =>
-        column < perLine - 1 ? box(el, { width }, text(el, {}, keyText(k))) : text(el, {}, keyText(k)),
+        column < perLine - 1 && width !== undefined
+          ? box(el, { width }, text(el, {}, keyText(k)))
+          : text(el, {}, keyText(k)),
       )
     lines.push(box(el, { paddingLeft: KEY_INDENT, columnGap: KEY_GAP }, ...cells))
   }
@@ -362,7 +380,8 @@ function problemLines(el: TableElements, m: HelpModel, form: CompactForm | undef
  * The help view as elements: a bold title per group, one two-column row per key, the config line and the problems.
  * `compact` takes the compact form, so the view takes fewer rows: a `CompactForm` (from `compactForm`) says how many keys to
  * a line and how many problems. Both forms draw every key. The form carries the body width it was made for (`form.columns`): a
- * group never takes more keys to a line than its columns hold in it.
+ * group never takes more keys to a line than its columns hold in it, except a group whose keys fit one row at their own widths
+ * (issue #276).
  */
 export function renderHelp(
   el: TableElements,

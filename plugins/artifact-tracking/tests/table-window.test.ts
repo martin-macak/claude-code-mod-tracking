@@ -1,7 +1,7 @@
 // TreeDataTable windows its rows when the body is shorter than the tree (issue #109): the title, the header and the footer
 // stay in view, the rows that do not fit are bare focus stops, and the window follows the selected row. Pure.
 import { expect, test } from 'claude-code/testing'
-import type { GroupSpec } from '../core/interfaces/view'
+import type { GroupSpec, StatusLine } from '../core/interfaces/view'
 import { BUDGET, fits, measure } from '../ux/tree-data-table/budget'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import { footerRows } from '../ux/tree-data-table/footer'
@@ -11,6 +11,7 @@ import {
   buttonOf,
   footerOf,
   handlesOf,
+  leaves,
   NO_ROW_FOOTER,
   type Node,
   nodes,
@@ -21,6 +22,7 @@ import {
   view,
 } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
+import { heightOf } from './fixtures/height'
 import { group, webRows } from './fixtures/sections'
 
 // The inline pane at 100x40: a body of 11 rows, 96 cells wide. The docked pane at 120x37: 31 rows, drawn here 95 cells wide
@@ -235,6 +237,39 @@ test('a footer of two rows leaves the table one row less', () => {
   const bodyRows = 16
   const { drawn } = draw(web(30), { bodyColumns: columns, bodyRows })
   expect(rowBoxes(drawn.tree)).toHaveLength(bodyRows - footer - 1 - 2 - 1) // the gap, the title and header, the hint
+})
+
+// Issue #276, L1 of #275: the lines of the quick view are in the Box of the footer, and the window takes the rows that `statusOf`
+// gives them off its budget. The selected row is in the window, whatever the height of the quick view and wherever the row sits.
+test('the quick view comes off the window budget with the footer: the selected row shows for every height of it, at the four bodies', () => {
+  const selected: StatusLine = { label: 'Selected:', cells: [{ text: 'a row' }] }
+  const health: StatusLine = { label: 'Health:', cells: [{ text: 'no problems', dim: true }] }
+  const lines = (n: number): StatusLine[] =>
+    Array.from({ length: n }, (_, i) => ({ label: `line ${i}:`, indent: 2, cells: [{ text: `text ${i}` }] }))
+  for (const [columns, bodyRows, form] of [
+    [96, 11, 'compact'],
+    [96, 17, 'full'],
+    [49, 30, 'full'],
+    [49, 31, 'full'],
+  ] as const) {
+    for (const n of [0, 1, 3, 5, 9]) {
+      for (const id of ['s0-w0', 's1-w5', 's2-w9']) {
+        const status = { selected, ...(form === 'full' ? { health } : {}), quick: { form, lines: lines(n) } }
+        const { drawn } = draw(many(3, 10), {
+          bodyColumns: columns,
+          bodyRows,
+          placement: 'dock',
+          selected: id,
+          status,
+        })
+        const at = `${columns}x${bodyRows} ${n} lines ${id}`
+        // The tree is the body, no taller: the title, the header, the hints, the gap and the footer with the lines are all counted.
+        expect(heightOf(drawn.tree, columns), at).toBe(bodyRows)
+        const marked = rowBoxes(drawn.tree).filter(b => leaves(b.children[0]).includes('>'))
+        expect(marked, at).toHaveLength(1)
+      }
+    }
+  }
 })
 
 test('the floor of the window: 7 body rows hold the title, the header, a row, both hints, the gap and the footer; 6 do not', () => {

@@ -5,17 +5,20 @@
 import { expect, test } from 'claude-code/testing'
 import { KeyRegistry } from '../core/infra/keys'
 import type { GroupSpec, StatusLine, TreeRow } from '../core/interfaces/view'
+import { callRow } from '../trackers/questions/rows'
 import { cellWidth } from '../ux/text/cell-width'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import { helpModel } from '../ux/tree-data-table/help'
 import {
+  capLines,
   FULL_ROWS,
-  STATUS_ROWS,
   type StatusForm,
   SUMMARY_ROWS,
   selectedLine,
   statusForm,
   statusLineBox,
+  statusOf,
+  statusRows,
   withSummary,
 } from '../ux/tree-data-table/status'
 import { TreeDataTable } from '../ux/tree-data-table/table'
@@ -60,6 +63,14 @@ const MIDDLE = 's1-w5'
 
 const LINE = { text: 'View: list', keys: LIVE_VIEW_KEYS }
 
+/** The `n` lines of a quick view below its first line: `  line 1: …`, as the lines of a row's detail. */
+const quickOf = (n: number): StatusLine[] =>
+  Array.from({ length: n }, (_, i) => ({
+    label: `line ${i + 1}:`,
+    indent: 2,
+    cells: [{ text: `text of line ${i + 1}` }],
+  }))
+
 /**
  * One drawing the way PaneSession makes it: the table takes the body less the summary row of the full form, and the summary
  * wraps it. `form` is the form the pane picks from the body; `body` is what the engine gives (`scroll.bodyRows`).
@@ -73,6 +84,8 @@ function pane(
     readonly hint?: number
     /** Draws the form that the body does not pick, to compare the two. */
     readonly form?: StatusForm
+    /** The lines of the quick view of the selected row below its first line (issue #276): drawn in the form that is drawn. */
+    readonly quick?: number
   },
   over: Parameters<typeof view>[0] = {},
   groups: readonly GroupSpec[] = many(3, 10),
@@ -86,7 +99,17 @@ function pane(
     placement: body.placement,
     selected: MIDDLE,
     viewLine: LINE,
-    ...(full ? { status: STATUS } : {}),
+    ...(body.quick === undefined
+      ? full
+        ? { status: STATUS }
+        : {}
+      : {
+          status: {
+            selected: SELECTED,
+            ...(full ? { health: HEALTH } : {}),
+            quick: { form: full ? 'full' : 'compact', lines: quickOf(body.quick) },
+          },
+        }),
     ...over,
   })
   const drawn = TreeDataTable.render(groups, table, EL, rec.actions)
@@ -98,11 +121,11 @@ const INLINE_11 = { columns: 96, rows: 11, placement: 'inline' } as const
 const INLINE_17 = { columns: 96, rows: 17, placement: 'inline' } as const
 const INLINE_18 = { columns: 96, rows: 18, placement: 'inline' } as const
 const DOCK_31 = { columns: 49, rows: 31, placement: 'dock' } as const
+const DOCK_30 = { columns: 49, rows: 30, placement: 'dock' } as const
 const DOCK_12 = { columns: 49, rows: 12, placement: 'dock' } as const
 
 test('statusForm: the engine body of 18 rows or more is the full form, below it or with no height the compact form', () => {
   expect(FULL_ROWS).toBe(18)
-  expect(STATUS_ROWS).toBe(2)
   expect(SUMMARY_ROWS).toBe(1)
   expect(statusForm(undefined)).toBe('compact')
   expect(statusForm(0)).toBe('compact')
@@ -318,7 +341,7 @@ test('the two status lines come off the window budget: a body of 17 rows with th
   const table = view({ bodyColumns: 96, bodyRows: 17, placement: 'inline', selected: MIDDLE, viewLine: LINE })
   const lined = TreeDataTable.render(many(3, 10), { ...table, status: STATUS }, EL, recorder().actions)
   resetWidths()
-  const bare = TreeDataTable.render(many(3, 10), { ...table, bodyRows: 17 - STATUS_ROWS }, EL, recorder().actions)
+  const bare = TreeDataTable.render(many(3, 10), { ...table, bodyRows: 17 - 2 }, EL, recorder().actions)
   expect(rowBoxes(lined.tree).length).toBe(rowBoxes(bare.tree).length)
   expect(lined.top).toBe(bare.top)
   expect(lined.page).toBe(bare.page)
@@ -389,10 +412,12 @@ test('a tall inline body (100x60: 18 body rows) draws the full form and is exact
   expect(p.height).toBe(18)
 })
 
-test('at 40 cells the full form keeps every line to its rows: 18 data rows docked, and the tree is the body', () => {
+test('at 40 cells the full form keeps every line to its rows: 17 data rows docked, and the tree is the body', () => {
   const dock = pane({ columns: 40, rows: 31, placement: 'dock' })
   expect(dock.full).toBe(true)
-  expect(dock.rows).toBe(18)
+  // The view line takes three rows at 40 cells with its six keys (`e` of issue #276 after `p` of issue #199), two with the five keys of
+  // `main`: the list keeps one data row fewer than the 18 it kept.
+  expect(dock.rows).toBe(17)
   expect(dock.height).toBe(31)
   const inline = pane({ columns: 40, rows: 31, placement: 'inline' })
   expect(inline.height).toBeLessThanOrEqual(31)
@@ -465,4 +490,418 @@ test('two empty status lines never make the tree taller than the body', () => {
   )
   // An empty line is an empty Box: it takes no row, though the window left two for it. The tree is never taller than the body.
   expect(heightOf(withLines.tree, 96)).toBeLessThanOrEqual(17)
+})
+
+// ---- the quick view in the row budget (issue #276, L1 of #275) ----------------------------------------------------------------------
+//
+// The quick view takes as many rows as the selected row has lines, up to a cap, and the list keeps a floor of data rows: in the full form
+// at most 6 rows and the list keeps 5 data rows, in the compact form at most 3 rows and 2. Three groups of ten rows, the selection
+// in the middle of the list (both hints show), as the study of the issue measured them. The lines of the quick view are given whole
+// (`quick: n` lines below the first); the status area cuts them to the room the body has.
+
+/** The words of the `Selected:` line and the lines below it, as the footer draws them. */
+const quickWords = (tree: unknown): string[] =>
+  texts(tree)
+    .map(([, s]) => s)
+    .filter(s => s === 'Selected:' || /^line \d+:$/.test(s) || /^\+\d+ more$/.test(s))
+
+test('full, inline 96x18: a quick view of 8 lines takes 4 rows, the list keeps 5 data rows, and the tree is the body', () => {
+  expect(pane(INLINE_18).rows).toBe(8) // the baseline: the `Selected:` line alone
+  const q = pane({ ...INLINE_18, quick: 8 })
+  expect(q.rows).toBe(5)
+  expect(q.height).toBe(18)
+  expect(quickWords(q.tree)).toEqual(['Selected:', 'line 1:', 'line 2:', 'line 3:', '+5 more'])
+})
+
+test('full, docked 49x30: the cap of 6 rows holds, and the list keeps 11 data rows', () => {
+  expect(pane(DOCK_30).rows).toBe(17) // the baseline
+  const q = pane({ ...DOCK_30, quick: 8 })
+  expect(q.rows).toBe(11)
+  expect(q.height).toBe(30)
+  expect(quickWords(q.tree)).toEqual(['Selected:', 'line 1:', 'line 2:', 'line 3:', 'line 4:', 'line 5:', '+3 more'])
+})
+
+test('full, docked 49x31: the list keeps 12 data rows', () => {
+  const q = pane({ ...DOCK_31, quick: 8 })
+  expect(q.rows).toBe(12)
+  expect(q.height).toBe(31)
+})
+
+test('compact, inline 96x11 after e: a quick view of 3 lines takes 2 rows, the list keeps 2 data rows (3 at the top), the tree is the body', () => {
+  const q = pane({ ...INLINE_11, quick: 3 })
+  expect(q.full).toBe(false)
+  expect(q.rows).toBe(2)
+  expect(q.height).toBe(11)
+  expect(quickWords(q.tree)).toEqual(['Selected:', 'line 1:', '+2 more'])
+  const top = pane({ ...INLINE_11, quick: 3 }, { selected: 's0-w0' })
+  expect(top.rows).toBe(3) // one hint less: the list keeps one row more
+  expect(top.height).toBe(11)
+})
+
+test('a quick view that has no more lines than the room takes only the rows it has, and shows no tail', () => {
+  for (const [body, lines, rows] of [
+    [INLINE_18, 2, 3],
+    [DOCK_31, 3, 4],
+    [INLINE_11, 1, 2],
+  ] as const) {
+    const q = pane({ ...body, quick: lines })
+    const at = `${body.columns}x${body.rows}`
+    expect(
+      quickWords(q.tree).filter(s => s.startsWith('+')),
+      at,
+    ).toEqual([])
+    expect(quickWords(q.tree).length, at).toBe(rows)
+    expect(q.height, at).toBe(body.rows)
+  }
+})
+
+test('the floor of the list is the room of one group with a hint on each side: at the first rows of a later group two titles and a gap show, and the list keeps 3 rows at 96x18', () => {
+  // The room is the same for every selection, so the quick view holds still while the person moves (S2 of #275). It counts one group
+  // title. Where the window shows the end of one group and the start of the next, a title and a gap more take their lines, and the
+  // list keeps fewer data rows. This pins that limit on purpose (review of PR #284, M2); a hard floor would cost every pane with
+  // two or more groups two rows of its quick view, so the owner decides it.
+  const kept = (selected: string): number => pane({ ...INLINE_18, quick: 8 }, { selected }).rows
+  expect(kept(MIDDLE)).toBe(5) // one group in view, both hints: the floor
+  expect(kept('s1-w2')).toBe(5)
+  for (const selected of ['s1-w0', 's1-w1', 's2-w0', 's2-w1']) {
+    expect(kept(selected), selected).toBe(3)
+    expect(pane({ ...INLINE_18, quick: 8 }, { selected }).height, selected).toBe(18) // the tree is still the body
+  }
+  // Without the quick view the same selections show 6 rows: the line of the `Selected:` alone leaves room for them.
+  expect(pane(INLINE_18, { selected: 's1-w0' }).rows).toBe(6)
+})
+
+test('the keys hint line and a wrapped question each take a row of the body, and the quick view gives back its rows before the list gives back one of its own', () => {
+  const asking = { viewLine: { text: 'Dismiss 3 marked rows? x again: yes', keys: LIVE_VIEW_KEYS } }
+  const cases = [
+    // [what, body, over, the words of the quick view, the data rows of the list in the middle of it]
+    [
+      'full 96x18 with the hint line',
+      { ...INLINE_18, hint: 1, quick: 8 },
+      {},
+      ['Selected:', 'line 1:', 'line 2:', '+6 more'],
+      5,
+    ],
+    [
+      'full 96x18 with the question',
+      { ...INLINE_18, quick: 8 },
+      asking,
+      ['Selected:', 'line 1:', 'line 2:', '+6 more'],
+      5,
+    ],
+    ['compact 96x11 with the hint line', { ...INLINE_11, hint: 1, quick: 3 }, {}, ['Selected:', '+3 more'], 2],
+    ['compact 96x11 with the question', { ...INLINE_11, quick: 3 }, asking, ['Selected:', '+3 more'], 2],
+  ] as const
+  for (const [at, body, over, words, list] of cases) {
+    const q = pane(body, over)
+    expect(q.height, at).toBe(body.rows)
+    expect(quickWords(q.tree), at).toEqual(words)
+    expect(q.rows, at).toBe(list) // the floor of the form: the list keeps what the quick view cannot take
+  }
+})
+
+test('a compact body at the edge of the window: the quick view after e costs one row more, 9 body rows at 96 cells (8 without it), 10 with the hint line or the question', () => {
+  // The window shows one unit whatever its height and `quickRows` keeps the `Selected:` line, so a body below these edges has a tree
+  // one row taller than it has without `e`. A known limit (README, "Window over a long list"), the same as the floor of the window.
+  const asking = { viewLine: { text: 'Dismiss 3 marked rows? x again: yes', keys: LIVE_VIEW_KEYS } }
+  /** The rows by which the tree is taller than the body, selection in the middle of three groups of ten rows. */
+  const over = (rows: number, o: { hint?: 1; quick?: number } = {}, extra: Parameters<typeof view>[0] = {}): number =>
+    pane({ ...INLINE_11, rows, ...o }, extra).height - rows
+  expect(over(8)).toBe(0)
+  expect(over(7)).toBe(1) // the window floor of 8 rows, with no quick view
+  expect(over(9, { quick: 3 })).toBe(0)
+  expect(over(8, { quick: 3 })).toBe(1) // with e: 9
+  expect(over(9, { hint: 1 })).toBe(0)
+  expect(over(8, { hint: 1 })).toBe(1) // the keys hint line takes a row: 9 without e
+  expect(over(10, { hint: 1, quick: 3 })).toBe(0)
+  expect(over(9, { hint: 1, quick: 3 })).toBe(1) // 10 with e
+  expect(over(9, {}, asking)).toBe(0)
+  expect(over(8, {}, asking)).toBe(1)
+  expect(over(10, { quick: 3 }, asking)).toBe(0)
+  expect(over(9, { quick: 3 }, asking)).toBe(1)
+})
+
+test('the cap and the floor hold for every length of the quick view: the tree is the body and the selected row always shows', () => {
+  for (const body of [INLINE_11, INLINE_17, INLINE_18, DOCK_30, DOCK_31]) {
+    for (let lines = 0; lines <= 12; lines++) {
+      for (const selected of ['s0-w0', MIDDLE, 's2-w9']) {
+        const q = pane({ ...body, quick: lines }, { selected })
+        const at = `${body.columns}x${body.rows} ${lines} lines ${selected}`
+        expect(q.height, at).toBe(body.rows)
+        expect(
+          rowBoxes(q.tree).some(b => leaves(b.children[0]).includes('>')),
+          at,
+        ).toBe(true)
+        const shownLines = quickWords(q.tree).filter(s => !s.startsWith('+')).length
+        expect(shownLines, at).toBeLessThanOrEqual(q.full ? 6 : 3)
+        // The list keeps its floor of data rows in the middle of a list (both hints show) when the lines are cut to it.
+        if (selected === MIDDLE) expect(q.rows, at).toBeGreaterThanOrEqual(q.full ? Math.min(5, pane(body).rows) : 2)
+      }
+    }
+  }
+})
+
+// ---- an open selected row (review of PR #284, Codex P2) ---------------------------------------------------------------------
+// The detail lines under an open row are lines of the list: the window shows at least the selected unit and cannot give them back. The
+// floor of the list keeps them (`quick.open`, set by `TreeDataTable.render` from the layout), so the quick view yields its rows to
+// them first, and the tree is never taller than it is with the `Selected:` line alone.
+
+/** A plan call of the questions tracker with five short lines: its open row takes 9 lines (the row, when, the id, the plan, the reasons). */
+const PLAN = callRow(
+  {
+    id: 'p1',
+    n: 2,
+    kind: 'plan',
+    state: 'answered',
+    at: Date.UTC(2026, 9, 27, 10, 30),
+    plan: 'one\ntwo\nthree\nfour\nfive',
+  },
+  s => s,
+)
+/** The plan call above ten rows of one line each, as the review of PR #284 drew it. */
+const planOver = (): GroupSpec[] => [group('s0', [PLAN, ...webRows(10)])]
+/** 30 rows of one line, the row `at` with `n` short detail lines, and the view that selects it and opens it. */
+const ROWS = 30
+const opened = (at: number, n: number) => ({
+  groups: [
+    group(
+      's0',
+      webRows(ROWS).map((r, i) =>
+        i === at
+          ? {
+              ...r,
+              detail: () => Array.from({ length: n }, (_, k) => ({ label: `d${k}`, cell: { text: `text ${k}` } })),
+            }
+          : r,
+      ),
+    ),
+  ],
+  over: { selected: `w${at}`, expanded: new Set([`w${at}`]) },
+})
+/** The row in the middle of the list: both hints show, the case the floor is made for. */
+const CENTRE = ROWS / 2
+
+test('an open plan above ten rows at 96x18: the quick view gives its rows back to the list, and the tree is the body it is without the quick view', () => {
+  const over = { selected: PLAN.id, expanded: new Set([PLAN.id]) }
+  const without = pane(INLINE_18, over, planOver()) // what `main` draws: the `Selected:` line and the health line
+  expect(without.height).toBe(18)
+  const q = pane({ ...INLINE_18, quick: 8 }, over, planOver())
+  expect(q.height).toBe(18) // the quick view took 3 rows of 21 before it gave back the lines of the open row
+  expect(q.rows).toBe(without.rows)
+  expect(quickWords(q.tree)).toEqual(['Selected:', '+8 more'])
+})
+
+test('an open row with a few detail lines: the list keeps its 5 data rows beside them, and the quick view takes what is left', () => {
+  const { groups, over } = opened(CENTRE, 2) // the open row takes 3 lines
+  const q = pane({ ...INLINE_18, quick: 8 }, over, groups)
+  expect(q.height).toBe(18)
+  expect(q.rows).toBe(5) // the open row and four more: the floor of the list, as with a closed row
+  expect(quickWords(q.tree)).toEqual(['Selected:', 'line 1:', '+7 more']) // 4 rows without the open lines, 2 with them
+  // A closed row of the same pane has the 4 rows and gives none away.
+  const closed = pane({ ...INLINE_18, quick: 8 }, { selected: `w${CENTRE}` }, groups)
+  expect(closed.rows).toBe(5)
+  expect(quickWords(closed.tree)).toEqual(['Selected:', 'line 1:', 'line 2:', 'line 3:', '+5 more'])
+})
+
+test('the quick view never makes the tree taller than the Selected: line alone does, for every length of an open row at every body', () => {
+  // The open row is in the window whatever its height, so a body too short for it overflows with or without the quick view (the known
+  // limit of the window). What the quick view must not do is add to it: with 9 lines of detail it made a body of 18 draw 21.
+  for (const body of [INLINE_11, INLINE_18, DOCK_30, DOCK_31]) {
+    for (let n = 0; n <= 12; n++) {
+      for (const at of [0, CENTRE, ROWS - 1]) {
+        const { groups, over } = opened(at, n)
+        const alone = pane({ ...body, quick: 0 }, over, groups).height
+        const q = pane({ ...body, quick: 8 }, over, groups)
+        const name = `${body.columns}x${body.rows} ${n} lines at ${at}`
+        expect(q.height, name).toBeLessThanOrEqual(Math.max(body.rows, alone))
+        expect(
+          rowBoxes(q.tree).some(b => leaves(b.children[0]).includes('>')),
+          name,
+        ).toBe(true) // the selected row shows
+      }
+    }
+  }
+})
+
+test('the lines of an open row come off the room of the quick view before the list loses a data row, docked 49x30', () => {
+  // 49x30 docked: a closed row has the cap of 6 rows and the list keeps 11 data rows. The lines of an open row take the 6 rows the list
+  // has over its floor of 5 (the unit of the open row counts as one of the 5), and then the quick view gives its own rows back.
+  const rowsOf = (n: number) => {
+    const { groups, over } = opened(CENTRE, n)
+    const q = pane({ ...DOCK_30, quick: 8 }, over, groups)
+    return { rows: q.rows, height: q.height, words: quickWords(q.tree) }
+  }
+  const six = ['Selected:', 'line 1:', 'line 2:', 'line 3:', 'line 4:', 'line 5:', '+3 more']
+  expect(rowsOf(0)).toEqual({ rows: 13, height: 30, words: six }) // nothing under the row: the list has room to spare
+  expect(rowsOf(8)).toEqual({ rows: 5, height: 30, words: six }) // 9 lines: the list is at its floor, the quick view whole
+  expect(rowsOf(9)).toEqual({
+    rows: 5,
+    height: 30,
+    words: ['Selected:', 'line 1:', 'line 2:', 'line 3:', 'line 4:', '+4 more'],
+  })
+  expect(rowsOf(11)).toEqual({ rows: 5, height: 30, words: ['Selected:', 'line 1:', 'line 2:', '+6 more'] })
+})
+
+test('the quick view built with no open row asks for no detail() of the table: a closed selected row is laid as it was', () => {
+  const seen: string[] = []
+  const { groups, over } = opened(CENTRE, 3)
+  const spy = groups.map(g => ({
+    ...g,
+    rows: g.rows.map(r => ({
+      ...r,
+      detail: () => {
+        seen.push(r.id)
+        return r.detail?.() ?? []
+      },
+    })),
+  }))
+  pane({ ...DOCK_30, quick: 8 }, { selected: `w${CENTRE}` }, spy) // nothing is open
+  expect(seen).toEqual([])
+  pane({ ...DOCK_30, quick: 8 }, over, spy) // the centre row is open: its lines count, and no other row's detail() is asked
+  expect(new Set(seen)).toEqual(new Set([`w${CENTRE}`]))
+})
+
+test('the quick view comes off the window budget with the footer: a body with it draws what a body without it and as many rows less draws', () => {
+  resetWidths()
+  const table = view({ bodyColumns: 96, bodyRows: 17, placement: 'inline', selected: MIDDLE, viewLine: LINE })
+  const lined = TreeDataTable.render(
+    many(3, 10),
+    { ...table, status: { selected: SELECTED, health: HEALTH, quick: { form: 'full', lines: quickOf(2) } } },
+    EL,
+    recorder().actions,
+  )
+  resetWidths()
+  const bare = TreeDataTable.render(many(3, 10), { ...table, bodyRows: 17 - 2 - 2 }, EL, recorder().actions)
+  expect(rowBoxes(lined.tree).length).toBe(rowBoxes(bare.tree).length)
+  expect(lined.top).toBe(bare.top)
+  expect(lined.page).toBe(bare.page)
+  expect(heightOf(lined.tree, 96)).toBe(17)
+})
+
+test('the drawing and the window read the rows of the status lines from one rule: statusRows is what the footer draws', () => {
+  for (const lines of [0, 1, 3, 9]) {
+    for (const [rows, form] of [
+      [31, 'full'],
+      [18, 'full'],
+      [11, 'compact'],
+    ] as const) {
+      const table = view({
+        bodyColumns: 49,
+        bodyRows: rows,
+        placement: 'dock',
+        selected: MIDDLE,
+        viewLine: LINE,
+        status: {
+          selected: SELECTED,
+          ...(form === 'full' ? { health: HEALTH } : {}),
+          quick: { form, lines: quickOf(lines) },
+        },
+      })
+      resetWidths()
+      const drawn = TreeDataTable.render(many(3, 10), table, EL, recorder().actions)
+      const footer = ((drawn.tree as unknown as Node).children.at(-1) as Node).children[0] as Node
+      const statusBoxes = footer.children.filter(c => {
+        const t = texts(c)[0]?.[1] ?? ''
+        return t === 'Selected:' || /^line \d+:$/.test(t) || t === 'Health:'
+      })
+      expect(statusBoxes.length, `${rows} ${form} ${lines}`).toBe(statusRows(table))
+    }
+  }
+})
+
+test('statusOf: no status area in the help view and none without a status; the first line alone without a quick view', () => {
+  const base = view({ bodyColumns: 96, bodyRows: 31 })
+  expect(statusOf(base)).toBeUndefined()
+  expect(statusRows(base)).toBe(0)
+  const help = helpModel(new KeyRegistry().all(), [], undefined, [])
+  const lined = {
+    ...base,
+    status: { selected: SELECTED, health: HEALTH, quick: { form: 'full', lines: quickOf(3) } },
+  } as const
+  expect(statusOf({ ...lined, help })).toBeUndefined()
+  expect(statusRows({ ...lined, help })).toBe(0)
+  expect(statusOf({ ...base, status: STATUS })).toEqual({ selected: [SELECTED], health: HEALTH })
+  expect(statusRows({ ...base, status: STATUS })).toBe(2) // the selected-row line and the health line
+})
+
+test('statusOf with no body height takes the cap of the form: 6 rows in the full form, 3 in the compact form, no health line in the compact', () => {
+  const base = view({ bodyColumns: 96, bodyRows: undefined })
+  const full = statusOf({
+    ...base,
+    status: { selected: SELECTED, health: HEALTH, quick: { form: 'full', lines: quickOf(9) } },
+  })
+  expect(full?.selected).toHaveLength(6)
+  expect(full?.selected.at(-1)?.tail).toEqual({ text: '+4 more', dim: true })
+  const compact = statusOf({
+    ...base,
+    status: { selected: SELECTED, quick: { form: 'compact', lines: quickOf(9) } },
+  })
+  expect(compact?.selected).toHaveLength(3)
+  expect(compact?.health).toBeUndefined()
+  expect(compact?.selected.at(-1)?.tail).toEqual({ text: '+7 more', dim: true })
+})
+
+test('capLines: the first rows, the last of them ends with a dim +N more tail; a body too short for the first line still shows it', () => {
+  const lines = [SELECTED, ...quickOf(4)]
+  expect(capLines(lines, 5)).toBe(lines)
+  expect(capLines(lines, 9)).toBe(lines)
+  const cut = capLines(lines, 3)
+  expect(cut).toHaveLength(3)
+  expect(cut.slice(0, 2)).toEqual(lines.slice(0, 2))
+  expect(cut[2]).toEqual({ ...lines[2], tail: { text: '+2 more', dim: true } })
+  expect(capLines(lines, 0)).toHaveLength(1)
+  expect(capLines(lines, 0)[0]?.tail).toEqual({ text: '+4 more', dim: true })
+})
+
+test('statusLineBox: a line with an indent sits under the label of the line above, and its cells use the cells that are left', () => {
+  const line: StatusLine = {
+    label: 'reasons:',
+    indent: 2,
+    cells: [{ text: 'created, touched, discovered, and a few more words' }],
+  }
+  const node = statusLineBox(EL, line, 30) as unknown as Node
+  expect(node.props.paddingLeft).toBe(2)
+  // 28 cells are left: the label takes 8, a gap 1, so the cell is cut to 19.
+  const words = texts(node).map(([, s]) => s)
+  expect(words[0]).toBe('reasons:')
+  expect(cellWidth(words[1] ?? '')).toBe(19)
+  expect(words[1]?.endsWith('…')).toBe(true)
+  expect(heightOf(node, 30)).toBe(1)
+  expect((statusLineBox(EL, { ...line, indent: undefined }, 30) as unknown as Node).props.paddingLeft).toBeUndefined()
+})
+
+test('statusLineBox: a cell with clip middle is cut in the middle', () => {
+  const link = 'https://github.com/martin-macak/claude-code-mod-tracking/pull/262'
+  const mid = texts(statusLineBox(EL, { label: 'link:', cells: [{ text: link, clip: 'middle' }] }, 40)).map(
+    ([, s]) => s,
+  )
+  expect(mid[1]).toMatch(/^https:\/\/github.*….*\/pull\/262$/)
+  expect(cellWidth(mid[1] ?? '')).toBeLessThanOrEqual(40 - 'link:'.length - 1)
+  const end = texts(statusLineBox(EL, { label: 'link:', cells: [{ text: link }] }, 40)).map(([, s]) => s)
+  expect(end[1]?.endsWith('…')).toBe(true)
+  expect(end[1]?.endsWith('/pull/262')).toBe(false)
+})
+
+test('the tail of a cut quick view keeps its room even on the last line of a narrow body', () => {
+  const lines = capLines([SELECTED, ...quickOf(3)], 2)
+  const words = texts(statusLineBox(EL, lines[1] as StatusLine, 24)).map(([, s]) => s)
+  expect(words.at(-1)).toBe('+2 more')
+})
+
+test('the help view draws no quick view, whatever the view carries', () => {
+  resetWidths()
+  const help = helpModel(new KeyRegistry().all(), [], undefined, [])
+  const drawn = TreeDataTable.render(
+    [],
+    view({
+      bodyColumns: 96,
+      bodyRows: 31,
+      placement: 'dock',
+      help,
+      status: { selected: SELECTED, health: HEALTH, quick: { form: 'full', lines: quickOf(4) } },
+    }),
+    EL,
+    recorder().actions,
+  )
+  expect(quickWords(drawn.tree)).toEqual([])
 })

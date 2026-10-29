@@ -16,7 +16,7 @@ import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { focusOn, handleFor, headersOf, mountPane, type PaneUi, rowsOf, select } from './fixtures/pane'
 import { reasonsOfSources } from './fixtures/reasons'
-import { prompt, quiet, response, SESSION, START, track, until, world } from './fixtures/world'
+import { clearSession, prompt, quiet, response, SESSION, START, track, until, world } from './fixtures/world'
 
 type World = ReturnType<typeof world>
 type On = Parameters<typeof world>[0]
@@ -55,8 +55,8 @@ const viewLineOf = async (ui: PaneUi) =>
   (await ui.findAll({ type: 'Button' })).filter(b => VIEW_LINE_KEYS.includes(String(b.key)))
 const footerKeys = async (ui: PaneUi) => (await footerOf(ui)).map(b => b.key)
 /**
- * The footer Buttons of the help view: every Button with a hotkey. The help view has no view line (issue #200), so `g`, `a`, `t`
- * and `m` are footer Buttons there, dim, after `0`. `footerOf` leaves them out.
+ * The footer Buttons of the help view: every Button with a hotkey. The help view has no view line (issue #200), so `g`, `a`, `t`, `p`,
+ * `m` and `e` are footer Buttons there, dim, after `0`. `footerOf` leaves them out.
  */
 const helpFooterOf = async (ui: PaneUi) =>
   (await ui.findAll({ type: 'Button' })).filter(b => b.props.hotkey !== undefined)
@@ -111,10 +111,11 @@ test('pane: Enter on a Jira root hides its children and shows them again', async
   await ui.unmount()
 })
 
+// The compact body (17 rows) has no quick view (issue #276): the lines under the open row are the only `link:` on the screen.
 test('pane: Enter on a leaf shows its default detail and the link; Enter again hides it', async ($, on) => {
   const w = world(on)
   await listed($, w, 'See https://one.example/')
-  const ui = await mountPane($)
+  const ui = await mountPane($, { bodyRows: 17 })
   expect(await ui.find({ text: 'link:' })).toBeUndefined()
   await ui.press({ key: await handleFor(ui, 'one.example') })
   expect(await ui.find({ text: 'link:' })).toBeDefined()
@@ -423,7 +424,7 @@ test('pane: h shows the help view with every key and the config path; h again re
 const MANIFEST = JSON.stringify({ name: 'artifact-tracking', version: '1.2.3' })
 // The body of the inline pane at 100x40: 11 rows for the help lines and the footer, with no gap. The help lines: Pane keys
 // (title, one line of keys), Row keys (title, one line of keys), the groups of the trackers on one row, the config line and the
-// version line. The footer takes two rows since issue #200: the five dim Buttons of g, a, t, p and m wrap it.
+// version line. The footer takes two rows since issue #200: the six dim Buttons of g, a, t, p, m and e wrap it.
 const SHORT_ROWS = 11
 // The help view of the live screen of issue #92: the config path of the e2e world, in the temp folder of macOS.
 const LIVE_DIR = '/var/folders/sn/0_q8tr7x4vv44d69rbtyckwr0000gn/T/cc-tracker-config-SAq3DF'
@@ -441,7 +442,7 @@ test('pane: h in a short inline pane draws the compact help view, so Pane keys a
   const ui = await mountPane($, { bodyColumns: 96, bodyRows: 11, placement: 'inline' })
   await ui.press({ key: 'help' })
   const { gap, help, footer } = await helpTree(ui)
-  // The footer holds the five dim Buttons of g, a, t, p and m since issue #200, so it takes two rows at 96 cells, not one: the view
+  // The footer holds the six dim Buttons of g, a, t, p, m and e since issue #200, so it takes two rows at 96 cells, not one: the view
   // is 9 rows beside it (it was 10 beside a 1-row footer) and the two fill the body to the row.
   expect(await drawnHelpFooter(ui)).toEqual(modelHelpFooter)
   expect(HELP_FOOTER_ROWS).toBe(2)
@@ -466,7 +467,7 @@ test('pane: h in a short inline pane with a started mod, the version and the liv
   await ui.press({ key: 'help' })
   const { gap, help, footer } = await helpTree(ui)
   const wrapped = 1 // `Config file: <86 cells>` does not fit 96 cells: the path takes its own row
-  expect(await drawnHelpFooter(ui)).toEqual(modelHelpFooter) // two rows since issue #200: the five dim Buttons of g, a, t, p and m wrap the footer
+  expect(await drawnHelpFooter(ui)).toEqual(modelHelpFooter) // two rows since issue #200: the six dim Buttons of g, a, t, p, m and e wrap the footer
   expect(HELP_FOOTER_ROWS).toBe(2)
   expect(gap + help.length + wrapped + HELP_FOOTER_ROWS).toBeLessThanOrEqual(11) // the help lines, the wrapped row and the footer fit
   expect(JSON.stringify(help.at(-2))).toContain(`Config file: ${LIVE_PATH}`)
@@ -476,7 +477,7 @@ test('pane: h in a short inline pane with a started mod, the version and the liv
   expect(JSON.stringify(help)).toContain('files')
   expect(footer).toBeDefined()
   expect(await helpFooterKeys(ui)).toEqual(HELP_FOOTER_KEYS)
-  for (const b of (await helpFooterOf(ui)).slice(7)) expect(b.props.dimColor, String(b.key)).toBe(true) // g, a, t, p and m draw dim
+  for (const b of (await helpFooterOf(ui)).slice(7)) expect(b.props.dimColor, String(b.key)).toBe(true) // g, a, t, p, m and e draw dim
   await ui.unmount()
 })
 
@@ -487,8 +488,8 @@ test('pane: h in a docked pane keeps the full help view, one key to a line', asy
   await ui.press({ key: 'help' })
   const { gap, help } = await helpTree(ui)
   expect(gap).toBe(1)
-  // 4 titles, 17 keys (g, a, t, p and m, v and d of the preview, the github keys c and f and the questions key y of the started mod), the config line, the version line
-  expect(help).toHaveLength(23)
+  // 4 titles, 18 keys (g, a, t, p, m and e, v and d of the preview, the github keys c and f and the questions key y of the started mod), the config line, the version line
+  expect(help).toHaveLength(24)
   expect(JSON.stringify(help[0])).toContain('Pane keys')
   expect(JSON.stringify(help[1])).toContain('refresh')
   await ui.unmount()
@@ -536,7 +537,7 @@ test('pane: a body shorter than the footer plus one line still draws the help vi
   await ui.press({ key: 'help' })
   // No start: nothing fits, so the fewest rows: 2 titles, 2 lines of keys (the seven row keys, m and v among them, hold one line: each group's columns are as wide as its widest key), the config line
   expect((await helpTree(ui)).help).toHaveLength(5)
-  expect(await helpFooterKeys(ui)).toEqual(HELP_FOOTER_KEYS) // the five dim Buttons of g, a, t, p and m too, not only the 7 of the pane
+  expect(await helpFooterKeys(ui)).toEqual(HELP_FOOTER_KEYS) // the six dim Buttons of g, a, t, p, m and e too, not only the 7 of the pane
   await ui.unmount()
 })
 
@@ -641,7 +642,7 @@ test('pane: inline 100x40 with 12 links shows the title, the header and the foot
   expect(await ui.find({ text: '▼ 7 more below' })).toBeDefined()
   expect(await ui.find({ text: /more above/ })).toBeUndefined()
   expect(await ui.find({ text: 'View: list' })).toBeDefined()
-  expect((await viewLineOf(ui)).map(b => b.props.hotkey)).toEqual(['g', 'a', 't', 'p', 'm'])
+  expect((await viewLineOf(ui)).map(b => b.props.hotkey)).toEqual(['g', 'a', 't', 'p', 'm', 'e'])
   await ui.unmount()
 })
 
@@ -682,6 +683,92 @@ test('pane: docked 120x37 draws the summary, the selected row and the health bes
   expect(after).not.toContain('No row selected')
   expect(after[after.indexOf('Selected:') + 1]).toContain('site3.example/page3') // a Link: the Text holds its href too
   await ui.unmount()
+})
+
+// Issue #276, L1 of #275: the quick view of the selected row, below the `Selected:` line. The full form shows it by default, and `e`
+// (the Button `quick` of the view line) hides it and shows it again. The choice is a session atom: a new pane draws by it.
+test('pane: docked 120x37 shows the quick view of the selected row; e hides it, shows it again, and a new pane keeps the choice', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(36))
+  const ui = await mountPane($, DOCKED)
+  await ui.drawn()
+  expect(await lines(ui)).not.toContain('reasons:') // no row is selected: the one dim line
+  await select($, ui, 'site3.example')
+  const shown = await lines(ui)
+  expect(shown).toContain('Selected:')
+  expect(shown).toContain('reasons:') // the lines of the detail that the row cannot show
+  expect(shown.indexOf('reasons:')).toBeGreaterThan(shown.indexOf('Selected:'))
+  expect(shown.indexOf('reasons:')).toBeLessThan(shown.indexOf('View: list'))
+  const rowsShown = rowsOf(await ui.drawn()).length
+  await ui.press({ key: 'quick' })
+  expect(await lines(ui)).not.toContain('reasons:')
+  expect(await lines(ui)).toContain('Selected:') // the one-row line stays
+  expect(rowsOf(await ui.drawn()).length).toBeGreaterThan(rowsShown) // and the list has its rows back
+  await ui.unmount()
+  const again = await mountPane($, DOCKED)
+  await again.drawn()
+  await select($, again, 'site3.example')
+  expect(await lines(again)).not.toContain('reasons:') // a close and a reopen keep the choice
+  await again.press({ key: 'quick' })
+  expect(await lines(again)).toContain('reasons:')
+  await again.unmount()
+})
+
+test('pane: inline 100x40 hides the quick view, and e shows a small one that leaves the list 2 rows', async ($, on) => {
+  const w = world(on)
+  await listed($, w, links(12))
+  const ui = await mountPane($, INLINE)
+  await ui.drawn()
+  await select($, ui, 'site1.example')
+  expect(await lines(ui)).not.toContain('Selected:')
+  const before = rowsOf(await ui.drawn()).length
+  await ui.press({ key: 'quick' })
+  const text = await lines(ui)
+  expect(text).toContain('Selected:')
+  expect(text).not.toContain('Health:') // the compact form has no health line
+  // The room is two rows: the first line and the first line of the detail (the link), and the rest is counted by the tail.
+  expect(text).toContain('link:')
+  expect(text).not.toContain('reasons:')
+  expect(text).toContain('+1 more')
+  expect(rowsOf(await ui.drawn()).length).toBeGreaterThanOrEqual(2)
+  expect(rowsOf(await ui.drawn()).length).toBeLessThan(before)
+  await ui.unmount()
+})
+
+// A6 of #275: `/clear` resets the choice of `e`. The atom `quick` is a member of the engine state, and the real engine resets every
+// member on a new session id; a world with `isolateState` keeps the state under the session id, as the engine does. So the test goes
+// through the real hooks and the real `/clear` row: a pane drawn after it takes the default again, the quick view of the full form.
+// A mutant that keeps the flag outside the engine state (a module variable) fails it.
+test('pane: /clear resets the choice of e to { full: true, compact: false }: a pane after it shows the quick view again', async ($, on) => {
+  const w = world(on, { isolateState: true })
+  await listed($, w, links(36))
+  const ui = await mountPane($, DOCKED)
+  await ui.drawn()
+  await select($, ui, 'site3.example')
+  expect(await lines(ui)).toContain('reasons:') // the default of the full form: shown
+  await ui.press({ key: 'quick' })
+  await ui.redraw() // a world with isolateState answers state.set itself, so nothing draws the pane again (see `select`)
+  expect(await lines(ui)).not.toContain('reasons:') // e hid it
+  await ui.unmount()
+  const small = await mountPane($, INLINE) // the compact form has its own flag: e shows the quick view there
+  await small.drawn()
+  await select($, small, 'site1.example')
+  expect(await lines(small)).not.toContain('Selected:')
+  await small.press({ key: 'quick' })
+  await small.redraw()
+  expect(await lines(small)).toContain('Selected:')
+  await small.unmount()
+  await clearSession($, w, 'sess-2', 'clear')
+  const after = await mountPane($, DOCKED)
+  await after.drawn()
+  await select($, after, 'site3.example') // the row came over with /clear
+  expect(await lines(after)).toContain('reasons:') // the default is back: the quick view shows
+  await after.unmount()
+  const smallAfter = await mountPane($, INLINE)
+  await smallAfter.drawn()
+  await select($, smallAfter, 'site1.example')
+  expect(await lines(smallAfter)).not.toContain('Selected:') // and the compact form hides it again
+  await smallAfter.unmount()
 })
 
 test('pane: inline 100x60 (18 body rows) draws the full form, also while the keys are in the prompt', async ($, on) => {
@@ -770,10 +857,10 @@ test('pane: a hint line that wraps in a narrow body costs the window both of its
   const narrow = { bodyColumns: 40, bodyRows: 16, placement: 'inline' } as const
   const hint = wrapRows(NO_KEYS_HINT, narrow.bodyColumns)
   const footer = footerRows(NO_ROW_FOOTER, narrow.bodyColumns, false)
-  // `View: list` and the three keys do not fit 40 cells in one row: the view line takes two (issue #63, L3).
+  // `View: list` and the six keys do not fit 40 cells in one row: the view line takes three (issues #63, #199 and #276), two with the five keys of `main`.
   const line = viewLineRows({ text: 'View: list', keys: LIVE_VIEW_KEYS }, narrow.bodyColumns)
   expect(hint).toBe(2)
-  expect(line).toBe(2)
+  expect(line).toBe(3)
   const ui = await mountPane($, { ...narrow, isFocused: false })
   const rows = rowsOf(await ui.drawn()).length
   expect(hint + 2 + rows + 1 + 1 + line + footer).toBe(narrow.bodyRows)

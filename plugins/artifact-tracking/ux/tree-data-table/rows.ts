@@ -155,24 +155,41 @@ export interface Solving {
  * The columns come from every row of every group, drawn or not, so they hold still while a window moves over them and
  * the cells of two groups stand under the same header.
  */
-export function solving(d: Draw, laid: readonly LaidGroup[]): Solving {
-  const width = d.view.bodyColumns ?? DEFAULT_BODY_COLUMNS
-  const solved = solveColumns(
+export const solving = (d: Draw, laid: readonly LaidGroup[]): Solving =>
+  solvingOf(laid, d.view.bodyColumns ?? DEFAULT_BODY_COLUMNS)
+
+/** `solving` for a body `width` wide, with no drawing: the quick view asks it for the lines of the open selected row (`openLinesOf`). */
+function solvingOf(laid: readonly LaidGroup[], width: number): Solving {
+  const solved = solvedOf(laid, width)
+  return { solved, offset: GUTTER + treeOffset(solved), width }
+}
+
+/**
+ * The columns of the table for these laid rows in a body `width` wide. The quick view (issue #276) reads the same columns to know
+ * which cells the table cut, so it asks here and the two cannot solve the columns two ways.
+ */
+export const solvedOf = (laid: readonly LaidGroup[], width: number): Solved =>
+  solveColumns(
     TABLE,
     SHARED_COLUMNS,
     laid.flatMap(g => g.rows),
     width - GUTTER,
   )
-  return { solved, offset: GUTTER + treeOffset(solved), width }
+
+/** The detail lines under a row and their indent. */
+interface Details {
+  readonly lines: readonly DetailLine[]
+  readonly pad: number
 }
 
 /** The detail lines of a row and their indent. None when the budget guard turned detail off or the row is closed. */
-export function detailsOf(
-  d: Draw,
-  g: Solving,
-  r: LaidRow,
-): { readonly lines: readonly DetailLine[]; readonly pad: number } {
-  if (!d.detail || !r.open) return { lines: [], pad: 0 }
+export function detailsOf(d: Draw, g: Solving, r: LaidRow): Details {
+  return d.detail ? openDetailsOf(g, r) : { lines: [], pad: 0 }
+}
+
+/** The detail lines of a row and their indent: none for a closed row. */
+function openDetailsOf(g: Solving, r: LaidRow): Details {
+  if (!r.open) return { lines: [], pad: 0 }
   const pad = Math.min(g.offset + INDENT * r.depth + GLYPH_BOX, Math.max(0, g.width - MIN_DETAIL))
   return { lines: detailOf(r.row, SHARED_COLUMNS, g.solved, r.depth), pad }
 }
@@ -186,10 +203,20 @@ export function detailRows(line: DetailLine, pad: number, width: number): number
   return wrapRows(clipTo(normaliseCell(line.cell.text), DETAIL_CELLS), width - pad - label)
 }
 
+const heightOfDetails = ({ lines, pad }: Details, width: number): number =>
+  lines.reduce((sum, line) => sum + detailRows(line, pad, width), 0)
+
 /** The rows a laid row takes: its own line and its detail lines. */
-export function rowLines(d: Draw, g: Solving, r: LaidRow): number {
-  const { lines, pad } = detailsOf(d, g, r)
-  return 1 + lines.reduce((sum, line) => sum + detailRows(line, pad, g.width), 0)
+export const rowLines = (d: Draw, g: Solving, r: LaidRow): number => 1 + heightOfDetails(detailsOf(d, g, r), g.width)
+
+/**
+ * The rows that the detail lines of the open row `id` take below its own line, as `rowLines` counts them in a body `width` wide: 0 for
+ * a row that is closed or not laid. The window shows at least the selected unit whatever its height, so these rows are rows of the
+ * list that the quick view must leave (issue #276, review of PR #284). Calls the `detail()` of that one row, and only when it is open.
+ */
+export function openLinesOf(laid: readonly LaidGroup[], id: string | null, width: number): number {
+  const r = laid.flatMap(g => g.rows).find(x => x.row.id === id)
+  return r === undefined || !r.open ? 0 : heightOfDetails(openDetailsOf(solvingOf(laid, width), r), width)
 }
 
 /** A row and its detail lines. */

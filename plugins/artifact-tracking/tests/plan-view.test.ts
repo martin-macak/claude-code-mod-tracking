@@ -390,9 +390,11 @@ test('every plan drawn inline fits the 11 rows at 96, 58, 49 and 40 cells, as th
     }
 })
 
-test('the plan footer takes 2 rows at 96 and 80 cells, 3 at 58 and 49, and 4 at 40', () => {
+// The footer holds the 13 core keys, `e: quick view` (issue #276) among them as a dim Button. With the 12 keys of `main` it took 3 rows at
+// 49 cells and 4 at 40; it takes 4 and 5 now. The 11-row fit test above holds the limit of the floor.
+test('the plan footer takes 2 rows at 96 and 80 cells, 3 at 58, 4 at 49 and 5 at 40', () => {
   const rows = (columns: number) => footerRows(FOOTER, columns, moveHintFits(FOOTER, columns))
-  expect([96, 80, 58, 49, 40].map(rows)).toEqual([2, 2, 3, 3, 4])
+  expect([96, 80, 58, 49, 40].map(rows)).toEqual([2, 2, 3, 4, 5])
 })
 
 // The text of a step and of a problem comes from outside. A tab counts as no cell in `cellWidth`, and an escape byte moves the cursor.

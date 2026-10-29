@@ -20,7 +20,7 @@ import type {
   Timer,
 } from '../../core/interfaces/ports'
 import type { PreviewState } from '../../core/interfaces/preview'
-import type { FilterState, HiddenState } from '../../core/interfaces/view'
+import type { FilterState, HiddenState, QuickState } from '../../core/interfaces/view'
 import { emptyLedger } from '../../core/lib/turns'
 import type { ToolStatus, TurnLedger } from '../../types'
 
@@ -244,6 +244,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       hidden: atom<HiddenState>('hidden', () => ({ showAll: false })),
       view: atom<string | null>('view', () => null),
       filters: atom<FilterState>('filters', () => ({ touchedOnly: false })),
+      quick: atom<QuickState>('quick', () => ({ full: true, compact: false })),
       marks: atom<string[]>('marks', () => []),
       preview: atom<PreviewState | null>('preview', () => null),
       turns: atom<TurnLedger>('turns', emptyLedger),

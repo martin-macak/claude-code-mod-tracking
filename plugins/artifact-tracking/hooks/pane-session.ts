@@ -13,7 +13,15 @@ import type { Ports } from '../core/interfaces/ports'
 import type { PreviewState } from '../core/interfaces/preview'
 import type { FooterKey, GroupSpec, RowRef } from '../core/interfaces/view'
 import type { PlanLine } from '../core/lib/clean-text'
-import { flipShowAll, flipTouched, listGroups, nextView, resolveView, viewSummary } from '../core/lib/grouping'
+import {
+  flipQuick,
+  flipShowAll,
+  flipTouched,
+  listGroups,
+  nextView,
+  resolveView,
+  viewSummary,
+} from '../core/lib/grouping'
 import { healthLine } from '../core/lib/health'
 import { dismissQuestion, markedSummary, pruned, relabelDismiss, rowIdsOf, toggled } from '../core/lib/marks'
 import { bandText } from '../ux/band'
@@ -21,15 +29,18 @@ import { resetWidths } from '../ux/tree-data-table/columns'
 import type { TableElements } from '../ux/tree-data-table/el'
 import { hintRows, withKeysHint } from '../ux/tree-data-table/hint'
 import { renderPreview } from '../ux/tree-data-table/preview'
-import { SUMMARY_ROWS, selectedLine, statusForm, withSummary } from '../ux/tree-data-table/status'
+import { quickLines } from '../ux/tree-data-table/quick'
+import { solvedOf } from '../ux/tree-data-table/rows'
+import { type StatusForm, SUMMARY_ROWS, statusAreaOf, statusForm, withSummary } from '../ux/tree-data-table/status'
 import {
   DEFAULT_BODY_COLUMNS,
   type Drawn,
   type DrawnRow,
   findRow,
   findTreeRow,
-  laidRefs,
+  layout,
   neighbourOf,
+  refsOf,
   shownSelection,
   survivorOf,
   type TableActions,
@@ -125,12 +136,13 @@ export class PaneSession {
    */
   async draw(p: Ports, m: PaneHost, el: TableElements, props: PaneDrawProps = {}): Promise<RenderElement> {
     const { bodyColumns, bodyRows, focused, placement } = props
-    const [expanded, selected, help, marks, previewing] = await Promise.all([
+    const [expanded, selected, help, marks, previewing, quick] = await Promise.all([
       p.state.expanded.get(),
       p.state.selected.get(),
       p.state.help.get(),
       p.state.marks.get(),
       p.state.preview.get(),
+      p.state.quick.get(),
     ])
     // The preview takes the place of the table (issue #57, L2), also when the help view is on: the state holds both, and `Frame.view`
     // says which one the body draws. The press of `v` opens nothing over the help view, so only a press in flight can have written both.
@@ -143,24 +155,31 @@ export class PaneSession {
     const plan = help ? undefined : this.plan
     const viewKind: ViewKind = help ? 'help' : plan === undefined ? 'rows' : 'plan'
     const textOnly = viewKind !== 'rows' // the help view and the plan view: no rows, no view line, no status area, no hint
-    const full = !textOnly && statusForm(bodyRows) === 'full'
+    const form = statusForm(bodyRows)
+    const full = !textOnly && form === 'full'
+    // The quick view of the selected row (issue #276) shows in the form the pane draws when its flag says so: on by default in the
+    // full form, off in the compact form. A text view (the help view, the plan view) has none.
+    const quickOn = !textOnly && quick[form]
     const tools = full ? await p.state.tools.get() : undefined
     const now = p.clock.wall()
     const model = await paneModel(p, m, { selected, expanded: new Set(expanded) })
     const { groups } = model
     const shown = await shownOf(p, groups)
     const limits = m.config.global().ui
+    // What the layout reads of the view: the one copy of it, for the selection, the laid rows, the quick view and the table.
+    const layoutView = { expanded: new Set(expanded), shown: (id: string) => shown.get(id) ?? 0, limits }
     // A row can hide with no key from the person. The drawing, the ring and the keys then follow the row the selection
     // falls to. The atom is not written here (E9): `pressed` reads the same row from `chosen` (issue #49). The window
     // follows that row too (`view.selected`), so a row that hid moves it onto the row the selection fell to (issue #109).
     const chosen = shownSelection(
       groups,
-      { expanded: new Set(expanded), shown: id => shown.get(id) ?? 0, limits },
+      layoutView,
       selected,
       this.rows,
       this.chosen?.atom === selected ? this.chosen.id : null,
     )
     this.chosen = { atom: selected, id: chosen }
+    const selectedRow = findTreeRow(groups, chosen)
     // A pane with no keys draws a hint line above the tree (issue #108). The table gets the rows below it, else the tree is
     // taller than the body and the footer drops out of view (issue #109).
     const hinted = focused === false && !textOnly
@@ -172,9 +191,8 @@ export class PaneSession {
         : Math.max(0, bodyRows - (hinted ? hintRows(columns) : 0) - (full ? SUMMARY_ROWS : 0))
     // The marked rows that this drawing lays: a row that a cap, a filter or a closed parent leaves out counts nowhere (G7). The
     // keys read them, so the footer is asked for them before the drawing is made.
-    const laid = textOnly
-      ? []
-      : laidRefs(groups, { expanded: new Set(expanded), shown: id => shown.get(id) ?? 0, limits })
+    const laidGroups = textOnly ? [] : layout(groups, layoutView)
+    const laid = refsOf(laidGroups)
     const marked = new Set(marks)
     const markedDrawn = laid.filter(r => marked.has(r.id))
     const row = textOnly ? undefined : findRow(groups, chosen)
@@ -186,6 +204,26 @@ export class PaneSession {
     // The question stands while the same rows are its targets and the pane has the keys: a drawing without them, the help
     // view and a change of the marked rows withdraw it. The first drawing that reads it notes its number.
     const asking = this.question.read(drawing, targets, focused !== false && !textOnly)
+    // The status area (issue #138): the selected row and, in the full form, the health, in the footer Box. The quick view of the
+    // selected row (issue #276) adds the lines of its detail below the selected line, in either form. The selected row is the row the
+    // drawing treats as selected, as the keys and the window do. The lines are built here, once: `detail()` of that row is called for
+    // this drawing and no other, and a text view calls none.
+    const status = statusAreaOf({
+      row: selectedRow,
+      health: full
+        ? healthLine(
+            m.liveTools().map(id => ({ id, status: tools?.[id] })),
+            now,
+            problemCount(m),
+          )
+        : undefined,
+      quick: quickOn
+        ? {
+            form,
+            lines: selectedRow === undefined ? [] : quickLines(selectedRow, solvedOf(laidGroups, columns), columns),
+          }
+        : undefined,
+    })
     const view: TableView = {
       bodyColumns,
       bodyRows: room,
@@ -196,16 +234,16 @@ export class PaneSession {
       // draw after the last close left a place behind.
       top: selected === null ? 0 : this.top,
       ...(this.onMore === undefined ? {} : { onMore: this.onMore }),
-      expanded: new Set(expanded),
+      expanded: layoutView.expanded,
       marked: new Set(markedDrawn.map(r => r.id)),
-      shown: id => shown.get(id) ?? 0,
+      shown: layoutView.shown,
       limits,
       // The help view works only `r` and `h`, so its footer is drawn as with no row selected: a tracker's dim, inert keys
-      // would wrap the footer further and push `Pane keys` out of the body again (issue #105). The footer holds the four
+      // would wrap the footer further and push `Pane keys` out of the body again (issue #105). The footer holds the six
       // keys of the view line as dim Buttons, because the help view has no view line (issue #200). While marked rows are
       // the targets of `x`, its label says how many (`dismiss 3`, and `confirm 3` while the question stands).
       footer: relabelDismiss(footer, targets.length, asking),
-      // The view line above the footer: the view, the filters and the keys `g`, `a`, `t`, `p` and `m` (issues #63, #138 and #199). The
+      // The view line above the footer: the view, the filters and the keys `g`, `a`, `t`, `p`, `m` and `e` (issue #63, L3; #138; #199; #276). The
       // words say how many rows are marked, and the question of a bulk dismiss takes their place. The help view has none.
       ...(textOnly
         ? {}
@@ -222,25 +260,12 @@ export class PaneSession {
               ),
             },
           }),
-      // The full status area (issue #138): the selected row and the health, in the footer Box. The selected row is the row the
-      // drawing treats as selected, as the keys and the window do.
-      ...(full
-        ? {
-            status: {
-              selected: selectedLine(findTreeRow(groups, chosen)),
-              health: healthLine(
-                m.liveTools().map(id => ({ id, status: tools?.[id] })),
-                now,
-                problemCount(m),
-              ),
-            },
-          }
-        : {}),
+      ...(status === undefined ? {} : { status }),
       // The help titles a tracker's keys by the sections that hold its rows, whatever the view draws (issue #63, L3).
       help: help ? helpOf(m, listGroups(model.sections)) : null,
       ...(plan === undefined ? {} : { plan }),
     }
-    const drawn = TreeDataTable.render(groups, view, el, this.actionsOf(p, m, focused === false, drawing))
+    const drawn = TreeDataTable.render(groups, view, el, this.actionsOf(p, m, focused === false, drawing, form))
     this.refocus.seen(drawn)
     this.drawn = drawn
     if (!textOnly) this.top = drawn.top // a text view draws no window: its place of 0 would reset the one the rows left
@@ -286,7 +311,8 @@ export class PaneSession {
         blocks: content?.blocks,
         columns: props.bodyColumns,
       },
-      this.actionsOf(p, m, props.focused === false, ++this.drawing),
+      // A press while the preview shows goes to `PanePreview.key` before any `e` flips a flag, so the form is only the one the pane has.
+      this.actionsOf(p, m, props.focused === false, ++this.drawing, statusForm(props.bodyRows)),
     )
     this.refocus.frame({ view: 'preview', rows: new Map(), keys: keys.map(k => k.buttonKey), stops: [] })
     return props.focused === false ? withKeysHint(el, tree) : tree
@@ -454,7 +480,7 @@ export class PaneSession {
    * because the `x` asks for the ring last. The next click or Tab sets it right.
    *
    * `drawing` is the number of the drawing these actions belong to: a press of `x` answers the question of a bulk dismiss only
-   * from a drawing that showed it (issue #138).
+   * from a drawing that showed it (issue #138). `form` is the form of that drawing: `e` flips the flag of the form the pane drew (issue #276).
    *
    * `keysInPrompt` is `Pane.isFocused === false` of the drawing these actions belong to. One session can be drawn on
    * several surfaces and each has its own value, so a press uses the value of its own tree, not that of the last drawing.
@@ -462,7 +488,7 @@ export class PaneSession {
    * history (issues #115 and #129). Each press takes its closing count when the person presses, before it waits in the
    * chain: a press that began before a closing does nothing after it (issue #130).
    */
-  private actionsOf(p: Ports, m: PaneHost, keysInPrompt: boolean, drawing: number): TableActions {
+  private actionsOf(p: Ports, m: PaneHost, keysInPrompt: boolean, drawing: number, form: StatusForm): TableActions {
     return {
       // A press is a click or Enter. It opens or closes the row and selects it (issue #108): the row stays selected
       // whether it opens or closes, and the ring goes to the handle the drawing gives the row. The keys come before the
@@ -503,7 +529,7 @@ export class PaneSession {
         if (m.keys.get(key)?.confirm !== true) this.disarm(p)
         const press = this.pressOf(keysInPrompt)
         const run = async () => {
-          if (press.still()) await this.pressed(p, m, key, press, surface, drawing)
+          if (press.still()) await this.pressed(p, m, key, press, surface, drawing, form)
         }
         if (m.keys.get(key)?.scope === 'pane') this.work.detach(p, key, run)
         else this.work.queue(p, key, run)
@@ -541,6 +567,7 @@ export class PaneSession {
     begun: Press,
     surface: string | undefined,
     drawing: number,
+    form: StatusForm,
   ): Promise<void> {
     const key = m.keys.get(buttonKey)
     if (key === undefined) return
@@ -553,7 +580,7 @@ export class PaneSession {
     if (!afterAsk.still()) return
     if (shown !== null) return this.preview.key(p, m, key, shown, afterAsk)
     // While a marked row is drawn, `x` and the digits act on the marked rows only, whatever row is selected (issue #138, G2).
-    // Only a core row key reads the marks: `r`, `h`, `g`, `a`, `t`, `p` and the keys of a tracker do not wait for the read.
+    // Only a core row key reads the marks: `r`, `h`, the view line keys (`g`, `a`, `t`, `p`, `e`) and the keys of a tracker do not wait for the read.
     const marked = key.owner === 'core' && key.scope === 'row' ? await this.markedRows(p) : []
     if (!afterAsk.still()) return
     const isItemOwner = (owner: string) => m.isItemOwner(owner)
@@ -599,7 +626,7 @@ export class PaneSession {
         await m.setPriority(p, to.rowId, to.level)
         await this.refocus.to(p, m, to.rowId, afterAsk)
         return
-      // `g`, `a` and `t` (issue #63, L3) write a session atom and nothing else: no file, no store key. The rows get new
+      // `g`, `a` and `t` (issue #63, L3), like `e` (issue #276), write a session atom and nothing else: no file, no store key. The rows get new
       // handles, and the ring keeps its place among the Buttons, so each key asks for the ring on the selected row again.
       case 'view': {
         const { view, views } = m.config.global().ui
@@ -611,6 +638,15 @@ export class PaneSession {
         return this.redrawn(p, m, selected, afterAsk)
       case 'touched':
         await p.state.filters.update(unlessClosed(afterAsk, flipTouched))
+        return this.redrawn(p, m, selected, afterAsk)
+      // `e` (issue #276) flips the flag of the form the pane drew, and nothing else is written: no file, no store key. The window
+      // takes the rows of the quick view off the list or gives them back, so the ring asks for the selected row again, as after `t`.
+      // The quick view is a part of the list, so over another view of the body a press of `e` from an older drawing changes nothing, as
+      // `v` does over the help view and the plan view: the person would find a flipped flag on the way back. The preview takes every
+      // key itself (`PanePreview.key`, above), and none of its Buttons is `e`.
+      case 'quick':
+        if (this.plan !== undefined || (await p.state.help.get())) return
+        await p.state.quick.update(unlessClosed(afterAsk, cur => flipQuick(cur, form)))
         return this.redrawn(p, m, selected, afterAsk)
       // `m` (issue #138) writes a session atom and nothing else, as `g`, `a` and `t` do. The write also drops the marks of rows
       // that no tracker holds any more. It reads the inventory, not `paneData`: a rule that only hides a row (the TTL, the row

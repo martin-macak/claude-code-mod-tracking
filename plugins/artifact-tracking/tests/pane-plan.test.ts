@@ -110,7 +110,7 @@ const hotkeys = (drawn: unknown): string[] =>
     .map(b => String(b.props.hotkey))
 const dim = (drawn: unknown, key: string): boolean => buttonOf(drawn, key).props.dimColor === true
 
-const CORE_HOTKEYS = ['r', 'h', 'g', 'a', 't', 'p', 'm', 'x', '1', '2', '3', '0']
+const CORE_HOTKEYS = ['r', 'h', 'g', 'a', 't', 'p', 'm', 'e', 'x', '1', '2', '3', '0']
 
 // ---------------------------------------------------------------- open, read, go back
 
@@ -118,7 +118,7 @@ test('p reads the plan and draws it in place of the rows: no row, no view line, 
   const t = setup()
   t.w.state.set('selected', 'b')
   expect(handlesOf(await t.draw())).toEqual(['r0', 'r1', 'r2'])
-  expect(viewLineOf(await t.draw()).map(b => b.props.hotkey)).toEqual(['g', 'a', 't', 'p', 'm'])
+  expect(viewLineOf(await t.draw()).map(b => b.props.hotkey)).toEqual(['g', 'a', 't', 'p', 'm', 'e'])
   await t.pressKey('clean')
   expect(t.host.calls).toEqual(['cleanPlan']) // one read, which makes the entry of the host itself
   const drawn = await t.draw()
@@ -216,12 +216,48 @@ test('the frame of the plan view names the view and holds the keys of its footer
     'touched',
     'clean',
     'mark',
+    'quick',
     'dismiss',
     'prio-1',
     'prio-2',
     'prio-3',
     'prio-0',
   ])
+})
+
+// ---------------------------------------------------------------- no quick view (issue #276)
+
+// The plan view is a text view, like the help view: no rows, no view line, no status area. With the flags of `e` on in both forms it
+// still draws no quick view, builds none and asks for no `detail()` that nobody would see (A8 of #275, said there for the help view).
+test('the plan view draws no quick view, in either form, and asks for no detail() that nobody would see', async () => {
+  for (const rows of [31, 11]) {
+    const t = setup()
+    const seen: string[] = []
+    t.host.sections = [
+      section(
+        'web',
+        ['a', 'b', 'c'].map(id => ({
+          ...web(id),
+          detail: () => {
+            seen.push(id)
+            return [{ label: 'note', cell: { text: `note of ${id}` } }]
+          },
+        })),
+      ),
+    ]
+    t.w.state.set('selected', 'b')
+    t.w.state.set('quick', { full: true, compact: true })
+    // The guard: the rows view draws the quick view of the selected row, so the checks below can fail.
+    const rowsView = leaves(await t.draw(96, rows))
+    expect(rowsView, `${rows} rows view`).toContain('Selected:')
+    expect(rowsView, `${rows} rows view`).toContain('note of b')
+    await t.pressKey('clean', rows)
+    seen.length = 0
+    const plan = leaves(await t.draw(96, rows))
+    expect(plan, `${rows} plan view`).not.toContain('Selected:')
+    expect(plan, `${rows} plan view`).not.toContain('note of b')
+    expect(seen, `${rows} plan view`).toEqual([])
+  }
 })
 
 // ---------------------------------------------------------------- the key changes nothing

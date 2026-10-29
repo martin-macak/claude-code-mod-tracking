@@ -43,10 +43,10 @@ const core = (id: string) => {
 const FOOTER_CORE = CORE_KEYS.filter(k => k.bar === undefined && k.id !== 'preview').map(k => k.id)
 
 /** The Button keys of the view line. The help view has no view line, so its footer draws them (issue #200). */
-const VIEW_KEYS = ['view', 'show-all', 'touched', 'clean', 'mark']
+const VIEW_KEYS = ['view', 'show-all', 'touched', 'clean', 'mark', 'quick']
 
-test("core keys are r h, the view line keys g a t p m, x 1 2 3 0, then v and d of the preview, with today's labels for the footer keys", () => {
-  expect(CORE_KEYS.map(k => k.key)).toEqual(['r', 'h', 'g', 'a', 't', 'p', 'm', 'x', '1', '2', '3', '0', 'v', 'd'])
+test("core keys are r h, the view line keys g a t p m e, x 1 2 3 0, then v and d of the preview, with today's labels for the footer keys", () => {
+  expect(CORE_KEYS.map(k => k.key)).toEqual(['r', 'h', 'g', 'a', 't', 'p', 'm', 'e', 'x', '1', '2', '3', '0', 'v', 'd'])
   expect(CORE_KEYS.map(k => k.label)).toEqual([
     'refresh',
     'help',
@@ -55,6 +55,7 @@ test("core keys are r h, the view line keys g a t p m, x 1 2 3 0, then v and d o
     'touched', // issue #199, owner decision Q5: the sixth pane key needs the shorter label to keep the compact help view in 11 rows
     'clean plan',
     'mark',
+    'quick view',
     'dismiss',
     'high',
     'normal',
@@ -71,6 +72,7 @@ test("core keys are r h, the view line keys g a t p m, x 1 2 3 0, then v and d o
     'touched',
     'clean',
     'mark',
+    'quick',
     'dismiss',
     'prio-1',
     'prio-2',
@@ -101,8 +103,8 @@ test('v is a row key of the footer, d sits on the key line of the preview: neith
     mode: 'diff',
   })
   expect(CORE_KEYS.filter(k => k.bar === 'preview').map(k => k.key)).toEqual(['d'])
-  // The view line keeps its five keys: the preview adds none to it.
-  expect(CORE_KEYS.filter(k => k.bar === 'view').map(k => k.key)).toEqual(['g', 'a', 't', 'p', 'm'])
+  // The view line keeps its six keys: the preview adds none to it.
+  expect(CORE_KEYS.filter(k => k.bar === 'view').map(k => k.key)).toEqual(['g', 'a', 't', 'p', 'm', 'e'])
 })
 
 test('a tracker cannot take v or d: the keys are taken by core, so a second provider never meets a key that is off (issue #57, L2)', () => {
@@ -114,23 +116,24 @@ test('a tracker cannot take v or d: the keys are taken by core, so a second prov
   ])
 })
 
-test('g, a, t, p and m sit on the view line, so the footer keeps its keys and its rows (issue #63, L3; issues #138 and #199)', () => {
+test('g, a, t, p, m and e sit on the view line, so the footer keeps its keys and its rows (issues #63, #138, #199 and #276)', () => {
   const bar = CORE_KEYS.filter(k => k.bar === 'view')
-  expect(bar.map(k => k.key)).toEqual(['g', 'a', 't', 'p', 'm'])
-  // `m` acts on the selected row, so it is a row key: its press waits in the chain beside `x` and the digits.
-  expect(bar.map(k => k.scope)).toEqual(['pane', 'pane', 'pane', 'pane', 'row'])
+  expect(bar.map(k => k.key)).toEqual(['g', 'a', 't', 'p', 'm', 'e'])
+  // `m` acts on the selected row, so it is a row key: its press waits in the chain beside `x` and the digits. `e` works on the
+  // whole pane, as `g`, `a`, `t` and `p` do.
+  expect(bar.map(k => k.scope)).toEqual(['pane', 'pane', 'pane', 'pane', 'row', 'pane'])
   expect(FOOTER_CORE).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
   const reg = new KeyRegistry()
   reg.add('a', [spec('open', 'o')])
   for (const row of [undefined, ref('a'), ref('items')])
-    expect(footerKeys(reg, row, items, false).some(k => ['g', 'a', 't', 'p', 'm'].includes(k.key))).toBe(false)
+    expect(footerKeys(reg, row, items, false).some(k => ['g', 'a', 't', 'p', 'm', 'e'].includes(k.key))).toBe(false)
 })
 
 test('viewButtonKeys: the Button key of each view line key, in registry order, whatever the state', () => {
   const reg = new KeyRegistry()
   reg.add('a', [spec('open', 'o')])
   const buttons = viewButtonKeys(reg)
-  expect(buttons).toEqual(['view', 'show-all', 'touched', 'clean', 'mark'])
+  expect(buttons).toEqual(['view', 'show-all', 'touched', 'clean', 'mark', 'quick'])
   for (const k of buttons) expect(reg.get(k)?.bar).toBe('view')
   // The pane's own keys carry the same Button keys: the refocus compares the two.
   expect(viewKeys(reg, ref('items'), items, false).map(k => k.buttonKey)).toEqual(buttons)
@@ -146,20 +149,21 @@ test('viewKeys: the view line keys, each with its label and the Button key the r
     ['t', 'touched', 'touched', true],
     ['p', 'clean plan', 'clean', true],
     ['m', 'mark', 'mark', true],
+    ['e', 'quick view', 'quick', true],
   ])
   for (const k of on) expect(reg.get(k.buttonKey)?.id).toBe(k.id)
 })
 
-test('viewKeys with the selected row: m is live on a row that takes a bulk key, or is marked, else dim; g, a, t and p stay live', () => {
+test('viewKeys with the selected row: m is live on a row that takes a bulk key, or is marked, else dim; g, a, t, p and e stay live', () => {
   const reg = new KeyRegistry()
   const live = (row: RowRef | undefined, marked = false) =>
     Object.fromEntries(viewKeys(reg, row, items, marked).map(k => [k.key, k.enabled]))
-  expect(live(ref('items'))).toEqual({ g: true, a: true, t: true, p: true, m: true })
+  expect(live(ref('items'))).toEqual({ g: true, a: true, t: true, p: true, m: true, e: true })
   expect(live(ref('repos', { dismiss: true }))).toMatchObject({ m: true })
   expect(live(ref('repos', { priority: true }))).toMatchObject({ m: false }) // a digit needs an item owner
-  expect(live(ref('repos', {}))).toEqual({ g: true, a: true, t: true, p: true, m: false })
+  expect(live(ref('repos', {}))).toEqual({ g: true, a: true, t: true, p: true, m: false, e: true })
   expect(live(ref('repos', {}), true)).toMatchObject({ m: true }) // a marked row can always be unmarked
-  expect(live(undefined)).toEqual({ g: true, a: true, t: true, p: true, m: false })
+  expect(live(undefined)).toEqual({ g: true, a: true, t: true, p: true, m: false, e: true })
 })
 
 test('a tracker cannot take m: it is a core key', () => {
@@ -168,24 +172,26 @@ test('a tracker cannot take m: it is a core key', () => {
   expect(reg.problems()).toEqual(['keys: x key "m" (mark) is taken by core (mark). The key is off.'])
 })
 
-test('a tracker cannot take g, a, t or p: the keys are taken by core', () => {
+test('a tracker cannot take g, a, t, p or e: the keys are taken by core', () => {
   const reg = new KeyRegistry()
-  reg.add('x', [spec('go', 'g'), spec('all', 'A'), spec('tag', 't'), spec('plan', 'p')])
+  reg.add('x', [spec('go', 'g'), spec('all', 'A'), spec('tag', 't'), spec('plan', 'p'), spec('edit', 'e')])
   expect(reg.problems()).toEqual([
     'keys: x key "g" (go) is taken by core (view). The key is off.',
     'keys: x key "a" (all) is taken by core (show-all). The key is off.',
     'keys: x key "t" (tag) is taken by core (touched). The key is off.',
     'keys: x key "p" (plan) is taken by core (clean). The key is off.',
+    'keys: x key "e" (edit) is taken by core (quick). The key is off.',
   ])
   expect(reg.get('x.plan')).toBeUndefined()
 })
 
-test('route: g, a, t and p route at once, with no row, with a tracker row and with a row that takes no key', () => {
+test('route: g, a, t, p and e route at once, with no row, with a tracker row and with a row that takes no key', () => {
   for (const row of [undefined, ref('items'), ref('t', {}), ref('github', undefined)]) {
     expect(route(core('view'), row, items)).toEqual({ to: 'view' })
     expect(route(core('show-all'), row, items)).toEqual({ to: 'showAll' })
     expect(route(core('touched'), row, items)).toEqual({ to: 'touched' })
     expect(route(core('clean'), row, items)).toEqual({ to: 'clean' }) // before the row check: the plan needs no row (issue #199)
+    expect(route(core('quick'), row, items)).toEqual({ to: 'quick' })
   }
 })
 
@@ -368,7 +374,7 @@ test('footerKeys in the help view: the keys of the view line follow 0 as dim But
   const reg = new KeyRegistry()
   reg.add('a', [spec('open', 'o')])
   const help = footerKeys(reg, undefined, items, true)
-  expect(help.map(k => k.key)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'p', 'm']) // the Tab walk from h reaches x
+  expect(help.map(k => k.key)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'p', 'm', 'e']) // the Tab walk from h reaches x
   expect(help.map(k => k.label)).toEqual([
     'refresh',
     'back',
@@ -382,6 +388,7 @@ test('footerKeys in the help view: the keys of the view line follow 0 as dim But
     'touched',
     'clean plan',
     'mark',
+    'quick view',
   ])
   const viewKeys = help.filter(k => VIEW_KEYS.includes(k.buttonKey))
   expect(viewKeys.map(k => k.buttonKey)).toEqual(VIEW_KEYS)
@@ -641,7 +648,7 @@ test('route and bulkTargets take the same rows for a key and do the same work on
 
 test('bulkTargets: the pane keys, m and a tracker key are single-row: no bulk', () => {
   const marked = [row('a', 'items', ALL)]
-  for (const id of ['refresh', 'help', 'view', 'show-all', 'touched', 'mark', 'preview', 'diff']) {
+  for (const id of ['refresh', 'help', 'view', 'show-all', 'touched', 'mark', 'quick', 'preview', 'diff']) {
     expect(bulkTargets(core(id), marked, items), id).toBeUndefined()
   }
   const open = { id: 'open', key: 'o', label: 'open', scope: 'row', owner: 'items' } as const

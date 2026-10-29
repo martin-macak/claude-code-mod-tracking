@@ -121,11 +121,15 @@ test('the tag @help-view-keys selects the scenario of issue #200 docked at 120x3
     const steps = scenario.steps
     const ring = steps.indexOf('I press "Tab" until the focus ring is on "g: view"')
     const open = steps.indexOf('I press "h"')
-    const clean = steps.indexOf('I press "p"')
-    const letters = steps.indexOf('I press "m"')
     const close = steps.lastIndexOf('I press "h"')
     assert.ok(ring !== -1 && ring < open, 'the ring is on g before the help view opens')
-    assert.ok(open < clean && clean < letters && letters < close, 'the five letters come between the two presses of h')
+    // Each of the six keys of the view line is pressed between the two presses of h. A scenario that dropped one of them would not
+    // prove that its dim Button keeps the keyboard in the pane (issue #200; `p` of issue #199 and `e` of issue #276).
+    for (const letter of ['g', 'a', 't', 'p', 'm', 'e']) {
+      const at = steps.indexOf(`I press "${letter}"`)
+      assert.ok(at !== -1, `the scenario presses ${letter}`)
+      assert.ok(open < at && at < close, `${letter} is pressed between the two presses of h`)
+    }
     // The proof that the pane kept the keyboard is that the second h closes the help view: a keyboard in the prompt would type it.
     assert.ok(steps.indexOf('the screen stops showing "Row keys"') > close, 'the help view closes after the second h')
   }
