@@ -38,7 +38,13 @@ export type FakeOpts = {
   /** Engine time at the start. Default 0. */
   now?: number
   /** The session id, cwd, repo and transcript the `session` port answers. */
-  session?: { id?: string; cwd?: string; repo?: RepoRemote | null; messages?: SessionRow[] }
+  session?: {
+    id?: string
+    cwd?: string
+    repo?: RepoRemote | null
+    messages?: SessionRow[]
+    surfaces?: readonly string[]
+  }
   /** Seeds the store. */
   store?: Record<string, Json>
   /** Seeds the files: path to text. */
@@ -90,7 +96,7 @@ export type FakeWorld = {
   reads: string[]
   env: Record<string, string>
   settings?: Json
-  session: { id: string; cwd: string; repo: RepoRemote | null; messages: SessionRow[] }
+  session: { id: string; cwd: string; repo: RepoRemote | null; messages: SessionRow[]; surfaces: readonly string[] }
   agents: AgentInfo[]
   /**
    * `placed` is what `ui.open` answers: false when the terminal is too narrow for the pane. `openedWith` holds the selected
@@ -220,6 +226,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       cwd: async () => world.session.cwd,
       repo: async () => world.session.repo,
       messages: async () => world.session.messages,
+      surfaces: async () => world.session.surfaces,
     },
     agents: { list: async () => world.agents },
     tasks: {
@@ -340,6 +347,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       cwd: o.session?.cwd ?? '/work',
       repo: o.session?.repo ?? null,
       messages: o.session?.messages ?? [],
+      surfaces: o.session?.surfaces ?? [],
     },
     agents: o.agents ?? [],
     ui: {

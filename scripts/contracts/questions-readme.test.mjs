@@ -43,3 +43,14 @@ test('every pattern has an id and a label, and the ids are unique', () => {
     assert.ok(p.label.length > 0, p.id)
   }
 })
+
+// Issue #246. `/track qa` answers a stub where a surface draws, so the README must tell the person how to give the calls to the
+// model on purpose: `--send`. The old promise ("run it when you want the model to have the calls") named no flag.
+test('the README names --send as the way to give the calls to the model', () => {
+  assert.ok(
+    README.includes('Run `--send` when you want the model to have the calls.'),
+    'the Privacy section tells the person to run --send when the model should have the calls',
+  )
+  assert.ok(README.includes('| `/track qa [--send] [n]` |'), 'the command table names the flag')
+  assert.ok(!README.includes('Run it when you want the model to have the calls'), 'the old promise names no flag')
+})

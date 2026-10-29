@@ -61,6 +61,8 @@ Make the README demo GIF from a Gherkin scenario that also runs as an E2E test.
 | `Given the session writes a debug log` | Hidden. The launch passes `--debug-file` with a file in the folder of the scenario, empty at the start (`e2e/support/debug-log.ts`). Put it before the session step. Not for `@demo`. |
 | `Then the debug log shows "text"` | Polls the debug log until a line holds the text, read as it is. Shows what the mod wrote with `$.ui.log(…, { to: 'debug' })`, which the screen does not, for example the line of the wake of the ring pause (issue #193). |
 | `Then the fake model was told "text"` | Polls what the engine told the model about its tools, for example the answer of a dialog. Shows that the dialog of the real session ran. |
+| `Then a command reply to the fake model holds "text"` | Polls the `<local-command-stdout>` blocks of the requests that the fake model got: the replies of slash commands that the model reads in its next request. Type a prompt and let Claude finish first, since a reply goes out with the next request. Shows what the model read of a command (issue #246). |
+| `Then no command reply to the fake model holds "text"` | Waits until the model got at least one command reply, then fails when a reply holds the text. Put the positive step before it, or the check holds for a model that was sent nothing. Shows what the model did not read of a command, for example a text that only the screen drew. |
 
 ## Loop
 

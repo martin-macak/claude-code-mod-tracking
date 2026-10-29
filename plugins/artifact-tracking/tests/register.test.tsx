@@ -927,7 +927,7 @@ test('session.start registers /track with its hint', async ($, on) => {
     {
       name: 'track',
       argumentHint:
-        '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>|qa [n]]',
+        '[refresh|clear|help|version|show-all|view <name>|clean [--hide|--log|--yes <kind>]|turn [n]|prio <ref> <level>|qa [--send] [n]]',
     },
   ])
 })

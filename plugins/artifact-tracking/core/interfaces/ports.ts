@@ -234,6 +234,11 @@ export interface Ports {
     cwd(): Promise<string>
     repo(): Promise<RepoRemote | null>
     messages(): Promise<readonly SessionRow[]>
+    /**
+     * Every surface the session draws on (`terminal`, the desktop app, ...). Empty where nothing draws: `claude -p`, the SDK, the
+     * VS Code host. The engine never rejects it, so a caller treats a rejection as "a surface draws" (issue #246).
+     */
+    surfaces(): Promise<readonly string[]>
   }
   readonly agents: { list(): Promise<readonly AgentInfo[]> }
   /**

@@ -1,11 +1,13 @@
-// The Markdown of the calls (issue #71): the reply of `/track qa [n]` and the text of the copy key. It is made to paste into an
-// issue, a PR or a doc: every question word for word, every option with its description and preview, the chosen option
+// The Markdown of the calls (issue #71): the reply of `/track qa [--send] [n]` and the text of the copy key. It is made to paste
+// into an issue, a PR or a doc: every question word for word, every option with its description and preview, the chosen option
 // marked, typed text tagged, the notes quoted. Secrets are masked unless the config turns masking off. Pure.
+// Issue #246: where a surface draws, the reply is a stub (`qaStub`) that names the call numbers, and a `CommandOutput` rewrite
+// draws the Markdown of exactly those calls (`stubRange`, `qaScreen`). The stored row and the next request hold the stub only.
 
 import { type Masker, masker, type ShownItem, shownItem, shownResponse, stateWord } from './present'
 import type { QuestionCall } from './types'
 
-export const QA_USAGE = 'Usage: /track qa [n]'
+export const QA_USAGE = 'Usage: /track qa [--send] [n]'
 export const NO_CALLS = 'No questions asked in this session.'
 
 /** A fence of backticks that no run of backticks in `text` can close. */
@@ -106,15 +108,127 @@ export function qaMarkdown(calls: readonly QuestionCall[], mask: boolean): strin
 const kept = (calls: readonly QuestionCall[]): string =>
   calls.length <= 8 ? calls.map(c => c.n).join(', ') : `${calls[0]!.n} to ${calls.at(-1)!.n}`
 
+/** The word of `qa`'s argument: a whole number, or nothing. Anything else is the usage. */
+const NUMBER = /^[1-9]\d{0,8}$/
+
 /**
- * The reply of `/track qa [n]`. No argument: every call. A number: that call, with no title. Anything else is the usage.
- * `n` is the number of the call, which stays when the older calls drop.
+ * The reply of `/track qa [n]` as the model may read it. No argument: every call. A number: that call, with no title. Anything
+ * else is the usage. `n` is the number of the call, which stays when the older calls drop.
+ * The text of the whole list and of one call starts with a line break. The engine puts `<plugin>: ` in front of a reply, so a
+ * title on the same line draws a literal `#` (issue #246, R6, seen live on 2.1.311). With the break the prefix stands alone and
+ * the title is a heading. The usage line and the two short answers have none: they are no Markdown. The break is added here
+ * and not in `qaMarkdown` or `callMarkdown`, which the copy key puts on the clipboard.
  */
 export function qaText(calls: readonly QuestionCall[], args: string, mask: boolean): string {
   const arg = args.trim()
-  if (arg !== '' && !/^[1-9]\d{0,8}$/.test(arg)) return QA_USAGE
+  if (arg !== '' && !NUMBER.test(arg)) return QA_USAGE
   if (calls.length === 0) return NO_CALLS
-  if (arg === '') return qaMarkdown(calls, mask)
+  if (arg === '') return `\n${qaMarkdown(calls, mask)}`
   const found = calls.find(c => c.n === Number(arg))
-  return found === undefined ? `No call ${arg}. Calls kept: ${kept(calls)}.` : callMarkdown(found, mask)
+  return found === undefined ? `No call ${arg}. Calls kept: ${kept(calls)}.` : `\n${callMarkdown(found, mask)}`
+}
+
+// ---------------------------------------------------------------- the stub and the screen text (issue #246)
+
+/** The calls a stub names: the number of the first and of the last. One call has `from === to`. */
+export type CallRange = { readonly from: number; readonly to: number }
+
+/** The most characters that the engine draws of one `CommandOutput` row (observed on 2.1.310: the first 100 000, then a notice). */
+export const SCREEN_LIMIT = 100_000
+/**
+ * What a cut text keeps back for the notice that names the calls left out, and for the line of the calls that are no longer
+ * kept. The names are short, and a list of numbers that skip is the longest case, so this is a generous bound.
+ */
+const NOTICE_ROOM = 600
+
+const TITLE = '# Questions and answers'
+/** The words of a stub that `stubRange` finds: `Questions and answers Q1–Q7 (7 calls): drawn on the screen only.` or `Q3 (1 call)`. */
+const STUB = /Questions and answers Q(\d{1,9})(?:–Q(\d{1,9}))? \(\d+ calls?\): drawn on the screen only\./
+
+const label = (r: CallRange): string => (r.from === r.to ? `Q${r.from}` : `Q${r.from}–Q${r.to}`)
+
+/** Numbers in ascending order as ranges of consecutive numbers: `[1, 2, 4]` is `Q1–Q2, Q4`. */
+const named = (numbers: readonly number[]): string => {
+  const runs: { from: number; to: number }[] = []
+  for (const n of numbers) {
+    const last = runs.at(-1)
+    if (last !== undefined && n === last.to + 1) last.to = n
+    else runs.push({ from: n, to: n })
+  }
+  return runs.map(label).join(', ')
+}
+
+/**
+ * The stub of `/track qa [n]` for a surface that draws: the call numbers, how many calls, and the way to send them. It holds no
+ * word of a question, an option, an answer or a note, and it does not say what the model reads: the model holds the Q&A of its
+ * own AskUserQuestion calls already (spike #196, S10). `undefined` where the reply stays plain text: the usage line, no call
+ * asked, no call `n`. The numbers are the ones `stubRange` reads back.
+ */
+export function qaStub(calls: readonly QuestionCall[], args: string): string | undefined {
+  const arg = args.trim()
+  if (arg !== '' && !NUMBER.test(arg)) return undefined
+  if (calls.length === 0) return undefined
+  const of = arg === '' ? calls : calls.filter(c => c.n === Number(arg))
+  if (of.length === 0) return undefined
+  const from = Math.min(...of.map(c => c.n))
+  const to = Math.max(...of.map(c => c.n))
+  const noun = of.length === 1 ? '1 call' : `${of.length} calls`
+  const send = of.length === 1 ? `/track qa --send ${from} puts it` : '/track qa --send puts them'
+  return `Questions and answers ${label({ from, to })} (${noun}): drawn on the screen only. ${send} in the context of the model.`
+}
+
+/** The calls that a stub names, found by its own words anywhere in the text: the engine puts one or more plugin names in front. */
+export function stubRange(shown: string): CallRange | undefined {
+  const found = STUB.exec(shown)
+  if (found === null) return undefined
+  const from = Number(found[1])
+  const to = found[2] === undefined ? from : Number(found[2])
+  return from <= to ? { from, to } : undefined
+}
+
+/**
+ * The Markdown that the row draws for the stub of `range`: the calls of the range that the list holds now, so a row of an
+ * earlier command draws the same calls after more calls came. `withTitle` is the whole list (`/track qa`), not one call. No
+ * line break in front: the rewrite replaces the whole drawn text, the plugin prefix too. `undefined` when the list holds no call
+ * of the range (before the slot has loaded after a resume, or after `/track clear`): the row keeps the stub.
+ * A number of the range with no call gets one line (the caps dropped it). Past `SCREEN_LIMIT` the newest whole calls stay and
+ * the first line names the others. A call that is alone over the limit is kept: the engine cuts it and adds its own notice.
+ */
+export function qaScreen(
+  calls: readonly QuestionCall[],
+  range: CallRange,
+  withTitle: boolean,
+  mask: boolean,
+): string | undefined {
+  const inRange = calls.filter(c => c.n >= range.from && c.n <= range.to).sort((a, b) => a.n - b.n)
+  if (inRange.length === 0) return undefined
+  const parts = inRange.map(c => callMarkdown(c, mask))
+  // The numbers of the range that no call holds, as ranges, so a range of a million numbers costs no more than a short one.
+  const gone: CallRange[] = []
+  let next = range.from
+  for (const c of inRange) {
+    if (c.n > next) gone.push({ from: next, to: c.n - 1 })
+    next = c.n + 1
+  }
+  if (next <= range.to) gone.push({ from: next, to: range.to })
+  const goneCount = gone.reduce((sum, r) => sum + (r.to - r.from + 1), 0)
+  const goneLine =
+    gone.length === 0 ? [] : [`_${gone.map(label).join(', ')} ${goneCount === 1 ? 'is' : 'are'} no longer kept._`]
+  const fixed = [...(withTitle ? [TITLE] : []), ...goneLine]
+  const head = fixed.join('\n\n').length + (fixed.length > 0 ? 2 : 0)
+  const whole = head + parts.reduce((sum, p) => sum + p.length, 0) + 2 * (parts.length - 1)
+  if (whole <= SCREEN_LIMIT) return [...fixed, ...parts].join('\n\n')
+  // The newest calls first, while they fit; the newest call stays whatever its size.
+  const room = SCREEN_LIMIT - head - NOTICE_ROOM
+  let first = parts.length - 1
+  let used = parts[first]!.length
+  while (first > 0 && used + 2 + parts[first - 1]!.length <= room) {
+    first--
+    used += 2 + parts[first]!.length
+  }
+  const left = inRange.slice(0, first).map(c => c.n)
+  // One call alone is over the limit: nothing is left out. The engine cuts it and adds its own notice.
+  if (left.length === 0) return [...fixed, ...parts].join('\n\n')
+  const notice = `${named(left)} left out to fit. /track qa ${left[0]} draws one call.`
+  return [notice, ...fixed, ...parts.slice(first)].join('\n\n')
 }

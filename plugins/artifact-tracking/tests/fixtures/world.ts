@@ -12,8 +12,11 @@ import { NOT_A_REPO_STDERR } from './git'
 
 export const SESSION = 'sess-1'
 /** The session id the stub answers. A test sets it to what `/clear` would do. */
-/** The session id the stub answers, and whether a read of the `items` state fails (needs `isolateState`). */
-export const current = { id: SESSION, failItemsRead: false }
+/**
+ * The session id the stub answers, whether a read of the `items` state fails, and the id of a tracker slot (`trackers` family)
+ * whose read fails (both need `isolateState`).
+ */
+export const current = { id: SESSION, failItemsRead: false, failSlot: undefined as string | undefined }
 
 // The hooks runtime has timers; tsc here has no DOM or node types.
 declare function setTimeout(fn: () => void, ms: number): unknown
@@ -100,6 +103,12 @@ export type Opts = {
   refuseEvery?: number
   /** Writes of the `auto` atom are refused. Needs `isolateState`. */
   denyAutoWrites?: boolean
+  /**
+   * What `$.session.surfaces()` answers (the hook-side read of the surfaces the session draws on). Default `[]`: nothing draws,
+   * as under `claude -p`, so `/track qa` answers its whole text. A test of the screen path passes `['terminal']`. The kit rejects
+   * the read when no hook answers it, which the mod counts as "a surface draws" (issue #246).
+   */
+  surfaces?: readonly string[]
   /** Files on the stub disk the config file lives on: path to text. */
   disk?: Record<string, string>
   /** Refuse one fs op of the stub disk with this message (`$.fs.read`, `$.fs.write`, `$.fs.exists`, `$.fs.stat`). */
@@ -220,8 +229,10 @@ export function world(on: On, opts: Opts = {}) {
   })
   current.id = SESSION
   current.failItemsRead = false
+  current.failSlot = undefined
   on('session.id', () => ({ value: current.id }))
   on('session.messages', () => ({ value: (opts.messages ?? []) as never }))
+  on('session.surfaces', () => ({ value: (opts.surfaces ?? []) as never }))
   on('session.repo', () => ({
     value:
       opts.remote === null
@@ -240,6 +251,8 @@ export function world(on: On, opts: Opts = {}) {
     const at = (e: { plugin: string; key: string; id?: string }) => `${current.id}|${e.plugin}|${e.key}|${e.id ?? ''}`
     on('state.get', (_$, e) => {
       if (current.failItemsRead && e.key === 'items') return { deny: 'state read failed' }
+      if (current.failSlot !== undefined && e.key === 'trackers' && e.id === current.failSlot)
+        return { deny: 'state read failed' }
       const s = states.get(at(e))
       return { value: { value: s?.value, version: s?.version ?? 0 } as never }
     })

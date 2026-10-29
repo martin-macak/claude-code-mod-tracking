@@ -138,6 +138,7 @@ function portsOf($: EngineInterface): Ports {
         return (info?.remote ? parseRemote(info.remote) : null) ?? null
       },
       messages: () => $.session.messages(),
+      surfaces: () => $.session.surfaces(),
     },
     // A submit never waits: a press that awaits its own prompt hangs when it runs inside a turn. The answer comes in a
     // detached step: `{ drop }` is a hook that refused the prompt, a throw is a call the engine refused. Neither is an error.
@@ -357,6 +358,21 @@ export const register: Register = on => {
   on('command.run', { command: 'track' }, ($, e) => managerOf($).track(portsOf($), e.args)).catch(() => ({
     text: 'artifact-tracking: could not run the command.',
   }))
+
+  // `/track qa` on the screen only (issue #246). Where a surface draws, the reply of the command is a stub that names the call
+  // numbers, so the stored row and the next request hold the stub. This hook rewrites the text of the row to the Markdown of
+  // exactly those calls: the engine draws the rewrite and keeps what it stored (spike #196, 2.1.310, again on 2.1.311). It
+  // matches on the component only and checks the command first, before any await, so the rows of other commands pay one
+  // string compare. `e.props.text` is the stored text with the plugin name in front: the stub is found by its own words.
+  // A row that has no stub (a plain reply, a `--send` reply, an old row of the whole text), a draw with nothing to show, an error
+  // and a failed read leave the row to the engine. The rewrite replaces the whole drawn text, the plugin prefix too, and carries
+  // every other prop on as received (`onScreen` in the fullscreen layout). It never calls `entry` or reads the config file: a
+  // render only reads (E9).
+  on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
+    if (e.props.command !== 'track' || e.props.isErrored) return next(e)
+    const text = await managerOf($).commands.screenText(portsOf($), e.props.args, e.props.text)
+    return text === undefined ? next(e) : next({ ...e, props: { ...e.props, text } })
+  }).catch((_$, e, next) => next(e))
 
   // The sections of every tracker, drawn by one TreeDataTable. A render only reads (E9). A failed read must not close
   // the pane: it draws one line instead.

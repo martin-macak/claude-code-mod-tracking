@@ -14,7 +14,7 @@ import type { TurnPort } from '../../core/interfaces/turns'
 import { QUESTION_KEYS, questionActions } from './actions'
 import { QUESTIONS_DEFAULTS, type QuestionsConfig, questionsConfig } from './config'
 import { addCall, asCalls, type Caps, callsWithin, capCalls, mergeCalls } from './log'
-import { qaText } from './markdown'
+import { qaScreen, qaStub, qaText, stubRange } from './markdown'
 import { askCall, type CallBody, planCall } from './parse'
 import { questionsPrompt } from './prompt'
 import { questionReasonsOf } from './reasons'
@@ -46,6 +46,18 @@ const capsOfSlice = (slice: Readonly<JsonObject>): Caps => ({
   maxCalls: typeof slice.maxCalls === 'number' ? slice.maxCalls : QUESTIONS_DEFAULTS.maxCalls,
   maxBytes: typeof slice.maxBytes === 'number' ? slice.maxBytes : QUESTIONS_DEFAULTS.maxBytes,
 })
+
+/**
+ * The calls and the mask of a context with no config type, as a command and the row of its stub have them. The slice is a plain
+ * object: masking is on unless the file says `false`. The caps of the config as it is now: a limit lowered since the last write
+ * applies to this reply too.
+ */
+async function callsOf(
+  ctx: Pick<TrackerContext, 'config' | 'data'>,
+): Promise<{ calls: QuestionCall[]; mask: boolean }> {
+  const slice = ctx.config.slice()
+  return { calls: callsWithin(await ctx.data.get(), capsOfSlice(slice)), mask: slice.mask !== false }
+}
 
 /** Changes the calls in the slot and applies the caps in the same write. */
 async function setCalls(ctx: Ctx, change: (calls: QuestionCall[]) => QuestionCall[]): Promise<void> {
@@ -128,12 +140,22 @@ export function questionsTracker(): Tracker<QuestionsConfig, Json> & Traceable<J
     commands: [
       {
         sub: 'qa',
-        hint: '[n]',
-        // The slice of a context with no config type is a plain object: masking is on unless the file says `false`.
-        // The caps of the config as it is now: a limit lowered since the last write applies to this reply too.
+        hint: '[--send] [n]',
+        // The whole text: where no surface draws (`claude -p`, the SDK, the VS Code host) and for `--send`. The model reads it.
         text: async (ctx, args) => {
-          const slice = ctx.config.slice()
-          return qaText(callsWithin(await ctx.data.get(), capsOfSlice(slice)), args, slice.mask !== false)
+          const { calls, mask } = await callsOf(ctx)
+          return qaText(calls, args, mask)
+        },
+        // Issue #246: where a surface draws, the reply is the stub, which names the call numbers. The `CommandOutput` hook draws
+        // the Markdown of exactly those calls in the row, so the stored row and the next request hold the stub only.
+        screen: {
+          stub: async (ctx, args) => qaStub((await callsOf(ctx)).calls, args),
+          draw: async (ctx, args, shown) => {
+            const range = stubRange(shown)
+            if (range === undefined) return undefined
+            const { calls, mask } = await callsOf(ctx)
+            return qaScreen(calls, range, args.trim() === '', mask)
+          },
         },
       },
     ],
