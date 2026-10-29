@@ -316,5 +316,7 @@ test('an AcliTool over a handle writes its site to that handle', async () => {
   expect(handle.status().site).toBe('acme.atlassian.net')
   expect(acli.status()).toEqual(handle.status())
   acli.reset()
-  expect(handle.status().site).toBe('acme.atlassian.net') // a known site stays through a reset
+  expect(handle.status().site).toBeUndefined() // a reset forgets the site, so the next use reads it again (#225)
+  expect(await acli.loadActiveSite()).toBe('acme.atlassian.net')
+  expect(handle.status().site).toBe('acme.atlassian.net')
 })

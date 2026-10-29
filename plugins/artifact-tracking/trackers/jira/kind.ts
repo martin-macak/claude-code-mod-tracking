@@ -14,7 +14,7 @@ import type {
 import { isRecord } from '../../core/lib/json'
 import { reasonOfSource, reasonSet } from '../../core/lib/reasons'
 import { sighted } from '../../core/lib/records'
-import { acliWorkitems } from './acli-command'
+import { acliAuthChange, acliWorkitems } from './acli-command'
 import { acliOf } from './client'
 import { JiraItem } from './jira-item'
 import { carryPriorities, childRow, mergeNodePriorities, setNode } from './nodes'
@@ -63,6 +63,14 @@ function jiraRecord(ref: JiraRef, claim: Claim): JiraRecord {
 /** The client of the `acli` handle the owning tracker declared. The runner builds a handle for every declared tool. */
 const clientOf = (c: RefreshContext) => acliOf(c.tools, c.config, c.now)!
 
+/** The acli client of a hook context. One place builds it, so every caller gets the same client. */
+const acliOfCtx = (ctx: KindContext) => acliOf(ctx.tools, ctx.config, () => ctx.clock.wall())
+
+/** A login, logout or switch in `command` may have changed the active site (issue #225): the next use reads it again. */
+function forgetSiteAfterAuthChange(command: string, ctx: KindContext): void {
+  if (acliAuthChange(command)) acliOfCtx(ctx)?.forgetSite()
+}
+
 /**
  * The active Jira site:
  * - `undefined`: no acli (do not filter Jira refs)
@@ -70,7 +78,7 @@ const clientOf = (c: RefreshContext) => acliOf(c.tools, c.config, c.now)!
  * - `<host>`: the active Jira site host
  */
 async function activeSite(ctx: KindContext): Promise<string | null | undefined> {
-  const acli = acliOf(ctx.tools, ctx.config, () => ctx.clock.wall())
+  const acli = acliOfCtx(ctx)
   if (!acli) return undefined
   if (acli.activeSite !== undefined) return acli.activeSite
   try {
@@ -107,11 +115,20 @@ export const jiraKind: ItemKind<JiraRecord> = {
    * asked again by the next acli call, until the breaker opens. A load does not warm it (only the restore of a stored
    * copy asks): a new session that runs no acli makes no lookup, and `/track` makes only the version probe
    * (`tests/toggles.test.ts`).
+   *
+   * The cache is forgotten when the site may have changed (issue #225): after a Bash call with an `acli jira auth` or
+   * `acli auth` login, logout or switch (`acliAuthChange`, also when the call failed, never when it was denied), and on
+   * `/track refresh` (`refresh.reset`). The next use reads the site again. A key that is tracked keeps its site. A key named
+   * before the switch in the same command takes the site that is read after it.
    */
   fromTool: {
     Bash: async (ev, ctx) => {
-      if (isRecord(ev.result) && (ev.result.deny !== undefined || ev.result.isError === true)) return []
+      if (isRecord(ev.result) && ev.result.deny !== undefined) return [] // nothing ran
       const command = isRecord(ev.input) && typeof ev.input.command === 'string' ? ev.input.command : ''
+      // Also when the call failed (`switch ...; false` may have switched). Forget first, so a key in the same command is filed
+      // under the site that is read after the switch.
+      forgetSiteAfterAuthChange(command, ctx)
+      if (isRecord(ev.result) && ev.result.isError === true) return []
       const found = acliWorkitems(command)
       if (found.length === 0) return []
       const site = await activeSite(ctx)
@@ -160,7 +177,7 @@ export const jiraKind: ItemKind<JiraRecord> = {
     hydrate: (rec, c): Refreshable => new JiraItem(rec, clientOf(c), () => c.config.global().refresh.staleMs),
     refreshItems: (items: Refreshable[], c) => clientOf(c).refreshItems(items as unknown as JiraTarget[]),
     apply: (out, fresh) => ({ ...out, children: carryPriorities(fresh.children, out.children) }),
-    // A manual refresh also forgets a site that could not be loaded.
+    // A manual refresh also forgets the site, so a switch that the mod did not see is read again.
     reset: c => clientOf(c).reset(),
   },
   row: (item, ctx) => jiraRow(item, ctx, trackedOf(jiraRecords(ctx.items), ctx.levelOf)),

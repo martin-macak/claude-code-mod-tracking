@@ -146,6 +146,12 @@ export class CliTool implements ToolHandle {
         return
     }
   }
+
+  /** Feeds one outcome to the breaker alone. The login flag and the last error stay. */
+  recordBreaker(outcome: ToolOutcome): void {
+    if (outcome === 'ok' || outcome === 'item-error') this.breaker.success()
+    else this.breaker.failure(this.now())
+  }
 }
 
 /**
@@ -235,5 +241,10 @@ export abstract class Tool<T> implements RefreshTool<T> {
 
   protected record(outcome: Outcome, detail?: string): void {
     this.handle.record(outcome, detail)
+  }
+
+  /** The breaker alone, for a call whose answer is out of date: the login flag and the last error stay. */
+  protected recordBreaker(outcome: Outcome): void {
+    this.handle.recordBreaker(outcome)
   }
 }

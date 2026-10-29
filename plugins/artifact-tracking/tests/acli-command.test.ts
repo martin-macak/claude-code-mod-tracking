@@ -1,6 +1,6 @@
 // The Jira work items that a Bash command names through `acli jira workitem <sub>`. Pure.
 import { expect, test } from 'claude-code/testing'
-import { acliWorkitems } from '../trackers/jira/acli-command'
+import { acliAuthChange, acliWorkitems } from '../trackers/jira/acli-command'
 
 const read = (key: string) => ({ key, reason: 'read' })
 const updated = (key: string) => ({ key, reason: 'updated' })
@@ -168,4 +168,48 @@ test('command -v in front of acli runs nothing, so it names no item', () => {
 
 test('a quoted reserved word is a command of its own, so it is no lead word', () => {
   expect(acliWorkitems("'if' acli jira workitem view ABC-1")).toEqual([])
+})
+
+// Issue #225: a command that logs in, logs out or switches the acli account may change the active site.
+test('acliAuthChange: login, logout and switch of both acli families count', () => {
+  for (const command of [
+    'acli jira auth switch --site b.atlassian.net',
+    'acli jira auth login --web',
+    'acli jira auth logout',
+    'acli auth switch',
+    'acli auth login',
+    'acli auth logout',
+  ])
+    expect([command, acliAuthChange(command)]).toEqual([command, true])
+})
+
+test('acliAuthChange: a path, a chain and a wrapper in front of acli do not hide it', () => {
+  for (const command of [
+    '/opt/homebrew/bin/acli jira auth switch',
+    'cd x && acli jira auth switch',
+    'sudo acli jira auth switch',
+    'FOO=1 acli jira auth switch',
+    'if true; then acli jira auth switch; fi',
+    'acli jira auth switch --site b.atlassian.net && acli jira workitem view TEAL-2',
+  ])
+    expect([command, acliAuthChange(command)]).toEqual([command, true])
+})
+
+test('acliAuthChange: status, other sub-commands, other families and plain text do not count', () => {
+  for (const command of [
+    'acli jira auth status',
+    'acli jira auth',
+    'acli auth status',
+    'acli jira workitem view ABC-1',
+    'echo acli jira auth switch',
+    'gh auth switch',
+    'acli admin auth switch',
+    'acli rovodev auth login',
+    'acli jira workitem comment create --key A-1 --body "acli jira auth switch"',
+    // Documented limit (README, Known limits): the shell reader does not open `bash -c`. If it learns to, flip these two.
+    'bash -c "acli jira auth switch"',
+    'sh -c "acli jira auth switch"',
+    '',
+  ])
+    expect([command, acliAuthChange(command)]).toEqual([command, false])
 })

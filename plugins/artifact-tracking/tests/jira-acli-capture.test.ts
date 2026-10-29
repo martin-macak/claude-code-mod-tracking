@@ -3,7 +3,8 @@
 import { expect, test } from 'claude-code/testing'
 import type { Json } from '../core/interfaces/items'
 import { viewGroups } from '../core/lib/grouping'
-import { fakeItems, promptRow, replayTool, res, until } from './fixtures/items'
+import { fakeItems, promptRow, replayTool, res, toolResultRow, until } from './fixtures/items'
+import { reasonsOfSources } from './fixtures/reasons'
 import { turnWorld } from './fixtures/turn-world'
 
 const KEY = 'jira:acme.atlassian.net/TEAL-2071'
@@ -237,4 +238,217 @@ test('the touched-only filter keeps an item that acli changed and hides one that
     ['Updated', [KEY]],
     ['Mentioned', [OTHER]],
   ])
+})
+
+// Issue #225: the active site is read again after an `acli jira auth` or `acli auth` login, logout or switch in a Bash call,
+// and on `/track refresh`. A key that is already tracked keeps its site. The fake acli reads its site when a call runs.
+const ACME = 'acme.atlassian.net'
+const BETA = 'beta.atlassian.net'
+const ON_ACME = `jira:${ACME}/TEAL-1`
+
+/** A fake acli whose active site is `w.site`. It reads the site when a call runs, as acli reads its profile. */
+const acliAt = (w: { site: string }) => async (argv: string[]) =>
+  argv[0] === 'acli' && argv[2] === 'auth'
+    ? res(`\u2713 Authenticated\n  Site: ${w.site}\n  Email: <email>\n`)
+    : undefined
+
+function switching() {
+  const w = { site: ACME }
+  return { t: fakeItems({ run: acliAt(w) }), w }
+}
+
+test('after an acli jira auth switch the next key is filed under the new site; a key filed before keeps its site', async () => {
+  const { t, w } = switching()
+  const items = await t.started()
+  await items.toolCall(bash('acli jira workitem view TEAL-1'))
+  w.site = BETA
+  await items.toolCall(bash(`acli jira auth switch --site ${BETA}`))
+  await items.toolCall(bash('acli jira workitem view TEAL-2'))
+  expect(t.keys()).toEqual([ON_ACME, `jira:${BETA}/TEAL-2`])
+  expect(lookups(t.world.calls)).toBe(2)
+})
+
+test('with no auth command in the session a site that changed on its own is not seen: the documented limit', async () => {
+  const { t, w } = switching()
+  const items = await t.started()
+  await items.toolCall(bash('acli jira workitem view TEAL-1'))
+  w.site = BETA // a switch in another terminal
+  await items.toolCall(bash('acli jira workitem view TEAL-2'))
+  expect(t.keys()).toEqual([ON_ACME, `jira:${ACME}/TEAL-2`])
+})
+
+test('each login, logout and switch of acli jira auth and acli auth makes the next key read the site again', async () => {
+  for (const command of [
+    'acli jira auth login --web',
+    'acli jira auth logout',
+    'acli auth switch',
+    'acli auth login',
+    'acli auth logout',
+  ]) {
+    const { t, w } = switching()
+    const items = await t.started()
+    await items.toolCall(bash('acli jira workitem view TEAL-1'))
+    w.site = BETA
+    await items.toolCall(bash(command))
+    await items.toolCall(bash('acli jira workitem view TEAL-2'))
+    expect([command, t.keys()]).toEqual([command, [ON_ACME, `jira:${BETA}/TEAL-2`]])
+  }
+})
+
+test('a switch and a key in one command: the key takes the site that is read after the switch', async () => {
+  const { t, w } = switching()
+  const items = await t.started()
+  await items.toolCall(bash('acli jira workitem view TEAL-1'))
+  w.site = BETA
+  await items.toolCall(bash(`acli jira auth switch --site ${BETA} && acli jira workitem view TEAL-2`))
+  expect(t.keys()).toEqual([ON_ACME, `jira:${BETA}/TEAL-2`])
+})
+
+// The documented limit (1) of the README: the reader keeps no order between the key and the switch of one command, so a key
+// named before the switch takes the site that is read after it. If the reader learns the order, this test flips.
+test('a key and then a switch in one command: the key takes the site that is read after the switch (documented limit)', async () => {
+  const { t, w } = switching()
+  const items = await t.started()
+  await items.toolCall(bash('acli jira workitem view TEAL-1'))
+  w.site = BETA
+  await items.toolCall(bash(`acli jira workitem view TEAL-2 && acli jira auth switch --site ${BETA}`))
+  expect(t.keys()).toEqual([ON_ACME, `jira:${BETA}/TEAL-2`])
+})
+
+test('a denied switch changes nothing: the next key keeps the cached site', async () => {
+  const { t, w } = switching()
+  const items = await t.started()
+  await items.toolCall(bash('acli jira workitem view TEAL-1'))
+  w.site = BETA
+  await items.toolCall(bash(`acli jira auth switch --site ${BETA}`, { deny: 'not allowed' }))
+  await items.toolCall(bash('acli jira workitem view TEAL-2'))
+  expect(t.keys()).toEqual([ON_ACME, `jira:${ACME}/TEAL-2`])
+})
+
+test('a switch the tool reported as an error forgets the site and adds no claim', async () => {
+  const { t, w } = switching()
+  const items = await t.started()
+  await items.toolCall(bash('acli jira workitem view TEAL-1'))
+  w.site = BETA
+  await items.toolCall(bash(`acli jira auth switch --site ${BETA}; false`, { isError: true, text: 'exit 1' }))
+  expect(t.keys()).toEqual([ON_ACME]) // the failed command adds no claim
+  await items.toolCall(bash('acli jira workitem view TEAL-2'))
+  expect(t.keys()).toEqual([ON_ACME, `jira:${BETA}/TEAL-2`])
+})
+
+test('acli jira auth status changes nothing, so the next key keeps the cached site', async () => {
+  const { t, w } = switching()
+  const items = await t.started()
+  await items.toolCall(bash('acli jira workitem view TEAL-1'))
+  w.site = BETA
+  await items.toolCall(bash('acli jira auth status'))
+  await items.toolCall(bash('acli jira workitem view TEAL-2'))
+  expect(t.keys()).toEqual([ON_ACME, `jira:${ACME}/TEAL-2`])
+  expect(lookups(t.world.calls)).toBe(1)
+})
+
+test('/track refresh reads the site again when a Jira item exists; the next key takes the new site', async () => {
+  const { t, w } = switching()
+  const items = await t.started()
+  await items.toolCall(bash('acli jira workitem view TEAL-1'))
+  expect(lookups(t.world.calls)).toBe(1)
+  w.site = BETA // a switch that the mod did not see
+  await items.refreshAll()
+  expect(lookups(t.world.calls)).toBe(2)
+  await items.toolCall(bash('acli jira workitem view TEAL-2'))
+  expect(t.keys()).toEqual([ON_ACME, `jira:${BETA}/TEAL-2`])
+  expect(lookups(t.world.calls)).toBe(2)
+})
+
+test('/track refresh with no Jira item makes no site lookup', async () => {
+  const { t } = switching()
+  const items = await t.started()
+  await items.refreshAll()
+  expect(lookups(t.world.calls)).toBe(0)
+})
+
+test('after the switch and a refresh the old key keeps its site, is not asked again, and its row reads track-only', async () => {
+  const w = { site: ACME }
+  const t = turnWorld({ run: acliAt(w) })
+  await t.bash('acli jira workitem view TEAL-1')
+  w.site = BETA
+  await t.bash(`acli jira auth switch --site ${BETA}`)
+  await t.bash('acli jira workitem view TEAL-2')
+  const before = t.w.calls.length
+  await t.rt.refreshAll()
+  const viewed = t.w.calls.slice(before).filter(c => c[0] === 'acli' && c[3] === 'view')
+  expect(viewed.map(c => c[4])).toEqual(['TEAL-2']) // TEAL-1 is on acme: acli cannot ask for it on beta
+  expect(t.items().find(r => r.key === ON_ACME)).toMatchObject({ site: ACME })
+  expect((await t.rows()).find(r => r.id === ON_ACME)?.cells.status).toEqual({ text: 'track-only' })
+})
+
+test('after the switch a Jira URL of the new site in a tool result is accepted, and one of the old site is not', async () => {
+  const { t, w } = switching()
+  const items = await t.started()
+  await items.toolCall(bash('acli jira workitem view TEAL-1'))
+  w.site = BETA
+  await items.toolCall(bash(`acli jira auth switch --site ${BETA}`))
+  await items.capture(toolResultRow(`see https://${BETA}/browse/NEW-1 and https://${ACME}/browse/OLD-9`))
+  expect(t.keys()).toEqual([ON_ACME, `jira:${BETA}/NEW-1`])
+})
+
+test('a site lookup that fails after a switch files no key; the next acli call asks again', async () => {
+  let mode: 'ok' | 'fail' = 'ok'
+  const t = fakeItems({
+    run: async argv =>
+      argv[0] === 'acli' && argv[2] === 'auth'
+        ? mode === 'ok'
+          ? res('\u2713 Authenticated\n  Site: acme.atlassian.net\n')
+          : res('', 1, 'dial tcp: i/o timeout')
+        : undefined,
+  })
+  const items = await t.started()
+  await items.toolCall(bash('acli jira workitem view TEAL-1'))
+  mode = 'fail'
+  await items.toolCall(bash('acli jira auth switch --site beta.atlassian.net'))
+  await items.toolCall(bash('acli jira workitem view TEAL-2'))
+  expect(t.keys()).toEqual([ON_ACME]) // a missing row, not one under a wrong site
+  const asked = lookups(t.world.calls)
+  mode = 'ok'
+  await items.toolCall(bash('acli jira workitem view TEAL-3'))
+  expect(lookups(t.world.calls)).toBe(asked + 1)
+  expect(t.keys()).toEqual([ON_ACME, `jira:${ACME}/TEAL-3`])
+})
+
+test('a replayed acli auth command forgets the site like a live one: a later key reads it again', async () => {
+  const { t, w } = switching()
+  const items = await t.started()
+  const use = (command: string) => replayTool('Bash', { command }, { tool: 'Bash', isError: false })
+  await items.replay([use('acli jira workitem view TEAL-1')])
+  w.site = BETA
+  await items.replay([use('acli jira auth switch'), use('acli jira workitem view TEAL-2')])
+  expect(t.keys()).toEqual([ON_ACME, `jira:${BETA}/TEAL-2`])
+  expect(lookups(t.world.calls)).toBe(2)
+})
+
+// Owner decision Q1 of #225: a load keeps its rule. After a switch, a stored row that only a tool call named is dropped when
+// its site is not the active one. A row that a prompt named stays.
+test('after the switch a load drops a stored old-site row that only a tool call named, and keeps one a prompt named', async () => {
+  const { t, w } = switching()
+  const items = await t.started()
+  await items.toolCall(bash('acli jira workitem view TEAL-1'))
+  w.site = BETA
+  await items.toolCall(bash(`acli jira auth switch --site ${BETA}`))
+  const stored = (key: string, sources: string[]) => ({
+    key: `jira:${ACME}/${key}`,
+    category: 'jira',
+    url: `https://${ACME}/browse/${key}`,
+    label: key,
+    sources,
+    reasons: reasonsOfSources(sources),
+    firstSeen: 1,
+    lastSeen: 1,
+    seenCount: 1,
+    site: ACME,
+    issueKey: key,
+    trackOnly: false,
+    children: [],
+  })
+  await items.slot.restore([stored('TEAL-9', ['tool']), stored('TEAL-8', ['prompt'])] as unknown as Json, 'load')
+  expect(t.keys().sort()).toEqual([ON_ACME, `jira:${ACME}/TEAL-8`])
 })

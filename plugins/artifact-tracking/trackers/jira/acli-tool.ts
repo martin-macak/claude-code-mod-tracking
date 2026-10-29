@@ -1,5 +1,6 @@
 // AcliTool: Jira work items through the Atlassian CLI (spec section 7.3, KB jira.md).
-// No `$`: it gets a Runner and a clock. It never runs `acli jira auth switch`, `login` or `logout`.
+// No `$`: it gets a Runner and a clock. It never runs `acli jira auth switch`, `login` or `logout`. It forgets its cached site
+// when the kind sees one of them, and on a manual refresh (`forgetSite`, issue #225).
 
 import type { Now, Runner } from '../../core/interfaces/ports'
 import type { Breaker, ToolHandle } from '../../core/interfaces/tracker'
@@ -107,6 +108,8 @@ export type AcliLimits = () => Pick<JiraConfig, 'concurrency' | 'epicChildLimit'
 export class AcliTool extends Tool<JiraTarget> implements JiraToolApi {
   private site: string | null | undefined
   private loading?: Promise<string | null>
+  /** Raised when the site is forgotten, so a lookup that began before it never stores its answer. */
+  private era = 0
   private readonly gate: ReturnType<typeof limit>
   private readonly limits: AcliLimits
 
@@ -132,32 +135,54 @@ export class AcliTool extends Tool<JiraTarget> implements JiraToolApi {
     this.handle.setSite(site ?? undefined)
   }
 
-  /** Manual refresh: also forget a "no site" answer, so the next refresh asks acli again. */
+  /**
+   * Forget the site: the next use asks acli again. A lookup in flight still answers its caller, but stores no site and sets
+   * no login flag, so a switch that ends while it runs is not undone by its old answer.
+   */
+  forgetSite(): void {
+    this.era += 1
+    this.loading = undefined
+    this.setSite(undefined)
+  }
+
+  /** Manual refresh: also forget the site, so the next use asks acli again. */
   override reset(): void {
     super.reset()
-    if (this.site === null) this.setSite(undefined)
+    this.forgetSite()
   }
 
   /** Runs `acli jira auth status` and caches the site. Concurrent callers share one call. */
   loadActiveSite(): Promise<string | null> {
-    this.loading ??= this.loadSite().finally(() => {
-      this.loading = undefined
-    })
+    if (!this.loading) {
+      // The block body keeps `p` out of its own type. Only the lookup of the current era may clear `loading`.
+      const p: Promise<string | null> = this.loadSite().finally(() => {
+        if (this.loading === p) this.loading = undefined
+      })
+      this.loading = p
+    }
     return this.loading
   }
 
   private async loadSite(): Promise<string | null> {
+    const era = this.era
     const r = await this.gate(() => this.exec(['acli', 'jira', 'auth', 'status']))
     if (!r) return this.site ?? null // blocked by the breaker, or rejected (already recorded)
+    // false: the site was forgotten while this call ran. Its answer then goes to its caller only. It sets no site and no login
+    // flag, but it still tells the breaker, so a stale call that was the half-open probe does not leave the breaker stuck.
+    const current = era === this.era
     const site = r.exitCode === 0 ? parseAuthStatus(r.stdout) : null
     if (site) {
-      this.setSite(site)
-      this.record('ok')
+      if (current) {
+        this.setSite(site)
+        this.record('ok')
+      } else this.recordBreaker('ok')
       return site
     }
     if (/unauthorized/i.test(r.stderr)) {
-      this.setSite(null)
-      this.record('auth')
+      if (current) {
+        this.setSite(null)
+        this.record('auth')
+      } else this.recordBreaker('auth')
       return null
     }
     this.record('tool-failure', firstLine(r.stderr) || 'no Site line in acli auth status')
