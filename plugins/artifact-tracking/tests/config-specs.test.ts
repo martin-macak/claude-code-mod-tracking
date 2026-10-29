@@ -145,6 +145,8 @@ test('the slices hold exactly the keys of the Defaults table', () => {
     'maxFiles',
     'bashEdits',
     'mime',
+    'secretPaths',
+    'preview',
     'prompt',
   ])
   expect(Object.keys(REPOS_DEFAULTS)).toEqual([
@@ -247,6 +249,8 @@ const TABLE: readonly (readonly [string, number, number])[] = [
   ['trackers.artifact.prompt.maxItems', 5, 50],
   ['trackers.file.maxMentionsPerRow', 0, 200],
   ['trackers.file.maxFiles', 50, 2000],
+  ['trackers.file.preview.maxLines', 100, 10000],
+  ['trackers.file.preview.maxChars', 5000, 70000],
   ['trackers.file.prompt.maxItems', 5, 50],
   ['trackers.repos.maxRepos', 1, 500],
   ['trackers.repos.maxRepoAgents', 1, 50],

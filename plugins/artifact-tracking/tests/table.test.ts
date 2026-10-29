@@ -35,8 +35,8 @@ import { group, row, webRows } from './fixtures/sections'
 
 // The first title of the help view: it names Tab, Shift+Tab and the arrows (issue #108).
 const PANE_KEYS = 'Pane keys (Tab, Shift+Tab, Up, Down move between rows)'
-/** The core keys that have a Button in the footer: all but the keys of the view line (issue #63, L3). */
-const FOOTER_CORE = CORE_KEYS.filter(k => k.bar !== 'view')
+/** The core keys with a Button in the footer of a row that has no preview: `v` is drawn only for a row of a tracker that has one (issue #57, L2). */
+const FOOTER_CORE = CORE_KEYS.filter(k => k.bar === undefined && k.id !== 'preview')
 
 const draw = (sections: Parameters<typeof TreeDataTable.render>[0], over: Parameters<typeof view>[0] = {}) => {
   resetWidths()
@@ -730,10 +730,11 @@ test('the help view lists every problem of its model when the body has the rows,
   expect(tall.lines.join('\n')).not.toContain('/track help')
   expect(tall.tree.props.rowGap).toBe(1)
   // The compact form: the footer and a body of 16 rows. The pane keys take two lines (g, a and t, issue #63, L3) and the footer takes
-  // two rows (the dim Buttons of g, a, t, p and m, issues #200 and #199), so 2 of 12 problems fit.
+  // two rows (the dim Buttons of g, a, t, p and m, issues #200 and #199), so 2 of 12 problems fit before `v`. `v` of the preview
+  // (issue #57, L2) is the seventh row key, which costs one more row here, so 1 of 12 fits.
   const room = problemsIn(12, 16, '/c/config.json')
-  expect(room.lines.filter(l => /^Problem \d+\.$/.test(l))).toHaveLength(2)
-  expect(room.lines.at(-1)).toBe('10 more problems: /track help')
+  expect(room.lines.filter(l => /^Problem \d+\.$/.test(l))).toHaveLength(1)
+  expect(room.lines.at(-1)).toBe('11 more problems: /track help')
 })
 
 test('the table view never turns compact: the root keeps its gap, and a body that holds the tree changes nothing', () => {

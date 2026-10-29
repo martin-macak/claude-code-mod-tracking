@@ -4,8 +4,10 @@ import { expect, test } from 'claude-code/testing'
 import { CORE_KEYS } from '../core/infra/keys'
 import { LifecycleManager } from '../core/infra/lifecycle'
 import type { ItemKind, ItemsHost, JsonObject } from '../core/interfaces/items'
+import type { PreviewSpec } from '../core/interfaces/preview'
 import type { KeySpec, Tracker } from '../core/interfaces/tracker'
 import type { ActionImpls, RowRef } from '../core/interfaces/view'
+import { PREVIEW_LIMITS } from '../core/lib/preview'
 import { fakeConfig } from './fixtures/config-fs'
 import { IDLE_ITEMS } from './fixtures/items-host'
 import { fakePorts } from './fixtures/ports'
@@ -76,7 +78,7 @@ test('start builds the key registry from the live trackers', async () => {
       .all()
       .slice(0, CORE_KEYS.length)
       .map(k => k.key),
-  ).toEqual(['r', 'h', 'g', 'a', 't', 'p', 'm', 'x', '1', '2', '3', '0'])
+  ).toEqual(['r', 'h', 'g', 'a', 't', 'p', 'm', 'x', '1', '2', '3', '0', 'v', 'd'])
   expect(keysOf(m).at(-1)).toBe('t.open')
 })
 
@@ -353,4 +355,166 @@ test('a copy from an action goes to the surface that runAction was given, and to
   await t.m.runAction(t.w.ports, 't', 'open', 'row-1')
   expect(t.w.ui.copied).toEqual(['words', 'words'])
   expect(t.w.ui.copiedOn).toEqual(['desktop', undefined])
+})
+
+// Issue #57, L2: the preview of a row. A tracker that has a `preview` makes its rows draw `v`, and core finds the tracker, reads
+// its modes with the view context of the row and calls its `load` with the context of the tracker.
+const VIEW_ONLY = [{ id: 'view', enabled: true }] as const
+const spec = (over: Partial<PreviewSpec> = {}): PreviewSpec => ({
+  modes: () => VIEW_ONLY,
+  load: async (_ctx, rowId) => ({ title: `title of ${rowId}`, blocks: [{ kind: 'notice', text: 'hello' }] }),
+  ...over,
+})
+
+test('a live tracker with a preview makes its rows draw v; a tracker without one, one that is off and one that failed do not', async () => {
+  const config = { defaults: { enabled: true }, normalise: (raw: JsonObject) => ({ enabled: raw.enabled !== false }) }
+  const bad = fake('bad', 40, {
+    preview: spec(),
+    init: () => {
+      throw new Error('boom')
+    },
+  })
+  const t = await started(
+    [fake('on', 10, { preview: spec() }), fake('plain', 20), fake('off', 30, { preview: spec(), config }), bad],
+    { trackers: { off: { enabled: false } } },
+  )
+  expect([t.m.keys.hasPreview('on'), t.m.keys.hasPreview('plain')]).toEqual([true, false])
+  expect([t.m.keys.hasPreview('off'), t.m.keys.hasPreview('bad')]).toEqual([false, false])
+  const keys = async (owner: string) => (await t.m.footer(t.w.ports, { ...ROW, owner }, false)).map(k => k.key).join('')
+  expect(await keys('on')).toBe('rhx1230v')
+  expect(await keys('plain')).toBe('rhx1230')
+})
+
+test('the footer draws v dim for a row that the provider skips, and live for a row it has: the row decides, not the owner (R11)', async () => {
+  const t = await started([
+    fake('t', 10, { preview: spec({ modes: (_ctx, rowId) => (rowId === 'row-1' ? VIEW_ONLY : undefined) }) }),
+  ])
+  const v = async (id: string) =>
+    (await t.m.footer(t.w.ports, { ...ROW, owner: 't', id }, false)).find(k => k.buttonKey === 'preview')
+  expect(await v('row-1')).toMatchObject({ key: 'v', enabled: true })
+  expect(await v('row-2')).toMatchObject({ key: 'v', enabled: false })
+  // The help view reads no modes: it draws no row, so a provider is never asked for it.
+  expect(
+    (await t.m.footer(t.w.ports, { ...ROW, owner: 't', id: 'row-2' }, true)).find(k => k.buttonKey === 'preview')
+      ?.enabled,
+  ).toBe(false)
+})
+
+test('previewModes and loadPreview of a tracker that is off or failed ask nothing of it: no modes, a notice, and no read (R9)', async () => {
+  const config = { defaults: { enabled: true }, normalise: (raw: JsonObject) => ({ enabled: raw.enabled !== false }) }
+  const asked: string[] = []
+  const watched = (id: string): PreviewSpec =>
+    spec({
+      modes: () => {
+        asked.push(`${id} modes`)
+        return VIEW_ONLY
+      },
+      load: async () => {
+        asked.push(`${id} load`)
+        return { title: 'T', blocks: [] }
+      },
+    })
+  const bad = fake('bad', 30, {
+    preview: watched('bad'),
+    init: () => {
+      throw new Error('boom')
+    },
+  })
+  const t = await started(
+    [fake('on', 10, { preview: watched('on') }), fake('off', 20, { preview: watched('off'), config }), bad],
+    {
+      trackers: { off: { enabled: false } },
+    },
+  )
+  for (const owner of ['off', 'bad']) {
+    expect(await t.m.previewModes(t.w.ports, owner, 'row-1'), owner).toBeUndefined()
+    expect((await t.m.loadPreview(t.w.ports, owner, 'row-1', 'view')).blocks, owner).toEqual([
+      { kind: 'notice', text: 'This row has no preview.', tone: 'info' },
+    ])
+  }
+  expect(asked).toEqual([])
+  expect(await t.m.previewModes(t.w.ports, 'on', 'row-1')).toEqual(VIEW_ONLY) // the spy does see a live tracker
+  expect(asked).toEqual(['on modes'])
+})
+
+test('previewModes asks the preview of the owner for the modes of a row, with the view context of that row selected', async () => {
+  const seen: { selected: string | null; id: string }[] = []
+  const t = await started([
+    fake('t', 10, {
+      preview: spec({
+        modes: (ctx, rowId) => {
+          seen.push({ selected: ctx.selected, id: rowId })
+          return [
+            { id: 'view', enabled: true },
+            { id: 'diff', enabled: false, reason: 'no repo' },
+          ]
+        },
+      }),
+    }),
+    fake('plain', 20),
+  ])
+  expect(await t.m.previewModes(t.w.ports, 't', 'row-1')).toEqual([
+    { id: 'view', enabled: true },
+    { id: 'diff', enabled: false, reason: 'no repo' },
+  ])
+  expect(seen).toEqual([{ selected: 'row-1', id: 'row-1' }])
+  // No preview and no tracker: no modes, and no log line (a tracker that is off or failed has its own test).
+  expect(await t.m.previewModes(t.w.ports, 'plain', 'row-1')).toBeUndefined()
+  expect(await t.m.previewModes(t.w.ports, 'ghost', 'row-1')).toBeUndefined()
+  expect(t.w.logs.filter(l => l.startsWith('keys:'))).toEqual([])
+})
+
+test('previewModes of a row that says undefined has no preview; a modes() that throws gives none and logs one line', async () => {
+  const none = await started([fake('t', 10, { preview: spec({ modes: () => undefined }) })])
+  expect(await none.m.previewModes(none.w.ports, 't', 'row-1')).toBeUndefined()
+  const bad = await started([
+    fake('t', 10, {
+      preview: spec({
+        modes: () => {
+          throw new Error('bad modes')
+        },
+      }),
+    }),
+  ])
+  expect(await bad.m.previewModes(bad.w.ports, 't', 'row-1')).toBeUndefined()
+  expect(bad.w.logs.filter(l => l.startsWith('keys:'))).toEqual(['keys: t preview modes failed: bad modes'])
+})
+
+test('loadPreview calls load of the owner with its context, the row, the mode and the limits of the drawing', async () => {
+  const calls: unknown[][] = []
+  const t = await started([
+    fake('t', 10, {
+      preview: spec({
+        load: async (ctx, rowId, mode, limits) => {
+          calls.push([ctx.id, rowId, mode, limits])
+          return { title: 'T', subtitle: 'S', blocks: [{ kind: 'code', source: 'x', path: 'a.ts' }] }
+        },
+      }),
+    }),
+  ])
+  expect(await t.m.loadPreview(t.w.ports, 't', 'row-1', 'view')).toEqual({
+    title: 'T',
+    subtitle: 'S',
+    blocks: [{ kind: 'code', source: 'x', path: 'a.ts' }],
+  })
+  expect(calls).toEqual([['t', 'row-1', 'view', PREVIEW_LIMITS]])
+})
+
+test('loadPreview of a load that rejects gives a notice, never a throw, and logs one line; a tracker with no preview gives a notice too', async () => {
+  const t = await started([
+    fake('t', 10, {
+      preview: spec({
+        load: async () => {
+          throw new Error('disk gone')
+        },
+      }),
+    }),
+    fake('plain', 20),
+  ])
+  const failed = await t.m.loadPreview(t.w.ports, 't', 'row-1', 'view')
+  expect(failed.blocks).toEqual([{ kind: 'notice', text: 'The preview could not be read: disk gone', tone: 'warning' }])
+  expect(failed.title).toBe('Preview')
+  expect(t.w.logs.filter(l => l.startsWith('keys:'))).toEqual(['keys: t preview failed: disk gone'])
+  const none = await t.m.loadPreview(t.w.ports, 'plain', 'row-1', 'view')
+  expect(none.blocks).toEqual([{ kind: 'notice', text: 'This row has no preview.', tone: 'info' }])
 })

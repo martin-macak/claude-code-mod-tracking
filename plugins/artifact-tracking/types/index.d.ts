@@ -194,6 +194,8 @@ declare module 'claude-code' {
       filters: { touchedOnly: boolean }
       /** Issue #138. The ids of the rows the person marked with `m`. Session scope: the pane clears it at close, `/clear` resets it. */
       marks: string[]
+      /** Issue #57, L2. The preview the pane shows: a row id, its owner and a mode, never content. Session scope, reset by `/clear`. */
+      preview: { rowId: string; owner: string; mode: string } | null
     }
   }
 }

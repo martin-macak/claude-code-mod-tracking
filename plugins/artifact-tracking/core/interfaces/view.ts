@@ -308,8 +308,14 @@ export interface PaneKey {
    * Where the Button of the key sits. Absent: the footer. `view`: the view line above the footer (issue #63, L3): `g`, `a`,
    * `t` and `m` are there, so the pane footer does not grow a row. The help view has no view line: it lists the key and draws
    * its Button at the end of its footer, dim (issue #200, `footerKeys`). Only core sets it.
+   * `preview`: the key line of the preview (issue #57, L2): `d` is there, and only a row whose tracker has a diff mode draws it.
    */
-  readonly bar?: 'view'
+  readonly bar?: 'view' | 'preview'
+  /**
+   * The preview mode this key picks (issue #57, L2): `v` picks `view`, `d` picks `diff`. The Button of a mode on the key line is a
+   * press of the core key that names it, and a key with no `bar` and a `mode` opens the preview from the list. Only core sets it.
+   */
+  readonly mode?: string
   /**
    * A key that asks before it acts on many rows (issue #138): `x`. Its question stands until a press of the same key answers it, so the
    * pane does not end the question on this key, and the label of the key says the count (`dismiss 3`, `confirm 3`). Only core sets it.

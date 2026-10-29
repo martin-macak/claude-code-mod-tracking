@@ -172,11 +172,12 @@ test('draw hands the body height to the help view: a short body draws it compact
   const t = setup(webs('a'), { path: '/p/config.json', version: '1.2.3' })
   t.w.state.set('help', true)
   const help = async (rows?: number) => (await t.draw(96, rows)) as unknown as { children: { children: unknown[] }[] }
-  // The full view is 2 titles, 12 keys (g, a, t and p are pane keys, issues #63 and #199; m is a row key, issue #138), the config line and
-  // the version line. The compact view is 8 lines: three keys to a line, as the body has the rows for it.
-  expect((await help(undefined)).children[0]?.children).toHaveLength(16)
-  expect((await help(28)).children[0]?.children).toHaveLength(16)
-  expect((await help(11)).children[0]?.children).toHaveLength(8)
+  // The full view is 2 titles, 13 keys (g, a, t and p are pane keys, issues #63 and #199; m is a row key, issue #138; v opens the preview,
+  // issue #57, L2), the config line and the version line. The compact view is 9 lines: three keys to a line, so the seven row keys
+  // take three lines. With the two rows of the help footer (issue #200) it fills 11 of the 11 rows of an inline pane at 100x40.
+  expect((await help(undefined)).children[0]?.children).toHaveLength(17)
+  expect((await help(28)).children[0]?.children).toHaveLength(17)
+  expect((await help(11)).children[0]?.children).toHaveLength(9)
 })
 
 test('with many problems a short body draws the help view capped with a count, and /track help prints every problem of its model', async () => {
@@ -1732,8 +1733,8 @@ test('the frame of the help view names the view and holds no row', async () => {
   expect(await waited).toMatchObject({ view: 'help', rows: new Map(), stops: [] })
 })
 
-/** What the next drawing shows (`Refocus.keep`): the rows with `row` selected, the help view or the plan view of issue #199. */
-type Next = { view: 'rows' | 'help' | 'plan'; row: string | null }
+/** What the next drawing shows (`Refocus.keep`): the rows with `row` selected, the help view, the plan view of issue #199 or the preview (issue #57, L2). */
+type Next = { view: 'rows' | 'help' | 'plan' | 'preview'; row: string | null }
 
 /**
  * A bare `Refocus` on ports that hold the clock and `ui.focus` alone, and no host: it reaches for nothing but those. `keep`

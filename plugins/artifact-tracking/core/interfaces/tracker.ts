@@ -21,6 +21,7 @@ import type {
 } from './events'
 import type { ItemKind, ItemStorePort, Json, JsonObject } from './items'
 import type { AgentInfo, EnvName, Ports, RepoRemote, RunOpts, RunResult, TasksPort, Timer } from './ports'
+import type { PreviewSpec } from './preview'
 import type { TurnPort } from './turns'
 import type { ActionImpls, SectionSpec, ViewContext } from './view'
 
@@ -276,6 +277,11 @@ export interface Tracker<C extends JsonObject = JsonObject, D extends Json = Jso
   actions?(ctx: ViewContext<C, D>): ActionImpls<C, D>
   /** One line per item. */
   prompt?(ctx: ViewContext<C, D>): readonly string[]
+  /**
+   * A view of a row of its own (issue #57, L2): the modes a row has and the content of each. Core draws it in the pane, owns the
+   * keys `v`, `d` and `r` and keeps the size budget. A row of a tracker with no `preview` shows no `v`. Absent: no preview.
+   */
+  readonly preview?: PreviewSpec<C, D>
   /** Best effort, synchronous. A reload gives no call (E7). */
   dispose?(): void
 }

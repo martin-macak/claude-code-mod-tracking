@@ -3,6 +3,7 @@
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.4 and 5.13.
 
 import type { Json, StoredItem, ToolStatus, TurnLedger } from '../../types'
+import type { PreviewState } from './preview'
 import type { FilterState, HiddenState } from './view'
 
 /** The engine's timer handle. */
@@ -168,6 +169,12 @@ export interface StatePorts {
   readonly marks: AtomPort<string[]>
   /** Issue #69: what each main-loop turn tracked. The TurnLedger writes it, Persistence stores it. */
   readonly turns: AtomPort<TurnLedger>
+  /**
+   * Issue #57, L2: the preview the pane shows in place of the table, or `null`. A row id, its owner and a mode: never the
+   * content, which sits in module memory. Session scope: the pane clears it at close and `/clear` resets it. Never written to
+   * the config file or the store.
+   */
+  readonly preview: AtomPort<PreviewState | null>
 }
 
 /** What stopping a background task gave: the engine stopped it, or it did not, and says why. */

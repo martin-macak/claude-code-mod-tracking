@@ -23,8 +23,9 @@ const lengthOf = (v: unknown): number => (typeof v === 'string' ? v.length : 0)
 /**
  * The cost of a tree of `{ type, props, children }` nodes and lists of them. A node with a string type is 1 value. A
  * string child is 1 value and its length in characters, a number child the same for its text. A Button adds its
- * label, a Box its key, a Link its href and label. A Button key and every other prop count nothing. The engine and the
- * node stand-in leave out an empty props and an empty children, so both may be missing.
+ * label, a Box its key, a Link its href and label, a Code its source and a Markdown its text (the engine counts both: a `Code`
+ * of 120,000 characters draws 100,000 and drops the Buttons after it, issue #57). A Button key and every other prop count
+ * nothing. The engine and the node stand-in leave out an empty props and an empty children, so both may be missing.
  */
 export function measure(tree: unknown): Cost {
   let values = 0
@@ -42,6 +43,8 @@ export function measure(tree: unknown): Cost {
         if (type === 'Button') chars += lengthOf(props.label)
         else if (type === 'Box') chars += lengthOf(props.key)
         else if (type === 'Link') chars += lengthOf(props.href) + lengthOf(props.label)
+        else if (type === 'Code') chars += lengthOf(props.source)
+        else if (type === 'Markdown') chars += lengthOf(props.text)
       }
       walk(children)
     }

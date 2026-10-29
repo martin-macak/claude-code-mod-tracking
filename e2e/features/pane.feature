@@ -57,6 +57,28 @@ Feature: Drive the /track pane with the keys
     Then the screen stops showing "Row keys"
     And the selected row shows "one.example"
 
+  # Issue #57, L2. `v` on a file row opens the file in place of the table, with a key line and the source. The first Esc goes back to
+  # the list with the keys in the pane (the hook answers deny and opens the pane again), and the second Esc closes the pane.
+  # /etc/hosts exists on every host the harness runs on, and it names localhost.
+  Scenario: v opens the preview of a file, Esc goes back to the list and a second Esc closes the pane
+    Given a Claude Code session with the artifact-tracking mod
+    When I type "Note the file /etc/hosts for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "hosts"
+    And the screen shows "v: preview"
+    When I press "v"
+    Then the screen shows "Esc back"
+    And the screen shows "v: view"
+    And the screen shows "localhost"
+    And the screen stops showing "x: dismiss"
+    When I press "Escape"
+    Then the screen stops showing "Esc back"
+    And the selected row shows "hosts"
+    And the screen shows "v: preview"
+    When I press "Escape"
+    Then the screen stops showing "Esc close"
+
   Scenario: A long section ends in an N more row
     Given the tracker config file:
       """

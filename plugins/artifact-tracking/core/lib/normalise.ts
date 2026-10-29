@@ -11,6 +11,7 @@ export type Rule =
   | { readonly kind: 'int'; readonly def: number; readonly min: number; readonly max: number }
   | { readonly kind: 'bool'; readonly def: boolean }
   | { readonly kind: 'words'; readonly def: readonly string[]; readonly max: number }
+  | { readonly kind: 'globs'; readonly def: readonly string[]; readonly max: number }
   | { readonly kind: 'enum'; readonly def: string; readonly values: readonly string[] }
   | { readonly kind: 'enums'; readonly def: readonly string[]; readonly values: readonly string[] }
   | { readonly kind: 'obj'; readonly of: Schema }
@@ -25,14 +26,19 @@ export type ConfigOf<S extends Schema> = {
       ? boolean
       : S[K] extends { readonly kind: 'words' }
         ? readonly string[]
-        : S[K] extends { readonly kind: 'enum'; readonly values: readonly (infer V extends string)[] }
-          ? V
-          : S[K] extends { readonly kind: 'enums'; readonly values: readonly (infer V extends string)[] }
-            ? readonly V[]
-            : S[K] extends { readonly kind: 'obj'; readonly of: infer O extends Schema }
-              ? ConfigOf<O>
-              : never
+        : S[K] extends { readonly kind: 'globs' }
+          ? readonly string[]
+          : S[K] extends { readonly kind: 'enum'; readonly values: readonly (infer V extends string)[] }
+            ? V
+            : S[K] extends { readonly kind: 'enums'; readonly values: readonly (infer V extends string)[] }
+              ? readonly V[]
+              : S[K] extends { readonly kind: 'obj'; readonly of: infer O extends Schema }
+                ? ConfigOf<O>
+                : never
 }
+
+/** Any C0 or C1 control character, DEL among them: a glob holds none. */
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/
 
 /** A word of a word list, after lowercasing. */
 export const WORD: RegExp = /^[a-z][a-z0-9-]{0,31}$/
@@ -45,6 +51,16 @@ export const bool = (def: boolean): Rule & { kind: 'bool' } => ({ kind: 'bool', 
 
 /** A list of at most `max` words (`WORD`). The default list is the fallback for a value that is not a list. */
 export const words = (def: readonly string[], max: number): Rule & { kind: 'words' } => ({ kind: 'words', def, max })
+
+/** The longest glob of a glob list, in characters. */
+export const GLOB_MAX_LENGTH = 200
+
+/**
+ * A list of at most `max` globs: strings that stand for paths (`*.vault`, `~/keys/**`). Each is kept as written, case too, once, in
+ * the order given. A glob is a non-empty string of at most `GLOB_MAX_LENGTH` characters with no control character. A word list
+ * would refuse every glob: a glob has dots, stars and slashes. The default list is the fallback for a value that is not a list.
+ */
+export const globs = (def: readonly string[], max: number): Rule & { kind: 'globs' } => ({ kind: 'globs', def, max })
 
 /**
  * One of a fixed list of words, compared as written (no case folding). The default must be one of them. The result type is
@@ -95,7 +111,7 @@ export function defaultsOf<S extends Schema>(s: S): ConfigOf<S> {
   const out: Rec = {}
   for (const [key, rule] of Object.entries(s)) {
     if (rule.kind === 'obj') out[key] = defaultsOf(rule.of)
-    else if (rule.kind === 'words' || rule.kind === 'enums') out[key] = [...rule.def]
+    else if (rule.kind === 'words' || rule.kind === 'globs' || rule.kind === 'enums') out[key] = [...rule.def]
     else out[key] = rule.def
   }
   return out as ConfigOf<S>
@@ -110,26 +126,45 @@ export function deepFreeze<T>(v: T): T {
   return v
 }
 
-/** The word list of a raw value, or the fallback list when it is not a list. */
-function wordsOf(
-  rule: Rule & { kind: 'words' },
+/** What a list rule keeps of one raw item: its kept form, or undefined for an item that does not belong. */
+type Keep = (item: unknown) => string | undefined
+
+/** A word: lowercased, and one of `WORD`. */
+const keepWord: Keep = item => {
+  const word = typeof item === 'string' ? item.toLowerCase() : undefined
+  return word !== undefined && WORD.test(word) ? word : undefined
+}
+
+/** A glob: a non-empty string of at most `GLOB_MAX_LENGTH` characters with no control character, kept as written. */
+const keepGlob: Keep = item =>
+  typeof item === 'string' && item !== '' && item.length <= GLOB_MAX_LENGTH && !CONTROL.test(item) ? item : undefined
+
+/**
+ * The list of a raw value, or the fallback list when it is not a list: the items that `keep` accepts, each once, in the order
+ * given. One problem for each item that is left out, and one when the list is cut at `rule.max`. The word list and the glob list
+ * differ in `keep` and in the noun of their problems.
+ */
+function listOf(
+  noun: 'word' | 'glob',
+  keep: Keep,
+  rule: { readonly max: number },
   v: unknown,
   fallback: readonly string[],
   p: string,
   warn: (problem: string) => void,
 ): readonly string[] {
   if (!Array.isArray(v)) {
-    warn(`${p}: ${show(v)} is not a list of words. Using the default list.`)
+    warn(`${p}: ${show(v)} is not a list of ${noun}s. Using the default list.`)
     return fallback
   }
   const kept: string[] = []
   for (const item of v) {
-    const word = typeof item === 'string' ? item.toLowerCase() : undefined
-    if (word === undefined || !WORD.test(word)) warn(`${p}: ${show(item)} is not a valid word. The mod leaves it out.`)
-    else if (!kept.includes(word)) kept.push(word)
+    const one = keep(item)
+    if (one === undefined) warn(`${p}: ${show(item)} is not a valid ${noun}. The mod leaves it out.`)
+    else if (!kept.includes(one)) kept.push(one)
   }
   if (kept.length > rule.max) {
-    warn(`${p}: the list has more than ${rule.max} words. The mod uses the first ${rule.max}.`)
+    warn(`${p}: the list has more than ${rule.max} ${noun}s. The mod uses the first ${rule.max}.`)
     return kept.slice(0, rule.max)
   }
   return kept
@@ -239,7 +274,9 @@ export function normaliseWith<S extends Schema>(
       }
     } else if (rule.kind === 'enum') known[key] = enumOf(rule, v, fallback as string, p, warn)
     else if (rule.kind === 'enums') known[key] = enumsOf(rule, v, fallback as readonly string[], p, warn)
-    else known[key] = wordsOf(rule, v, fallback as readonly string[], p, warn)
+    else if (rule.kind === 'globs')
+      known[key] = listOf('glob', keepGlob, rule, v, fallback as readonly string[], p, warn)
+    else known[key] = listOf('word', keepWord, rule, v, fallback as readonly string[], p, warn)
   }
   for (const key of Object.keys(src))
     if (!Object.hasOwn(s, key)) warn(`${at(key)}: unknown key. The mod keeps it and ignores it.`)
