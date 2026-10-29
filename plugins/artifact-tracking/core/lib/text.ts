@@ -1,4 +1,4 @@
-// Small text helpers any tracker may use: short ages, the note of a tool, compact agent ids, first line, error message.
+// Small text helpers any tracker may use: short ages, the note of a tool, compact agent ids, first line, error message, a cut text.
 // Moved from the pane code and `core/infra/tool.ts` in plan L5, Task 2. Pure.
 
 import type { ToolStatus } from '../../types'
@@ -57,4 +57,11 @@ export function firstLine(s: string): string {
 
 export function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+/** `text` cut to `max` code units, with no surrogate pair split: a pair that the cut would divide goes whole, or not at all. */
+export function clip(text: string, max: number): string {
+  const head = text.slice(0, Math.max(0, max))
+  const last = head.charCodeAt(head.length - 1)
+  return last >= 0xd800 && last <= 0xdbff ? head.slice(0, -1) : head
 }

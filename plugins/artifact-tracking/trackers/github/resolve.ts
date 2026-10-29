@@ -3,15 +3,13 @@
 // The mod never rebases, merges or pushes. The prompt asks Claude to do it in the session, under the permission rules of
 // the person, and to ask before any push.
 
+import { isSafeRef } from '../../core/lib/git'
 import { isLanePr } from './lane-pr'
 import { isQueued, type MergeEnv } from './merge'
 import type { GitHubRecord } from './types'
 
-/**
- * The branch names that go into a prompt or a git argument: letters, digits and `. _ / + @ -`, and no leading dash or dot.
- * A name made by someone else must not add words to a prompt or an option to a command line. GitHub allows more.
- */
-export const SAFE_REF = /^[A-Za-z0-9_][A-Za-z0-9._/+@-]*$/
+// The branch names that go into a prompt or a git argument pass `isSafeRef` of core, the one rule for every tracker (the diff of a
+// file uses it too, issue #254): a name made by someone else must not add words to a prompt or an option to a command line.
 
 /** A look for the conflicting files that has not ended after this long never will: the key may be pressed again. */
 export const FILES_PENDING_MS = 3 * 60_000
@@ -69,7 +67,7 @@ function conflicted(rec: GitHubRecord | undefined, env: MergeEnv) {
   // A PR the session created in another repo (issue #158): its branches are that repo's, and git runs in the session repo.
   if (rec.otherRepo)
     return no('the PR is in another repo, so its branches are not branches of this one', HINT.otherRepo)
-  if (!SAFE_REF.test(rec.headRefName) || !SAFE_REF.test(rec.baseRefName))
+  if (!isSafeRef(rec.headRefName) || !isSafeRef(rec.baseRefName))
     return no('the branch name has a character that is not put in a prompt', HINT.branch)
   return { ok: true as const, rec, head: rec.headRefName, base: rec.baseRefName, note }
 }
@@ -90,8 +88,7 @@ export function resolveCheck(
   const path = gate.note.worktree
   if (path === undefined) return no(`no local worktree has the branch ${gate.head}`, HINT.noWorktree)
   if (defaultBranch === undefined) return no('the default branch is not known', HINT.noDefault)
-  if (!SAFE_REF.test(defaultBranch))
-    return no('the branch name has a character that is not put in a prompt', HINT.branch)
+  if (!isSafeRef(defaultBranch)) return no('the branch name has a character that is not put in a prompt', HINT.branch)
   if (/[\u0000-\u001f\u007f]/.test(path)) return no('the worktree path has a control character', HINT.path)
   if (!/^https?:\/\/\S+$/.test(gate.rec.url)) return no('the PR url is not one plain link', HINT.url)
   return {

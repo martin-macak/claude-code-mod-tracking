@@ -12,9 +12,18 @@ import type { Handler, Tracker, TrackerContext } from '../../core/interfaces/tra
 import { LoadState } from '../../core/lib/load-state'
 import { parsePorcelain } from '../../core/lib/porcelain'
 import { actions, KEYS } from './actions'
+import { publishBranchPr } from './branch-pr'
 import { GH_TOOL, ghOf } from './client'
 import { GITHUB_DEFAULTS, type GithubConfig, githubConfig } from './config'
-import { branchesOf, createdOf, FACT_BRANCHES, FACT_PRS, FACT_REPO_BRANCHES, foreignOf } from './facts'
+import {
+  branchesOf,
+  createdOf,
+  FACT_BRANCHES,
+  FACT_PRS,
+  FACT_REPO_BRANCHES,
+  FACT_SESSION_REPO,
+  foreignOf,
+} from './facts'
 import { githubKind } from './kind'
 import { EMPTY_LANE, PrLane, wantsStep } from './lane'
 import { githubPrompt } from './prompt'
@@ -108,6 +117,7 @@ function laneOf(ctx: Ctx): PrLane {
         return result.list
       })
       if (!result) throw new Error('the item write did not run')
+      publishBranchPr(ctx.facts, result.list) // the PR of the session branch (issue #254) follows the list just written: no second read
       return result
     },
     onAdded: keys => {
@@ -135,11 +145,36 @@ function laneOf(ctx: Ctx): PrLane {
 /** The lane of each load. A tracker is a module constant, so nothing per load sits in its closure. */
 const loads = new LoadState<PrLane>()
 
-/** A new `auto.branches` that opens the lane starts a step before `publish` returns; the step is not awaited. */
+/**
+ * Publishes the fact `github.branchPr` for the item list as it is now, or withdraws it (issue #254). A list that cannot be read leaves
+ * the fact as it was: the next step of the lane or the next branch tries again.
+ */
+async function publishFact(ctx: Pick<Ctx, 'items' | 'facts'>): Promise<void> {
+  try {
+    publishBranchPr(ctx.facts, await ctx.items.list())
+  } catch {
+    // The session ended under the read, or the store refused it.
+  }
+}
+
+/**
+ * A new `auto.branches` that opens the lane starts a step before `publish` returns; the step is not awaited. A new branch of the master
+ * agent changes the PR of the session branch at once, from the list the lane wrote last: the fact must not name the PR of the branch
+ * that the session left while the lane asks `gh`.
+ */
 const onBranches: H<FactEvent> = (ctx, ev) => {
   const next = branchesOf(ev.value)
   if (next && wantsStep(next, branchesOf(ev.previous))) loads.get(ctx)?.request()
+  return publishFact(ctx)
 }
+
+/**
+ * The third input of the fact `github.branchPr` is the session repo (issue #254): it comes from a lookup that can end after the first
+ * `auto.branches` of a load and after a step of the lane that found no PR. A repo that is found, or changed, derives the fact again
+ * from the list as it is: a list restored with the PR then gives the fact without waiting for the next step. `FactsPort.publish`
+ * drops a value that did not change, so the call is cheap. The forget at a session switch withdraws the fact itself (`forgetRepo`).
+ */
+const onSessionRepo: H<FactEvent> = ctx => publishFact(ctx)
 
 /**
  * A new `repos.branches` starts a step, once a value is there to compare with: the first one comes at init (or at the first
@@ -177,7 +212,7 @@ export function githubTracker(): Tracker<GithubConfig, LaneState> {
       },
     },
     events: {
-      facts: { [FACT_BRANCHES]: onBranches, [FACT_REPO_BRANCHES]: onRepos },
+      facts: { [FACT_BRANCHES]: onBranches, [FACT_REPO_BRANCHES]: onRepos, [FACT_SESSION_REPO]: onSessionRepo },
       command: onCommand,
     },
     sections,

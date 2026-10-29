@@ -9,7 +9,7 @@ import type { Engine } from 'claude-code/testing'
 import { expect, mock } from 'claude-code/testing'
 import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
-import { mountPane, type PaneUi, select } from './fixtures/pane'
+import { buttonKeys, mountPane, type PaneUi, seen, select } from './fixtures/pane'
 import {
   fileTool,
   graphqlCalls,
@@ -17,7 +17,6 @@ import {
   res,
   response,
   START,
-  sleep,
   track,
   until,
   world,
@@ -48,15 +47,6 @@ async function withFile(
   return { w, reads }
 }
 
-/** Waits until the pane draws the preview: its key line ends in the hint. A hang guard of 20 s, as `until` has. */
-async function shown(ui: PaneUi): Promise<void> {
-  for (let i = 0; i < 2000; i++) {
-    if ((await ui.find({ text: 'Esc back' })) !== undefined) return
-    await sleep(10)
-  }
-  throw new Error('timed out waiting for the preview')
-}
-
 /** The pane with the row selected and `v` pressed. */
 async function opened(
   $: Engine,
@@ -70,11 +60,9 @@ async function opened(
   await select($, ui, 'a.ts')
   await ui.press({ key: 'preview' })
   await until(() => reads.length > 0, 'the read of the file') // the read runs apart from the press
-  await shown(ui)
+  await seen(ui, 'Esc back') // the preview is drawn: its key line ends in the hint
   return { ui, reads, w }
 }
-
-const buttonKeys = async (ui: PaneUi) => (await ui.findAll({ type: 'Button' })).map(b => b.key)
 
 test('preview: v on a file row opens the source in place of the table: the header, the key line, then the code', async ($, on) => {
   const { ui, reads } = await opened($, on, 'export const one = 1\nexport const two = 2\n')
@@ -82,7 +70,7 @@ test('preview: v on a file row opens the source in place of the table: the heade
   expect(await ui.find({ text: 'src/a.ts' })).toBeDefined() // the header
   expect(await ui.find({ text: ' · code · view · 2 lines' })).toBeDefined()
   expect(await ui.find({ text: 'Esc back' })).toBeDefined()
-  expect(await buttonKeys(ui)).toEqual(['preview', 'refresh'])
+  expect(await buttonKeys(ui)).toEqual(['preview', 'diff', 'refresh'])
   const [code] = await ui.findAll({ type: 'Code' })
   expect(code?.props).toMatchObject({
     source: 'export const one = 1\nexport const two = 2\n',
@@ -99,7 +87,7 @@ test('preview: a source with control characters is drawn, not refused: the engin
   const { ui } = await opened($, on, 'a\u001b[31mred\u0007\r\nb\rc\u0085\u007f\n')
   const [code] = await ui.findAll({ type: 'Code' })
   expect(code?.props.source).toBe('a\uFFFD[31mred\uFFFD\nb\uFFFDc\uFFFD\uFFFD\n')
-  expect(await buttonKeys(ui)).toEqual(['preview', 'refresh'])
+  expect(await buttonKeys(ui)).toEqual(['preview', 'diff', 'refresh'])
   await ui.unmount()
 })
 
@@ -109,7 +97,7 @@ test('preview: a file over the caps shows its notice and a source within the cap
   expect(await ui.find({ text: 'Truncated: the first 600 of 2500 lines.' })).toBeDefined()
   const [code] = await ui.findAll({ type: 'Code' })
   expect(String(code?.props.source).length).toBeLessThanOrEqual(60_000)
-  expect(await buttonKeys(ui)).toEqual(['preview', 'refresh'])
+  expect(await buttonKeys(ui)).toEqual(['preview', 'diff', 'refresh'])
   await ui.unmount()
 })
 
@@ -136,7 +124,7 @@ test('preview: an inline pane of 11 body rows (100x40) gets the whole tall tree,
   const lines = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`)
   const { ui } = await opened($, on, `${lines.join('\n')}\n`, { placement: 'inline', bodyRows: 11, bodyColumns: 96 })
   expect(await ui.find({ text: 'Esc back' })).toBeDefined() // the key line is in the tree, before the content
-  expect(await buttonKeys(ui)).toEqual(['preview', 'refresh'])
+  expect(await buttonKeys(ui)).toEqual(['preview', 'diff', 'refresh'])
   const [code] = await ui.findAll({ type: 'Code' })
   // No window cuts the tree: the 60 lines are all in the one Code, and the engine scrolls it.
   expect(String(code?.props.source).split('\n').filter(Boolean)).toEqual(lines)

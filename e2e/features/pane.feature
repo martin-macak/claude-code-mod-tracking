@@ -79,6 +79,48 @@ Feature: Drive the /track pane with the keys
     When I press "Escape"
     Then the screen stops showing "Esc close"
 
+  # Issue #254, L3 of #57. `d` in the preview runs git in the folder of the file and shows the working tree against the merge-base with
+  # origin/HEAD (no PR for the session branch here). The session folder is a clone of this repo at its HEAD, and README.md is not changed
+  # there, so the diff is a notice that names the base. `v` goes back to the view. A clone has an origin/HEAD only when the checkout that
+  # made it was on a branch, so the step pins it: the scenario does not depend on how the harness was started.
+  Scenario: d shows the diff of a file of the repo against its base, and v goes back to the view
+    Given a Claude Code session with the artifact-tracking mod
+    And the clone has origin/HEAD at its HEAD
+    When I type "Note the file README.md for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "README.md"
+    When I press "v"
+    Then the screen shows "v: view"
+    And the screen shows "d: diff"
+    When I press "d"
+    Then the screen shows "docs · diff"
+    And the screen shows "No change against origin/HEAD @"
+    When I press "v"
+    Then the screen shows "docs · view"
+    And the screen stops showing "No change against"
+
+  # A file outside any repository has no diff, so the diff mode is off (R16): the view asks git once, apart from its hook, and `d` then
+  # says why in a toast and opens nothing. A press before that answer shows the same words as a notice, so the first press passes on
+  # either side of the race. The second press comes after the answer for sure (the first press asks git too), and the view stays.
+  # /etc/hosts is in no repo on any host.
+  Scenario: d on a file that is in no repository says so, and the view stays
+    Given a Claude Code session with the artifact-tracking mod
+    When I type "Note the file /etc/hosts for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "hosts"
+    When I press "v"
+    Then the screen shows "localhost"
+    When I press "d"
+    Then the screen shows "Not in a git repository"
+    When I press "v"
+    Then the screen shows "localhost"
+    When I press "d"
+    Then the screen shows "Not in a git repository"
+    And the screen shows "localhost"
+    And the screen shows "v: view"
+
   Scenario: A long section ends in an N more row
     Given the tracker config file:
       """

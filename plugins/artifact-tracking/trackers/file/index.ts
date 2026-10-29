@@ -8,10 +8,12 @@
 // tick starts it, and it runs after the hook has returned.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.8. Plan: L3 Task 12, L5 Task 8.
 
-import type { ToolCallEvent } from '../../core/interfaces/events'
+import type { SessionChangedEvent, ToolCallEvent } from '../../core/interfaces/events'
 import type { Json } from '../../core/interfaces/items'
 import type { Handler, Tracker } from '../../core/interfaces/tracker'
+import { isRecord } from '../../core/lib/json'
 import { type FileConfig, fileConfig } from './config'
+import { clearOff, GIT_REPO_CMD } from './diff-off'
 import { fileKind, settingsOf, touchesOf } from './kind'
 import { FILE_TOOL, typeUnknownFiles } from './mime'
 import { filePreview } from './preview'
@@ -22,11 +24,23 @@ export { type FileConfig, fileConfig, fileKind }
 
 /**
  * A finished call that touched a file may have brought a name that the type map does not know. `touchesOf` decides what the call
- * touched, as it does for the sighting, so the lookup starts for the calls that add a row and for no other.
+ * touched, as it does for the sighting, so the lookup starts for the calls that add a row and for no other. A Bash call that makes a
+ * repo or a remote, or moves the branch, may change what git says about a folder: the answers that turned the diff mode off go
+ * (issue #254, `diff-off.ts`).
  */
 const onTouch: Handler<FileConfig, Json, ToolCallEvent> = (ctx, ev) => {
+  if (
+    ev.tool === 'Bash' &&
+    isRecord(ev.input) &&
+    typeof ev.input.command === 'string' &&
+    GIT_REPO_CMD.test(ev.input.command)
+  )
+    clearOff(ctx.facts)
   if (touchesOf(ev.tool, ev, settingsOf(ctx)).length > 0) typeUnknownFiles(ctx)
 }
+
+/** A new session has its own folders and its own repos: no answer of the old one holds. */
+const onSessionChanged: Handler<FileConfig, Json, SessionChangedEvent> = ctx => clearOff(ctx.facts)
 
 export function fileTracker(): Tracker<FileConfig, Json> {
   return {
@@ -40,6 +54,7 @@ export function fileTracker(): Tracker<FileConfig, Json> {
       toolCall: Object.fromEntries(Object.keys(fileKind.fromTool ?? {}).map(tool => [tool, onTouch])),
       // The tick looks again: a restored or replayed record has no answer yet, and a call may have come before `file` was probed.
       tick: { run: ctx => typeUnknownFiles(ctx) },
+      sessionChanged: onSessionChanged,
     },
     store: ctx => ctx.config.slice(),
     sections,

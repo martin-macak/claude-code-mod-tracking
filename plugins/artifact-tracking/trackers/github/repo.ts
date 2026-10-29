@@ -9,6 +9,7 @@ import type { Json, PrepareContext } from '../../core/interfaces/items'
 import type { RepoRef } from '../../core/interfaces/ports'
 import type { FactsPort } from '../../core/interfaces/tracker'
 import { resolveBareRefs } from './bare'
+import { FACT_BRANCH_PR } from './branch-pr'
 import { ghOf } from './client'
 
 /**
@@ -146,4 +147,7 @@ export function forgetRepo(ctx: PrepareContext): void {
   lookups.delete(ctx.facts)
   ctx.facts.publish('session.repo', undefined)
   ctx.facts.publish('github.hosts', undefined)
+  // The PR of the session branch belongs to the repo and the branch of the old session (issue #254): the next step of the lane finds
+  // the PR of the new one, and a reader meanwhile finds none.
+  ctx.facts.publish(FACT_BRANCH_PR, undefined)
 }

@@ -2,8 +2,9 @@
 // take the level of the PRs that close it. A rule reads facts and the list through `RuleEnv`; it names no other tracker.
 // Plan: L5 Task 6, K6, K20.
 
-import type { Json, Level, PriorityRule, RuleEnv, StoredItem } from '../../core/interfaces/items'
+import type { Json, Level, PriorityRule, StoredItem } from '../../core/interfaces/items'
 import type { RepoRef } from '../../core/interfaces/ports'
+import type { FactsPort } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import { rankOf } from '../../core/lib/levels'
 import type { GitHubRecord } from './types'
@@ -11,17 +12,34 @@ import type { GitHubRecord } from './types'
 const lower = (s: string | undefined): string => (s ?? '').toLowerCase()
 
 /** The session repo fact, when it holds a host, an owner and a repo. */
-function sessionRepo(env: RuleEnv): RepoRef | undefined {
-  const v = env.facts.read<Json>('session.repo')
+export function sessionRepo(facts: Pick<FactsPort, 'read'>): RepoRef | undefined {
+  const v = facts.read<Json>('session.repo')
   return isRecord(v) && typeof v.host === 'string' && typeof v.owner === 'string' && typeof v.repo === 'string'
     ? { host: v.host, owner: v.owner, repo: v.repo }
     : undefined
 }
 
 /** The branch of the master agent, as the auto tracker publishes it. Absent: a detached HEAD, or not known yet. */
-function currentBranch(env: RuleEnv): string | undefined {
-  const v = env.facts.read<Json>('auto.branches')
+export function currentBranch(facts: Pick<FactsPort, 'read'>): string | undefined {
+  const v = facts.read<Json>('auto.branches')
   return isRecord(v) && typeof v.current === 'string' ? v.current : undefined
+}
+
+/**
+ * Whether `rec` is an open PR (a draft too) of the session repo whose head is `branch`. The one test of R7 below and of the fact
+ * `github.branchPr` (issue #254), so the PR that is `top` and the PR whose base a diff takes are the same PR.
+ */
+export function isBranchPr(rec: GitHubRecord, repo: RepoRef | undefined, branch: string | undefined): boolean {
+  return (
+    rec.type === 'pr' &&
+    rec.state === 'open' &&
+    rec.headRefName !== undefined &&
+    repo !== undefined &&
+    rec.headRefName === branch &&
+    lower(rec.host) === lower(repo.host) &&
+    lower(rec.owner) === lower(repo.owner) &&
+    lower(rec.repo) === lower(repo.repo)
+  )
 }
 
 /** R7: an open PR (a draft too) of the session repo whose head is the current branch is `top`. */
@@ -29,16 +47,7 @@ export const BRANCH_PR: PriorityRule = {
   id: 'github-pr',
   stage: 0,
   level(item, env) {
-    const rec = item as GitHubRecord
-    if (rec.type !== 'pr' || rec.state !== 'open' || rec.headRefName === undefined) return undefined
-    const repo = sessionRepo(env)
-    return repo !== undefined &&
-      rec.headRefName === currentBranch(env) &&
-      lower(rec.host) === lower(repo.host) &&
-      lower(rec.owner) === lower(repo.owner) &&
-      lower(rec.repo) === lower(repo.repo)
-      ? 'top'
-      : undefined
+    return isBranchPr(item as GitHubRecord, sessionRepo(env.facts), currentBranch(env.facts)) ? 'top' : undefined
   },
 }
 

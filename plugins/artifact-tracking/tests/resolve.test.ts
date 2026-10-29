@@ -1,7 +1,8 @@
 // The resolve prompt and the checks behind the resolve and files keys (issue #50, P2 and P3). Pure.
 import { expect, test } from 'claude-code/testing'
+import { isSafeRef } from '../core/lib/git'
 import { QUEUED_MS } from '../trackers/github/merge'
-import { blockedHint, filesCheck, resolveCheck, resolvePrompt, SAFE_REF } from '../trackers/github/resolve'
+import { blockedHint, filesCheck, resolveCheck, resolvePrompt } from '../trackers/github/resolve'
 import type { GitHubRecord, MergeNote } from '../trackers/github/types'
 import { LANE, named } from './fixtures/reasons'
 
@@ -116,7 +117,7 @@ test('AC9: a press is ignored while the PR is queued, and counts again after ten
 
 test('a branch name with a space, a leading dash, a quote or a shell character is not put in a prompt', () => {
   for (const bad of ['-x', 'a b', 'a"b', 'a;b', 'a`b', 'a$(b)', 'a\nb', '', '.hidden', 'a|b', 'a&b', 'a<b']) {
-    expect(SAFE_REF.test(bad), bad).toBe(false)
+    expect(isSafeRef(bad), bad).toBe(false)
     const r = resolveCheck(pr({ headRefName: bad }), env({ worktree: '/x/wt-a' }), 'main')
     expect(r).toEqual({
       ok: false,
@@ -125,7 +126,7 @@ test('a branch name with a space, a leading dash, a quote or a shell character i
     })
   }
   for (const good of ['main', 'feat/auto-tracking', 'fix/BUG-3184_x', 'release/1.2.x', 'user+bot/a@b']) {
-    expect(SAFE_REF.test(good), good).toBe(true)
+    expect(isSafeRef(good), good).toBe(true)
   }
   const base = resolveCheck(pr({ baseRefName: 'a b' }), env({ worktree: '/x/wt-a' }), 'main')
   expect(base.ok).toBe(false)

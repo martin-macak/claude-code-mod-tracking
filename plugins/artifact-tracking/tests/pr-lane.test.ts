@@ -820,6 +820,69 @@ test('lane: with github off auto still publishes branches and no gh call runs', 
   expect((await t.m.track(t.w.ports, '')).text).not.toContain('Pull requests')
 })
 
+// The fact `github.branchPr` (issue #254): the open PR of the session repo whose head is the branch of the master agent, with its
+// base. The file preview takes the base of a diff from it. Over the real auto and github trackers, so the branch and the repo are the
+// facts that the real publishers give.
+const BRANCH_PR_FACT = { host: 'github.com', owner: 'acme', repo: 'web', number: 9, base: 'develop', head: 'main' }
+
+test('lane: a step that finds the open PR of the session branch publishes it as the fact github.branchPr, with its base', async () => {
+  const t = shipped({ defaultBranch: 'trunk' }) // a PR on the default branch is no lane PR: main is not the default here
+  t.nodes['head:main'] = [prNode({ number: 9, headRefName: 'main', baseRefName: 'develop' })]
+  expect(t.m.facts.read('github.branchPr')).toBeUndefined()
+  await t.start()
+  await t.refresh()
+  expect(t.m.facts.read('github.branchPr')).toEqual(BRANCH_PR_FACT)
+})
+
+test('lane: the fact follows the PR: a merged PR withdraws it, and a PR of another branch is not the fact', async () => {
+  const t = shipped({ defaultBranch: 'trunk' }) // a PR on the default branch is no lane PR: main is not the default here
+  t.nodes['head:main'] = [prNode({ number: 9, headRefName: 'main', baseRefName: 'develop' })]
+  t.nodes[`head:${BRANCH}`] = [prNode({ number: 7, headRefName: BRANCH, baseRefName: 'main' })]
+  await t.start()
+  await t.enter()
+  await t.w.clock.advance(WINDOW)
+  await t.refresh()
+  expect(t.m.facts.read('github.branchPr')).toEqual(BRANCH_PR_FACT) // #7 is the PR of a worktree branch: not the session branch
+  t.nodes['head:main'] = [prNode({ number: 9, headRefName: 'main', baseRefName: 'develop', state: 'MERGED' })]
+  await t.refresh()
+  expect(t.m.facts.read('github.branchPr')).toBeUndefined()
+})
+
+test('lane: a new session branch changes the fact at once, before the PR lane has asked gh for anything', async () => {
+  const t = shipped({ defaultBranch: 'trunk' }) // a PR on the default branch is no lane PR: main is not the default here
+  t.nodes['head:main'] = [prNode({ number: 9, headRefName: 'main', baseRefName: 'develop' })]
+  await t.start()
+  await t.refresh()
+  expect(t.m.facts.read('github.branchPr')).toEqual(BRANCH_PR_FACT)
+  // The master agent moves to another branch: the next `auto.branches` has another `current` and the same branches, so it starts no step.
+  const queries = t.queries.length
+  const branches = t.branches()
+  t.m.facts.publish('auto.branches', {
+    ...branches,
+    seq: (branches?.seq ?? 0) + 1,
+    reasons: [],
+    current: 'other',
+  } as never)
+  await until(() => t.m.facts.read('github.branchPr') === undefined, 'the fact is withdrawn')
+  expect(t.queries.length).toBe(queries)
+})
+
+test('lane: the fact follows the session repo too: a repo that is found after the PR was listed gives the fact at once', async () => {
+  const t = shipped({ defaultBranch: 'trunk' }) // a PR on the default branch is no lane PR: main is not the default here
+  t.nodes['head:main'] = [prNode({ number: 9, headRefName: 'main', baseRefName: 'develop' })]
+  await t.start()
+  await t.refresh()
+  expect(t.m.facts.read('github.branchPr')).toEqual(BRANCH_PR_FACT)
+  const repo = t.m.facts.read('session.repo')
+  t.m.facts.publish('session.repo', undefined) // the lookup of another repo has not ended: the PR belongs to no repo yet
+  await until(() => t.m.facts.read('github.branchPr') === undefined, 'the fact is withdrawn')
+  const queries = t.queries.length
+  t.m.facts.publish('session.repo', repo) // found: the list holds the PR, so the fact is there before any step of the lane
+  await until(() => t.m.facts.read('github.branchPr') !== undefined, 'the fact is back')
+  expect(t.m.facts.read('github.branchPr')).toEqual(BRANCH_PR_FACT)
+  expect(t.queries.length).toBe(queries)
+})
+
 test('lane: /track refresh with wait returns after the discovery', async () => {
   const t = shipped()
   t.nodes[`head:${BRANCH}`] = [prNode({ number: 7, headRefName: BRANCH, title: 'Opened here' })]

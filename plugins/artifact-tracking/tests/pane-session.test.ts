@@ -172,11 +172,12 @@ test('draw hands the body height to the help view: a short body draws it compact
   const t = setup(webs('a'), { path: '/p/config.json', version: '1.2.3' })
   t.w.state.set('help', true)
   const help = async (rows?: number) => (await t.draw(96, rows)) as unknown as { children: { children: unknown[] }[] }
-  // The full view is 2 titles, 13 keys (g, a, t and p are pane keys, issues #63 and #199; m is a row key, issue #138; v opens the preview,
-  // issue #57, L2), the config line and the version line. The compact view is 9 lines: three keys to a line, so the seven row keys
-  // take three lines. With the two rows of the help footer (issue #200) it fills 11 of the 11 rows of an inline pane at 100x40.
-  expect((await help(undefined)).children[0]?.children).toHaveLength(17)
-  expect((await help(28)).children[0]?.children).toHaveLength(17)
+  // The full view is 2 titles, 14 keys (g, a, t and p are pane keys, issues #63 and #199; m is a row key, issue #138; v opens the preview,
+  // issue #57, L2, and d is its diff mode, issue #254), the config line and the version line. The compact view is 9 lines: three keys
+  // to a line, so the eight row keys take three lines. With the two rows of the help footer (issue #200) it fills 11 of the 11 rows of
+  // an inline pane at 100x40.
+  expect((await help(undefined)).children[0]?.children).toHaveLength(18)
+  expect((await help(28)).children[0]?.children).toHaveLength(18)
   expect((await help(11)).children[0]?.children).toHaveLength(9)
 })
 

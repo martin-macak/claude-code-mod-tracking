@@ -12,6 +12,8 @@ export const FACT_BRANCHES = 'auto.branches'
 export const FACT_PRS = 'auto.prs'
 /** The branches that the session proved in other repos. */
 export const FACT_REPO_BRANCHES = 'repos.branches'
+/** The repo of the session, as this tracker finds it (`repo.ts`). The fact of the PR of the session branch follows it (issue #254). */
+export const FACT_SESSION_REPO = 'session.repo'
 
 const isStrings = (v: unknown): v is readonly string[] => Array.isArray(v) && v.every(x => typeof x === 'string')
 

@@ -2,7 +2,7 @@
 // handle of a row by its text and move the ring onto it. They read the plain-data tree `ui.drawn()` returns. The engine
 // leaves out an empty `props` and an empty `children`, so every read below defaults both.
 import type { Engine } from 'claude-code/testing'
-import { PANE } from './world'
+import { PANE, sleep } from './world'
 
 type Raw = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
 
@@ -143,3 +143,15 @@ export async function select($: Engine, ui: PaneUi, text: string): Promise<void>
   await focusOn($, await handleFor(ui, text))
   await ui.redraw()
 }
+
+/** Waits for a text on the screen. A hang guard of 20 s, as `until` has: the limit is no speed limit. */
+export async function seen(ui: PaneUi, text: string): Promise<void> {
+  for (let i = 0; i < 2000; i++) {
+    if ((await ui.find({ text })) !== undefined) return
+    await sleep(10)
+  }
+  throw new Error(`timed out waiting for ${text}`)
+}
+
+/** The keys of the Buttons on the screen, in the order they are drawn. */
+export const buttonKeys = async (ui: PaneUi) => (await ui.findAll({ type: 'Button' })).map(b => b.key)

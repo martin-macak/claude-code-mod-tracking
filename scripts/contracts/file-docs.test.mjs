@@ -12,7 +12,15 @@ import { fileURLToPath } from 'node:url'
 import { VIEW_IDS } from '../../plugins/artifact-tracking/core/lib/grouping.ts'
 import { readOnlyLine } from '../../plugins/artifact-tracking/trackers/file/activity.ts'
 import { FILE_DEFAULTS, HEAD_BYTES } from '../../plugins/artifact-tracking/trackers/file/config.ts'
+import { OFF_TTL_MS } from '../../plugins/artifact-tracking/trackers/file/diff-off.ts'
+import { FACT_BRANCH_PR, FACT_DIFF_OFF } from '../../plugins/artifact-tracking/trackers/file/facts.ts'
 import { FILE_TYPES, typeOfName } from '../../plugins/artifact-tracking/trackers/file/file-type.ts'
+import {
+  DIFF_FLAGS,
+  DIFF_MAX_BYTES,
+  DIFF_NOTICES,
+  GIT_PIN,
+} from '../../plugins/artifact-tracking/trackers/file/git-diff.ts'
 import { filePrompt } from '../../plugins/artifact-tracking/trackers/file/prompt.ts'
 import { isSecretPath } from '../../plugins/artifact-tracking/trackers/file/secret.ts'
 import { BUDGET } from '../../plugins/artifact-tracking/ux/tree-data-table/budget.ts'
@@ -22,6 +30,7 @@ const read = rel => readFileSync(path(rel), 'utf8')
 const README = read('../../plugins/artifact-tracking/README.md')
 const KB = '../../docs/knowledge-base/claude-code-mods/'
 const KB_README = read(`${KB}README.md`)
+const GIT_DIFF_SOURCE = read('../../plugins/artifact-tracking/trackers/file/git-diff.ts')
 const PAGE_PATH = `${KB}concepts/file-signals.md`
 
 /** The text from the line that starts with `from` up to the line that starts with `to`. */
@@ -258,4 +267,131 @@ test('the KB page grades the limit of 5 diffs as a primary source, and the line 
   const cited = read(`${KB}sources/${link[1]}`).split('\n')[Number(link[2]) - 1]
   assert.ok(cited.includes('up to 5 changed files'), `line ${link[2]} of ${link[1]} is: ${cited}`)
   assert.ok(bullet.includes('`[primary source]`'), 'the limit has the grade of the types and the docs')
+})
+
+// Issue #254, L3 of #57: the diff mode of the preview. The code is the source: `DIFF_NOTICES` (every notice of the mode), `GIT_PIN` and
+// `DIFF_FLAGS` (the git options), the byte limit, the two facts and the time that an answer holds. The README says them in its Diff
+// section, the KB in the tree-table page and the file-signals page, and a README Known limits bullet keeps its own line.
+const DIFF = between(README, '#### Diff of a file', '#### Types of files')
+const LIMITS = between(README, '## Known limits', '## Develop')
+const TREE_TABLE = read('../../docs/knowledge-base/claude-code-mod-architecture/tree-table.md')
+const DIFF_KB = between(TREE_TABLE, '#### The diff mode (issue #254)', '### 5.6')
+const SIGNALS_DIFF = between(read(PAGE_PATH), '## What the diff reads', '## Not tested')
+const SCENARIOS = read('../../e2e/features/pane.feature').split('\n')
+
+/** The fixed parts of a notice: a text, or a function of strings that gets a mark for each part that changes. A part of 12 characters or more counts. */
+const MARK = '\u0001'
+const fragmentsOf = text =>
+  text
+    .split(MARK)
+    .map(f => f.trim())
+    .filter(f => f.length >= 12)
+const NOTICES = Object.entries(DIFF_NOTICES).map(([name, v]) => [
+  name,
+  fragmentsOf(typeof v === 'string' ? v : v(...Array(v.length).fill(MARK))),
+])
+
+test('the Diff section names the pinned git options, the byte limit and the facts, as the code has them', () => {
+  for (const option of [...GIT_PIN, ...DIFF_FLAGS].filter(o => o !== '-c'))
+    assert.ok(DIFF.includes(option), `the Diff section names ${option}`)
+  assert.ok(DIFF.includes(DIFF_MAX_BYTES.toLocaleString('en-US')), 'the Diff section names the limit in bytes')
+  assert.ok(DIFF.includes(`\`${FACT_BRANCH_PR}\``), 'the Diff section names the fact of the PR')
+  assert.ok(DIFF.includes(`\`${FACT_DIFF_OFF}\``), 'the Diff section names the fact that turns the mode off')
+  assert.ok(
+    DIFF.includes(`${OFF_TTL_MS / 1000} s`),
+    `the Diff section says that an answer holds ${OFF_TTL_MS / 1000} s`,
+  )
+  for (const word of [
+    'origin/HEAD',
+    'merge-base',
+    '--no-index',
+    'ls-files',
+    'LC_ALL=C',
+    'no shell',
+    'git fetch',
+    'cat-file',
+  ])
+    assert.ok(DIFF.includes(word), `the Diff section names ${word}`)
+})
+
+test('the Diff section gives every notice of the code, built from DIFF_NOTICES: a new or a reworded notice fails until the README says it', () => {
+  assert.ok(NOTICES.length >= 20, 'the table has the notices of the mode')
+  for (const [name, fragments] of NOTICES) {
+    assert.ok(fragments.length > 0, `the notice ${name} has a fixed part of 12 characters or more to check`)
+    for (const fragment of fragments) assert.ok(DIFF.includes(fragment), `the Diff section says ${name}: ${fragment}`)
+  }
+  // No notice of git-diff.ts is written out of the table: one that is would have no check above.
+  assert.ok(!/\bnotice\(\s*['"`]/.test(GIT_DIFF_SOURCE), 'every notice of git-diff.ts comes from DIFF_NOTICES')
+  const preview = between(README, '#### Preview of a file', '#### Diff of a file')
+  assert.ok(preview.includes('Press d for the diff.'), 'the Preview section says the hint of a file that is gone')
+})
+
+test('the KB pages of the diff mode name what the code has, and link the README section', () => {
+  for (const word of [
+    'git-diff.ts',
+    'diff-base.ts',
+    'diff-text.ts',
+    'diff-off.ts',
+    'facts.ts',
+    'branch-pr.ts',
+    'isBranchPr',
+    FACT_BRANCH_PR,
+    FACT_DIFF_OFF,
+    DIFF_MAX_BYTES.toLocaleString('en-US'),
+    `${OFF_TTL_MS / 1000} s`,
+  ])
+    assert.ok(DIFF_KB.includes(word), `the tree-table page names ${word}`)
+  assert.ok(DIFF_KB.includes('README.md#diff-of-a-file'), 'the tree-table page links the README section')
+  for (const option of [...GIT_PIN, ...DIFF_FLAGS].filter(o => o !== '-c'))
+    assert.ok(SIGNALS_DIFF.includes(option), `the file-signals page names ${option}`)
+  for (const word of [
+    DIFF_MAX_BYTES.toLocaleString('en-US'),
+    FACT_BRANCH_PR,
+    FACT_DIFF_OFF,
+    'LC_ALL=C',
+    'README.md#diff-of-a-file',
+  ])
+    assert.ok(SIGNALS_DIFF.includes(word), `the file-signals page names ${word}`)
+  const row = lineOf(KB_README, '| | [file-signals]')
+  assert.ok(
+    row.includes('diff') && row.includes('#254'),
+    `the KB map row of file-signals names the diff and #254: ${row}`,
+  )
+})
+
+test('the e2e scenarios that the docs cite are the diff scenarios: a line that starts with `Scenario: d`', () => {
+  const docs = DIFF_KB + LIMITS
+  const cited = [...docs.matchAll(/pane\.feature:(\d+)/g)].map(m => Number(m[1]))
+  assert.ok(cited.length > 0, 'the docs cite the live scenarios')
+  for (const n of new Set(cited.filter(n => n !== 63))) {
+    assert.ok(
+      SCENARIOS[n - 1]?.trim().startsWith('Scenario: d'),
+      `pane.feature:${n} is a diff scenario: ${SCENARIOS[n - 1]}`,
+    )
+  }
+})
+
+test('Known limits has a bullet of its own for the diff mode, on its own line, with the caveats of the code', () => {
+  const bullet = lineOf(LIMITS, '- **Diff.**')
+  for (const word of ['git fetch', 'origin/HEAD', FACT_BRANCH_PR, FACT_DIFF_OFF])
+    assert.ok(bullet.includes(word), `the Diff bullet names ${word}`)
+  assert.ok(
+    !LIMITS.split('\n').some(l => /\S- \*\*/.test(l)),
+    'no Known limits line holds a second bullet glued to the first',
+  )
+})
+
+test('the Keys table row of d links the Diff section and the help view lists d, and the code map names the diff files and the facts', () => {
+  const key = README.split('\n').find(l => l.startsWith('| `v` |'))
+  assert.ok(key?.includes('#diff-of-a-file'), 'the Keys table row of v links the Diff section')
+  assert.ok(key?.includes('the help view lists'), 'the Keys table row says that the help view lists d')
+  assert.ok(!key?.includes('held for'), 'the row says no more that d is held for a later layer')
+  const preview = between(README, '#### Preview of a file', '#### Diff of a file')
+  assert.ok(preview.includes('`d: diff`'), 'the key line of the preview names d')
+  assert.ok(!preview.includes('There is no `d` yet'), 'the Preview section says no more that there is no d')
+  const files = lineOf(README, '| `trackers/file/` |')
+  for (const file of ['git-diff.ts', 'diff-base.ts', 'diff-text.ts', 'diff-off.ts', 'facts.ts', 'notice.ts'])
+    assert.ok(files.includes(file), `${file} is in: ${files}`)
+  const github = lineOf(README, '| `trackers/github/` |')
+  for (const word of ['branch-pr.ts', 'github.branchPr']) assert.ok(github.includes(word), `${word} is in: ${github}`)
 })
