@@ -69,6 +69,21 @@ Captured on 2026-10-21 from one throwaway probe mod of [issue #71](https://githu
 
 Absolute scratch paths are replaced with `<SPIKES>`. Do not edit it. To add more evidence, make a new dated folder.
 
+## `spikes-2026-10-26/`
+
+Captured on 2026-10-26 from the real artifact-tracking mod and one throwaway probe plugin, for the design study of [issue #219](https://github.com/martin-macak/claude-code-mod-tracking/issues/219). Claude Code 2.1.310 (macOS, a managed machine), against a fake Messages API, headless and in tmux. Not a primary source: it is the evidence behind the block "Cost of the config problem burst" in [limits-and-diagnostics](../reference/limits-and-diagnostics.md#cost-of-the-config-problem-burst-issue-219).
+
+| Content | Origin |
+| --- | --- |
+| `config-log-burst/run.sh`, `tui.sh`, `runlp.sh` | The launchers: a headless run of the mod, an interactive run in tmux, a run of the isolated probe plugin. |
+| `config-log-burst/fake-api.mjs`, `seq.json` | The fake Messages API (copied from `live-probe-2026-10-10`) and its one text turn. |
+| `config-log-burst/logprobe/` | The isolated plugin that sends N problem-like lines, B lines per `$.ui.log` call. |
+| `config-log-burst/extract.mjs` | The reader of the engine's `session.start settled in` line and of the problem lines. |
+| `config-log-burst/evidence.md`, `excerpts/` | The tables of the study and the debug entries of one call. The raw logs and request logs are not kept. |
+| `config-log-burst/README.md` | The question, the grade of each run type and how to redo a run. |
+
+Absolute scratch paths are replaced with `<SCRATCH>` and `<REPO>`. Do not edit it. To add more evidence, make a new dated folder.
+
 ## `code-claude-com-2026-10-09/`
 
 Raw Markdown of the public docs, fetched on 2026-10-09 from `https://code.claude.com/docs/en/<page>.md` (page list from `https://code.claude.com/docs/llms.txt`).

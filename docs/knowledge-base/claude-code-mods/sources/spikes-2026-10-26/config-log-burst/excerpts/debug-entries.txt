@@ -1,0 +1,11 @@
+The three debug entries of one $.ui.log call, and the engine's settle line of session.start (the smoke run of 5000 keys; a managed machine: the guard cc-plugin-sec-default is seated outermost). Each line below that starts with a timestamp is as the engine wrote it. This line, the blank lines and each [...] are ours.
+
+2026-10-26T13:15:29.091Z [DEBUG] hooks module cc-plugin-sec-default@builtin (native): ui.log nested in artifact-tracking#0
+2026-10-26T13:15:29.091Z [DEBUG] [artifact-tracking] $.ui.log (to debug): config: global.k0: unknown key. The mod keeps it and ignores it.
+2026-10-26T13:15:29.091Z [DEBUG] hooks module cc-plugin-sec-default@builtin ui.log settled in 0.1ms (native link, next() included)
+[...]
+2026-10-26T13:15:29.304Z [DEBUG] hooks module artifact-tracking@inline session.start settled in 233.4ms (worker hop, next() included)
+
+One batched call of 50 problems (isolated logprobe plugin, not the mod) is one entry with escaped newlines. The line is cut after 3 problems here ([...]):
+
+2026-10-26T13:29:34.636Z [DEBUG] "[logprobe] $.ui.log (to debug): probe: global.k0: unknown key. The mod keeps it and ignores it.\nprobe: global.k1: unknown key. The mod keeps it and ignores it.\nprobe: global.k2: unknown key. The mod keeps it and ignores it.\n[...]
