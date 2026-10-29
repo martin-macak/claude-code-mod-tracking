@@ -335,6 +335,29 @@ test('interactive: the open Button opens /track on the first entry of its own tu
   await line.unmount()
 })
 
+test('#232 interactive: the open Button marks the rows of its turn, and a second press on the same turn clears them', async ($, on) => {
+  engineLine(on)
+  const w = stripWorld(on, 'interactive', { isolateState: true })
+  await $.session.start(START)
+  await turn($, 1, [C])
+  await turn($, 2, [A, B])
+  await quiet(w.calls)
+  const line = await mountDuration($, 'row-2')
+  const pane = await mountPane($)
+  expect(await pane.find({ text: 'View: list · 2 marked' })).toBeUndefined()
+  await line.press({ key: 'turn-strip-open' })
+  await quiet(w.calls)
+  await pane.redraw()
+  expect(await pane.find({ text: 'View: list · 2 marked' })).toBeDefined()
+  await line.press({ key: 'turn-strip-open' }) // the pane is open and the strip stays: the same turn again
+  await quiet(w.calls)
+  await pane.redraw()
+  expect(await pane.find({ text: 'View: list · 2 marked' })).toBeUndefined()
+  expect(await pane.find({ text: 'View: list' })).toBeDefined()
+  await pane.unmount()
+  await line.unmount()
+})
+
 test('a bad ui.turnStrip reads as off: no line, no strip', async ($, on) => {
   engineLine(on)
   stripWorld(on, 'loud')

@@ -13,7 +13,8 @@ export const STRIP_KEY = 'turn-strip-open'
 
 /**
  * The engine's line, then the strip in one column. `press` is the open Button's work: it opens `/track` on the first entry
- * of the turn. Absent: the counts show and no Button is drawn (the main screen, where a click on it is not delivered).
+ * of the turn and marks every listed entry of the turn that `m` can mark (issue #232; a second press on the same turn clears
+ * the marks). Absent: the counts show and no Button is drawn (the main screen, where a click on it is not delivered).
  */
 export function renderStrip(
   el: Pick<TableElements, 'Box' | 'Text' | 'Button'>,

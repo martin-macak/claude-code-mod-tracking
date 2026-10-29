@@ -33,6 +33,26 @@ export const sameIds = (a: readonly string[], b: readonly string[]): boolean => 
   return left.size === right.size && [...left].every(id => right.has(id))
 }
 
+/**
+ * The marks after the press of a turn (issue #232), as the `change` of `writeMarks`: the rows of the turn, or none when this is a
+ * second press on the same turn and the marks that the pane counts are those rows already. `ids` are the rows of the turn in its
+ * order; each is marked once. A turn with no row to mark gives no marks, so the older marks go as they do for any other turn.
+ *
+ * `sameTurn`: the last press named this turn. Rows alone cannot say it: a turn that only saw again what another turn added has the
+ * same rows, and the first press on it must set them. `laid`: the rows that the pane counts (`laidRefs`). A mark of a row that the
+ * pane leaves out (a cap, a filter, a dismissed row, a closed parent) is counted nowhere, so it cannot make the second press set.
+ * The clear empties the whole atom, so such a mark goes too, as it does with the set.
+ */
+export const turnMarked = (
+  cur: readonly string[],
+  ids: readonly string[],
+  { laid, sameTurn }: { readonly laid: ReadonlySet<string>; readonly sameTurn: boolean },
+): string[] => {
+  const rows = [...new Set(ids)]
+  const counted = cur.filter(id => laid.has(id))
+  return sameTurn && sameIds(counted, rows) ? [] : rows
+}
+
 /** The words of the view line with the count of the marked rows. The `/track` text never calls it: marks are pane state. */
 export const markedSummary = (summary: string, marked: number): string =>
   marked === 0 ? summary : `${summary} · ${marked} marked`

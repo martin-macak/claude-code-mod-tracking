@@ -218,11 +218,15 @@ export function route(
   if (k.mode !== undefined && k.bar === undefined)
     return { to: 'preview', rowId: row.id, owner: row.owner, mode: k.mode }
   if (k.id === 'mark') {
-    return isMarked || allowsDismiss(row) || allowsPriority(row, isItemOwner) ? { to: 'mark', rowId: row.id } : NONE
+    return isMarked || takesMark(row, isItemOwner) ? { to: 'mark', rowId: row.id } : NONE
   }
   const rowKey = rowKeyOf(k.id)
   return rowKey?.allows(row, isItemOwner) ? rowKey.one(row.id) : NONE
 }
+
+/** Whether `m` can mark the row: it takes `x` or a digit. The press of a turn marks the rows that pass this, as `route` does for `m` (issue #232). */
+export const takesMark = (row: RowRef, isItemOwner: (owner: string) => boolean): boolean =>
+  allowsDismiss(row) || allowsPriority(row, isItemOwner)
 
 /** The ids of the rows that `allows`, once each, in the order given. */
 const idsOf = (rows: readonly RowRef[], allows: (row: RowRef) => boolean): readonly string[] => [
