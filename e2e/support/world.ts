@@ -12,7 +12,7 @@ import {
   setWorldConstructor,
   World,
 } from '@cucumber/cucumber'
-import { CLONE_NAME, type Config, LOCK_DIR, loadConfig, OUT_DIR, PLUGIN_DIR, REPO_ROOT } from './config.ts'
+import { CLONE_NAME, type Config, loadConfig, lockDirOf, outDirOf, PLUGIN_DIR, REPO_ROOT } from './config.ts'
 import { CONFIG_FILE, makeConfigDir, pathWidthRefusal } from './config-dir.ts'
 import { type CopyProbe, writeCopyProbe } from './copy-probe.ts'
 import { FakeApi, type FakeTurn } from './fake-api.ts'
@@ -36,7 +36,8 @@ setDefaultTimeout(STEP_TIMEOUT_MS)
 
 // Every scenario takes the lock of the machine in its Before hook, and waits for it while another run holds it
 // (support/lock.ts). After the first timeout the later scenarios do not wait again. The runs get the lock in the order they
-// came: this run joins the queue of runs at its first claim and leaves it in the AfterAll hook below.
+// came: this run joins the queue of runs at its first claim and leaves it in the AfterAll hook below. A run with its own
+// tmux socket and folder (DEMO_SOCKET and DEMO_DIR, issue #185) takes a lock of its own socket instead: `lockDirOf`.
 const { lockWaitMs } = loadConfig()
 const claimRun = makeClaimer({ waitMs: lockWaitMs })
 
@@ -44,8 +45,8 @@ let recordedScenarios = 0
 
 export class DemoWorld extends World {
   config: Config = loadConfig()
-  // Fixed name: the lock in LOCK_DIR allows one run at a time, and setUp kills a server left by a crashed run.
-  tmux = new Tmux('cc-demo')
+  // One run at a time uses a socket (the lock of `lockDirOf`), and setUp kills a server left by a crashed run.
+  tmux = new Tmux(this.config.socket)
   recorder = new Recorder()
   timeline: Timeline | undefined
   outDir = ''
@@ -185,8 +186,8 @@ export class DemoWorld extends World {
   async setUp(name: string): Promise<void> {
     const { record, cols, rows, dir } = this.config
     if (record && ++recordedScenarios > 1) throw new Error('demo: only one @demo scenario can be recorded per run')
-    this.outDir = join(OUT_DIR, record ? 'demo' : slug(name))
-    this.release = await claimRun(LOCK_DIR, this.outDir)
+    this.outDir = outDirOf(this.config, record ? 'demo' : slug(name))
+    this.release = await claimRun(lockDirOf(this.config), this.outDir)
     this.configDir = makeConfigDir(tmpdir())
     this.signalFile = join(this.outDir, 'signal')
     this.timeline = new Timeline(join(this.outDir, 'timeline.ndjson'))

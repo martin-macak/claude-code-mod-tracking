@@ -37,7 +37,7 @@ A scenario that needs tools says so in its session step: `a Claude Code session 
 
 ## The lock
 
-One run at a time can use the machine: the tmux socket `cc-demo`, the folder `$DEMO_DIR` and the Claude session are shared. Each scenario takes the lock `$TMPDIR/cc-demo-lock/.lock` in its `Before` hook and lets it go in its `After` hook. The file holds the pid of the run.
+One run at a time can use the machine: the tmux socket `cc-demo`, the folder `$DEMO_DIR` and the Claude session are shared. Each scenario takes the lock `$TMPDIR/cc-demo-lock/.lock` in its `Before` hook and lets it go in its `After` hook. The file holds the pid of the run. A run with a socket and a folder of its own does not take this lock: see [A private socket](#a-private-socket).
 
 A scenario that finds a live run on the lock waits for it:
 
@@ -55,6 +55,31 @@ A run that ends by Ctrl+C, `SIGTERM` or `SIGKILL` runs no exit hook. Its ticket 
 A checkout from before the queue has no ticket. It can still take the lock in the moment between two scenarios of a run, and a run that waits for it waits for its process, as it did before the queue. A run with a ticket is not waited for by its process, also when it leaves the queue and its process lives on: the queue orders it. A checkout from before the wait fails at once while another run holds the lock, also in that moment. Rebase it onto `main` to get the queue and the wait. The lock file format did not change, so old and new runs see each other.
 
 Do not remove the lock by hand and do not kill a process you did not start. To see who holds it: `ps -p "$(cat "$TMPDIR/cc-demo-lock/.lock")" -o pid,etime,command`. The queue is the file names in `$TMPDIR/cc-demo-lock/.lock.queue/`: the number first, then the pid.
+
+## A private socket
+
+A run that has its own tmux socket and its own folder does not wait for the shared lock (issue [#185](https://github.com/martin-macak/claude-code-mod-tracking/issues/185)). It runs while other runs hold the lock, and two such runs go at the same time. Use it for a live check of one scenario when other lanes keep the lock, and for sweeps of many short runs.
+
+```sh
+cd e2e
+DEMO_SOCKET=lane-a DEMO_DIR=/tmp/cc-demo-lane-a npx cucumber-js -p one features/config.feature:4
+```
+
+- `DEMO_SOCKET` is the name of the tmux socket (`tmux -L`). It is one plain name: letters, digits, `.`, `_` and `-`, and it starts with a letter or a digit. The default is `cc-demo`.
+- `DEMO_DIR` is the folder of the clone. The default is `/tmp/cc-demo`. The harness resolves the path first, so `/tmp/cc-demo/` is the default too. A symlink to the default folder (`/private/tmp/cc-demo` on a Mac) is not seen: do not use one.
+- A run is private only when both differ from their defaults. With one of them alone the run takes the shared lock as before, because the other one is still shared with every run that has the default.
+- A private run takes a lock of its own socket, `$TMPDIR/cc-demo-lock-<socket>/`, with the same wait and queue as the shared lock. Two runs on the same private socket wait for each other. Runs on other sockets do not, and neither does a run of the shared lock: it never sees the lock of a private run.
+- The output of a private run goes to `e2e/out/<socket>/<scenario>/`, so the same scenario on two sockets does not wipe the folder of the other.
+- A recording (`DEMO_RECORD=1`, `make demo`) is never private. It takes the shared lock and writes `e2e/out/demo/`.
+
+Limits:
+
+- Give each run its own socket and its own `DEMO_DIR`. The lock keys on the socket alone. Two runs with different sockets and the same `DEMO_DIR` wipe the clone of each other, and nothing stops them.
+- The Claude login and `~/.claude`, the model and the CPU of the machine stay shared. The lock no longer keeps the runs apart, so they add load to each other and to every other job on the machine, and a tight wait can fail. On 2026-10-29, on a Mac with other lanes at work (load average 12, 16 and 27 over 1, 5 and 15 minutes at one reading; Claude Code 2.1.312), 10 of 28 sessions of two concurrent runs of one model-turn scenario failed: the prompt stayed unsent in the box (a key press did not send it either) until the turn timeout, and both runs of a pair failed together in 4 of 14 pairs. One run at a time failed 1 of 8 times on a private socket and 0 of 6 times on the default one. This is the signature of [#269](https://github.com/martin-macak/claude-code-mod-tracking/issues/269). The cause is not known. Raise `DEMO_SCREEN_TIMEOUT_S` and `DEMO_TURN_TIMEOUT_S` for a large sweep, run one scenario in each process (`-p one` with one position), and expect to rerun a turn that stalled.
+- Watch a run with files and `ps`. `pgrep -f 'e2e/out/<socket>/'` finds the `claude` process of a run: its command line holds the signal file. The lock files show who holds each lock.
+- `@artifacts` still publishes a private page to claude.ai with your login and deletes it, on a private socket as on the default one. Two such runs publish two pages. The default profile and the profiles `one` and `demo` skip it: do not pick `-p artifacts` or `-p all` for a private run unless you mean it.
+- A private run removes its clone at the end. The folder `$DEMO_DIR`, `e2e/out/<socket>/` and `$TMPDIR/cc-demo-lock-<socket>/` stay. They are small. Remove them when you no longer use the socket name.
+- A run that crashed leaves its tmux server on its socket. The next run on that socket kills it, as on the default socket.
 
 ## A fake model
 
@@ -119,6 +144,7 @@ Tags in use: `@demo` marks the scenario that `make demo` records. `@artifacts` p
 | `DEMO_TURN_TIMEOUT_S` | `120` | The bound of one model turn. |
 | `DEMO_TYPE_DELAY_MS` | `35` | The pause between two typed characters. |
 | `DEMO_MODEL` | `haiku` | The model of the session. |
-| `DEMO_DIR` | `/tmp/cc-demo` | The folder of the clone of the repo. |
+| `DEMO_DIR` | `/tmp/cc-demo` | The folder of the clone of the repo. A private run needs one of its own. |
+| `DEMO_SOCKET` | `cc-demo` | The tmux socket of the run. With a folder of its own too, the run skips the shared lock: [A private socket](#a-private-socket). |
 | `DEMO_KEEP` | unset | `1` keeps the tmux session and the clone after the scenario. |
 | `DEMO_RECORD` | unset | `1` records the `@demo` scenario. `make demo` sets it. |
