@@ -2,10 +2,11 @@
 // and, after `--yes tasks`, stops it through the narrow `tasks.stop` port, marks the row `killed` and leaves one log entry.
 // The world is the pane world: the real trackers over fake ports, where `stop` answers like the engine's TaskStop.
 import { expect, test } from 'claude-code/testing'
-import type { CleanStep, LogEntry } from '../core/interfaces/clean'
+import type { CleanStep } from '../core/interfaces/clean'
 import { processesCleanup } from '../trackers/processes/clean'
 import type { ProcessRecord } from '../trackers/processes/types'
 import { noDockerIssue, proc, setProcesses } from './fixtures/hide-world'
+import { logKeys, storedLog } from './fixtures/log'
 import { NOW, paneWorld } from './fixtures/pane-world'
 
 const sleeper = (id: string, f: Partial<ProcessRecord> = {}): ProcessRecord =>
@@ -17,7 +18,7 @@ async function taskWorld(rows: ProcessRecord[]) {
   setProcesses(t, rows)
   const run = (args: string) => t.m.track(t.w.ports, args)
   const row = (id: string) => (t.w.state.get('processes') as unknown as ProcessRecord[]).find(r => r.id === id)
-  const log = () => (t.w.store.get('v2:log') ?? []) as unknown as LogEntry[]
+  const log = () => storedLog(t.w.store)
   return { ...t, run, row, log }
 }
 
@@ -119,7 +120,7 @@ test('the apply judges the rows of now: a task that ended since the last plan is
   setProcesses(t, [sleeper('t1', { state: 'completed', endedAt: NOW })])
   await t.run('clean --yes tasks')
   expect(t.w.stops).toEqual([])
-  expect(t.w.store.has('v2:log')).toBe(false)
+  expect(logKeys(t.w.store)).toEqual([])
 })
 
 test('a clean that stops a task leaves the other kinds alone, and a dry run runs no process', async () => {

@@ -1,5 +1,6 @@
-// Persistence: the only writer of the plugin store. Keys: `v2:s:<id>`, `v2:index`, `v2:run` and `v2:log` (spec 5.13).
+// Persistence: the only writer of the plugin store. Keys: `v2:s:<id>`, `v2:index`, `v2:run` and `v2:log:<run>` (spec 5.13).
 // It writes through with a debounce, bounds the total size, and writes the leaving session at `session.end`.
+// The audit log of `/track clean` keeps one key for each run, so two sessions that append at once lose nothing (issue #213).
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, sections 5.6 and 5.13. Plan decisions D1 to D3.
 
 import type { LogEntry } from '../interfaces/clean'
@@ -12,9 +13,34 @@ export const KEYS = {
   session: (id: string) => `v2:s:${id}`,
   index: 'v2:index',
   run: 'v2:run',
-  /** The audit log of `/track clean` (issue #122): not per session, so `/clear` and the session copies leave it alone. */
+  /**
+   * The audit log of `/track clean` (issue #122), not per session: `/clear` and the session copies leave it alone. Before
+   * issue #213 this one key held every run. This build still reads it, never writes it, and prunes it when it is old. It is
+   * also the prefix of the run keys.
+   */
   log: 'v2:log',
+  /**
+   * One run of `/track clean --yes` (issue #213): the time of the run, the JSON size of its entries and a tag (8 characters of
+   * the session id, `-`, and a counter of the load). A run key is written once: no append reads another run's key, so no append
+   * replaces the key of another session. One edge stays, on purpose: a new load of the same session restarts the counter, so
+   * two runs of it with the same newest time (to the millisecond) and the same size would share a key.
+   */
+  logRun: (at: number, chars: number, tag: string) => `v2:log:${String(at).padStart(13, '0')}:${chars}:${tag}`,
 } as const
+
+/** A run key: the time, the size and, when the tag ends in `-<counter>`, the counter. */
+const LOG_RUN = /^v2:log:(\d{13}):(\d+):.+?(?:-(\d+))?$/
+/**
+ * The parts of a run key (the read side of `KEYS.logRun`), or `undefined` for a key that is no run key: the old `v2:log`, or a
+ * name made by hand under `v2:log:`. `seq` is the counter of the tag, or 0 when the tag has none.
+ */
+export const parseLogRun = (key: string): { at: number; chars: number; seq: number } | undefined => {
+  const m = LOG_RUN.exec(key)
+  return m ? { at: Number(m[1]), chars: Number(m[2]), seq: Number(m[3] ?? 0) } : undefined
+}
+/** The latest time a run key names: 13 digits. */
+const MAX_RUN_TIME = 9_999_999_999_999
+const isLogKey = (k: string): boolean => k === KEYS.log || k.startsWith(`${KEYS.log}:`)
 
 /** How many entries of the audit log the store keeps: the newest. */
 export const LOG_KEEP = 200
@@ -47,6 +73,25 @@ const isEntry = (e: unknown): e is LogEntry =>
   Number.isFinite(new Date(e.at).getTime()) &&
   ['by', 'kind', 'id', 'action', 'outcome'].every(k => typeof e[k] === 'string')
 const reason = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+/** The time of the newest entry, or `undefined` when there is none. */
+const newestAt = (entries: readonly LogEntry[]): number | undefined =>
+  entries.length === 0 ? undefined : entries.reduce((t, e) => Math.max(t, e.at), Number.NEGATIVE_INFINITY)
+
+/** A log key with its rank: `at` is the time in a run key's name, or the newest entry of any other key. */
+type RankedKey = { key: string; at: number; seq: number; chars: number; entries?: LogEntry[] }
+/** What a walk does with a log key it cannot read: it tells the caller, who logs it or throws. */
+type OnReadError = (key: string, e: unknown) => void
+/** What a walk of the log keys saw. */
+type Walk = {
+  /** The newest `LOG_KEEP` entries, newest first. */
+  entries: LogEntry[]
+  /** The keys it read, newest first, with their sizes and the time of their newest entry (`undefined`: none prints). */
+  read: { key: string; chars: number; newestAt: number | undefined }[]
+  /** The keys it did not read. None of them can hold one of `entries`. */
+  unread: string[]
+  /** The time of the oldest of `entries` once the log is full, else minus infinity. */
+  floor: number
+}
 
 /** The persisted slots as a stored copy, and whether any of them holds something worth a write. */
 function copyOf(entries: readonly (readonly [DataSlot, Json | undefined])[]): { copy: SessionCopy; hasData: boolean } {
@@ -69,8 +114,10 @@ export class Persistence {
   /** The size of each stored copy. Learned from the store once per load, then kept. */
   private readonly sizes = new Map<string, number>()
   private runSize: number | undefined
-  /** The size of `v2:log`. Learned from the store once per load, then kept. */
-  private logSize: number | undefined
+  /** The size of each log key whose name holds none (the old `v2:log`). Learned from the store once per load, then kept. */
+  private readonly logSizes = new Map<string, number>()
+  /** Makes the tag of a run key unique in this load. */
+  private logSeq = 0
 
   constructor(private readonly d: PersistenceDeps) {}
 
@@ -228,44 +275,157 @@ export class Persistence {
   }
 
   /**
-   * The audit log of `/track clean`: the newest entries first, at most `LOG_KEEP`. A failed read is logged and counts as an
-   * empty log.
+   * The audit log of `/track clean`: the entries of every run key and of the old `v2:log`, newest first by their time, at
+   * most `LOG_KEEP`. It writes nothing. A key that cannot be read is logged and left out; a store that cannot list its keys
+   * is logged and gives an empty log.
    */
   async readLog(): Promise<readonly LogEntry[]> {
-    return (await this.loadLog())?.log ?? []
-  }
-
-  /**
-   * Adds entries to the audit log, in the order given (oldest first): the newest end up first, and the log keeps the newest
-   * `LOG_KEEP`. It writes at once and never rejects. A log that cannot be read is left as it is, and so is a failed write:
-   * the faults are logged, and the next append tries again.
-   */
-  async appendLog(entries: readonly LogEntry[]): Promise<void> {
-    if (entries.length === 0) return
-    const cur = await this.loadLog()
-    if (cur === undefined) return // never replace a log that cannot be read
-    const next = [...[...entries].reverse(), ...cur.log].slice(0, LOG_KEEP)
-    // The log never takes more than half of the bound, so the copies of the sessions keep the other half. The oldest go first,
-    // and the newest try stays even when it alone is over. The sessions make room for the log at their next write (`write`).
-    const { maxBytes } = this.d.limits()
-    while (next.length > 1 && size(next as unknown as Json) > maxBytes / 2) next.pop()
     try {
-      await this.d.store.set(KEYS.log, next as unknown as Json)
-      this.logSize = size(next as unknown as Json)
+      return (await this.walkLog((key, e) => this.d.log(`store: read of ${key} failed: ${reason(e)}`))).entries
     } catch (e) {
-      this.logSize = undefined // the stored size is not the new one: learn it again
-      this.d.log(`store: write of ${KEYS.log} failed: ${reason(e)}`)
+      this.d.log(`store: read of ${KEYS.log} failed: ${reason(e)}`)
+      return []
     }
   }
 
-  /** The stored log and its size. `undefined` when the read fails; the fault is logged. An absent key is an empty log. */
-  private async loadLog(): Promise<{ log: LogEntry[] } | undefined> {
+  /**
+   * Adds the entries of one run, given oldest first, under a key of their own. It lists the key names before it writes and
+   * reads no value, so a run that another session adds meanwhile is never replaced. The run keeps the newest `LOG_KEEP`
+   * entries and at most half of `maxBytes` (the oldest go first, and the newest stays even when it alone is over). Then it
+   * prunes the old runs (`pruneLog`), only from the keys it listed. It writes at once and never rejects: a failed write or
+   * prune is logged, and the next append tries again.
+   */
+  async appendLog(entries: readonly LogEntry[]): Promise<void> {
+    if (entries.length === 0) return
+    const { maxBytes } = this.d.limits()
+    const run = [...entries].reverse().slice(0, LOG_KEEP)
+    // The log never takes more than half of the bound, so the copies of the sessions keep the other half. The sessions make
+    // room for the log at their next write (`write`).
+    while (run.length > 1 && size(run as unknown as Json) > maxBytes / 2) run.pop()
+    const runAt = Math.min(Math.max(Math.floor(Math.max(...run.map(e => e.at))) || 0, 0), MAX_RUN_TIME)
+    const key = KEYS.logRun(runAt, size(run as unknown as Json), `${await this.sessionTag()}-${++this.logSeq}`)
+    const listed = await this.listLogKeys() // before the write: the prune below deletes only from this list
     try {
-      const raw = (await this.d.store.get(KEYS.log)) as LogEntry[] | undefined
-      this.logSize = size(raw as unknown as Json | undefined)
-      return { log: Array.isArray(raw) ? raw.filter(isEntry) : [] }
+      await this.d.store.set(key, run as unknown as Json)
     } catch (e) {
-      this.d.log(`store: read of ${KEYS.log} failed: ${reason(e)}`)
+      this.d.log(`store: write of ${key} failed: ${reason(e)}`)
+      return
+    }
+    await this.pruneLog(key, maxBytes, listed)
+  }
+
+  /** The log keys in the store, or the fault when it cannot list: the prune logs it after the write, as it logs any fault. */
+  private async listLogKeys(): Promise<string[] | Error> {
+    try {
+      return (await this.d.store.keys()).filter(isLogKey)
+    } catch (e) {
+      return new Error(reason(e))
+    }
+  }
+
+  /** The first 8 characters of the session id, for the tag of a run key. An id that cannot be read gives `nosess`: the run is still written. */
+  private async sessionTag(): Promise<string> {
+    try {
+      return (await this.d.sessionId()).slice(0, 8)
+    } catch (e) {
+      this.d.log(`store: read of the session id for the log key failed: ${reason(e)}`)
+      return 'nosess'
+    }
+  }
+
+  /**
+   * After an append: deletes the keys that hold none of the newest `LOG_KEEP` entries, then the oldest keys past half of
+   * `maxBytes`. The key of this run (`own`) stays and is counted first, so the other keys, newest first, keep what is left of
+   * the half (the log passes it only when this run alone does). `listed` is the list of keys that the run took before it
+   * wrote, and the prune sees and deletes only those keys, so it never touches a run that another session wrote after that.
+   * Two prunes then never delete each other's run: A deletes B only if B was written before A listed, B deletes A only if A
+   * was written before B listed, and both cannot hold. Runs that write at the same moment can leave the log over half of
+   * `maxBytes` until the next prune. A read that fails stops the prune before any delete. Never rejects.
+   */
+  private async pruneLog(own: string, maxBytes: number, listed: readonly string[] | Error): Promise<void> {
+    try {
+      if (listed instanceof Error) throw listed
+      const { read, unread, floor } = await this.walkLog(
+        (key, e) => {
+          throw new Error(`read of ${key} failed: ${reason(e)}`) // a prune must not act on a partial view
+        },
+        new Set([...listed, own]),
+      )
+      const drop = new Set(unread.filter(key => key !== own))
+      for (const k of read) if (k.key !== own && (k.newestAt === undefined || k.newestAt < floor)) drop.add(k.key)
+      let chars = parseLogRun(own)?.chars ?? 0
+      for (const k of read) {
+        if (k.key === own || drop.has(k.key)) continue
+        chars += k.chars
+        if (chars > maxBytes / 2) drop.add(k.key)
+      }
+      for (const key of drop) {
+        await this.d.store.delete(key)
+        this.logSizes.delete(key)
+      }
+    } catch (e) {
+      this.d.log(`store: prune of ${KEYS.log} failed: ${reason(e)}`)
+    }
+  }
+
+  /**
+   * Walks the log keys newest first and stops when no key left can hold one of the newest `LOG_KEEP` entries. A run key
+   * ranks by the time in its name, so it is read only when it is needed. The old `v2:log` ranks by its newest entry, so it
+   * is read first. A key that cannot be read goes to `onReadError`, and when that returns, the key counts as empty. It walks
+   * the log keys that the store lists now, or only `keys` when the caller gives them (a prune).
+   */
+  private async walkLog(onReadError: OnReadError, keys?: Iterable<string>): Promise<Walk> {
+    const ranked = await this.rankLogKeys(onReadError, keys)
+    const merged: LogEntry[] = []
+    const read: Walk['read'] = []
+    for (let i = 0; i < ranked.length; i++) {
+      const k = ranked[i] as RankedKey
+      const entries = k.entries ?? (await this.readLogKey(k.key, onReadError))?.entries ?? []
+      merged.push(...entries)
+      merged.sort((a, b) => b.at - a.at) // stable: a tie in time keeps the order of the keys
+      read.push({ key: k.key, chars: k.chars, newestAt: newestAt(entries) })
+      const after = ranked[i + 1]
+      if (after !== undefined && merged.length >= LOG_KEEP && (merged[LOG_KEEP - 1] as LogEntry).at >= after.at) break
+    }
+    const entries = merged.slice(0, LOG_KEEP)
+    const floor = entries.length >= LOG_KEEP ? (entries[LOG_KEEP - 1] as LogEntry).at : Number.NEGATIVE_INFINITY
+    return { entries, read, unread: ranked.slice(read.length).map(k => k.key), floor }
+  }
+
+  /**
+   * Every log key, newest first. A run key ranks by the time in its name, and a tie by its counter, then by its name. The old
+   * key (or a key under `v2:log:` with a name that is no run key) is read to rank it by its newest entry.
+   */
+  private async rankLogKeys(onReadError: OnReadError, keys?: Iterable<string>): Promise<RankedKey[]> {
+    const ranked: RankedKey[] = []
+    for (const key of keys ?? (await this.d.store.keys())) {
+      if (!isLogKey(key)) continue
+      const run = parseLogRun(key)
+      if (run) {
+        ranked.push({ key, ...run })
+        continue
+      }
+      const got = await this.readLogKey(key, onReadError)
+      if (got) this.logSizes.set(key, got.chars) // a key with no size in its name: learned here, kept for the flushes
+      const entries = got?.entries ?? []
+      ranked.push({ key, at: newestAt(entries) ?? Number.NEGATIVE_INFINITY, seq: 0, chars: got?.chars ?? 0, entries })
+    }
+    return ranked.sort((a, b) => b.at - a.at || b.seq - a.seq || (a.key < b.key ? 1 : -1))
+  }
+
+  /**
+   * The printable entries of one log key and its stored size, or `undefined` when the read failed (`onReadError` was told
+   * first). A key that holds no array has no entries.
+   */
+  private async readLogKey(
+    key: string,
+    onReadError: OnReadError,
+  ): Promise<{ entries: LogEntry[]; chars: number } | undefined> {
+    try {
+      const raw = await this.d.store.get(key)
+      return { entries: Array.isArray(raw) ? raw.filter(isEntry) : [], chars: size(raw) }
+    } catch (e) {
+      onReadError(key, e)
       return undefined
     }
   }
@@ -305,10 +465,38 @@ export class Persistence {
     return this.runSize
   }
 
-  /** The size of `v2:log`, read once per load. A read that fails counts as 0 and is tried again at the next write. */
+  /**
+   * The size of the audit log: a run key holds its size in its name, so one `keys()` call counts them with no read. A key
+   * with no size in its name (the old `v2:log`) is read once per load. A failure is logged and counts as 0, and the sizes
+   * already summed stay. A key that failed is tried again at the next write.
+   */
   private async logBytes(): Promise<number> {
-    if (this.logSize === undefined) await this.loadLog()
-    return this.logSize ?? 0
+    let keys: string[]
+    try {
+      keys = await this.d.store.keys()
+    } catch (e) {
+      this.d.log(`store: list of ${KEYS.log} keys failed: ${reason(e)}`)
+      return 0
+    }
+    let n = 0
+    for (const k of keys) {
+      if (!isLogKey(k)) continue
+      const run = parseLogRun(k)
+      if (run) {
+        n += run.chars
+        continue
+      }
+      if (!this.logSizes.has(k)) {
+        try {
+          this.logSizes.set(k, size(await this.d.store.get(k)))
+        } catch (e) {
+          this.d.log(`store: read of ${k} failed: ${reason(e)}`)
+          continue
+        }
+      }
+      n += this.logSizes.get(k) ?? 0
+    }
+    return n
   }
 
   private async setRun(run: RunCopy): Promise<void> {

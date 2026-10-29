@@ -1,11 +1,13 @@
 // Kit test of `/track clean --yes tasks` through the real hooks (issue #122): the engine's TaskStop is raised from the
 // `command.run` hook with the task id of the row, the answers of the engine (a record, `Error: ...` with `isError`, `{ deny }`,
-// a throw) become `done` or `skipped: <text>`, the row reads `killed` only after a real stop, and the audit log `v2:log`
-// holds one entry for each try. The rules of the plan and of the log run in tests/clean.test.ts over fake ports.
+// a throw) become `done` or `skipped: <text>`, the row reads `killed` only after a real stop, and the audit log (issue #213:
+// one `v2:log:<run>` key for each `--yes`) holds one entry for each try. The rules of the plan and of the log run in
+// tests/clean.test.ts over fake ports.
 
 import type { On } from 'claude-code'
 import { type Engine, expect, mock } from 'claude-code/testing'
 import { test } from './fixtures/kit'
+import { logKeys, storedLog } from './fixtures/log'
 import { taskStopped } from './fixtures/notices'
 import { quiet, START, track, world } from './fixtures/world'
 
@@ -26,7 +28,7 @@ test('a dry run raises no TaskStop and writes no log; --yes tasks raises one wit
   const plan = (await track($, 'clean')).text ?? ''
   expect(plan).toContain('sleep 300 --token=abc: stop')
   expect(w.fake.toolRuns.TaskStop).toBeUndefined()
-  expect(w.store.has('v2:log')).toBe(false)
+  expect(logKeys(w.store)).toEqual([])
 
   const out = (await track($, 'clean --yes tasks')).text ?? ''
   expect(w.fake.toolRuns.TaskStop).toBe(1)
@@ -35,7 +37,9 @@ test('a dry run raises no TaskStop and writes no log; --yes tasks raises one wit
   expect(out).toContain('sleep 300 --token=abc: done')
   expect(out).toMatch(/Processes\s+1 tracked/)
   expect(out).toContain('killed') // the list that follows draws the row as killed
-  const log = w.store.get('v2:log') as { kind: string; id: string; action: string; outcome: string; by: string }[]
+  const log = storedLog(w.store)
+  expect(logKeys(w.store)).toHaveLength(1) // one --yes is one run key: the key a session writes is its own
+  expect(logKeys(w.store)[0]).toMatch(/^v2:log:\d{13}:\d+:\S+-1$/)
   expect(log).toHaveLength(1)
   expect(log[0]).toMatchObject({ by: 'manual', kind: 'tasks', id: 'task:task-bg-1', action: 'stop', outcome: 'done' })
   expect(JSON.stringify(log)).not.toContain('--token') // no command line in the log
@@ -53,7 +57,7 @@ test('a TaskStop answer Error: ... with isError is skipped: <text>, the row keep
   expect(out).toContain('sleep 300 --token=abc: skipped: No task found with ID: task-bg-1')
   expect(out).toContain('running')
   expect(out).not.toContain('killed')
-  const log = w.store.get('v2:log') as { outcome: string }[]
+  const log = storedLog(w.store)
   expect(log.map(e => e.outcome)).toEqual(['skipped: No task found with ID: task-bg-1'])
 })
 
@@ -64,7 +68,7 @@ test('a TaskStop answer that names another task is skipped, and the row of the r
   expect(w.fake.toolRuns.TaskStop).toBe(1)
   expect(out).toContain('sleep 300 --token=abc: skipped: TaskStop named another task')
   expect(out).not.toContain('killed')
-  const log = w.store.get('v2:log') as { outcome: string }[]
+  const log = storedLog(w.store)
   expect(log.map(e => e.outcome)).toEqual(['skipped: TaskStop named another task'])
 })
 
