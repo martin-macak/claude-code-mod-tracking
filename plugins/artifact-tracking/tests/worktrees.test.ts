@@ -244,6 +244,20 @@ test('a second call on the returned state changes nothing: same state object', (
   expect(second.rows).toEqual(first.rows)
 })
 
+test('a round keeps the turn stamps of a proof, live, quiet and removed, and gives a proof that it makes none (issue #205)', () => {
+  const s = base({ worktrees: [proof(`${DIR}/w`, { firstTurn: 3, lastTurn: 5 })], agents: [agent('abc')] })
+  const list = [root(), rec(`${DIR}/w`, 'b'), rec(`${DIR}/agent-abc`, 'wt-abc')]
+  const first = trackWorktrees(s, list, AT)
+  expect(first.state.worktrees[0]).toMatchObject({ path: `${DIR}/w`, firstTurn: 3, lastTurn: 5 })
+  const found = first.state.worktrees.find(p => p.path === `${DIR}/agent-abc`)
+  expect(found).toMatchObject({ origin: 'agent', owner: 'abc' })
+  expect(found).not.toHaveProperty('firstTurn') // a round has no turn
+  const quiet = trackWorktrees(first.state, list, AT + 30_000)
+  expect(quiet.state).toBe(first.state) // a round that only lists them again writes nothing
+  const gone = trackWorktrees(first.state, [root()], AT + 60_000)
+  expect(gone.state.worktrees[0]).toMatchObject({ firstTurn: 3, lastTurn: 5, removedAt: AT + 60_000 })
+})
+
 /** The state as a round saves it: the rows become the snapshot, so the next call sees the previous row states. */
 const withRows = (s: AutoState, rows: ReturnType<typeof trackWorktrees>['rows']): AutoState => ({
   ...s,

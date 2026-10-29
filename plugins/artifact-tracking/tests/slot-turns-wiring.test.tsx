@@ -25,7 +25,7 @@ async function empty($: Engine, n: number): Promise<void> {
   await end($, `turn-${n}`)
 }
 
-type Stamped = { id?: string; key?: string; firstTurn?: number; lastTurn?: number }
+type Stamped = { id?: string; key?: string; path?: string; firstTurn?: number; lastTurn?: number }
 /** The rows of a tracker slot as the isolated kit state holds them. */
 const rowsOf = (states: Map<string, { value: unknown }>, id: string): Stamped[] =>
   (states.get(`sess-1|artifact-tracking|trackers|${id}`)?.value as Stamped[] | undefined) ?? []
@@ -158,4 +158,25 @@ test('/track clean --yes tasks run inside turn 5 kills the row but is no sightin
     lastTurn: 3,
   })
   expect(await turnText($, 5)).toMatch(/nothing tracked$/)
+})
+
+test('spike: a worktree that EnterWorktree proved in turn 3 carries both turns as 3 and is listed as new in /track turn 3', async ($, on) => {
+  const w = world(on, { isolateState: true })
+  await $.session.start(START)
+  await empty($, 1)
+  await empty($, 2)
+  await $.session.append(prompt('enter a worktree'))
+  await start($, 'turn-3', 'enter a worktree')
+  const path = '/work/.claude/worktrees/probe-wt'
+  w.fake.tools.EnterWorktree = { worktreePath: path, worktreeBranch: 'worktree-probe-wt', message: 'created' }
+  await $.tool.call({ tool: 'EnterWorktree', name: 'probe-wt' } as never)
+  await end($, 'turn-3')
+  await quiet(w.calls)
+  const proofs = (states: typeof w.states) =>
+    (states.get('sess-1|artifact-tracking|trackers|auto')?.value as { worktrees?: Stamped[] } | undefined)?.worktrees ??
+    []
+  expect(proofs(w.states)[0]).toMatchObject({ path, firstTurn: 3, lastTurn: 3 })
+  const text = await turnText($, 3)
+  expect(text.split('\n')[0]).toMatch(/ · 1 new$/)
+  expect(text).toMatch(new RegExp(`\\n {2}new {4}.*${path}.* {2}created$`)) // no round has drawn the row: the ledger words it
 })

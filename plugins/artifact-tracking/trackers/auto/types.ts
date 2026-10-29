@@ -23,6 +23,13 @@ export type WorktreeProof = {
    * stays while it remains removed. The view hides the row `removedTtlMs` after it (issue #49).
    */
   removedAt?: number
+  /**
+   * The first and the last turn whose event named the worktree (issue #205): the `EnterWorktree` or the completed `Agent`
+   * that proved it, and a later `EnterWorktree`, `ExitWorktree` or `Agent` result that named it again. A round never stamps
+   * it. Absent: no turn stamped the proof (a round found it, or an event outside a turn proved it).
+   */
+  firstTurn?: number
+  lastTurn?: number
 }
 
 export type AgentKind = 'subagent' | 'workflow'
@@ -161,6 +168,8 @@ export type BranchesFact = {
 }
 
 export type EnterFacts = { path: string; branch?: string; agentId?: string }
+/** The `worktreePath` of an `ExitWorktree` result (issue #205). */
+export type ExitFacts = { path: string }
 export type AgentResultFacts = { agentId: string; worktreePath?: string; worktreeBranch?: string }
 export type BashFacts = { agentId?: string; branch?: string; pr?: PrFacts; kick?: 'pr-event' | 'git' }
 /** Copied from the `agent.spawn` input and its `next(e)` answer. */

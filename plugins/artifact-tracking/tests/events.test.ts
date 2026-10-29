@@ -1,6 +1,14 @@
 // Raw engine events to plain facts. Pure. This file is the only automated cover of agent-scoped events (spec 13.3).
 import { expect, test } from 'claude-code/testing'
-import { fromAgentResult, fromBash, fromEnterResult, fromSpawn, fromTurnEnd, GIT_CMD } from '../trackers/auto/events'
+import {
+  fromAgentResult,
+  fromBash,
+  fromEnterResult,
+  fromExitResult,
+  fromSpawn,
+  fromTurnEnd,
+  GIT_CMD,
+} from '../trackers/auto/events'
 import * as fx from './fixtures/events'
 
 test('fromEnterResult: path and branch; an agent id rides along', () => {
@@ -17,6 +25,20 @@ test('fromEnterResult: no result or an unknown shape gives null', () => {
   expect(fromEnterResult({ result: {} })).toBeNull()
   expect(fromEnterResult({ result: { worktreePath: 7 } })).toBeNull()
   expect(fromEnterResult('text')).toBeNull()
+})
+
+test('fromExitResult: the worktree path of an ExitWorktree result, whether it kept or removed the tree', () => {
+  expect(fromExitResult(fx.EXIT_RAN)).toEqual({ path: '/x/repo/.claude/worktrees/probe-wt' })
+  expect(fromExitResult(fx.EXIT_KEEP_RAN)).toEqual({ path: '/x/repo/.claude/worktrees/probe-wt' })
+})
+
+test('fromExitResult: a refused call (its result is a string), no result or an unknown shape gives null', () => {
+  expect(fromExitResult({ result: 'Cannot remove: uncommitted files', isError: true })).toBeNull()
+  expect(fromExitResult(undefined)).toBeNull()
+  expect(fromExitResult({})).toBeNull()
+  expect(fromExitResult({ result: {} })).toBeNull()
+  expect(fromExitResult({ result: { worktreePath: 7 } })).toBeNull()
+  expect(fromExitResult('text')).toBeNull()
 })
 
 test('fromAgentResult: completed has the path and branch; async_launched has the id only', () => {

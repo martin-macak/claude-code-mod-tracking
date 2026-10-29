@@ -10,7 +10,7 @@ import type { TreeRow } from '../core/interfaces/view'
 import { PaneSession } from '../hooks/pane-session'
 import { auto } from '../trackers/auto'
 import { recordSpawn } from '../trackers/auto/ledger'
-import { agentsOfRun, autoTurnsOf, runVisit, spawnSightings } from '../trackers/auto/turns'
+import { agentsOfRun, autoTurnsOf, runVisit, spawnSightings, worktreeSightings } from '../trackers/auto/turns'
 import { githubTracker } from '../trackers/github'
 import { processesTracker } from '../trackers/processes'
 import { mergeProcessRows } from '../trackers/processes/rows'
@@ -18,9 +18,12 @@ import { processTurnsOf } from '../trackers/processes/turns'
 import { reposTracker } from '../trackers/repos'
 import { mergeRepoRows, upsertRepoRows } from '../trackers/repos/rows'
 import { repoSightings, repoTurnsOf } from '../trackers/repos/turns'
-import type { AgentProof, ProcessRecord, RepoRecord } from './fixtures/contracts'
+import { fakeConfig } from './fixtures/config-fs'
+import type { AgentProof, ProcessRecord, RepoRecord, WorktreeProof } from './fixtures/contracts'
 import { detailBoxes, leaves } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
+import * as ev from './fixtures/events'
+import { porcelain } from './fixtures/git'
 import { BG_START_ASYNC_AGENT, BG_START_MAIN } from './fixtures/notices'
 import { WORLD_SNAPSHOT } from './fixtures/pane-world'
 import type { FakeWorld } from './fixtures/ports'
@@ -913,6 +916,331 @@ test('spawnSightings: a plain subagent is its own entry, a run is one entry, eac
   expect(spawnSightings(1, run('b', 'r1'), autoStateOf(proofOf('a', 'r1'))).seen).toEqual([wfRun('r1')])
 })
 
+// ---------------------------------------------------------------- worktrees (issue #205)
+
+const MAIN = '/x/repo'
+const WT = `${MAIN}/.claude/worktrees/probe-wt`
+const WT_ID = `wt:${WT}`
+const WT_ENTRY = { k: WT_ID, c: 'worktree', r: 'created' }
+const AGENT_ID = ev.AGENT_DONE_RAN.result.agentId
+const AGENT_WT = ev.AGENT_DONE_RAN.result.worktreePath
+
+/** The `ran` of a completed `Agent` call whose worktree is `path`. */
+const agentDone = (path: string) => ({
+  result: { ...ev.AGENT_DONE_RAN.result, worktreePath: path, worktreeBranch: 'worktree-probe-wt' },
+})
+
+/**
+ * Answers the git calls of a round in `/x/repo`: the toplevel, and `git worktree list` with the probe worktree (while
+ * `git.listed` holds: a removed worktree is gone from the list) and `kids` (more folders of `.claude/worktrees`, as
+ * `[folder, branch]`).
+ */
+function wtGit(git: { listed: boolean }, ...kids: [string, string][]) {
+  return async (argv: string[]): Promise<RunResult | undefined> => {
+    if (argv[0] !== 'git') return undefined
+    if (argv[1] === 'rev-parse') return res(`${MAIN}\n`)
+    if (argv[1] === 'worktree')
+      return res(
+        porcelain(MAIN, ...(git.listed ? [['probe-wt', 'worktree-probe-wt'] as [string, string]] : []), ...kids),
+      )
+    return undefined
+  }
+}
+
+/** A run in `/x/repo` with the auto tracker alone: the root is pinned, so a round can run and `/clear` can carry the proofs. */
+async function worktrees(o: { maxProofs?: number; kids?: [string, string][] } = {}) {
+  const config =
+    o.maxProofs === undefined
+      ? undefined
+      : (specs: readonly Tracker[]) => fakeConfig({ specs, file: { trackers: { auto: { maxProofs: o.maxProofs } } } })
+  const git = { listed: true }
+  const t = turnWorld({ trackers: () => [auto], run: wtGit(git, ...(o.kids ?? [])), ...(config ? { config } : {}) })
+  await t.m.start(t.w.ports, { cwd: MAIN, fromSessionStart: true })
+  const proofs = () =>
+    ((t.w.state.get('auto') as unknown as { worktrees?: (WorktreeProof & Stamps)[] } | undefined)?.worktrees ??
+      []) as (WorktreeProof & Stamps)[]
+  /** One proof by path. */
+  const proof = (path = WT) => proofs().find(p => p.path === path)
+  /** An `EnterWorktree` call that the probe saw: its result names `WT`, whatever the input says. */
+  const enter = (input: Record<string, unknown> = { name: 'probe-wt' }, extra: Record<string, unknown> = {}) =>
+    t.call('EnterWorktree', input, ev.ENTER_RAN, extra)
+  /** An `ExitWorktree` call: `keep` with its own result by default. Pair `ev.EXIT_RAN` (the result of a `remove`) with `'remove'`. */
+  const exit = (ran: unknown = ev.EXIT_KEEP_RAN, action: 'keep' | 'remove' = 'keep') =>
+    t.call('ExitWorktree', { action }, ran)
+  /** The worktree is gone from `git worktree list`, as after an `ExitWorktree` with `remove`. */
+  const unlist = () => {
+    git.listed = false
+  }
+  /** A round at once: the command `refresh` with `wait`. It lists the worktrees of git and draws the rows. */
+  const round = () => t.m.command(t.w.ports, { sub: 'refresh', args: '', wait: true })
+  return { ...t, proofs, proof, enter, exit, unlist, round }
+}
+
+type WtWorld = Awaited<ReturnType<typeof worktrees>>
+
+test('a worktree that EnterWorktree proved in turn 3 carries firstTurn 3 and lastTurn 3, and /track turn 3 lists it as new', async () => {
+  const t = await worktrees()
+  await t.idle(1)
+  await t.idle(2)
+  await t.start('turn-3', 'work in a worktree')
+  await t.enter()
+  await t.end('turn-3')
+  expect(t.proof()).toMatchObject({ path: WT, origin: 'enter', firstTurn: 3, lastTurn: 3 })
+  expect(t.rec(3).new).toEqual([WT_ENTRY])
+  await t.round() // the round draws the row, so the entry reads as the row
+  const text = await t.text('turn 3')
+  expect(text.split('\n')[0]).toMatch(/ · 1 new$/)
+  expect(text).toMatch(/\n {2}new {4}.*probe-wt.*worktree-probe-wt.* {2}created$/)
+})
+
+for (const [what, nameIt] of [
+  ['ExitWorktree', (t: WtWorld) => t.exit()],
+  ['a second EnterWorktree', (t: WtWorld) => t.enter({ path: WT })],
+  ['a completed Agent result', (t: WtWorld) => t.call('Agent', { description: 'iso' }, agentDone(WT))],
+] as const)
+  test(`${what} that names the worktree in turn 5 moves lastTurn to 5, keeps firstTurn 3, and /track turn 5 lists it as seen again`, async () => {
+    const t = await worktrees()
+    await t.idle(1)
+    await t.idle(2)
+    await t.start('turn-3', 'enter')
+    await t.enter()
+    await t.end('turn-3')
+    await t.idle(4)
+    await t.start('turn-5', 'name it again')
+    await nameIt(t)
+    await t.end('turn-5')
+    expect(t.proof()).toMatchObject({ firstTurn: 3, lastTurn: 5 })
+    expect(t.rec(5).seen).toEqual([WT_ENTRY])
+    expect(t.rec(5).new).toEqual([])
+    await t.round()
+    const text = await t.text('turn 5')
+    expect(text.split('\n')[0]).toMatch(/ · 1 seen again$/)
+    expect(text).toMatch(/\n {2}again {2}.*probe-wt.* {2}created$/)
+  })
+
+/** A worktree that turn 3 entered and turn 5 left again. `round`: the round that draws its row has run. */
+async function enteredAndLeft(o: { round?: boolean } = {}) {
+  const t = await worktrees()
+  await t.idle(1)
+  await t.idle(2)
+  await t.start('turn-3', 'enter')
+  await t.enter()
+  await t.end('turn-3')
+  await t.idle(4)
+  await t.start('turn-5', 'leave')
+  await t.exit()
+  await t.end('turn-5')
+  if (o.round !== false) await t.round()
+  return t
+}
+
+test('a round that only lists the worktree again moves no stamp and notes nothing', async () => {
+  const t = await enteredAndLeft({ round: false })
+  const ledger = t.ledger()
+  await t.round() // git lists the worktree: the round sees it live
+  expect(t.proof()?.seenAt).toBeDefined()
+  expect(t.proof()).toMatchObject({ firstTurn: 3, lastTurn: 5 })
+  expect(t.ledger()).toEqual(ledger)
+})
+
+test('a round that runs while a turn runs moves no stamp and notes nothing in that turn', async () => {
+  const t = await enteredAndLeft({ round: false })
+  await t.start('turn-6', 'a round inside a turn')
+  await t.round() // the round writes `auto` (seenAt) with no turn: it stamps nothing, whatever turn runs
+  expect(t.proof()?.seenAt).toBeDefined()
+  expect(t.proof()).toMatchObject({ firstTurn: 3, lastTurn: 5 })
+  await t.end('turn-6')
+  expect(t.rec(6)).toMatchObject({ new: [], seen: [] })
+})
+
+test('a quiet round writes nothing', async () => {
+  const t = await enteredAndLeft()
+  const writes = t.w.stateSets.auto
+  await t.round()
+  expect(t.w.stateSets.auto).toBe(writes) // a quiet round returns the same state: no write
+  expect(t.proof()).toMatchObject({ firstTurn: 3, lastTurn: 5 })
+})
+
+test('the pane row of a worktree carries its turns, and the detail prints them', async () => {
+  const t = await enteredAndLeft()
+  expect(all(await t.rows()).find(r => r.id === WT_ID)?.turns).toEqual({ first: 3, last: 5 })
+  t.w.state.set('expanded', [WT_ID])
+  const drawn = await new PaneSession().draw(t.w.ports, t.m, EL, { bodyColumns: 120 })
+  expect(detailBoxes(drawn).flatMap(leaves).slice(-2)).toEqual(['turns:', 'first 3 · last 5'])
+})
+
+test('the root row of the worktrees has no turns', async () => {
+  const t = await enteredAndLeft()
+  expect(all(await t.rows()).find(r => r.id === `wt:${MAIN}`)?.turns).toBeUndefined() // the root has no proof
+})
+
+test('a worktree that ExitWorktree removed in turn 5 keeps its stamps, its pane turns and its entry in turn 5', async () => {
+  const t = await worktrees()
+  await t.idle(1)
+  await t.idle(2)
+  await t.start('turn-3', 'enter')
+  await t.enter()
+  await t.end('turn-3')
+  await t.round() // git lists the worktree: it is live
+  expect(t.proof()?.removedAt).toBeUndefined()
+  await t.idle(4)
+  await t.start('turn-5', 'remove it')
+  t.unlist() // the tool removed it before its result came back
+  await t.exit(ev.EXIT_RAN, 'remove')
+  await t.end('turn-5')
+  await t.round() // git no longer lists it: the round marks the proof removed
+  expect(t.proof()?.removedAt).toBeDefined()
+  expect(t.proof()).toMatchObject({ firstTurn: 3, lastTurn: 5 })
+  expect(all(await t.rows()).find(r => r.id === WT_ID)?.turns).toEqual({ first: 3, last: 5 })
+  expect(t.rec(5).seen).toEqual([WT_ENTRY])
+  expect(await t.text('turn 5')).toMatch(/\n {2}again {2}.*probe-wt.* {2}created$/)
+})
+
+test('a worktree that a round found before its Agent result is listed as new in the turn of the result, and carries that turn', async () => {
+  const t = await worktrees({ kids: [[`agent-${AGENT_ID}`, ev.AGENT_DONE_RAN.result.worktreeBranch]] })
+  await t.idle(1)
+  await t.start('turn-2', 'spawn an isolated agent')
+  await t.spawn(AGENT_ID, 'tu_iso', SPAWN)
+  await t.end('turn-2')
+  await t.round() // the round proves the worktree by the path convention `agent-<id>`: no event, no turn
+  expect(t.proof(AGENT_WT)).toMatchObject({ origin: 'agent' })
+  expect(t.proof(AGENT_WT)).not.toHaveProperty('firstTurn')
+  await t.idle(3)
+  await t.start('turn-4', 'the agent ends')
+  await t.call('Agent', { description: 'iso agent' }, ev.AGENT_DONE_RAN)
+  await t.end('turn-4')
+  expect(t.proof(AGENT_WT)).toMatchObject({ firstTurn: 4, lastTurn: 4 })
+  expect(t.rec(4).new).toEqual([{ k: `wt:${AGENT_WT}`, c: 'worktree', r: 'created' }])
+  expect(t.rec(4).seen).toEqual([])
+})
+
+test('two events that name the worktree in one turn give one entry, in new, and the second writes nothing', async () => {
+  const t = await worktrees()
+  await t.idle(1)
+  await t.start('turn-2', 'enter and exit')
+  await t.enter()
+  const writes = t.w.stateSets.auto
+  await t.exit()
+  await t.end('turn-2')
+  expect(t.w.stateSets.auto).toBe(writes)
+  expect(t.proof()).toMatchObject({ firstTurn: 2, lastTurn: 2 })
+  expect(t.rec(2).new).toEqual([WT_ENTRY])
+  expect(t.rec(2).seen).toEqual([])
+})
+
+test('an EnterWorktree with no turn running proves the worktree with no stamp and lists nothing', async () => {
+  const t = await worktrees()
+  await t.enter()
+  expect(t.proof()).toMatchObject({ path: WT })
+  expect(t.proof()).not.toHaveProperty('firstTurn')
+  expect(t.ledger().turns).toEqual([])
+})
+
+test("a subagent's EnterWorktree after its turn ended stamps the turn that spawned the agent, and the entry is late", async () => {
+  const t = await worktrees()
+  await t.start('turn-1', 'spawn')
+  await t.spawn('agent-1', 'tu_agent1', SPAWN)
+  await t.end('turn-1')
+  await t.start('turn-2', 'something else')
+  await t.enter({ name: 'probe-wt' }, { agentId: 'agent-1' })
+  expect(t.proof()).toMatchObject({ owner: 'agent-1', firstTurn: 1, lastTurn: 1 })
+  expect(t.rec(1).new).toEqual([
+    { k: 'ag:agent-1', c: 'agent', r: 'created' },
+    { ...WT_ENTRY, late: true },
+  ])
+  expect(t.rec(2).new).toEqual([])
+})
+
+test('an ExitWorktree of a path with no proof, or the root path in any call, makes no proof and no entry', async () => {
+  const t = await worktrees()
+  await t.idle(1)
+  await t.start('turn-2', 'exit what was never entered')
+  await t.exit()
+  await t.exit({ result: { ...ev.EXIT_KEEP_RAN.result, worktreePath: MAIN } })
+  await t.call('EnterWorktree', {}, { result: { ...ev.ENTER_RAN.result, worktreePath: `${MAIN}/` } })
+  await t.end('turn-2')
+  expect(t.proofs()).toEqual([])
+  expect(t.rec(2)).toMatchObject({ new: [], seen: [] })
+})
+
+test('a refused ExitWorktree (its result is a string) stamps nothing and adds no entry', async () => {
+  const t = await worktrees()
+  await t.idle(1)
+  await t.start('turn-2', 'enter')
+  await t.enter()
+  await t.end('turn-2')
+  await t.idle(3)
+  await t.start('turn-4', 'try to remove it')
+  await t.exit({ result: 'Cannot remove: the worktree has uncommitted files', isError: true }, 'remove')
+  await t.end('turn-4')
+  expect(t.proof()).toMatchObject({ firstTurn: 2, lastTurn: 2 })
+  expect(t.rec(4)).toMatchObject({ new: [], seen: [] })
+})
+
+test('the cap drops the oldest proof with its stamps; the newest keeps its stamps and its entry', async () => {
+  const t = await worktrees({ maxProofs: 10 })
+  await t.idle(1)
+  await t.start('turn-2', 'many worktrees')
+  for (let i = 0; i < 11; i++)
+    await t.call('EnterWorktree', { name: `w${i}` }, { result: { worktreePath: `${MAIN}/.claude/worktrees/w${i}` } })
+  await t.end('turn-2')
+  expect(t.proofs()).toHaveLength(10)
+  expect(t.proof(`${MAIN}/.claude/worktrees/w0`)).toBeUndefined()
+  expect(t.proof(`${MAIN}/.claude/worktrees/w10`)).toMatchObject({ firstTurn: 2, lastTurn: 2 })
+  expect(t.rec(2).new.map(e => e.k)).toContain(`wt:${MAIN}/.claude/worktrees/w10`)
+})
+
+/** An auto state with these worktree proofs. */
+const wtState = (...worktrees: WorktreeProof[]) =>
+  ({ root: null, worktrees, agents: [], dismissed: [], snapshot: null }) as never
+
+test('worktreeSightings: a proof that the event made or kept gets one entry, in the list of its visit', () => {
+  const unstamped: WorktreeProof = { path: WT, origin: 'agent', provenAt: 1 }
+  const at = (first: number, last: number): WorktreeProof => ({ ...unstamped, firstTurn: first, lastTurn: last })
+  // A proof the event made, and a proof that no turn stamped (a round found it): the turn of the event is its first, so it is new.
+  expect(worktreeSightings(5, WT, wtState(), wtState(at(5, 5)))).toEqual({ added: [WT_ENTRY], seen: [] })
+  expect(worktreeSightings(5, WT, wtState(unstamped), wtState(at(5, 5)))).toEqual({ added: [WT_ENTRY], seen: [] })
+  // A stamped proof of an older turn is a row seen again, and a stamp of the same turn is a repeat.
+  expect(worktreeSightings(5, WT, wtState(at(3, 3)), wtState(at(3, 5)))).toEqual({ added: [], seen: [WT_ENTRY] })
+  expect(worktreeSightings(5, WT, wtState(at(3, 5)), wtState(at(3, 5)))).toEqual({
+    added: [],
+    seen: [],
+    repeat: [WT_ENTRY],
+  })
+  // The path is the one the proof keeps: a trailing slash names the same row.
+  expect(worktreeSightings(5, `${WT}/`, wtState(), wtState(at(5, 5)))).toEqual({ added: [WT_ENTRY], seen: [] })
+})
+
+test('worktreeSightings: no proof after the event (the root, an unknown path) gives no entry', () => {
+  const none = { added: [], seen: [] }
+  expect(worktreeSightings(5, MAIN, wtState(), wtState())).toEqual(none)
+  expect(
+    worktreeSightings(
+      5,
+      WT,
+      wtState(),
+      wtState({ path: `${MAIN}/.claude/worktrees/other`, origin: 'enter', provenAt: 1 }),
+    ),
+  ).toEqual(none)
+})
+
+test('autoTurnsOf answers the span of the row wt:<path> of a stamped worktree proof, and still the rows of agents', () => {
+  const state = {
+    root: null,
+    agents: [proofOf('a', undefined, { firstTurn: 2, lastTurn: 3 })],
+    dismissed: [],
+    snapshot: null,
+    worktrees: [
+      { path: WT, origin: 'enter', provenAt: 1, firstTurn: 3, lastTurn: 5 },
+      { path: `${MAIN}/.claude/worktrees/other`, origin: 'agent', provenAt: 1 }, // no stamp: no turns
+    ],
+  } as never
+  expect(autoTurnsOf(state, WT_ID)).toEqual({ first: 3, last: 5 })
+  expect(autoTurnsOf(state, `wt:${MAIN}/.claude/worktrees/other`)).toBeUndefined()
+  expect(autoTurnsOf(state, `wt:${MAIN}`)).toBeUndefined() // the root has no proof
+  expect(autoTurnsOf(state, 'ag:a')).toEqual({ first: 2, last: 3 })
+})
+
 // ---------------------------------------------------------------- /clear and /resume
 
 /** The order of a live /clear or /resume: the end sees the leaving id, the id changes, the engine resets `$.state`. */
@@ -1009,4 +1337,43 @@ test('an agent row belongs to the run: a cold /resume has no proof of it, and /t
   await leave(t, 'sess-b', 'resume')
   expect(read.agentRows()).toEqual([])
   expect(await t.text('turn 1')).toMatch(/\n {2}new {4}agent ag:agent-7 +created\n/)
+})
+
+test('a worktree keeps firstTurn and lastTurn and its pane turns over /clear, and /track turn still lists it', async () => {
+  const t = await enteredAndLeft()
+  expect(t.proof()).toMatchObject({ firstTurn: 3, lastTurn: 5 })
+  await leave(t, 'sess-2', 'clear')
+  expect(t.proof()).toMatchObject({ firstTurn: 3, lastTurn: 5 })
+  await t.round()
+  expect(all(await t.rows()).find(r => r.id === WT_ID)?.turns).toEqual({ first: 3, last: 5 })
+  const text = await t.text('turn 3')
+  expect(text).toContain('Turn 3 (earlier session)')
+  expect(text).toMatch(/\n {2}new {4}.*probe-wt.* {2}created/)
+  // The new session counts on from the ledger: the worktree named again is seen again in turn 6.
+  await t.start('turn-6', 'back')
+  await t.enter({ path: WT })
+  await t.end('turn-6')
+  expect(t.proof()).toMatchObject({ firstTurn: 3, lastTurn: 6 })
+  expect(t.rec(6).seen).toEqual([WT_ENTRY])
+})
+
+test('a worktree keeps its stamps over an in-process /resume, which the engine resets like a /clear', async () => {
+  const t = await enteredAndLeft()
+  await leave(t, 'sess-b', 'resume')
+  expect(t.proof()).toMatchObject({ firstTurn: 3, lastTurn: 5 })
+  await t.round()
+  expect(all(await t.rows()).find(r => r.id === WT_ID)?.turns).toEqual({ first: 3, last: 5 })
+})
+
+test('a worktree row belongs to the run: a cold /resume has no proof of it, and /track turn still lists its entry by the raw id', async () => {
+  const first = await enteredAndLeft()
+  await first.m.flushNow()
+  const stored = first.w.store.get('v2:s:sess-1') as unknown as Record<string, Json>
+  expect('auto' in stored).toBe(false) // the auto tracker is not persisted
+  const t = await worktrees()
+  t.w.store.set('v2:s:sess-b', stored as unknown as Json)
+  await t.m.entry(t.w.ports)
+  await leave(t, 'sess-b', 'resume')
+  expect(t.proofs()).toEqual([])
+  expect(await t.text('turn 3')).toMatch(new RegExp(`\\n {2}new {4}worktree ${WT_ID} +created$`))
 })
