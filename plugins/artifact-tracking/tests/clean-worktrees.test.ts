@@ -10,6 +10,7 @@ import { autoCleanup } from '../trackers/auto/clean'
 import { AUTO_DEFAULTS } from '../trackers/auto/config'
 import type { AutoState, WorktreeProof, WorktreeRow } from '../trackers/auto/types'
 import { noDockerIssue, proc, setProcesses } from './fixtures/hide-world'
+import { storedLog } from './fixtures/log'
 import { NOW, paneWorld, WORLD_AUTO, WORLD_SNAPSHOT } from './fixtures/pane-world'
 
 const ok = (stdout = ''): RunResult => ({ exitCode: 0, stdout, stderr: '' })
@@ -68,7 +69,7 @@ async function treeWorld(
   const run = (args: string) => t.m.track(t.w.ports, args)
   const gits = () => t.w.calls.filter(c => c[0] === 'git')
   const removes = () => gits().filter(c => c[1] === 'worktree' && c[2] === 'remove')
-  const log = () => (t.w.store.get('v2:log') ?? []) as unknown as { id: string; outcome: string; kind: string }[]
+  const log = () => storedLog(t.w.store)
   return { ...t, run, gits, removes, log }
 }
 

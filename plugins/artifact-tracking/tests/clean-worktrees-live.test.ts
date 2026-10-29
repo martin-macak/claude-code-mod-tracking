@@ -10,6 +10,7 @@ import { autoCleanup } from '../trackers/auto/clean'
 import { AUTO_DEFAULTS } from '../trackers/auto/config'
 import type { AgentProof, AutoState, WorktreeProof, WorktreeRow } from '../trackers/auto/types'
 import { draw, flat, noDockerIssue, proc, setProcesses } from './fixtures/hide-world'
+import { storedLog } from './fixtures/log'
 import { NOW, paneWorld, WORLD_AUTO, WORLD_SNAPSHOT } from './fixtures/pane-world'
 
 const ok = (stdout = ''): RunResult => ({ exitCode: 0, stdout, stderr: '' })
@@ -110,8 +111,7 @@ async function liveWorld(o: Opts = {}) {
   const gits = () => t.w.calls.filter(c => c[0] === 'git')
   const removes = () => gits().filter(c => c[1] === 'worktree' && c[2] === 'remove')
   const subs = () => gits().map(c => (c[1] === '-C' ? c[3] : c[1] === 'worktree' ? `worktree ${c[2]}` : c[1]))
-  const log = () =>
-    (t.w.store.get('v2:log') ?? []) as unknown as { id: string; action: string; kind: string; outcome: string }[]
+  const log = () => storedLog(t.w.store)
   const row = (path = LIVE) => {
     const auto = t.w.state.get('auto') as unknown as { snapshot: { worktrees: WorktreeRow[] } }
     return auto.snapshot.worktrees.find(r => r.id === `wt:${path}`)
@@ -837,6 +837,11 @@ test('one --yes handles a removed record and a live tree together: one git workt
     ['remove-worktree', 'done'],
     ['remove-record', 'done'],
   ])
+  // `--log` reads the same entries back through the real readLog, isEntry and logText (issue #213, the entries of issue #123).
+  const printed = (await t.run('clean --log')).text ?? ''
+  expect(printed).toContain('Clean log, newest first (2 entries):')
+  expect(printed).toContain(`  manual  worktrees  wt:${LIVE}  remove-worktree  done`)
+  expect(printed).toContain(`  manual  worktrees  wt:${OLD}  remove-record  done`)
 })
 
 test('the record removal keeps gitTimeoutMs: only the removal of a live tree has the long timeout', async () => {

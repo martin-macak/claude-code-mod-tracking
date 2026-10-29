@@ -12,6 +12,7 @@ import type { PaneHost } from '../hooks/pane-text'
 import { processesTracker } from '../trackers/processes'
 import { fakeConfig, fakeConfigFs } from './fixtures/config-fs'
 import type { ProcessRecord } from './fixtures/contracts'
+import { logKeys } from './fixtures/log'
 import { managerWorld } from './fixtures/manager'
 
 const NOW = 1_000_000
@@ -147,7 +148,7 @@ test('cleanPlan never applies: no step to a tracker, no slot or store write, no 
   expect(t.w.calls).toHaveLength(before.calls)
   expect(t.w.stops).toHaveLength(before.stops)
   expect(t.w.state.get('hidden')).toEqual({ showAll: false, before: NOW })
-  expect(t.w.store.has('v2:log')).toBe(false)
+  expect(logKeys(t.w.store)).toEqual([])
 })
 
 // The stub trackers above only count what is handed to `apply`. The real processes tracker is the one that stops a task (a
@@ -173,7 +174,7 @@ test('cleanPlan over the real processes tracker plans the stop of a running task
   expect(rows().map(r => r.state)).toEqual(['running']) // the row is not killed
   expect(t.w.stateSets).toEqual(before.sets)
   expect(t.w.storeSets).toBe(before.store)
-  expect(t.w.store.has('v2:log')).toBe(false)
+  expect(logKeys(t.w.store)).toEqual([])
 })
 
 // Issue #123: a plan reads a switch of its tracker, and the tick reads the file only every 30 s. The pane key must see an

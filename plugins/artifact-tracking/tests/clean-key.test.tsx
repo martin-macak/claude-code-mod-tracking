@@ -7,6 +7,7 @@
 import type { On } from 'claude-code'
 import { type Engine, expect, mock } from 'claude-code/testing'
 import { test } from './fixtures/kit'
+import { logKeys } from './fixtures/log'
 import { mountPane, type PaneUi } from './fixtures/pane'
 import { quiet, START, track, until, world } from './fixtures/world'
 
@@ -86,7 +87,7 @@ test('p changes nothing: no TaskStop, no process run, no store write, no atom wr
   await quiet(w.calls)
   expect(w.fake.toolRuns.TaskStop).toBeUndefined() // no TaskStop
   expect(w.calls).toHaveLength(before.calls) // no process run
-  expect(w.store.has('v2:log')).toBe(false) // no audit log entry
+  expect(logKeys(w.store)).toEqual([]) // no audit log entry
   expect(w.fake.storeSets).toBe(before.store)
   expect(w.fake.fsWrites).toHaveLength(before.writes)
   expect(w.fake.stateSets).toEqual(before.sets) // no atom: `selected`, `hidden`, `filters`, `view`, `help`, `marks`

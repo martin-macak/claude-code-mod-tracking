@@ -49,7 +49,7 @@ export interface Cleanup<C extends JsonObject = JsonObject, D extends Json = Jso
 }
 
 /**
- * One entry of the audit log (`v2:log`): an attempt to change something outside the view. The row id, never the command
+ * One entry of the audit log (a `v2:log:<run>` key): an attempt to change something outside the view. The row id, never the command
  * line. `by` is `manual` for `/track clean`; it names who asked, for a later automatic path.
  */
 export type LogEntry = {

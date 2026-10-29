@@ -4,10 +4,11 @@
 import { expect, test } from 'claude-code/testing'
 import { CORE_HINT, CORE_SUBS, USAGE } from '../core/infra/command-text'
 import { ConfigManager } from '../core/infra/config-manager'
-import type { CleanResult, CleanStep, LogEntry } from '../core/interfaces/clean'
+import type { CleanResult, CleanStep } from '../core/interfaces/clean'
 import type { Tracker } from '../core/interfaces/tracker'
 import { CLEAN_USAGE } from '../core/lib/clean-text'
 import { fakeConfig, fakeConfigFs } from './fixtures/config-fs'
+import { logKeys, storedLog } from './fixtures/log'
 import { managerWorld } from './fixtures/manager'
 
 const NOW = 1_000_000
@@ -65,7 +66,7 @@ function world(trackers: Tracker[], file = {}) {
     config: specs => fakeConfig({ specs, file }),
   })
   const run = (args: string) => w.m.track(w.w.ports, args)
-  const log = () => (w.w.store.get('v2:log') ?? []) as unknown as LogEntry[]
+  const log = () => storedLog(w.w.store)
   return { ...w, run, log }
 }
 
@@ -148,7 +149,7 @@ test('clean makes no slot write, no store write and no process run', async () =>
   expect(t.w.storeSets).toBe(before.store)
   expect(t.w.calls).toHaveLength(before.calls)
   expect(t.w.stops).toHaveLength(before.stops)
-  expect(t.w.store.has('v2:log')).toBe(false)
+  expect(logKeys(t.w.store)).toEqual([])
 })
 
 test('a tracker whose plan throws is named in the plan, and the others still list their steps', async () => {
@@ -192,7 +193,7 @@ test('clean --hide sets hidden.before to now, clears showAll, redraws, and runs 
   expect(text).toContain('Ended rows hidden. /track show-all shows them again.')
   expect(a.s.applied).toEqual([])
   expect(t.w.calls.filter(c => c[0] === 'git' || c[0] === 'ps')).toEqual([])
-  expect(t.w.store.has('v2:log')).toBe(false) // a hide changes nothing outside the view: no log entry
+  expect(logKeys(t.w.store)).toEqual([]) // a hide changes nothing outside the view: no log entry
 })
 
 test('show-all after --hide shows the rows, and a second show-all hides them again: before stays', async () => {
@@ -301,7 +302,7 @@ test('the apply asks the plan again, so a step is judged on the state of now', a
   rows = []
   await t.run('clean --yes tasks')
   expect(a.s.applied).toEqual([]) // the row is gone: nothing is applied
-  expect(t.w.store.has('v2:log')).toBe(false)
+  expect(logKeys(t.w.store)).toEqual([])
 })
 
 test('--yes saves the session copy before it replies, and redraws the pane', async () => {
