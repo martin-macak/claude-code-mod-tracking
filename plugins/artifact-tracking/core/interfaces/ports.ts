@@ -4,7 +4,7 @@
 
 import type { Json, StoredItem, ToolStatus, TurnLedger } from '../../types'
 import type { PreviewState } from './preview'
-import type { FilterState, HiddenState } from './view'
+import type { FilterState, HiddenState, QuickState } from './view'
 
 /** The engine's timer handle. */
 export interface Timer {
@@ -162,6 +162,11 @@ export interface StatePorts {
   readonly view: AtomPort<string | null>
   /** Issue #63, L3: `t` (touched only). Session scope, reset by `/clear`. */
   readonly filters: AtomPort<FilterState>
+  /**
+   * Issue #276: `e` (quick view), one flag for each form of the pane. Session scope: a close and a reopen keep it, `/clear` resets
+   * it, and it is never written to the config file or the store.
+   */
+  readonly quick: AtomPort<QuickState>
   /**
    * Issue #138: the ids of the rows the person marked with `m`. `x` and the digits act on the marked rows. Session scope: the
    * pane clears it when it closes and `/clear` resets it. Never written to the config file or the store.

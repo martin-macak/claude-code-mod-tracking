@@ -172,13 +172,14 @@ test('draw hands the body height to the help view: a short body draws it compact
   const t = setup(webs('a'), { path: '/p/config.json', version: '1.2.3' })
   t.w.state.set('help', true)
   const help = async (rows?: number) => (await t.draw(96, rows)) as unknown as { children: { children: unknown[] }[] }
-  // The full view is 2 titles, 14 keys (g, a, t and p are pane keys, issues #63 and #199; m is a row key, issue #138; v opens the preview,
-  // issue #57, L2, and d is its diff mode, issue #254), the config line and the version line. The compact view is 9 lines: three keys
-  // to a line, so the eight row keys take three lines. With the two rows of the help footer (issue #200) it fills 11 of the 11 rows of
-  // an inline pane at 100x40.
-  expect((await help(undefined)).children[0]?.children).toHaveLength(18)
-  expect((await help(28)).children[0]?.children).toHaveLength(18)
-  expect((await help(11)).children[0]?.children).toHaveLength(9)
+  // The full view is 2 titles, 15 keys (g, a, t, p and e are pane keys, issues #63, #199 and #276; m is a row key, issue #138; v opens the
+  // preview, issue #57, L2, and d is its diff mode, issue #254), the config line and the version line. The compact view is 8 lines: three
+  // keys to a line would take 10 (the seven pane keys take three lines and the eight row keys three), and with the two rows of the help
+  // footer (issue #200) that is 12 of the 11 rows of an inline pane at 100x40. So the form takes four keys to a line, and the pane keys
+  // and the row keys take two lines each.
+  expect((await help(undefined)).children[0]?.children).toHaveLength(19)
+  expect((await help(28)).children[0]?.children).toHaveLength(19)
+  expect((await help(11)).children[0]?.children).toHaveLength(8)
 })
 
 test('with many problems a short body draws the help view capped with a count, and /track help prints every problem of its model', async () => {
@@ -214,6 +215,7 @@ test('with a tracker row selected the help view still fits the 11-row inline bod
     't',
     'p',
     'm',
+    'e',
   ])
   const [body] = (tree as unknown as { children: unknown[] }).children
   const wrapped = 1 // the 86-cell config path takes a second row at 96 cells
@@ -246,6 +248,7 @@ test('the selected row hides while the help view is open: the help footer keeps 
     't',
     'p',
     'm',
+    'e',
   ])
   const [body] = (help as unknown as { children: unknown[] }).children
   const wrapped = 1 // the 86-cell config path takes a second row at 96 cells
@@ -2397,7 +2400,7 @@ test('x on the last row while the ring is on x or r asks for the ring on that Bu
   }
 })
 
-// `g`, `a`, `t`, `p` and `m` sit on the view line, not in the footer. A ring on one of them is a ring on a Button that the next drawing
+// `g`, `a`, `t`, `p`, `m` and `e` (issues #199 and #276) sit on the view line, not in the footer. A ring on one of them is a ring on a Button that the next drawing
 // still holds, so the press that took the last row asks for that Button again (issue #63, L3, review m1).
 test('x on the only row while the ring sits on a view line Button keeps the ring on it: the Button is still drawn', async () => {
   for (const at of VIEW_LINE_KEYS) {
@@ -2423,10 +2426,10 @@ test('x on the only row while the ring sits on a view line Button, with no frame
   }
 })
 
-// Issue #200: the help view has no view line, so it draws `g`, `a`, `t`, `p` and `m` as dim Buttons in its footer. The rule for the ring
+// Issue #200: the help view has no view line, so it draws `g`, `a`, `t`, `p`, `m` and `e` (issues #199 and #276) as dim Buttons in its footer. The rule for the ring
 // is the one of `x` and the digits: it stays on its Button, because the next drawing still holds it (`Refocus.keep`). The second
 // `h` closes the help view, and the Button is on the view line again, so the ring goes back to where the person had it.
-test('h opens the help view while the ring sits on g, a, t, p or m: the ring stays on that dim Button, and the second h keeps it there', async () => {
+test('h opens the help view while the ring sits on g, a, t, p, m or e: the ring stays on that dim Button, and the second h keeps it there', async () => {
   for (const at of VIEW_LINE_KEYS) {
     const t = await ringOn(at)
     await pressDraw(t, 'help')
@@ -2439,8 +2442,8 @@ test('h opens the help view while the ring sits on g, a, t, p or m: the ring sta
   }
 })
 
-// `frameFromState` reads the footer of the help view, which now names the five Buttons: the bound needs no drawing to know them.
-test('h opens the help view while the ring sits on g, a, t, p or m, with no frame before the bound: the state read keeps the ring on that Button', async () => {
+// `frameFromState` reads the footer of the help view, which now names the six Buttons: the bound needs no drawing to know them.
+test('h opens the help view while the ring sits on g, a, t, p, m or e, with no frame before the bound: the state read keeps the ring on that Button', async () => {
   for (const at of VIEW_LINE_KEYS) {
     const t = await ringOn(at)
     press(buttonOf(await t.draw(), 'help'))
@@ -2523,7 +2526,7 @@ async function views(o: Parameters<typeof setup>[1] = {}) {
   return t
 }
 
-test('draw puts the view line above the footer: the view, then g, a, t, p and m; the footer keeps its keys', async () => {
+test('draw puts the view line above the footer: the view, then g, a, t, p, m and e; the footer keeps its keys', async () => {
   const t = await views()
   const tree = await t.draw()
   expect(texts(tree).some(([, s]) => s === 'View: list')).toBe(true)
@@ -2533,6 +2536,7 @@ test('draw puts the view line above the footer: the view, then g, a, t, p and m;
     ['t', 'touched'],
     ['p', 'clean plan'],
     ['m', 'mark'],
+    ['e', 'quick view'],
   ])
   expect(footerOf(tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
 })
@@ -2574,14 +2578,14 @@ test('the view line of the by-list view leaves out the ended count that the sect
   expect(await line()).toBe('View: status · 2 ended hidden')
 })
 
-// Issue #200: with no view line, a press of g, a, t, p or m would type the letter into the prompt. The help footer holds one dim
-// Button for each: a Button takes the hotkey, so the keyboard stays in the pane. The help keys name them too (issue #199).
-test('the help view has no view line, and the help footer holds g, a, t, p and m as dim Buttons, one Button per hotkey', async () => {
+// Issue #200: with no view line, a press of g, a, t, p, m or e would type the letter into the prompt. The help footer holds one dim
+// Button for each: a Button takes the hotkey, so the keyboard stays in the pane. The help keys name them too (issues #199 and #276).
+test('the help view has no view line, and the help footer holds g, a, t, p, m and e as dim Buttons, one Button per hotkey', async () => {
   const t = await views()
   t.w.state.set('help', true)
   const tree = await t.draw()
   const hotkeys = helpFooterOf(tree).map(b => String(b.props.hotkey))
-  expect(hotkeys).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'p', 'm'])
+  expect(hotkeys).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'p', 'm', 'e'])
   expect(hotkeys).toEqual([...new Set(hotkeys)]) // the engine lets the later of two equal hotkeys win in silence
   for (const key of VIEW_LINE_KEYS) expect(buttonOf(tree, key).props.dimColor, key).toBe(true)
   expect(texts(tree).some(([, s]) => s.startsWith('View:'))).toBe(false)
@@ -2589,7 +2593,7 @@ test('the help view has no view line, and the help footer holds g, a, t, p and m
   expect(nodes(footer, 'Button').map(b => String(b.props.hotkey))).toEqual(hotkeys) // all of them in the footer Box
   t.w.state.set('help', false)
   const pane = await t.draw()
-  expect(viewLineOf(pane)).toHaveLength(5) // the pane draws them on the view line only
+  expect(viewLineOf(pane)).toHaveLength(6) // the pane draws them on the view line only
   expect(footerOf(pane).map(b => String(b.props.hotkey))).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
   const out = leaves(tree)
   expect(out).toContain('view')
@@ -2629,8 +2633,8 @@ test('g takes the next view of global.ui.views, keeps the row selected and asks 
   expect(t.w.ui.focused.at(-1)).toBe('r1')
 })
 
-test('g, a and t redraw the pane once and write no config file and no store key', async () => {
-  for (const key of ['view', 'show-all', 'touched']) {
+test('g, a, t and e redraw the pane once and write no config file and no store key', async () => {
+  for (const key of ['view', 'show-all', 'touched', 'quick']) {
     const t = await views()
     await t.w.clock.advance(5000) // the opening of the pane may write the store: let it happen first
     const drawn = t.w.ui.invalidated
@@ -2696,11 +2700,12 @@ test('g, a and t with no row selected change the view and ask for no ring', asyn
   expect(t.w.ui.focused).toEqual([])
 })
 
-test('a press of g, a or t whose write is in flight when the pane closes changes nothing after it', async () => {
+test('a press of g, a, t or e whose write is in flight when the pane closes changes nothing after it', async () => {
   for (const [key, atom, rest] of [
     ['view', 'view', null],
     ['show-all', 'hidden', { showAll: false }],
     ['touched', 'filters', { touchedOnly: false }],
+    ['quick', 'quick', { full: true, compact: false }],
   ] as const) {
     const t = await views()
     const calls = engineLog(t)
@@ -2713,6 +2718,104 @@ test('a press of g, a or t whose write is in flight when the pane closes changes
     expect(await t.w.ports.state[atom].get(), key).toEqual(rest)
     expect(calls, key).toEqual([]) // no ask for the keys, no ring request
   }
+})
+
+// Issue #276, L1 of #275: `e` shows or hides the quick view of the selected row. The atom `quick` keeps one flag for each form of the
+// pane, `{ full: true, compact: false }` by default, and `e` flips the flag of the form the drawing of the pressed Button had.
+const QUICK_DEFAULT = { full: true, compact: false }
+/** Presses `e` in a drawing of this body: `rows` of 18 or more draw the full form, fewer the compact form. */
+async function pressE(t: Awaited<ReturnType<typeof views>>, rows: number | undefined) {
+  press(buttonOf(await t.draw(96, rows), 'quick'))
+  await t.session.idle()
+}
+
+test('e flips the flag of the form the pane draws: the full form from 18 body rows, the compact form below', async () => {
+  const t = await views()
+  expect(await t.w.ports.state.quick.get()).toEqual(QUICK_DEFAULT)
+  await pressE(t, 31)
+  expect(t.w.state.get('quick')).toEqual({ full: false, compact: false })
+  await pressE(t, 11)
+  expect(t.w.state.get('quick')).toEqual({ full: false, compact: true })
+  await pressE(t, undefined) // no body height is known: the compact form
+  expect(t.w.state.get('quick')).toEqual({ full: false, compact: false })
+  await pressE(t, 18)
+  expect(t.w.state.get('quick')).toEqual(QUICK_DEFAULT)
+})
+
+test('e flips the form of the drawing the Button came from, not of the drawing that came after it', async () => {
+  const t = await views()
+  const tree = await t.draw(96, 31) // the full form
+  await t.draw(96, 11) // the pane was drawn smaller since: the next press is a press of the compact form
+  press(buttonOf(tree, 'quick'))
+  await t.session.idle()
+  expect(t.w.state.get('quick')).toEqual({ full: false, compact: false })
+})
+
+test('e keeps the selection, asks for the ring on that row and redraws once', async () => {
+  const t = await views()
+  const drawn = t.w.ui.invalidated
+  await pressE(t, 31)
+  expect(t.selected()).toBe('b')
+  expect(t.w.ui.focused.at(-1)).toBe('r1')
+  expect(t.w.ui.invalidated - drawn).toBe(1)
+})
+
+test('e with no row selected flips the flag and asks for no ring', async () => {
+  const t = setup([web('a'), failing('b')])
+  await t.draw()
+  await pressE(t, 11)
+  expect(t.w.state.get('quick')).toEqual({ full: true, compact: true })
+  expect(t.selected()).toBeNull()
+  expect(t.w.ui.focused).toEqual([])
+})
+
+test('a close and a reopen of the pane keep the choice of e, as they keep the view and the filters', async () => {
+  const t = await views()
+  await pressE(t, 31)
+  await pressE(t, 11)
+  await t.session.closed(t.w.ports)
+  expect(t.w.state.get('quick')).toEqual({ full: false, compact: true })
+  await t.draw(96, 31) // the pane opens again
+  expect(await t.w.ports.state.quick.get()).toEqual({ full: false, compact: true })
+})
+
+// The engine drops `$.state` at /clear, so the atom is gone and the default is back. The fake ports stand in for the engine here, as
+// they do for `view` and `filters`; a kit test of the real reset would be a change of its own (the pattern of `tests/hide-wiring.test.tsx`).
+test('/clear resets the choice of e to the default: the full form shows the quick view, the compact form hides it', async () => {
+  const t = await views()
+  await pressE(t, 31)
+  await pressE(t, 11)
+  expect(await t.w.ports.state.quick.get()).toEqual({ full: false, compact: true })
+  t.w.state.delete('quick') // what the engine does to `$.state` at /clear
+  expect(await t.w.ports.state.quick.get()).toEqual(QUICK_DEFAULT)
+})
+
+test('no config file and no store key hold the choice of e', async () => {
+  const t = await views()
+  await t.w.clock.advance(5000)
+  const files = { ...t.w.files }
+  const sets = t.w.storeSets
+  await pressE(t, 31)
+  await pressE(t, 11)
+  await t.w.clock.advance(5000) // past the flush delay of the stored copy
+  expect(t.w.files).toEqual(files)
+  expect(t.w.storeSets).toBe(sets)
+})
+
+test('the quick view shows the detail of the selected row in the full form, and e hides it down to the Selected: line', async () => {
+  const t = setup([
+    web('a'),
+    web('b', { reasons: { first: 'created', all: ['created', 'updated'], strongest: 'created' } }),
+  ])
+  t.w.state.set('selected', 'b')
+  const words = async (rows: number) => texts(await t.draw(96, rows)).map(([, s]) => s)
+  expect(await words(31)).toContain('reasons:')
+  await pressE(t, 31)
+  const hidden = await words(31)
+  expect(hidden).not.toContain('reasons:')
+  expect(hidden).toContain('Selected:')
+  await pressE(t, 31)
+  expect(await words(31)).toContain('reasons:')
 })
 
 test('g forgets the "N more" stop the ring sat on: its group index means another group in the next view', async () => {
@@ -3080,6 +3183,7 @@ const ENDS: [string, (t: ReturnType<typeof setup>) => Promise<void>][] = [
   ['a', t => t.pressKey('show-all')],
   ['t', t => t.pressKey('touched')],
   ['m', t => t.pressKey('mark')],
+  ['e', t => t.pressKey('quick')], // issue #276
   [
     'h and back',
     async t => {

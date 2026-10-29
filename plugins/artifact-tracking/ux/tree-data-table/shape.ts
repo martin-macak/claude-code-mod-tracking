@@ -2,9 +2,11 @@
 // drew. Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L6 Task 8.
 import type { RenderElement } from 'claude-code'
 import type { PlanLine } from '../../core/interfaces/clean'
-import type { FooterKey, HelpModel, StatusLine, TreeRow } from '../../core/interfaces/view'
+import type { FooterKey, HelpModel, StatusForm, StatusLine, TreeRow } from '../../core/interfaces/view'
 import type { Cost } from './budget'
 import { GLYPH_BOX, INDENT } from './columns'
+
+export type { StatusForm } from '../../core/interfaces/view'
 
 /** The selection marker and one gap, left of the first column. */
 export const GUTTER = 2
@@ -14,6 +16,8 @@ export const DEFAULT_BODY_COLUMNS = 80
 export const ROW_GAP = 1
 /** The row of column names above the groups. The one header of the table, drawn once a row is drawn. */
 export const HEADER_ROWS = 1
+/** The title row of a group that has a row to draw. */
+export const TITLE_ROWS = 1
 /** A detail line is cut at this many cells. */
 export const DETAIL_CELLS = 500
 export const TOO_LARGE = 'The pane is too large to draw. /track prints the list.'
@@ -26,12 +30,27 @@ export const indentOf = (columnWidth: number, depth: number): number =>
 
 /**
  * The view line (issue #63, L3): one line above the footer. `text` says the view, the filters and the rows they hid. `keys` are
- * the Buttons of `g`, `a`, `t`, `p` and `m`: they sit here and not in the footer, so the footer keeps its rows. The line is clipped to
+ * the Buttons of `g`, `a`, `t`, `p`, `m` and `e`: they sit here and not in the footer, so the footer keeps its rows. The line is clipped to
  * the width, and its Buttons wrap like the footer's.
  */
 export interface ViewLine {
   readonly text: string
   readonly keys: readonly FooterKey[]
+}
+
+/** The status area of a view (`TableView.status`). */
+export interface StatusArea {
+  /** The first line: today's `Selected:` line. */
+  readonly selected: StatusLine
+  /** The health line. The full form has it, the compact form never. */
+  readonly health?: StatusLine
+  /**
+   * The quick view of the selected row (issue #276): its lines below `selected`, and the form that caps them. Absent: it is hidden.
+   * `open` is the rows that the detail lines of the selected row take under it when it is open: they are rows of the list, so the list
+   * keeps them as well as its data rows and the quick view has the room that is left. `TreeDataTable.render` sets it from the layout; a
+   * caller leaves it out (0).
+   */
+  readonly quick?: { readonly form: StatusForm; readonly lines: readonly StatusLine[]; readonly open?: number }
 }
 
 export interface TableView {
@@ -68,11 +87,15 @@ export interface TableView {
   /** The line above the footer. Absent: none is drawn. The help view never draws it. */
   readonly viewLine?: ViewLine
   /**
-   * The two lines of the full status area (issue #138): the selected row above the view line, the health below it. Both sit in the
-   * footer Box, so the dock pins them with the keys, and the window takes `STATUS_ROWS` off its budget. Absent: the compact bottom.
-   * The help view never draws them.
+   * The status area (issue #138): the selected row above the view line, the health below it. All of it sits in the footer Box, so the
+   * dock pins it with the keys, and the window takes `statusRows` off its budget. Absent: the compact bottom. The help view never draws
+   * it. The full form has `health`; the compact form has it never.
+   *
+   * `quick` (issue #276, L1 of #275) is the quick view of the selected row: the lines below `selected`, all of them, and the form that
+   * says how many the body may take (`quickRows` in status.ts). The drawing and the window both read the lines that fit from
+   * `statusOf`, so they cannot count them two ways. Absent: the `selected` line alone.
    */
-  readonly status?: { readonly selected: StatusLine; readonly health: StatusLine }
+  readonly status?: StatusArea
   readonly help: HelpModel | null
   /**
    * The plan of `/track clean` as typed lines (issue #199): the plan view, drawn in the slot of the help view and cut to the body

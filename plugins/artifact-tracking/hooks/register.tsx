@@ -9,6 +9,7 @@ import { LifecycleManager } from '../core/infra/lifecycle'
 import type { Json, StoredItem } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
 import type { PreviewState } from '../core/interfaces/preview'
+import type { QuickState } from '../core/interfaces/view'
 import { stopResultOf } from '../core/lib/tasks'
 import { withLine } from '../core/lib/turn-strip'
 import { emptyLedger } from '../core/lib/turns'
@@ -44,6 +45,10 @@ const hidden = atom({ plugin: 'artifact-tracking', key: 'hidden' } as const, { s
 // that resets the atom puts the pane back on the configured view with no seeding from the config at start.
 const view = atom({ plugin: 'artifact-tracking', key: 'view' } as const, null as string | null)
 const filters = atom({ plugin: 'artifact-tracking', key: 'filters' } as const, { touchedOnly: false })
+// Issue #276: `e` shows or hides the quick view of the selected row. One flag for each form of the pane: the full form shows it by
+// default, the compact form hides it. Session state like `view` and `filters`: a close keeps it, `/clear` resets it.
+const QUICK_DEFAULT: QuickState = { full: true, compact: false }
+const quick = atom({ plugin: 'artifact-tracking', key: 'quick' } as const, QUICK_DEFAULT)
 // Issue #138: the rows the person marked with `m`. Session state like `hidden` and `filters`: the pane clears it at close and
 // `/clear` resets it. The ids only: a render never prunes them (E9), the next mark write does.
 const marks = atom({ plugin: 'artifact-tracking', key: 'marks' } as const, [] as string[])
@@ -188,6 +193,7 @@ function portsOf($: EngineInterface): Ports {
       hidden: { get: () => read($, hidden), update: fn => update($, hidden, fn) },
       view: { get: () => read($, view), update: fn => update($, view, fn) },
       filters: { get: () => read($, filters), update: fn => update($, filters, fn) },
+      quick: { get: () => read($, quick), update: fn => update($, quick, fn) },
       marks: { get: () => read($, marks), update: fn => update($, marks, fn) },
       preview: { get: () => read($, preview), update: fn => update($, preview, fn) },
       turns: { get: () => read($, turns), update: fn => update($, turns, fn) },

@@ -78,7 +78,7 @@ test('start builds the key registry from the live trackers', async () => {
       .all()
       .slice(0, CORE_KEYS.length)
       .map(k => k.key),
-  ).toEqual(['r', 'h', 'g', 'a', 't', 'p', 'm', 'x', '1', '2', '3', '0', 'v', 'd'])
+  ).toEqual(['r', 'h', 'g', 'a', 't', 'p', 'm', 'e', 'x', '1', '2', '3', '0', 'v', 'd'])
   expect(keysOf(m).at(-1)).toBe('t.open')
 })
 

@@ -12,7 +12,7 @@ import { footerBox, footerRows, moveHintFits } from './footer'
 import { compactForm, renderHelp } from './help'
 import { type LaidGroup, layout, refOf } from './layout'
 import { renderPlan, shapePlan } from './plan'
-import { type Draw, drawGroups } from './rows'
+import { type Draw, drawGroups, openLinesOf } from './rows'
 import {
   DEFAULT_BODY_COLUMNS,
   type Drawn,
@@ -39,6 +39,7 @@ export {
   layout,
   neighbourOf,
   refOf,
+  refsOf,
   shownSelection,
   survivorOf,
 } from './layout'
@@ -63,12 +64,25 @@ function halvings(groups: readonly GroupSpec[], view: TableView): number {
   return k
 }
 
+/**
+ * The view with the rows of the open selected row set on its quick view (`quick.open`, issue #276, review of PR #284): the detail lines
+ * of an open row take room from the list, and the window cannot give them back, so the quick view leaves them. The footer and the
+ * window both read this one view, so they count the quick view alike. Any other view is as it was.
+ */
+function withOpenLines(groups: readonly GroupSpec[], view: TableView): TableView {
+  const quick = view.status?.quick
+  if (view.status === undefined || quick === undefined || view.bodyRows === undefined || textView(view)) return view
+  const open = openLinesOf(layout(groups, view, 0), view.selected, view.bodyColumns ?? DEFAULT_BODY_COLUMNS)
+  return open === 0 ? view : { ...view, status: { ...view.status, quick: { ...quick, open } } }
+}
+
 export const TreeDataTable = {
   /**
    * The guard tries a full drawing, one with no detail lines, then the caps halved until each is 1, then one dim
    * line. `handles` and `rows` describe the drawing that was kept.
    */
-  render(groups: readonly GroupSpec[], view: TableView, el: TableElements, actions: TableActions): Drawn {
+  render(groups: readonly GroupSpec[], given: TableView, el: TableElements, actions: TableActions): Drawn {
+    const view = withOpenLines(groups, given)
     const columns = view.bodyColumns ?? DEFAULT_BODY_COLUMNS
     // The move hint only where it adds no footer row (issue #108), so it never turns the help view compact by itself.
     const hint = moveHintFits(view.footer, columns)
@@ -77,7 +91,8 @@ export const TreeDataTable = {
     // rows of both. The help view has no view line: its footer draws the keys of the view line as dim Buttons (issue #200), so
     // a letter of it does not reach the prompt. Only `r` and `h` work, and the compact form is budgeted to the footer rows.
     // The full status area (issue #138) puts the selected-row line above the view line and the health line below it: all of it
-    // in the Box of the footer, so the dock pins it and the budget guard keeps it. The help view has none.
+    // in the Box of the footer, so the dock pins it and the budget guard keeps it. The quick view of the selected row (issue #276)
+    // adds its lines under the selected-row line, as many as `statusOf` says: the window budgets the same lines. The help view has none.
     const lines = statusOf(view)
     const viewLine = textView(view) ? undefined : view.viewLine
     const footer =
@@ -86,9 +101,9 @@ export const TreeDataTable = {
         : box(
             el,
             { flexDirection: 'column' },
-            ...(lines === undefined ? [] : [statusLineBox(el, lines.selected, columns)]),
+            ...(lines === undefined ? [] : lines.selected.map(line => statusLineBox(el, line, columns))),
             ...(viewLine === undefined ? [] : [viewLineBox(el, viewLine, columns, actions)]),
-            ...(lines === undefined ? [] : [statusLineBox(el, lines.health, columns)]),
+            ...(lines?.health === undefined ? [] : [statusLineBox(el, lines.health, columns)]),
             keys,
           )
     // The help view is one tree, so a short body turns it compact, with no gap, once for every attempt. The compact form

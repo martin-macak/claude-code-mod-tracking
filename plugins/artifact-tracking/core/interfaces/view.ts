@@ -231,12 +231,14 @@ export interface GroupSpec {
 /**
  * One line of the status area (issue #138): a dim label, then cells that the table joins with a dim dot. The table clips the line
  * to the width cell by cell, so it takes one row at every width. An empty label draws none. The tail is the last cell and keeps its
- * room: the cells before it are cut to leave it, so a narrow line loses a cell and not the tail.
+ * room: the cells before it are cut to leave it, so a narrow line loses a cell and not the tail. `indent` is the cells before the
+ * label: the lines of the quick view (issue #276) sit under the `Selected:` line. A cell with `clip: 'middle'` is cut in the middle.
  */
 export interface StatusLine {
   readonly label: string
   readonly cells: readonly Cell[]
   readonly tail?: Cell
+  readonly indent?: number
 }
 
 /** What the pane remembers of the person's view: the selected row and the rows the person opened. */
@@ -263,6 +265,18 @@ export interface HiddenState {
 export interface FilterState {
   readonly touchedOnly: boolean
 }
+
+/** The form of the bottom of the pane: the full status area from 18 body rows (issue #138), the compact bottom below. */
+export type StatusForm = 'compact' | 'full'
+
+/**
+ * Whether the quick view of the selected row shows, one flag for each form of the pane (issue #276, L1 of #275): the full form
+ * shows it by default, the compact form hides it. `e` flips the flag of the form the pane draws, so a resize between the dock and
+ * the inline pane does not turn the choice around. A session atom like `hidden` and `filters`: a close and a reopen of the pane keep
+ * it, `/clear` resets it, and it is never written to the config file or the store. The keys are the forms, so a third form is a
+ * flag here at once.
+ */
+export type QuickState = Readonly<Record<StatusForm, boolean>>
 
 /** What a tracker reads to draw. All reads, no writes: a render must not write (E8, E9). */
 export interface ViewContext<C = JsonObject, D = Json> {
@@ -306,7 +320,7 @@ export interface PaneKey {
   readonly owner: string
   /**
    * Where the Button of the key sits. Absent: the footer. `view`: the view line above the footer (issue #63, L3): `g`, `a`,
-   * `t` and `m` are there, so the pane footer does not grow a row. The help view has no view line: it lists the key and draws
+   * `t`, `p` (issue #199), `m` and `e` (issue #276) are there, so the pane footer does not grow a row. The help view has no view line: it lists the key and draws
    * its Button at the end of its footer, dim (issue #200, `footerKeys`). Only core sets it.
    * `preview`: the key line of the preview (issue #57, L2): `d` is there, and only a row whose tracker has a diff mode draws it.
    */

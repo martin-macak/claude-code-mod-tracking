@@ -1,7 +1,8 @@
 // The window planner of the pane (issue #109): which units of the pane are drawn in full when the body is shorter
 // than the tree. Pure: units, a line budget, the last first unit and the unit that must show in, a plan out.
 import { expect, test } from 'claude-code/testing'
-import { HINT, linesOf, planWindow, type Unit } from '../ux/tree-data-table/window'
+import { HEADER_ROWS, TITLE_ROWS } from '../ux/tree-data-table/shape'
+import { HINT, linesOf, listFloor, planWindow, type Unit } from '../ux/tree-data-table/window'
 
 /** `n` one-line row units in one section whose title and header take 2 lines. */
 const rows = (n: number, section = 0): Unit[] => Array.from({ length: n }, () => ({ section, lines: 1, rows: 1 }))
@@ -14,6 +15,16 @@ test('linesOf: the units, the title and header of each section, a gap between se
   expect(linesOf(units, chrome, 0, 5)).toBe(3 + 2 + 1 + 2 + 2) // 3 rows, 2 rows, two title+header, one gap
   expect(linesOf(units, chrome, 1, 3)).toBe(2 + 2 + HINT + HINT) // two rows of section 0, its chrome, a hint on each side
   expect(linesOf(units, chrome, 3, 5)).toBe(2 + 2 + HINT) // the end of the list: no hint below
+})
+
+test('listFloor: the header, the title of one group, the rows and a hint on each side, at the cost that linesOf gives a window', () => {
+  const list = rows(12)
+  const chrome = [TITLE_ROWS]
+  for (const n of [1, 2, 5]) {
+    // `n` rows in the middle of a list of 12: the lines of the window (title, rows, both hints) and the header of the table.
+    expect(listFloor(n), `${n} rows`).toBe(HEADER_ROWS + linesOf(list, chrome, 3, 3 + n))
+  }
+  expect(listFloor(5)).toBe(HEADER_ROWS + TITLE_ROWS + 5 + 2 * HINT)
 })
 
 test('a tree that fits is not windowed', () => {

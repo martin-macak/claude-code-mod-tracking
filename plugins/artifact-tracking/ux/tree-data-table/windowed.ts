@@ -12,7 +12,6 @@ import { normaliseCell } from '../text/cell-width'
 import { wrapRows } from '../text/wrap'
 import { GLYPH } from '../theme'
 import { box, button, text } from './el'
-import { footerRows } from './footer'
 import type { LaidGroup, LaidRow } from './layout'
 import {
   bareParts,
@@ -25,9 +24,8 @@ import {
   solving,
   tableHeader,
 } from './rows'
-import { DEFAULT_BODY_COLUMNS, GUTTER, HEADER_ROWS, ROW_GAP } from './shape'
-import { statusRows } from './status'
-import { viewLineRows } from './viewline'
+import { DEFAULT_BODY_COLUMNS, GUTTER, HEADER_ROWS, TITLE_ROWS } from './shape'
+import { bottomRows, statusRows } from './status'
 import { type Plan, planWindow, rowsIn, type Unit } from './window'
 
 type Kind = 'row' | 'more' | 'block'
@@ -49,7 +47,7 @@ const MORE = '▼'
 const LESS = '▲'
 
 /** The title takes one line of a group that has a row. A group with none holds its own lines. The header is the table's. */
-const CHROME = 1
+const CHROME = TITLE_ROWS
 
 function unitsOf(d: Draw, laid: readonly LaidGroup[]): Pick<Windowed, 'units' | 'solved'> & { chrome: number[] } {
   const units: Placed[] = []
@@ -82,18 +80,12 @@ export function windowOf(d: Draw, laid: readonly LaidGroup[]): Windowed | undefi
   const { view } = d
   if (view.bodyRows === undefined) return undefined
   const { units, chrome, solved } = unitsOf(d, laid)
-  // The footer takes the same rows with or without the move hint: the table draws it only where it adds no row.
   const header = solved === undefined ? 0 : HEADER_ROWS
-  const columns = view.bodyColumns ?? DEFAULT_BODY_COLUMNS
-  // The view line is in the Box of the footer: its rows come off the budget with the footer's (issue #63, L3). So do the two
-  // lines of the full status area (issue #138), one row each.
-  const budget =
-    view.bodyRows -
-    footerRows(view.footer, columns, false) -
-    viewLineRows(view.viewLine, columns) -
-    statusRows(view) -
-    ROW_GAP -
-    header
+  // The bottom is the footer, the view line and the gap above them (`bottomRows`; the footer takes the same rows with or without the
+  // move hint, as the table draws it only where it adds no row). The view line is in the Box of the footer, so its rows come off the
+  // budget with the footer's (issue #63, L3). So do the lines of the status area (issue #138): the selected-row line with the lines
+  // of the quick view (issue #276), and the health line.
+  const budget = view.bodyRows - bottomRows(view) - statusRows(view) - header
   const find = (pick: (u: Placed, s: LaidGroup) => boolean): number =>
     units.findIndex(u => {
       const s = laid[u.section]

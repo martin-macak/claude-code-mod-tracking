@@ -6,7 +6,17 @@
 // Design study of issue #63, sections 5.2 and 5.8; owner decisions of 2026-10-21.
 
 import type { CoreReason } from '../interfaces/reasons'
-import type { FilterState, GroupSpec, HiddenState, SectionSpec, StatusToken, TreeRow, ViewId } from '../interfaces/view'
+import type {
+  FilterState,
+  GroupSpec,
+  HiddenState,
+  QuickState,
+  SectionSpec,
+  StatusForm,
+  StatusToken,
+  TreeRow,
+  ViewId,
+} from '../interfaces/view'
 import { byLevel } from './levels'
 import { REASON_ORDER } from './reasons'
 import { countFailed } from './status'
@@ -34,6 +44,9 @@ export const flipShowAll = (cur: HiddenState): HiddenState => ({ ...cur, showAll
 
 /** `t`: the one flip of the touched-only filter. */
 export const flipTouched = (cur: FilterState): FilterState => ({ ...cur, touchedOnly: !cur.touchedOnly })
+
+/** `e` (issue #276): the flip of the quick-view flag of the form the pane draws. The flag of the other form stays as it is. */
+export const flipQuick = (cur: QuickState, form: StatusForm): QuickState => ({ ...cur, [form]: !cur[form] })
 
 /** What the view line says: the view, the filter, the rows it hid and the ended rows that wait for show-all, or that they show. */
 export interface ViewSummary {

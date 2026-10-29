@@ -111,4 +111,4 @@ The mod pins the global options (`--no-optional-locks`, `--literal-pathspecs`, `
 - A subagent's Bash call with an `agentId`.
 - `file` on a Linux host that has it, and `file` through the tool of the mod in a live session.
 - The rate of false positives for mentions of paths that are not Markdown.
-- The preview of a file on a Linux host, and an inline preview at 100x40 in a live session. (`head -c` through `ctx.tools.run` ran live on Claude Code 2.1.311, `e2e/features/pane.feature:63`: `v` on `/etc/hosts` shows `localhost`.)
+- The preview of a file on a Linux host, and an inline preview at 100x40 in a live session. (`head -c` through `ctx.tools.run` ran live on Claude Code 2.1.311, `e2e/features/pane.feature:67`: `v` on `/etc/hosts` shows `localhost`.)

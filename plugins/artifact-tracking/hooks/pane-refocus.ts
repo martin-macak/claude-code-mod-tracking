@@ -51,10 +51,10 @@ export const WAKE_SLACK_MS = 250
 /**
  * What a press can tell about a drawing: which view it shows (the rows, the help view, the plan view of issue #199 or the preview of
  * issue #57), the handle of each row it draws (by row id) and the keys of its Buttons outside the rows: the footer in drawing order,
- * then the view line (`g`, `a`, `t`, `p` and `m`, issues #63, #138 and #199). The help view and the plan view have no view line, and
- * their footers hold those five keys as dim Buttons (issue #200 for the help view, `planFooter` for the plan view). The preview has
- * none either: it has the Buttons of its key line instead. `keep` chooses the Button for its ring request from this alone. A press
- * whose drawing never came gets one from the state instead (`frameFromState`).
+ * then the view line (`g`, `a`, `t`, `p`, `m` and `e`, issues #63, #138, #199 and #276). The help view and the plan view have no view
+ * line, and their footers hold those six keys as dim Buttons (issue #200 for the help view, `planFooter` for the plan view). The
+ * preview has none either: it has the Buttons of its key line instead. `keep` chooses the Button for its ring request from this
+ * alone. A press whose drawing never came gets one from the state instead (`frameFromState`).
  *
  * `stops` is the key of every focus stop of the body in drawing order, the row handles and the `m<n>` Buttons (`Drawn.stops`).
  * The pause compares drawings by it, and `keep` chooses from none of it: the ring sits on a position among the Buttons, so an
@@ -174,8 +174,8 @@ export async function frameFromState(
   return {
     view: next.view,
     rows: row === null || handle === undefined ? new Map() : new Map([[row, handle]]),
-    // The view line holds `g`, `a`, `t`, `p` and `m` outside the footer, and a ring on one of them stays on it. A text view (the
-    // help view, the plan view) has no view line: its footer holds the five keys (issue #200, `planFooter`), so `footer` names them
+    // The view line holds `g`, `a`, `t`, `p`, `m` and `e` outside the footer, and a ring on one of them stays on it. A text view (the
+    // help view, the plan view) has no view line: its footer holds the six keys (issue #200, `planFooter`), so `footer` names them
     // there and a ring on one stays on it too.
     keys: [...footer.map(k => k.buttonKey), ...(text ? [] : viewButtonKeys(m.keys))],
     stops: [], // no pause follows the bound, so nothing compares this frame

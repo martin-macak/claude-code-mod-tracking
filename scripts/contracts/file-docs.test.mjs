@@ -278,6 +278,8 @@ const TREE_TABLE = read('../../docs/knowledge-base/claude-code-mod-architecture/
 const DIFF_KB = between(TREE_TABLE, '#### The diff mode (issue #254)', '### 5.6')
 const SIGNALS_DIFF = between(read(PAGE_PATH), '## What the diff reads', '## Not tested')
 const SCENARIOS = read('../../e2e/features/pane.feature').split('\n')
+/** The line of the scenario of `v` (the one of the preview): the docs cite it too, and it is no diff scenario. A line number is a pin, so it is found, not typed. */
+const PREVIEW_SCENARIO = SCENARIOS.findIndex(l => l.trim().startsWith('Scenario: v opens the preview')) + 1
 
 /** The fixed parts of a notice: a text, or a function of strings that gets a mark for each part that changes. A part of 12 characters or more counts. */
 const MARK = '\u0001'
@@ -363,7 +365,7 @@ test('the e2e scenarios that the docs cite are the diff scenarios: a line that s
   const docs = DIFF_KB + LIMITS
   const cited = [...docs.matchAll(/pane\.feature:(\d+)/g)].map(m => Number(m[1]))
   assert.ok(cited.length > 0, 'the docs cite the live scenarios')
-  for (const n of new Set(cited.filter(n => n !== 63))) {
+  for (const n of new Set(cited.filter(n => n !== PREVIEW_SCENARIO))) {
     assert.ok(
       SCENARIOS[n - 1]?.trim().startsWith('Scenario: d'),
       `pane.feature:${n} is a diff scenario: ${SCENARIOS[n - 1]}`,

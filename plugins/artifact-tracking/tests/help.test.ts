@@ -30,13 +30,13 @@ const PANE_KEYS = 'Pane keys (Tab, Shift+Tab, Up, Down move between rows)'
 const open: PaneKey = { id: 'open', key: 'o', label: 'open', scope: 'row', owner: 'github' }
 /**
  * The core keys that have a Button in the footer of a row with no preview: the keys the help view listed before the view line keys
- * `g`, `a` and `t` (issue #63, L3) and before `v` (issue #57, L2). The tests of the mechanics of the help view (how a line wraps,
- * how the compact form caps and counts) take this set, so their numbers stay about the mechanics. The tests that name the real keys
- * of the mod take `CORE_KEYS`.
+ * (`g`, `a` and `t` of issue #63, L3, then `p`, `m` and `e`) and before `v` (issue #57, L2). The tests of the mechanics of the help
+ * view (how a line wraps, how the compact form caps and counts) take this set, so their numbers stay about the mechanics. The tests
+ * that name the real keys of the mod take `CORE_KEYS`.
  */
 const FOOTER_KEYS = CORE_KEYS.filter(k => k.bar === undefined && k.id !== 'preview')
 // The fit tests of 96x11 take `HELP_FOOTER_ROWS` (the rows of the help footer in a 96-cell body: 2 since issue #200, which draws
-// `g`, `a`, `t`, `p` and `m` in it as dim Buttons) in place of a literal 1 row, so a key added to that footer that wraps it moves their
+// `g`, `a`, `t`, `p`, `m` and `e` in it as dim Buttons) in place of a literal 1 row, so a key added to that footer that wraps it moves their
 // budget and they fail: a literal 1 cannot see a footer that wraps (issue #265). A literal footer stays where the height of the
 // footer or of the body is the input of the test: `compactHelp` and the fallback for a body too short for any form, and the tests
 // that name a 1-row or a 2-row footer. The sweeps over the body height from 11 take `HELP_FOOTER_ROWS` too: a footer of F rows in a
@@ -102,9 +102,9 @@ test('helpModel leaves out a group with no keys', () => {
   expect(m.groups.map(g => g.title)).toEqual([PANE_KEYS])
 })
 
-// Issue #63, L3: `g`, `a` and `t` are core pane keys, and `p` since issue #199. The footer does not draw them (the view line does),
-// so the help view is where every key is listed: the person finds the view keys here.
-test('the help view lists g, a, t and p with the pane keys, and m with the row keys, before x and the digits', () => {
+// Issue #63, L3: `g`, `a` and `t` are core pane keys, and so are `p` (issue #199) and `e` (issue #276). The footer does not draw them
+// (the view line does), so the help view is where every key is listed: the person finds the view keys here.
+test('the help view lists g, a, t, p and e with the pane keys, and m with the row keys, before x and the digits', () => {
   const m = helpModel(CORE_KEYS, [], PATH, [])
   expect(m.groups[0]?.title).toBe(PANE_KEYS)
   expect(m.groups[0]?.keys.map(k => [k.key, k.label])).toEqual([
@@ -114,6 +114,7 @@ test('the help view lists g, a, t and p with the pane keys, and m with the row k
     ['a', 'show all'],
     ['t', 'touched'],
     ['p', 'clean plan'],
+    ['e', 'quick view'],
   ])
   // `v` opens the preview (issue #57, L2) and `d` is the diff mode of its key line (issue #254): the help lists both, in the order of the keys.
   expect(m.groups[1]?.keys.map(k => [k.key, k.label])).toEqual([
@@ -127,24 +128,25 @@ test('the help view lists g, a, t and p with the pane keys, and m with the row k
     ['d', 'diff'],
   ])
   expect(helpText(m)).toContain(
-    `${PANE_KEYS}\n  r  refresh\n  h  help\n  g  view\n  a  show all\n  t  touched\n  p  clean plan\nRow keys (act on the selected or marked rows)\n  m  mark\n  x  dismiss`,
+    `${PANE_KEYS}\n  r  refresh\n  h  help\n  g  view\n  a  show all\n  t  touched\n  p  clean plan\n  e  quick view\nRow keys (act on the selected or marked rows)\n  m  mark\n  x  dismiss`,
   )
 })
 
-test('with every key of the mod the compact form still fits the 100x40 inline body: g, a, t and p on the pane keys line, m with the row keys', () => {
+test('with every key of the mod the compact form still fits the 100x40 inline body: g, a, t, p and e on the pane keys line, m with the row keys', () => {
   const live = '/var/folders/sn/0_q8tr7x4vv44d69rbtyckwr0000gn/T/cc-tracker-config-SAq3DF/config.json' // 86 cells
   const github: readonly PaneKey[] = GITHUB_ROW_KEYS.map(k => ({ ...k, owner: 'github' }))
   const m = helpModel([...CORE_KEYS, ...github], [], live, [], '1.2.3')
   const form = compactForm(m, HELP_FOOTER_ROWS, 96, 11) as CompactForm
-  // Eight keys to a line: the pane keys (six since issue #199) take one line and the eight row keys one. The help footer takes two
-  // rows since issue #200 (the dim Buttons of g, a, t, p and m), so the body has one row fewer for the lines than the 1-row footer
-  // left. `v` of the preview (issue #57, L2) is the seventh row key and `d` of its diff mode (issue #254) the eighth: with seven to a
-  // line the eighth would take a second line, so the form takes eight and adds no row.
+  // Eight keys to a line (issues #199, #276 and #57): the seven pane keys take one line, drawn at the widths of their own keys (85
+  // cells), and the eight row keys one. The help footer takes two rows since issue #200 (the dim Buttons of g, a, t, p, m and e), so the
+  // body has one row fewer for the lines than the 1-row footer left. `v` of the preview (issue #57, L2) is the seventh row key and `d` of
+  // its diff mode (issue #254) the eighth: with seven to a line the eighth would take a second line, so the form takes eight and adds
+  // no row.
   expect(HELP_FOOTER_ROWS).toBe(2)
   expect(form).toEqual({ columns: 96, perLine: 8, problems: 0 })
   const lines = linesOf(renderHelp(EL, m, form))
   expect(lines[0]).toBe(PANE_KEYS)
-  expect(lines[1]).toBe('r  refresh  h  help  g  view  a  show all  t  touched  p  clean plan')
+  expect(lines[1]).toBe('r  refresh  h  help  g  view  a  show all  t  touched  p  clean plan  e  quick view')
   expect(lines[3]).toBe('m  mark  x  dismiss  1  high  2  normal  3  low  0  auto  v  preview  d  diff') // issue #138: m is the sixth row key
   expect(drawnRows(m, form) + HELP_FOOTER_ROWS).toBeLessThanOrEqual(11) // with the footer rows: the view fits the body
 })
@@ -153,11 +155,13 @@ test('with every key of the mod the compact form still fits the 100x40 inline bo
 // made a line of the body, and a sixth would take a second line of the row keys and push `Pane keys` out of the 11-row body of the
 // scenario of issue #105 (three problems, a config path on two rows, the keys of GitHub and of the questions). Issue #265: the
 // groups of GitHub and of the questions share one row, which wins a row back. Issue #200: the help footer takes two rows (the dim
-// Buttons of g, a, t, p and m), which takes a row. The shared row pays for it, and issue #199 adds `p  clean plan` as the sixth pane
+// Buttons of g, a, t, p, m and e), which takes a row. The shared row pays for it, and issue #199 adds `p  clean plan` as the sixth pane
 // key and relabels `t` to `touched` (owner decision Q5): the widest key is `p  clean plan`, six of them make a line of the body, the
 // pane keys take one line, and each group takes its columns as wide as its own widest key: eight keys to a line (`v` of the preview,
 // issue #57, L2, is the seventh and `d` of its diff mode, issue #254, the eighth) put the eight row keys on one line, and the body
 // holds 8 lines, the wrapped path and the 2-row footer. With `t  touched only` the case did not fit beside the footer of two rows.
+// Issue #276 adds `e  quick view` as the seventh pane key: seven columns of 13 cells do not fit a line of 96 cells, so the one-row rule
+// of `columnsOf` draws the pane keys on one line at their own widths (85 cells) and the case keeps its 11 of 11 rows.
 test('the compact form still fits the 11-row inline body with m, three problems and the keys of two trackers (issue #105)', () => {
   // 90 cells, as the path of the @inline-help scenario: `makeConfigDir` pads the folder name, so the path wraps onto two rows there.
   // The other tests of the file use the shorter path of `SAq3DF`, which wraps the same way.
@@ -177,14 +181,70 @@ test('the compact form still fits the 11-row inline body with m, three problems 
   expect(form).toEqual({ columns: 96, perLine: 8, problems: 0, merge: 96 }) // the problems are counted: `3 problems: /track help`
   expect(compactRows(m, form) + HELP_FOOTER_ROWS).toBeLessThanOrEqual(11)
   expect(drawnRows(m, form) + HELP_FOOTER_ROWS).toBeLessThanOrEqual(11)
+  // The one-row rule for the seven pane keys (issue #276) keeps the 11 rows: 11 of 11 with the 2-row footer, the same as with six
+  // pane keys. Without it the pane keys take a second line and the view needs a 12th row. A change that spends the row fails here,
+  // before the live `@inline-help` scenario.
+  expect(compactRows(m, form) + HELP_FOOTER_ROWS).toBe(11)
   const lines = linesOf(renderHelp(EL, m, form))
   expect(lines[0]).toBe(PANE_KEYS)
-  expect(lines[1]).toBe('r  refresh  h  help  g  view  a  show all  t  touched  p  clean plan') // the pane keys hold six to a line
+  expect(lines[1]).toBe('r  refresh  h  help  g  view  a  show all  t  touched  p  clean plan  e  quick view') // the pane keys hold seven to a line
   expect(lines.slice(3, 5)).toEqual([
     'm  mark  x  dismiss  1  high  2  normal  3  low  0  auto  v  preview  d  diff', // the row keys hold eight: one line
     'Pull requests  c  resolve  f  files  questions  y  copy', // the groups of the two trackers share one row
   ])
   expect(lines.at(-1)).toBe('3 problems: /track help')
+})
+
+// Issue #276, S3 of #275: `e` is the seventh pane key, after `p` of issue #199. Drawn in columns as wide as the widest key (`p  clean plan`
+// and `e  quick view`, 13 cells), seven keys do not fit a line of 96 cells (six do), and the pane keys would take a second line that the
+// 11-row body of 100x40 inline does not have. The form draws a group that its columns would split, and whose keys fit one row at their
+// own widths (85 cells), on that one row, when it asks for more keys to a line than the columns hold. This keeps every fit test of the
+// file as it was, with the dim view keys of #200 and the plan view of #199 beside it.
+test('a group that the columns would split takes one row at the widths of its own keys when they fit, and the columns otherwise', () => {
+  const m = helpModel(CORE_KEYS, [], PATH, [], '1.2.3')
+  const lines = (columns: number, perLine: number) => linesOf(renderHelp(EL, m, { columns, perLine, problems: 0 }))
+  const one = 'r  refresh  h  help  g  view  a  show all  t  touched  p  clean plan  e  quick view'
+  expect(lines(96, 7).slice(0, 3)).toEqual([PANE_KEYS, one, 'Row keys (act on the selected or marked rows)'])
+  // A form that asks for no more keys than the columns hold keeps the columns: six to a line at 96 cells, the seventh on a second line.
+  expect(lines(96, 6).slice(0, 3)).toEqual([
+    PANE_KEYS,
+    'r  refresh  h  help  g  view  a  show all  t  touched  p  clean plan',
+    'e  quick view',
+  ])
+  // A body narrower than the 85 cells of the keys keeps the columns: four to a line (the column is 15 cells), then three.
+  expect(lines(72, 7).slice(0, 4)).toEqual([
+    PANE_KEYS,
+    'r  refresh  h  help  g  view  a  show all',
+    't  touched  p  clean plan  e  quick view',
+    'Row keys (act on the selected or marked rows)',
+  ])
+  // A form that asks for three keys to a line gets three: the width does not limit it.
+  expect(lines(96, 3).slice(0, 3)).toEqual([
+    PANE_KEYS,
+    'r  refresh  h  help  g  view',
+    'a  show all  t  touched  p  clean plan',
+  ])
+  // The boundary is the 85 cells of the keys at their own widths: a body of 85 holds them on one row, one of 84 does not.
+  expect(lines(85, 7)[1]).toBe(one)
+  expect(lines(84, 7)[1]).toBe('r  refresh  h  help  g  view  a  show all  t  touched')
+  // The one row draws the keys as plain Texts. A Box with a fixed width around each key would cut it, and the text of the line would
+  // not show it: the tree does. The columns of a narrower body do have the Box, so the check can fail.
+  const tree = (columns: number) => JSON.stringify(renderHelp(EL, m, { columns, perLine: 7, problems: 0 }).slice(1, 2)) // the line of the pane keys
+  expect(tree(96)).not.toContain('"width"')
+  expect(tree(72)).toContain('"width":13')
+  // The rows that the form counts are the rows it draws, in either case.
+  for (const [columns, perLine] of [
+    [96, 7],
+    [96, 6],
+    [85, 7],
+    [84, 7],
+    [72, 7],
+    [96, 3],
+    [40, 3],
+  ] as const) {
+    const form = { columns, perLine, problems: 0 }
+    expect(compactRows(m, form), `${columns} ${perLine}`).toBe(drawnRows(m, form))
+  }
 })
 
 test('helpText prints the groups, the config path and the problems', () => {
@@ -430,7 +490,7 @@ test('with the github keys, the version and the live config path the compact for
   const live = '/var/folders/sn/0_q8tr7x4vv44d69rbtyckwr0000gn/T/cc-tracker-config-SAq3DF/config.json' // 86 cells
   const m = helpModel([...FOOTER_KEYS, ...GITHUB_KEYS], [], live, [], '1.2.3')
   expect(compactHelp(m, HELP_FOOTER_ROWS, 96, 11)).toBe(true)
-  // The help footer holds g, a, t, p and m as dim Buttons since issues #200 and #199, so it takes two rows at 96 cells, not one: the form has
+  // The help footer holds g, a, t, p, m and e as dim Buttons since issues #200, #199 and #276, so it takes two rows at 96 cells, not one: the form has
   // 9 rows and takes five keys to a line (the 1-row footer left 10 rows and three keys to a line).
   expect(HELP_FOOTER_ROWS).toBe(2)
   const form = compactForm(m, HELP_FOOTER_ROWS, 96, 11) as CompactForm
@@ -1014,26 +1074,30 @@ const startedMod = (path: string, list: readonly string[]): HelpModel =>
     '0.2.0',
   )
 
-// Issue #200: the help footer holds the keys of the view line as dim Buttons after `0` (`g`, `a`, `t`, `m`, and `p` since issue #199),
-// so it takes two rows at 96 cells.
+// Issue #200: the help footer holds the keys of the view line as dim Buttons after `0` (`g`, `a`, `t`, `m`, `p` since issue #199 and `e`
+// since issue #276), so it takes two rows at 96 cells.
 // The fit of the compact form with four groups, a wrapped path and problems is pinned with that footer.
-test('the help footer holds the five dim Buttons of the view line after 0, and takes two rows at 96 cells', () => {
-  expect(HELP_FOOTER.map(k => k.key)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'p', 'm'])
+test('the help footer holds the six dim Buttons of the view line after 0, and takes two rows at 96 cells', () => {
+  expect(HELP_FOOTER.map(k => k.key)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'p', 'm', 'e'])
   expect(HELP_FOOTER.slice(7).map(k => [k.buttonKey, k.enabled])).toEqual([
     ['view', false],
     ['show-all', false],
     ['touched', false],
     ['clean', false],
     ['mark', false],
+    ['quick', false],
   ])
   expect(HELP_FOOTER_ROWS).toBe(2)
 })
 
 // The README states these widths (the budget paragraph of the help view). A change to a label or to the hint rule that moves one
-// of them makes the README wrong, so this test fails with it.
-test('the help footer takes 1 row from 137 cells, 2 from 68, 3 from 48 and 4 from 35, as the README says', () => {
+// of them makes the README wrong, so this test fails with it. `e: quick view` (issue #276) moved them: with the 12 Buttons of `main` (`p`
+// of issue #199 without `e`) 1 row came from 137 cells, 2 from 68, 3 from 48 and 4 from 35, so a docked help view of 49 cells had a footer
+// of three rows. It has four now.
+test('the help footer takes 1 row from 152 cells, 2 from 77, 3 from 51 and 4 from 40, as the README says', () => {
   const rows = (cols: number) => footerRows(HELP_FOOTER, cols, moveHintFits(HELP_FOOTER, cols))
-  expect([137, 136, 68, 67, 48, 47, 35, 34].map(rows)).toEqual([1, 2, 2, 3, 3, 4, 4, 5])
+  expect([152, 151, 77, 76, 51, 50, 40, 39].map(rows)).toEqual([1, 2, 2, 3, 3, 4, 4, 5])
+  expect(rows(49)).toBe(4) // a docked pane of 49 cells
 })
 
 test('with a footer of two rows, four groups, an 86-cell path and 3 problems the compact form fits the 11-row body', () => {
@@ -1057,7 +1121,7 @@ test('with a footer of two rows the compact form puts the eight row keys on one 
   expect(form).toEqual({ columns: 96, perLine: 8, problems: 0, merge: 96 })
   expect(linesOf(renderHelp(EL, m, form))).toEqual([
     PANE_KEYS,
-    'r  refresh  h  help  g  view  a  show all  t  touched  p  clean plan',
+    'r  refresh  h  help  g  view  a  show all  t  touched  p  clean plan  e  quick view',
     'Row keys (act on the selected or marked rows)',
     'm  mark  x  dismiss  1  high  2  normal  3  low  0  auto  v  preview  d  diff',
     'Pull requests  c  resolve  f  files  questions  y  copy',

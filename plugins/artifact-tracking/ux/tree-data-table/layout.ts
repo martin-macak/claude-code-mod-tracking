@@ -59,13 +59,17 @@ export function handleOf(groups: readonly GroupSpec[], view: LayoutView, rowId: 
 /** A row as the key routing sees it. The one place that builds a `RowRef`: `findRow`, `laidRefs` and the drawing use it. */
 export const refOf = (row: TreeRow, group: string): RowRef => ({ id: row.id, owner: row.owner, group, can: row.can })
 
+/** The rows of laid groups as the key routing sees them, in drawing order. */
+export const refsOf = (laid: readonly LaidGroup[]): readonly RowRef[] =>
+  laid.flatMap(g => g.rows.map(r => refOf(r.row, g.spec.id)))
+
 /**
  * Every row that a full drawing holds (`layout` with no halving), as the key routing sees it, in drawing order. A row that a cap,
  * a filter or a closed parent leaves out is not here. The footer, the labels, the question and the press all read the marked
  * rows from this one list, so a label never counts rows that the press does not act on (issue #138).
  */
 export function laidRefs(groups: readonly GroupSpec[], view: LayoutView): readonly RowRef[] {
-  return layout(groups, view).flatMap(g => g.rows.map(r => refOf(r.row, g.spec.id)))
+  return refsOf(layout(groups, view))
 }
 
 /** The row with this id and the id of its group, drawn or not: a child of a closed row counts. */

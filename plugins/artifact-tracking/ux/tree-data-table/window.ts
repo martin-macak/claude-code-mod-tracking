@@ -2,7 +2,7 @@
 // owns one scroll window over the whole pane tree and gives the mod no sticky region, so a tall tree scrolls its title,
 // header and footer away (issue #109). The mod keeps the tree as tall as the body instead: it draws the units that fit
 // and every other row as a bare focus stop (windowed.ts). Pure.
-import { ROW_GAP } from './shape'
+import { HEADER_ROWS, ROW_GAP, TITLE_ROWS } from './shape'
 
 /** One thing the window moves over: a row with its detail lines, the "N more" row of a section, or a section with no row. */
 export interface Unit {
@@ -57,6 +57,25 @@ export function linesOf(units: readonly Unit[], chrome: readonly number[], a: nu
     lines += unit.lines
   }
   return lines + (a > 0 ? HINT : 0) + (b < units.length ? HINT : 0)
+}
+
+/**
+ * The lines a list needs to keep `rows` data rows in view: the header of the table, the title of one group, the rows, and a hint on
+ * each side (the selection in the middle of a list has hidden rows above and below). It is `linesOf` over `rows` one-line units with
+ * one unit hidden on each side, so the cost of a title and a hint is the one the window pays, not a copy of it. The quick view keeps
+ * this much room for the list (`quickRows` in status.ts). A second group in view costs a title and a gap more: not counted.
+ */
+export function listFloor(rows: number): number {
+  const unit: Unit = { section: 0, lines: 1, rows: 1 }
+  return (
+    HEADER_ROWS +
+    linesOf(
+      Array.from({ length: rows + 2 }, () => unit),
+      [TITLE_ROWS],
+      1,
+      rows + 1,
+    )
+  )
 }
 
 /**
