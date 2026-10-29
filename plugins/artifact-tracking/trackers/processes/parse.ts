@@ -10,6 +10,7 @@ import {
   stripWrappers,
   unmarkDollars,
 } from '../../core/lib/shell'
+import { nameOfId } from './probe'
 import type { ProcessRecord, ProcessState } from './types'
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v !== '' ? v : undefined)
@@ -114,6 +115,57 @@ function runOptions(args: readonly string[]): { detach: boolean; name?: string }
     i = c.next
   }
   return name !== undefined ? { detach, name } : { detach }
+}
+
+/**
+ * Text that the lone-command rule (`isLoneRun`) turns away, wherever it stands, in quotes or not: a list or a pipe (`;`, `&`, `|`,
+ * so `&&`, `||` and a trailing `&` too), a redirection of any kind (`<` and `>` also start a heredoc, a here-string, a descriptor
+ * copy and a process substitution), a backtick, and `$(`, `${` and `$'`. The rule reads the raw text and does not follow quotes, so
+ * the splitter and its limits are out of it. The cost, on purpose: `docker run -d x sh -c 'a; b'` and `-v "$(pwd)":/x` lose the mark.
+ */
+const NOT_LONE_TEXT = /[;&|<>`]|\$[({']/
+
+/**
+ * Does a newline in the text break the lone command? Every newline does, unless a backslash continues the line outside single
+ * quotes: bash drops a `\<newline>` pair between words and in double quotes, and the word keeps no newline. A `\\` is one backslash,
+ * so an even run of them before a newline leaves the newline in. In single quotes a backslash is a plain character, and the newline
+ * stays in the word. A newline in quotes is no separator, but it prints: Docker echoes an argument that it cannot parse as it
+ * stands, so `--memory "<newline><id><newline>"` and `--dns '\<newline><id>'` put the id of another container on a line of its own
+ * (Docker 29.9.2). So the scan follows the quotes, one pass, with the state of the open quote. It does not read comments: bash ends
+ * a comment at its newline even when a backslash stands before it, so `# x \<newline>echo` is two commands, and the count of
+ * segments in `isLoneRun` withholds it. White space at the start or the end of the call is no break.
+ */
+function hasLineBreak(command: string): boolean {
+  const text = command.trim()
+  let quote: string | undefined
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!
+    if (c === '\n') return true
+    if (c === '\\' && quote !== "'") {
+      i++ // the pair is one escape (or a continuation): a quote or a newline after the backslash is no quote and no break
+      continue
+    }
+    if (quote === undefined && (c === "'" || c === '"')) quote = c
+    else if (quote === c) quote = undefined
+  }
+  return false
+}
+
+/**
+ * Is the whole call one simple command, which is a detached `docker run` (issue #123, the ninth review round of PR 285)? Only then
+ * the one id line of the result can be the run's own, and the row may carry `ProcessRecord.containerRunAlone`.
+ * Bash can put any text, an id too, on a bare line of the tool result: a trace, the message of a builtin that failed on an operand,
+ * of a failed redirection or of a failed `${y?...}`, a wrapper. Each round of the review closed one such variant and found the next,
+ * and a list of commands that print nothing cannot be proven. So the rule is narrow, and anything else withholds the mark:
+ * - the call is one segment of the splitter, at the top level, and no wrapper stands before `docker` (`env`, `command`, `sudo`,
+ *   `time`, `nohup`, `!`, a leading `A=1`): `bare` is true when `stripLead` and `stripWrappers` took no word from the segment;
+ * - the text has no list, no pipe, no redirection and no substitution (`NOT_LONE_TEXT`) and no line break that a backslash does not
+ *   continue outside single quotes (`hasLineBreak`).
+ * The caller adds the last part: the segment is a `docker run -d`. A call that fails this still pairs its id (`containerIdExact`).
+ */
+function isLoneRun(command: string, segments: readonly Segment[], bare: boolean): boolean {
+  const one = segments.length === 1 && segments[0]!.scope === ''
+  return one && bare && !NOT_LONE_TEXT.test(command) && !hasLineBreak(command)
 }
 
 const COMPOSE_GLOBAL_VALUES = new Set([
@@ -409,8 +461,9 @@ export function parseBashProcesses(
       }),
     )
 
-  // `printed`: the standard output of the run reaches the tool result, so an id line can be its own (issue #231).
-  const runs: { name?: string; text: string; printed: boolean }[] = []
+  // `printed`: the standard output of the run reaches the tool result, so an id line can be its own (issue #231). `alone`: the
+  // whole call is this one `docker run -d` and nothing else (`isLoneRun`, issue #123).
+  const runs: { name?: string; text: string; printed: boolean; alone: boolean }[] = []
   const detached: Detached[] = []
   let lastBg: Detached | undefined
   const pids = pidLines(stdout)
@@ -437,7 +490,8 @@ export function parseBashProcesses(
     vars.set(scope, name, v === '' ? undefined : v)
   }
 
-  for (const seg of splitShell(command)) {
+  const segments = splitShell(command)
+  for (const seg of segments) {
     // A `&` ended a group, subshell or substitution right before this segment (`{ a; } & echo $!`). Like `done &`, that sends a
     // shell to the background: `$!` names it, and no row has its pid, so no job before it may take the next pid line. For
     // `sleep $(a) &`, `( sleep 3 ) &` and `( true; sleep 3 ) &` `$!` names the command itself, which has no row either (a limit):
@@ -510,6 +564,8 @@ export function parseBashProcesses(
           ...(o.name !== undefined ? { name: o.name } : {}),
           text: shortCmd(words.join(' ')),
           printed: keepsStdout(seg),
+          // `marked` is the end of `seg.marked`: a word that is missing in front of it is a wrapper or an assignment.
+          alone: isLoneRun(command, segments, marked.length === seg.marked.length),
         })
       continue
     }
@@ -564,7 +620,8 @@ export function parseBashProcesses(
   // An id line is the id of a run only when the run printed it (issue #231): `pairContainerIds` holds the rule. A paired row is
   // exact (`containerIdExact`). Left over: the limits that the KB page process-tracking-signals lists under "The id of a
   // container" (a run that failed or did not run, a trailing `&`, a function called with a redirection). The test "container
-  // id: known limits" pins them.
+  // id: known limits" pins them. A row whose call is one lone `docker run -d` also has `containerRunAlone` (issue #123): the one
+  // id line can only be the run's own then, so none of those limits applies (`isLoneRun` holds the rule).
   const paired = pairContainerIds(
     containerIds(stdout),
     runs.map(r => r.printed),
@@ -574,11 +631,17 @@ export function parseBashProcesses(
     rows.push({
       id: `docker:ctr:${run.name ?? containerId ?? run.text}`,
       kind: 'docker-container',
-      name: run.name ?? containerId?.slice(0, 12) ?? run.text,
+      name: run.name ?? (containerId !== undefined ? nameOfId(containerId) : undefined) ?? run.text,
       state: 'running',
       firstSeen: at,
       lastSeen: at,
-      ...(containerId !== undefined ? { containerId, containerIdExact: true as const } : {}),
+      ...(containerId !== undefined
+        ? {
+            containerId,
+            containerIdExact: true as const,
+            ...(run.alone ? { containerRunAlone: true as const } : {}),
+          }
+        : {}),
     })
   })
 

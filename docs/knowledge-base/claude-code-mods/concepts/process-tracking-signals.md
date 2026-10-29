@@ -524,9 +524,58 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   count says that a line came from another command, so no run takes an id. A run
   that does not print takes none, and it is left out of the count, so
   `docker run -d a > /dev/null; docker run -d b` pairs the one id line with `b`.
-  A paired row has `containerIdExact: true`. A new sighting of the same row id
-  replaces `containerId` and `containerIdExact`, also with none: the merge
-  `{ ...old, ...row }` kept the old id before. A row of an older build has no
+  A paired row has `containerIdExact: true`. It also has `containerRunAlone: true`
+  when the whole Bash call is this one `docker run -d` (issue #123, the lone
+  command, `isLoneRun` in `parse.ts`). Bash can put any text, an id too, on a
+  bare line of the tool result: a trace (`PS4` with `BASH_XTRACEFD=1` and
+  `set -x`), the message of a builtin that failed on an operand
+  (`[ 0 -eq $'\n<id>\n' ]`, `sleep`, `wait`), of a failed redirection
+  (`true < $'\n<id>\n'`, `: 2>&1 > $'\n<id>\n/absent'`) or of a failed
+  `${y?...}` on a line of assignments, a listing (`set`, `export -f`, `env`),
+  `cd -`, the report of `time`, and a substitution that the splitter cannot
+  read (bash 5.3.20 and 3.2.57 printed the id for each). Nine review rounds of
+  PR 285 closed one such variant each and found the next, because a list of
+  commands that print nothing cannot be proven. So the parser has one rule,
+  and anything else withholds the mark. The call is one simple command, one
+  segment of the splitter at the top level. `docker` is its head, with no
+  wrapper before `docker` (`env`, `command`, `sudo`, `time`, `nohup`, `!`) and
+  no leading assignment. The command is a detached `docker run` (also `docker
+  container run`). The text has no `;`, `&` or `|` (so no `&&`, no `||` and no trailing
+  `&`), no redirection of any kind (no `<` and no `>`: a heredoc, a
+  here-string, `2>&1`, a process substitution), no backtick, no `$(`, `${` and
+  `$'`, and no line break that a backslash does not continue outside single
+  quotes. The rule reads the raw text and follows no quote for these
+  characters, so such a character in quotes counts too. Only the line break
+  follows the quotes (see below).
+  The cost, on purpose: `cd /x && docker run -d --name api nginx`,
+  `env docker run -d --name api nginx`, `docker run -d --name api nginx > log`,
+  `-v "$(pwd)":/x` and `sh -c 'a; b'` lose the mark, and the plan says
+  `skipped: the run was not the whole Bash call, ...`. A newline that stands
+  in quotes is no separator, but it prints: Docker echoes an argument that it
+  cannot parse as it stands, so `docker run -d --name api --memory
+  "<newline><id><newline>" nginx` puts `<id>` on a line of its own in
+  `invalid argument` (Docker 29.9.2). A backslash continuation (an odd run of
+  backslashes before the newline, outside single quotes) cannot do that: bash
+  drops the pair, so a long `docker run -d \` over several lines keeps the
+  mark. In single quotes a backslash is a plain character, so `--dns
+  '\<newline><id>'` keeps both and prints `<id>` on a line of its own, and the
+  scan of the line break follows the quotes for that. One attack stays open
+  for a lone command,
+  and the pairing already shuts it. A run that fails on a taken name prints the
+  id of the container that holds the name, but inside a sentence
+  (`docker: Error response from daemon: Conflict. The container name "/api" is
+  already in use by container "<id>". You have to remove (or rename) that
+  container to be able to reuse that name.`), not as a bare line. The pairing
+  reads bare lines only, so the row takes no id, and a test pins the real
+  message. A known limit: a word that the shell fills from state outside the
+  call (a variable of the environment, a glob that matches a file with a
+  newline in its name) can still put a newline in an argument. It needs setup
+  in an earlier call. The mark is evidence, not proof, so the checks of the
+  inspect stay.
+  With the
+  mark the one id line can only be the run's own, so a row with this mark never comes from limit (1) to (4) below. A new sighting of
+  the same row id replaces `containerId`, `containerIdExact` and `containerRunAlone`,
+  also with none: the merge `{ ...old, ...row }` kept the old id before. A row of an older build has no
   mark. A row with no id and no `--name` is named by its command, so the probe
   finds no container and shows it `exited`.
   Limits, where a run still pairs and gets the mark. These are the same four in
@@ -540,9 +589,40 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   function body that the call runs with a redirection (`f() { docker run -d y; };
   f > log; docker ps -q --no-trunc`): the parser reads a function body as a live
   command, and the call of the function is not read as the run's. So the mark is
-  strong evidence, not proof. Code that acts on an id (the `docker rm` of #123)
-  trusts only a row with the mark, and must also check the container by its name
-  or label before it removes it.
+  strong evidence, not proof. Code that acts on an id trusts only a row with the
+  mark, and must also check the container before it removes it. The one such code
+  is `/track clean --yes containers` (issue #123, `trackers/processes/clean.ts`).
+  It plans a step for a docker-container row that is over, has the mark and is
+  not `containerGone`. A row that is over with no id, with an id that has no
+  mark, with no `--name` or with no `containerRunAlone` is listed as `skipped`
+  with its reason. Its apply runs one `docker container inspect --format` line of
+  the id and removes the container (`docker rm <id>`, no `-f`, no `-v`) only when
+  the id of the answer is the row's, the state is `exited`, no label key starts
+  with `org.testcontainers`, `Created` is not before `firstSeen` less 11 minutes
+  (no upper bound, because a `--name` row that runs again keeps its first
+  `firstSeen`), and the container has the `--name` of the row. A row with no `--name` is never a step: its name is the short id,
+  so there is no name to check, and its id can be another command's output (the limits above), so the window of `Created`
+  alone cannot tell the container of the run from one that someone else made a few minutes before. The plan lists it as
+  `skipped: no --name, so nothing proves that this run made the container`. A `--name` is no proof either:
+  Docker keeps names unique, so a run that failed on a taken name pairs with the id of the old container that
+  holds the name (limit 1), and that container passes the name check, the window of `Created` and every other
+  check of the inspect (review of PR 285, P1 again; a test reproduced the `docker rm`). So a row also needs
+  `containerRunAlone`, and the plan lists one without it as
+  `skipped: the run was not the whole Bash call, so nothing proves that this run made the container`.
+  `Created` has nanoseconds, so the
+  fraction is cut to 3 digits before `Date.parse`: the mod runs in the engine's
+  runtime, and only node was seen to read them. The probe marks a row
+  `containerGone` by id alone (no line of `docker ps -a --no-trunc` has the id,
+  even when a container of the same name is listed) and drops the mark when the id
+  is listed again. A listing that the runner cut (`isStdoutTruncated`) may lack the
+  line of a container that exists, so it proves no absence: it sets no mark and
+  leaves each mark as it was. A live sighting of the row drops it in the merge. The apply
+  also sets it after a `docker rm` and on `No such container`. A `--rm` container
+  leaves no `ps -a` line, and both `inspect` and `rm` then exit 1 with `Error
+  response from daemon: No such container: <id>` (study of #123, part 2, S1 L110
+  to L118). The README ("Containers") lists the limits: another Docker context, a
+  container started in a person's own shell, a `docker run -d` with no `--name`
+  (see above), anonymous volumes.
   Evidence (grade: *verified-kit* for the parser, not *verified-live*): the
   tests "container id: ..." in `process-parse.test.ts` (the glued forms, the bare
   `exec` and the limits among them), the marks in `shell.test.ts` ("splitShell

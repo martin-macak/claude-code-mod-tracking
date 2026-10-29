@@ -15,6 +15,9 @@ export const PROCESSES_SCHEMA = {
   // Issues #49 and #134: past this many rows, ended rows go, from the view and from the stored rows. The stored rows lose
   // the rows past their TTL first, then the oldest ended rows. A live row never goes.
   maxRows: int(200, 20, 2000),
+  // Issue #123: `/track clean --yes containers` removes an exited container that this run started (`docker rm`). Off by default:
+  // the plan then says `skipped: not enabled` and the apply runs no Docker call. The person turns it on.
+  destroyContainers: bool(false),
 } as const satisfies Schema
 
 export type ProcessesConfig = ConfigOf<typeof PROCESSES_SCHEMA>

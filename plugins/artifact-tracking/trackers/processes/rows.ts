@@ -34,6 +34,18 @@ export function withState(
 }
 
 /**
+ * The row with `containerGone` set or dropped (issue #123). The mark is `true` or absent, never `false`. The same object when
+ * nothing changes, so a caller that maps rows can tell that it wrote nothing.
+ */
+export function withContainerGone(r: ProcessRecord, gone: boolean): ProcessRecord {
+  if ((r.containerGone === true) === gone) return r
+  const next: ProcessRecord = { ...r }
+  if (gone) next.containerGone = true
+  else delete next.containerGone
+  return next
+}
+
+/**
  * A merged row with its `endedAt` set by the rule: a live row has none, and an ended row keeps the first time of its
  * ended copies (a copy that is live says nothing about the end). A row that is ended and has no time gets `now`, so a row
  * stored before `endedAt` existed can expire too.
@@ -85,13 +97,19 @@ export function overCap(rows: readonly ProcessRecord[], cap: ProcessCap, now: nu
 
 /**
  * The old row as a new sighting of it leaves it. The new sighting wins field by field, except that the container id and its
- * mark go together and come from the new row alone (issue #231): a sighting with no id, or with an id that no run proved,
- * must not keep the old row's proof. `{ ...old, ...row }` alone would keep the old id when the new row has none.
+ * marks (`containerIdExact`, `containerRunAlone`) go together and come from the new row alone (issue #231): a sighting with no id,
+ * or with an id that no run proved, must not keep the old row's proof. `{ ...old, ...row }` alone would keep the old id when the new row has none.
+ *
+ * `containerGone` (issue #123) is the old row's until a live sighting comes: a live row with no mark of its own is a new `docker
+ * run -d` of the same row id, which makes a new container, so the old mark goes. A new row that has the mark itself (a stored
+ * copy that the probe marked) keeps it, and an ended sighting says nothing new about the container.
  */
 function sighted(old: ProcessRecord, row: ProcessRecord, now: number): ProcessRecord {
   const next: ProcessRecord = { ...old, ...row, firstSeen: old.firstSeen, lastSeen: now }
   if (row.containerId === undefined) delete next.containerId
   if (row.containerIdExact === undefined) delete next.containerIdExact
+  if (row.containerRunAlone === undefined) delete next.containerRunAlone
+  if (row.containerGone === undefined && !ENDED_STATES.has(row.state)) delete next.containerGone
   return next
 }
 
@@ -99,7 +117,8 @@ function sighted(old: ProcessRecord, row: ProcessRecord, now: number): ProcessRe
  * Folds `added` into `cur` by id. A known row keeps its `firstSeen` and gets a new `lastSeen`. Oldest first. `endedAt`
  * follows `endedBy`: a live copy clears it, and two ended copies keep the first. `now` is the time of the merge: the new
  * `lastSeen`, and the `endedAt` of an ended row that has none. A caller with the engine clock passes it. The container id
- * and its mark (`containerIdExact`) are the new row's: a sighting that has none removes the old ones.
+ * and its mark (`containerIdExact`) are the new row's: a sighting that has none removes the old ones. A live sighting that has
+ * no `containerGone` of its own drops the old row's mark (`sighted`): a new `docker run -d` makes a new container.
  *
  * `cap` caps the rows the merge keeps (issue #134): the rows over `maxRows` leave, by `overCap`. A live row never leaves.
  * A caller that stores the result passes the config of the tracker. No `cap`: no cap.
@@ -206,5 +225,28 @@ export async function applyTaskUpdate(ctx: RowsCtx, u: TaskUpdate | null, at: nu
       return out
     })
     return { next: named.length > 0 ? next : rows, named }
+  })
+}
+
+/**
+ * Sets or drops `containerGone` of the row `rowId` while it still holds `containerId`: a `docker run -d --name api` that ran
+ * again since the caller read the row gave it another container, and the mark of the old one is not its. Writes nothing when
+ * no row changes.
+ */
+export async function applyContainerGone(
+  ctx: RowsCtx,
+  rowId: string,
+  containerId: string,
+  gone: boolean,
+): Promise<void> {
+  await setProcesses(ctx, rows => {
+    let changed = false
+    const next = rows.map(r => {
+      if (r.id !== rowId || r.containerId !== containerId) return r
+      const marked = withContainerGone(r, gone)
+      if (marked !== r) changed = true
+      return marked
+    })
+    return changed ? next : rows
   })
 }
