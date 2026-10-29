@@ -31,8 +31,9 @@ Feature: The strip under an answer says what the turn tracked
     And the tracker config file sets "global.ui.turnStrip" to "\"text\""
 
   # The duration line is the engine's, on the terminal. On the fullscreen layout the strip has an open Button and a click
-  # on it opens the turn in the pane, as the band key `9` does for the newest turn. The click is a synthetic SGR click (bytes
-  # sent with tmux), not a real mouse (design study S10).
+  # on it opens the turn in the pane and marks its entries, as the band key `9` does for the newest turn (issue #232). A second
+  # click on the same turn clears the marks: the band draws no Button while the pane is shown, the strip does. The click is a
+  # synthetic SGR click (bytes sent with tmux), not a real mouse (design study S10).
   Scenario: An interactive strip draws the counts and an open Button on the duration line, and a click on it opens the turn
     Given the tracker config file:
       """
@@ -44,6 +45,9 @@ Feature: The strip under an answer says what the turn tracked
     Then no permission dialog is open
     And the screen matches /^ {2}\+2 new open/
     And the screen does not show "+2 new · /track turn 1"
-    When I click the open Button of the strip until the pane selects the row showing "one.example"
+    When I click the open Button of the strip until the pane selects the row showing "one.example" and marks 2 rows
     Then the screen does not show "Keys go to the prompt."
     And the screen shows "Tab ↑↓ move"
+    And the screen shows "View: list · 2 marked"
+    When I click the open Button of the strip again until the pane marks no row
+    Then the screen does not show "2 marked"

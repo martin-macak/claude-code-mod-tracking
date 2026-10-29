@@ -12,6 +12,7 @@ import {
   planFooter,
   previewKeys,
   route,
+  takesMark,
   viewButtonKeys,
   viewKeys,
 } from '../core/infra/keys'
@@ -679,4 +680,17 @@ test('footerKeys with marked rows leaves the keys of a tracker on the selected r
   expect(keys.find(k => k.id === 'open')?.enabled).toBe(true)
   const help = footerKeys(reg, ref('a'), items, true, undefined, marked)
   expect(help.filter(k => k.enabled).map(k => k.key)).toEqual(['r', 'h'])
+})
+
+test('takesMark is the rule of m: a row that takes x, or a digit with an item owner; the press of a turn marks only such rows (issue #232)', () => {
+  expect(takesMark(ref('items'), items)).toBe(true)
+  expect(takesMark(ref('repos', { dismiss: true }), items)).toBe(true)
+  expect(takesMark(ref('repos', { priority: true }), items)).toBe(false) // a digit needs an item owner
+  expect(takesMark(ref('items', { priority: true }), items)).toBe(true)
+  expect(takesMark(ref('repos', {}), items)).toBe(false)
+  expect(takesMark(ref('repos', undefined), items)).toBe(false)
+  // route gives mark on exactly these rows, so m and the press cannot take different rows
+  for (const row of [ref('items'), ref('repos', { priority: true }), ref('repos', {}), ref('repos', undefined)]) {
+    expect(route(core('mark'), row, items).to === 'mark').toBe(takesMark(row, items))
+  }
 })

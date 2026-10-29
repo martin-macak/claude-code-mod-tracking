@@ -34,10 +34,11 @@ export interface TurnPart {
   /** `+3 new · 1 seen again`. */
   readonly text: string
   /**
-   * The press: open `/track` with the first entry of the turn selected, and run the refresh of `/track`. It returns its
+   * The press: open `/track` with the first entry of the turn selected, mark every listed entry of the turn that `m` can mark
+   * (issue #232; a second press on the same turn clears the marks), and run the refresh of `/track`. It returns its
    * work, so the engine keeps the press open while the work runs: a pane that a press asks for is placed at any width, one
    * that nothing asked for needs 144 columns. Absent: the words show and no Button is drawn. A band with a Button is a focus
-   * target of `ctrl+x Tab`, which then stops there before it reaches the pane, so the Button stays out while the pane is open.
+   * target of `ctrl+x Tab`, which then stops there before it reaches the pane, so the Button stays out while the pane is shown.
    */
   press?(): void | Promise<void>
 }
