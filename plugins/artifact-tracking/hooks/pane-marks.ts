@@ -1,6 +1,7 @@
 // The write of the row marks (issue #138): this module owns the `marks` atom. `m` toggles a row through `writeMarks` and a bulk
-// action clears the marks through it. It is also the seam for marking a whole turn: the band press of #69 (issue #232) will set
-// the marks to the entries of the turn through `writeMarks`, and no other code needs to learn how the marks are stored.
+// action clears the marks through it. It is also the seam for marking a whole turn: the band press of #69 and the open Button of a
+// strip (issue #232, `pane-turn.ts`) set the marks to the entries of the turn through `writeMarks`, and no other code needs to learn
+// how the marks are stored.
 // `writeMarks` is guarded by the press. `clearMarks` is not, and it is the only write that is not: the closing of the pane
 // bumps the closing count first, so a press token would be stale for it, and the closing is what ends the marks anyway.
 // PaneSession calls them; nothing here touches the engine but the `marks` state port.

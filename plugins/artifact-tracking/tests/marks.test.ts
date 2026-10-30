@@ -2,7 +2,16 @@
 import { expect, test } from 'claude-code/testing'
 import { CORE_KEYS } from '../core/infra/keys'
 import type { FooterKey, SectionSpec, TreeRow } from '../core/interfaces/view'
-import { dismissQuestion, markedSummary, pruned, relabelDismiss, rowIdsOf, sameIds, toggled } from '../core/lib/marks'
+import {
+  dismissQuestion,
+  markedSummary,
+  pruned,
+  relabelDismiss,
+  rowIdsOf,
+  sameIds,
+  toggled,
+  turnMarked,
+} from '../core/lib/marks'
 import { row, section } from './fixtures/sections'
 
 test('toggled adds an id that is not marked and removes one that is, and leaves the list it got alone', () => {
@@ -77,4 +86,36 @@ test('relabelDismiss follows the confirm flag of a key, not its id', () => {
   expect(labelOf(relabelDismiss([asks], 2, false), 'sweep')).toBe('sweep 2')
   expect(labelOf(relabelDismiss([asks], 2, true), 'sweep')).toBe('confirm 2')
   expect(relabelDismiss([plain], 2, false)).toEqual([plain])
+})
+
+/** What the press of a turn knows beside the marks: the rows that the pane counts, and whether the last press named this turn. */
+const pane = (laid: readonly string[], sameTurn: boolean) => ({ laid: new Set(laid), sameTurn })
+
+test('turnMarked sets the marks to the rows of the turn, once each in the order given, and clears them when the marks that the pane counts are those rows again on the same turn (issue #232)', () => {
+  expect(turnMarked([], ['a', 'b'], pane(['a', 'b'], false))).toEqual(['a', 'b'])
+  expect(turnMarked(['x'], ['a', 'b'], pane(['a', 'b', 'x'], true))).toEqual(['a', 'b']) // an older mark of another row goes
+  expect(turnMarked(['b', 'a'], ['a', 'b'], pane(['a', 'b'], true))).toEqual([]) // the same rows in another order: a second press on the same turn
+  expect(turnMarked(['a', 'b', 'x'], ['a', 'b'], pane(['a', 'b', 'x'], true))).toEqual(['a', 'b']) // one more counted mark: not the same, so it sets
+  expect(turnMarked([], ['a', 'a', 'b'], pane(['a', 'b'], false))).toEqual(['a', 'b'])
+  const cur = ['x']
+  turnMarked(cur, ['a'], pane(['a', 'x'], false))
+  expect(cur).toEqual(['x'])
+})
+
+test('turnMarked sets and never clears on a turn that the last press did not name, although the marks are its rows (issue #232)', () => {
+  // Turn 2 saw again what turn 1 added: the first press on turn 2 finds the rows of turn 2 marked already, and still sets.
+  expect(turnMarked(['a'], ['a'], pane(['a'], false))).toEqual(['a'])
+  expect(turnMarked(['a'], ['a'], pane(['a'], true))).toEqual([]) // the second press on that turn clears
+})
+
+test('turnMarked counts only the marks that the pane counts: a mark of a hidden row does not block the clear (issue #232)', () => {
+  expect(turnMarked(['a', 'b'], ['a'], pane(['a'], true))).toEqual([]) // b hid since the first press
+  expect(turnMarked(['a', 'x'], ['a'], pane(['a', 'x'], true))).toEqual(['a']) // x is counted: a mark that m added since
+  expect(turnMarked(['a', 'b'], ['a'], pane(['a'], false))).toEqual(['a']) // another turn: sets, and the hidden mark goes
+})
+
+test('turnMarked with no row to mark gives no marks: the press of a turn that the pane lists nothing of drops the older marks (issue #232)', () => {
+  expect(turnMarked(['x'], [], pane(['x'], false))).toEqual([])
+  expect(turnMarked(['x'], [], pane(['x'], true))).toEqual([])
+  expect(turnMarked([], [], pane([], true))).toEqual([])
 })

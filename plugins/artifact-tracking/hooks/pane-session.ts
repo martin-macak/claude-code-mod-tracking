@@ -53,7 +53,7 @@ import { BulkQuestion } from './pane-question'
 import { WorkQueue } from './pane-queue'
 import { type Frame, frameFromState, type Press, Refocus, unlessClosed, type ViewKind } from './pane-refocus'
 import { helpOf, type PaneHost, paneGroups, paneModel, problemCount, shownOf } from './pane-text'
-import { openTurn, type TurnPaneHost } from './pane-turn'
+import { type MarkedTurn, openTurn, type TurnPaneHost } from './pane-turn'
 
 export { helpOf, helpTextOf, listText, type PaneHost, TEXT_VIEW, turnLabels } from './pane-text'
 
@@ -95,6 +95,17 @@ export class PaneSession {
   /** The `selected` atom as the last drawing read it, and the row that drawing treated as selected (issue #49). */
   private chosen: { readonly atom: string | null; readonly id: string | null } | undefined
   private readonly refocus = new Refocus()
+  /**
+   * The turn that the last press of a turn set the marks to (issue #232): a press on that turn again clears the marks, a press on
+   * another turn sets them, though the other turn holds the same rows. `closed` forgets it, as the closing clears the marks.
+   */
+  private pressedTurn: number | undefined
+  private readonly markedTurn: MarkedTurn = {
+    get: () => this.pressedTurn,
+    set: ord => {
+      this.pressedTurn = ord
+    },
+  }
   private readonly work = new WorkQueue()
   /** The drawings so far. A drawing takes the next number when it reads the question, and its presses carry it (issue #138). */
   private drawing = 0
@@ -396,6 +407,7 @@ export class PaneSession {
   /** The pane closed: no selection, no help view, no plan view, no preview, no marks, no question, no refocus and no window place left over. Each write stands alone: one may fail. */
   async closed(p: Ports): Promise<void> {
     this.closings++
+    this.pressedTurn = undefined
     this.preview.closed() // the content of a preview never outlives the pane
     this.refocus.clear()
     this.top = 0
@@ -445,8 +457,9 @@ export class PaneSession {
   }
 
   /**
-   * The band Button `9: open` (issue #69): opens the pane with the keys and selects the first entry of the newest turn that
-   * tracked anything. The open Button of a strip names its turn (`ord`, P2). It stands outside the work chain: the press does
+   * The band Button `9: open` (issue #69): opens the pane with the keys, selects the first entry of the newest turn that
+   * tracked anything and marks every listed entry that `m` can mark (issue #232; a second press on the same turn clears the marks).
+   * The open Button of a strip names its turn (`ord`, P2). It stands outside the work chain: the press does
    * not read `selected` after a write of another press. Its token is made now, before any wait, and says `keys: false`: the
    * band and the strip are drawn while the pane is closed or beside it, and `ui.open` grants the keys itself.
    * A preview that shows (issue #57, L2) goes first: the row of the turn is in the list, so the press leaves the preview (`PanePreview.leave`)
@@ -455,7 +468,7 @@ export class PaneSession {
   async openTurn(p: Ports, m: TurnPaneHost, ord?: number): Promise<void> {
     const press = this.pressOf(false)
     await this.preview.leave(p)
-    return openTurn(p, m, this.refocus, press, ord)
+    return openTurn(p, m, this.refocus, press, this.markedTurn, ord)
   }
 
   /** Resolves when every Button press so far has finished. For tests and for a caller that must not race the work. */
