@@ -105,3 +105,22 @@ test('Tmux resize throws when tmux refuses the size, and the old size stays', { 
   assert.throws(() => tmux.resize(0, 40), /tmux/)
   assert.deepEqual(tmux.size(), { cols: 80, rows: 20 })
 })
+
+test('Tmux buffer is undefined before any write, and holds an OSC 52 write once the server takes it', {
+  skip,
+}, async t => {
+  const tmux = await shell('buffer')
+  t.after(() => tmux.kill())
+  assert.equal(tmux.buffer(), undefined)
+  tmux.takeClipboardWrites()
+  // base64 of "copied-by-osc52"
+  tmux.respawn("printf '\\033]52;c;Y29waWVkLWJ5LW9zYzUy\\a'; sleep 5")
+  await waitUntil(() => tmux.buffer(), { timeoutMs: 5000, what: 'the tmux buffer' })
+  assert.equal(tmux.buffer(), 'copied-by-osc52')
+})
+
+test('Tmux buffer throws when the server is gone, instead of reporting an empty buffer', { skip }, async () => {
+  const tmux = await shell('buffer-dead')
+  tmux.kill()
+  assert.throws(() => tmux.buffer())
+})

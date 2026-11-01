@@ -13,6 +13,7 @@ import {
   World,
 } from '@cucumber/cucumber'
 import { claimBudgetMs, claimScenario } from './claim-scenario.ts'
+import { type ClipboardGuard, pasteboardStamp, withClipboardGuard, writeClipboardGuard } from './clipboard-guard.ts'
 import { CLONE_NAME, type Config, loadConfig, PLUGIN_DIR, REPO_ROOT } from './config.ts'
 import { CONFIG_FILE, makeConfigDir, pathWidthRefusal } from './config-dir.ts'
 import { type CopyProbe, writeCopyProbe } from './copy-probe.ts'
@@ -80,6 +81,11 @@ export class DemoWorld extends World {
   debugLog: string | undefined
   /** The second repo of the scenario (issue #195, `fakeForeignRepo`). Absent: the scenario has none. */
   foreignRepo: { dir: string; readme: string; bare: string } | undefined
+  /** The shims and the environment that keep the clipboard of the machine out of the run (`guardClipboard`). */
+  clipboardGuard: ClipboardGuard | undefined
+  /** The pasteboard counter before the run (macOS), or undefined. */
+  clipboardStampBefore: number | undefined
+  private tempDirs: string[] = []
   private foreignDir = ''
   /** Every probe plugin of the scenario: its folder (removed at the end) and its plugin folder (loaded by the launch). */
   private probes: { dir: string; pluginDir: string }[] = []
@@ -178,6 +184,23 @@ export class DemoWorld extends World {
   }
 
   /**
+   * Guards the clipboard of the machine and lets the engine take its own routes to a clipboard (support/clipboard-guard.ts):
+   * the tmux server of the scenario keeps an OSC 52 write, and the clipboard tools and the native addon cannot reach the
+   * clipboard of the person. Before the session starts: the environment of a running session cannot change.
+   */
+  guardClipboard(): void {
+    if (this.launched) throw new Error('clipboard guard: install it before the step that starts the session')
+    if (this.clipboardGuard !== undefined) return
+    if (this.config.record)
+      throw new Error('clipboard guard: a recording attaches a tmux client, which would write the clipboard')
+    const dir = mkdtempSync(join(tmpdir(), 'cc-clipboard-guard-'))
+    this.tempDirs.push(dir)
+    this.clipboardGuard = writeClipboardGuard(dir)
+    this.clipboardStampBefore = pasteboardStamp()
+    this.tmux.takeClipboardWrites()
+  }
+
+  /**
    * Adds a probe plugin to the next launch that denies the `clock.after` of `ms` and passes every other delay, and counts what
    * it refused (issue #193). Before the session starts: the plugins of a running session cannot change. The scenario removes it
    * at the end. A scenario has one refuser: a second step with another delay throws, a second step with the same delay
@@ -247,6 +270,11 @@ export class DemoWorld extends World {
     this.configDir = next
   }
 
+  /** The environment of the session, with the clipboard guard on top when the scenario has one. */
+  private guardedEnv(env: Record<string, string>): Record<string, string> {
+    return this.clipboardGuard ? withClipboardGuard(this.clipboardGuard, env) : env
+  }
+
   async launch(prompt?: string, tools?: readonly string[]): Promise<void> {
     this.launched = true
     this.tl.phase('cut')
@@ -263,8 +291,10 @@ export class DemoWorld extends World {
         ...(this.permissionMode === undefined ? {} : { permissionMode: this.permissionMode }),
         env: {
           CLAUDE_TRACKER_CONFIG_DIR: this.configDir,
-          ...(this.fakeGh ? fakeGhEnv(this.fakeGhFiles) : {}),
-          ...(this.fakeApi ? fakeApiEnv(this.fakeApi.url, this.fakeHome) : {}),
+          ...this.guardedEnv({
+            ...(this.fakeGh ? fakeGhEnv(this.fakeGhFiles) : {}),
+            ...(this.fakeApi ? fakeApiEnv(this.fakeApi.url, this.fakeHome) : {}),
+          }),
         },
         ...(this.fakeApi ? { unset: PARENT_SESSION_VARS } : {}),
       },
@@ -325,6 +355,7 @@ export class DemoWorld extends World {
         rmSync(this.configDir, { recursive: true, force: true })
         if (this.fakeHome !== '') rmSync(this.fakeHome, { recursive: true, force: true })
         for (const probe of this.probes) rmSync(probe.dir, { recursive: true, force: true })
+        for (const dir of this.tempDirs) rmSync(dir, { recursive: true, force: true })
         if (this.foreignDir !== '') rmSync(this.foreignDir, { recursive: true, force: true })
       }
       await this.fakeApi?.close()
