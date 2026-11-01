@@ -1,0 +1,247 @@
+
+## H1-H3: claude -p "/p196 qa" (json, text, stream-json)
+L1 #1 session.start {"surface":null,"isInteractive":false,"surfaces":[]}
+L2 #2 command.run {"command":"p196","args":"qa","origin":{"kind":"sdk"},"presentation":{"isFullscreen":false,"columns":80},"surfaces":[]}
+L3 #3 command.out {"command":"p196","text":"STUB196T: the Q&A shows above, on screen only"}
+L4 #4 append {"door":"command","origin":{"kind":"unclassified"},"type":"user","role":"user","uuid":"bf6e91cf-967b-453c-9164-0061913e16fa","text":"<local-command-caveat>The command below was run directly in Claude Code, not sent to you as a request, and its output…
+L5 #5 append {"door":"command","origin":{"kind":"unclassified"},"type":"user","role":"user","uuid":"74bc36a8-8a83-4bf1-95bd-0ef9ba8987f9","text":"<command-name>/p196</command-name>\n            <command-message>p196</command-message>\n            <command-args>qa…
+L6 #6 append {"door":"command","origin":{"kind":"engine"},"name":"local_command","type":"system","role":"user","uuid":"57f2784a-f3c7-4eb9-add1-7d96d94ede0e","text":"<local-command-stdout>p196-probe: STUB196T: the Q&A shows above, on screen only</local-command-std…
+L7 $ run.sh -p "/p196 qa" --output-format json   ->  "result":"p196-probe: STUB196T: the Q&A shows above, on screen only","local_command":"custom","num_turns":0
+L8 $ run.sh -p "/p196 qa" --output-format text   ->  p196-probe: STUB196T: the Q&A shows above, on screen only
+L9 stream-json assistant model=<synthetic> content=[{"type":"text","text":"p196-probe: STUB196T: the Q&A shows above, on screen only"}]
+L10 stream-json result="p196-probe: STUB196T: the Q&A shows above, on screen only" num_turns=0
+L11 (no render.CommandOutput line in any headless event log: grep count 0)
+
+## H5: claude -p --continue after the stub run: the next request (run again at the final review)
+L12 req-001 messages=2 markers=STUB196T local-command-stdout=["p196-probe: STUB196T: the Q&A shows above, on screen only"]
+
+## H6: the surface-aware variant p196s, headless: whole text printed, then --continue (run again at the final review)
+L13 $ run.sh -p "/p196s qa" --output-format text  ->  p196-probe: # QA196S-FULL-MARKER questions and answers (args="qa") ... > Notes: SECRET196 typed note ... QA196S-FULL-END
+L14 req-002 messages=2 markers=QA196S-FULL,SECRET196 local-command-stdout=["p196-probe: # QA196S-FULL-MARKER questions and answers (args=\\\"qa\\\")\\n"]
+
+## T1: interactive, main screen (CLAUDE_CODE_NO_FLICKER=0), tmux 150x60, fresh session
+L15 #1 session.start {"surface":"terminal","isInteractive":true,"surfaces":["terminal"]}
+L16 #2 command.run {"command":"p196","args":"qa","origin":{"kind":"composer"},"presentation":{"isFullscreen":false,"columns":150},"surfaces":["terminal"]}
+L17 #3 command.out {"command":"p196","text":"STUB196T: the Q&A shows above, on screen only"}
+L18 #4 append {"door":"command","origin":{"kind":"engine"},"name":"local_command","type":"system","role":"user","uuid":"46f3f012-04f6-4429-953e-9df6eab8b251","text":"<command-name>/p196</command-name>\n            <command-message>p196</command-message>\n         …
+L19 #5 append {"door":"command","origin":{"kind":"engine"},"name":"local_command","type":"system","role":"user","uuid":"43b87513-e5eb-43b2-bcd0-f358e1593bdb","text":"<local-command-stdout>p196-probe: STUB196T: the Q&A shows above, on screen only</local-command-std…
+L20 #6 render.CommandOutput {"requestId":"43b87513-e5eb-43b2-bcd0-f358e1593bdb","surface":"terminal","isFullscreen":false,"command":"p196","args":"qa","text":"p196-probe: STUB196T: the Q&A shows above, on screen only","isErrored":false}
+L21 #7 render.CommandOutput.out {"requestId":"43b87513-e5eb-43b2-bcd0-f358e1593bdb","type":"engine"}
+L22 #8 command.run {"command":"p196r","args":"qa 3","origin":{"kind":"composer"},"presentation":{"isFullscreen":false,"columns":150},"surfaces":["terminal"]}
+L23 #9 command.out {"command":"p196r","text":"STUB196R: the Q&A shows above, on screen only"}
+L24 #10 append {"door":"command","origin":{"kind":"engine"},"name":"local_command","type":"system","role":"user","uuid":"d32d47c5-e9db-4a02-9082-8cb874bffd89","text":"<command-name>/p196r</command-name>\n            <command-message>p196r</command-message>\n      …
+L25 #11 append {"door":"command","origin":{"kind":"engine"},"name":"local_command","type":"system","role":"user","uuid":"e820b37e-22e2-4e44-9da3-110cdd761b1e","text":"<local-command-stdout>p196-probe: STUB196R: the Q&A shows above, on screen only</local-command-st…
+L26 #12 render.CommandOutput {"requestId":"e820b37e-22e2-4e44-9da3-110cdd761b1e","surface":"terminal","isFullscreen":false,"command":"p196r","args":"qa 3","text":"p196-probe: STUB196R: the Q&A shows above, on screen only","isErrored":false}
+L27 #13 command.run {"command":"p196c","args":"","origin":{"kind":"composer"},"presentation":{"isFullscreen":false,"columns":150},"surfaces":["terminal"]}
+L28 #14 command.out {"command":"p196c","text":"# CTRL196-MARKER control reply, no rewrite"}
+L29 #15 append {"door":"command","origin":{"kind":"engine"},"name":"local_command","type":"system","role":"user","uuid":"072836db-1dc7-47c2-b246-dbb48ef8feb1","text":"<command-name>/p196c</command-name>\n            <command-message>p196c</command-message>\n      …
+L30 #16 append {"door":"command","origin":{"kind":"engine"},"name":"local_command","type":"system","role":"user","uuid":"1c4677da-abf6-45eb-b9c6-29eabcfa4b65","text":"<local-command-stdout>p196-probe: # CTRL196-MARKER control reply, no rewrite</local-command-stdou…
+L31 #17 render.CommandOutput {"requestId":"1c4677da-abf6-45eb-b9c6-29eabcfa4b65","surface":"terminal","isFullscreen":false,"command":"p196c","args":"","text":"p196-probe: # CTRL196-MARKER control reply, no rewrite","isErrored":false}
+L32 #18 command.run {"command":"p196e","args":"","origin":{"kind":"composer"},"presentation":{"isFullscreen":false,"columns":150},"surfaces":["terminal"]}
+L33 #19 command.out {"command":"p196e","text":""}
+L34 #20 append {"door":"command","origin":{"kind":"engine"},"name":"local_command","type":"system","role":"user","uuid":"454aebae-45ed-42f0-b49c-e9d6cb9061f7","text":"<command-name>/p196e</command-name>\n            <command-message>p196e</command-message>\n      …
+L35 #21 append {"door":"command","origin":{"kind":"engine"},"name":"local_command","type":"system","role":"user","uuid":"3c7f8182-46ae-407f-b813-fc874035590f","text":"<local-command-stdout>p196-probe: </local-command-stdout>"}
+L36 #22 render.CommandOutput {"requestId":"3c7f8182-46ae-407f-b813-fc874035590f","surface":"terminal","isFullscreen":false,"command":"p196e","args":"","text":"p196-probe: ","isErrored":false}
+L37 #23 render.CommandOutput.out {"requestId":"3c7f8182-46ae-407f-b813-fc874035590f","type":"engine"}
+L38 #24 command.run {"command":"p196n","args":"","origin":{"kind":"composer"},"presentation":{"isFullscreen":false,"columns":150},"surfaces":["terminal"]}
+L39 #25 command.out {"command":"p196n","text":"undefined"}
+L40 #26 command.run {"command":"p196s","args":"qa","origin":{"kind":"composer"},"presentation":{"isFullscreen":false,"columns":150},"surfaces":["terminal"]}
+L41 #27 command.out {"command":"p196s","text":"STUB196S: the Q&A shows above, on screen only"}
+L42 #28 append {"door":"command","origin":{"kind":"engine"},"name":"local_command","type":"system","role":"user","uuid":"09df4268-f29a-46d0-bccd-a1a5e74d6876","text":"<command-name>/p196s</command-name>\n            <command-message>p196s</command-message>\n      …
+L43 #29 append {"door":"command","origin":{"kind":"engine"},"name":"local_command","type":"system","role":"user","uuid":"61d31c16-bb73-4d0a-be11-298cee6cbe5c","text":"<local-command-stdout>p196-probe: STUB196S: the Q&A shows above, on screen only</local-command-st…
+L44 #30 render.CommandOutput {"requestId":"61d31c16-bb73-4d0a-be11-298cee6cbe5c","surface":"terminal","isFullscreen":false,"command":"p196s","args":"qa","text":"p196-probe: STUB196S: the Q&A shows above, on screen only","isErrored":false}
+L45 #31 render.CommandOutput.out {"requestId":"61d31c16-bb73-4d0a-be11-298cee6cbe5c","type":"engine"}
+L46 --- screen after /p196 qa (caps/T1-main-p196.txt)
+L47 ❯ /p196 qa
+L48   ⎿  QA196T-MARKER questions and answers (args="qa")
+L49      Q1 · turn 1 · answered
+L50      Storage
+L51      Where should the cache live?
+L52      - [x] State only: keep it in $.state
+L53      - [ ] Store: persist it with $.store
+L54      ▎ Notes: SECRET196 typed note
+L55      - filler line 1 of the long export
+L56      - filler line 2 of the long export
+L57      - filler line 3 of the long export
+L58      - filler line 4 of the long export
+L59      - filler line 5 of the long export
+L60      - filler line 6 of the long export
+L61      - filler line 7 of the long export
+L62      - filler line 8 of the long export
+L63      - filler line 9 of the long export
+L64      - filler line 10 of the long export
+L65      - filler line 11 of the long export
+L66      - filler line 12 of the long export
+L67      fenced preview line
+L68      QA196T-END
+L69 --- screen after the other variants (caps/T1-main-all.txt, from /p196r on)
+L70 ❯ /p196r qa 3
+L71 QA196R-MARKER tree rewrite (args="qa 3")
+L72 - [x] State only: keep it in $.state
+L73 QA196R-END
+L74 ❯ /p196c
+L75   ⎿  p196-probe: # CTRL196-MARKER control reply, no rewrite
+L76 ❯ /p196e
+L77   ⎿  QA196E-MARKER questions and answers (args="")
+L78      Q1 · turn 1 · answered
+L79    (the rows of /p196e and /p196s draw the same 22-line Markdown as /p196; /p196n has no row)
+L80 --- the next request after "next prompt TP1"
+L81 req 3 isTurn=false messages=1 markers=none local-command-stdout=[]
+L82 req 4 isTurn=true messages=2 markers=STUB196T,STUB196R,CTRL196,STUB196S local-command-stdout=["p196-probe: STUB196T: the Q&A shows above, on screen only","p196-probe: STUB196R: the Q&A shows above, on screen only","p196-probe: # CTRL196-MARKER control reply, no rewrite","p196-probe: ","p196-probe: STUB196S: the Q&A shows above, on screen only"]
+L83 --- ctrl+o transcript view (caps/T1-main-ctrlo.txt): rewritten rows, no new render.CommandOutput line in the log
+L84 ❯ /p196c
+L85      QA196S-END
+L86   Showing detailed transcript · ctrl+o to toggle · ctrl+e to show all                                                                         verbose
+
+## T2: main screen, claude --continue of T1 (restored rows)
+L87 #1 render.CommandOutput {"requestId":"43b87513-e5eb-43b2-bcd0-f358e1593bdb","surface":"terminal","isFullscreen":false,"command":"p196","args":"qa","text":"p196-probe: STUB196T: the Q&A shows above, on screen only","isErrored":fals…
+L88 #2 render.CommandOutput {"requestId":"e820b37e-22e2-4e44-9da3-110cdd761b1e","surface":"terminal","isFullscreen":false,"command":"p196r","args":"qa 3","text":"p196-probe: STUB196R: the Q&A shows above, on screen only","isErrored":f…
+L89 #3 render.CommandOutput {"requestId":"1c4677da-abf6-45eb-b9c6-29eabcfa4b65","surface":"terminal","isFullscreen":false,"command":"p196c","args":"","text":"p196-probe: # CTRL196-MARKER control reply, no rewrite","isErrored":false}
+L90 #4 render.CommandOutput {"requestId":"3c7f8182-46ae-407f-b813-fc874035590f","surface":"terminal","isFullscreen":false,"command":"p196e","args":"","text":"p196-probe: ","isErrored":false}
+L91 #5 render.CommandOutput {"requestId":"61d31c16-bb73-4d0a-be11-298cee6cbe5c","surface":"terminal","isFullscreen":false,"command":"p196s","args":"qa","text":"p196-probe: STUB196S: the Q&A shows above, on screen only","isErrored":fal…
+L92 #6 render.CommandOutput.out {"requestId":"43b87513-e5eb-43b2-bcd0-f358e1593bdb","type":"engine"}
+L93 #7 render.CommandOutput.out {"requestId":"3c7f8182-46ae-407f-b813-fc874035590f","type":"engine"}
+L94 #8 render.CommandOutput.out {"requestId":"61d31c16-bb73-4d0a-be11-298cee6cbe5c","type":"engine"}
+L95 #9 session.start {"surface":"terminal","isInteractive":true,"surfaces":["terminal"]}
+L96 (a second module load follows in the log, 27 lines: the probe file was edited during the run)
+L97 req 5 isTurn=true messages=5 markers=STUB196T,STUB196R,CTRL196,STUB196S
+
+## Stored transcript of the T1/T2 session (the scratch config dir, not a user transcript)
+L98 marker counts in the transcript file: {"STUB196T":2,"STUB196R":2,"CTRL196":2,"STUB196S":2}
+L99 system local_command "<local-command-stdout>p196-probe: STUB196T: the Q&A shows above, on screen only</local-command-stdout>"
+L100 system local_command "<local-command-stdout>p196-probe: STUB196R: the Q&A shows above, on screen only</local-command-stdout>"
+L101 system local_command "<local-command-stdout>p196-probe: # CTRL196-MARKER control reply, no rewrite</local-command-stdout>"
+L102 system local_command "<local-command-stdout>p196-probe: </local-command-stdout>"
+L103 system local_command "<local-command-stdout>p196-probe: STUB196S: the Q&A shows above, on screen only</local-command-stdout>"
+
+## T3: fullscreen (CLAUDE_CODE_NO_FLICKER=1), tmux 150x60, fresh session
+L104 req 6 isTurn=false messages=1 markers=none
+L105 req 7 isTurn=true messages=2 markers=STUB196T,STUB196D,CTRL196
+L106 #9 render.CommandOutput {"requestId":"8e09a9de-133a-4d3e-a4a0-f77c12a0260f","surface":"terminal","isFullscreen":true,"command":"p196","args":"qa","text":"p196-probe: STUB196T: the Q&A shows above, on screen only","isErrored":false,"onScreen":{"first":0,"last":28,"of":29}}
+L107 #17 render.CommandOutput {"requestId":"8e09a9de-133a-4d3e-a4a0-f77c12a0260f","surface":"terminal","isFullscreen":true,"command":"p196","args":"qa","text":"p196-probe: STUB196T: the Q&A shows above, on screen only","isErrored":false,"onScreen":{"first":5,"last":28,"of":29}}
+L108 #18 render.CommandOutput {"requestId":"44dd7d83-abf4-410b-aff6-df74b80e8a76","surface":"terminal","isFullscreen":true,"command":"p196d","args":"qa","text":"p196-probe: STUB196D: the Q&A shows above, on screen only","isErrored":false,"onScreen":{"first":0,"last":28,"of":29}}
+L109 #22 render.CommandOutput {"requestId":"8e09a9de-133a-4d3e-a4a0-f77c12a0260f","surface":"terminal","isFullscreen":true,"command":"p196","args":"qa","text":"p196-probe: STUB196T: the Q&A shows above, on screen only","isErrored":false,"onScreen":{"first":10,"last":28,"of":29}}
+L110 #28 render.CommandOutput {"requestId":"8e09a9de-133a-4d3e-a4a0-f77c12a0260f","surface":"terminal","isFullscreen":true,"command":"p196","args":"qa","text":"p196-probe: STUB196T: the Q&A shows above, on screen only","isErrored":false,"onScreen":{"first":8,"last":28,"of":29}}
+L111 #29 render.CommandOutput {"requestId":"bd999146-32b0-40b7-a58c-1dada037def5","surface":"terminal","isFullscreen":true,"command":"p196c","args":"","text":"p196-probe: # CTRL196-MARKER control reply, no rewrite","isErrored":false,"onScreen":{"first":0,"last":0,"of":1}}
+L112 #32 render.CommandOutput {"requestId":"8e09a9de-133a-4d3e-a4a0-f77c12a0260f","surface":"terminal","isFullscreen":true,"command":"p196","args":"qa","text":"p196-probe: STUB196T: the Q&A shows above, on screen only","isErrored":false,"onScreen":{"first":13,"last":28,"of":29}}
+L113 #36 render.CommandOutput {"requestId":"8e09a9de-133a-4d3e-a4a0-f77c12a0260f","surface":"terminal","isFullscreen":true,"command":"p196","args":"qa","text":"p196-probe: STUB196T: the Q&A shows above, on screen only","isErrored":false,"onScreen":{"first":15,"last":28,"of":29}}
+L114 #43 render.CommandOutput {"requestId":"8e09a9de-133a-4d3e-a4a0-f77c12a0260f","surface":"terminal","isFullscreen":true,"command":"p196","args":"qa","text":"p196-probe: STUB196T: the Q&A shows above, on screen only","isErrored":false,"onScreen":{"first":14,"last":28,"of":29}}
+L115 #45 render.CommandOutput {"requestId":"8e09a9de-133a-4d3e-a4a0-f77c12a0260f","surface":"terminal","isFullscreen":true,"command":"p196","args":"qa","text":"p196-probe: STUB196T: the Q&A shows above, on screen only","isErrored":false,"onScreen":{"first":16,"last":28,"of":29}}
+L116 #47 render.CommandOutput {"requestId":"8e09a9de-133a-4d3e-a4a0-f77c12a0260f","surface":"terminal","isFullscreen":true,"command":"p196","args":"qa","text":"p196-probe: STUB196T: the Q&A shows above, on screen only","isErrored":false,"onScreen":{"first":0,"last":28,"of":29}}
+L117 #48 render.CommandOutput {"requestId":"44dd7d83-abf4-410b-aff6-df74b80e8a76","surface":"terminal","isFullscreen":true,"command":"p196d","args":"qa","text":"p196-probe: STUB196D: the Q&A shows above, on screen only","isErrored":false,"onScreen":{"first":0,"last":16,"of":29}}
+
+## T4: fullscreen, claude --continue: p196d draws only after the late load and $.ui.invalidate("ui.render")
+L118 #2 render.CommandOutput {"requestId":"44dd7d83-abf4-410b-aff6-df74b80e8a76","surface":"terminal","isFullscreen":true,"command":"p196d","args":"qa","text":"p196-probe: STUB196D: the Q&A shows above, on…
+L119 #5 render.p196d.notLoaded {"requestId":"44dd7d83-abf4-410b-aff6-df74b80e8a76"}
+L120 #8 session.start {"surface":"terminal","isInteractive":true,"surfaces":["terminal"]}
+L121 #9 loaded {}
+L122 #11 render.CommandOutput {"requestId":"44dd7d83-abf4-410b-aff6-df74b80e8a76","surface":"terminal","isFullscreen":true,"command":"p196d","args":"qa","text":"p196-probe: STUB196D: the Q&A shows above, o…
+L123 #16 render.CommandOutput {"requestId":"44dd7d83-abf4-410b-aff6-df74b80e8a76","surface":"terminal","isFullscreen":true,"command":"p196d","args":"qa","text":"p196-probe: STUB196D: the Q&A shows above, o…
+L124 T4-full-continue-early.txt: ❯ /p196d qa | ⎿  p196-probe: STUB196D: the Q&A shows above, on screen only
+L125 T4-full-continue-late.txt: ❯ /p196d qa | ⎿  QA196D-MARKER questions and answers (args="qa")
+
+## T5: main screen 150x60, claude --continue: the same
+L126 T5-main-continue-early.txt: ❯ /p196d qa | ⎿  p196-probe: STUB196D: the Q&A shows above, on screen only
+L127 T5-main-continue-late.txt: ❯ /p196d qa | ⎿  QA196D-MARKER questions and answers (args="qa")
+
+## T6/T7: main screen 150x20 (transcript taller than the screen), claude --continue, slow and fast hook
+L128 --- T7-main20-fast-early.txt (lines with a command echo or a marker, with the capture line number)
+L129   6: ❯ /p196 qa
+L130   7:   ⎿  p196-probe: STUB196T: the Q&A shows above, on screen only
+L131   9: ❯ /p196d qa
+L132  10:   ⎿  p196-probe: STUB196D: the Q&A shows above, on screen only
+L133  35:      QA196T-END
+L134  37: ❯ /p196d qa
+L135  38:   ⎿  p196-probe: STUB196D: the Q&A shows above, on screen only
+L136  40: ❯ /p196c
+L137 --- T7-main20-fast-late.txt (lines with a command echo or a marker, with the capture line number)
+L138   6: ❯ /p196 qa
+L139   7:   ⎿  p196-probe: STUB196T: the Q&A shows above, on screen only
+L140   9: ❯ /p196d qa
+L141  10:   ⎿  p196-probe: STUB196D: the Q&A shows above, on screen only
+L142  35:      QA196T-END
+L143  37: ❯ /p196d qa
+L144  38:   ⎿  p196-probe: STUB196D: the Q&A shows above, on screen only
+L145  66:      QA196D-END
+L146  68: ❯ /p196c
+
+## T8: fullscreen, a 177,552-character rewrite
+L147 - line 1408 of the long export, padded with words to about six … 77552 more characters, not drawn
+L148 ⏺ p196-probe: ui.render (CommandOutput): 177552 characters of text are drawn up to the first 100000
+L149 #8 append {"door":"notice","origin":{"kind":"engine"},"name":"informational","type":"system","uuid":"d512a6cd-2e2c-492d-9eb1-ac5fa1a84cef","text":"p196-probe: ui.render (CommandOutput): 177552 characters of text are drawn up to the first 10…
+L150 #9 render.p196l {"requestId":"67b38bea-b6e5-46e3-800f-e35d0052b25e","chars":177552,"ms":4}
+L151 #11 render.p196l {"requestId":"67b38bea-b6e5-46e3-800f-e35d0052b25e","chars":177552,"ms":2,"onScreen":{"first":1365,"last":1409,"of":1410}}
+L152 #13 render.p196l {"requestId":"67b38bea-b6e5-46e3-800f-e35d0052b25e","chars":177552,"ms":2,"onScreen":{"first":1367,"last":1409,"of":1410}}
+L153 #15 render.p196l {"requestId":"67b38bea-b6e5-46e3-800f-e35d0052b25e","chars":177552,"ms":2,"onScreen":{"first":1345,"last":1389,"of":1410}}
+L154 #17 render.p196l {"requestId":"67b38bea-b6e5-46e3-800f-e35d0052b25e","chars":177552,"ms":2,"onScreen":{"first":1323,"last":1367,"of":1410}}
+L155 #20 render.p196l {"requestId":"67b38bea-b6e5-46e3-800f-e35d0052b25e","chars":177552,"ms":3,"onScreen":{"first":1372,"last":1409,"of":1410}}
+L156 #24 render.p196l {"requestId":"67b38bea-b6e5-46e3-800f-e35d0052b25e","chars":177552,"ms":2,"onScreen":{"first":1374,"last":1409,"of":1410}}
+L157 #31 render.p196l {"requestId":"67b38bea-b6e5-46e3-800f-e35d0052b25e","chars":177552,"ms":2,"onScreen":{"first":1373,"last":1409,"of":1410}}
+L158 #33 render.p196l {"requestId":"67b38bea-b6e5-46e3-800f-e35d0052b25e","chars":177552,"ms":2,"onScreen":{"first":1375,"last":1409,"of":1410}}
+L159 req 8 isTurn=false messages=1 markers=none
+L160 req 9 isTurn=true messages=2 markers=STUB196L
+L161 req-009 holds "characters of text are drawn": no
+L162 req-009 tools: Agent, AskUserQuestion, Bash, Edit, ListAgents, Read, ReportFindings, ScheduleWakeup, Skill, ToolSearch, Workflow, DeferredToolPlaceholder, Write
+L163 req-009 names a p196 command in tools: no, in system: no; in messages only as <command-name> rows and the stub
+
+## T9: main screen 150x20, fresh session (no --continue): /p196 qa (24 lines), then /p196l, then ctrl+o twice
+L164 --- T9-main20-fresh-p196.txt (every line with a command echo, a stub or a marker, with the capture line number)
+L165    6: ❯ /p196 qa
+L166    7:   ⎿  QA196T-MARKER questions and answers (args="qa")
+L167   35:      QA196T-END
+L168 --- T9-main20-fresh-all.txt (every line with a command echo, a stub or a marker, with the capture line number)
+L169    6: ❯ /p196 qa
+L170    7:   ⎿  QA196T-MARKER questions and answers (args="qa")
+L171   35:      QA196T-END
+L172   37: ❯ /p196l qa
+L173   38:   ⎿  QA196L-MARKER long export (args="qa")
+L174 1447:      - line 1408 of the long export, padded with words to about six … 77552 more characters, not drawn
+L175 1449: ⏺ p196-probe: ui.render (CommandOutput): 177552 characters of text are drawn up to the first 100000
+L176 T9-main20-fresh-all.txt holds 1456 lines: the whole tmux history (history-limit 2000)
+L177 req 1 isTurn=false messages=1 markers=none
+L178 req 2 isTurn=true messages=2 markers=STUB196T,STUB196L
+
+## B1: baseline, the real mod today (a copy of plugins/artifact-tracking at main in the scratchpad), main screen 150x50, scripted AskUserQuestion
+L179 ❯ /track qa
+L180   ⎿  artifact-tracking: # Questions and answers
+L181      Q1 · turn 1 · answered · 2026-10-26 10:51 UTC
+L182      Storage
+L183      Where should the probe records live?
+L184      - [x] QREAL196 state: Keep them in state
+L185      - [ ] Store: Persist them
+L186 req 1 isTurn=false messages=1 markers=none
+L187 req 2 isTurn=true messages=2 markers=none
+L188 req 3 isTurn=true messages=5 markers=Where should the probe records live?,QREAL196
+L189     msg2 assistant: "\"name\":\"AskUserQuestion\",\"input\":{\"questions\":[{\"question\":\"Where should the probe records live?\",\"h"
+L190     msg3 user: "ool_result\",\"content\":\"Your questions have been answered: \\\"Where should the probe records live?\\\"=\\"
+L191 req 4 isTurn=true messages=8 markers=Where should the probe records live?,QREAL196
+L192     msg2 assistant: "\"name\":\"AskUserQuestion\",\"input\":{\"questions\":[{\"question\":\"Where should the probe records live?\",\"h"
+L193     msg3 user: "ool_result\",\"content\":\"Your questions have been answered: \\\"Where should the probe records live?\\\"=\\"
+L194     msg6 user: " turn 1 · answered · 2026-10-26 10:51 UTC\\n\\n### Storage\\n\\nWhere should the probe records live?\\n\\n"
+
+## H7: debug log of claude -p "/p196 qa" and -p --continue (the guard)
+L195 [DEBUG] cc-plugin-sec-default@builtin seated outermost: this machine has managed settings
+L196 [DEBUG] hooks module cc-plugin-sec-default@builtin loaded (native, environment 1, tier prepend); events: classic.*,prompt.section,prompt.context,prompt.attachment,prompt.compose,skill.prompt,attribution.text,session.append,session.compact,settings.read,tool.describe,command.describe,agent.offer,agent.spawn,tool.register,tool.list,tool.check,ui.log,env.get,env.set,plugin.register
+L197 [DEBUG] hooks module p196-probe@inline session.start settled in Nms (worker hop, next() included)
+L198 [DEBUG] hooks module p196-probe@inline command.run settled in Nms (worker hop, next() included)
+L199 [DEBUG] p196-probe: session.append bypassed by cc-plugin-sec-default (tier user); beneath runs
+
+## Types: the CommandOutput block and CommandRunResult in 2.1.310 equal 2.1.302
+L200 2.1.310 index.d.ts (engine-written into the probe folder): "// Written by Claude Code 2.1.310.", CommandOutput at line 10554, CommandRunResult at line 1873
+L201 diff of the CommandOutput block (58 lines) against 2.1.302 lines 10443-10500: no difference
+L202 diff of CommandRunResult (66 lines) against 2.1.302 lines 1850-1915: no difference
+
+## T3 screens: fullscreen, fresh session (the alternate screen has no history, so two captures)
+L203 --- T3-full-pgup.txt (after two PageUp)
+L204   7: ❯ /p196 qa
+L205   8:   ⎿  QA196T-MARKER questions and answers (args="qa")
+L206  36:      QA196T-END
+L207  38: ❯ /p196d qa
+L208  39:   ⎿  QA196D-MARKER questions and answers (args="qa")
+L209 --- T3-full-cmds.txt
+L210  21:      QA196T-END
+L211  23: ❯ /p196d qa
+L212  24:   ⎿  QA196D-MARKER questions and answers (args="qa")
+L213  52:      QA196D-END
+L214  54: ❯ /p196c
+L215  55:   ⎿  p196-probe: # CTRL196-MARKER control reply, no rewrite

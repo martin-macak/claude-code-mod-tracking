@@ -43,3 +43,20 @@ test('every pattern has an id and a label, and the ids are unique', () => {
     assert.ok(p.label.length > 0, p.id)
   }
 })
+
+// Issue #246. `/track qa` answers a stub where a surface draws, so the README must tell the person how to give the calls to the
+// model on purpose: `--send`. The old promise ("run it when you want the model to have the calls") named no flag.
+test('the README names --send as the way to give the calls to the model', () => {
+  assert.ok(
+    README.includes('Run `--send` when you want the model to have the calls.'),
+    'the Privacy section tells the person to run --send when the model should have the calls',
+  )
+  assert.ok(README.includes('| `/track qa [--send] [n]` |'), 'the command table names the flag')
+  assert.ok(!README.includes('Run it when you want the model to have the calls'), 'the old promise names no flag')
+})
+
+// Review of #299 (R10): no run tried the VS Code host. The README must not say that it takes the whole-text branch.
+test('the README claims no behaviour of the VS Code host for /track qa that no run saw', () => {
+  assert.ok(!README.includes('the SDK, the VS Code host'), 'the VS Code host is not named as a no-surface host')
+  assert.ok(!README.includes('The VS Code host attaches no surface'), 'the old claim of 2.1.302 is gone')
+})
