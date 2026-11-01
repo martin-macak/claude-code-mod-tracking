@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { Given, Then, When } from '@cucumber/cucumber'
 import {
   callsOf,
+  checkedCallName,
   type FakePr,
   fakeGhSpec,
   isQuiet,
@@ -53,6 +54,15 @@ Given(
     this.setFakeGh({ ...this.fakeGh, prs: [...this.fakeGh.prs, pr] })
   },
 )
+
+// Issue #210. A slow start: the fake holds back the answer of one call (by the name of the log, for example "--version") for
+// the given seconds. `gh --version` is the first call of the mod, so a hold on it delays every later call of the start. Put
+// the step after the one that makes the repo and before the step that starts the session.
+Given('the fake gh holds back {string} for {int} seconds', function (this: DemoWorld, call: string, seconds: number) {
+  if (this.fakeGh === undefined) throw new Error('fake gh: start with the step "a fake GitHub repo ..."')
+  this.tl.phase('cut')
+  this.setFakeGh({ ...this.fakeGh, delays: { ...this.fakeGh.delays, [checkedCallName(call)]: seconds * 1000 } })
+})
 
 // Issue #195. A second repo that the session reads from: a repo of its own under $HOME/.cache/cc-demo, on a feature branch,
 // whose origin names GitHub. The fake gh answers it as it answers the first repo. Put the step after the one that makes the

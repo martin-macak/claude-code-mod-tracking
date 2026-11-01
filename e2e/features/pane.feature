@@ -457,6 +457,29 @@ Feature: Drive the /track pane with the keys
     And the screen stops showing "Keys go to the prompt."
     And the fake gh answered no unsupported call
 
+  # Issue #210. The twin of the scenario above on a slow start: the fake gh holds back `gh --version` for 5 seconds, the first
+  # call of the mod, so the first PR discovery (and its stamp of the age) comes about 5 seconds after the session starts, past
+  # the 3 seconds that the scenario above used to wait. The waits for the discovery call and for a quiet log hold. A return of
+  # the fixed wait makes this scenario fail: the first drawing says "just now". @slow-start selects it alone.
+  @slow-start
+  Scenario: A click on r: refresh refreshes on a slow start, when gh answers late
+    Given a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-refresh"
+    And the fake gh reports PR #7 "Refresh the fake PR" from "feat/fake-refresh" into "main" as MERGEABLE
+    And the fake gh holds back "--version" for 5 seconds
+    And a Claude Code session with the artifact-tracking mod
+    When the fake gh answered "graphql discovery"
+    And the fake gh has been quiet for 2 seconds
+    And I type "/track"
+    Then the screen matches /│Pull requests \d+ +gh · refreshed \d+s ago/
+    When I note how old the last refresh on the screen is
+    And I press "C-x"
+    And I press "Tab"
+    Then the screen shows "Keys go to the prompt."
+    When I click "r: refresh" in the pane to give it the keys
+    Then the last refresh on the screen is younger than the one noted
+    And the screen stops showing "Keys go to the prompt."
+    And the fake gh answered no unsupported call
+
   # Issue #129. The same for an N more row: the click shows the next rows and gives the pane the keys.
   Scenario: A click on an N more row gives the pane the keys when they are in the prompt
     Given the tracker config file:
