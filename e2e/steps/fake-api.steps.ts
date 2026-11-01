@@ -64,6 +64,37 @@ Then('the fake model was told {string}', async function (this: DemoWorld, text: 
   })
 })
 
+// Issue #246. What the engine told the model about a slash command: the engine puts the reply of a command in the next request
+// as a `<local-command-stdout>` block, which is no tool result. The text a command printed is only in such a block when the
+// stored row holds it, so this is the check that the model did not read what the screen showed (a `ui.render` rewrite draws
+// text that the stored row does not hold). A reply reaches the model in the next request, so type a prompt and let Claude
+// finish before these steps.
+Then('a command reply to the fake model holds {string}', async function (this: DemoWorld, text: string) {
+  const api = this.fakeApi
+  if (api === undefined) throw new Error('a command reply to the fake model holds: no fake model in this scenario')
+  await waitUntil(() => (api.commandReplies().some(r => r.includes(text)) ? true : undefined), {
+    timeoutMs: this.config.screenTimeoutMs,
+    what: `a command reply to the fake model to hold "${text}"`,
+    last: () => JSON.stringify(api.commandReplies()),
+  })
+})
+
+// The absence of words in every command reply. It waits until the model has been sent at least one reply, or the check would
+// hold for a model that was sent nothing. Put the positive step before it, so the reply that the words were left out of is
+// known to be there.
+Then('no command reply to the fake model holds {string}', async function (this: DemoWorld, text: string) {
+  const api = this.fakeApi
+  if (api === undefined) throw new Error('no command reply to the fake model holds: no fake model in this scenario')
+  await waitUntil(() => (api.commandReplies().length > 0 ? true : undefined), {
+    timeoutMs: this.config.screenTimeoutMs,
+    what: 'a command reply to reach the fake model (the check would hold for nothing)',
+    last: () => JSON.stringify(api.commandReplies()),
+  })
+  const holding = api.commandReplies().filter(r => r.includes(text))
+  if (holding.length > 0)
+    throw new Error(`a command reply to the fake model holds "${text}": ${JSON.stringify(holding).slice(0, 400)}`)
+})
+
 // The copy key of the questions tracker hands its text to the engine, which writes the clipboard of the machine. This probe
 // plugin answers the engine's `ui.copy` event without writing it and logs the text, so the run never touches the clipboard
 // (support/copy-probe.ts). Put the step before the step that starts the session.

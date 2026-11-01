@@ -29,6 +29,7 @@ import {
   NOT_READY,
   PRIO_WORDS,
   problemsText,
+  takeSend,
   USAGE,
   VIEW_USAGE,
   versionText,
@@ -51,6 +52,18 @@ export interface CommandHost {
   runDeclared(p: Ports, owner: string, ev: CommandEvent): Promise<void>
   /** The text of a declared sub-command that has one (`CommandSpec.text`), built from the context of its owner. */
   textOf(p: Ports, owner: string, spec: CommandSpec, args: string): Promise<string>
+  /**
+   * True when a surface draws (the surfaces port is not empty), false under `claude -p` and the SDK (the VS Code host is untested). A read
+   * that fails counts as "a surface draws": a failure never sends the whole text to the model (issue #246).
+   */
+  drawsOnScreen(p: Ports): Promise<boolean>
+  /** The stub of a declared sub-command that has `screen`, built from the context of its owner. */
+  stubOf(p: Ports, owner: string, spec: CommandSpec, args: string): Promise<string | undefined>
+  /**
+   * What the row of a stub draws (`CommandSpec.screen.draw`), built from the context of its owner. It makes no entry and checks
+   * no config: a render only reads.
+   */
+  drawOf(p: Ports, owner: string, spec: CommandSpec, args: string, shown: string): Promise<string | undefined>
   /** Opens the pane. It toasts when the terminal has no room. */
   openPane(p: Ports): Promise<void>
   clear(p: Ports): Promise<void>
@@ -77,7 +90,9 @@ export class Commands {
 
   /** `CORE_HINT` while no tracker declares a sub-command, else with `|<sub> <hint>` for each, before the closing `]`. */
   hint(): string {
-    const more = [...this.table().values()].map(d => `${d.spec.sub} ${d.spec.hint}`.trim())
+    const more = [...this.table().values()].map(d =>
+      `${d.spec.sub} ${d.spec.text && d.spec.screen ? '[--send] ' : ''}${d.spec.hint}`.trim(),
+    )
     return more.length === 0 ? CORE_HINT : `${CORE_HINT.slice(0, -1)}|${more.join('|')}]`
   }
 
@@ -249,17 +264,46 @@ export class Commands {
    * that has a text of its own answers with it and prints no list (issue #71). It checks the config file first, like `/track`,
    * `refresh`, `help` and `show-all`: its text may hang on a toggle that was edited since the last check (`/track qa` and the
    * mask), and the text reaches the model.
+   * A sub that also has a `screen` spec (issue #246) answers its stub where a surface draws, and the `CommandOutput` hook draws
+   * the text in the row (`screenText`), so the model reads the stub only. The whole text is the reply where no surface draws,
+   * where the person typed `--send`, and where the stub is `undefined` (a usage line). A read of the surfaces that fails counts as
+   * "a surface draws".
    */
   private async declared(p: Ports, args: string): Promise<Reply> {
-    const [, first = '', rest = ''] = /^(\S+)\s*([\s\S]*)$/.exec(args) ?? []
-    const found = this.table().get(first.toLowerCase())
+    const { found, rest } = this.split(args)
     if (found === undefined) return { text: USAGE }
     if (found.spec.text !== undefined) {
       await this.host.refreshConfig(p)
-      return { text: await this.host.textOf(p, found.owner, found.spec, rest) }
+      if (found.spec.screen === undefined) return { text: await this.host.textOf(p, found.owner, found.spec, rest) }
+      const taken = takeSend(rest)
+      if (!taken.send && (await this.host.drawsOnScreen(p))) {
+        const stub = await this.host.stubOf(p, found.owner, found.spec, taken.rest)
+        if (stub !== undefined) return { text: stub }
+      }
+      return { text: await this.host.textOf(p, found.owner, found.spec, taken.rest) }
     }
     await this.host.runDeclared(p, found.owner, { sub: found.spec.sub, args: rest, wait: true })
     return this.list(p)
+  }
+
+  /**
+   * What the row of a `/track <args>` reply draws in place of its stored text (issue #246): the `CommandOutput` hook asks it.
+   * `args` is the `args` of the row, `shown` the text of the row as stored (the plugin prefix and the stub). `undefined` leaves
+   * the row to the engine: a sub that has no text or no `screen`, a `--send` row (it holds the whole text already) and a draw
+   * with nothing to show. It reads only: no entry, no config check, no write. It does not wait for the start either, so a row
+   * that draws before the slot has loaded keeps its stub (the draw finds no calls).
+   */
+  async screenText(p: Ports, args: string, shown: string): Promise<string | undefined> {
+    const { found, rest } = this.split(args)
+    if (found?.spec.text === undefined || found.spec.screen === undefined) return undefined
+    const taken = takeSend(rest)
+    return taken.send ? undefined : this.host.drawOf(p, found.owner, found.spec, taken.rest, shown)
+  }
+
+  /** The declared sub that `args` names, and the words after it. `declared` and `screenText` both read it, so a row draws for the commands the router answers. */
+  private split(args: string) {
+    const [, first = '', rest = ''] = /^(\S+)\s*([\s\S]*)$/.exec(args.trim()) ?? []
+    return { found: this.table().get(first.toLowerCase()), rest }
   }
 
   /** The declared sub-commands by lower-case sub. The first owner in `order` wins a repeat. Core subs are not here. */

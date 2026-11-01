@@ -14,6 +14,13 @@ import type { TrackerHost } from './tracker-host'
 /** `session.end` reasons after which the process goes away. `clear` and `resume` are switches. */
 const EXITS: ReadonlySet<string> = new Set(['prompt_input_exit', 'logout', 'other'])
 
+/**
+ * After a `resume`, the waits before the checks that carry the switch (issue #246). The engine fires `session.end` only: no
+ * hook of ours sees the new id, and the next tick is up to 30 s away. Until the carry runs, a row that drew before its data was
+ * here (the stub of `/track qa`) keeps the stub. Each check stops the chain when the id moved.
+ */
+export const RESUME_CHECKS_MS: readonly number[] = [250, 1000, 3000]
+
 export interface SessionEndDeps {
   /** The start of the load, without the write of the config file: an end can be the first hook of a load (C16). */
   started(ports: Ports): Promise<void>
@@ -57,9 +64,28 @@ export class SessionEnd {
       }
       watch.ended(pending, snapshot)
     }
+    if (endReason === 'resume') this.checkSoon(ports, 0)
     if (EXITS.has(endReason)) {
       this.d.host.dispose()
       await guard(log, 'item dispose', async () => this.d.items.dispose(), 'the end')
+    }
+  }
+
+  /** Arms check `i` of `RESUME_CHECKS_MS`. A check that sees the id move ends the chain; one that sees none arms the next. */
+  private checkSoon(ports: Ports, i: number): void {
+    const wait = RESUME_CHECKS_MS[i]
+    if (wait === undefined) return
+    try {
+      ports.clock.after(wait, () =>
+        this.d.watch
+          .check()
+          .then(moved => {
+            if (!moved) this.checkSoon(ports, i + 1)
+          })
+          .catch(e => this.d.log(`lifecycle: check after a resume failed: ${reason(e)}`)),
+      )
+    } catch (e) {
+      this.d.log(`lifecycle: check after a resume not armed: ${reason(e)}`)
     }
   }
 }
