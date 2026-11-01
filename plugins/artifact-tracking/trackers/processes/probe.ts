@@ -173,8 +173,11 @@ const namesOnlyProgram = (fingerprint: string): boolean =>
 
 /** Slack for `firstSeen`: ps prints whole seconds. */
 const START_SLACK_MS = 2000
-/** A Bash call runs at most 10 minutes, so its process started at most that long before the row was seen. */
-const SPAWN_WINDOW_MS = 11 * 60_000
+/**
+ * A Bash call runs at most 10 minutes, so its process started at most that long before the row was seen. Also the lower bound
+ * of the `Created` time of a container that `/track clean --yes containers` may remove (`containerKeepReason`).
+ */
+export const SPAWN_WINDOW_MS = 11 * 60_000
 
 /**
  * Does `ps -p <pid> -o lstart=,command=` still show the spawned process? A process that started after the row
@@ -210,4 +213,109 @@ export function findDetachedPid(stdout: string, fingerprint: string, firstSeen: 
       best = { pid: Number(m[1]), strength, start }
   }
   return best?.pid
+}
+
+// ---------------------------------------------------------------- the container that `/track clean --yes containers` removes
+
+/**
+ * The `--format` of the one `docker container inspect` that comes before a `docker rm` (issue #123): the id, the state, the
+ * creation time, the name and the labels as JSON, on one line, with real tabs between the fields (the two characters `\t` would
+ * print as they are). One line, not the full JSON: the runner may cut stdout (`isStdoutTruncated`), and a cut line fails the
+ * parse. The labels are last because they are the only free text, and JSON escapes a tab in it.
+ */
+export const INSPECT_FORMAT = '{{.Id}}\t{{.State.Status}}\t{{.Created}}\t{{.Name}}\t{{json .Config.Labels}}'
+
+/** What `INSPECT_FORMAT` gives, parsed. `name` has the slash that Docker prints (`/api`). `labels` are the label keys. */
+export type InspectedContainer = {
+  readonly id: string
+  readonly status: string
+  /** As Docker printed it: RFC 3339 with nanoseconds. Read with `createdMs`. */
+  readonly created: string
+  readonly name: string
+  readonly labels: readonly string[]
+}
+
+/** One line of `INSPECT_FORMAT`, or `undefined` for an answer that is not exactly that: more or fewer lines or fields, labels that are no object. */
+export function parseInspectLine(stdout: string): InspectedContainer | undefined {
+  const text = stdout.replace(/\r?\n$/, '')
+  if (text === '' || /[\r\n]/.test(text)) return undefined
+  const fields = text.split('\t')
+  if (fields.length !== 5) return undefined
+  const [id, status, created, name, labels] = fields as [string, string, string, string, string]
+  let keys: string[]
+  try {
+    const value: unknown = JSON.parse(labels)
+    if (value === null) keys = []
+    else if (typeof value === 'object' && !Array.isArray(value)) keys = Object.keys(value)
+    else return undefined
+  } catch {
+    return undefined
+  }
+  return { id, status, created, name, labels: keys }
+}
+
+/**
+ * The epoch ms of a `Created` time, or `undefined` when it is no date. Docker prints nanoseconds. Node reads them, but the mod
+ * runs in the engine's runtime, which no run has checked (issue #123, G19), so the fraction is cut or padded to 3 digits first.
+ */
+export function createdMs(text: string): number | undefined {
+  const ms = Date.parse(text.replace(/\.(\d+)/, (_, digits: string) => `.${`${digits}000`.slice(0, 3)}`))
+  return Number.isNaN(ms) ? undefined : ms
+}
+
+/** The name of a docker row that has no `--name`: the short id that `docker ps` shows. `parse.ts` names the row, the check reads it. */
+export const nameOfId = (id: string): string => id.slice(0, 12)
+
+/**
+ * Why a row with no `--name` is never removed. Its id is all that says that the run made the container, and the id can be
+ * another command's output (the known limits of the pairing: a run that failed or never ran, and the output of another command
+ * in the same call). A name from `--name` is the second proof, and the window of `Created` alone cannot tell the container of
+ * the run from one that someone else made a few minutes before (review of PR 285, P1).
+ */
+export const NO_OWN_NAME = 'no --name, so nothing proves that this run made the container'
+
+/** A row has a name of its own when its run had `--name`. The name of any other row is `nameOfId` of its id. */
+export const hasOwnName = (row: { readonly containerId: string; readonly name: string }): boolean =>
+  row.name !== nameOfId(row.containerId)
+
+/**
+ * Why a row whose run was not the whole Bash call is never removed. Anything else in the call (a command, a wrapper, a redirection, a
+ * substitution) may print the one id line, so it may be that command's (`ProcessRecord.containerRunAlone`, `isLoneRun` in the
+ * parser). A `--name` does not mend it: Docker keeps names unique, so a run that failed because the name is taken pairs with the id
+ * of the old container that holds the name, and that container passes the name check (review of PR 285, P1 again).
+ */
+export const NOT_ALONE = 'the run was not the whole Bash call, so nothing proves that this run made the container'
+
+/** The row fields that the removal check reads. */
+type RowOfContainer = {
+  readonly containerId: string
+  readonly name: string
+  readonly firstSeen: number
+  readonly containerRunAlone?: true | undefined
+}
+
+/**
+ * Why the container that Docker just described must not be removed, or `undefined` when nothing speaks against it. The first
+ * check that fails is the answer, in the order of the design study of #123 (section 5.3):
+ * 1. The id is the row's, in full. Docker names another container otherwise.
+ * 2. The state is `exited`. A running, paused or restarting container is never removed.
+ * 3. No label key starts with `org.testcontainers`: Testcontainers removes its own containers (its Ryuk reaper).
+ * 4. `Created` reads as a date and is not before `firstSeen - SPAWN_WINDOW_MS`. There is no upper bound: a row named by
+ *    `--name` that runs again keeps its first `firstSeen` and takes the new container, which is created long after it.
+ * 5. A row has a name of its own (`hasOwnName`, a `--name` run), else `NO_OWN_NAME`: a row with no `--name` is never removed.
+ * 6. The run was the whole call (`containerRunAlone`), else `NOT_ALONE`: the id may be another command's, and then the name
+ *    of the container proves nothing (a container of that name can be an old one that the run never made).
+ * 7. The `.Name` must be `/<name>`.
+ */
+export function containerKeepReason(row: RowOfContainer, c: InspectedContainer): string | undefined {
+  if (c.id !== row.containerId) return 'docker named another container'
+  if (c.status !== 'exited') return `the container is ${c.status}`
+  if (c.labels.some(k => k.startsWith('org.testcontainers'))) return 'managed by Testcontainers'
+  const created = createdMs(c.created)
+  if (created === undefined) return 'cannot read the creation time'
+  if (created < row.firstSeen - SPAWN_WINDOW_MS) return 'created before the row was seen'
+  if (!hasOwnName(row)) return NO_OWN_NAME
+  if (row.containerRunAlone !== true) return NOT_ALONE
+  if (c.name !== `/${row.name}`) return `the name is not ${row.name}`
+  return undefined
 }
