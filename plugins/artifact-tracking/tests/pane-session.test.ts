@@ -2933,7 +2933,7 @@ test('m is dim on a row that takes no bulk key, and does nothing; a marked row c
   press(buttonOf(tree, 'mark'))
   await t.session.idle()
   expect(marksOf(t) ?? []).toEqual([])
-  t.w.state.set('marks', ['a']) // marked another way (a later press that marks a whole turn): it stays unmarkable
+  t.w.state.set('marks', ['a']) // marked another way (a write of the atom, not `m`): it stays unmarkable
   expect(buttonOf(await t.draw(), 'mark').props.dimColor).toBeUndefined()
   await t.pressKey('mark')
   expect(marksOf(t)).toEqual([])

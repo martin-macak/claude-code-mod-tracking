@@ -197,6 +197,8 @@ test('the band Button opens /track with the pane focused and the first entry of 
   expect(selected).toHaveLength(1)
   expect(selected[0]!.text).toContain('one.example') // the first entry of turn 2: the first link of its prompt
   expect(await handleFor(pane, 'three.example')).toBeDefined() // turn 1's item is listed too, and not selected
+  // #232: the press marked the rows of turn 2 (two links), not turn 1's, and the view line counts them.
+  expect(await pane.find({ text: 'View: list · 2 marked' })).toBeDefined()
   await pane.unmount()
   await band.unmount()
 })

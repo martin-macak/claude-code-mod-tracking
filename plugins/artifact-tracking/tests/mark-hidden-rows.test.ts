@@ -7,7 +7,7 @@ import { NO_VIEW } from '../core/infra/views'
 import type { Json } from '../core/interfaces/items'
 import { type PaneHost, PaneSession } from '../hooks/pane-session'
 import type { WorktreeProof } from '../trackers/auto/types'
-import { buttonOf, leaves, press, rowBoxes, texts } from './fixtures/drawn'
+import { buttonOf, press, starsOf, texts } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
 import { flat, MIN, noDockerIssue, proc, proof, setAgents, setProcesses, type World } from './fixtures/hide-world'
 import { KEYS, NOW, paneWorld, WORLD_AUTO } from './fixtures/pane-world'
@@ -36,7 +36,6 @@ function pane(t: World) {
 }
 
 const marksOf = (t: World): unknown => t.w.state.get('marks')
-const stars = (tree: unknown): number => rowBoxes(tree).filter(b => leaves(b).includes('*')).length
 const viewLine = (tree: unknown): string | undefined => texts(tree).find(([, s]) => s.startsWith('View:'))?.[1]
 /** The ids of every row that the sections of the pane hold now, a child included. */
 const shownIds = async (t: World): Promise<string[]> =>
@@ -61,14 +60,14 @@ test('a mark on a row that the TTL hides stays when another row is marked, and c
 
   await pressOn(null, 'show-all') // a: the row is back, with its mark
   const tree = await draw()
-  expect(stars(tree)).toBe(2)
+  expect(starsOf(tree)).toBe(2)
   expect(viewLine(tree)).toContain('2 marked')
 })
 
 // Every rule that leaves a row out of the sections reads `hidden.showAll` (`ViewContext.hidden`). The inventory that the pruning
 // reads sets it, so one set of cases covers the TTL of an agent, of a worktree and of a process row, the cap of the process rows
-// and the sweep of `/track clean --hide`. A process row takes no bulk key, so `m` is dim on it: its mark comes from the atom, as
-// a mark of a whole turn does (`writeMarks`, issue #232).
+// and the sweep of `/track clean --hide`. A process row takes no bulk key, so `m` is dim on it: its mark comes from a write of
+// the atom, not from `m`.
 const RULES: { rule: string; hidden: string; world: () => Promise<World> }[] = [
   {
     rule: 'the TTL of a removed worktree',
@@ -132,14 +131,14 @@ for (const { rule, hidden, world } of RULES) {
     t.w.state.set('marks', [hidden])
     const { draw, pressOn } = pane(t)
     expect(await shownIds(t), 'the rule hides the row').not.toContain(hidden)
-    expect(stars(await draw())).toBe(0)
+    expect(starsOf(await draw())).toBe(0)
 
     await pressOn(FEAT, 'mark')
     expect(marksOf(t)).toEqual([hidden, FEAT])
 
     await pressOn(null, 'show-all') // a
     const tree = await draw()
-    expect(stars(tree)).toBe(2)
+    expect(starsOf(tree)).toBe(2)
     expect(viewLine(tree)).toContain('2 marked')
   })
 }

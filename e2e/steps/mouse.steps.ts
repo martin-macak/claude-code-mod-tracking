@@ -60,23 +60,40 @@ When('I click {string} in the pane to give it the keys', async function (this: D
   })
 })
 
-// Issue #69, P2. A click on the `open` Button of the strip that `ui.turnStrip: interactive` draws under the duration line.
-// The click is a press: the pane opens with the keys and the first entry of that turn is selected. A click that lands while
-// the line still draws can be lost, so the step clicks again while the row is not selected. It is done when the pane selects
-// the row. The click is a synthetic SGR click, as in the steps above, not a real mouse.
+// Issue #69, P2, and #232. A click on the `open` Button of the strip that `ui.turnStrip: interactive` draws under the duration
+// line. The click is a press: the pane opens with the keys, the first entry of that turn is selected and every entry that the pane
+// lists is marked. A second click on the same turn clears the marks. A click that lands while the line still draws can be lost,
+// and a click that lands late is followed by another that undoes it, because the press toggles the marks. So the first step is done
+// when the pane selects the row and the view line counts the marks, and the second when no mark is counted: each state must hold
+// for SETTLE_MS (support/click.ts). The click is a synthetic SGR click, as in the steps above, not a real mouse.
 When(
-  'I click the open Button of the strip until the pane selects the row showing {string}',
-  async function (this: DemoWorld, text: string) {
+  'I click the open Button of the strip until the pane selects the row showing {string} and marks {int} rows',
+  async function (this: DemoWorld, text: string, marked: number) {
     this.tl.phase('normal')
     await clickUntil({
       capture: () => this.tmux.capture(),
       locate: screen => stripOpenAt(screen),
       click: (column, row) => this.tmux.click(column, row),
-      landed: screen => selectedLine(screen)?.includes(text) === true,
+      landed: screen =>
+        selectedLine(screen)?.includes(text) === true && screen.includes(`View: list · ${marked} marked`),
       tries: TRIES,
       waitMs: WAIT_MS,
       settleMs: SETTLE_MS,
-      what: `a click on the open Button of the strip did not make the pane select the row showing "${text}"`,
+      what: `a click on the open Button of the strip did not make the pane select the row showing "${text}" and mark ${marked} rows`,
     })
   },
 )
+
+When('I click the open Button of the strip again until the pane marks no row', async function (this: DemoWorld) {
+  this.tl.phase('normal')
+  await clickUntil({
+    capture: () => this.tmux.capture(),
+    locate: screen => stripOpenAt(screen),
+    click: (column, row) => this.tmux.click(column, row),
+    landed: screen => screen.includes('View: list') && !/\d+ marked/.test(screen),
+    tries: TRIES,
+    waitMs: WAIT_MS,
+    settleMs: SETTLE_MS,
+    what: 'a second click on the open Button of the strip did not clear the marks of its turn',
+  })
+})

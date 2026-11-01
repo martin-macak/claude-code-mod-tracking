@@ -43,6 +43,13 @@ export function rowBoxes(tree: unknown): Node[] {
   })
 }
 
+/** How many rows of the drawing carry the mark star. */
+export const starsOf = (tree: unknown): number => rowBoxes(tree).filter(b => leaves(b).includes('*')).length
+
+/** The text of the view line, or the bulk question that takes its place. */
+export const viewWords = (tree: unknown): string | undefined =>
+  texts(tree).find(([, s]) => s.startsWith('View:') || s.startsWith('Dismiss '))?.[1]
+
 /** The row handles, in drawing order. */
 export const handlesOf = (tree: unknown): string[] =>
   nodes(tree, 'Button')

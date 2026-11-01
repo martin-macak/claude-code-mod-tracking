@@ -1,5 +1,5 @@
-// writeMarks (issue #138): the one guarded write of the row marks, and the seam that the band press of #232 will call to mark a
-// whole turn. On fakePorts, with a hand-made `Press` in place of the token that PaneSession makes.
+// writeMarks (issue #138): the one guarded write of the row marks, and the seam that the band press of #232 calls to mark a
+// whole turn (tests/pane-turn.test.ts). On fakePorts, with a hand-made `Press` in place of the token that PaneSession makes.
 import { expect, test } from 'claude-code/testing'
 import { clearMarks, writeMarks } from '../hooks/pane-marks'
 import type { Press } from '../hooks/pane-refocus'
