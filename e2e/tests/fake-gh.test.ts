@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -7,6 +7,9 @@ import { test } from 'node:test'
 import {
   answer,
   callsOf,
+  checkedCallName,
+  delayOf,
+  FAKE_GH_CALLS,
   type FakeGhSpec,
   type FakePr,
   fakeGhSpec,
@@ -396,4 +399,86 @@ test('the gh shim is the file the env names, found by PATH like claude finds gh'
   const env = fakeGhEnv({ specFile: '/nowhere', logFile: '/nowhere.log' }, process.env.PATH ?? '')
   const found = execFileSync('/bin/sh', ['-c', 'command -v gh'], { encoding: 'utf8', env }).trim()
   assert.equal(found, join(FAKE_GH_DIR, 'bin', 'gh'))
+})
+
+/** Run the shim as a child that the test can watch while it runs. */
+function spawnShim(args: string[], env: Record<string, string>) {
+  const child = spawn(join(FAKE_GH_DIR, 'bin', 'gh'), args, {
+    env: { PATH: process.env.PATH, FAKE_GH_NODE: process.execPath, ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const exited = new Promise<number | null>(resolve => child.on('close', code => resolve(code)))
+  return { child, exited }
+}
+
+test('a held call logs only after the hold, and a call with no hold does not wait for it', async () => {
+  const dir = tempDir('fake-gh-')
+  const specFile = join(dir, 'fake-gh.json')
+  const logFile = join(dir, 'fake-gh.log')
+  writeFileSync(specFile, JSON.stringify({ ...SPEC, delays: { '--version': 3000 } }))
+  const env = { FAKE_GH_SPEC: specFile, FAKE_GH_LOG: logFile }
+  const logged = () => (existsSync(logFile) ? readFileSync(logFile, 'utf8') : '')
+  const held = spawnShim(['--version'], env)
+  try {
+    // Causality: the call with no hold answers and is logged while the held child still runs, and the log has no line of
+    // the held call yet (the log says "answered").
+    const free = shim(['auth', 'status'], env)
+    assert.equal(free.exitCode, 0)
+    assert.equal(held.child.exitCode, null, 'the held call is still running')
+    assert.deepEqual(
+      callsOf(logged()).map(c => c.call),
+      ['auth status'],
+    )
+    // After the hold the held call answers and is logged.
+    assert.equal(await held.exited, 0)
+    assert.deepEqual(
+      callsOf(logged()).map(c => c.call),
+      ['auth status', '--version'],
+    )
+  } finally {
+    held.child.kill('SIGKILL')
+  }
+})
+
+test('a delay holds back its call by at least that long', () => {
+  const dir = tempDir('fake-gh-')
+  const specFile = join(dir, 'fake-gh.json')
+  writeFileSync(specFile, JSON.stringify({ ...SPEC, delays: { '--version': 600 } }))
+  const start = Date.now()
+  const r = shim(['--version'], { FAKE_GH_SPEC: specFile })
+  assert.equal(r.exitCode, 0)
+  assert.match(r.stdout, /^gh version/)
+  assert.ok(Date.now() - start >= 550, 'the held call answered before its hold ended')
+})
+
+test('FAKE_GH_CALLS names every call that answer() logs, except unsupported', () => {
+  const graphql = (q: string) => ['api', 'graphql', '-f', `query=${q}`]
+  const argvs = [
+    ['--version'],
+    ['auth', 'status'],
+    ['auth', 'token'],
+    ['repo', 'view'],
+    graphql('query { repository(owner: "o", name: "r") { defaultBranchRef { name } } }'),
+    graphql('query { a0: repository(owner: "o", name: "r") { issueOrPullRequest(number: 1) { x } } }'),
+  ]
+  assert.deepEqual(
+    argvs.map(a => answer(a, SPEC).call),
+    [...FAKE_GH_CALLS],
+  )
+  assert.equal(answer(['pr', 'list'], SPEC).call, 'unsupported')
+})
+
+test('checkedCallName returns a call name of the log and throws for any other name', () => {
+  assert.equal(checkedCallName('--version'), '--version')
+  assert.throws(() => checkedCallName('--versoin'), /not a call name of the log/)
+  assert.throws(() => checkedCallName('unsupported'), /not a call name/)
+  assert.throws(() => checkedCallName('graphql'), /graphql discovery/)
+})
+
+test('delayOf reads the delay by call name, and is 0 without a map or an entry', () => {
+  assert.equal(delayOf('--version', { ...SPEC, delays: { '--version': 5000 } }), 5000)
+  assert.equal(delayOf('auth status', { ...SPEC, delays: { '--version': 5000 } }), 0)
+  assert.equal(delayOf('--version', SPEC), 0)
+  assert.equal(delayOf('--version', { ...SPEC, delays: { '--version': 0 } }), 0)
+  assert.equal(delayOf('--version', { ...SPEC, delays: { '--version': -5 } }), 0)
 })

@@ -34,7 +34,40 @@ export type FakeGhRepo = {
  * What the fake answers. The spec is the repo of the session (`repo view` names it), and `others` adds more repos that the
  * discovery and the refresh answer for (issue #195: a PR on a branch of a second repo). A repo in neither is not found.
  */
-export type FakeGhSpec = FakeGhRepo & { others?: readonly FakeGhRepo[] }
+export type FakeGhSpec = FakeGhRepo & {
+  others?: readonly FakeGhRepo[]
+  /**
+   * Issue #210. Milliseconds that the fake holds back a call before it answers, by call name (the `call` of the log, for
+   * example `--version`). A call not in the map does not wait. Default: no delay. It stands for a slow start of the mod.
+   */
+  delays?: Readonly<Record<string, number>>
+}
+
+/**
+ * The call names that a hold can target: the `call` of the log for each call the fake answers. `unsupported` is not one: it
+ * names every call the fake refuses, so a hold on it would hit them all. `tests/fake-gh.test.ts` checks that `answer()` yields these.
+ */
+export const FAKE_GH_CALLS = [
+  '--version',
+  'auth status',
+  'auth token',
+  'repo view',
+  'graphql discovery',
+  'graphql refresh',
+] as const
+
+/** The call name or an error that lists the valid names, so a typo in a hold fails loud and not as a fast, passing run. */
+export function checkedCallName(call: string): string {
+  if (!(FAKE_GH_CALLS as readonly string[]).includes(call))
+    throw new Error(`fake gh: "${call}" is not a call name of the log (${FAKE_GH_CALLS.join(', ')})`)
+  return call
+}
+
+/** How long the fake holds back the answer of the call named `call`, in milliseconds. 0 without an entry. */
+export function delayOf(call: string, spec: FakeGhSpec): number {
+  const ms = spec.delays?.[call]
+  return typeof ms === 'number' && ms > 0 ? ms : 0
+}
 
 /** What one call gets. `call` names the kind of call for the log: `unsupported` for one the fake does not answer. */
 export type FakeGhResult = { exitCode: number; stdout: string; stderr: string; call: string }

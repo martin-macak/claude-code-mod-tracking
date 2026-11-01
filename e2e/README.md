@@ -123,6 +123,12 @@ The PR lane also polls a branch that the session proved in another repo (issue [
 
 The repo lives in `$HOME/.cache/cc-demo/run-…` and the scenario removes it at the end (`DEMO_KEEP=1` keeps it). It must not be in a temporary folder or in one of Claude's own: the repos tracker treats those as noise and makes no row of a repo there.
 
+## A slow start
+
+The fake `gh` can hold a call back (issue [#210](https://github.com/martin-macak/claude-code-mod-tracking/issues/210)). The spec has an optional `delays` map: milliseconds by call name (the `call` of the log, such as `--version`). The fake waits that long before it logs and answers the call. A call not in the map does not wait. The step accepts only a name in `FAKE_GH_CALLS` (not `unsupported`) and throws on a typo, so a mistyped hold cannot give a fast run that passes. `delayOf()` of `support/fake-gh.ts` reads the map and `fake-gh/main.ts` waits.
+
+`Given the fake gh holds back "--version" for N seconds` sets it. Put it after the step that makes the fake repo and before the step that starts the session. `gh --version` is the first call of the mod, so a hold on it delays the first PR discovery. The `@slow-start` scenario of `features/pane.feature` uses a 5 s hold to show that the refresh scenario waits for the discovery call and not for a fixed time. Run it alone with `npx cucumber-js -p one features/pane.feature:<line>`.
+
 ## Run one scenario
 
 `make e2e-safe` and `npx cucumber-js` run every scenario except `@artifacts`. `make e2e` runs every scenario. Pick fewer with a tag, a name or a file position:
