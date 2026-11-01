@@ -1,5 +1,5 @@
-// The fixed words of `/track`: the usage line, the argument hint, the `prio` levels, the version line and the config
-// problems block.
+// The fixed words of `/track`: the usage line, the argument hint, the `prio` levels, the version line, the config
+// problems block and the `--send` word that the router takes off the arguments of a sub that has a screen spec.
 // Split from commands.ts (spec 12: the next layer that edits a file over the size limit splits it).
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.12. Plan: L4 Task 6, L6 Task 12, G14.
 
@@ -58,4 +58,15 @@ export function problemsText(path: string | undefined, problems: readonly string
     ...named.slice(0, SHOWN_PROBLEMS).map(p => `  ${p}`),
     ...(rest > 0 ? [`  and ${rest} more ${rest === 1 ? 'problem' : 'problems'}: see /track help.`] : []),
   ].join('\n')
+}
+
+/**
+ * `--send` as a whole word, in any case, before or after the other words: the person asks for the whole text on purpose
+ * (issue #246). The router takes it off the arguments of a sub that has a `screen` spec. `rest` is the other words, one space
+ * apart. A word that only starts with `--send` is no `--send`.
+ */
+export function takeSend(args: string): { send: boolean; rest: string } {
+  const words = args.split(/\s+/).filter(w => w !== '')
+  const rest = words.filter(w => w.toLowerCase() !== '--send')
+  return { send: rest.length !== words.length, rest: rest.join(' ') }
 }

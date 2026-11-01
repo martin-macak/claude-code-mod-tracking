@@ -1,0 +1,1 @@
+{ "name": "p246-probe", "version": "0.0.1", "description": "scratch probe for issue 246: CommandOutput rewrite and the leading line break", "author": { "name": "scratch" } }

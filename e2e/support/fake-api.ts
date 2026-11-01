@@ -17,11 +17,13 @@ export type FakeBlock =
 /** One answer of the model: its blocks, in order. A turn that holds a `tool_use` stops with `tool_use`, else with `end_turn`. */
 export type FakeTurn = readonly FakeBlock[]
 
-/** What the fake saw of a request: whether it was a turn of the script, and the tool results it carried. */
+/** What the fake saw of a request: whether it was a turn of the script, the tool results and the command replies it carried. */
 export type FakeRequest = {
   readonly isTurn: boolean
   /** Every `tool_result` block of the request, in order: what the engine told the model about its tools so far. */
   readonly toolResults: readonly { readonly id: string; readonly text: string }[]
+  /** The text of every `<local-command-stdout>` block of the request, in order: the replies of the slash commands the model reads. */
+  readonly commandReplies: readonly string[]
 }
 
 /** The answer to a request with no tools: a title, in the form the engine asks for. */
@@ -79,6 +81,14 @@ export function streamOf(turn: FakeTurn, id: string, model: string): string {
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
+/** The texts of a message `content`: the string, or the `text` of each part. */
+const textsOf = (content: unknown): string[] =>
+  typeof content === 'string'
+    ? [content]
+    : Array.isArray(content)
+      ? content.flatMap(part => (isRecord(part) && typeof part.text === 'string' ? [part.text] : []))
+      : []
+
 /**
  * The `tool_result` blocks of a request body, in order. The result of a tool is in the message that follows its call, and
  * the engine adds a message of its own after that one: the last message is not the one to read.
@@ -89,15 +99,24 @@ export function toolResultsOf(body: unknown): { id: string; text: string }[] {
     const content = isRecord(message) && Array.isArray(message.content) ? message.content : []
     return content.flatMap(block => {
       if (!isRecord(block) || block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') return []
-      const inner = block.content
-      const parts =
-        typeof inner === 'string'
-          ? [inner]
-          : Array.isArray(inner)
-            ? inner.flatMap(part => (isRecord(part) && typeof part.text === 'string' ? [part.text] : []))
-            : []
-      return parts.map(text => ({ id: block.tool_use_id as string, text }))
+      return textsOf(block.content).map(text => ({ id: block.tool_use_id as string, text }))
     })
+  })
+}
+
+/** The block that the engine puts a command reply in, in the next request (spike #196, `concepts/turn-strip.md`, S12). */
+const COMMAND_REPLY = /<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/g
+
+/**
+ * The replies of the slash commands that a request body carries, in order: the text inside each `<local-command-stdout>` block
+ * of a message (issue #246). The block is in the text of a user message, as a string or as text parts. A `tool_result` is not
+ * read: its text is no reply of a command. A block that is not closed is no reply.
+ */
+export function commandRepliesOf(body: unknown): string[] {
+  const messages = isRecord(body) && Array.isArray(body.messages) ? body.messages : []
+  return messages.flatMap(message => {
+    const content = isRecord(message) ? message.content : undefined
+    return textsOf(content).flatMap(text => [...text.matchAll(COMMAND_REPLY)].map(m => m[1] ?? ''))
   })
 }
 
@@ -151,6 +170,14 @@ export class FakeApi {
       .map(r => r.text)
   }
 
+  /**
+   * The text of every command reply the engine sent the model, in order, each once: a request repeats the history. A second reply
+   * with the same words counts once, which is enough to ask whether the model read some words.
+   */
+  commandReplies(): string[] {
+    return [...new Set(this.requests.flatMap(r => r.commandReplies))]
+  }
+
   close(): Promise<void> {
     this.server.closeAllConnections()
     return new Promise(resolve => this.server.close(() => resolve()))
@@ -181,7 +208,7 @@ export class FakeApi {
       const model = isRecord(body) && typeof body.model === 'string' ? body.model : 'fake'
       const stream = isRecord(body) && body.stream === true
       const isTurn = tools > 0
-      this.requests.push({ isTurn, toolResults: toolResultsOf(body) })
+      this.requests.push({ isTurn, toolResults: toolResultsOf(body), commandReplies: commandRepliesOf(body) })
       const turn = isTurn ? (this.turns[Math.min(this.taken, this.turns.length - 1)] as FakeTurn) : AUX_ANSWER
       if (isTurn) this.taken += 1
       if (!stream) {

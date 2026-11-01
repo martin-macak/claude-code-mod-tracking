@@ -2,12 +2,22 @@
 // chosen option marked, typed text tagged, and secrets masked unless masking is off. Pure.
 import { expect, test } from 'claude-code/testing'
 import { capCalls } from '../trackers/questions/log'
-import { callMarkdown, QA_USAGE, qaMarkdown, qaText } from '../trackers/questions/markdown'
+import {
+  callMarkdown,
+  QA_USAGE,
+  qaMarkdown,
+  qaScreen,
+  qaStub,
+  qaText,
+  SCREEN_LIMIT,
+  stubRange,
+} from '../trackers/questions/markdown'
 import { askCall, planCall } from '../trackers/questions/parse'
 import { answerText, masker, shownItem } from '../trackers/questions/present'
 import { MASKED } from '../trackers/questions/secrets'
 import type { QuestionCall, QuestionItem } from '../trackers/questions/types'
 import { LIVE_ASK, LIVE_PLAN_REJECTED, PLAN, PLAN_FILE } from './fixtures/questions'
+import { expectLinear } from './fixtures/scaling'
 
 const AT = Date.UTC(2026, 9, 21, 21, 41)
 const stamped = (
@@ -351,13 +361,232 @@ test('qaMarkdown: a title, then the calls in order, one blank line between them'
 
 test('qaText: no argument is the list, a number is one call without the title, and a wrong word is the usage', () => {
   const calls = [callOf([item()], { n: 1, id: 'a' }), callOf([item()], { n: 4, id: 'b' })]
-  expect(qaText(calls, '', true)).toBe(qaMarkdown(calls, true))
-  expect(qaText(calls, '4', true)).toBe(callMarkdown(calls[1]!, true))
-  expect(qaText(calls, ' 4 ', true)).toBe(callMarkdown(calls[1]!, true))
+  // The reply starts with one line break: the engine puts `<plugin>: ` in front, and a title that follows on the same line
+  // draws a literal `#` (issue #246, R6). The whole list and one call have it; `qaMarkdown` and `callMarkdown` do not.
+  expect(qaText(calls, '', true)).toBe(`\n${qaMarkdown(calls, true)}`)
+  expect(qaText(calls, '4', true)).toBe(`\n${callMarkdown(calls[1]!, true)}`)
+  expect(qaText(calls, ' 4 ', true)).toBe(`\n${callMarkdown(calls[1]!, true)}`)
   expect(qaText(calls, '2', true)).toBe('No call 2. Calls kept: 1, 4.')
   expect(qaText(calls, 'x', true)).toBe(QA_USAGE)
   expect(qaText(calls, '1 2', true)).toBe(QA_USAGE)
   expect(qaText(calls, '0', true)).toBe(QA_USAGE)
   expect(qaText([], '', true)).toBe('No questions asked in this session.')
   expect(qaText([], '3', true)).toBe('No questions asked in this session.')
+})
+
+test('the shared Markdown has no leading line break: the copy key puts it on the clipboard as it is', () => {
+  const calls = [callOf([item()], { n: 1, id: 'a' })]
+  expect(qaMarkdown(calls, true).startsWith('# Questions and answers')).toBe(true)
+  expect(callMarkdown(calls[0]!, true).startsWith('## Q1')).toBe(true)
+})
+
+test('the usage line names --send: /track qa [--send] [n]', () => {
+  expect(QA_USAGE).toBe('Usage: /track qa [--send] [n]')
+})
+
+// ---------------------------------------------------------------- the stub and the screen text (issue #246)
+
+const many = (...ns: number[]): QuestionCall[] => ns.map(n => callOf([item()], { n, id: `id-${n}` }))
+
+test('qaStub: the range of the calls, the count, and the way to send them', () => {
+  const calls = many(1, 2, 3, 4, 5, 6, 7)
+  expect(qaStub(calls, '')).toBe(
+    'Questions and answers Q1–Q7 (7 calls): drawn on the screen only. /track qa --send puts them in the context of the model.',
+  )
+  expect(qaStub(calls, '3')).toBe(
+    'Questions and answers Q3 (1 call): drawn on the screen only. /track qa --send 3 puts it in the context of the model.',
+  )
+  expect(qaStub(many(2), '')).toBe(
+    'Questions and answers Q2 (1 call): drawn on the screen only. /track qa --send 2 puts it in the context of the model.',
+  )
+  // A range of calls that the caps cut at the front: the numbers stay, and the count is what the list holds.
+  expect(qaStub(many(5, 6, 9), ' ')).toContain('Questions and answers Q5–Q9 (3 calls):')
+})
+
+test('qaStub: the plain replies stay plain, so there is no stub for them', () => {
+  const calls = many(1, 2)
+  expect(qaStub(calls, 'x')).toBeUndefined() // the usage line
+  expect(qaStub(calls, '0')).toBeUndefined()
+  expect(qaStub(calls, '1 2')).toBeUndefined()
+  expect(qaStub([], '')).toBeUndefined() // no questions asked
+  expect(qaStub([], '3')).toBeUndefined()
+  expect(qaStub(calls, '9')).toBeUndefined() // no call 9
+})
+
+test('the stub holds no word of a question, an option, an answer or a note', () => {
+  const secret = item({ question: 'Where is SECRETQ?', answer: 'SECRETA', notes: 'SECRETN' })
+  const stub = qaStub([callOf([secret], { n: 1 })], '') ?? ''
+  for (const word of ['SECRETQ', 'SECRETA', 'SECRETN', 'Storage', 'State only']) expect(stub).not.toContain(word)
+})
+
+test('stubRange reads the range back, behind the prefix of one plugin or of two', () => {
+  const stub = qaStub(many(1, 2, 3, 4, 5, 6, 7), '')!
+  expect(stubRange(stub)).toEqual({ from: 1, to: 7 })
+  expect(stubRange(`artifact-tracking: ${stub}`)).toEqual({ from: 1, to: 7 })
+  expect(stubRange(`a: b: ${stub}`)).toEqual({ from: 1, to: 7 })
+  const one = qaStub(many(3), '')!
+  expect(stubRange(`artifact-tracking: ${one}`)).toEqual({ from: 3, to: 3 })
+})
+
+test('stubRange: a text with no stub, and a range that runs backwards, are no range', () => {
+  expect(stubRange('')).toBeUndefined()
+  expect(stubRange('artifact-tracking: \n# Questions and answers\n\n## Q1 · answered')).toBeUndefined() // the whole text
+  expect(stubRange('Usage: /track qa [--send] [n]')).toBeUndefined()
+  expect(stubRange('Questions and answers Q7–Q2 (3 calls): drawn on the screen only.')).toBeUndefined()
+})
+
+test('stubRange: a row of the whole text that quotes the words of a stub is no stub (the stub starts the text)', () => {
+  const quoted = 'Questions and answers Q1–Q9 (9 calls): drawn on the screen only.'
+  expect(
+    stubRange(`artifact-tracking: \n# Questions and answers\n\n## Q1 · answered\n\nWhy "${quoted}"?`),
+  ).toBeUndefined()
+  expect(stubRange(`artifact-tracking: \n${quoted}`)).toBeUndefined() // a break after the prefix: the whole text, not a stub
+})
+
+test('qaScreen draws exactly the range of the stub, with the title for the whole list', () => {
+  const calls = many(1, 2, 3, 4)
+  const drawn = qaScreen(calls, { from: 2, to: 3 }, true, true)!
+  expect(drawn).toBe(qaMarkdown(calls.slice(1, 3), true)) // no line break in front: the rewrite replaces the whole drawn text
+  expect(drawn).toContain('## Q2 ')
+  expect(drawn).toContain('## Q3 ')
+  expect(drawn).not.toContain('## Q1 ')
+  expect(drawn).not.toContain('## Q4 ') // a call that came after the stub is not in the old row
+})
+
+test('qaScreen of one call has no title, and a call over a range of one is that call', () => {
+  const calls = many(1, 2, 3)
+  expect(qaScreen(calls, { from: 2, to: 2 }, false, true)).toBe(callMarkdown(calls[1]!, true))
+})
+
+test('qaScreen: a call that the caps dropped since the stub gets one line, in its place', () => {
+  const calls = many(3, 4, 5) // Q1 and Q2 went
+  const drawn = qaScreen(calls, { from: 1, to: 5 }, true, true)!
+  expect(drawn).toContain('_Q1–Q2 are no longer kept._')
+  expect(drawn.indexOf('Q1–Q2')).toBeLessThan(drawn.indexOf('## Q3 '))
+  expect(qaScreen(many(1, 2, 5), { from: 1, to: 5 }, true, true)).toContain('_Q3–Q4 are no longer kept._')
+  expect(qaScreen(many(1, 3), { from: 1, to: 3 }, true, true)).toContain('_Q2 is no longer kept._')
+})
+
+test('qaScreen: calls that came again after /track clear, fewer than the stub names, leave a line for the numbers with no call', () => {
+  const calls = many(1, 2)
+  const drawn = qaScreen(calls, { from: 1, to: 4 }, true, true)!
+  expect(drawn).toContain('_Q3–Q4 are no longer kept._')
+  expect(drawn.indexOf('Q3–Q4')).toBeLessThan(drawn.indexOf('## Q1 '))
+})
+
+test('qaScreen: no call of the range in the list is nothing to draw (the slot has not loaded yet)', () => {
+  expect(qaScreen([], { from: 1, to: 3 }, true, true)).toBeUndefined()
+  expect(qaScreen(many(8, 9), { from: 1, to: 3 }, true, true)).toBeUndefined()
+})
+
+test('qaScreen masks a secret unless the config turns the mask off, as the whole text does', () => {
+  const KEY = `ghp_${'a1b2c3d4e5'.repeat(4)}`
+  const calls = [callOf([item({ answer: `in ${KEY}` })], { n: 1 })]
+  expect(qaScreen(calls, { from: 1, to: 1 }, true, true)).not.toContain(KEY)
+  expect(qaScreen(calls, { from: 1, to: 1 }, true, true)).toContain(MASKED)
+  expect(qaScreen(calls, { from: 1, to: 1 }, true, false)).toContain(KEY)
+})
+
+/** Calls that are each about `chars` characters long in Markdown: a long preview does it. */
+const bulky = (ns: number[], chars: number): QuestionCall[] =>
+  ns.map(n =>
+    callOf([item({ options: [{ label: 'A', preview: 'x'.repeat(chars) }], answer: 'A' })], { n, id: `id-${n}` }),
+  )
+
+test('qaScreen past the limit of the row: the newest whole calls stay and the others are named', () => {
+  const calls = bulky([1, 2, 3, 4, 5], 30_000) // about 150 000 characters
+  const drawn = qaScreen(calls, { from: 1, to: 5 }, true, true)!
+  expect(drawn.length).toBeLessThanOrEqual(SCREEN_LIMIT)
+  expect(drawn.split('\n')[0]).toBe('Q1–Q2 left out to fit. /track qa 1 draws one call.')
+  expect(drawn).not.toContain('## Q1 ')
+  expect(drawn).not.toContain('## Q2 ')
+  for (const n of [3, 4, 5]) expect(drawn).toContain(callMarkdown(calls[n - 1]!, true)) // whole, never cut in the middle
+  // The title comes after the notice. The newest call is always the last.
+  expect(drawn.indexOf('# Questions and answers')).toBeGreaterThan(0)
+  expect(drawn.endsWith(callMarkdown(calls[4]!, true))).toBe(true)
+})
+
+test('qaScreen names calls that are not in a row of numbers, and keeps the newest call whole even when it alone is too long', () => {
+  const calls = bulky([2, 4, 7], 60_000)
+  const drawn = qaScreen(calls, { from: 2, to: 7 }, true, true)!
+  // Only Q7 fits with room for the title: the older calls are named, Q4 and Q2 as two calls (Q3, Q5 and Q6 were never there).
+  expect(drawn.split('\n')[0]).toBe('Q2, Q4 left out to fit. /track qa 2 draws one call.')
+  expect(drawn).toContain('## Q7 ')
+  const huge = bulky([1, 2], 120_000) // each call alone is over the limit: the engine cuts it, with its own notice
+  const out = qaScreen(huge, { from: 1, to: 2 }, true, true)!
+  expect(out.split('\n')[0]).toBe('Q1 left out to fit. /track qa 1 draws one call.')
+  expect(out).toContain(callMarkdown(huge[1]!, true))
+})
+
+test('qaScreen: one call that is alone over the limit has no notice, whatever the title: the engine cuts it', () => {
+  const calls = bulky([5], 120_000)
+  expect(qaScreen(calls, { from: 5, to: 5 }, false, true)).toBe(callMarkdown(calls[0]!, true))
+  const withTitle = qaScreen(calls, { from: 5, to: 5 }, true, true)!
+  expect(withTitle).toBe(qaMarkdown(calls, true))
+  expect(withTitle).not.toContain('left out')
+  expect(withTitle).not.toContain('undefined')
+})
+
+test('qaScreen: the notice never pushes the text past SCREEN_LIMIT, however full the kept calls are', () => {
+  const per = callMarkdown(bulky([1], 1)[0]!, true).length - 1
+  const room = SCREEN_LIMIT - ('# Questions and answers'.length + 2)
+  const chars = room - 2 - 2 * per
+  const second = Math.floor(chars / 2)
+  const calls = [...bulky([1], 5_000), ...bulky([2], second), ...bulky([3], chars - second)]
+  const drawn = qaScreen(calls, { from: 1, to: 3 }, true, true)!
+  expect(drawn).toContain('left out to fit')
+  expect(drawn.length).toBeLessThanOrEqual(SCREEN_LIMIT)
+})
+
+test('qaScreen: many numbers that skip name a bounded notice, and the text stays under the limit with the newest call whole', () => {
+  const odd = Array.from({ length: 150 }, (_, i) => 2 * i + 1) // 1, 3, ... 299: a run of its own each
+  const calls = [...bulky(odd, 1_000), ...bulky([1000, 1001], 48_000)]
+  const drawn = qaScreen(calls, { from: 1, to: 1001 }, true, true)!
+  expect(drawn.length).toBeLessThanOrEqual(SCREEN_LIMIT)
+  expect(drawn.endsWith(callMarkdown(calls.at(-1)!, true))).toBe(true)
+  expect(drawn.split('\n')[0]!.length).toBeLessThan(200) // the notice names at most 8 runs, then the first, the last and how many
+  expect(drawn).toMatch(/^Q1–Q\d+ \(\d+ calls\) left out to fit\. \/track qa 1 draws one call\./)
+  expect(drawn).toMatch(/_Q2–Q\d+ \(\d+ calls\) are no longer kept\._/)
+})
+
+test('qaScreen: up to 8 runs of numbers are named one by one', () => {
+  const calls = bulky([1, 3, 5, 7, 9, 11, 13, 15, 100], 20_000)
+  const drawn = qaScreen(calls, { from: 1, to: 100 }, true, true)!
+  expect(drawn.split('\n')[0]).toMatch(/^Q1, Q3, Q5, Q7, Q9(, Q11)?(, Q13)?(, Q15)? left out to fit\./)
+})
+
+test('qaScreen: a text of exactly SCREEN_LIMIT characters is drawn whole, one character more is cut', () => {
+  const per = callMarkdown(bulky([1], 1)[0]!, true).length - 1
+  const titleAndBreaks = '# Questions and answers'.length + 2 + 2
+  const pair = (total: number) => {
+    const chars = total - titleAndBreaks - 2 * per
+    const first = Math.floor(chars / 2)
+    return [...bulky([1], first), ...bulky([2], chars - first)]
+  }
+  const exact = pair(SCREEN_LIMIT)
+  expect(qaMarkdown(exact, true).length).toBe(SCREEN_LIMIT)
+  expect(qaScreen(exact, { from: 1, to: 2 }, true, true)).toBe(qaMarkdown(exact, true))
+  const cut = qaScreen(pair(SCREEN_LIMIT + 1), { from: 1, to: 2 }, true, true)!
+  expect(cut).toContain('Q1 left out to fit.')
+  expect(cut.length).toBeLessThanOrEqual(SCREEN_LIMIT)
+})
+
+test('qaScreen of one call that fits has no notice; the text under the limit is drawn whole', () => {
+  const calls = bulky([1, 2], 10_000)
+  const drawn = qaScreen(calls, { from: 1, to: 2 }, true, true)!
+  expect(drawn).toBe(qaMarkdown(calls, true))
+  expect(drawn).not.toContain('left out')
+})
+
+test('qaScreen: the cost of the cut grows with the size of the calls, not faster', async () => {
+  await expectLinear({
+    make: k =>
+      bulky(
+        Array.from({ length: 10 * k }, (_, i) => i + 1),
+        20_000,
+      ),
+    run: calls => {
+      qaScreen(calls, { from: 1, to: calls.length }, true, true)
+    },
+  })
 })

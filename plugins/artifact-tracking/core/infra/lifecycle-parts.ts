@@ -111,6 +111,20 @@ export function commandHostOf(
       await m.entry(p)
       return (await spec.text?.(w.host.ctx(owner, p), args)) ?? ''
     },
+    // The engine never rejects `surfaces()`, but a hook can refuse it. Then the surface is unknown, and the text that reaches the
+    // model must not be the whole one: it counts as "a surface draws" (issue #246).
+    drawsOnScreen: async p => {
+      try {
+        return (await p.session.surfaces()).length > 0
+      } catch {
+        return true
+      }
+    },
+    stubOf: async (p, owner, spec, args) => {
+      await m.entry(p)
+      return spec.screen?.stub(w.host.ctx(owner, p), args)
+    },
+    drawOf: async (p, owner, spec, args, shown) => spec.screen?.draw(w.host.ctx(owner, p), args, shown),
     openPane: async p => {
       if (!(await p.ui.open())) p.ui.toast(NO_ROOM)
     },

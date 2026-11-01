@@ -1,0 +1,59 @@
+# The real mod under `claude -p` (issue #246, Claude Code 2.1.312)
+
+Made for the PR of issue #246. A throwaway step of the e2e harness (not committed) ran the scenario "A question and my answer are
+listed by /track qa" up to the answer of the dialog, ended the interactive session with `/exit`, and then ran, in the same clone
+and with the same config folder, `claude -p --continue "<prompt>"` with the real mod (`--plugin-dir plugins/artifact-tracking`)
+against the fake Messages API. `claude -p` draws nothing (`$.session.surfaces()` is `[]`), so every reply is the whole text. The
+call was read back from the transcript of the interactive session (the replay). The guard `cc-plugin-sec-default` was loaded and
+was not bypassed. Grade: *verified-kit* (a headless run is never *verified-live*). The model was the fake. The lines
+`its prompt.compose hook was skipped` on stderr come from the guard that runs first on this machine.
+
+=== claude -p --continue "/track qa" (exit 0)
+artifact-tracking: 
+# Questions and answers
+
+## Q1 · turn 1 · answered · 2026-10-29 15:14 UTC
+
+### Storage
+
+Where should the records live?
+
+- [x] **State only**: Choose State only.
+- [ ] **State and store**: Choose State and store.
+
+--- stderr
+artifact-tracking: its prompt.compose hook was skipped. "cc-plugin-sec-default" runs first and sent the event on past it.
+
+--- command replies the fake model got so far: []
+=== claude -p --continue "/track qa 1" (exit 0)
+artifact-tracking: 
+## Q1 · turn 1 · answered · 2026-10-29 15:14 UTC
+
+### Storage
+
+Where should the records live?
+
+- [x] **State only**: Choose State only.
+- [ ] **State and store**: Choose State and store.
+
+--- stderr
+artifact-tracking: its prompt.compose hook was skipped. "cc-plugin-sec-default" runs first and sent the event on past it.
+
+--- command replies the fake model got so far: []
+=== claude -p --continue "/track qa --send" (exit 0)
+artifact-tracking: 
+# Questions and answers
+
+## Q1 · turn 1 · answered · 2026-10-29 15:14 UTC
+
+### Storage
+
+Where should the records live?
+
+- [x] **State only**: Choose State only.
+- [ ] **State and store**: Choose State and store.
+
+--- stderr
+artifact-tracking: its prompt.compose hook was skipped. "cc-plugin-sec-default" runs first and sent the event on past it.
+
+--- command replies the fake model got so far: []

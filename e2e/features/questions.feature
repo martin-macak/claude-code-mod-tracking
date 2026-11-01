@@ -20,6 +20,36 @@ Feature: The questions that Claude asks are listed with their answers
     Then the screen shows "Q1 · turn 1 · answered"
     And the screen shows "- [x] State only: Choose State only."
     And the screen shows "- [ ] State and store: Choose State and store."
+    # Issue #246. The session runs in a terminal, so a surface draws: the row is a `ui.render` rewrite of the reply, and the reply
+    # that the engine stored (and sends the model in the next request) is a stub that names the call. The title is a heading, so
+    # no literal "#" shows. The tool call and its result still hold the question, so the steps look at command replies only.
+    And the screen shows "Questions and answers"
+    And the screen does not show "# Questions and answers"
+    When I type "Thanks"
+    And Claude finishes
+    Then a command reply to the fake model holds "Questions and answers Q1 (1 call): drawn on the screen only"
+    And no command reply to the fake model holds "Where should the records live?"
+    And no command reply to the fake model holds "State only"
+
+  # Issue #246. `--send` answers the whole text on purpose, so the model reads the call in its next request. The session has a
+  # surface (the terminal), so this is the `--send` branch of a drawing surface. The reply starts with a line break after the
+  # plugin name, so the title is a heading here too.
+  Scenario: /track qa --send gives the model the whole text
+    Given a fake model that asks "Where should the records live?" under the header "Storage" with the options "State only" and "State and store"
+    And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
+    When I type "Ask me where"
+    Then the screen shows "Where should the records live?"
+    When I press "Enter"
+    And Claude finishes
+    And I type "/track qa --send"
+    Then the screen shows "Q1 · turn 1 · answered"
+    And the screen shows "- [x] State only: Choose State only."
+    And the screen does not show "# Questions and answers"
+    When I type "Thanks"
+    And Claude finishes
+    Then a command reply to the fake model holds "Where should the records live?"
+    And a command reply to the fake model holds "- [x] **State only**: Choose State only."
+    And no command reply to the fake model holds "drawn on the screen only"
 
   Scenario: The pane lists the call as one summary row
     Given a fake model that asks "Where should the records live?" under the header "Storage" with the options "State only" and "State and store"
