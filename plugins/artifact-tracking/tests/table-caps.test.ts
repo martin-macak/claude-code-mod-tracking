@@ -114,7 +114,7 @@ test('budget at 600 rows: nothing is cut (spec 7)', () => {
   const { drawn } = draw(sections, { bodyColumns: 96, limits: { sectionRows: 2000, maxRows: 2000 } })
   expect(drawn.handles.size).toBe(600)
   expect(fits(measure(drawn.tree), BUDGET)).toBe(true)
-  expect(footerOf(drawn.tree)).toHaveLength(7)
+  expect(footerOf(drawn.tree)).toHaveLength(8)
 })
 
 test('budget at 1,400 rows: the guard cuts, the footer stays, every drawn row keeps its Button (spec 7)', () => {
@@ -124,7 +124,7 @@ test('budget at 1,400 rows: the guard cuts, the footer stays, every drawn row ke
   expect(drawn.handles.size).toBeLessThan(1400)
   expect(drawn.handles.size).toBeGreaterThan(0)
   expect(nodes(drawn.tree, 'Button').filter(b => b.props.key === 'm0')).toHaveLength(1)
-  expect(footerOf(drawn.tree)).toHaveLength(7)
+  expect(footerOf(drawn.tree)).toHaveLength(8)
   const rows = rowBoxes(drawn.tree)
   expect(rows).toHaveLength(drawn.handles.size)
   for (const r of rows) expect(nodes(r, 'Button')).toHaveLength(1)
@@ -161,7 +161,7 @@ test('budget: one too-large line when even one row per section does not fit', ()
   expect(drawn.handles.size).toBe(0)
   expect(drawn.rows).toEqual([])
   expect(texts(drawn.tree).filter(([p, s]) => s === TOO_LARGE && p.dimColor === true)).toHaveLength(1)
-  expect(footerOf(drawn.tree)).toHaveLength(7)
+  expect(footerOf(drawn.tree)).toHaveLength(8)
   expect(TOO_LARGE).toBe('The pane is too large to draw. /track prints the list.')
 })
 
@@ -213,8 +213,8 @@ test('findRow finds a hidden child of a closed row, with its section id and can'
     group('web', [row('p', { name: 'p' }, { owner: 'web', children: [kid] })]),
     group('file', [row('f', { name: 'f' }, { owner: 'file', can: {} })]),
   ]
-  expect(findRow(sections, 'c1')).toEqual({ id: 'c1', owner: 't', group: 'web', can: { dismiss: true } })
-  expect(findRow(sections, 'f')).toEqual({ id: 'f', owner: 'file', group: 'file', can: {} })
+  expect(findRow(sections, 'c1')).toEqual({ id: 'c1', owner: 't', group: 'web', can: { dismiss: true, open: false } })
+  expect(findRow(sections, 'f')).toEqual({ id: 'f', owner: 'file', group: 'file', can: { open: false } })
   expect(findRow(sections, 'p')?.owner).toBe('web')
   expect(findRow(sections, 'gone')).toBeUndefined()
   expect(findRow(sections, null)).toBeUndefined()

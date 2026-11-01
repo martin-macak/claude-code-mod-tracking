@@ -6,6 +6,7 @@ import type { RunResult } from '../core/interfaces/ports'
 import type { RowRef } from '../core/interfaces/view'
 import { githubTracker } from '../trackers/github'
 import type { LaneState, MergeNote } from '../trackers/github/types'
+import { footerRows, moveHintFits } from '../ux/tree-data-table/footer'
 import { res, until } from './fixtures/items'
 import { managerWorld } from './fixtures/manager'
 import { LANE, named } from './fixtures/reasons'
@@ -86,6 +87,15 @@ test('the github tracker declares the resolve key (c) and the files key (f), and
   ])
   expect(t.m.problems()).toEqual([])
   expect(t.m.keys.get('github.resolve')).toMatchObject({ key: 'c', owner: 'github', scope: 'row' })
+})
+
+test('the list footer of a github row takes 2 rows at 96 cells: r h x 1 2 3 0 o c f and Esc close (B10, m3 of PR 302)', async () => {
+  const t = await setup()
+  const row = { ...ROW(K7), can: { ...ROW(K7).can, open: true } }
+  const keys = await t.m.footer(t.w.ports, row, false)
+  expect(keys.map(k => k.key).join('')).toBe('rhx1230ocf')
+  expect(footerRows(keys, 96, moveHintFits(keys, 96))).toBe(2)
+  expect(footerRows(keys, 96, false)).toBe(2)
 })
 
 test('a github row selected: resolve and files work for a conflicted PR, and not for an issue', async () => {

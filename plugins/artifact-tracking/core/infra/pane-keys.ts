@@ -50,7 +50,6 @@ export class PaneKeys {
     for (const t of this.ordered) {
       if (!this.d.host.live(t.id)) continue
       if (t.keys !== undefined) next.add(t.id, t.keys)
-      if (t.preview !== undefined) next.addPreview(t.id) // its rows draw `v` (issue #57, L2)
     }
     this.reg = next
   }
@@ -85,8 +84,8 @@ export class PaneKeys {
   /**
    * The footer for the selected row. A tracker key works when the owner's actions have an impl for it, and the impl's
    * `state` does not say `disabled`. Reads only: it runs in a render. `markedRows` are the marked rows that the last drawing laid
-   * (issue #138): `x` and the digits then follow them, and a tracker key stays on the selected row. `v` is live when the provider says the
-   * row has a preview (`previewModes`): a row it skips draws `v` dim (issue #57, L2, R11).
+   * (issue #138): `x` and the digits then follow them, and a tracker key stays on the selected row. `v` is on no footer (issue #277): it
+   * sits on the key line of the preview, where the provider's `previewModes` decide which modes are live.
    */
   async footer(
     ports: Ports,
@@ -111,11 +110,7 @@ export class PaneKeys {
         return 'disabled'
       }
     }
-    const previewable =
-      row !== undefined && !help && this.reg.hasPreview(row.owner)
-        ? (await this.previewModes(ports, row.owner, row.id)) !== undefined
-        : true // no `v` is drawn for another row, and the help view works no `v`
-    return footerKeys(this.reg, row, o => this.isItemOwner(o), help, state, markedRows, previewable)
+    return footerKeys(this.reg, row, o => this.isItemOwner(o), help, state, markedRows)
   }
 
   /**

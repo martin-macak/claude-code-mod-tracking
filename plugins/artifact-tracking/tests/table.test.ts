@@ -35,8 +35,8 @@ import { group, row, webRows } from './fixtures/sections'
 
 // The first title of the help view: it names Tab, Shift+Tab and the arrows (issue #108).
 const PANE_KEYS = 'Pane keys (Tab, Shift+Tab, Up, Down move between rows)'
-/** The core keys with a Button in the footer of a row that has no preview: `v` is drawn only for a row of a tracker that has one (issue #57, L2). */
-const FOOTER_CORE = CORE_KEYS.filter(k => k.bar === undefined && k.id !== 'preview')
+/** The core keys with a Button in the footer of the list: `v` and `d` sit on the key line of the preview, `o` is the last of them (issue #277). */
+const FOOTER_CORE = CORE_KEYS.filter(k => k.bar === undefined)
 
 const draw = (sections: Parameters<typeof TreeDataTable.render>[0], over: Parameters<typeof view>[0] = {}) => {
   resetWidths()
@@ -126,7 +126,7 @@ test('the tree cell holds the indent, the glyph Button and the text', () => {
   expect(cell.props.paddingLeft).toBe(2)
   expect(cell.props.flexShrink).toBe(0)
   const glyph = only(nodes(cell, 'Button'))
-  expect(glyph.props).toMatchObject({ key: 'r1', plain: true, label: '▸' })
+  expect(glyph.props).toMatchObject({ key: 'r1', plain: true, label: '›' }) // the child is a leaf: no fold to show (issue #277)
   expect((cell.children[0] as Node).props).toEqual({ width: 2, flexShrink: 0 })
   expect(leaves(cell)).toEqual(['child'])
   expect(cell.props.width).toBe(((headerBoxes(drawn.tree)[0] as Node).children[2] as Node).props.width)
@@ -271,10 +271,31 @@ test('expandedByDefault rows are open unless their id is in expanded (G3)', () =
   expect(rowBoxes(draw(sections, { expanded: new Set(['p']) }).drawn.tree)).toHaveLength(1)
 })
 
-test('Enter on a handle calls toggle with the row id', () => {
+test('Enter on a handle calls enter with the row id', () => {
   const { drawn, calls } = draw([group('web', webRows(2))])
   press(buttonOf(drawn.tree, 'r1'))
-  expect(calls).toEqual(['toggle:w1'])
+  expect(calls).toEqual(['enter:w1'])
+})
+
+// Issue #277, B9. A leaf has no fold: its Button opens the detail view, so it draws `›`. A row with children keeps `▸` and `▾`, the
+// glyphs of the fold that `o` toggles.
+test('a leaf draws ›, and a row with children draws ▸ closed and ▾ open (B9)', () => {
+  const kid = row('c', { name: 'child' })
+  const sections = [group('web', [row('p', { name: 'parent' }, { children: [kid] }), row('leaf', { name: 'leaf' })])]
+  const closed = draw(sections)
+  expect(buttonOf(closed.drawn.tree, 'r0').props.label).toBe('▸')
+  expect(buttonOf(closed.drawn.tree, 'r1').props.label).toBe('›')
+  const open = draw(sections, { expanded: new Set(['p']) })
+  expect(buttonOf(open.drawn.tree, 'r0').props.label).toBe('▾')
+  expect(buttonOf(open.drawn.tree, 'r1').props.label).toBe('›') // the child of the open parent
+  expect(buttonOf(open.drawn.tree, 'r2').props.label).toBe('›')
+  // The same in a windowed drawing: the stop of a row out of the window carries the glyph of its row too.
+  expect(handlesOf(open.drawn.tree)).toEqual(['r0', 'r1', 'r2'])
+})
+
+test('an expandedByDefault row with no child draws ›: a glyph of a fold needs something to fold (B9)', () => {
+  const sections = [group('web', [row('p', { name: 'parent' }, { expandedByDefault: true, children: [] })])]
+  expect(buttonOf(draw(sections).drawn.tree, 'r0').props.label).toBe('›')
 })
 
 test('an open leaf with detail() draws its lines; without detail it draws the default detail (U1)', () => {
@@ -417,14 +438,14 @@ test('every core key has one footer Button in every state; disabled ones are dim
   const sections = [group('web', webRows(1))]
   const process: RowRef = { id: 'w0', owner: 'p', group: 'processes', can: {} }
   const item: RowRef = { id: 'w0', owner: 'items', group: 'web', can: { dismiss: true, priority: true } }
-  const pane = ['r', 'h', 'x', '1', '2', '3', '0']
+  const pane = ['r', 'h', 'x', '1', '2', '3', '0', 'o']
   const cases = [
     { footer: footerKeys(reg, undefined, () => false, false), help: null, on: ['refresh', 'help'], hotkeys: pane },
     { footer: footerKeys(reg, process, () => false, false), help: null, on: ['refresh', 'help'], hotkeys: pane },
     {
       footer: footerKeys(reg, item, o => o === 'items', false),
       help: null,
-      on: FOOTER_CORE.map(k => k.id),
+      on: FOOTER_CORE.map(k => k.id).filter(id => id !== 'open'), // the row has no children: o is dim
       hotkeys: pane,
     },
     {
@@ -463,10 +484,10 @@ test('the help view draws g, a, t, p, m and e as dim footer Buttons, one Button 
     help: helpModel(reg.all(), sections, '/c/config.json', []),
   })
   const hotkeys = helpFooterOf(drawn.tree).map(b => String(b.props.hotkey))
-  expect(hotkeys).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'p', 'm', 'e'])
+  expect(hotkeys).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'o', 'g', 'a', 't', 'p', 'm', 'e'])
   expect(hotkeys).toEqual([...new Set(hotkeys)]) // the engine lets the later of two equal hotkeys win in silence
   expect(viewLineOf(drawn.tree)).toHaveLength(6) // the same Buttons: the help view has no view line, so these are its footer
-  expect(footerOf(drawn.tree)).toHaveLength(7)
+  expect(footerOf(drawn.tree)).toHaveLength(8)
   for (const key of ['view', 'show-all', 'touched', 'clean', 'mark', 'quick']) {
     const b = buttonOf(drawn.tree, key)
     expect(b.props.dimColor, key).toBe(true)
@@ -493,7 +514,7 @@ test('the pane draws g, a, t, p, m and e once, on the view line, and the help vi
   expect(paneKeys).toEqual([...new Set(paneKeys)])
   expect(paneKeys.filter(k => ['g', 'a', 't', 'p', 'm', 'e'].includes(String(k)))).toHaveLength(6)
   expect(viewLineOf(pane.drawn.tree)).toHaveLength(6)
-  expect(footerOf(pane.drawn.tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
+  expect(footerOf(pane.drawn.tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'o'])
   // The help view takes no view line, whatever the view carries: the keys are in the footer, not twice.
   const help = draw(sections, {
     footer: footerKeys(reg, undefined, () => false, true),
@@ -502,17 +523,18 @@ test('the pane draws g, a, t, p, m and e once, on the view line, and the help vi
   })
   const helpKeys = helpFooterOf(help.drawn.tree).map(b => b.props.hotkey)
   expect(helpKeys).toEqual([...new Set(helpKeys)])
-  expect(helpKeys).toHaveLength(13)
+  expect(helpKeys).toHaveLength(14)
 })
 
-// Issue #108, option 1: the footer says how to move, where that costs no row. The core footer is 79 cells, 92 with the hint.
-// A body of 79 to 91 cells draws it on one row without the hint and on two with it, so the hint stays out there: the help
-// view names the keys at every width. Where the footer wraps anyway and the hint fits on the second row, it stays.
+// Issue #108, option 1: the footer says how to move, where that costs no row. The core footer is 88 cells since `o` of issue #277 (it
+// was 79), 101 with the hint. A body of 88 to 100 cells draws it on one row without the hint and on two with it, so the hint stays out
+// there, and it stays out at 96 cells of the inline pane: the help view names the keys at every width. Where the footer wraps anyway
+// and the hint fits on the second row, it stays.
 const MOVE = 'Tab ↑↓ move'
 const footerAt = (bodyColumns: number) => draw([], { bodyColumns }).drawn.tree as unknown as Node
 
 test('the footer names Tab and the arrows before Esc close in a body where that adds no row', () => {
-  for (const bodyColumns of [92, 95, 96]) {
+  for (const bodyColumns of [101, 110, 120]) {
     const footer = (footerAt(bodyColumns).children.at(-1) ?? {}) as Node
     expect(footer.children.slice(-2)).toEqual([
       { type: 'Text', props: { dimColor: true }, children: [MOVE] },
@@ -522,8 +544,8 @@ test('the footer names Tab and the arrows before Esc close in a body where that 
   }
 })
 
-test('the footer leaves the move hint out of a body where it would add a row', () => {
-  for (const bodyColumns of [91, 80, 79]) {
+test('the footer leaves the move hint out of a body where it would add a row, also the 96 cells of the inline pane (issue #277, B10)', () => {
+  for (const bodyColumns of [100, 96, 88]) {
     const footer = footerAt(bodyColumns).children.at(-1) as Node
     expect(leaves(footer)).not.toContain(MOVE)
     expect(footer.children.at(-1)).toEqual({ type: 'Text', props: { dimColor: true }, children: ['Esc close'] })
@@ -539,22 +561,22 @@ test('the footer keeps the move hint where it wraps anyway and the hint fits on 
   expect(leaves(footerAt(78).children.at(-1))).toContain(MOVE)
 })
 
-// The help footer (issues #200, #199 and #276) is 152 cells wide with its 13 Buttons and `Esc close` (165 cells with the hint), so the
-// hint fits it only where it adds no row: not at 77 to 85 cells (2 rows without the hint, 3 with it), and not at 152 to 164 cells
-// (1 row without, 2 with). It fits from 86 to 151 cells, where the footer wraps anyway, and from 165.
-test('the help footer of 13 Buttons draws the move hint only where it adds no row', () => {
+// The help footer (issues #200, #199, #276 and #277) is 161 cells wide with its 14 Buttons and `Esc close` (174 cells with the hint), so
+// the hint fits it only where it adds no row: not at 82 to 85 cells (2 rows without the hint, 3 with it), and not at 161 to 173 cells
+// (1 row without, 2 with). It fits from 86 to 160 cells, where the footer wraps anyway, and from 174.
+test('the help footer of 14 Buttons draws the move hint only where it adds no row', () => {
   const draws = (bodyColumns: number) => {
     const help = helpModel([], [], undefined, [])
     const tree = draw([], { footer: HELP_FOOTER, help, bodyColumns }).drawn.tree as unknown as Node
     return leaves(tree.children.at(-1)).includes(MOVE)
   }
-  for (const bodyColumns of [86, 96, 151, 165]) {
+  for (const bodyColumns of [86, 96, 160, 174]) {
     expect(draws(bodyColumns), `${bodyColumns} cells`).toBe(true)
     expect(footerRows(HELP_FOOTER, bodyColumns, true), `${bodyColumns} cells`).toBe(
       footerRows(HELP_FOOTER, bodyColumns, false),
     )
   }
-  for (const bodyColumns of [152, 164, 85, 77]) {
+  for (const bodyColumns of [161, 173, 85, 82]) {
     expect(draws(bodyColumns), `${bodyColumns} cells`).toBe(false)
     expect(footerRows(HELP_FOOTER, bodyColumns, true), `${bodyColumns} cells`).toBeGreaterThan(
       footerRows(HELP_FOOTER, bodyColumns, false),
@@ -564,7 +586,7 @@ test('the help footer of 13 Buttons draws the move hint only where it adds no ro
 
 test('the footer Button key is the key the registry finds the key by, for a tracker key too', () => {
   const reg = new KeyRegistry()
-  reg.add('a', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+  reg.add('a', [{ id: 'open', key: 'w', label: 'open', scope: 'row' }])
   const mine: RowRef = { id: 'w0', owner: 'a', group: 'web', can: {} }
   const footer = footerKeys(reg, mine, () => false, false)
   const { drawn, calls } = draw([group('web', webRows(1))], { footer })
@@ -587,7 +609,7 @@ test('with help the footer labels h as back', () => {
 test('an empty pane draws No tracked items yet. and the footer', () => {
   const { drawn } = draw([])
   expect(texts(drawn.tree).filter(([p, s]) => s === EMPTY_TEXT && p.dimColor === true)).toHaveLength(1)
-  expect(footerOf(drawn.tree)).toHaveLength(7)
+  expect(footerOf(drawn.tree)).toHaveLength(8)
   expect(drawn.handles.size).toBe(0)
   expect(drawn.rows).toEqual([])
 })
@@ -614,7 +636,7 @@ test('with help the pane draws the help view and the footer, and no row', () => 
   expect(rowBoxes(drawn.tree)).toHaveLength(0)
   expect(handlesOf(drawn.tree)).toEqual([])
   expect(drawn.handles.size).toBe(0)
-  expect(helpFooterOf(drawn.tree)).toHaveLength(13) // the 7 footer keys and the dim g, a, t, p, m and e (issues #200, #199 and #276)
+  expect(helpFooterOf(drawn.tree)).toHaveLength(14) // the 8 footer keys and the dim g, a, t, p, m and e (issues #200, #199, #276 and #277)
 })
 
 // The help view in a short body (issue #92). The engine gives the body height as `scroll.bodyRows`. The full help view
@@ -636,7 +658,7 @@ const FULL_LINES = 11
  * and in `pane.test.tsx`.
  */
 function helpIn(bodyRows: number | undefined, bodyColumns = 96) {
-  const reg = new KeyRegistry(FOOTER_CORE)
+  const reg = new KeyRegistry(FOOTER_CORE.filter(k => k.id !== 'open')) // the footer that took 79 cells before `o` (issue #277)
   const footer = footerKeys(reg, undefined, () => false, true)
   const { drawn } = draw([], {
     footer,
@@ -709,7 +731,7 @@ function problemsIn(n: number, bodyRows: number | undefined, path = LIVE_PATH) {
 }
 
 test('at 100x40 inline with 3 or more problems the help view shows Pane keys, the count and the footer in the 11-row body', () => {
-  expect(HELP_FOOTER_ROWS).toBe(2) // the 13 Buttons wrap at 96 cells (issues #200, #199 and #276)
+  expect(HELP_FOOTER_ROWS).toBe(2) // the 14 Buttons wrap at 96 cells (issues #200, #199, #276 and #277)
   for (const n of [3, 4, 30]) {
     const { tree, body, foot, lines } = problemsIn(n, 11)
     expect(lines[0], `${n} problems`).toBe(PANE_KEYS)
@@ -718,7 +740,7 @@ test('at 100x40 inline with 3 or more problems the help view shows Pane keys, th
     // takes one row of its own (issue #265), and the 2-row footer leaves the body one row fewer than the 1-row footer did.
     expect(body.children).toHaveLength(8)
     expect(tree.props.rowGap).toBe(0)
-    expect(helpFooterOf(foot)).toHaveLength(13)
+    expect(helpFooterOf(foot)).toHaveLength(14)
     // The 86-cell path wraps to a second row: 8 lines, 1 wrapped row and the 2-row footer fill the body.
     expect(body.children.length + 1 + HELP_FOOTER_ROWS).toBe(11)
   }
@@ -745,7 +767,7 @@ test('the help view lists every problem of its model when the body has the rows,
 test('the table view never turns compact: the root keeps its gap, and a body that holds the tree changes nothing', () => {
   const sections = [group('web', webRows(2))]
   const tall = draw(sections, { bodyRows: 28 }).drawn
-  const exact = draw(sections, { bodyRows: 6 }).drawn // the title, the header, 2 rows, the gap and the footer
+  const exact = draw(sections, { bodyRows: 7 }).drawn // the title, the header, 2 rows, the gap and the footer of 2 rows (80 cells, since `o`, issue #277)
   expect(JSON.stringify(exact.tree)).toBe(JSON.stringify(tall.tree)) // closures differ, the shape does not
   const short = draw(sections, { bodyRows: 3 }).drawn // a window over the rows (table-window.test.ts), still with the gap
   expect((short.tree as unknown as Node).props.rowGap).toBe(1)
@@ -855,7 +877,7 @@ test('R6: the turns line follows the detail() of a tracker and the default detai
 
 test('a footer key passes the surface of its press to the action; a press with no event names none', () => {
   const reg = new KeyRegistry()
-  reg.add('a', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+  reg.add('a', [{ id: 'open', key: 'w', label: 'open', scope: 'row' }])
   const mine: RowRef = { id: 'w0', owner: 'a', group: 'web', can: {} }
   const { drawn, calls, surfaces } = draw([group('web', webRows(1))], {
     footer: footerKeys(reg, mine, () => false, false),

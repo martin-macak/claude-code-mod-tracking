@@ -151,7 +151,7 @@ test('draw passes the selected row, the config caps and the footer to the table'
   const tree = await t.draw()
   expect(handlesOf(tree)).toEqual(['r0', 'r1', 'r2', 'r3', 'r4'])
   expect(buttonOf(tree, 'm0').props.label).toBe('2 more')
-  expect(footerOf(tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
+  expect(footerOf(tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'o'])
   expect(buttonOf(tree, 'dismiss').props.dimColor).toBeUndefined() // the selected row can be dismissed
   expect(t.host.views).toEqual([{ selected: 'b', expanded: new Set() }])
 })
@@ -172,14 +172,14 @@ test('draw hands the body height to the help view: a short body draws it compact
   const t = setup(webs('a'), { path: '/p/config.json', version: '1.2.3' })
   t.w.state.set('help', true)
   const help = async (rows?: number) => (await t.draw(96, rows)) as unknown as { children: { children: unknown[] }[] }
-  // The full view is 2 titles, 15 keys (g, a, t, p and e are pane keys, issues #63, #199 and #276; m is a row key, issue #138; v opens the
-  // preview, issue #57, L2, and d is its diff mode, issue #254), the config line and the version line. The compact view is 8 lines: three
+  // The full view is 2 titles, 16 keys (g, a, t, p and e are pane keys, issues #63, #199 and #276; m is a row key, issue #138; v opens the
+  // preview, issue #57, L2, and d is its diff mode, issue #254), the config line and the version line. The compact view is 9 lines (with `o` of issue #277): three
   // keys to a line would take 10 (the seven pane keys take three lines and the eight row keys three), and with the two rows of the help
   // footer (issue #200) that is 12 of the 11 rows of an inline pane at 100x40. So the form takes four keys to a line, and the pane keys
   // and the row keys take two lines each.
-  expect((await help(undefined)).children[0]?.children).toHaveLength(19)
-  expect((await help(28)).children[0]?.children).toHaveLength(19)
-  expect((await help(11)).children[0]?.children).toHaveLength(8)
+  expect((await help(undefined)).children[0]?.children).toHaveLength(20)
+  expect((await help(28)).children[0]?.children).toHaveLength(20)
+  expect((await help(11)).children[0]?.children).toHaveLength(9)
 })
 
 test('with many problems a short body draws the help view capped with a count, and /track help prints every problem of its model', async () => {
@@ -210,6 +210,7 @@ test('with a tracker row selected the help view still fits the 11-row inline bod
     '2',
     '3',
     '0',
+    'o',
     'g',
     'a',
     't',
@@ -243,6 +244,7 @@ test('the selected row hides while the help view is open: the help footer keeps 
     '2',
     '3',
     '0',
+    'o',
     'g',
     'a',
     't',
@@ -255,8 +257,13 @@ test('the selected row hides while the help view is open: the help footer keeps 
   expect((body as { children: unknown[] }).children.length + wrapped + HELP_FOOTER_ROWS).toBeLessThanOrEqual(11) // body, path, footer
   t.w.state.set('help', false)
   const rows = await t.draw(96, 11)
-  expect(footerOf(rows).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'c', 'f'])
-  expect(footerOf(rows).every(b => b.props.dimColor !== true)).toBe(true) // the keys of `b` are live
+  expect(footerOf(rows).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'o', 'c', 'f'])
+  expect(
+    footerOf(rows)
+      .filter(b => b.props.hotkey !== 'o')
+      .every(b => b.props.dimColor !== true),
+  ).toBe(true) // the keys of `b` are live
+  expect(buttonOf(rows, 'open').props.dimColor).toBe(true) // `o` is dim: `b` is a leaf (issue #277)
 })
 
 test('draw with the help on draws the version line after the config line', async () => {
@@ -558,14 +565,36 @@ test('Enter on an "N more" Button after the selected row hid puts the ring on th
   expect(t.selected()).toBe('w3')
 })
 
-test('toggle flips the id in expanded; more adds sectionRows to shown(group), keyed by view and group', async () => {
-  const t = setup(webs('a', 'b'))
-  const tree = await t.draw()
-  press(buttonOf(tree, 'r1'))
-  await t.session.idle()
-  expect(t.w.state.get('expanded')).toEqual(['b'])
-  press(buttonOf(tree, 'r1'))
-  await t.session.idle()
+test('a press after the selected row hid: the row the pane fell to opens, any other row only gets the selection (B7, m2 of PR 302)', async () => {
+  // w4 is selected and hides with no key, so the pane falls to w3 while the atom still names w4. Enter or a second click on w3 opens it:
+  // it is the row the person sees as selected. A press on w2 only selects it.
+  const rows = TWELVE.filter(r => r.id !== 'w4')
+  const hid = async () => {
+    const t = setup(TWELVE, { file: { global: { ui: { sectionRows: 5 } } } })
+    t.w.state.set('selected', 'w4')
+    await t.draw(96, SHORT)
+    t.host.setRows(rows)
+    return { t, tree: await t.draw(96, SHORT) }
+  }
+  const fell = await hid()
+  expect(fell.t.selected()).toBe('w4') // the atom is not written
+  press(buttonOf(fell.tree, 'r3')) // w3
+  await fell.t.session.idle()
+  expect(fell.t.w.state.get('preview')).toEqual({ rowId: 'w3', owner: 'web', mode: 'detail' })
+  const other = await hid()
+  press(buttonOf(other.tree, 'r2')) // w2
+  await other.t.session.idle()
+  expect(other.t.w.state.get('preview') ?? null).toBeNull()
+  expect(other.t.selected()).toBe('w2')
+})
+
+test('o flips the id in expanded on a row with children; more adds sectionRows to shown(group), keyed by view and group (B8)', async () => {
+  const t = setup([web('a', { children: [web('a1')] }), web('b')])
+  t.w.state.set('selected', 'a')
+  await t.draw()
+  await t.pressKey('open')
+  expect(t.w.state.get('expanded')).toEqual(['a'])
+  await t.pressKey('open')
   expect(t.w.state.get('expanded')).toEqual([])
   expect(await t.w.ports.state.shown.get('list:web')).toBe(0)
   const over = setup(webs('a', 'b', 'c', 'd', 'e', 'f', 'g'), { file: { global: { ui: { sectionRows: 5 } } } })
@@ -575,20 +604,34 @@ test('toggle flips the id in expanded; more adds sectionRows to shown(group), ke
   expect(handlesOf(await over.draw())).toHaveLength(7)
 })
 
-// Issue #108, option 2. A click on the arrow of a row is a press, and the press must select the row. The ring follows, as
-// after `x` and the digits, so Tab and the arrows go on from the row the person chose.
-test('toggle also selects the row and asks the engine for the ring on its handle', async () => {
+test('o on a leaf, or with no row, does nothing and writes no atom (B8)', async () => {
+  const t = setup(webs('a', 'b'))
+  t.w.state.set('selected', 'a')
+  await t.draw()
+  await t.pressKey('open')
+  expect(t.w.state.get('expanded') ?? []).toEqual([])
+  t.w.state.set('selected', null)
+  await t.draw()
+  await t.pressKey('open')
+  expect(t.w.state.get('expanded') ?? []).toEqual([])
+})
+
+// Issue #108, option 2, and issue #277 (rule of the click, B7). A press of a row Button is Enter or a click. A press on a row that is not
+// the selected one selects it, and the ring follows, as after `x` and the digits, so Tab and the arrows go on from the row the person
+// chose. A press on the row that holds the ring opens its detail view.
+test('a press on another row only selects it and asks for the ring on its handle; a press on the selected row opens its detail view (B7)', async () => {
   const t = setup(webs('a', 'b', 'c'))
   t.w.state.set('selected', 'a')
   const tree = await t.draw()
   press(buttonOf(tree, 'r2')) // a click on c
   await t.session.idle()
-  expect(t.w.state.get('expanded')).toEqual(['c'])
+  expect(t.w.state.get('expanded') ?? []).toEqual([]) // a leaf has no open state any more
   expect(t.selected()).toBe('c')
   expect(t.w.ui.focused).toEqual(['r2'])
-  press(buttonOf(await t.draw(), 'r2')) // the second press closes the row and keeps it selected
+  expect(t.w.state.get('preview') ?? null).toBeNull() // the first click only selected
+  press(buttonOf(await t.draw(), 'r2')) // the second press opens the detail view of c
   await t.session.idle()
-  expect(t.w.state.get('expanded')).toEqual([])
+  expect(t.w.state.get('preview')).toEqual({ rowId: 'c', owner: 'web', mode: 'detail' })
   expect(t.selected()).toBe('c')
 })
 
@@ -603,7 +646,8 @@ test('a press asks for the ring on the handle of the pressed row, also after an 
   expect(t.w.ui.focused).toEqual(['r1'])
   t.w.ui.focused.length = 0
   t.w.state.set('expanded', ['a'])
-  press(buttonOf(await t.draw(), 'r2')) // b again, now at r2: closing leaves it there
+  t.w.state.set('selected', 'a')
+  press(buttonOf(await t.draw(), 'r2')) // b again, now at r2: another row than the selected one, so it only selects
   await t.session.idle()
   expect(t.w.ui.focused).toEqual(['r2'])
 })
@@ -639,7 +683,7 @@ function engineLog(t: ReturnType<typeof setup>) {
   return calls
 }
 
-test('a press while the pane has no keys selects and opens the row, asks for the keys, then for the ring', async () => {
+test('a press while the pane has no keys selects the row, asks for the keys, then for the ring', async () => {
   const t = setup(webs('a', 'b', 'c'))
   t.w.state.set('selected', 'a')
   const calls = engineLog(t)
@@ -647,7 +691,6 @@ test('a press while the pane has no keys selects and opens the row, asks for the
   await t.session.idle()
   expect(calls).toEqual(['open', 'focus r2'])
   expect(t.selected()).toBe('c')
-  expect(t.w.state.get('expanded')).toEqual(['c'])
 })
 
 test('a press while the pane has the keys, or does not say, asks for no keys', async () => {
@@ -795,7 +838,7 @@ const FOOTER_KEYS = [
 for (const { key, what, engine } of FOOTER_KEYS) {
   test(`a click on the footer key ${key} (${what}) while the pane has no keys asks for them once, before the work`, async () => {
     const t = setup(webs('a', 'b', 'c'))
-    t.host.keys.add('web', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+    t.host.keys.add('web', [{ id: 'open', key: 'w', label: 'open', scope: 'row' }])
     t.host.allLive = true
     t.w.state.set('selected', 'b')
     const calls = engineLog(t)
@@ -810,7 +853,7 @@ for (const { key, what, engine } of FOOTER_KEYS) {
   test(`a click on the footer key ${key} (${what}) while the pane has the keys asks for none`, async () => {
     for (const focused of [true, undefined]) {
       const t = setup(webs('a', 'b', 'c'))
-      t.host.keys.add('web', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+      t.host.keys.add('web', [{ id: 'open', key: 'w', label: 'open', scope: 'row' }])
       t.host.allLive = true
       t.w.state.set('selected', 'b')
       const calls = engineLog(t)
@@ -847,27 +890,12 @@ function holdFirst<T extends object, K extends keyof T>(owner: T, name: K): () =
   return release
 }
 
-test('a row press whose expanded write is in flight when the pane closes writes nothing after it', async () => {
-  const t = setup(webs('a', 'b', 'c'))
-  const calls = engineLog(t)
-  const release = holdFirst(t.w.ports.state.expanded, 'update')
-  press(buttonOf(await t.draw(80, undefined, false), 'r1'))
-  await turn()
-  await t.session.closed(t.w.ports)
-  release()
-  await t.session.idle()
-  expect(t.w.state.get('expanded') ?? []).toEqual([])
-  expect(t.selected()).toBeNull()
-  expect(calls).toEqual([]) // no ask for the keys, no ring request
-})
-
 test('a row press whose selected write is in flight when the pane closes does not select after it', async () => {
   const t = setup(webs('a', 'b', 'c'))
   const calls = engineLog(t)
   const release = holdFirst(t.w.ports.state.selected, 'update')
   press(buttonOf(await t.draw(80, undefined, false), 'r1'))
-  await turn() // the row is open, and its selection is the call in flight
-  expect(t.w.state.get('expanded')).toEqual(['b'])
+  await turn() // the selection is the call in flight
   await t.session.closed(t.w.ports)
   release()
   await t.session.idle()
@@ -1140,7 +1168,7 @@ test('Enter, N more, h and r run at once: a press that never finishes holds none
     press(buttonOf(tree, 'help'))
     if (key !== 'refresh') press(buttonOf(tree, 'refresh'))
     await turn() // no idle(): the press above never ends
-    expect(t.w.state.get('expanded'), hang).toEqual(['c'])
+    expect(t.selected(), hang).toBe('c')
     expect(await t.w.ports.state.shown.get('list:web'), hang).toBe(5)
     expect(t.w.state.get('help'), hang).toBe(true)
     if (key !== 'refresh') expect(t.host.calls, hang).toEqual(['refreshManual'])
@@ -1149,14 +1177,14 @@ test('Enter, N more, h and r run at once: a press that never finishes holds none
 
 test('a tracker key whose work never finishes holds no later press', async () => {
   const t = await abc()
-  t.host.keys.add('web', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+  t.host.keys.add('web', [{ id: 'open', key: 'w', label: 'open', scope: 'row' }])
   t.host.allLive = true
   t.host.runAction = () => new Promise<undefined>(() => {})
   const tree = await t.draw()
   press(buttonOf(tree, 'web.open'))
   press(buttonOf(tree, 'r2'))
   await turn()
-  expect(t.w.state.get('expanded')).toEqual(['c'])
+  expect(t.selected()).toBe('c')
 })
 
 test('press refresh resets the width memo and runs refreshManual', async () => {
@@ -1299,7 +1327,7 @@ test('a click on a dim footer key while the pane has the keys, or does not say, 
 
 test('a tracker key runs after the entry, with the owner, the id and the row', async () => {
   const t = setup(webs('a'))
-  t.host.keys.add('web', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+  t.host.keys.add('web', [{ id: 'open', key: 'w', label: 'open', scope: 'row' }])
   t.w.state.set('selected', 'a')
   t.host.allLive = true
   await t.pressKey('web.open')
@@ -2538,7 +2566,7 @@ test('draw puts the view line above the footer: the view, then g, a, t, p, m and
     ['m', 'mark'],
     ['e', 'quick view'],
   ])
-  expect(footerOf(tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
+  expect(footerOf(tree).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'o'])
 })
 
 test('the view line says the view, the filter with its hidden rows and the show-all toggle', async () => {
@@ -2585,7 +2613,7 @@ test('the help view has no view line, and the help footer holds g, a, t, p, m an
   t.w.state.set('help', true)
   const tree = await t.draw()
   const hotkeys = helpFooterOf(tree).map(b => String(b.props.hotkey))
-  expect(hotkeys).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'p', 'm', 'e'])
+  expect(hotkeys).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'o', 'g', 'a', 't', 'p', 'm', 'e'])
   expect(hotkeys).toEqual([...new Set(hotkeys)]) // the engine lets the later of two equal hotkeys win in silence
   for (const key of VIEW_LINE_KEYS) expect(buttonOf(tree, key).props.dimColor, key).toBe(true)
   expect(texts(tree).some(([, s]) => s.startsWith('View:'))).toBe(false)
@@ -2594,7 +2622,7 @@ test('the help view has no view line, and the help footer holds g, a, t, p, m an
   t.w.state.set('help', false)
   const pane = await t.draw()
   expect(viewLineOf(pane)).toHaveLength(6) // the pane draws them on the view line only
-  expect(footerOf(pane).map(b => String(b.props.hotkey))).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
+  expect(footerOf(pane).map(b => String(b.props.hotkey))).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'o'])
   const out = leaves(tree)
   expect(out).toContain('view')
   expect(out).toContain('show all')
@@ -2604,14 +2632,14 @@ test('the help view has no view line, and the help footer holds g, a, t, p, m an
 
 test('help titles a tracker by its sections, whatever the view draws: never by Failed or No status', async () => {
   const t = await views()
-  t.host.keys.add('web', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+  t.host.keys.add('web', [{ id: 'open', key: 'w', label: 'open', scope: 'row' }])
   t.w.state.set('help', true)
   const byList = leaves(await t.draw())
   expect(byList).toContain('web') // the section of the tracker, as the by-list view titles it
   for (const view of ['status', 'tracker', 'reason', 'flat']) {
     await t.w.ports.state.view.update(() => view)
     expect(leaves(await t.draw()), view).toEqual(byList)
-    expect(await helpTextOf(t.w.ports, t.m), view).toContain('\nweb\n  o  open')
+    expect(await helpTextOf(t.w.ports, t.m), view).toContain('\nweb\n  w  open')
   }
   const text = await helpTextOf(t.w.ports, t.m)
   expect(text).not.toMatch(/Failed|No status|Pinned/)
@@ -2843,7 +2871,7 @@ test('g in a pane that has no keys asks for them once, before the write', async 
 // the person pressed, and the press event names it: the pane hands it to the action as it got it.
 test('a tracker key passes the surface of its press to runAction', async () => {
   const t = setup(webs('a', 'b', 'c'))
-  t.host.keys.add('web', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+  t.host.keys.add('web', [{ id: 'open', key: 'w', label: 'open', scope: 'row' }])
   t.host.allLive = true
   t.w.state.set('selected', 'b')
   press(buttonOf(await t.draw(), 'web.open'), 'desktop')
@@ -3502,7 +3530,7 @@ test('x acts on the marked rows while the selected row is a process row that can
 
 test('a tracker key stays on the selected row, whatever is marked', async () => {
   const t = await marked('a', 'c')
-  t.host.keys.add('web', [{ id: 'open', key: 'o', label: 'open', scope: 'row' }])
+  t.host.keys.add('web', [{ id: 'open', key: 'w', label: 'open', scope: 'row' }])
   t.host.allLive = true
   await t.pressKey('web.open')
   expect(t.host.calls).toEqual(['entry', 'runAction web.open b'])

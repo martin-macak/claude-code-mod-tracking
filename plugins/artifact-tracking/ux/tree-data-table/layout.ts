@@ -1,7 +1,8 @@
 // Which rows a drawing holds, and the handle of each. The one place that numbers handles: `render` and `handleOf`
 // both use it, so a refocus finds the handle the next drawing gives a row. Pure.
 // Decisions G3 (open state) and G4 (caps) of plan L6. Spec 5.10 "Rows".
-import type { GroupSpec, RowRef, TreeRow } from '../../core/interfaces/view'
+import { canOpen, type GroupSpec, type RowRef, type TreeRow } from '../../core/interfaces/view'
+import { GLYPH } from '../theme'
 import type { DrawnRow, TableView } from './shape'
 
 export interface LaidRow {
@@ -21,6 +22,12 @@ export interface LaidGroup {
 }
 
 export type LayoutView = Pick<TableView, 'expanded' | 'shown' | 'limits'>
+
+/**
+ * The glyph of the Button of a laid row (issue #277): `›` on a leaf, whose Button opens the detail view and has no fold to show, and
+ * `▸` or `▾` on a row with children. The drawing and the stop of a row out of the window use this one rule.
+ */
+export const glyphOf = (r: LaidRow): string => (!canOpen(r.row) ? GLYPH.leaf : r.open ? GLYPH.open : GLYPH.closed)
 
 /**
  * The caps count top-level rows. `maxRows` and every `shown` chunk make the total. In pane order each group takes
@@ -56,8 +63,16 @@ export function handleOf(groups: readonly GroupSpec[], view: LayoutView, rowId: 
   return undefined
 }
 
-/** A row as the key routing sees it. The one place that builds a `RowRef`: `findRow`, `laidRefs` and the drawing use it. */
-export const refOf = (row: TreeRow, group: string): RowRef => ({ id: row.id, owner: row.owner, group, can: row.can })
+/**
+ * A row as the key routing sees it. The one place that builds a `RowRef`: `findRow`, `laidRefs` and the drawing use it. `can.open` is
+ * set here, from the children of the row (issue #277): `o` is live where the row has children, so the footer and `route` know it.
+ */
+export const refOf = (row: TreeRow, group: string): RowRef => ({
+  id: row.id,
+  owner: row.owner,
+  group,
+  can: { ...row.can, open: canOpen(row) },
+})
 
 /** The rows of laid groups as the key routing sees them, in drawing order. */
 export const refsOf = (laid: readonly LaidGroup[]): readonly RowRef[] =>
@@ -73,18 +88,24 @@ export function laidRefs(groups: readonly GroupSpec[], view: LayoutView): readon
 }
 
 /** The row with this id and the id of its group, drawn or not: a child of a closed row counts. */
-function locate(groups: readonly GroupSpec[], rowId: string | null): { row: TreeRow; group: string } | undefined {
+function locate(
+  groups: readonly GroupSpec[],
+  rowId: string | null,
+): { row: TreeRow; group: string; title: string } | undefined {
   if (rowId === null) return undefined
-  const search = (rows: readonly TreeRow[], group: string): { row: TreeRow; group: string } | undefined => {
+  const search = (
+    rows: readonly TreeRow[],
+    g: GroupSpec,
+  ): { row: TreeRow; group: string; title: string } | undefined => {
     for (const row of rows) {
-      if (row.id === rowId) return { row, group }
-      const hit = search(row.children ?? [], group)
+      if (row.id === rowId) return { row, group: g.id, title: g.title }
+      const hit = search(row.children ?? [], g)
       if (hit !== undefined) return hit
     }
     return undefined
   }
   for (const g of groups) {
-    const hit = search(g.rows, g.id)
+    const hit = search(g.rows, g)
     if (hit !== undefined) return hit
   }
   return undefined
@@ -99,6 +120,15 @@ export function findRow(groups: readonly GroupSpec[], rowId: string | null): Row
 /** The row with this id, drawn or not, whole: the selected-row line of the status area reads its cells (issue #138). */
 export const findTreeRow = (groups: readonly GroupSpec[], rowId: string | null): TreeRow | undefined =>
   locate(groups, rowId)?.row
+
+/** The row with this id and the title of its group, drawn or not: the detail view of the row reads both (issue #277). */
+export function findDetailRow(
+  groups: readonly GroupSpec[],
+  rowId: string | null,
+): { readonly row: TreeRow; readonly title: string } | undefined {
+  const hit = locate(groups, rowId)
+  return hit === undefined ? undefined : { row: hit.row, title: hit.title }
+}
 
 /**
  * The row to select once `id` is gone: the next drawn row at the same or a lower depth, else the one before. It is `survivorOf`

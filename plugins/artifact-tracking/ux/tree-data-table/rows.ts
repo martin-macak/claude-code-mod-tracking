@@ -11,7 +11,7 @@ import { cellNode, headerRow, shown, titleRow } from './cells'
 import { cellOf, GAP, GLYPH_BOX, INDENT, SHARED_COLUMNS, type Solved, type SolvedColumn, solveColumns } from './columns'
 import { detailOf } from './detail'
 import { box, button, type TableElements, text } from './el'
-import type { LaidGroup, LaidRow } from './layout'
+import { glyphOf, type LaidGroup, type LaidRow } from './layout'
 import { DEFAULT_BODY_COLUMNS, DETAIL_CELLS, GUTTER, indentOf, type TableActions, type TableView } from './shape'
 
 /** A detail line keeps at least this many cells for its text. */
@@ -41,9 +41,9 @@ function treeCell(d: Draw, col: SolvedColumn, cell: Cell, r: LaidRow, dim: boole
   const handle = button(d.el, {
     key: r.handle,
     plain: true,
-    label: r.open ? GLYPH.open : GLYPH.closed,
+    label: glyphOf(r),
     ...(r.handle === d.focus ? { autoFocus: true as const } : {}),
-    onPress: () => d.actions.toggle(r.row.id),
+    onPress: () => d.actions.enter(r.row.id),
   })
   return box(
     d.el,

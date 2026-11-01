@@ -68,18 +68,28 @@ export function focusedTexts(ansi: string): string[] {
   return found
 }
 
+// The plain text of each screen line that holds a run in reverse video: the line of the Button that has the focus ring. A step that
+// asks which row has the ring reads the row text from this line, where `focusedTexts` returns the glyph alone (`›` on every leaf).
+export function focusedLines(ansi: string): string[] {
+  return ansi
+    .replace(OSC, '')
+    .split('\n')
+    .filter(line => focusedTexts(line).length > 0)
+    .map(line => line.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, ''))
+}
+
 // The last screen of a timeout error for a step that reads reverse video. The plain screen shows no reverse video, so
 // the texts that the step looked at come after it.
 export function withFocus(plain: string, ansi: string): string {
   return `${plain}\n--- reverse video: ${JSON.stringify(focusedTexts(ansi))}`
 }
 
-// The 1-based column and row of the arrow (`▸` closed, `▾` open) of the first row that shows `text`, and the arrow itself,
-// or undefined. The arrow is the one place of a row that takes a click.
+// The 1-based column and row of the glyph (`›` on a leaf, `▸` closed and `▾` open on a row with children) of the first row that shows
+// `text`, and the glyph itself, or undefined. The glyph is the one place of a row that takes a click.
 export function arrowOf(screen: string, text: string): { column: number; row: number; glyph: string } | undefined {
   const lines = screen.split('\n')
   for (const [at, line] of lines.entries()) {
-    const found = /[▸▾] /.exec(line)
+    const found = /[›▸▾] /.exec(line)
     if (found !== null && line.slice(found.index + 2).startsWith(text)) {
       return { column: found.index + 1, row: at + 1, glyph: line.charAt(found.index) }
     }

@@ -14,7 +14,7 @@ import { frameFromState, type Refocus, RING_PAUSE_MS } from '../hooks/pane-refoc
 import { listText, type PaneHost, PaneSession } from '../hooks/pane-session'
 import type { TurnPaneHost } from '../hooks/pane-turn'
 import { resetWidths } from '../ux/tree-data-table/columns'
-import { footerRows } from '../ux/tree-data-table/footer'
+import { footerRows, moveHintFits } from '../ux/tree-data-table/footer'
 import { fakeConfig } from './fixtures/config-fs'
 import { buttonOf, footerOf, handlesOf, leaves, nodes, press, texts } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
@@ -47,7 +47,6 @@ function setup(
   resetWidths()
   const w = fakePorts()
   const reg = new KeyRegistry(keys)
-  reg.addPreview('file')
   const host = {
     sections: [section('mixed', rows)] as SectionSpec[],
     calls: [] as string[],
@@ -111,33 +110,50 @@ const turn = async (): Promise<void> => {
 const contentIn = (tree: unknown): string[] =>
   [...nodes(tree, 'Code'), ...nodes(tree, 'Markdown')].map(n => String(n.props.source ?? n.props.text))
 
-/** A pane on `a.ts` with its preview open: the press of `v` has run. */
+/**
+ * The way to the file view since issue #277: Enter on the selected row opens its detail view, and `v` on the key line of that view
+ * switches to the file mode. `from` is the drawing the Enter comes from (a stale one for the tests of an old press). The press of `v`
+ * is not awaited, so a test can hold its read open; the Enter is.
+ */
+async function openFileView(t: ReturnType<typeof setup>, from: unknown): Promise<void> {
+  const ids = t.host.sections.flatMap(s => s.rows.map(r => r.id))
+  const at = `r${ids.indexOf(t.w.state.get('selected') as string)}`
+  if (nodes(from, 'Button').some(b => b.props.key === at)) {
+    // From a list drawing: Enter on the row first. From a view (a second `v`), the press of `v` alone.
+    press(buttonOf(from, at))
+    await t.session.idle()
+    press(buttonOf(await t.draw(), 'preview'))
+  } else {
+    press(buttonOf(from, 'preview'))
+  }
+}
+
+/** A pane on `a.ts` with its file view open: the Enter and the press of `v` have run. */
 async function opened(rows?: readonly TreeRow[]) {
   const t = setup(rows)
   t.w.state.set('selected', 'a.ts')
-  press(buttonOf(await t.draw(), 'preview'))
+  await openFileView(t, await t.draw())
   await t.session.idle()
   return t
 }
 
 // ---------------------------------------------------------------- the key
 
-test('v is on the footer of a row whose tracker has a preview, and on no other row (R11)', async () => {
+test('v is on no footer, whatever the row (issue #277, B5): a file row, a web row and no row draw the same list footer', async () => {
   const t = setup()
-  t.w.state.set('selected', 'a.ts')
-  expect(footerOf(await t.draw()).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'v'])
-  t.w.state.set('selected', 'w')
-  expect(footerOf(await t.draw()).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
-  t.w.state.set('selected', null)
-  expect(footerOf(await t.draw()).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
+  for (const id of ['a.ts', 'w', null]) {
+    t.w.state.set('selected', id)
+    expect(footerOf(await t.draw()).map(b => b.props.hotkey)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'o'])
+  }
 })
 
-test('v at 100x40 inline keeps the footer to one row: r h x 1 2 3 0 v and Esc close fit the 96 cells of the body', async () => {
+test('the list footer with o keeps one row at 96 cells: r h x 1 2 3 0 o and Esc close (B10)', async () => {
   const t = setup()
   t.w.state.set('selected', 'a.ts')
   const keys = await t.m.footer(t.w.ports, { id: 'a.ts', owner: 'file', group: 'g', can: {} }, false)
-  expect(keys.map(k => k.key).join('')).toBe('rhx1230v')
+  expect(keys.map(k => k.key).join('')).toBe('rhx1230o')
   expect(footerRows(keys, 96, false)).toBe(1)
+  expect(footerRows(keys, 96, moveHintFits(keys, 96))).toBe(1) // the pane draws with the hint when it fits
 })
 
 // ---------------------------------------------------------------- opening
@@ -147,12 +163,12 @@ test('v loads the content of the selected row, then writes the row id, the owner
   t.w.state.set('selected', 'b.ts')
   let release = () => {}
   t.host.gate = new Promise<void>(go => (release = go))
-  press(buttonOf(await t.draw(), 'preview'))
+  await openFileView(t, await t.draw())
   await turn()
-  // Hold the fake call open: the read has begun and the state does not name the preview yet, so the table stays as it is.
+  // Hold the fake call open: the read has begun and the state names the detail view of the row (Enter), not the file view yet.
   expect(t.host.loads).toEqual(['file b.ts view'])
-  expect(t.preview()).toBeNull()
-  expect(handlesOf(await t.draw())).toEqual(['r0', 'r1', 'r2'])
+  expect(t.preview()).toEqual({ rowId: 'b.ts', owner: 'file', mode: 'detail' })
+  expect(handlesOf(await t.draw())).toEqual([])
   release()
   await t.session.idle()
   expect(t.preview()).toEqual({ rowId: 'b.ts', owner: 'file', mode: 'view' })
@@ -176,19 +192,30 @@ test('the preview draws in place of the table: the header, the key line, the not
   expect(texts(tree).some(([, s]) => s.startsWith('View:'))).toBe(false)
 })
 
-test('a press of v on a row that says it has no preview, or whose mode is off, gives a toast and opens nothing', async () => {
+test('the detail view of a row that says it has no preview has no v; a mode that is off draws dim, and its press gives a toast and reads nothing', async () => {
   const t = setup()
   t.w.state.set('selected', 'a.ts')
   t.host.modes.set('a.ts', undefined)
-  press(buttonOf(await t.draw(), 'preview'))
+  press(buttonOf(await t.draw(), 'r0')) // Enter
   await t.session.idle()
-  expect(t.preview()).toBeNull()
-  expect(t.w.ui.toasts).toEqual(['This row has no preview.'])
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'detail' }) // every row has a detail
+  // No `v` Button on the key line, but a dim one: the letter must not reach the prompt (B6, M1 of PR 302). Its press reads and says nothing.
+  const none = await t.draw(96, undefined, false)
+  expect(buttonOf(none, 'preview').props.dimColor).toBe(true)
+  expect(buttonOf(none, 'diff').props.dimColor).toBe(true)
+  press(buttonOf(none, 'preview'))
+  press(buttonOf(none, 'diff'))
+  await t.session.idle()
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'detail' })
+  expect(t.w.ui.toasts).toEqual([])
+  expect(t.host.loads).toEqual([])
   t.host.modes.set('a.ts', [{ id: 'view', enabled: false, reason: 'Secret.' }])
-  press(buttonOf(await t.draw(), 'preview'))
+  const tree = await t.draw()
+  expect(buttonOf(tree, 'preview').props.dimColor).toBe(true)
+  press(buttonOf(tree, 'preview'))
   await t.session.idle()
-  expect(t.preview()).toBeNull()
-  expect(t.w.ui.toasts).toEqual(['This row has no preview.', 'Secret.'])
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'detail' })
+  expect(t.w.ui.toasts).toEqual(['Secret.'])
   expect(t.host.loads).toEqual([])
 })
 
@@ -198,7 +225,7 @@ test('the key line has a Button for each mode the row has, dim when the mode is 
   const t = setup()
   t.host.modes.set('a.ts', [VIEW, { id: 'diff', enabled: true }])
   t.w.state.set('selected', 'a.ts')
-  press(buttonOf(await t.draw(), 'preview'))
+  await openFileView(t, await t.draw())
   await t.session.idle()
   const view = await t.draw()
   expect(nodes(view, 'Button').map(b => b.props.hotkey)).toEqual(['v', 'd', 'r'])
@@ -207,7 +234,7 @@ test('the key line has a Button for each mode the row has, dim when the mode is 
   expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'diff' })
   expect(contentIn(await t.draw())).toEqual([`${MARKER} a.ts diff\n`])
   // Back to the view: it is in the cache, but a press reads again, as `v` says (the file may have changed).
-  press(buttonOf(await t.draw(), 'preview'))
+  await openFileView(t, await t.draw())
   await t.session.idle()
   expect(t.host.loads).toEqual(['file a.ts view', 'file a.ts diff', 'file a.ts view'])
   expect(contentIn(await t.draw())).toEqual([`${MARKER} a.ts view\n`])
@@ -217,7 +244,7 @@ test('a mode that is off draws dim and says why in a toast; a mode that is gone 
   const t = setup()
   t.host.modes.set('a.ts', [VIEW, { id: 'diff', enabled: false, reason: 'No repo here.' }])
   t.w.state.set('selected', 'a.ts')
-  press(buttonOf(await t.draw(), 'preview'))
+  await openFileView(t, await t.draw())
   await t.session.idle()
   const tree = await t.draw()
   expect(buttonOf(tree, 'diff').props.dimColor).toBe(true)
@@ -256,7 +283,7 @@ test('a press from the drawing before the preview does nothing while the preview
   const t = setup()
   t.w.state.set('selected', 'a.ts')
   const list = await t.draw() // the drawing the stale press comes from
-  press(buttonOf(list, 'preview'))
+  await openFileView(t, list)
   await t.session.idle()
   press(buttonOf(list, 'dismiss'))
   press(buttonOf(list, 'prio-1'))
@@ -268,12 +295,12 @@ test('a press from the drawing before the preview does nothing while the preview
   expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'view' })
 })
 
-test('a press of v from a drawing before h opens nothing over the help view (the body is one view)', async () => {
+test('an Enter from a drawing before h opens nothing over the help view (the body is one view)', async () => {
   const t = setup()
   t.w.state.set('selected', 'a.ts')
   const list = await t.draw()
   t.w.state.set('help', true) // `h` came first
-  press(buttonOf(list, 'preview'))
+  press(buttonOf(list, 'r0'))
   await t.session.idle()
   expect(t.preview()).toBeNull()
   expect(t.host.loads).toEqual([])
@@ -281,7 +308,7 @@ test('a press of v from a drawing before h opens nothing over the help view (the
 })
 
 // The plan view of issue #199 and the preview are two more views of the one body. `Frame.view` names the one that a drawing shows.
-test('a press of v from a drawing before p opens nothing over the plan view (the body is one view)', async () => {
+test('an Enter from a drawing before p opens nothing over the plan view (the body is one view)', async () => {
   const t = setup()
   t.w.state.set('selected', 'a.ts')
   const list = await t.draw()
@@ -289,7 +316,7 @@ test('a press of v from a drawing before p opens nothing over the plan view (the
   await t.session.idle()
   expect(handlesOf(await t.draw())).toEqual([]) // the plan view shows, and no row
   const asked = t.host.calls.length
-  press(buttonOf(list, 'preview'))
+  press(buttonOf(list, 'r0'))
   await t.session.idle()
   expect(t.preview()).toBeNull()
   expect(t.host.loads).toEqual([])
@@ -298,7 +325,7 @@ test('a press of v from a drawing before p opens nothing over the plan view (the
   expect(handlesOf(await t.draw())).toEqual([]) // still the plan view
 })
 
-test('a read of the plan that ends after v opened the preview opens no plan view: Esc goes back to the list', async () => {
+test('a read of the plan that ends after Enter opened the detail view opens no plan view: Esc goes back to the list', async () => {
   const t = setup()
   t.w.state.set('selected', 'a.ts')
   const list = await t.draw()
@@ -306,9 +333,9 @@ test('a read of the plan that ends after v opened the preview opens no plan view
   t.host.planGate = new Promise<void>(go => (release = go))
   press(buttonOf(list, 'clean')) // `p` starts to read the plan
   await turn()
-  press(buttonOf(list, 'preview')) // `v` opens the preview while the plan is read
+  press(buttonOf(list, 'r0')) // Enter opens the detail view while the plan is read
   await turn()
-  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'view' })
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'detail' })
   release() // the read ends and finds the preview open: it writes no lines
   await turn()
   expect(await t.session.closeOrBack(t.w.ports, t.m, 'person')).toEqual({ deny: 'back to the list' })
@@ -333,7 +360,7 @@ test('a press of e from a drawing before v changes nothing over the preview, and
   const t = setup()
   t.w.state.set('selected', 'a.ts')
   const list = await t.draw()
-  press(buttonOf(list, 'preview')) // `v` came first
+  await openFileView(t, list) // `v` came first
   await t.session.idle()
   expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'view' })
   const loads = [...t.host.loads]
@@ -399,7 +426,7 @@ test('v from the list with the quick view hidden opens the preview, and the flag
   press(buttonOf(await t.draw(96, 30), 'quick')) // `e` hides the quick view of the full form
   await t.session.idle()
   expect(t.w.state.get('quick')).toEqual(QUICK_FULL_OFF)
-  press(buttonOf(await t.draw(96, 30), 'preview'))
+  await openFileView(t, await t.draw(96, 30))
   await t.session.idle()
   expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'view' })
   expect(t.w.state.get('quick')).toEqual(QUICK_FULL_OFF) // `v` writes no flag
@@ -525,9 +552,9 @@ test('the open Button of a turn strip while the first v still reads: the preview
   t.w.state.set('selected', 'a.ts')
   let release = () => {}
   t.host.gate = new Promise<void>(go => (release = go))
-  press(buttonOf(await t.draw(), 'preview')) // v: the read begins, the state names no preview yet
+  await openFileView(t, await t.draw()) // Enter, then v: the read begins, the state names the detail view still
   await turn()
-  expect(t.preview()).toBeNull()
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'detail' })
   await t.session.openTurn(t.w.ports, turnHost(t, ['b.ts']), 2)
   release()
   await t.session.idle()
@@ -574,7 +601,7 @@ test('the cache keeps the last two views: a third pushes the oldest out', async 
   t.host.modes.set('a.ts', [VIEW, { id: 'diff', enabled: true }])
   t.host.modes.set('b.ts', [VIEW])
   t.w.state.set('selected', 'a.ts')
-  press(buttonOf(await t.draw(), 'preview'))
+  await openFileView(t, await t.draw())
   await t.session.idle()
   press(buttonOf(await t.draw(), 'diff'))
   await t.session.idle()
@@ -647,74 +674,11 @@ test('a hot-reload read that ends after an r has shown newer content does not br
 
 // ---------------------------------------------------------------- the newest press wins
 
-/** Holds the reads of one row until `release` is called. */
-function hold(t: ReturnType<typeof setup>, rowId: string): () => void {
-  let release = () => {}
-  t.host.gates.set(rowId, new Promise<void>(go => (release = go)))
-  return release
-}
-
-test('two opens that overlap: the press that came last shows, whichever read ends last (R10)', async () => {
-  const t = setup()
-  const releaseA = hold(t, 'a.ts')
-  const releaseB = hold(t, 'b.ts')
-  t.w.state.set('selected', 'a.ts')
-  press(buttonOf(await t.draw(), 'preview'))
-  await turn()
-  t.w.state.set('selected', 'b.ts')
-  press(buttonOf(await t.draw(), 'preview'))
-  await turn()
-  expect(t.host.loads).toEqual(['file a.ts view', 'file b.ts view'])
-  releaseB() // the newer read ends first, then the older one
-  await turn()
-  releaseA()
-  await t.session.idle()
-  expect(t.preview()).toEqual({ rowId: 'b.ts', owner: 'file', mode: 'view' })
-  expect(contentIn(await t.draw())).toEqual([`${MARKER} b.ts view\n`])
-})
-
-test('two opens that overlap, the older read ending first: the older view never shows (R10)', async () => {
-  const t = setup()
-  const releaseA = hold(t, 'a.ts')
-  const releaseB = hold(t, 'b.ts')
-  t.w.state.set('selected', 'a.ts')
-  press(buttonOf(await t.draw(), 'preview'))
-  await turn()
-  t.w.state.set('selected', 'b.ts')
-  press(buttonOf(await t.draw(), 'preview'))
-  await turn()
-  releaseA()
-  await turn()
-  expect(t.preview()).toBeNull() // a newer press is on its way: the older read brings nothing
-  releaseB()
-  await t.session.idle()
-  expect(t.preview()).toEqual({ rowId: 'b.ts', owner: 'file', mode: 'view' })
-})
-
-test('a second v whose modes are still read already supersedes the first: the first read, ending meanwhile, shows nothing (R10)', async () => {
-  const t = setup()
-  const releaseA = hold(t, 'a.ts')
-  t.w.state.set('selected', 'a.ts')
-  press(buttonOf(await t.draw(), 'preview'))
-  await turn()
-  t.w.state.set('selected', 'b.ts')
-  let answer = (_modes: readonly PreviewMode[]) => {}
-  t.m.previewModes = () => new Promise(go => (answer = go)) // the modes of the second press wait
-  press(buttonOf(await t.draw(), 'preview'))
-  await turn()
-  releaseA() // the first read ends while the second press still waits for its modes
-  await turn()
-  expect(t.preview()).toBeNull() // the older view never shows over a newer press
-  answer([VIEW])
-  await t.session.idle()
-  expect(t.preview()).toEqual({ rowId: 'b.ts', owner: 'file', mode: 'view' })
-})
-
 test('a mode switch that overlaps a reload: the press that came last decides the mode that shows (R12)', async () => {
   const t = setup()
   t.host.modes.set('a.ts', [VIEW, { id: 'diff', enabled: true }])
   t.w.state.set('selected', 'a.ts')
-  press(buttonOf(await t.draw(), 'preview'))
+  await openFileView(t, await t.draw())
   await t.session.idle()
   let slow = () => {}
   t.host.gate = new Promise<void>(go => (slow = go))
@@ -744,12 +708,15 @@ test('Esc while the modes of a press are still read: the press brings no preview
   expect(t.host.loads).toEqual(['file a.ts view']) // no second read
 })
 
-test('the pane closes while the modes of v are still read: nothing is read, and no preview opens (R10)', async () => {
+test('the pane closes while the modes of v are still read: nothing is read, and no file view opens (R10)', async () => {
   const t = setup()
   t.w.state.set('selected', 'a.ts')
+  press(buttonOf(await t.draw(), 'r0')) // Enter: the detail view
+  await t.session.idle()
+  const detail = await t.draw()
   let answer = (_modes: readonly PreviewMode[]) => {}
   t.m.previewModes = () => new Promise(go => (answer = go)) // the read of the modes of the press waits
-  press(buttonOf(await t.draw(), 'preview'))
+  press(buttonOf(detail, 'preview'))
   await turn()
   await t.session.closed(t.w.ports) // the pane closes while the press waits for the modes
   answer([VIEW])
@@ -758,14 +725,13 @@ test('the pane closes while the modes of v are still read: nothing is read, and 
   expect(t.preview()).toBeNull()
 })
 
-test('the pane closes while v still asks if the help view shows: the tracker is asked for no modes, and no toast shows (R10)', async () => {
+test('the pane closes while Enter still asks if the help view shows: no view opens, and no toast shows (R10)', async () => {
   const t = setup()
-  t.host.modes.set('a.ts', undefined) // a row with no preview: a press that went on would toast "This row has no preview."
   t.w.state.set('selected', 'a.ts')
   const list = await t.draw()
   let answer = (_help: boolean) => {}
   ;(t.w.ports.state as { help: { get: () => Promise<boolean> } }).help.get = () => new Promise(go => (answer = go))
-  press(buttonOf(list, 'preview'))
+  press(buttonOf(list, 'r0'))
   await turn()
   await t.session.closed(t.w.ports) // the pane closes while the press waits for the help flag
   answer(false)
@@ -800,52 +766,52 @@ test('Esc does not wait for the pane to open again: the state is cleared first, 
 
 // ---------------------------------------------------------------- a mode core does not know yet (issue #275)
 
-/** The key of a core mode that issue #275 adds: a third mode that every row has, with a key of its own. */
-const DETAIL_KEY: PaneKey = {
-  id: 'detail',
+/** The key of a stand-in for a mode that core adds: a third mode that every row has, with a key of its own. */
+const NOTES_KEY: PaneKey = {
+  id: 'notes',
   key: 'i',
-  label: 'detail',
+  label: 'notes',
   scope: 'row',
   owner: 'core',
   bar: 'preview',
-  mode: 'detail',
+  mode: 'notes',
 }
 
 test('a third mode draws its Button between the modes of the provider and r: reload, in the order the provider lists them (N275)', async () => {
-  const t = setup(undefined, [...CORE_KEYS, DETAIL_KEY])
-  t.host.modes.set('a.ts', [VIEW, { id: 'detail', enabled: true }, { id: 'diff', enabled: true }])
+  const t = setup(undefined, [...CORE_KEYS, NOTES_KEY])
+  t.host.modes.set('a.ts', [VIEW, { id: 'notes', enabled: true }, { id: 'diff', enabled: true }])
   t.w.state.set('selected', 'a.ts')
-  press(buttonOf(await t.draw(), 'preview'))
+  await openFileView(t, await t.draw())
   await t.session.idle()
   const tree = await t.draw()
   expect(nodes(tree, 'Button').map(b => [b.props.hotkey, b.props.label])).toEqual([
     ['v', 'view'],
-    ['i', 'detail'],
+    ['i', 'notes'],
     ['d', 'diff'],
     ['r', 'reload'],
   ])
 })
 
 test('the key of a third mode loads that mode, and r reloads the mode on show (N275)', async () => {
-  const t = setup(undefined, [...CORE_KEYS, DETAIL_KEY])
-  t.host.modes.set('a.ts', [VIEW, { id: 'detail', enabled: true }])
+  const t = setup(undefined, [...CORE_KEYS, NOTES_KEY])
+  t.host.modes.set('a.ts', [VIEW, { id: 'notes', enabled: true }])
   t.w.state.set('selected', 'a.ts')
-  press(buttonOf(await t.draw(), 'preview'))
+  await openFileView(t, await t.draw())
   await t.session.idle()
-  press(buttonOf(await t.draw(), 'detail'))
+  press(buttonOf(await t.draw(), 'notes'))
   await t.session.idle()
-  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'detail' })
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'notes' })
   press(buttonOf(await t.draw(), 'refresh'))
   await t.session.idle()
-  expect(t.host.loads).toEqual(['file a.ts view', 'file a.ts detail', 'file a.ts detail'])
-  expect(contentIn(await t.draw())).toEqual([`${MARKER} a.ts detail\n`])
+  expect(t.host.loads).toEqual(['file a.ts view', 'file a.ts notes', 'file a.ts notes'])
+  expect(contentIn(await t.draw())).toEqual([`${MARKER} a.ts notes\n`])
 })
 
 test('a mode that no core key picks has no Button, and the line keeps the others (N275)', async () => {
   const t = setup()
-  t.host.modes.set('a.ts', [VIEW, { id: 'detail', enabled: true }])
+  t.host.modes.set('a.ts', [VIEW, { id: 'notes', enabled: true }])
   t.w.state.set('selected', 'a.ts')
-  press(buttonOf(await t.draw(), 'preview'))
+  await openFileView(t, await t.draw())
   await t.session.idle()
   expect(nodes(await t.draw(), 'Button').map(b => b.props.hotkey)).toEqual(['v', 'r'])
 })
@@ -886,6 +852,186 @@ test('the frame that the state gives for the preview is the same: the key line o
   expect((await frameFromState(t.w.ports, t.m, { view: 'preview', row: null })).keys).toEqual(['refresh'])
 })
 
+// ---------------------------------------------------------------- the detail view (issue #277, L2 of #275)
+
+const DETAIL_MARKER = 'DETAIL_TEXT_OF_A_ROW'
+/** A file row with a description, a reason and turns: the detail view shows them whole. */
+const richRow = (id: string): TreeRow =>
+  row(
+    id,
+    { control: '', name: id, description: DETAIL_MARKER, status: 'edited 3' },
+    {
+      owner: 'file',
+      reasons: { first: 'created', all: ['created', 'updated'], strongest: 'created' },
+      turns: { first: 2, last: 7 },
+    },
+  )
+
+/** A pane on `a.ts` with its detail view open: Enter has run. */
+async function detailOpen(rows: readonly TreeRow[] = [richRow('a.ts'), fileRow('b.ts'), webRow('w')]) {
+  const t = setup(rows)
+  t.w.state.set('selected', 'a.ts')
+  press(buttonOf(await t.draw(), 'r0'))
+  await t.session.idle()
+  return t
+}
+
+test('Enter on the selected row opens its detail view: the row and the mode on the first line, the keys on the second, the fields below (B1)', async () => {
+  const t = await detailOpen()
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'detail' })
+  const tree = await t.draw()
+  expect(handlesOf(tree)).toEqual([]) // the list is not drawn
+  const lines = leaves(tree)
+  expect(lines.slice(0, 2)).toEqual(['a.ts', ' · mixed · edited 3 · detail'])
+  expect(nodes(tree, 'Button')[0]?.props.key).toBe('back') // `↩ back` holds the ring
+  expect(nodes(tree, 'Button')[0]?.props.label).toBe('↩ back')
+  expect(lines).toContain(DETAIL_MARKER) // the description, whole
+  expect(lines).toContain('created, updated') // the reasons
+  expect(lines).toContain('first 2 · last 7') // the turns
+  expect(t.host.loads).toEqual([]) // no tracker is asked for anything: core builds the detail from the row
+})
+
+test('the detail view of a row with no preview still opens: every row has a detail (B2)', async () => {
+  const t = setup()
+  t.host.modes.set('w', undefined)
+  t.w.state.set('selected', 'w')
+  press(buttonOf(await t.draw(), 'r2'))
+  await t.session.idle()
+  expect(t.preview()).toEqual({ rowId: 'w', owner: 'web', mode: 'detail' })
+  expect(leaves(await t.draw())).toContain('Source')
+  expect(t.w.ui.toasts).toEqual([])
+})
+
+test('r in the detail view reads the row again: the trackers refresh and the view is drawn again, nothing is loaded (B6)', async () => {
+  const t = await detailOpen()
+  const before = t.w.ui.invalidated
+  press(buttonOf(await t.draw(), 'refresh'))
+  await t.session.idle()
+  expect(t.host.calls).toContain('refreshManual')
+  expect(t.host.loads).toEqual([])
+  expect(t.w.ui.invalidated).toBeGreaterThan(before)
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'detail' })
+})
+
+test('every other key of the list is a dim Button in the detail view, and its press does nothing but give the pane the keys (B6)', async () => {
+  const t = await detailOpen()
+  const tree = await t.draw(96, undefined, false) // the prompt has the keys: a press asks for them
+  const dimKeys = [
+    'help',
+    'view',
+    'show-all',
+    'touched',
+    'clean',
+    'mark',
+    'quick',
+    'dismiss',
+    'prio-1',
+    'prio-2',
+    'prio-3',
+    'prio-0',
+    'open',
+  ]
+  for (const key of dimKeys) expect(buttonOf(tree, key).props.dimColor, key).toBe(true)
+  // Every core hotkey has a Button, so no letter reaches the prompt.
+  const hotkeys = nodes(tree, 'Button').map(b => b.props.hotkey)
+  for (const k of CORE_KEYS) expect(hotkeys, k.id).toContain(k.key)
+  const opened = t.w.ui.opened
+  for (const key of dimKeys) press(buttonOf(tree, key))
+  await t.session.idle()
+  expect(t.host.calls).toEqual([])
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'detail' })
+  expect(t.w.state.get('expanded') ?? []).toEqual([])
+  expect(t.w.ui.opened).toBe(opened + dimKeys.length)
+})
+
+test('a file row that lists the view only: d is a dim Button in the detail view and its press does no read and no toast (B6)', async () => {
+  const t = setup()
+  t.host.modes.set('a.ts', [VIEW])
+  t.w.state.set('selected', 'a.ts')
+  press(buttonOf(await t.draw(), 'r0'))
+  await t.session.idle()
+  const tree = await t.draw(96, undefined, false)
+  expect(buttonOf(tree, 'preview').props.dimColor).toBeUndefined() // on the key line
+  expect(buttonOf(tree, 'diff').props.dimColor).toBe(true)
+  press(buttonOf(tree, 'diff'))
+  await t.session.idle()
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'detail' })
+  expect(t.w.ui.toasts).toEqual([])
+  expect(t.host.loads).toEqual([])
+})
+
+test('v and d on a file row switch from the detail to the file modes (B5)', async () => {
+  const t = setup()
+  t.host.modes.set('a.ts', [VIEW, { id: 'diff', enabled: true }])
+  t.w.state.set('selected', 'a.ts')
+  press(buttonOf(await t.draw(), 'r0'))
+  await t.session.idle()
+  const detail = await t.draw()
+  expect(
+    nodes(detail, 'Button')
+      .slice(0, 4)
+      .map(b => b.props.key),
+  ).toEqual(['back', 'preview', 'diff', 'refresh'])
+  press(buttonOf(detail, 'diff'))
+  await t.session.idle()
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'diff' })
+  expect(contentIn(await t.draw())).toEqual([`${MARKER} a.ts diff\n`])
+})
+
+test('↩ back goes to the list with the selection on the same row; the list comes back whole (B4)', async () => {
+  const t = await detailOpen()
+  press(buttonOf(await t.draw(), 'back'))
+  await t.session.idle()
+  expect(t.preview()).toBeNull()
+  expect(t.w.state.get('selected')).toBe('a.ts')
+  expect(handlesOf(await t.draw())).toEqual(['r0', 'r1', 'r2'])
+})
+
+test('Esc in the detail view goes back to the list, and Esc in the list closes the pane (B4)', async () => {
+  const t = await detailOpen()
+  expect(await t.session.closeOrBack(t.w.ports, t.m, 'person')).toEqual({ deny: 'back to the list' })
+  await t.session.idle()
+  expect(t.preview()).toBeNull()
+  expect(await t.session.closeOrBack(t.w.ports, t.m, 'person')).toBeUndefined() // the list: the pane closes
+})
+
+test('a row that left the pane while its view is open: the view says This row is gone and keeps ↩ back (B11)', async () => {
+  const t = await detailOpen()
+  t.host.sections = [section('mixed', [fileRow('b.ts'), webRow('w')])] // a TTL or /track clear took a.ts
+  const tree = await t.draw()
+  expect(leaves(tree)).toContain('This row is gone')
+  expect(nodes(tree, 'Button')[0]?.props.key).toBe('back')
+  press(buttonOf(tree, 'back'))
+  await t.session.idle()
+  expect(t.preview()).toBeNull()
+})
+
+test('the detail of a row reaches no store key, no stored copy, no prompt line and no log (B12)', async () => {
+  const t = await detailOpen()
+  await t.draw()
+  press(buttonOf(await t.draw(), 'refresh'))
+  await t.session.idle()
+  expect(JSON.stringify([...t.w.state.entries()])).not.toContain(DETAIL_MARKER)
+  expect(JSON.stringify([...t.w.store.entries(), t.w.prompts, t.w.logs])).not.toContain(DETAIL_MARKER)
+  expect(await listText(t.w.ports, t.m)).not.toContain('detail')
+})
+
+test('o opens a row with children and Enter on its row opens the detail view; the view shows the children count (B8)', async () => {
+  const kid = fileRow('kid')
+  const parent = row('p', { control: '', name: 'p', description: '' }, { owner: 'file', children: [kid] })
+  const t = setup([parent])
+  t.w.state.set('selected', 'p')
+  await t.draw()
+  press(buttonOf(await t.draw(), 'open'))
+  await t.session.idle()
+  expect(t.w.state.get('expanded')).toEqual(['p'])
+  expect(t.preview()).toBeNull()
+  press(buttonOf(await t.draw(), 'r0'))
+  await t.session.idle()
+  expect(t.preview()).toEqual({ rowId: 'p', owner: 'file', mode: 'detail' })
+  expect(leaves(await t.draw())).toContain('Children')
+})
+
 // ---------------------------------------------------------------- the ring
 
 /** The engine log: the calls the session makes, in the order the engine sees them. */
@@ -915,16 +1061,16 @@ async function pressDraw(t: ReturnType<typeof setup>, key: string): Promise<void
   await t.session.idle()
 }
 
-test('v while the ring is on a row sends the ring to v: view of the key line, and Esc sends it home to the row', async () => {
+test('Enter while the ring is on a row sends the ring to ↩ back: the first Button of the detail view, and Esc sends it home to the row (B4)', async () => {
   const t = setup()
   t.w.state.set('selected', 'b.ts')
   await t.draw()
   const calls = engineLog(t)
   await t.session.focused(t.w.ports, 'r1') // the ring is on the row
-  await pressDraw(t, 'preview')
-  expect(t.preview()).not.toBeNull()
-  expect(calls).toEqual(['focus preview']) // the first Button of the key line
-  await t.session.focused(t.w.ports, 'preview', 'plugin')
+  await pressDraw(t, 'r1') // Enter
+  expect(t.preview()).toEqual({ rowId: 'b.ts', owner: 'file', mode: 'detail' })
+  expect(calls).toEqual(['focus back']) // the first Button of the key line
+  await t.session.focused(t.w.ports, 'back', 'plugin')
   // Esc: the pane answers deny, opens again with the keys, and asks for the ring on the selected row once the list is drawn.
   const back = await t.session.closeOrBack(t.w.ports, t.m, 'person')
   await turn()
@@ -933,15 +1079,30 @@ test('v while the ring is on a row sends the ring to v: view of the key line, an
   await t.w.clock.advance(RING_PAUSE_MS)
   await t.session.idle()
   expect(back).toEqual({ deny: 'back to the list' })
-  expect(calls).toEqual(['focus preview', 'open', 'focus r1'])
+  expect(calls).toEqual(['focus back', 'open', 'focus r1'])
 })
 
-test('a ring that nobody reported stays alone when the preview opens and when Esc goes back', async () => {
+test('a second Enter on ↩ back goes back to the list with the ring on the same row, and reopens nothing (B4)', async () => {
+  const t = setup()
+  t.w.state.set('selected', 'b.ts')
+  await t.draw()
+  const calls = engineLog(t)
+  await t.session.focused(t.w.ports, 'r1')
+  await pressDraw(t, 'r1') // Enter: the detail view
+  await t.session.focused(t.w.ports, 'back', 'plugin') // the ring sits on ↩ back
+  await pressDraw(t, 'back') // Enter again, on ↩ back
+  expect(t.preview()).toBeNull()
+  expect(handlesOf(await t.draw())).toEqual(['r0', 'r1', 'r2'])
+  expect(t.w.state.get('selected')).toBe('b.ts')
+  expect(calls).toEqual(['focus back', 'focus r1']) // no reopen: nothing was denied
+})
+
+test('a ring that nobody reported stays alone when the detail view opens and when Esc goes back', async () => {
   const t = setup()
   t.w.state.set('selected', 'a.ts')
   await t.draw()
   const calls = engineLog(t)
-  await pressDraw(t, 'preview')
+  await pressDraw(t, 'r0')
   expect(t.preview()).not.toBeNull()
   await t.session.closeOrBack(t.w.ports, t.m, 'person')
   await turn()

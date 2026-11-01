@@ -95,6 +95,9 @@ export interface DetailLine {
   readonly cell: Cell
 }
 
+/** Whether a row has children to fold open. The one rule of the fold: the glyph, the key routing and the detail read it. */
+export const canOpen = (row: TreeRow): boolean => (row.children?.length ?? 0) > 0
+
 export interface TreeRow {
   /** A stable id, e.g. the item key. */
   readonly id: string
@@ -347,13 +350,19 @@ export interface FooterKey extends PaneKey {
   readonly buttonKey: string
 }
 
+/**
+ * What a row allows, as the key routing sees it: the flags a tracker sets on the row (`TreeRow.can`), and `open` (issue #277), which
+ * core sets from the row itself: the row has children, so `o` opens or closes them. A tracker never sets `open`.
+ */
+export type RowCan = NonNullable<TreeRow['can']> & { readonly open?: boolean }
+
 /** What the key routing needs of a drawn row. */
 export interface RowRef {
   readonly id: string
   readonly owner: string
   /** The id of the group the row sits in (`list:prs` in the by-list view). It is no tracker section id. */
   readonly group: string
-  readonly can: TreeRow['can']
+  readonly can: RowCan | undefined
 }
 
 export interface HelpGroup {

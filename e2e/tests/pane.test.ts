@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   arrowOf,
+  focusedLines,
   focusedTexts,
   paneShows,
   paneTextAt,
@@ -119,6 +120,14 @@ test('focusedTexts returns the text drawn in reverse video', () => {
 
 test('focusedTexts finds the glyph of a focused row and skips the link markup', () => {
   assert.deepEqual(focusedTexts(ROW_FOCUSED), ['▸'])
+})
+
+test('focusedLines returns the plain line of the focused Button, so a step can name the row that has the ring (n1 of PR 302)', () => {
+  const lines = focusedLines(`${ROW_BLURRED}\n${ROW_FOCUSED}\n${MORE_BLURRED}`)
+  assert.equal(lines.length, 1)
+  assert.ok(lines[0]?.includes('▸ a.example/1'))
+  assert.ok(!lines[0]?.includes('e.example/5'))
+  assert.deepEqual(focusedLines(`${ROW_BLURRED}\n${MORE_BLURRED}`), [])
 })
 
 test('focusedTexts returns nothing for a screen with no reverse video', () => {

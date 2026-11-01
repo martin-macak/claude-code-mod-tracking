@@ -7,10 +7,12 @@
 // engine but the `preview` state port, `ui.open`, `ui.toast` and `ui.invalidate`.
 // Design study of issue #57, comment 6414682787 (R10, G11, G18).
 
+import { BACK_BUTTON } from '../core/infra/preview-body'
 import { reason } from '../core/infra/steps'
 import type { Ports } from '../core/interfaces/ports'
-import type { PreviewContent, PreviewModeId, PreviewState } from '../core/interfaces/preview'
+import type { PreviewContent, PreviewMode, PreviewModeId, PreviewState } from '../core/interfaces/preview'
 import type { PaneKey } from '../core/interfaces/view'
+import { DETAIL_MODE } from '../core/lib/preview'
 import type { WorkQueue } from './pane-queue'
 import type { Press, Refocus } from './pane-refocus'
 import { frameFromState, unlessClosed } from './pane-refocus'
@@ -63,9 +65,9 @@ export class PreviewCache {
 /**
  * Reads the content of `target` and shows it: the content goes into the cache first, then the state names the view, so the first
  * drawing of the view has its content and never says `Loading…`. The state write is guarded by the press: a press that began before
- * a closing writes nothing after it (issue #130). `entering`: the preview was not on show, so the ring goes to the first Button of
- * its key line, as the help view sends it to `h: back` (`Refocus.keep`, issue #140). A reload or a change of mode keeps the ring.
- * The state may be the same as before (`r`), so the pane is asked to draw again.
+ * a closing writes nothing after it (issue #130). A switch from the detail view (issue #277) changes the Buttons of the body: the dim keys
+ * and `↩ back` go, and the ring sits on a position among the Buttons, so the press asks for the ring again (`Refocus.keep`, issue #140).
+ * A reload or a switch between file modes keeps the ring. The state may be the same as before (`r`), so the pane is asked to draw again.
  */
 export async function showPreview(
   p: Ports,
@@ -74,13 +76,15 @@ export async function showPreview(
   refocus: Refocus,
   press: Press,
   target: PreviewState,
-  entering: boolean,
 ): Promise<void> {
   const content = await m.loadPreview(p, target.owner, target.rowId, target.mode)
   if (!press.still()) return
   cache.put(target.rowId, target.mode, content)
-  const drawn = entering ? refocus.awaitFrame(p, frame => frame.view === 'preview') : undefined // armed before the write
   const before = await p.state.preview.get()
+  const fromDetail = before?.mode === DETAIL_MODE
+  const drawn = fromDetail
+    ? refocus.awaitFrame(p, frame => frame.view === 'preview' && frame.keys[0] !== BACK_BUTTON)
+    : undefined // armed before the write
   await p.state.preview.update(unlessClosed<PreviewState | null>(press, () => target))
   if (!press.still()) return
   if (before?.rowId === target.rowId && before.mode === target.mode) p.ui.invalidate()
@@ -174,31 +178,27 @@ export class PanePreview {
   }
 
   /**
-   * `v` on a row. The tracker says if the row has the mode: no mode, or one that is off, gives a toast with its reason and nothing
-   * opens. Else the read runs outside the chain and the preview opens when it has the content. The help view shows no `v`, so a press
-   * from a drawing before `h` opens nothing over it. The ticket is taken before the first wait. A press that comes later then
-   * supersedes the read of an earlier press at once, also while this press still waits for the help flag or for its own modes. The
-   * checks after each wait end the press when the pane closed or a newer press came (no read is started for it), and the ticket makes
-   * a read that runs on lose to a press that comes after it (`showPreview`).
-   */
-  async open(p: Ports, m: PaneHost, target: PreviewState, buttonKey: string, press: Press): Promise<void> {
-    const mine = this.ticket(press)
-    if ((await p.state.help.get()) || !mine.still()) return
-    if (!(await this.modeOk(p, m, target)) || !mine.still()) return
-    this.d.work.detach(p, buttonKey, () => showPreview(p, m, this.cache, this.d.refocus, mine, target, true))
-  }
-
-  /**
    * A press while the preview shows: a key that picks a mode reads that mode (`v` the view, `d` the diff), `r` reads the mode on show
    * again. Any other key has no Button in this drawing, so a press that comes from an older drawing does nothing.
    */
   async key(p: Ports, m: PaneHost, key: PaneKey, shown: PreviewState, press: Press): Promise<void> {
+    // In the detail view `r` reads the row again: the trackers refresh, and the next drawing builds the fields from the new row. There
+    // is no content to load (issue #277). `v` and `d` switch to the file modes below, for a row whose tracker lists them.
+    if (shown.mode === DETAIL_MODE && key.id === 'refresh') {
+      await m.refreshManual(p)
+      if (press.still()) p.ui.invalidate()
+      return
+    }
     const mode: PreviewModeId | undefined = key.mode ?? (key.id === 'refresh' ? shown.mode : undefined)
     if (mode === undefined) return
     const mine = this.ticket(press)
     const target = { ...shown, mode }
-    if (!(await this.modeOk(p, m, target)) || !mine.still()) return
-    this.d.work.detach(p, key.id, () => showPreview(p, m, this.cache, this.d.refocus, mine, target, false))
+    const modes = await m.previewModes(p, target.owner, target.rowId)
+    // A mode that the row does not list is a dim Button in the detail view (B6): its press gives the pane the keys and does nothing
+    // else. A mode that the row lists but has off keeps its toast (`PreviewMode.reason`).
+    if (shown.mode === DETAIL_MODE && key.mode !== undefined && modes?.some(x => x.id === key.mode) !== true) return
+    if (!this.modeOk(p, modes, target) || !mine.still()) return
+    this.d.work.detach(p, key.id, () => showPreview(p, m, this.cache, this.d.refocus, mine, target))
   }
 
   /**
@@ -213,21 +213,59 @@ export class PanePreview {
     if (origin !== 'person') return undefined
     try {
       if ((await p.state.preview.get()) === null) return undefined
-      this.leavings++
-      this.cache.clear()
-      const press = this.d.pressOf(false)
-      const drawn = this.d.refocus.awaitFrame(p, frame => frame.view !== 'preview') // armed before the write
-      await p.state.preview.update(() => null)
-      void p.ui.open().catch(e => p.log(`pane: reopen failed: ${reason(e)}`)) // the pane stays, with the keys
-      this.d.work.detach(p, 'preview back', async () => {
-        const next = { view: 'rows', row: await this.d.selectedRow(p) } as const
-        await this.d.refocus.keep(p, next, press, drawn, () => frameFromState(p, m, next))
-      })
+      await this.backToList(p, m, this.d.pressOf(false), true)
       return { deny: 'back to the list' }
     } catch (e) {
       p.log(`pane: leaving the preview failed: ${reason(e)}`)
       return undefined
     }
+  }
+
+  /**
+   * The `↩ back` Button and a second Enter on it (issue #277): the same way back as Esc, with no `ui.close` to deny, so the pane is not
+   * reopened. The view clears, the pane draws the list, and the ring goes back to the selected row. A press with nothing to leave does
+   * nothing. A failed write is logged and the person stays in the view.
+   */
+  async back(p: Ports, m: PaneHost, press: Press): Promise<void> {
+    try {
+      if ((await p.state.preview.get()) === null || !press.still()) return
+      await this.backToList(p, m, press, false)
+    } catch (e) {
+      p.log(`pane: leaving the preview failed: ${reason(e)}`)
+    }
+  }
+
+  /** The one way back: the work of the preview ends, the state clears, and the ring goes to the selected row. `reopen`: Esc, which the hook denied. */
+  private async backToList(p: Ports, m: PaneHost, press: Press, reopen: boolean): Promise<void> {
+    this.leavings++
+    this.cache.clear()
+    const drawn = this.d.refocus.awaitFrame(p, frame => frame.view !== 'preview') // armed before the write
+    await p.state.preview.update(() => null)
+    if (reopen)
+      void p.ui.open().catch(e => p.log(`pane: reopen failed: ${reason(e)}`)) // the pane stays, with the keys
+    else p.ui.invalidate()
+    this.d.work.detach(p, 'preview back', async () => {
+      const next = { view: 'rows', row: await this.d.selectedRow(p) } as const
+      await this.d.refocus.keep(p, next, press, drawn, () => frameFromState(p, m, next))
+    })
+  }
+
+  /**
+   * Enter on the row that holds the ring (issue #277): the detail view of the row. The content is built at each drawing from the row, so
+   * nothing is read: the state names the view and the ring goes to `↩ back`, the first Button of the key line. The help view shows no row,
+   * so a press from a drawing before `h` opens nothing over it. The ticket is taken first, so a newer press supersedes this one.
+   */
+  async openDetail(p: Ports, target: PreviewState, buttonKey: string, press: Press, m: PaneHost): Promise<void> {
+    const mine = this.ticket(press)
+    if ((await p.state.help.get()) || !mine.still()) return
+    this.d.work.detach(p, buttonKey, async () => {
+      const drawn = this.d.refocus.awaitFrame(p, frame => frame.view === 'preview') // armed before the write
+      await p.state.preview.update(unlessClosed<PreviewState | null>(mine, () => target))
+      if (!mine.still()) return
+      p.ui.invalidate()
+      const next = { view: 'preview', row: null } as const
+      await this.d.refocus.keep(p, next, mine, drawn, () => frameFromState(p, m, next))
+    })
   }
 
   /**
@@ -244,8 +282,7 @@ export class PanePreview {
   }
 
   /** True when the row has the mode and it is on. Else a toast says why, and the press ends. */
-  private async modeOk(p: Ports, m: PaneHost, target: PreviewState): Promise<boolean> {
-    const modes = await m.previewModes(p, target.owner, target.rowId)
+  private modeOk(p: Ports, modes: readonly PreviewMode[] | undefined, target: PreviewState): boolean {
     const found = modes?.find(x => x.id === target.mode)
     if (found?.enabled === true) return true
     p.ui.toast(found?.reason ?? (modes === undefined ? 'This row has no preview.' : 'This mode is not available.'))

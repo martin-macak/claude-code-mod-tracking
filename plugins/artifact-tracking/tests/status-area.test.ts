@@ -416,8 +416,8 @@ test('at 40 cells the full form keeps every line to its rows: 17 data rows docke
   const dock = pane({ columns: 40, rows: 31, placement: 'dock' })
   expect(dock.full).toBe(true)
   // The view line takes three rows at 40 cells with its six keys (`e` of issue #276 after `p` of issue #199), two with the five keys of
-  // `main`: the list keeps one data row fewer than the 18 it kept.
-  expect(dock.rows).toBe(17)
+  // `main`: the list keeps one data row fewer than the 18 it kept. The footer takes one more row at 40 cells with `o` of issue #277 (a dock of 49 cells keeps its rows).
+  expect(dock.rows).toBe(16)
   expect(dock.height).toBe(31)
   const inline = pane({ columns: 40, rows: 31, placement: 'inline' })
   expect(inline.height).toBeLessThanOrEqual(31)

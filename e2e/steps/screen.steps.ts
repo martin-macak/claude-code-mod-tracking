@@ -1,5 +1,5 @@
 import { defineParameterType, Then, When } from '@cucumber/cucumber'
-import { focusedTexts, paneShows, placementOf, refreshAge, selectedLine } from '../support/pane.ts'
+import { focusedLines, focusedTexts, paneShows, placementOf, refreshAge, selectedLine } from '../support/pane.ts'
 import { PERMISSION_MARKERS } from '../support/session.ts'
 import { waitUntil } from '../support/wait.ts'
 import type { DemoWorld } from '../support/world.ts'
@@ -50,6 +50,15 @@ Then('the focus ring is on {string}', async function (this: DemoWorld, text: str
   await this.waitScreen(
     screen => focusedTexts(screen).some(focused => focused.includes(text)),
     `the focus ring to be on "${text}"`,
+    { ansi: true },
+  )
+})
+
+// The ring on the Button of one row. Every leaf draws `›`, so the step above cannot tell the rows apart: this one reads the line.
+Then('the focus ring is on the row showing {string}', async function (this: DemoWorld, text: string) {
+  await this.waitScreen(
+    screen => focusedLines(screen).some(line => line.includes(text)),
+    `the focus ring to be on the row showing "${text}"`,
     { ansi: true },
   )
 })

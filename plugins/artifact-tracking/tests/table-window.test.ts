@@ -120,7 +120,7 @@ test('the rows out of the window are bare stops: no height, clipped, one Button 
     expect(button.props.plain).toBe(true)
     press(button)
   }
-  expect(calls).toEqual(keyRange(6, 12).map(k => `toggle:w${k.slice(1)}`)) // an Enter that lands before the next drawing still opens the row
+  expect(calls).toEqual(keyRange(6, 12).map(k => `enter:w${k.slice(1)}`)) // an Enter that lands before the next drawing still acts
 })
 
 test('the window follows the selected row: it shows it and gives its place back to the next draw', () => {

@@ -7,7 +7,7 @@
 import type { Engine } from 'claude-code/testing'
 import { expect, mock } from 'claude-code/testing'
 import { test } from './fixtures/kit'
-import { buttonKeys, mountPane, type PaneUi, seen, select } from './fixtures/pane'
+import { buttonKeys, handleFor, mountPane, type PaneUi, seen, select } from './fixtures/pane'
 import { fileTool, quiet, res, START, sleep, world, writeCreated } from './fixtures/world'
 
 const SHA = '1efdf45aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -47,6 +47,8 @@ async function opened($: Engine, on: Parameters<typeof world>[0], diff: string, 
   await quiet(w.calls)
   const ui = await mountPane($, {})
   await select($, ui, 'a.ts')
+  await ui.press({ key: await handleFor(ui, 'a.ts') }) // Enter: the detail view (issue #277), where v sits on the key line
+  await seen(ui, '· detail')
   await ui.press({ key: 'preview' })
   await seen(ui, ' · code · view · 2 lines')
   return { ui, calls, w }

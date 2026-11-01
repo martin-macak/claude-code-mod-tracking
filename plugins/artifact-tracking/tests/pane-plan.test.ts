@@ -110,7 +110,7 @@ const hotkeys = (drawn: unknown): string[] =>
     .map(b => String(b.props.hotkey))
 const dim = (drawn: unknown, key: string): boolean => buttonOf(drawn, key).props.dimColor === true
 
-const CORE_HOTKEYS = ['r', 'h', 'g', 'a', 't', 'p', 'm', 'e', 'x', '1', '2', '3', '0']
+const CORE_HOTKEYS = ['r', 'h', 'g', 'a', 't', 'p', 'm', 'e', 'x', '1', '2', '3', '0', 'o']
 
 // ---------------------------------------------------------------- open, read, go back
 
@@ -222,6 +222,7 @@ test('the frame of the plan view names the view and holds the keys of its footer
     'prio-2',
     'prio-3',
     'prio-0',
+    'open',
   ])
 })
 

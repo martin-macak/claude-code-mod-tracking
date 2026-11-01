@@ -5,7 +5,7 @@
 // row with children too and for a row with its own `detail()`, then the lines of that `detail()`, the reasons and the turns, with no
 // badge line (the first line of the quick view has the badges) and with the count of the children. Pure.
 // Decision G13 of plan L6. Spec 5.10 "Rows".
-import type { CellId, ColumnDef, DetailLine, TreeRow } from '../../core/interfaces/view'
+import { type CellId, type ColumnDef, canOpen, type DetailLine, type TreeRow } from '../../core/interfaces/view'
 import { cellWidth, normaliseCell } from '../text/cell-width'
 import { cellOf, GLYPH_BOX, type Solved } from './columns'
 import { indentOf, NOTHING_MORE } from './shape'
@@ -76,7 +76,7 @@ export function detailOf(
 ): readonly DetailLine[] {
   const why = [...whyOf(row), ...turnsOf(row)]
   if (row.detail !== undefined) return [...row.detail(), ...why]
-  if ((row.children?.length ?? 0) > 0) return why
+  if (canOpen(row)) return why
   const lines = [...cutLines(row, columns, solved, depth, { badges: true }), ...why]
   return lines.length > 0 ? lines : [{ cell: { text: NOTHING_MORE, dim: true } }]
 }
