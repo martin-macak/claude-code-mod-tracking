@@ -1,6 +1,6 @@
 # The strip under an answer (issue #69, spikes S7 to S13)
 
-Date: 2026-10-21. Engine: Claude Code 2.1.305 for the spike, 2.1.306 for the live checks of the PR that ships the strip.
+Date: 2026-10-21. Engine: Claude Code 2.1.305 for the spike, 2.1.306 for the live checks of the PR that ships the strip. The four open questions were checked on 2.1.316 on 2026-11-01 ([issue #167](https://github.com/martin-macak/claude-code-mod-tracking/issues/167), [the live checks of #167](#the-live-checks-of-167)).
 
 This page records what a mod can show near the end of a turn, and what the engine does with it. The design study of [issue #69](https://github.com/martin-macak/claude-code-mod-tracking/issues/69) ran the spike (S7 to S13). The probe logs are not in this repo, so the lines below are copied from [part 2 of the study](https://github.com/martin-macak/claude-code-mod-tracking/issues/69#issuecomment-6303565557) with their `L<n>` numbers. The mod's own strip is in [`ux/strip.ts`](../../../../plugins/artifact-tracking/ux/strip.ts), [`core/lib/turn-strip.ts`](../../../../plugins/artifact-tracking/core/lib/turn-strip.ts) and [`hooks/register.tsx`](../../../../plugins/artifact-tracking/hooks/register.tsx). The user-facing key is `global.ui.turnStrip` in the [README](../../../../plugins/artifact-tracking/README.md#the-strip-under-an-answer).
 
@@ -29,7 +29,7 @@ The synthetic clicks are SGR mouse bytes sent with `tmux send-keys`, the method 
 | S12 | Does a command reply reach the model? | Yes, as `<local-command-stdout>` in the next request (L59, L69). | `[observed]` |
 | S13 | Does `-p` print the strip? | `text` and `json` output: no (L74, L76). `stream-json`: a `system` event, subtype `informational`, with the text (L80). | `[observed]` |
 
-Surfaces other than the terminal: `TurnDuration` is "raised on the terminal surface only" and a remote surface "draws its own footer" ([d.ts 302:10557-10561](../sources/claude-code-2.1.302/types/claude-code.d.ts#L10557)). `[primary source]` Nobody ran `interactive` on the desktop or in the VS Code panel. `[inference]` The strip would not show there. Use `text`.
+Surfaces other than the terminal: `TurnDuration` is "raised on the terminal surface only" and a remote surface "draws its own footer" ([d.ts 302:10557-10561](../sources/claude-code-2.1.302/types/claude-code.d.ts#L10557)). `[primary source]` Nobody ran `interactive` on the desktop or in the VS Code panel (check 3 of [#167](#the-live-checks-of-167) was not run). `[inference]` The strip would not show there. Use `text`.
 
 ## The evidence, copied in
 
@@ -151,7 +151,7 @@ L80 {"type":"system","subtype":"informational","content":"s69-probe+cc-plugin-ag
 
 `TurnCompleteResult` is `{ text, usage? }`. "A text other than a main-loop answer's is shown beneath it." `[primary source]` ([d.ts 302:14009](../sources/claude-code-2.1.302/types/claude-code.d.ts#L14009)) The study saw the same: a hook that returned a text equal to the answer added no row, and a hook that returned another text added one (S7). The text is shown with the names of the plugins in front: the study's row reads `s69-probe+cc-plugin-agents-md: TL69-MARKER ...` (L33, L199) and the mod's own row reads `artifact-tracking+cc-plugin-agents-md: +2 new · /track turn 1`. The prefix is the engine's. The mod does not control it. `[observed]` Why `cc-plugin-agents-md` is named is not known: it hooks `turn.complete` too (L219). `[observed]`
 
-The engine's own text is the answer: a hook that returned `next(e)` unchanged gave a text equal to the answer (L180, L181, L191, L192). `[observed]` So a text that differs from the answer, which `next(e)` resolves to inside the mod's hook, is the notice of a hook below it. The mod keeps such a text and puts its line after it, separated by a new line, and replaces a text that equals the answer. `[inference]` The kit pins the returned text. How the engine draws a two-line text was not run (open question 44).
+The engine's own text is the answer: a hook that returned `next(e)` unchanged gave a text equal to the answer (L180, L181, L191, L192). `[observed]` So a text that differs from the answer, which `next(e)` resolves to inside the mod's hook, is the notice of a hook below it. The mod keeps such a text and puts its line after it, separated by ` · `, and replaces a text that equals the answer. `[inference]` The kit pins the returned text. The engine draws a text with a line break as one row, with a replacement glyph in place of the break (check 4 of [#167](#the-live-checks-of-167), open question 44), so a join with `\n` would not give two lines; the mod joins with ` · ` instead. `[observed, verified-live]` for the glyph, `[verified-kit]` for the join.
 
 ## The order of one TUI turn
 
@@ -214,7 +214,7 @@ After the click the pane opened docked at the right with the keys (its footer li
 tracking Links 2 turn 1 +2 new /track                               [-] │3: low  0: auto  Tab ↑↓ move  Esc close
 ```
 
-Main screen (`CLAUDE_CODE_NO_FLICKER=0`): the line shows `+2 new` and no Button. `[observed, verified-live]` With the pane open, `ctrl+x Tab` went to the pane at once: the transcript Button of an earlier duration line did not stop the chord, and the hint "Keys go to the prompt." went away. `[observed, verified-live]` The band Button is a stop of that chord while the pane is closed (PR #136), and the strip Button is not: with the pane closed and two strips on screen, `ctrl+x Tab` put the focus ring on the band Button `9: open` (reverse video on that Button only), and a second `Tab` left it there. `[observed, verified-live]` So `ctrl+x Tab` does not stop at a transcript Button. `[observed, verified-live]` No other keyboard path was tried, so a keyboard path to it is an open question (see [open questions, 42](../open-questions.md#not-yet-observed-on-21306)).
+Main screen (`CLAUDE_CODE_NO_FLICKER=0`): the line shows `+2 new` and no Button. `[observed, verified-live]` With the pane open, `ctrl+x Tab` went to the pane at once: the transcript Button of an earlier duration line did not stop the chord, and the hint "Keys go to the prompt." went away. `[observed, verified-live]` The band Button is a stop of that chord while the pane is closed (PR #136), and the strip Button is not: with the pane closed and two strips on screen, `ctrl+x Tab` put the focus ring on the band Button `9: open` (reverse video on that Button only), and a second `Tab` left it there. `[observed, verified-live]` So `ctrl+x Tab` does not stop at a transcript Button. `[observed, verified-live]` The other paths of check 2 of [#167](#the-live-checks-of-167) did not reach it either: no keyboard path to a strip Button was found (open question 42). `[observed, verified-live]`
 
 After `claude --continue` the older duration lines drew their strips again, once the stored ledger had loaded (the mod kept the uuid of each `turn_duration` row in the stored copy, and the engine drew the lines with the same uuids). The first render ran with an empty ledger and drew none, and a later render, after the load, drew the strips. `[observed, verified-live]` One run, before the mod asked for a redraw, showed no strips 9 s after the start, so the mod now calls `$.ui.invalidate("ui.render")` when a stored ledger loads. A kit test pins the call. With the call in place, a run showed the strips 7 s after the start. `[observed, verified-live]` One run is no proof that the first run's gap is closed. `[inference]`
 
@@ -229,7 +229,7 @@ An aborted turn (Esc after a tool call began) has no duration line, and `interac
 ⏺ artifact-tracking+cc-plugin-agents-md: +1 new · /track turn 2
 ```
 
-`refusal` and `error` ends were not run. They have no duration line if they act like an abort. `[inference]` The mod treats them like an abort: the text line, and no strip on a duration line.
+`refusal` and `error` ends were run later (check 1 of [#167](#the-live-checks-of-167)). Unlike an abort, they do have a duration line and a `turn_duration` row. The mod treats them like an abort anyway: the text line, and no strip on their duration line. `[observed, verified-live]`
 
 ## The strip never reaches the model
 
@@ -254,14 +254,141 @@ $ claude -p --output-format stream-json --verbose ...        (the informational 
 
 On this machine the managed plugin `cc-plugin-sec-default` sits outermost. It reports that the `session.append` hook of the mod was skipped, once for the first prompt of a session and once for each `claude -p` process. The rows that matter here still reached the mod: the prompt row, the response row and the `turn_duration` notice (L96 and the live check). The row that the plugin bypasses is not named by the engine. `[observed]` Nothing tried to bypass or turn off the plugin.
 
+## The live checks of #167
+
+Date: 2026-11-01. Engine: Claude Code 2.1.316 (the types snapshot is 2.1.302), macOS, tmux 3.8, 120 by 40 cells, fullscreen layout (`CLAUDE_CODE_NO_FLICKER=1`). All runs are interactive sessions in tmux. The model is a fake Messages API, so a run can end a turn by a refusal and by an API error. The session had an empty config folder, the mod, and a probe plugin `p167` that logged `turn.complete`, the `turn_duration` rows and the `TurnDuration` renders. The machine has managed settings (`cc-plugin-sec-default`). The grade of every result below is *verified-live*, unless it says otherwise. The probe plugins and the fake API were scratch files and are not committed, and their logs are not in the repo: the lines below are copied from them. The first number of a log line is the milliseconds since the probe loaded.
+
+| # | Check | Result | Grade |
+| --- | --- | --- | --- |
+| 1 | Do `refusal` and `error` ends append a `turn_duration` row and draw a `TurnDuration` line? Does the strip fall back to the text line? | Yes, both append a row and draw a line. The strip falls back to the text line, as for an abort. `interactive` draws no strip on their duration line. | *verified-live* |
+| 2 | Is there a keyboard path to the open Button of a strip? | None found among the paths tried (table below). | *verified-live* (a negative result) |
+| 3 | Do the desktop app and the VS Code panel raise `TurnDuration`? | Not run. | *types-only* (unchanged) |
+| 4 | How does a `turn.complete` text of two lines draw? | As one row. The line break draws as a replacement glyph. | *verified-live* |
+
+### Check 1: a refusal and an API error end the turn with a duration row
+
+Setup: `turnStrip` was `interactive`. The fake API answered the first turn with text. For the refusal run it answered the next request with `stop_reason: "refusal"` (`stop_details` category `cyber`). The engine retried the refusal once (the line "continuing once with that noted"; the fake has no fallback model), the retry was a refusal too, and the turn ended. For the error run the fake answered HTTP 400 (`invalid_request_error`). The engine retried it seven times (requests 2 to 8 of the fake) and then gave up. A fake with fewer refusals or errors gives a normal answer after the retries, so the script must hold more of them than the engine retries.
+
+Refusal, the probe log (the first answer, then the refused turn):
+
+```text
+  12513 turn.complete turnId=1f46eff1 reason=answer isAborted=false durationMs=706 answer="noted https://example.com/alpha and http" agentId=undefined refusal=undefined
+  12517 append door=notice name=turn_duration uuid=a3d4a48c-594a-4c77-9dc7-7e0bbb488d37 agentId=undefined text=""
+  17246 append door=notice name=model_refusal_no_fallback uuid=0906cc0f-998f-4220-b650-74daca3972b8 agentId=undefined text=""
+  17275 turn.complete turnId=f13513c0 reason=refusal isAborted=false durationMs=152 answer="Still cannot https://example.com/gamma2" agentId=undefined refusal={"category":"cyber","explanation":"fake refusal"}
+  17275 append door=notice name=turn_duration uuid=e6cb478c-2e99-4f43-aaaf-d23a3fa363af agentId=undefined text=""
+  17300 turn.complete.out text="Still cannot https://example.com/gamma2"
+  17405 render.TurnDuration requestId=e6cb478c-2e99-4f43-aaaf-d23a3fa363af word=Churned durationMs=152 fullscreen=true
+```
+
+The screen after it. The first turn shows the strip (`+2 new open`). The refused turn shows its duration line with no strip, and then the text line:
+
+```text
+⏺ noted https://example.com/alpha and https://example.com/beta
+✻ Cogitated for 0s · done 12:33 PM
+  +2 new open
+❯ turn two refuse
+⏺ I cannot help https://example.com/gamma
+⏺ Haiku 5.5's safeguards stopped the response above · continuing once with that noted
+⏺ Still cannot https://example.com/gamma2
+⏺ API Error: Haiku 5.5's safeguards flagged this message. Our intentionally broad safeguards allow us to deliver
+  more capabilities faster, but can sometimes flag legitimate cybersecurity work. Learn more:
+  https://support.claude.com/en/articles/14604842-real-time-cyber-safeguards-on-claude
+  Details: `[cyber]`
+  Message ID: m3
+✻ Churned for 0s · done 12:34 PM
+⏺ artifact-tracking+p167+cc-plugin-agents-md: +3 new · /track turn 2
+```
+
+API error, the probe log and the screen. The answer of the turn is empty (`answer=""`):
+
+```text
+  38901 turn.complete turnId=9db8237f reason=error isAborted=false durationMs=54 answer="" agentId=undefined refusal=undefined
+  38902 append door=notice name=turn_duration uuid=973e09e8-d5ea-4710-9794-20eb6ceb4e5b agentId=undefined text=""
+  38907 turn.complete.out text=""
+  38915 render.TurnDuration requestId=973e09e8-d5ea-4710-9794-20eb6ceb4e5b word=Cogitated durationMs=54 fullscreen=true
+```
+
+```text
+❯ turn two error
+⏺ API Error: 400 fake api error https://example.com/delta
+✻ Cogitated for 0s · done 12:36 PM
+⏺ artifact-tracking+p167+cc-plugin-agents-md: +1 new · /track turn 2
+```
+
+What follows. `[observed, verified-live]`
+
+- `refusal` and `error` do append a `turn_duration` row, inside `turn.complete`, and the engine draws a `TurnDuration` line for it. They are not like an abort, which has no row (S9). The earlier inference was wrong on this point.
+- The mod draws no strip on that duration line (no counts, no Button), and the text line follows it. So the fallback of `interactive` holds. It holds by the mod's own rule for these two reasons, not because the line is missing.
+- A refusal that ends with no fallback model also appends a notice row `model_refusal_no_fallback` before the duration row, and the event carries `refusal: { category, explanation }`. The mod reads neither.
+- The text of an `error` turn is empty. The `API Error: ...` line is a row of its own.
+
+The mod's behaviour needed no change.
+
+### Check 2: no keyboard path to the open Button of a strip
+
+Setup: `interactive`, two turns that tracked links, the pane closed, an empty prompt. Two strips (`+2 new open` and `+1 new open`) and the band Button `9: open` were on screen. A focus ring shows as reverse video (`ESC[7m`) on a Button in `tmux capture-pane -e`. The prompt cursor is reverse video too, so only a second reverse span on a Button counts.
+
+| Keys | Result |
+| --- | --- |
+| `Tab` | The engine toggled thinking ("Use opt+t to toggle thinking"). No ring on a strip. |
+| `Shift+Tab` | The engine cycled the permission mode. No ring on a strip. |
+| `ctrl+x` `Tab` | The ring went to the band Button `9: open`, as in the study. |
+| `Tab`, twice more | The ring stayed on the band Button. |
+| `ctrl+x` `Shift+Tab` | No ring. |
+| `Up`, `Down`, `Left` (with the ring on the band Button) | `Up` moved the prompt history. The ring stayed on the band Button. |
+| `Esc` | The ring left the band Button. |
+| `ctrl+o` (the detailed transcript, "Showing detailed transcript · ctrl+o to toggle · ↑↓ scroll"), then `Tab`, `ctrl+x` `Tab`, `Down`, `Enter` | The strips are drawn there (`+1 new open`). No ring on a strip, and `Enter` opened nothing. |
+
+```text
+tracking Links 3 turn 2 +1 new <reverse>9: open</reverse> /track       [-]      (after ctrl+x Tab)
+  +1 new open                                                                    (the strip: no reverse span)
+```
+
+So the focus chain of the engine does not include a Button that is drawn in the transcript, in the prompt view or in the detailed transcript. `[observed, verified-live]` Not tried: a real mouse, `v` (open the transcript in the editor), other scroll keys of the fullscreen layout, and a screen reader. From the keyboard, a turn opens by the band key `9` (the newest turn) or by `/track turn N`.
+
+### Check 3: the desktop app and the VS Code panel were not run
+
+Not run. This machine has the Claude desktop app and VS Code with the Claude Code extension (2.1.301 and 2.1.310), but a run needs a person, or a computer-use grant, to start a session with the mod in each app and to read its screen. A terminal session cannot do it. The types still say `TurnDuration` is "raised on the terminal surface only" ([d.ts 302:10557-10561](../sources/claude-code-2.1.302/types/claude-code.d.ts#L10557)), so the grade stays *types-only*. A headless `claude -p` run is no substitute: it is a surface of neither app.
+
+### Check 4: a text of two lines draws as one row
+
+Setup: a second plugin `p167b` whose `turn.complete` hook returns `{ text: 'P167B-LINE-A (second plugin)' }` after `next(e)`. `turnStrip` was `text`, so the mod put its line after that text with a new line (`withLine`). The log line below is the text of the whole chain, as the probe `p167` saw it (it sits beneath the mod and above the second plugin in the order of the hooks):
+
+```text
+  12754 turn.complete turnId=beb300e0 reason=answer isAborted=false durationMs=6994 answer="noted https://example.com/alpha and http" agentId=undefined refusal=undefined
+  12769 turn.complete.out text="P167B-LINE-A (second plugin)"
+```
+
+The screen (tmux capture). The two texts are one row. The break between them is the glyph U+FFFD (bytes `ef bf bd` in the capture). The text of the second plugin comes first, the line of the mod after it:
+
+```text
+⏺ artifact-tracking+p167+p167b+cc-plugin-agents-md: P167B-LINE-A (second plugin)�+2 new · /track turn 1
+⏺ second https://example.com/gamma
+✻ Cooked for 0s · done 12:37 PM
+⏺ artifact-tracking+p167+p167b+cc-plugin-agents-md: P167B-LINE-A (second plugin)�+1 new · /track turn 2
+```
+
+A third plugin (`p167c`, with `turnStrip` set to `off`, so the mod added nothing) returned `P167C-LINE-A\nP167C-LINE-B` alone. The row shows the same glyph where the break is. So the engine does this with any text that holds a line break, and the mod is not the cause:
+
+```text
+⏺ artifact-tracking+p167+p167c+cc-plugin-agents-md: P167C-LINE-A�P167C-LINE-B
+```
+
+What follows. `[observed, verified-live]`
+
+- A `turn.complete` text draws as one notice row, whatever line breaks it holds. The break draws as a replacement glyph. Whether a terminal other than tmux draws the glyph, or the break, was not run.
+- The plugin names come first. The texts follow in the order of the hooks: the text of the plugin beneath the mod, then the line of the mod.
+- The join with `\n` (`withLine` in [`core/lib/turn-strip.ts`](../../../../plugins/artifact-tracking/core/lib/turn-strip.ts)) drew a glyph between the texts when another plugin also returns text (the run above used that join). The PR of this check changed the join to ` · `, a separator that draws as text. The kit pins the new string (`withLine` tests in `turn-strip.test.ts` and `turn-strip-wiring.test.tsx`: `[verified-kit]`). The new join was not run live: that needs a repeat of this check.
+
 ## Not tested
 
-The open engine questions are also rows 41 to 44 of [open-questions](../open-questions.md#not-yet-observed-on-21306).
+Rows 41, 42 and 44 of [open-questions](../open-questions.md#not-yet-observed-on-21306) are answered by the live checks of #167. Row 43 stays open.
 
-- `refusal` and `error` turn ends (typed only).
 - A real mouse (all clicks were synthetic SGR bytes in tmux).
 - The strip on a narrow terminal.
-- `interactive` on the desktop, the VS Code panel and mobile. `TurnDuration` is a terminal render.
+- `interactive` on the desktop, the VS Code panel and mobile (check 3 of #167 was not run). `TurnDuration` is a terminal render.
+- A keyboard path to a strip Button other than the ones tried in check 2, and a text with a line break in a terminal other than tmux.
 - A machine without managed settings.
 - Nested and workflow agents and teammates, and prompts queued while a turn runs.
 

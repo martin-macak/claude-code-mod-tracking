@@ -125,11 +125,11 @@ const below = (on: On, text: string) =>
     text,
   }))
 
-test('text: a text that a hook below returned for the turn stays, and the line follows it on a new line', async ($, on) => {
+test("text: a text that a hook below returned for the turn stays, and the line follows it after ' · ' (never a line break)", async ($, on) => {
   below(on, 'agents-md: a note of another plugin')
   stripWorld(on, 'text')
   await $.session.start(START)
-  expect(await turn($, 1, [A])).toEqual({ text: 'agents-md: a note of another plugin\n+1 new · /track turn 1' })
+  expect(await turn($, 1, [A])).toEqual({ text: 'agents-md: a note of another plugin · +1 new · /track turn 1' })
 })
 
 test("text: a text that is the answer itself is the engine's, so the line replaces it", async ($, on) => {
@@ -162,7 +162,7 @@ test('interactive: an aborted turn keeps the text of a hook below too, with the 
   stripWorld(on, 'interactive')
   await $.session.start(START)
   expect(await turn($, 1, [A], 'aborted')).toEqual({
-    text: 'agents-md: a note of another plugin\n+1 new · /track turn 1',
+    text: 'agents-md: a note of another plugin · +1 new · /track turn 1',
   })
 })
 
@@ -234,7 +234,7 @@ test('interactive: an aborted turn has no duration line, so it gets the text lin
   expect(await turn($, 1, [A], 'aborted')).toEqual({ text: '+1 new · /track turn 1' })
 })
 
-test('interactive: refusal and error are treated like an aborted turn: the text line, never a strip on a duration line (inference, not run)', async ($, on) => {
+test('interactive: refusal and error are treated like an aborted turn: the text line, never a strip on a duration line (verified live on 2.1.316, issue #167)', async ($, on) => {
   engineLine(on)
   stripWorld(on, 'interactive')
   await $.session.start(START)
