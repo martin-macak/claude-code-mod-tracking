@@ -47,6 +47,11 @@ export type LaunchSpec = {
    * prompt asks and whatever permission mode the machine has.
    */
   tools?: readonly string[]
+  /**
+   * The permission mode (`--permission-mode`). Absent: the mode of the machine, which can be auto mode. In auto mode a subagent's
+   * spawn opens a notice about the classifier when the API is not Anthropic's, and the notice blocks the session (issue #206).
+   */
+  permissionMode?: string
   /** Variables for claude only, set through env(1) so they win over the tmux server's own. */
   env?: Readonly<Record<string, string>>
   /** Variables claude must not inherit: env(1) `-u` removes them before it sets `env`. */
@@ -70,6 +75,7 @@ export function claudeCommand(spec: LaunchSpec): string {
     // A scenario with tools gets the default set and an allow list that spares the dialog. Any other gets no tool:
     // `--tools ''` drops the built-in tools, `--strict-mcp-config` the MCP servers of the account (the repo has none).
     ...(spec.tools ? ['--allowedTools', spec.tools.join(',')] : ['--tools', '', '--strict-mcp-config']),
+    ...(spec.permissionMode === undefined ? [] : ['--permission-mode', spec.permissionMode]),
     '--settings',
     stopHookSettings(spec.signalFile),
   ]

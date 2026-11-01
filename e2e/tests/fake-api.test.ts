@@ -27,6 +27,12 @@ const eventsOf = (stream: string): { type: string; [key: string]: unknown }[] =>
     .filter(Boolean)
     .map(chunk => JSON.parse(chunk.split('\n')[1]!.replace(/^data: /, '')))
 
+/** The text of the text deltas of a stream, joined. */
+const textOf = (stream: string): string =>
+  eventsOf(stream)
+    .flatMap(e => (e.type === 'content_block_delta' ? [(e.delta as { text?: string }).text ?? ''] : []))
+    .join('')
+
 const post = (api: FakeApi, body: unknown, path = '/v1/messages') =>
   fetch(`${api.url}${path}`, { method: 'POST', body: JSON.stringify(body) })
 
@@ -241,6 +247,8 @@ test('a body that is no JSON is a request with no tools', async () => {
 test('a script that ends in a tool call is refused: its last turn would repeat the call', async () => {
   await assert.rejects(FakeApi.start([ASK]), /must end in a turn of text/)
   await assert.rejects(FakeApi.start([]), /must end in a turn of text/)
+  // A function as the last step is refused too: it would repeat for every later request, and what it returns is not known.
+  await assert.rejects(FakeApi.start([() => ASK]), /must end in a turn of text/)
 })
 
 test('the session of the fake talks to the fake alone: its address, a token that is no secret, a home of its own', () => {
@@ -254,4 +262,52 @@ test('the variables of a parent session are removed, and the settings that switc
   assert.ok(PARENT_SESSION_VARS.includes('CLAUDE_CODE_SESSION_ID'))
   assert.ok(PARENT_SESSION_VARS.includes('CLAUDECODE'))
   assert.ok(PARENT_SESSION_VARS.every(name => !name.startsWith('CLAUDE_CODE_ENABLE_')))
+})
+
+// Issue #206. A task id is made by the engine, so a script cannot know it: a turn can be a function of what the engine
+// told the model so far (the tool results of the history).
+test('a turn that is a function gets the tool results of its request, and its answer is the turn', async () => {
+  const seen: string[][] = []
+  const api = await FakeApi.start([
+    results => {
+      seen.push(results.map(r => r.text))
+      return [{ type: 'tool_use', id: 'toolu_f', name: 'TaskStop', input: { task_id: results[0]?.text ?? 'none' } }]
+    },
+    DONE,
+  ])
+  try {
+    const history = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a', content: 'ID: b123' }] }
+    const res = await post(api, { stream: true, tools: [{ name: 'x' }], messages: [history] })
+    const json = eventsOf(await res.text())
+      .filter(e => e.type === 'content_block_delta')
+      .map(e => (e.delta as { partial_json: string }).partial_json)
+      .join('')
+    assert.deepEqual(JSON.parse(json), { task_id: 'ID: b123' })
+    assert.deepEqual(seen, [['ID: b123']])
+  } finally {
+    await api.close()
+  }
+})
+
+test('a turn function that throws is answered with a text turn, the error is kept, and the server stays up', async () => {
+  const api = await FakeApi.start([
+    () => {
+      throw new Error('no task id')
+    },
+    DONE,
+  ])
+  try {
+    const errorOf = (): string | undefined => api.scriptError?.message
+    assert.equal(errorOf(), undefined)
+    const first = await post(api, { stream: true, tools: [{ name: 'x' }], messages: [] })
+    assert.equal(first.status, 200)
+    assert.equal(textOf(await first.text()), 'fake script failed.')
+    assert.equal(errorOf(), 'no task id')
+    // The step counted as taken, and the server still answers the next request.
+    const second = await post(api, { stream: true, tools: [{ name: 'x' }], messages: [] })
+    assert.equal(textOf(await second.text()), 'Noted.')
+    assert.equal(errorOf(), 'no task id')
+  } finally {
+    await api.close()
+  }
 })

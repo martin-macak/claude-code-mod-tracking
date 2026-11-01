@@ -16,7 +16,7 @@ import { claimBudgetMs, claimScenario } from './claim-scenario.ts'
 import { CLONE_NAME, type Config, loadConfig, PLUGIN_DIR, REPO_ROOT } from './config.ts'
 import { CONFIG_FILE, makeConfigDir, pathWidthRefusal } from './config-dir.ts'
 import { type CopyProbe, writeCopyProbe } from './copy-probe.ts'
-import { FakeApi, type FakeTurn } from './fake-api.ts'
+import { FakeApi, type FakeStep } from './fake-api.ts'
 import { FAKE_HOME_TEXT, fakeApiEnv, homeFile, PARENT_SESSION_VARS } from './fake-api-env.ts'
 import type { FakeGhSpec } from './fake-gh.ts'
 import { fakeGhEnv } from './fake-gh-env.ts'
@@ -66,6 +66,8 @@ export class DemoWorld extends World {
   notedRefreshAge: number | undefined
   /** The fake Messages API of this scenario (support/fake-api.ts). Absent: claude talks to the real model. */
   fakeApi: FakeApi | undefined
+  /** The permission mode of the next launch (`--permission-mode`). Undefined: the mode of the machine. */
+  permissionMode: string | undefined
   /** The config folder of the session that runs against the fake API: empty, so no login or setting of the person reaches it. */
   fakeHome = ''
   /** The probe plugin that answers `ui.copy` (support/copy-probe.ts). Absent: the copy key writes the real clipboard. */
@@ -103,11 +105,17 @@ export class DemoWorld extends World {
     writeFileSync(this.fakeGhFiles.logFile, '')
   }
 
+  /** Sets the permission mode of the next launch. Before the session starts: the mode of a running session cannot change. */
+  setPermissionMode(mode: string): void {
+    if (this.launched) throw new Error('permission mode: set it before the step that starts the session')
+    this.permissionMode = mode
+  }
+
   /**
    * Makes the next launch talk to a fake model that plays `turns`, in a config folder of its own. Before the session starts:
    * the model of a running session cannot change. The scenario closes it at the end (`tearDown`).
    */
-  async startFakeApi(turns: readonly FakeTurn[]): Promise<void> {
+  async startFakeApi(turns: readonly FakeStep[]): Promise<void> {
     if (this.launched) throw new Error('fake api: start it before the step that starts the session')
     await this.fakeApi?.close()
     this.fakeApi = await FakeApi.start(turns)
@@ -252,6 +260,7 @@ export class DemoWorld extends World {
         model: this.config.model,
         timeoutMs: this.config.turnTimeoutMs,
         ...(tools ? { tools } : {}),
+        ...(this.permissionMode === undefined ? {} : { permissionMode: this.permissionMode }),
         env: {
           CLAUDE_TRACKER_CONFIG_DIR: this.configDir,
           ...(this.fakeGh ? fakeGhEnv(this.fakeGhFiles) : {}),
@@ -273,7 +282,14 @@ export class DemoWorld extends World {
 
   async finishTurn(): Promise<void> {
     this.tl.phase('fast')
-    await waitForTurnEnd(this.signalFile, this.turnMark, this.config.turnTimeoutMs, () => this.tmux.capture())
+    try {
+      await waitForTurnEnd(this.signalFile, this.turnMark, this.config.turnTimeoutMs, () => this.tmux.capture())
+    } catch (error) {
+      // A script step that threw is the cause of a turn that went wrong: name it, not the timeout.
+      throw this.fakeApi?.scriptError ?? error
+    }
+    const scriptError = this.fakeApi?.scriptError
+    if (scriptError !== undefined) throw scriptError
     this.tl.phase('normal')
   }
 

@@ -28,6 +28,13 @@ Given(
   },
 )
 
+// Before the session step. The session starts in the default permission mode, not the mode of the machine. In auto mode the spawn
+// of a subagent opens a notice about the classifier when the API is not Anthropic's (the fake model), and it blocks the session
+// (issue #206). A tool of the allow list still runs with no dialog.
+Given('the session asks for permission in the default mode', function (this: DemoWorld) {
+  this.setPermissionMode('default')
+})
+
 Given(
   'a Claude Code session with the artifact-tracking mod and the prompt {string}',
   async function (this: DemoWorld, prompt: string) {

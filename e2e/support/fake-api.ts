@@ -17,6 +17,15 @@ export type FakeBlock =
 /** One answer of the model: its blocks, in order. A turn that holds a `tool_use` stops with `tool_use`, else with `end_turn`. */
 export type FakeTurn = readonly FakeBlock[]
 
+/**
+ * One step of the script: a turn, or a function that makes the turn from the tool results in the request that asks for this turn
+ * (issue #206). The engine sends the whole history in each request, so these are all the results so far. The engine makes some
+ * ids, such as the id of a background task, so a script cannot write them in advance. The function runs when the request comes.
+ * It cannot be the last step: the last step repeats, and the fake could not know that a function ends in text. A function that
+ * throws does not break the server: the fake keeps the error (`scriptError`) and answers with a turn of text.
+ */
+export type FakeStep = FakeTurn | ((toolResults: readonly { readonly id: string; readonly text: string }[]) => FakeTurn)
+
 /** What the fake saw of a request: whether it was a turn of the script, the tool results and the command replies it carried. */
 export type FakeRequest = {
   readonly isTurn: boolean
@@ -125,19 +134,20 @@ export class FakeApi {
   readonly requests: FakeRequest[] = []
   readonly url: string
   private readonly server: Server
-  private readonly turns: readonly FakeTurn[]
+  private readonly turns: readonly FakeStep[]
   private taken = 0
+  private failure: Error | undefined
 
-  private constructor(server: Server, turns: readonly FakeTurn[], url: string) {
+  private constructor(server: Server, turns: readonly FakeStep[], url: string) {
     this.server = server
     this.turns = turns
     this.url = url
   }
 
   /** Starts a fake on a free port of 127.0.0.1. `turns` is the script: at least one, and the last is a turn of text. */
-  static async start(turns: readonly FakeTurn[]): Promise<FakeApi> {
+  static async start(turns: readonly FakeStep[]): Promise<FakeApi> {
     const last = turns.at(-1)
-    if (last === undefined || last.some(block => block.type === 'tool_use'))
+    if (last === undefined || typeof last === 'function' || last.some(block => block.type === 'tool_use'))
       throw new Error('fake api: the script must end in a turn of text, or the last turn would repeat its tool call')
     const server = createServer()
     const api: { current?: FakeApi } = {}
@@ -149,6 +159,11 @@ export class FakeApi {
     const { port } = server.address() as AddressInfo
     api.current = new FakeApi(server, turns, `http://127.0.0.1:${port}`)
     return api.current
+  }
+
+  /** The first error that a function step threw. The scenario reads it to fail with the cause, not with a timeout. */
+  get scriptError(): Error | undefined {
+    return this.failure
   }
 
   /** How many turns of the script the engine took. */
@@ -209,7 +224,16 @@ export class FakeApi {
       const stream = isRecord(body) && body.stream === true
       const isTurn = tools > 0
       this.requests.push({ isTurn, toolResults: toolResultsOf(body), commandReplies: commandRepliesOf(body) })
-      const turn = isTurn ? (this.turns[Math.min(this.taken, this.turns.length - 1)] as FakeTurn) : AUX_ANSWER
+      const step = this.turns[Math.min(this.taken, this.turns.length - 1)] as FakeStep
+      let turn: FakeTurn = AUX_ANSWER
+      if (isTurn) {
+        try {
+          turn = typeof step === 'function' ? step(this.requests.at(-1)?.toolResults ?? []) : step
+        } catch (error) {
+          this.failure ??= error instanceof Error ? error : new Error(String(error))
+          turn = [{ type: 'text', text: 'fake script failed.' }]
+        }
+      }
       if (isTurn) this.taken += 1
       if (!stream) {
         const text = turn.flatMap(b => (b.type === 'text' ? [b.text] : [])).join('')
