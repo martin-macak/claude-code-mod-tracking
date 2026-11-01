@@ -43,7 +43,7 @@ E2E_STAMP := $(E2E)/node_modules/.package-lock.json
 DEMO_GIF  := docs/assets/demo.gif
 
 .DEFAULT_GOAL := help
-.PHONY: help init build typecheck test coverage test-scripts check verify project-sync e2e-deps e2e-unit e2e-safe e2e demo lint hooks dist release release-dry marketplace-release install uninstall clean
+.PHONY: help init build typecheck test coverage test-scripts check verify project-sync e2e-deps e2e-unit e2e-safe e2e-pair e2e demo lint hooks dist release release-dry marketplace-release install uninstall clean
 
 help: ## List the targets
 	@echo "Targets (PLUGIN=$(PLUGIN)):"
@@ -162,6 +162,11 @@ e2e-unit: e2e-deps ## Unit-test the e2e harness (no claude, tmux tests skip with
 # it names the profile `all`. e2e/cucumber.mjs and e2e/README.md say why. tests/cucumber.test.ts pins both selections.
 e2e-safe: e2e-deps ## Run every Gherkin scenario except @artifacts against a real claude (needs a Claude login, tmux)
 	cd $(E2E) && $(NODE_RUN) npx cucumber-js
+
+# Two fake-model scenarios on two private tmux sockets at the same time, both must pass (issue #185). It needs tmux and the
+# claude binary, but no login: the model is a script. tests/private-pair.test.ts holds it and skips without E2E_PAIR=1.
+e2e-pair: e2e-deps ## Run two fake-model scenarios at once on two private tmux sockets (needs claude and tmux, no login)
+	cd $(E2E) && E2E_PAIR=1 $(NODE_RUN) node --test tests/private-pair.test.ts
 
 e2e: e2e-deps ## Run every Gherkin scenario, @artifacts included, against a real claude (needs a Claude login, tmux)
 	cd $(E2E) && $(NODE_RUN) npx cucumber-js -p all
