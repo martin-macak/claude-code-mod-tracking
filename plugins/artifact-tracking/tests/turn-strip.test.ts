@@ -54,7 +54,7 @@ test('stripText, interactive: the duration line carries the strip of an answer, 
   expect(stripText(record(4, { ...some, durationRow: ROW }), 'interactive')).toBeUndefined()
 })
 
-test('stripText, interactive: an aborted turn has no duration line, so it gets the text line; refusal and error are treated alike (inference)', () => {
+test('stripText, interactive: an aborted turn has no duration line, so it gets the text line; refusal and error are treated alike (their duration line is real, verified live on 2.1.316, issue #167)', () => {
   const some = { new: [entry('a')] }
   for (const end of ['aborted', 'refusal', 'error'] as const) {
     expect(stripText(record(5, { ...some, end }), 'interactive')).toBe('+1 new · /track turn 5') // no duration row
@@ -92,9 +92,9 @@ test("withLine: the answer itself is the engine's text, so the line replaces it"
   expect(withLine('', '', '+1 new · /track turn 1')).toBe('+1 new · /track turn 1')
 })
 
-test('withLine: a text of another hook stays, and the line follows it on a new line', () => {
+test('withLine: a text of another hook stays, and the line follows it after a visible separator, never a line break', () => {
   expect(withLine('agents-md: a note', 'the answer', '+1 new · /track turn 1')).toBe(
-    'agents-md: a note\n+1 new · /track turn 1',
+    'agents-md: a note · +1 new · /track turn 1',
   )
 })
 
