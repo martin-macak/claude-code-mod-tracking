@@ -1,0 +1,33 @@
+[
+  [
+    { "type": "text", "text": "More pieces." },
+    {
+      "type": "tool_use",
+      "id": "toolu_more_1",
+      "name": "AskUserQuestion",
+      "input": {
+        "questions": [
+          {
+            "question": "Quote only?",
+            "header": "Q1",
+            "multiSelect": true,
+            "options": [{ "label": "Lint", "description": "l" }, { "label": "Tests", "description": "t" }]
+          },
+          {
+            "question": "Backslash?",
+            "header": "Q2",
+            "multiSelect": true,
+            "options": [{ "label": "Lint", "description": "l" }, { "label": "Tests", "description": "t" }]
+          },
+          {
+            "question": "Single typed?",
+            "header": "Q3",
+            "multiSelect": false,
+            "options": [{ "label": "Yes", "description": "y" }, { "label": "No", "description": "n" }]
+          }
+        ]
+      }
+    }
+  ],
+  [{ "type": "text", "text": "Noted." }]
+]

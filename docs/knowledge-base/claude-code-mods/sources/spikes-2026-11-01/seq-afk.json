@@ -1,0 +1,24 @@
+[
+  [
+    { "type": "text", "text": "Away check." },
+    {
+      "type": "tool_use",
+      "id": "toolu_afk_1",
+      "name": "AskUserQuestion",
+      "input": {
+        "questions": [
+          {
+            "question": "Where should the records live?",
+            "header": "Storage",
+            "multiSelect": false,
+            "options": [
+              { "label": "State only", "description": "Keep them in the plugin state." },
+              { "label": "State and store", "description": "Also write them to the plugin store." }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  [{ "type": "text", "text": "Noted." }]
+]

@@ -1,0 +1,55 @@
+{
+  "tool": "AskUserQuestion",
+  "startedAt": 1793548365623,
+  "endedAt": 1793548371653,
+  "input": {
+    "questions": [
+      {
+        "question": "Which extras?",
+        "header": "Extras",
+        "multiSelect": true,
+        "options": [
+          {
+            "label": "Lint",
+            "description": "lint"
+          },
+          {
+            "label": "Tests",
+            "description": "tests"
+          }
+        ]
+      }
+    ],
+    "tool": "AskUserQuestion",
+    "tool_use_id": "toolu_quote_1"
+  },
+  "ran": {
+    "ref": 1,
+    "result": {
+      "questions": [
+        {
+          "question": "Which extras?",
+          "header": "Extras",
+          "options": [
+            {
+              "label": "Lint",
+              "description": "lint"
+            },
+            {
+              "label": "Tests",
+              "description": "tests"
+            }
+          ],
+          "multiSelect": true,
+          "kind": "choice"
+        }
+      ],
+      "answers": {
+        "Which extras?": "Lint, \"say \\\"hi\\\", ok\""
+      },
+      "annotations": {}
+    },
+    "text": "The user answered: \"Which extras?\"=\"Lint, \"say \\\"hi\\\", ok\"\". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+    "isReadOnly": true
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "tool": "AskUserQuestion",
+  "startedAt": 1793548371717,
+  "endedAt": 1793548376177,
+  "input": {
+    "questions": [
+      {
+        "question": "Where should the records live?",
+        "header": "Storage",
+        "multiSelect": false,
+        "options": [
+          {
+            "label": "State only",
+            "description": "Keep them in the plugin state."
+          },
+          {
+            "label": "State and store",
+            "description": "Also write them to the plugin store."
+          }
+        ]
+      }
+    ],
+    "tool": "AskUserQuestion",
+    "tool_use_id": "toolu_chat_1"
+  },
+  "ran": {
+    "ref": 1,
+    "result": "Error: The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nThe user wants to clarify these questions.\n    This means they may have additional information, context or questions for you.\n    Take their response into account and then reformulate the questions if appropriate.\n    Start by asking them what they would like to clarify.\n\n    Questions asked:\n- \"Where should the records live?\"\n  (No answer provided)",
+    "text": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\nThe user wants to clarify these questions.\n    This means they may have additional information, context or questions for you.\n    Take their response into account and then reformulate the questions if appropriate.\n    Start by asking them what they would like to clarify.\n\n    Questions asked:\n- \"Where should the records live?\"\n  (No answer provided)",
+    "isError": true
+  }
+}

@@ -1,0 +1,30 @@
+     - [x] A, custom: has a comma
+     - [ ] B: other
+     - [x] Other (typed): typed piece
+     Q3 · turn 1 · answered · 2026-11-01 15:52 UTC
+     Extras
+     Which extras?
+     - [x] Lint: lint
+     - [ ] Tests: tests
+     - [x] Other (typed): say "hi\
+     - [x] Other (typed): ok"
+     Q4 · turn 1 · declined · 2026-11-01 15:52 UTC
+     Storage
+     Where should the records live?
+     - [ ] State only: Keep them in the plugin state.
+     - [ ] State and store: Also write them to the plugin store.
+     ▎ Declined: Error: The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a
+     ▎ file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:
+     ▎ The user wants to clarify these questions.
+     ▎     This means they may have additional information, context or questions for you.
+     ▎     Take their response into account and then reformulate the questions if appropriate.
+     ▎     Start by asking them what they would like to clarify.
+     ▎
+     ▎ Questions asked:
+     ▎ - "Where should the records live?"
+     ▎   (No answer provided)
+tracking turn 1 +4 new 9: open /track                                                                               [-]
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)

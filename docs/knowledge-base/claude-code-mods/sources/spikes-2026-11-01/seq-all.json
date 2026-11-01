@@ -1,0 +1,81 @@
+[
+  [
+    { "type": "text", "text": "Text and number." },
+    {
+      "type": "tool_use",
+      "id": "toolu_tn_1",
+      "name": "AskUserQuestion",
+      "input": {
+        "questions": [
+          { "question": "What is the project name?", "header": "Name", "kind": "text", "placeholder": "my-project", "multiSelect": false },
+          { "question": "How many slides?", "header": "Slides", "kind": "number", "min": 1, "max": 20, "step": 1, "defaultValue": 5, "unit": "slides", "multiSelect": false }
+        ]
+      }
+    }
+  ],
+  [
+    { "type": "text", "text": "Comma label." },
+    {
+      "type": "tool_use",
+      "id": "toolu_comma_1",
+      "name": "AskUserQuestion",
+      "input": {
+        "questions": [
+          {
+            "question": "Which variants?",
+            "header": "Variants",
+            "multiSelect": true,
+            "options": [
+              { "label": "A", "description": "plain" },
+              { "label": "A, custom", "description": "has a comma" },
+              { "label": "B", "description": "other" }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  [
+    { "type": "text", "text": "Quote piece." },
+    {
+      "type": "tool_use",
+      "id": "toolu_quote_1",
+      "name": "AskUserQuestion",
+      "input": {
+        "questions": [
+          {
+            "question": "Which extras?",
+            "header": "Extras",
+            "multiSelect": true,
+            "options": [
+              { "label": "Lint", "description": "lint" },
+              { "label": "Tests", "description": "tests" }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  [
+    { "type": "text", "text": "Chat about this." },
+    {
+      "type": "tool_use",
+      "id": "toolu_chat_1",
+      "name": "AskUserQuestion",
+      "input": {
+        "questions": [
+          {
+            "question": "Where should the records live?",
+            "header": "Storage",
+            "multiSelect": false,
+            "options": [
+              { "label": "State only", "description": "Keep them in the plugin state." },
+              { "label": "State and store", "description": "Also write them to the plugin store." }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  [{ "type": "text", "text": "Noted." }]
+]

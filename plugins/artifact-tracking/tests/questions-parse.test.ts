@@ -299,10 +299,11 @@ test('answerParts: a quoted piece holds a comma, and a piece that is no label is
   expect(parts).toEqual({ chosen: ['A', 'B, C'], typed: ['typed, with comma', 'plain typed'], notesOnly: false })
 })
 
-test('answerParts: an unquoted label that holds a comma still joins when the pieces make a label', () => {
+// The engine quotes every label that holds a comma (live, 2.1.306 and 2.1.316), so an unquoted `B, C` is two pieces.
+test('answerParts: an unquoted comma splits the pieces, since the engine quotes a label that holds one', () => {
   expect(answerParts(item({ multiSelect: true, answer: 'A, B, C' }))).toEqual({
-    chosen: ['A', 'B, C'],
-    typed: [],
+    chosen: ['A'],
+    typed: ['B', 'C'],
     notesOnly: false,
   })
 })
@@ -311,6 +312,30 @@ test('answerParts: a quote with no closing quote is read as it stands', () => {
   expect(answerParts(item({ multiSelect: true, answer: 'A, "open, end' }))).toEqual({
     chosen: ['A'],
     typed: ['"open', 'end'],
+    notesOnly: false,
+  })
+})
+
+test('answerParts: a quote that is not followed by a comma and a space is plain text', () => {
+  expect(
+    answerParts(
+      item({ multiSelect: true, options: [{ label: 'Lint' }, { label: 'Tests' }], answer: 'Lint, "x"y, Tests' }),
+    ),
+  ).toEqual({
+    chosen: ['Lint', 'Tests'],
+    typed: ['"x"y'],
+    notesOnly: false,
+  })
+})
+
+test('answerParts: a closed quote that is no JSON string is plain text, quotes kept', () => {
+  expect(
+    answerParts(
+      item({ multiSelect: true, options: [{ label: 'Lint' }, { label: 'Tests' }], answer: 'Lint, "a\\qb", Tests' }),
+    ),
+  ).toEqual({
+    chosen: ['Lint', 'Tests'],
+    typed: ['"a\\qb"'],
     notesOnly: false,
   })
 })

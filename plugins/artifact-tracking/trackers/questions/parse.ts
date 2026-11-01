@@ -3,7 +3,7 @@
 // `{ ref, result, text, isError? }`. After a `--resume`, `ev.input` holds the arguments the model gave and `ev.result` is the
 // whole transcript use: `{ tool, tool_use_id, input, result, text, isError? }`. In both, `result.result` is the structured
 // answer, so this reads the structure and never the text. The one place that reads words is the typed answers of a
-// multi-select (`answerParts`): the structured answer joins them in one string.
+// multi-select answer (`answerParts`): the structured answer joins the pieces in one string, and the engine quotes some.
 // Evidence: docs/knowledge-base/claude-code-mods/concepts/questions-and-plans.md.
 
 import type { ToolCallEvent } from '../../core/interfaces/events'
@@ -181,45 +181,44 @@ export type AnswerParts = {
   notesOnly: boolean
 }
 
+/** The index of the quote that closes the JSON string opening at `from`, or -1. A backslash escapes the next character. */
+function stringEnd(answer: string, from: number): number {
+  for (let j = from + 1; j < answer.length; j++) {
+    if (answer[j] === '\\') j += 1
+    else if (answer[j] === '"') return j
+  }
+  return -1
+}
+
 /**
- * The pieces of a multi-select answer. The engine joins them with a comma and a space and puts double quotes round a piece
- * that holds a comma (live, 2.1.306: `Lint, "Tests, all", "typed, with comma"`). A quote with no closing quote is read
- * as plain text.
+ * The pieces of a multi-select answer. The engine joins them with a comma and a space. A piece that holds a comma or a
+ * quote is a JSON string (live, 2.1.306 and 2.1.316: `Lint, "Tests, all", "say \"hi\", ok"`). A plain piece is the text up
+ * to the next comma and space. A quote that opens no JSON string, or is not followed by a comma and a space or the end, is
+ * read as plain text.
  */
 function pieces(answer: string): string[] {
   const out: string[] = []
   let i = 0
   while (i < answer.length) {
     if (answer[i] === '"') {
-      let end = -1
-      for (let j = i + 1; j < answer.length && end < 0; j++)
-        if (answer[j] === '"' && (j + 1 === answer.length || answer.startsWith(', ', j + 1))) end = j
-      if (end >= 0) {
-        out.push(answer.slice(i + 1, end))
-        i = end + 3 // the closing quote, the comma and the space
-        continue
+      const end = stringEnd(answer, i)
+      if (end >= 0 && (end + 1 === answer.length || answer.startsWith(', ', end + 1))) {
+        try {
+          const text: unknown = JSON.parse(answer.slice(i, end + 1))
+          if (typeof text === 'string') {
+            out.push(text)
+            i = end + 3 // the closing quote, the comma and the space
+            continue
+          }
+        } catch {
+          // not a JSON string: read it as plain text below
+        }
       }
     }
     const next = answer.indexOf(', ', i)
     out.push(answer.slice(i, next < 0 ? answer.length : next))
     if (next < 0) break
     i = next + 2
-  }
-  return out
-}
-
-/** Joins the neighbours that make a label with a comma that the engine did not quote. */
-function joined(parts: readonly string[], labels: ReadonlySet<string>): string[] {
-  const out: string[] = []
-  for (let k = 0; k < parts.length; ) {
-    let take = 1
-    for (let len = parts.length - k; len >= 2; len--)
-      if (labels.has(parts.slice(k, k + len).join(', '))) {
-        take = len
-        break
-      }
-    out.push(parts.slice(k, k + take).join(', '))
-    k += take
   }
   return out
 }
@@ -236,7 +235,7 @@ export function answerParts(item: QuestionItem): AnswerParts {
   if (answer === NOTES_ONLY && !labels.has(answer)) return { chosen: [], typed: [], notesOnly: true }
   if (item.options.length === 0 || (item.kind !== undefined && item.kind !== 'choice'))
     return { chosen: [], typed: [answer], notesOnly: false }
-  const all = item.multiSelect ? joined(pieces(answer), labels) : [answer]
+  const all = item.multiSelect ? pieces(answer) : [answer]
   return {
     chosen: all.filter(p => labels.has(p)),
     typed: all.filter(p => !labels.has(p)),

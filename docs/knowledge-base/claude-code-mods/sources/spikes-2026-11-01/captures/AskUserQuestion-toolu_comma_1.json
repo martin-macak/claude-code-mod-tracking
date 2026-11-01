@@ -1,0 +1,63 @@
+{
+  "tool": "AskUserQuestion",
+  "startedAt": 1793548359580,
+  "endedAt": 1793548365584,
+  "input": {
+    "questions": [
+      {
+        "question": "Which variants?",
+        "header": "Variants",
+        "multiSelect": true,
+        "options": [
+          {
+            "label": "A",
+            "description": "plain"
+          },
+          {
+            "label": "A, custom",
+            "description": "has a comma"
+          },
+          {
+            "label": "B",
+            "description": "other"
+          }
+        ]
+      }
+    ],
+    "tool": "AskUserQuestion",
+    "tool_use_id": "toolu_comma_1"
+  },
+  "ran": {
+    "ref": 1,
+    "result": {
+      "questions": [
+        {
+          "question": "Which variants?",
+          "header": "Variants",
+          "options": [
+            {
+              "label": "A",
+              "description": "plain"
+            },
+            {
+              "label": "A, custom",
+              "description": "has a comma"
+            },
+            {
+              "label": "B",
+              "description": "other"
+            }
+          ],
+          "multiSelect": true,
+          "kind": "choice"
+        }
+      ],
+      "answers": {
+        "Which variants?": "A, \"A, custom\", typed piece"
+      },
+      "annotations": {}
+    },
+    "text": "The user answered: \"Which variants?\"=\"A, \"A, custom\", typed piece\". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+    "isReadOnly": true
+  }
+}
