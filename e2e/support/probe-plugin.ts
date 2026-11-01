@@ -12,16 +12,19 @@ export type ProbePlugin = { readonly pluginDir: string; readonly logFile: string
 export type ProbeSpec = {
   readonly name: string
   readonly description: string
-  readonly logName: string
+  /** The name of the log beside the plugin. A probe with no log (its mark is on the screen) leaves it out. */
+  readonly logName?: string
   readonly source: (logFile: string) => string
 }
 
 /** Writes the probe plugin into `dir`, and says where its log will be. The log does not exist until the probe writes it. */
+export function writeProbePlugin(dir: string, spec: ProbeSpec & { readonly logName: string }): ProbePlugin
+export function writeProbePlugin(dir: string, spec: ProbeSpec): { readonly pluginDir: string }
 export function writeProbePlugin(dir: string, spec: ProbeSpec): ProbePlugin {
   const pluginDir = join(dir, 'plugin')
   mkdirSync(join(pluginDir, '.claude-plugin'), { recursive: true })
   mkdirSync(join(pluginDir, 'hooks'), { recursive: true })
-  const logFile = join(dir, spec.logName)
+  const logFile = join(dir, spec.logName ?? 'no.log')
   writeFileSync(
     join(pluginDir, '.claude-plugin', 'plugin.json'),
     `${JSON.stringify({ name: spec.name, version: '0.0.1', description: spec.description, author: { name: 'e2e' } })}\n`,
