@@ -29,6 +29,7 @@ import { slug } from './slug.ts'
 import { Timeline } from './timeline.ts'
 import { type TimerRefuser, timerRefuserRefusal, writeTimerRefuser } from './timer-refuser.ts'
 import { Tmux } from './tmux.ts'
+import { writeTurnEndProbe } from './turn-end-probe.ts'
 import { waitUntil } from './wait.ts'
 
 // Each wait inside a step has its own, shorter timeout from Config.
@@ -71,6 +72,8 @@ export class DemoWorld extends World {
   copyProbe: CopyProbe | undefined
   /** The probe plugin that denies one `clock.after` delay (support/timer-refuser.ts). Absent: no timer is refused. */
   timerRefuser: TimerRefuser | undefined
+  /** Whether the scenario installed the probe plugin that marks the end of a turn (support/turn-end-probe.ts). */
+  turnEndProbe: { readonly pluginDir: string } | undefined
   /** The file the session writes its debug log to (`--debug-file`, support/debug-log.ts). Absent: the session writes none. */
   debugLog: string | undefined
   /** The second repo of the scenario (issue #195, `fakeForeignRepo`). Absent: the scenario has none. */
@@ -177,6 +180,15 @@ export class DemoWorld extends World {
     if (refusal !== undefined) throw new Error(refusal)
     if (this.timerRefuser !== undefined) return
     this.timerRefuser = this.installProbe('timer refuser', dir => writeTimerRefuser(dir, ms))
+  }
+
+  /**
+   * Adds a probe plugin to the next launch that adds a mark to the text of every main turn end (issue #197). Before the session
+   * starts: the plugins of a running session cannot change. The scenario removes it at the end. A second call changes nothing.
+   */
+  installTurnEndProbe(): void {
+    if (this.turnEndProbe !== undefined) return
+    this.turnEndProbe = this.installProbe('turn end probe', writeTurnEndProbe)
   }
 
   get tl(): Timeline {

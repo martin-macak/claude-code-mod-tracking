@@ -5,14 +5,20 @@ Feature: The strip under an answer says what the turn tracked
   # the text line, so the steps match the end of it. The kit tests (turn-strip-wiring.test.tsx) hold every rule.
 
   Scenario: With the strip off, which is the default, a turn that tracked links adds no line under the answer
-    Given a Claude Code session with the artifact-tracking mod
+    Given a plugin that marks the end of a turn
+    And a Claude Code session with the artifact-tracking mod
     Then the tracker config file sets "global.ui.turnStrip" to "\"off\""
     When I type "Note https://one.example/a and https://two.example/b for later. Reply ok."
     And Claude finishes
     Then no permission dialog is open
     And the screen matches /turn 1 \+2 new/
-    # The band names the turn when its items arrive, before the turn ends, so give the end of the turn a moment to show a line.
-    When I wait for 2 seconds
+    # The band names the turn when its items arrive, before the turn ends, and `Claude finishes` (the Stop hook) returns before
+    # the `turn.complete` hook of the mod has returned. The event to wait for is the end of that hook chain: the probe plugin
+    # adds a mark to the text that the chain returns, and the engine draws the mark and the strip line, if there is one, as
+    # one row (issue #197). So the line would be on the screen when the mark is, and its absence then proves something.
+    # The mark orders the text line only, not the TurnDuration strip of `interactive`: that strip shows counts, and this
+    # scenario never draws it.
+    When the end of the turn has drawn
     Then the screen does not show "/track turn 1"
 
   Scenario: A text strip puts one line under the answer of a turn that tracked links
