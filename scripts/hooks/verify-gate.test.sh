@@ -604,11 +604,11 @@ run_case 'heredoc: one body is text, the other feeds a shell' "cat <<'A'; sh <<'
 run_case 'heredoc: one body feeds a shell, the other is text' "sh <<'A'; cat <<'B'${nl}echo hi${nl}A${nl}git push${nl}B" 0
 # A quoted string with a newline is text too, under the same rule. A shell or an
 # interpreter may run it.
-run_case 'string: a push line in printf' "printf '%s' \"first${nl}git push origin main${nl}last\"" 0
+run_case 'string: a push line in echo, double quotes' "echo \"first${nl}git push origin main${nl}last\"" 0
 run_case 'string: a push line in echo, single quotes' "echo 'a${nl}git push${nl}b'" 0
 run_case 'string: a push line in a commit message' "git commit -m \"subject${nl}${nl}git push origin main${nl}\"" 0
 run_case 'string: a push line in gh pr create' "gh pr create --title t --body \"a${nl}(cd /tmp/x && git push)${nl}b\"" 0
-run_case 'string: gh stack line in printf' "printf '%s' 'a${nl}gh stack submit${nl}b'" 0
+run_case 'string: gh stack line in echo' "echo 'a${nl}gh stack submit${nl}b'" 0
 run_case 'string: the push after the string stays' "printf '%s' \"a${nl}b\" && git push" 2
 run_case 'string: the push before the string stays' "git push && printf '%s' \"a${nl}b\"" 2
 run_case 'string: the push on the next line stays' "printf '%s' \"a${nl}b\"${nl}git push" 2
@@ -639,11 +639,15 @@ run_case 'string: written to a file, run by a split name' "printf '%s' \"a${nl}g
 run_case 'string: written to a file, run in other case' "printf '%s' \"a${nl}git push${nl}\" > run; bash RUN" 2
 run_case 'string: written to a file, xargs reads the names' "printf '%s' \"a${nl}git push${nl}\" > run; ls | xargs bash" 2
 run_case 'string: written to a FIFO that a reader opened first' "mkfifo ff; bash < ff & printf '%s' \"a${nl}git push${nl}\" > ff" 2
-run_case 'string: a quoted message after the file' "printf '%s' \"a${nl}git push${nl}\" > notes.txt; echo \"done\"" 0
+run_case 'string: a quoted message after the file' "echo \"a${nl}git push${nl}\" > notes.txt; echo \"done\"" 0
 # printf -v stores the text in a variable. A later command may run it.
 run_case 'string: printf -v stores it, a shell runs it' "printf -v x '%s' \"a${nl}git push${nl}b\"; bash -c \"\$x\"" 2
 run_case 'string: printf with a quoted -v' "printf '-v' x '%s' \"a${nl}git push${nl}b\"; bash -c \"\$x\"" 2
-run_case 'string: printf with an option that is no -v' "printf -- '%s' \"a${nl}git push${nl}b\"" 0
+run_case 'string: printf with a built -v, a shell runs it' "printf '-''v' x '%s' \"a${nl}git push${nl}b\"; bash -c \"\$x\"" 2
+run_case 'string: printf with -v in a variable' "opt=-v; printf \"\$opt\" x '%s' \"a${nl}git push${nl}b\"; bash -c \"\$x\"" 2
+# printf is no owner, so any printf keeps its text. echo has no option that assigns.
+run_case 'string: printf with an option that is no -v keeps the text' "printf -- '%s' \"a${nl}git push${nl}b\"" 2
+run_case 'string: echo -e still drops the text' "echo -e \"a${nl}git push${nl}b\"" 0
 # A group or a subshell around the reader: the redirect feeds its first command.
 run_case 'heredoc runs: a subshell with the redirect' "( sh ) <<'EOF'${nl}git push${nl}EOF" 2
 run_case 'heredoc runs: a subshell, a list, the redirect' "( bash; ) <<'EOF'${nl}git push${nl}EOF" 2

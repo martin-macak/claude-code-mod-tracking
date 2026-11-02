@@ -7,10 +7,12 @@
 #
 # A body or a string is dropped only when the scan can show that nothing runs it. The
 # command that owns it must only read text, and its text must not run later:
-#   - the owner is cat, tee, echo, printf, git commit|tag|notes, or gh pr|issue|
+#   - the owner is cat, tee, echo, git commit|tag|notes, or gh pr|issue|
 #     release|gist|api. It is the first word, as plain text: no variable, quote,
 #     wrapper (env, sudo), assignment in front or path (but /usr/bin/ and /bin/).
-#     printf -v stores its text in a variable, so it is no owner;
+#     printf is no owner: printf -v stores its text in a variable, and its option
+#     word may be built at run time ('-''v', a variable), so any printf keeps its text.
+#     echo has no option that assigns, so it stays an owner;
 #   - the owner is not in a pipeline, in either direction, and not in a ( ) group;
 #   - when the owner sits in $( ) or a backtick, the command around it passes the same
 #     tests, so `git commit -m "$(cat <<EOF ...)"` is text and `eval "$(cat <<EOF ...)"`
@@ -448,9 +450,9 @@ function chain_ok(c, later) {
 function sink(c,    w, sub1) {
   if (cwn[c] < 1) return 0
   w = cw[c, 1]
-  # printf -v VAR stores the text in a variable that a later command may run.
-  if (w ~ "^(/usr/bin/|/bin/)?printf$" && substr(s, cst[c], cend[c] - cst[c]) ~ "[ \t][\"']?-[a-zA-Z]*v") return 0
-  if (w ~ "^(/usr/bin/|/bin/)?(cat|tee|echo|printf)$") return 1
+  # printf is no owner: printf -v VAR stores its text in a variable that a later command
+  # may run, and the -v may be built at run time. echo has no such option.
+  if (w ~ "^(/usr/bin/|/bin/)?(cat|tee|echo)$") return 1
   if (w == "git") {
     sub1 = cw[c, 2]
     if (sub1 == "-C") sub1 = cw[c, 4]

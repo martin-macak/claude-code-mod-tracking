@@ -39,7 +39,7 @@
 #
 # Text is no command: verify-gate-heredoc.awk drops a heredoc body and a quoted string
 # with a newline before any match, when a command that only reads text owns it (cat,
-# tee, echo, printf, git commit, gh pr). Any other owner, a pipe, a group or loop, exec,
+# tee, echo, git commit, gh pr). Any other owner, a pipe, a group or loop, exec,
 # eval, or a file that may be run later keeps it. The scan keeps the text on doubt about
 # a file name (a glob, a brace, a substitution, a quote or a case that spells it another
 # way). It cannot see a file that a later tool call runs, or a shell fed with file names
