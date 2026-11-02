@@ -30,7 +30,8 @@ export const GLOBAL_SCHEMA = {
   // `turnStrip` (issue #69): the line under each answer that says what the turn tracked. `text` is a line of text, `interactive`
   // draws the counts and an open Button on the duration line. Off by default (owner decision of 2026-10-21).
   // `view` and `views` (issue #63, L3): the view the pane opens in, and the views that `g` cycles. The live choice is a session
-  // atom, so no key press writes this file. By tracker and by reason are reachable with `/track view` and this list.
+  // atom, so no key press writes this file. By tracker, by reason and by kind (issue #248) are reachable with `/track view`
+  // and this list.
   ui: obj({
     maxRows: int(300, 50, 1000),
     sectionRows: int(50, 5, 300),

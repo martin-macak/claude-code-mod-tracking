@@ -264,7 +264,7 @@ test('view sets the session view after the config check, and prints the list wit
 test('view with an unknown name, with no name or with more words prints the usage and sets nothing', async () => {
   const t = fakeHost()
   for (const args of ['view', 'view type', 'view status flat', 'view constructor'])
-    expect((await t.commands.run(t.ports, args)).text).toBe('Usage: /track view <list|tracker|status|reason|flat>')
+    expect((await t.commands.run(t.ports, args)).text).toBe('Usage: /track view <list|tracker|status|reason|kind|flat>')
   expect(await t.ports.state.view.get()).toBeNull()
   expect(t.calls).toEqual(['entry', 'entry', 'entry', 'entry']) // no config check, no list
 })

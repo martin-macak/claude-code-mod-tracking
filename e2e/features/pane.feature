@@ -768,3 +768,17 @@ Feature: Drive the /track pane with the keys
     Then the screen shows "View: flat"
     And the screen matches /│All +3/
     And the selected row shows "two.example"
+
+  # Issue #248. `/track view kind` cuts each section by the kind of its rows. The Files section gives the file type: README.md is docs and
+  # biome.json is config, so the pane draws one group for each, titled `Files · <type>` and counted. The view is a session atom, so the next `/track` opens the pane in it. The session folder is a clone of this
+  # repo at its HEAD, and both files are in its root. A group title is a title line of the pane, so the regex anchors on the border.
+  Scenario: /track view kind groups the Files section by file type
+    Given a Claude Code session with the artifact-tracking mod
+    When I type "Note the files README.md and biome.json for later. Reply ok."
+    And Claude finishes
+    And I type "/track view kind"
+    Then the screen shows "View: kind"
+    When I type "/track"
+    Then the screen matches /│Files · config +1/
+    And the screen matches /│Files · docs +1/
+    And the screen matches /│View: kind/

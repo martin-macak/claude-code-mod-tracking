@@ -124,13 +124,20 @@ test('the types table has a row for each type, and the map gives that type for e
 
 test('the Files section claims a view by type only when a view by type exists, and names the issue of the follow-up when none does', () => {
   const hasKindView = VIEW_IDS.includes('kind')
-  assert.ok(!FILES.includes('A view can group by it'), 'no view groups by the type of a file in the code')
+  assert.ok(!FILES.includes('A view can group by it'), 'the row never says that a view can group by it')
+  if (hasKindView) assert.ok(FILES.includes('/track view kind'), 'the type row names the view that groups by it')
   assert.equal(
     FILES.includes('No view groups by it yet'),
     !hasKindView,
     'the type row says whether a view groups by it',
   )
   if (!hasKindView) assert.ok(FILES.includes('/issues/248'), 'the row links the follow-up that adds the view')
+})
+
+test('every README row that lists the views names each view of VIEW_IDS', () => {
+  const rows = [lineOf(README, '| `/track view <name>` |'), lineOf(README, '| `global.ui.view` |')]
+  for (const row of rows) for (const id of VIEW_IDS) assert.ok(row.includes(`\`${id}\``), `${id} is in: ${row}`)
+  for (const id of VIEW_IDS) assert.ok(README.includes(`| \`${id}\` |`), `the Views table has a row for ${id}`)
 })
 
 test('the code-map row of trackers/file/ names the files that read Bash, type a file and ask for the MIME type', () => {

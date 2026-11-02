@@ -425,7 +425,7 @@ test('the /track text names the Questions group and holds no question, answer or
 // mixes the rows of several sections, so the section's `text` cannot ride on a group. The rows carry the mark instead.
 test('in every view the /track text holds no question, answer or note: the rows of the Questions section are quiet', () => {
   const secs = sections(ctx([call('a', 1), plan({ n: 2, id: 'p' })]))
-  for (const view of ['list', 'tracker', 'status', 'reason', 'flat'] as const) {
+  for (const view of ['list', 'tracker', 'status', 'reason', 'kind', 'flat'] as const) {
     const { groups } = viewGroups(secs, view, { touchedOnly: false })
     const text = groupsText(groups)
     for (const word of ['Storage', 'State only', 'Lint', 'Plan', 'Q1', 'Q2', 'typed', 'Checks'])

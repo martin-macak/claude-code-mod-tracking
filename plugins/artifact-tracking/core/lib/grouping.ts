@@ -1,8 +1,9 @@
-// The groups of the pane: what the one table draws from the sections of the trackers. A view turns the sections into groups.
-// Five views (issue #63, L3): by list (each section is one group, the pane as it was), by tracker, by status, by reason and
-// flat. Every view puts the pinned rows in a group of their own, first, and may hide the rows nobody touched. A view groups,
-// sorts and filters on the facets of the top-level rows, the owner and the section: never on the text of a cell. Pure: no
-// `$`, no I/O, no tracker named.
+// The groups of the pane: what the one table draws from the sections of the trackers. A view turns the sections into
+// groups.
+// Six views (issue #63, L3; #248): by list (each section is one group, the pane as it was), by tracker, by status, by
+// reason, by kind (each section cut by the kind its rows give) and flat. Every view puts the pinned rows in a group of
+// their own, first, and may hide the rows nobody touched. A view groups, sorts and filters on the facets of the top-level
+// rows, the owner and the section: never on the text of a cell. Pure: no `$`, no I/O, no tracker named.
 // Design study of issue #63, sections 5.2 and 5.8; owner decisions of 2026-10-21.
 
 import type { CoreReason } from '../interfaces/reasons'
@@ -18,6 +19,7 @@ import type {
   ViewId,
 } from '../interfaces/view'
 import { byLevel } from './levels'
+import { stripControl } from './prompt-text'
 import { REASON_ORDER } from './reasons'
 import { countFailed } from './status'
 
@@ -25,7 +27,7 @@ import { countFailed } from './status'
 export const LIST_VIEW: ViewId = 'list'
 
 /** The views, in the order the docs name them. `ui.views` takes any of them. */
-export const VIEW_IDS: readonly ViewId[] = ['list', 'tracker', 'status', 'reason', 'flat']
+export const VIEW_IDS: readonly ViewId[] = ['list', 'tracker', 'status', 'reason', 'kind', 'flat']
 
 export const isViewId = (v: unknown): v is ViewId =>
   typeof v === 'string' && (VIEW_IDS as readonly string[]).includes(v)
@@ -222,24 +224,89 @@ interface Unit {
 const unique = <T>(list: readonly T[]): T[] => [...new Set(list)]
 const capital = (word: string): string => word.charAt(0).toUpperCase() + word.slice(1)
 
+/** A section less its pinned rows, which come back as `taken`. A section that sets its own count loses the rows of what left it. */
+function withoutPinned({ s, rows, gone }: { s: SectionSpec; rows: readonly TreeRow[]; gone: number }): {
+  readonly section: SectionSpec
+  readonly taken: readonly TreeRow[]
+} {
+  const own = rows.filter(r => !isPinned(r))
+  const taken = rows.filter(isPinned)
+  const count = s.count === undefined ? undefined : s.count - gone - taken.reduce((n, r) => n + sizeOf(r), 0)
+  return {
+    section: { ...s, rows: taken.length === 0 ? rows : own, ...(count === undefined ? {} : { count }) },
+    taken,
+  }
+}
+
 /** The by-list view: the sections as groups, less the pinned rows, which come out first in a group of their own. */
 function listView(
   kept: readonly { s: SectionSpec; rows: readonly TreeRow[]; gone: number }[],
   make: (key: string, title: string, rows: readonly TreeRow[]) => GroupSpec,
 ): readonly GroupSpec[] {
   const pinned: TreeRow[] = []
-  const sections = kept.map(({ s, rows, gone }) => {
-    const own = rows.filter(r => !isPinned(r))
-    const taken = rows.filter(isPinned)
+  const sections = kept.map(entry => {
+    const { section, taken } = withoutPinned(entry)
     pinned.push(...taken)
-    // A section that sets its own count (a tree under one root row) loses the rows of what left it.
-    const count = s.count === undefined ? undefined : s.count - gone - taken.reduce((n, r) => n + sizeOf(r), 0)
-    return { ...s, rows: taken.length === 0 ? rows : own, ...(count === undefined ? {} : { count }) }
+    return section
   })
   return [
     ...(pinned.length === 0 ? [] : [make('pinned', 'Pinned', [...pinned].sort(byOrder))]),
     ...listGroups(sections),
   ]
+}
+
+/** The kind of a row as one line, or `undefined` when the tracker gave none. */
+const kindOf = (r: TreeRow): string | undefined => stripControl(r.facets?.kind ?? '').trim() || undefined
+
+/** The longest kind a group title shows; a longer kind ends in an ellipsis. The group id keeps the whole kind. */
+const KIND_TITLE_MAX = 40
+const kindTitle = (k: string): string => (k.length > KIND_TITLE_MAX ? `${k.slice(0, KIND_TITLE_MAX - 1)}…` : k)
+
+/**
+ * The by-kind view (issue #248): each section cut into one group for each kind of its rows. A section with no kind at all is
+ * its list group (trees whole, its own count, no note or text lines). Rows with no kind in a kinded section go last.
+ *
+ * A kinded section is cut into plain groups (id, title, rows, count): it loses its note, its empty text, its text lines and its
+ * own count. This is on purpose: the groups of one section share no note, and a count that the section sets by itself has no
+ * meaning for a part of it. `lift` rows are lifted, so a tree splits by the kind of each row (the kindless branch keeps it whole).
+ * The id of a kind group is `kind:<section>:<kind>`; the kind is the whole kind, not the title.
+ */
+function kindView(
+  kept: readonly { s: SectionSpec; rows: readonly TreeRow[]; gone: number }[],
+  make: (key: string, title: string, rows: readonly TreeRow[]) => GroupSpec,
+): readonly GroupSpec[] {
+  const pinned: TreeRow[] = []
+  const groups: GroupSpec[] = []
+  for (const entry of kept) {
+    const { s, rows } = entry
+    const flat = lifted(rows).map(r => ({ r, k: kindOf(r) }))
+    if (!flat.some(x => x.k !== undefined)) {
+      const { section, taken } = withoutPinned(entry)
+      pinned.push(...taken)
+      const [own] = listGroups([section])
+      if (own !== undefined && own.rows.length > 0) {
+        const { note: _n, empty: _e, text: _t, textMore: _m, ...rest } = own
+        groups.push({ ...rest, id: groupId('kind', encodeURIComponent(s.id)) })
+      }
+      continue
+    }
+    pinned.push(...flat.filter(x => isPinned(x.r)).map(x => x.r))
+    const rest = flat.filter(x => !isPinned(x.r))
+    const seen = unique(rest.flatMap(x => x.k ?? []))
+    const first = s.kindOrder ?? []
+    for (const k of [...first.filter(k => seen.includes(k)), ...seen.filter(k => !first.includes(k))])
+      groups.push(
+        make(
+          // The parts of the key are encoded, so a `:` in a section id or a kind never makes the key of another group.
+          `${encodeURIComponent(s.id)}:${encodeURIComponent(k)}`,
+          `${s.title} · ${kindTitle(k)}`,
+          rest.filter(x => x.k === k).map(x => x.r),
+        ),
+      )
+    const none = rest.filter(x => x.k === undefined).map(x => x.r)
+    if (none.length > 0) groups.push(make(encodeURIComponent(s.id), `${s.title} · no kind`, none))
+  }
+  return [...(pinned.length === 0 ? [] : [make('pinned', 'Pinned', [...pinned].sort(byOrder))]), ...groups]
 }
 
 /**
@@ -250,6 +317,7 @@ function listView(
  * - By tracker: one group for each owner of a row, in the order the owners first show, titled by the sections they hold rows in.
  * - By status: one group for each token that a row has, failed first. A tree is in the failed group when a row below it failed.
  * - By reason: one group for each strongest reason, strongest first, then the rows with none (context).
+ * - By kind: each section cut into one group for each kind its rows give; a section with no kind is one group, as in the list.
  * - Flat: one group of every row.
  *
  * The other views sort each group by level, first seen and id, and lift the children of a `lift` row to the top. A group with
@@ -278,6 +346,7 @@ export function viewGroups(sections: readonly SectionSpec[], view: ViewId, optio
     failing: countFailed(rows),
   })
   if (view === 'list') return { groups: listView(kept, make), hidden: tally.hidden }
+  if (view === 'kind') return { groups: kindView(kept, make), hidden: tally.hidden }
   const units: Unit[] = kept.flatMap(({ s, rows }) => lifted(rows).map(row => ({ row, section: s })))
   const pinned = units.filter(u => isPinned(u.row)).map(u => u.row)
   const rest = units.filter(u => !isPinned(u.row))

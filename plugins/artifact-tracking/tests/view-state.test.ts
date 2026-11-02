@@ -4,7 +4,7 @@ import { expect, test } from 'claude-code/testing'
 import { listText, paneGroups, paneModel, TEXT_VIEW } from '../hooks/pane-text'
 import { paneWorld } from './fixtures/pane-world'
 
-const VIEW_USAGE = 'Usage: /track view <list|tracker|status|reason|flat>'
+const VIEW_USAGE = 'Usage: /track view <list|tracker|status|reason|kind|flat>'
 const firstLine = (text: string): string => text.split('\n')[0] ?? ''
 
 test('with no choice the pane takes global.ui.view: list by default, the configured view otherwise', async () => {
