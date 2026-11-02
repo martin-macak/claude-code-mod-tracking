@@ -111,6 +111,19 @@ Captured on 2026-10-27 from the throwaway probe mod of [issue #246](https://gith
 
 Do not edit it. To add more evidence, make a new dated folder.
 
+## `spikes-2026-11-01/`
+
+Captured on 2026-11-01 for [issue #208](https://github.com/martin-macak/claude-code-mod-tracking/issues/208), Claude Code 2.1.316 (macOS), against a fake Messages API in tmux. Not a primary source: it is the evidence behind the section "The forms that ran live" of `concepts/questions-and-plans.md`.
+
+| Content | Origin |
+| --- | --- |
+| `capture-probe/`, `asker-probe/` | Two probe plugins: one writes the `tool.call` of `AskUserQuestion`, the other asks with `$.ui.ask`. |
+| `seq-*.json`, `fake-api.mjs`, `launch.sh`, `start.sh`, `run.sh`, `drive-all.sh` | The scripted model turns, the fake API and the tmux launchers. |
+| `captures/` | What the hook wrote, the tool schema with extended questions, and the `/track qa` screens. |
+| `README.md` | The runs and the keys. |
+
+Do not edit it. To add more evidence, make a new dated folder.
+
 ## `code-claude-com-2026-10-09/`
 
 Raw Markdown of the public docs, fetched on 2026-10-09 from `https://code.claude.com/docs/en/<page>.md` (page list from `https://code.claude.com/docs/llms.txt`).

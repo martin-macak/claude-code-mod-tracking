@@ -1,0 +1,116 @@
+{
+  "tool": "AskUserQuestion",
+  "startedAt": 1793548080117,
+  "endedAt": 1793548152447,
+  "input": {
+    "questions": [
+      {
+        "question": "Quote only?",
+        "header": "Q1",
+        "multiSelect": true,
+        "options": [
+          {
+            "label": "Lint",
+            "description": "l"
+          },
+          {
+            "label": "Tests",
+            "description": "t"
+          }
+        ]
+      },
+      {
+        "question": "Backslash?",
+        "header": "Q2",
+        "multiSelect": true,
+        "options": [
+          {
+            "label": "Lint",
+            "description": "l"
+          },
+          {
+            "label": "Tests",
+            "description": "t"
+          }
+        ]
+      },
+      {
+        "question": "Single typed?",
+        "header": "Q3",
+        "multiSelect": false,
+        "options": [
+          {
+            "label": "Yes",
+            "description": "y"
+          },
+          {
+            "label": "No",
+            "description": "n"
+          }
+        ]
+      }
+    ],
+    "tool": "AskUserQuestion",
+    "tool_use_id": "toolu_more_1"
+  },
+  "ran": {
+    "ref": 1,
+    "result": {
+      "questions": [
+        {
+          "question": "Quote only?",
+          "header": "Q1",
+          "options": [
+            {
+              "label": "Lint",
+              "description": "l"
+            },
+            {
+              "label": "Tests",
+              "description": "t"
+            }
+          ],
+          "multiSelect": true
+        },
+        {
+          "question": "Backslash?",
+          "header": "Q2",
+          "options": [
+            {
+              "label": "Lint",
+              "description": "l"
+            },
+            {
+              "label": "Tests",
+              "description": "t"
+            }
+          ],
+          "multiSelect": true
+        },
+        {
+          "question": "Single typed?",
+          "header": "Q3",
+          "options": [
+            {
+              "label": "Yes",
+              "description": "y"
+            },
+            {
+              "label": "No",
+              "description": "n"
+            }
+          ],
+          "multiSelect": false
+        }
+      ],
+      "answers": {
+        "Quote only?": "Lint, \"a \\\"q\\\" b\"",
+        "Backslash?": "Lint, c\\d",
+        "Single typed?": "x, \"y\""
+      },
+      "annotations": {}
+    },
+    "text": "The user answered: \"Quote only?\"=\"Lint, \"a \\\"q\\\" b\"\", \"Backslash?\"=\"Lint, c\\d\", \"Single typed?\"=\"x, \"y\"\". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+    "isReadOnly": true
+  }
+}

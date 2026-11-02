@@ -572,7 +572,17 @@ Each call is one summary row. It shows the number of the call (`Q3`), the header
 | `partial` | A question was left blank, or has notes and no option (the engine writes `(notes only)`). |
 | `declined` | You pressed Esc, another hook denied the call, or you rejected the plan. For a plan: `rejected`. The words of the engine stay, and a rejected plan keeps what you wrote. |
 
-The mod reads the structured result of the tool and never its text. It takes the questions, the headers, `multiSelect`, the options with label, description and preview, the answers, the notes and the picked preview from it. A multi-select answer is one string: the engine joins the labels with a comma and a space and puts double quotes round a piece that holds a comma (`Lint, "Tests, all", "typed, with comma"`). The mod splits it and tells a label from text that you typed by the options of the question. `(notes only)` is the engine's word for notes with no option.
+The mod reads the structured result of the tool and never its text. It takes the questions, the headers, `multiSelect`, the options with label, description and preview, the answers, the notes and the picked preview from it. A multi-select answer is one string: the engine joins the pieces with a comma and a space. A piece that holds a comma or a quote is a JSON string (`Lint, "Tests, all", "say \"hi\", ok"`). The mod splits it like the engine does and tells a label from text that you typed by the options of the question. `(notes only)` is the engine's word for notes with no option.
+
+Which forms ran live (Claude Code 2.1.316, a fake Messages API, tmux; the notes are in [questions-and-plans](../../docs/knowledge-base/claude-code-mods/concepts/questions-and-plans.md#the-forms-that-ran-live-issue-208)):
+
+| Form | Grade |
+| --- | --- |
+| A single pick, a multi-select with typed text, notes with no option, Esc, a plan | verified-live |
+| A `text` and a `number` question | verified-live, but only when the host turns extended questions on. A terminal session asks none by default: the tool schema has no `kind`. Forced with `CLAUDE_CODE_QUESTION_EXTENDED=1` and `CLAUDE_CODE_ENTRYPOINT=sdk-cli` it reads `answers` as a plain string each, and the terminal draws both as a text box. |
+| An away dialog (`afkTimeoutMs`) | verified-live (`CLAUDE_AFK_TIMEOUT_MS`) |
+| A `$.ui.ask` of a second plugin | verified-live. The id is `toolu_plugin_…`, and no field names the plugin. |
+| `Chat about this` (`followUp`, `response`) | In the terminal it is a declined call with the words of the engine, and neither field is set. The two fields were not seen live (types-only). The engine takes them from the answer of a permission-prompt tool, but no run used one ([#312](https://github.com/martin-macak/claude-code-mod-tracking/issues/312)). |
 
 ### `/track qa [--send] [n]`
 
@@ -637,7 +647,7 @@ A session keeps at most 100 calls (`trackers.questions.maxCalls`) and 256 KiB of
 
 ### Plans
 
-A `tool.call` hook sees the plan in its input (`plan`, `planFilePath`) before the dialog opens, and the outcome after it. An approval is a result with the plan again and no error. A rejection, with a note or with Esc, is an error result, and the words of the engine hold what you wrote (`the user said: …`). For a rejected plan the mod keeps that structured error word for word and does not parse it. An approved plan is the plan of the result when the result has one (the plan that the dialog returned, an edited one included), else the plan of the input. The way to edit a plan (`Ctrl+G`) was not run, so the edited plan is not proven live ([#208](https://github.com/martin-macak/claude-code-mod-tracking/issues/208)). A teammate that waits for its leader was not tried either: a teammate with no outcome yet is not kept. The spike is in [the knowledge base](../../docs/knowledge-base/claude-code-mods/concepts/questions-and-plans.md).
+A `tool.call` hook sees the plan in its input (`plan`, `planFilePath`) before the dialog opens, and the outcome after it. An approval is a result with the plan again and no error. A rejection, with a note or with Esc, is an error result, and the words of the engine hold what you wrote (`the user said: …`). For a rejected plan the mod keeps that structured error word for word and does not parse it. An approved plan is the plan of the result when the result has one (the plan that the dialog returned, an edited one included), else the plan of the input. The way to edit a plan (`Ctrl+G`) was not run, so the edited plan is not proven live ([#312](https://github.com/martin-macak/claude-code-mod-tracking/issues/312)). A teammate that waits for its leader was not tried either: a teammate with no outcome yet is not kept. The spike is in [the knowledge base](../../docs/knowledge-base/claude-code-mods/concepts/questions-and-plans.md).
 
 ## Auto tracking
 

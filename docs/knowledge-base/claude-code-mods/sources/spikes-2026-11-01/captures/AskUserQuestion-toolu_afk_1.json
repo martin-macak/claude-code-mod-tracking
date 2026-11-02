@@ -1,0 +1,53 @@
+{
+  "tool": "AskUserQuestion",
+  "startedAt": 1793547912002,
+  "endedAt": 1793547920035,
+  "input": {
+    "questions": [
+      {
+        "question": "Where should the records live?",
+        "header": "Storage",
+        "multiSelect": false,
+        "options": [
+          {
+            "label": "State only",
+            "description": "Keep them in the plugin state."
+          },
+          {
+            "label": "State and store",
+            "description": "Also write them to the plugin store."
+          }
+        ]
+      }
+    ],
+    "tool": "AskUserQuestion",
+    "tool_use_id": "toolu_afk_1"
+  },
+  "ran": {
+    "ref": 1,
+    "result": {
+      "questions": [
+        {
+          "question": "Where should the records live?",
+          "header": "Storage",
+          "options": [
+            {
+              "label": "State only",
+              "description": "Keep them in the plugin state."
+            },
+            {
+              "label": "State and store",
+              "description": "Also write them to the plugin store."
+            }
+          ],
+          "multiSelect": false
+        }
+      ],
+      "answers": {},
+      "annotations": {},
+      "afkTimeoutMs": 8000
+    },
+    "text": "No response after 8s — the user may be away from keyboard. Proceed using your best judgment based on the context so far; you can re-ask this question later if it's still relevant.",
+    "isReadOnly": true
+  }
+}

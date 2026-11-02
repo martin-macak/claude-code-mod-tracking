@@ -1,0 +1,54 @@
+{
+  "tool": "AskUserQuestion",
+  "startedAt": 1793548005628,
+  "endedAt": 1793548013987,
+  "input": {
+    "questions": [
+      {
+        "question": "Which colour?",
+        "header": "Colour",
+        "options": [
+          {
+            "label": "Red",
+            "description": ""
+          },
+          {
+            "label": "Blue",
+            "description": ""
+          }
+        ],
+        "multiSelect": false
+      }
+    ],
+    "tool": "AskUserQuestion",
+    "tool_use_id": "toolu_plugin_8576f25e46234ddab0f7bb970150b5b2"
+  },
+  "ran": {
+    "ref": 1,
+    "result": {
+      "questions": [
+        {
+          "question": "Which colour?",
+          "header": "Colour",
+          "options": [
+            {
+              "label": "Red",
+              "description": ""
+            },
+            {
+              "label": "Blue",
+              "description": ""
+            }
+          ],
+          "multiSelect": false
+        }
+      ],
+      "answers": {
+        "Which colour?": "Blue"
+      },
+      "annotations": {}
+    },
+    "text": "Your questions have been answered: \"Which colour?\"=\"Blue\". You can now continue with these answers in mind.",
+    "isReadOnly": true
+  }
+}

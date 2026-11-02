@@ -1,0 +1,63 @@
+{
+  "tool": "AskUserQuestion",
+  "startedAt": 1793548352585,
+  "endedAt": 1793548359538,
+  "input": {
+    "questions": [
+      {
+        "question": "What is the project name?",
+        "header": "Name",
+        "kind": "text",
+        "placeholder": "my-project",
+        "multiSelect": false
+      },
+      {
+        "question": "How many slides?",
+        "header": "Slides",
+        "kind": "number",
+        "min": 1,
+        "max": 20,
+        "step": 1,
+        "defaultValue": 5,
+        "unit": "slides",
+        "multiSelect": false
+      }
+    ],
+    "tool": "AskUserQuestion",
+    "tool_use_id": "toolu_tn_1"
+  },
+  "ran": {
+    "ref": 1,
+    "result": {
+      "questions": [
+        {
+          "question": "What is the project name?",
+          "header": "Name",
+          "kind": "text",
+          "options": [],
+          "multiSelect": false,
+          "placeholder": "my-project"
+        },
+        {
+          "question": "How many slides?",
+          "header": "Slides",
+          "kind": "number",
+          "options": [],
+          "multiSelect": false,
+          "min": 1,
+          "max": 20,
+          "step": 1,
+          "defaultValue": 5,
+          "unit": "slides"
+        }
+      ],
+      "answers": {
+        "What is the project name?": "acme-app",
+        "How many slides?": "12"
+      },
+      "annotations": {}
+    },
+    "text": "The user answered: \"What is the project name?\"=\"acme-app\", \"How many slides?\"=\"12\". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.",
+    "isReadOnly": true
+  }
+}

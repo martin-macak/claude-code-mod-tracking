@@ -92,8 +92,8 @@ test('a blank question says so, and notes with no option say so', () => {
 })
 
 test('a text with several lines keeps them: a typed answer under its item, notes as a quote', () => {
-  const q = item({ multiSelect: true, options: [{ label: 'A' }], answer: '"one\ntwo"', notes: 'n1\nn2' })
-  // The engine quotes a piece only for a comma, but a piece that is no label is typed text whatever it holds.
+  const q = item({ multiSelect: true, options: [{ label: 'A' }], answer: '"one\\ntwo"', notes: 'n1\nn2' })
+  // A piece with a comma or a quote is a JSON string, so a line break in it reads back from its escape.
   const md = callMarkdown(callOf([q]), true)
   expect(md).toContain('- [x] Other (typed): one\n  two')
   expect(md).toContain('> Notes: n1\n> n2')
