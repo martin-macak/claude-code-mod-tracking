@@ -485,8 +485,8 @@ The token comes from the state of the thing, per tracker (`verified-kit`, `tests
 | | no category (no `acli`, not refreshed), `track-only` | `none` |
 | | `not found` | `failed` |
 | processes | running, up | `active` |
-| | failed, killed, exited, unhealthy (the red set of the band) | `failed` |
-| | completed; unknown | `done`; `gone` |
+| | failed, killed, unhealthy (the red set of the band) | `failed` |
+| | completed, exited (no known exit code, #258); unknown | `done`; `gone` |
 | agents | running, waiting, ended, failed; a folded run | `active`, `waiting`, `done`, `failed`; `failed` when an agent of it failed, else `done` |
 | worktrees | live (no word), removed | `active`, `gone` |
 | artifact | deleted, any other | `gone`, `none` |

@@ -311,7 +311,7 @@ test('an item row carries the level that the person or a rule gave it', async ()
 
 // ---------------------------------------------------------------- processes
 
-test('processes: running and up active; failed, killed, exited and unhealthy failed; completed done; unknown gone', async () => {
+test('processes: running and up active; failed, killed and unhealthy failed; completed and exited done; unknown gone', async () => {
   const t = await paneWorld()
   const states = ['running', 'up', 'completed', 'failed', 'killed', 'exited', 'unhealthy', 'unknown'] as const
   const rows = states.map((state, i) => ({ ...WORLD_PROCESSES[0]!, id: `bg:${i}`, state }))
@@ -323,7 +323,7 @@ test('processes: running and up active; failed, killed, exited and unhealthy fai
     ['completed', 'done'],
     ['failed', 'failed'],
     ['killed', 'failed'],
-    ['exited', 'failed'],
+    ['exited', 'done'],
     ['unhealthy', 'failed'],
     ['unknown', 'gone'],
   ])
@@ -333,12 +333,12 @@ test('processes: running and up active; failed, killed, exited and unhealthy fai
     { text: 'completed', fg: 'inactive' },
     { text: 'failed', fg: 'error' },
     { text: 'killed', fg: 'error' },
-    { text: 'exited', fg: 'error' },
+    { text: 'exited', fg: 'inactive' },
     { text: 'unhealthy', fg: 'error' },
     { text: 'unknown', fg: 'inactive' },
   ])
-  // The band counts the same four states as before.
-  expect(s.band?.failing).toBe(4)
+  // An exit with no known code is not a failure: the band counts three states (issue #258).
+  expect(s.band?.failing).toBe(3)
 })
 
 test('processes: the first sighting and the kind of the record ride on the facets; the row has no level', async () => {

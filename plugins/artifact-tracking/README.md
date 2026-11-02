@@ -117,8 +117,8 @@ Every row has a status: a word in the Status column, and one of six tokens behin
 | | no category (not refreshed, no `acli`), `track-only` | `none` |
 | | `not found` | `failed` |
 | Processes | `running`, `up` | `active` |
-| | `failed`, `killed`, `exited`, `unhealthy` | `failed` |
-| | `completed` | `done` |
+| | `failed`, `killed`, `unhealthy` | `failed` |
+| | `completed`, `exited` (gone, no known exit code) | `done` |
 | | `unknown` | `gone` |
 | Questions | `answered`, a plan that is `approved` | `done` |
 | | `partial`: a question was left blank, or has notes and no option (the dialog is closed, so nothing waits for it) | `done` |
