@@ -127,10 +127,10 @@ function components(nodes, edges) {
 // `fresh` (the lowest stored Wave of the open issues of the project, or 0). An issue that is
 // not in the project has no stored Wave and takes 0. null for an issue in a cycle and for an
 // issue that depends on a cycle.
-function analyse(graph, stored = new Map(), fresh = 0) {
+function analyse(graph, stored = new Map(), fresh = 0, inProject = new Set()) {
   const isOpen = k => graph[k]?.state === 'OPEN'
   const blockersOf = k => (graph[k]?.blockedBy ?? []).filter(isOpen)
-  const floorOf = k => (stored.has(k) ? stored.get(k) : fresh)
+  const floorOf = k => (stored.has(k) ? stored.get(k) : inProject.has(k) ? fresh : 0)
   const wave = new Map()
   const cycles = []
   for (const comp of components(Object.keys(graph).filter(isOpen), blockersOf)) {
@@ -213,11 +213,14 @@ export function positionPlan(items, repo) {
 export function plan({ items, graph, options, repo, milestoneIssues = [] }) {
   assertGraph(graph)
   const stored = new Map()
+  const openIssueKeys = items.filter(i => i.kind === 'issue' && i.state === 'OPEN').map(i => i.key)
   for (const i of items) {
     const n = i.kind === 'issue' && i.state === 'OPEN' ? waveNumber(i.fields.Wave) : null
     if (n !== null) stored.set(i.key, n)
   }
-  const { blockersOf, wave, cycles } = analyse(graph, stored, stored.size > 0 ? Math.min(...stored.values()) : 0)
+  const inProject = new Set(openIssueKeys)
+  const fresh = stored.size > 0 ? Math.min(...stored.values()) : 0
+  const { blockersOf, wave, cycles } = analyse(graph, stored, fresh, inProject)
   const label = k => refLabel(k, repo)
   const needed = { Wave: new Map(), Status: new Map() }
   const need = (field, name, item) => {

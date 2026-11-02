@@ -121,6 +121,19 @@ test('a new issue is Wave 0 when no other open issue has a Wave', () => {
   assert.equal(to(run(project().issue(1).issue(2, { state: 'CLOSED', wave: 'Wave 2' })), 1, 'Wave'), 'Wave 0')
 })
 
+test('a blocker outside the project has floor 0, so a Wave is stable over repeated syncs', () => {
+  let wave = 'Wave 1'
+  for (let pass = 0; pass < 4; pass += 1) {
+    const p = project()
+      .issue(1, { wave: 'Wave 1' })
+      .external(9)
+      .issue(2, { blockedBy: [9], wave })
+    const res = run(p)
+    wave = to(res, 2, 'Wave') ?? wave
+  }
+  assert.equal(wave, 'Wave 1')
+})
+
 test('a cycle still gets no Wave, whatever the stored Wave', () => {
   const res = run(
     project()
