@@ -68,6 +68,8 @@ export interface SessionRow {
     readonly tool: string
     readonly input: Readonly<Record<string, unknown>>
     readonly result?: unknown
+    /** The answer text, once answered. A subagent transcript stores it here and stores no `result` (issue #247). */
+    readonly text?: string
   }[]
   readonly toolResults?: readonly {
     readonly tool_use_id: string
@@ -238,7 +240,8 @@ export interface Ports {
     id(): Promise<string>
     cwd(): Promise<string>
     repo(): Promise<RepoRemote | null>
-    messages(): Promise<readonly SessionRow[]>
+    /** The newest 4096 messages of the session. `agentId`: the transcript of one of its agents (a subagent, a fork) instead. */
+    messages(o?: { readonly agentId?: string }): Promise<readonly SessionRow[]>
     /**
      * Every surface the session draws on (`terminal`, the desktop app, ...). Empty where nothing draws: `claude -p`, the SDK (the VS Code
      * host is untested). The engine never rejects it, so a caller treats a rejection as "a surface draws" (issue #246).

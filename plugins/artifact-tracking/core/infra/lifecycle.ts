@@ -131,7 +131,7 @@ export class LifecycleManager extends PaneApi {
       items: this.items,
       persistence: this.persistence,
       bus: this.bus,
-      replayer: new Replay({ messages: () => ports.session.messages(), log: ports.log }),
+      replayer: new Replay({ messages: o => ports.session.messages(o), log: ports.log }),
       slots: () => this.slots(),
       ports,
     })

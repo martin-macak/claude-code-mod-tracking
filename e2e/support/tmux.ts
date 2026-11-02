@@ -136,6 +136,11 @@ export class Tmux {
     this.run(['respawn-pane', '-k', '-t', this.target, command])
   }
 
+  // The pid of the process in the pane. It leads the process group of the pane.
+  panePid(): number {
+    return Number(this.run(['display-message', '-p', '-t', this.target, '#{pane_pid}']).trim())
+  }
+
   key(name: string): void {
     this.run(['send-keys', '-t', this.target, name])
   }

@@ -164,11 +164,11 @@ export const commandRow = (text: string, origin = 'composer') => row('command', 
 export const responseRow = (text: string) => row('response', text, { origin: 'unclassified' })
 export const toolResultRow = (text: string) => row('tool-result', text, { origin: 'unclassified' })
 
-export const replayRow = (door: 'prompt' | 'response', text: string): ReplayItem => ({
+export const replayRow = (door: 'prompt' | 'response', text: string): Extract<ReplayItem, { kind: 'row' }> => ({
   kind: 'row',
   ev: { door, origin: 'replay', isMeta: false, hasMessage: true, text },
 })
-export const replayTool = (tool: string, input: Json, use: Json): ReplayItem => ({
+export const replayTool = (tool: string, input: Json, use: Json): Extract<ReplayItem, { kind: 'toolCall' }> => ({
   kind: 'toolCall',
   ev: { tool, input, result: use },
 })

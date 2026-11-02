@@ -210,6 +210,43 @@ Given(
   },
 )
 
+// Issue #247. The subagent case of a cold resume. The model spawns a background subagent, and the subagent runs one Bash command,
+// which a scenario makes `gh pr create` against the fake gh. The main loop asks for its next turn at once, while
+// the subagent runs, so one ordered script would give the Bash turn to the main loop (the scenario then proves nothing of a
+// subagent transcript). The subagent has a script of its own, told apart by its system prompt. The session needs both tools:
+// `and the tools "Agent Bash"`. A foreground spawn is not a case: this engine backgrounds the agent anyway (N20 stays open).
+Given(
+  'a fake model that spawns a background subagent which runs {string}',
+  async function (this: DemoWorld, command: string) {
+    await this.startFakeApi(
+      [
+        [
+          { type: 'text', text: 'I will ask an agent.' },
+          {
+            type: 'tool_use',
+            id: 'toolu_e2e_agent',
+            name: 'Agent',
+            input: {
+              description: 'Open the PR',
+              prompt: 'Open the pull request.',
+              subagent_type: 'general-purpose',
+              run_in_background: true,
+            },
+          },
+        ],
+        [{ type: 'text', text: 'The agent opened the PR.' }],
+      ],
+      [
+        [
+          { type: 'text', text: 'I will open it.' },
+          { type: 'tool_use', id: 'toolu_e2e_sub_pr', name: 'Bash', input: { command } },
+        ],
+        [{ type: 'text', text: 'The PR is open.' }],
+      ],
+    )
+  },
+)
+
 // Issue #206. The model reads the README of the second repo in each of two prompts (the Read tool), so the repos tracker sees
 // the repo in turn 1 and again in turn 2. The first prompt ends in "Done 1.", the second in "Done 2.".
 Given('a fake model that reads the README of the second repo in each of two prompts', async function (this: DemoWorld) {

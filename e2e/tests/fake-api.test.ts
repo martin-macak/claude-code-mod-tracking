@@ -311,3 +311,37 @@ test('a turn function that throws is answered with a text turn, the error is kep
     await api.close()
   }
 })
+
+test('a script for the subagents keeps their turns apart from the main turns, whatever the order of the requests', async () => {
+  const text = (t: string): FakeTurn => [{ type: 'text', text: t }]
+  const api = await FakeApi.start([text('main one'), text('main two')], [text('agent one'), text('agent two')])
+  try {
+    const tools = [{ name: 'Bash' }]
+    const main = { stream: true, tools, system: [{ type: 'text', text: 'You are Claude Code, the CLI.' }] }
+    const agent = {
+      stream: true,
+      tools,
+      system: [{ type: 'text', text: "You are an agent for Claude Code, Anthropic's official CLI." }],
+    }
+    const ask = async (body: unknown) => textOf(await (await post(api, body)).text())
+    assert.equal(await ask(main), 'main one')
+    assert.equal(await ask(agent), 'agent one')
+    assert.equal(await ask(agent), 'agent two')
+    assert.equal(await ask(main), 'main two')
+    assert.equal(api.turnsTaken, 2)
+  } finally {
+    await api.close()
+  }
+})
+
+test('a script with no subagent script gives every request the next turn, as before', async () => {
+  const text = (t: string): FakeTurn => [{ type: 'text', text: t }]
+  const api = await FakeApi.start([text('one'), text('two')])
+  try {
+    const agent = { stream: true, tools: [{ name: 'Bash' }], system: 'You are an agent for Claude Code' }
+    assert.equal(textOf(await (await post(api, agent)).text()), 'one')
+    assert.equal(textOf(await (await post(api, agent)).text()), 'two')
+  } finally {
+    await api.close()
+  }
+})

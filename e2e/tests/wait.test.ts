@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { idleMs, waitUntil } from '../support/wait.ts'
+import { idleMs, waitForExit, waitUntil } from '../support/wait.ts'
 
 test('waitUntil resolves with the first defined probe value', async () => {
   let calls = 0
@@ -33,4 +34,28 @@ test('idleMs says how long ago the file last changed, and nothing for a missing 
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// A step that must not delete state while an old process may still write it waits for the process group to be gone, not for a
+// fixed time. The child is a group leader, as the process of a tmux pane is.
+test('waitForExit waits for the process group of a pid to end, and fails while it lives', async () => {
+  const child = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' })
+  const pid = child.pid!
+  try {
+    await assert.rejects(waitForExit(pid, { timeoutMs: 100, intervalMs: 10 }), /waiting for process \d+ to exit/)
+    const done = waitForExit(pid, { timeoutMs: 5000, intervalMs: 10 })
+    process.kill(-pid, 'SIGKILL')
+    await done
+    assert.throws(() => process.kill(pid, 0))
+  } finally {
+    try {
+      process.kill(-pid, 'SIGKILL')
+    } catch {}
+  }
+})
+
+test('waitForExit returns at once for a pid that is already gone', async () => {
+  const child = spawn('true', [], { detached: true, stdio: 'ignore' })
+  await new Promise(resolve => child.on('exit', resolve))
+  await waitForExit(child.pid!, { timeoutMs: 1000, intervalMs: 10 })
 })

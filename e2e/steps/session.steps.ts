@@ -1,4 +1,4 @@
-import { Given } from '@cucumber/cucumber'
+import { Given, When } from '@cucumber/cucumber'
 import { pinOriginHead } from '../support/session.ts'
 import type { DemoWorld } from '../support/world.ts'
 
@@ -50,3 +50,10 @@ Given(
     await this.launch(prompt)
   },
 )
+
+// Issue #247. A cold resume: claude ends, and a new process resumes the last conversation of the folder (`claude --continue`) with
+// the same tools, config and fake model. The new process fires no hook for the old calls, so the mod must read the transcripts.
+// Wait for the end of the last turn first: the transcript of the old process must be complete.
+When('the session exits and resumes cold', async function (this: DemoWorld) {
+  await this.resumeCold()
+})

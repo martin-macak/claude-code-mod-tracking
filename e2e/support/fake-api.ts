@@ -35,6 +35,14 @@ export type FakeRequest = {
   readonly commandReplies: readonly string[]
 }
 
+/** The opening of the system prompt that the engine gives a subagent (`querySource` `agent:builtin:*`). */
+const SUBAGENT_PROMPT = 'You are an agent for Claude Code'
+
+/** Whether a request is one of a subagent: its system prompt is the agent prompt, not the main one. */
+export function isSubagentRequest(body: unknown): boolean {
+  return isRecord(body) && JSON.stringify(body.system ?? '').includes(SUBAGENT_PROMPT)
+}
+
 /** The answer to a request with no tools: a title, in the form the engine asks for. */
 const AUX_ANSWER: FakeTurn = [{ type: 'text', text: '{"title":"Fake model"}' }]
 
@@ -135,20 +143,26 @@ export class FakeApi {
   readonly url: string
   private readonly server: Server
   private readonly turns: readonly FakeStep[]
+  /** The script of the subagents, when the scenario has one: their requests take turns from it, not from `turns`. */
+  private readonly agentTurns: readonly FakeStep[] | undefined
   private taken = 0
+  private agentTaken = 0
   private failure: Error | undefined
 
-  private constructor(server: Server, turns: readonly FakeStep[], url: string) {
+  private constructor(server: Server, turns: readonly FakeStep[], url: string, agentTurns?: readonly FakeStep[]) {
     this.server = server
     this.turns = turns
+    this.agentTurns = agentTurns
     this.url = url
   }
 
   /** Starts a fake on a free port of 127.0.0.1. `turns` is the script: at least one, and the last is a turn of text. */
-  static async start(turns: readonly FakeStep[]): Promise<FakeApi> {
-    const last = turns.at(-1)
-    if (last === undefined || typeof last === 'function' || last.some(block => block.type === 'tool_use'))
-      throw new Error('fake api: the script must end in a turn of text, or the last turn would repeat its tool call')
+  static async start(turns: readonly FakeStep[], agentTurns?: readonly FakeStep[]): Promise<FakeApi> {
+    for (const script of agentTurns === undefined ? [turns] : [turns, agentTurns]) {
+      const last = script.at(-1)
+      if (last === undefined || typeof last === 'function' || last.some(block => block.type === 'tool_use'))
+        throw new Error('fake api: the script must end in a turn of text, or the last turn would repeat its tool call')
+    }
     const server = createServer()
     const api: { current?: FakeApi } = {}
     server.on('request', (req, res) => void api.current?.answer(req, res))
@@ -157,7 +171,7 @@ export class FakeApi {
       server.listen(0, '127.0.0.1', resolve)
     })
     const { port } = server.address() as AddressInfo
-    api.current = new FakeApi(server, turns, `http://127.0.0.1:${port}`)
+    api.current = new FakeApi(server, turns, `http://127.0.0.1:${port}`, agentTurns)
     return api.current
   }
 
@@ -224,7 +238,11 @@ export class FakeApi {
       const stream = isRecord(body) && body.stream === true
       const isTurn = tools > 0
       this.requests.push({ isTurn, toolResults: toolResultsOf(body), commandReplies: commandRepliesOf(body) })
-      const step = this.turns[Math.min(this.taken, this.turns.length - 1)] as FakeStep
+      // A background subagent asks at the same time as the main loop, so the order of the requests is a race: a scenario that
+      // gives a script for the subagents keeps their turns apart from the main ones.
+      const own = this.agentTurns !== undefined && isSubagentRequest(body)
+      const script = own && this.agentTurns !== undefined ? this.agentTurns : this.turns
+      const step = script[Math.min(own ? this.agentTaken : this.taken, script.length - 1)] as FakeStep
       let turn: FakeTurn = AUX_ANSWER
       if (isTurn) {
         try {
@@ -234,7 +252,10 @@ export class FakeApi {
           turn = [{ type: 'text', text: 'fake script failed.' }]
         }
       }
-      if (isTurn) this.taken += 1
+      if (isTurn) {
+        if (own) this.agentTaken += 1
+        else this.taken += 1
+      }
       if (!stream) {
         const text = turn.flatMap(b => (b.type === 'text' ? [b.text] : [])).join('')
         res.writeHead(200, { 'content-type': 'application/json' }).end(

@@ -453,6 +453,21 @@ test('replay: a stored key wins, a later artifact publish wins, dismissed and fo
 const raceReplay = async (items: { replay(b: ReplayItem[]): Promise<void> }, batch: ReplayItem[], ms = 300) =>
   Promise.race([items.replay(batch).then(() => 'done'), sleep(ms).then(() => 'waited')])
 
+test('a replay batch with a subagent call makes no claim and does not throw', async () => {
+  const t = fakeItems({})
+  const items = await t.started()
+  await items.replay([
+    {
+      kind: 'agentCall',
+      tool: 'Bash',
+      input: { command: 'gh pr create' },
+      text: 'see https://example.com/a',
+      isError: false,
+    },
+  ])
+  expect(t.keys()).toEqual([])
+})
+
 test('replay does not wait for a slow gh repo view; the lookup runs on and a later prepare waits for it', async () => {
   let release = () => {}
   const gate = new Promise<void>(resolve => {

@@ -108,6 +108,35 @@ function createdPr(pr: Json): PrFacts | undefined {
   return { host: host === 'www.github.com' ? 'github.com' : host, owner: m[1]!, repo: m[2]!, number }
 }
 
+/** The `command` of a Bash input, or an empty string. */
+export const commandOf = (input: unknown): string =>
+  isRecord(input) && typeof input.command === 'string' ? input.command : ''
+
+/**
+ * `gh pr create` as a command: at the start, after `;`, `&`, `|`, `(` or a new line, and after env assignments. A plain
+ * mention (`echo "gh pr create"`) is none. The repo flag (`-R x`, `--repo x`, `--repo=x`) may stand before or between the subcommands. A mention after a `;` inside a quote is still a guess that matches.
+ */
+const REPO_FLAG = String.raw`(?:(?:-R|--repo)(?:=|\s+)\S+\s+)*`
+const GH_PR_CREATE = new RegExp(String.raw`(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*gh\s+${REPO_FLAG}pr\s+${REPO_FLAG}create\b`)
+
+/**
+ * The PR that a subagent's `gh pr create` printed (issue #247). Its transcript stores the output as text and no
+ * `gitOperation`, so this is a guess, marked `via: 'text'`. The command must run `gh pr create`, the call must not have
+ * failed, and the PR URL must be the last non-empty line of the output (`gh` prints it last). A PR by any other route
+ * (a script, `gh api`) is missed. The lane asks GitHub for the PR, so a wrong URL shows only a PR that exists.
+ */
+export function fromAgentText(command: string, text: string, isError: boolean): PrFacts | undefined {
+  if (isError || !GH_PR_CREATE.test(command)) return undefined
+  const last = text
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l !== '')
+    .at(-1)
+  if (last === undefined) return undefined
+  const pr = createdPr({ action: 'created', url: last })
+  return pr && { ...pr, via: 'text' }
+}
+
 /**
  * Bash: the branch of an agent's own commit or push, the PR the command created, and the kick reason.
  * `gitOperation.pr` kicks `pr-event`; a created one is also a proof (`pr`). Another operation, or a worktree or branch

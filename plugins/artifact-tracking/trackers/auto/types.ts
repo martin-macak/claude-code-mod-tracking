@@ -72,9 +72,11 @@ export type AgentProof = {
 /**
  * A pull request of any repo that this run made (issue #158): the `gitOperation.pr` of a Bash result with the action
  * `created`. It is a proof like a worktree proof, and the PR lane reads the PR by number, whatever its branch or repo.
- * Owner and repo keep the case of the URL; a comparison lowers it.
+ * Owner and repo keep the case of the URL; a comparison lowers it. `via: 'text'`: a guess from the URL in the text of a
+ * subagent's transcript (issue #247), not from a `gitOperation`. The proof is stored and published with the mark. A live
+ * proof of the same PR drops it.
  */
-export type PrFacts = { host: string; owner: string; repo: string; number: number }
+export type PrFacts = { host: string; owner: string; repo: string; number: number; via?: 'text' }
 
 export type Health = { ok: boolean; at: number; error?: string }
 
