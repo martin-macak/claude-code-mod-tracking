@@ -20,6 +20,12 @@ test('stripReserved drops !, which negates the pipeline that follows', () => {
   expect(stripReserved(['git', 'diff', '!'])).toEqual(['git', 'diff', '!'])
 })
 
+test('stripReserved stops at a reserved word that stands behind a redirection (issue #259)', () => {
+  expect(stripReserved(['!', 'git'], [true, true], [true, false])).toEqual(['!', 'git'])
+  expect(stripReserved(['if', '!', 'git'], [true, true, true], [false, true, false])).toEqual(['!', 'git'])
+  expect(stripReserved(['!', 'git'], [true, true], [false, true])).toEqual(['git'])
+})
+
 test('stripReserved drops done, fi and esac, which end a compound', () => {
   expect(stripReserved(['done'])).toEqual([])
   expect(stripReserved(['fi'])).toEqual([])
@@ -1925,4 +1931,23 @@ test('stripWrappers reports that setsid -f forks on its own', () => {
   expect(stripWrappers(['setsid', 'node'])).toMatchObject({ fork: false })
   const f = [true, true, true, true]
   expect(stripLead({ words: ['sudo', 'setsid', '-f', 'a'], whole: f, redir: f.map(() => false) }).fork).toBe(true)
+})
+
+// bash reads a reserved word only as the first word of a command. A word behind a redirection is a command name:
+// `>/dev/null ! git push` fails with `!: command not found` (bash 3.2 and 5.3), so no `git push` runs (issue #259).
+test('stripLead keeps a reserved word that stands behind a redirection as the command', () => {
+  const words = (command: string) => stripLead(splitShell(command)[0]!).words
+  expect(words('>/dev/null ! git push')).toEqual(['!', 'git', 'push'])
+  expect(words('time >/dev/null ! git push')).toEqual(['!', 'git', 'push'])
+  expect(words('time 2>&1 ! git push')).toEqual(['!', 'git', 'push'])
+  expect(words('time -p >/dev/null ! git push')).toEqual(['!', 'git', 'push'])
+  expect(words('>/dev/null done git push')).toEqual(['done', 'git', 'push'])
+  expect(words('>/dev/null if git push')).toEqual(['if', 'git', 'push'])
+  expect(words('>/dev/null while git push')).toEqual(['while', 'git', 'push'])
+  expect(words('! >/dev/null ! git push')).toEqual(['!', 'git', 'push'])
+  expect(words('time <<EOF ! git push\nbody\nEOF')).toEqual(['!', 'git', 'push'])
+  // Controls: a reserved word in front of the redirection, or a command behind it, reads as before.
+  expect(words('! >/dev/null git push')).toEqual(['git', 'push'])
+  expect(words('time ! >/dev/null git push')).toEqual(['git', 'push'])
+  expect(words('time ! git push')).toEqual(['git', 'push'])
 })

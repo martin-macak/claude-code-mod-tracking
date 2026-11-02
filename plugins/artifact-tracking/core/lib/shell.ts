@@ -1116,10 +1116,18 @@ const RESERVED = new Set(['!', 'if', 'while', 'until', 'do', 'then', 'else', 'el
  * not see a reserved word behind a wrapper: `time ! git push` has `!` behind `time`. A reader calls `stripLead`.
  * `whole` says for each word that it was typed whole (`Segment.whole`). Only such a word is reserved: `'done' y` runs a
  * command named `done` (issue #194). Without `whole`, every word counts as typed.
+ * `redir` says for each word that a redirection stood right before it (`Segment.redir`). bash reads a reserved word only
+ * as the first word of a command, so one behind a redirection is the command: `>/dev/null ! x` fails with `!: command
+ * not found` (issue #259). Without `redir`, no redirection stood anywhere. Only `stripLead` should call this function:
+ * a direct caller that has the flags must pass `redir`, or issue #259 comes back with no error.
  */
-export function stripReserved(words: readonly string[], whole?: readonly boolean[]): string[] {
+export function stripReserved(
+  words: readonly string[],
+  whole?: readonly boolean[],
+  redir?: readonly boolean[],
+): string[] {
   let i = 0
-  while (i < words.length && RESERVED.has(words[i]!) && whole?.[i] !== false) i++
+  while (i < words.length && RESERVED.has(words[i]!) && whole?.[i] !== false && redir?.[i] !== true) i++
   return words.slice(i)
 }
 
@@ -1231,7 +1239,7 @@ export function stripLead(seg: {
   for (;;) {
     // Both helpers only drop words from the front, so `rest` is always the end of `words`: its flags are the end of `whole`.
     // So are the words that `stripReserved` leaves, and `stripWrappers` reads their flags for the options of `time`.
-    const kept = stripReserved(rest, whole.slice(words.length - rest.length))
+    const kept = stripReserved(rest, whole.slice(words.length - rest.length), redir.slice(words.length - rest.length))
     const got = stripWrappers(kept, whole.slice(words.length - kept.length), redir.slice(words.length - kept.length))
     Object.assign(env, got.env)
     nohup ||= got.nohup

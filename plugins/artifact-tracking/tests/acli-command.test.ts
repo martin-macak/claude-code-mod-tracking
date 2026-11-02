@@ -213,3 +213,12 @@ test('acliAuthChange: status, other sub-commands, other families and plain text 
   ])
     expect([command, acliAuthChange(command)]).toEqual([command, false])
 })
+
+// A reserved word behind a redirection is the command: `time >/dev/null ! acli ...` fails with `!: command not found`
+// (bash 3.2 and 5.3), so `acli` runs nothing (issue #259).
+test('a reserved word behind a redirection is the command, so acli names no item', () => {
+  expect(acliWorkitems('>/dev/null ! acli jira workitem view ABC-1')).toEqual([])
+  expect(acliWorkitems('time >/dev/null ! acli jira workitem view ABC-1')).toEqual([])
+  expect(acliWorkitems('time 2>&1 ! acli jira workitem view ABC-1')).toEqual([])
+  expect(acliWorkitems('time ! >/dev/null acli jira workitem view ABC-1')).toEqual([read('ABC-1')])
+})
