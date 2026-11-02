@@ -1,5 +1,5 @@
-// The Buttons of the body of the preview (issue #277, B6): the `↩ back` Button, the key line of a mode and the dim keys of the detail
-// view. What the drawing and the refocus both name, so they cannot drift. Pure: no `$`, no I/O. The registry and the routing stay in
+// The Buttons of the body of the preview (issue #277, B6): the `↩ back` Button, the key line of a mode and the dim keys (every mode,
+// issues #277 and #300). What the drawing and the refocus both name, so they cannot drift. Pure: no `$`, no I/O. The registry and the routing stay in
 // `keys.ts`; this module only lays out the Buttons of one view.
 
 import type { PreviewMode, PreviewModeId } from '../interfaces/preview'
@@ -24,11 +24,13 @@ function dimKeys(reg: KeyRegistry, owner: string | undefined, line: readonly Foo
     .map(k => ({ ...k, enabled: false, buttonKey: buttonKeyOf(k) }))
 }
 
-/** The Buttons of a preview body for one mode. `dim` is the detail view's (issue #277): a file mode keeps the key line of issue #57. */
+/** The Buttons of a preview body for one mode. A file mode draws the dim keys too (issue #300), but no `↩ back`: that is the detail view's (issue #277). */
 export interface PreviewBody {
   readonly keys: readonly FooterKey[]
-  /** The dim keys under the key line. Set in the detail view only, which also draws `↩ back`. */
-  readonly dim: readonly FooterKey[] | undefined
+  /** The dim keys under the key line, in every mode: a core key with no Button would leave the pane for the prompt. */
+  readonly dim: readonly FooterKey[]
+  /** True in the detail view, which draws `↩ back` first. */
+  readonly back: boolean
   /** The Button keys in drawing order: `↩ back` first in the detail view (the ring goes to the first Button), the key line, the dim keys. */
   readonly buttons: readonly string[]
 }
@@ -40,7 +42,8 @@ export function previewBody(
   owner: string,
 ): PreviewBody {
   const keys = previewKeys(reg, modes, mode)
-  if (mode !== DETAIL_MODE) return { keys, dim: undefined, buttons: keys.map(k => k.buttonKey) }
   const dim = dimKeys(reg, owner, keys)
-  return { keys, dim, buttons: [BACK_BUTTON, ...keys.map(k => k.buttonKey), ...dim.map(k => k.buttonKey)] }
+  const back = mode === DETAIL_MODE
+  const rest = [...keys, ...dim].map(k => k.buttonKey)
+  return { keys, dim, back, buttons: back ? [BACK_BUTTON, ...rest] : rest }
 }

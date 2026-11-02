@@ -78,9 +78,15 @@ test('the Button keys: the back Button first, then the keys of the line, then th
   expect(new Set(all).size).toBe(all.length) // one Button key for each Button, or the refocus would pick the wrong one
 })
 
-test('a file mode has the key line alone: no dim keys, no back Button in the Button keys (issue #57)', () => {
-  const reg = new KeyRegistry()
-  const body = previewBody(reg, modesOf(['view', true]), 'view', 'web')
-  expect(body.dim).toBeUndefined()
-  expect(body.buttons).toEqual(['preview', 'refresh'])
+test('a file mode draws the dim keys too, but no back Button: no core key leaks to the prompt (issue #300)', () => {
+  const reg = world()
+  const body = previewBody(reg, modesOf(['view', true], ['diff', true]), 'view', 'github')
+  expect(body.keys.map(k => k.key)).toEqual(['v', 'd', 'r'])
+  expect(keysOf(body)).toEqual(['h', 'g', 'a', 't', 'p', 'm', 'e', 'x', '1', '2', '3', '0', 'o', 'c', 'f'])
+  expect(body.dim?.every(k => k.enabled === false)).toBe(true)
+  expect(body.back).toBe(false)
+  expect(body.buttons[0]).not.toBe(BACK_BUTTON)
+  expect(body.buttons).toEqual([...body.keys, ...(body.dim ?? [])].map(k => k.buttonKey))
+  // The detail view keeps its back Button.
+  expect(previewBody(reg, [], 'detail', 'github').back).toBe(true)
 })

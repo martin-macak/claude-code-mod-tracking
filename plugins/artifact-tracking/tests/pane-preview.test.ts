@@ -18,6 +18,7 @@ import { footerRows, moveHintFits } from '../ux/tree-data-table/footer'
 import { fakeConfig } from './fixtures/config-fs'
 import { buttonOf, footerOf, handlesOf, leaves, nodes, press, texts } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
+import { heightOf } from './fixtures/height'
 import { fakePorts } from './fixtures/ports'
 import { row, section } from './fixtures/sections'
 
@@ -184,7 +185,11 @@ test('the preview draws in place of the table: the header, the key line, the not
   const lines = leaves(tree)
   expect(lines.slice(0, 2)).toEqual(['a.ts', ' · code · view'])
   expect(lines.indexOf('a notice of view')).toBeGreaterThan(lines.indexOf('Esc back'))
-  expect(nodes(tree, 'Button').map(b => [b.props.key, b.props.hotkey, b.props.label])).toEqual([
+  expect(
+    nodes(tree, 'Button')
+      .slice(0, 2)
+      .map(b => [b.props.key, b.props.hotkey, b.props.label]),
+  ).toEqual([
     ['preview', 'v', 'view'],
     ['refresh', 'r', 'reload'],
   ])
@@ -221,6 +226,55 @@ test('the detail view of a row that says it has no preview has no v; a mode that
 
 // ---------------------------------------------------------------- modes and reload
 
+test('a file view draws every core key as a dim Button, and a press leaves the pane in the preview (issue #300)', async () => {
+  const t = await opened()
+  const tree = await t.draw()
+  const hotkeys = nodes(tree, 'Button').map(b => b.props.hotkey)
+  for (const k of CORE_KEYS) expect(hotkeys, k.id).toContain(k.key)
+  const dim = CORE_KEYS.filter(k => !['preview', 'refresh'].includes(k.id) && k.mode === undefined)
+  expect(dim.length).toBeGreaterThan(0)
+  for (const k of dim) expect(buttonOf(tree, k.id).props.dimColor, k.id).toBe(true)
+  const loads = [...t.host.loads]
+  for (const k of dim) press(buttonOf(tree, k.id))
+  await t.session.idle()
+  expect(t.host.calls).toEqual([])
+  expect(t.host.loads).toEqual(loads)
+  expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'view' })
+  expect(nodes(await t.draw(), 'Button').some(b => b.props.key === 'back')).toBe(false) // no back Button in a file mode
+})
+
+/** The ids of the dim keys of a file view that lists the view mode alone: every core key but the two of the key line, sorted. */
+const DIM_IDS = CORE_KEYS.map(k => k.id)
+  .filter(id => !['preview', 'refresh'].includes(id))
+  .sort()
+
+/** The rows of the dim keys of a file view by body width (`heightOf`, which counts the wrap as the footer does). */
+const DIM_ROWS: Record<number, number> = { 96: 2, 49: 4, 40: 5 }
+
+test('the key line and the dim keys of a file view stay whole at 49 and 40 cells, and every Button is drawn (issue #300)', async () => {
+  const t = await opened()
+  for (const cols of [96, 49, 40]) {
+    const tree = await t.draw(cols)
+    const [keyBox, dimBox, ...more] = nodes(tree, 'Box').filter(b => b.props.flexWrap === 'wrap')
+    expect(more, `no third wrapping line at ${cols}`).toEqual([])
+    // The key line is one row at every width. The dim keys wrap: the rows are pinned, counted as the footer fills them.
+    expect(heightOf(keyBox, cols), `key line at ${cols}`).toBe(1)
+    expect(heightOf(dimBox, cols), `dim keys at ${cols}`).toBe(DIM_ROWS[cols])
+    const dims = nodes(dimBox, 'Button')
+    expect(dims.length).toBeGreaterThan(0)
+    expect(
+      dims.every(b => b.props.dimColor === true),
+      `dim at ${cols}`,
+    ).toBe(true)
+    // No key is lost to the wrap: every core key still has its Button in the drawing.
+    for (const k of CORE_KEYS)
+      expect(
+        nodes(tree, 'Button').map(b => b.props.hotkey),
+        `${k.id} at ${cols}`,
+      ).toContain(k.key)
+  }
+})
+
 test('the key line has a Button for each mode the row has, dim when the mode is off; a press of d switches the mode, and the cache keeps both views', async () => {
   const t = setup()
   t.host.modes.set('a.ts', [VIEW, { id: 'diff', enabled: true }])
@@ -228,7 +282,11 @@ test('the key line has a Button for each mode the row has, dim when the mode is 
   await openFileView(t, await t.draw())
   await t.session.idle()
   const view = await t.draw()
-  expect(nodes(view, 'Button').map(b => b.props.hotkey)).toEqual(['v', 'd', 'r'])
+  expect(
+    nodes(view, 'Button')
+      .slice(0, 3)
+      .map(b => b.props.hotkey),
+  ).toEqual(['v', 'd', 'r'])
   press(buttonOf(view, 'diff'))
   await t.session.idle()
   expect(t.preview()).toEqual({ rowId: 'a.ts', owner: 'file', mode: 'diff' })
@@ -373,7 +431,11 @@ test('a press of e from a drawing before v changes nothing over the preview, and
   expect(t.w.ui.toasts).toEqual([])
   const tree = await t.draw()
   expect(handlesOf(tree)).toEqual([]) // still the preview, and no `e` in its key line
-  expect(nodes(tree, 'Button').map(b => b.props.hotkey)).toEqual(['v', 'r'])
+  expect(
+    nodes(tree, 'Button')
+      .slice(0, 2)
+      .map(b => b.props.hotkey),
+  ).toEqual(['v', 'r'])
   // Control: Esc goes back to the list, and `e` there flips the flag as it always did.
   expect(await t.session.closeOrBack(t.w.ports, t.m, 'person')).toEqual({ deny: 'back to the list' })
   await t.session.idle()
@@ -583,7 +645,11 @@ test('after a hot reload the state names a preview and the memory is empty: the 
   t.host.gate = new Promise<void>(go => (release = go))
   const first = await t.draw(96, undefined, undefined, fresh)
   expect(leaves(first)).toContain('Loading…')
-  expect(nodes(first, 'Button')).toHaveLength(2) // the keys are there while it loads
+  expect(
+    nodes(first, 'Button')
+      .slice(0, 2)
+      .map(b => b.props.hotkey),
+  ).toEqual(['v', 'r']) // the keys are there while it loads
   await t.draw(96, undefined, undefined, fresh) // a second drawing starts no second read
   await turn()
   expect(t.host.loads.filter(l => l === 'file a.ts view')).toHaveLength(2) // the first open, and the one read of the reload
@@ -784,7 +850,11 @@ test('a third mode draws its Button between the modes of the provider and r: rel
   await openFileView(t, await t.draw())
   await t.session.idle()
   const tree = await t.draw()
-  expect(nodes(tree, 'Button').map(b => [b.props.hotkey, b.props.label])).toEqual([
+  expect(
+    nodes(tree, 'Button')
+      .slice(0, 4)
+      .map(b => [b.props.hotkey, b.props.label]),
+  ).toEqual([
     ['v', 'view'],
     ['i', 'notes'],
     ['d', 'diff'],
@@ -813,7 +883,11 @@ test('a mode that no core key picks has no Button, and the line keeps the others
   t.w.state.set('selected', 'a.ts')
   await openFileView(t, await t.draw())
   await t.session.idle()
-  expect(nodes(await t.draw(), 'Button').map(b => b.props.hotkey)).toEqual(['v', 'r'])
+  expect(
+    nodes(await t.draw(), 'Button')
+      .slice(0, 2)
+      .map(b => b.props.hotkey),
+  ).toEqual(['v', 'r'])
 })
 
 test('the stored preview and the mode of a provider are one type: a mode that core adds fits the atom (N275)', () => {
@@ -831,25 +905,26 @@ test('the drawing of the preview names its view and holds the Buttons of its key
   const refocus = (t.session as unknown as { refocus: Refocus }).refocus
   const waited = refocus.awaitFrame(t.w.ports, () => true)
   await t.draw()
-  expect(await waited).toEqual({ view: 'preview', rows: new Map(), keys: ['preview', 'refresh'], stops: [] })
+  const frame = await waited
+  expect(frame).toMatchObject({ view: 'preview', rows: new Map(), stops: [] })
+  expect(frame?.keys.slice(0, 2)).toEqual(['preview', 'refresh']) // the key line, then the dim keys
+  expect([...(frame?.keys.slice(2) ?? [])].sort()).toEqual(DIM_IDS) // the tail is all the dim keys (issue #300)
 })
 
 test('the frame that the state gives for the preview is the same: the key line of the row the state names (Frame.view)', async () => {
   const t = await opened()
-  expect(await frameFromState(t.w.ports, t.m, { view: 'preview', row: null })).toEqual({
-    view: 'preview',
-    rows: new Map(),
-    keys: ['preview', 'refresh'],
-    stops: [],
-  })
+  const frame = await frameFromState(t.w.ports, t.m, { view: 'preview', row: null })
+  expect(frame).toMatchObject({ view: 'preview', rows: new Map(), stops: [] })
+  expect(frame.keys.slice(0, 2)).toEqual(['preview', 'refresh'])
+  expect([...frame.keys.slice(2)].sort()).toEqual(DIM_IDS)
   t.host.modes.set('a.ts', [VIEW, { id: 'diff', enabled: true }])
-  expect((await frameFromState(t.w.ports, t.m, { view: 'preview', row: null })).keys).toEqual([
+  expect((await frameFromState(t.w.ports, t.m, { view: 'preview', row: null })).keys.slice(0, 3)).toEqual([
     'preview',
     'diff',
     'refresh',
   ])
   t.w.state.set('preview', null) // no preview named: the key line has the reload key alone
-  expect((await frameFromState(t.w.ports, t.m, { view: 'preview', row: null })).keys).toEqual(['refresh'])
+  expect((await frameFromState(t.w.ports, t.m, { view: 'preview', row: null })).keys[0]).toBe('refresh')
 })
 
 // ---------------------------------------------------------------- the detail view (issue #277, L2 of #275)
@@ -1114,5 +1189,9 @@ test('a ring that nobody reported stays alone when the detail view opens and whe
 test('a footer key of the row is a press of the same key in the list only: while the preview shows, x and the digits are not drawn', async () => {
   const t = await opened()
   const tree = await t.draw()
-  expect(footerOf(tree).map(b => b.props.hotkey)).toEqual(['v', 'r'])
+  expect(
+    footerOf(tree)
+      .slice(0, 2)
+      .map(b => b.props.hotkey),
+  ).toEqual(['v', 'r'])
 })

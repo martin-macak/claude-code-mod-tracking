@@ -338,7 +338,7 @@ export class PaneSession {
         title: content?.title ?? 'Preview',
         subtitle: content?.subtitle,
         keys: body.keys,
-        back: body.dim === undefined ? undefined : BACK_BUTTON,
+        back: body.back ? BACK_BUTTON : undefined,
         dim: body.dim,
         blocks: content?.blocks,
         columns: props.bodyColumns,

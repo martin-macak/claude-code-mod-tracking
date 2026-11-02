@@ -42,11 +42,12 @@ export interface PreviewView {
   readonly subtitle?: string | undefined
   /** The Buttons of the key line: the modes of the row, then `r: reload` (`previewKeys`). */
   readonly keys: readonly FooterKey[]
-  /** The Button key of `↩ back`, drawn first on the key line. Absent: no such Button (the file preview before issue #277). */
+  /** The Button key of `↩ back`, drawn first on the key line. Absent: no such Button (the file modes: only the detail view draws it). */
   readonly back?: string | undefined
   /**
    * The keys that are no key of the view, as dim Buttons on a line of their own (issue #277, the rule of issue #200): the view has no
    * footer and no view line, so a letter with no Button would leave the pane for the prompt. A press only gives the pane the keys.
+   * Every mode draws them since issue #300 (a file mode too).
    */
   readonly dim?: readonly FooterKey[] | undefined
   /** The blocks, or `undefined` while they load. */

@@ -404,3 +404,17 @@ test('the Keys table row of d links the Diff section and the help view lists d, 
   const github = lineOf(README, '| `trackers/github/` |')
   for (const word of ['branch-pr.ts', 'github.branchPr']) assert.ok(github.includes(word), `${word} is in: ${github}`)
 })
+
+// Issue #300. The dim keys give a Button to the core keys and to the keys of the row's own tracker. A letter that is no key, a digit
+// with no key, and the key of another tracker still go to the prompt. A README that says "no letter or digit reaches the prompt"
+// promises more than the code keeps (the README says the opposite for a letter with no Button).
+test('the README scopes the claim about the prompt in the preview and the detail view to the keys that have a Button (issue #300)', () => {
+  const para = README.split('\n').find(l => l.startsWith('Keys in the preview:'))
+  assert.ok(para, 'the README has the paragraph "Keys in the preview:"')
+  assert.doesNotMatch(para, /no letter or digit reaches the prompt/)
+  assert.match(para, /letter that is no key goes to the prompt/)
+  const row = README.split('\n').find(l => l.startsWith('| Dim keys |'))
+  assert.ok(row, 'the README has the "Dim keys" row of the detail view')
+  assert.doesNotMatch(row, /a letter never goes to the prompt/)
+  assert.match(row, /letter that is no key goes to the prompt/)
+})

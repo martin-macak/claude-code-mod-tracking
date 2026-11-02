@@ -72,7 +72,7 @@ test('preview: v on a file row opens the source in place of the table: the heade
   expect(await ui.find({ text: 'src/a.ts' })).toBeDefined() // the header
   expect(await ui.find({ text: ' · code · view · 2 lines' })).toBeDefined()
   expect(await ui.find({ text: 'Esc back' })).toBeDefined()
-  expect(await buttonKeys(ui)).toEqual(['preview', 'diff', 'refresh'])
+  expect((await buttonKeys(ui)).slice(0, 3)).toEqual(['preview', 'diff', 'refresh'])
   const [code] = await ui.findAll({ type: 'Code' })
   expect(code?.props).toMatchObject({
     source: 'export const one = 1\nexport const two = 2\n',
@@ -84,12 +84,24 @@ test('preview: v on a file row opens the source in place of the table: the heade
   await ui.unmount()
 })
 
+test('preview: a press of every dim core key in the real engine leaves the preview on the screen and reads nothing (issue #300)', async ($, on) => {
+  const { ui, reads } = await opened($, on, 'one\n')
+  const dim = (await ui.findAll({ type: 'Button' })).filter(b => b.props.dimColor === true)
+  expect(dim.length).toBeGreaterThan(10) // every core key but the key line: h g a t p m e x 1 2 3 0 o d
+  for (const b of dim) {
+    await ui.press({ key: String(b.key) })
+    expect(await ui.find({ text: 'Esc back' }), `after ${String(b.props.hotkey)}`).toBeDefined() // still the preview
+  }
+  expect(reads).toHaveLength(1) // none of them read the file again
+  await ui.unmount()
+})
+
 test('preview: a source with control characters is drawn, not refused: the engine would blank the pane for one', async ($, on) => {
   // No NUL here: a NUL in the first 8 KB makes the file binary, and the provider shows a notice (file-preview.test.ts).
   const { ui } = await opened($, on, 'a\u001b[31mred\u0007\r\nb\rc\u0085\u007f\n')
   const [code] = await ui.findAll({ type: 'Code' })
   expect(code?.props.source).toBe('a\uFFFD[31mred\uFFFD\nb\uFFFDc\uFFFD\uFFFD\n')
-  expect(await buttonKeys(ui)).toEqual(['preview', 'diff', 'refresh'])
+  expect((await buttonKeys(ui)).slice(0, 3)).toEqual(['preview', 'diff', 'refresh'])
   await ui.unmount()
 })
 
@@ -99,7 +111,7 @@ test('preview: a file over the caps shows its notice and a source within the cap
   expect(await ui.find({ text: 'Truncated: the first 600 of 2500 lines.' })).toBeDefined()
   const [code] = await ui.findAll({ type: 'Code' })
   expect(String(code?.props.source).length).toBeLessThanOrEqual(60_000)
-  expect(await buttonKeys(ui)).toEqual(['preview', 'diff', 'refresh'])
+  expect((await buttonKeys(ui)).slice(0, 3)).toEqual(['preview', 'diff', 'refresh'])
   await ui.unmount()
 })
 
@@ -126,7 +138,7 @@ test('preview: an inline pane of 11 body rows (100x40) gets the whole tall tree,
   const lines = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`)
   const { ui } = await opened($, on, `${lines.join('\n')}\n`, { placement: 'inline', bodyRows: 11, bodyColumns: 96 })
   expect(await ui.find({ text: 'Esc back' })).toBeDefined() // the key line is in the tree, before the content
-  expect(await buttonKeys(ui)).toEqual(['preview', 'diff', 'refresh'])
+  expect((await buttonKeys(ui)).slice(0, 3)).toEqual(['preview', 'diff', 'refresh'])
   const [code] = await ui.findAll({ type: 'Code' })
   // No window cuts the tree: the 60 lines are all in the one Code, and the engine scrolls it.
   expect(String(code?.props.source).split('\n').filter(Boolean)).toEqual(lines)

@@ -100,6 +100,11 @@ Feature: Drive the /track pane with the keys
     When I press "v"
     Then the screen shows "localhost"
     And the screen stops showing "x: dismiss"
+    # Issue #300. The core keys are dim Buttons in the preview, so `e` and `g` do not reach the prompt. If they did, the pane would lose
+    # the keyboard and the Esc below would not go back to the list.
+    When I press "e"
+    And I press "g"
+    Then the screen shows "Esc back"
     When I press "Escape"
     Then the screen stops showing "Esc back"
     And the selected row shows "hosts"
