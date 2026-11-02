@@ -5,10 +5,11 @@ import { buttonKeyOf, CORE_KEYS, footerKeys, KeyRegistry, viewKeys } from '../co
 import type { Cell, RowRef } from '../core/interfaces/view'
 import { KEYS as GITHUB_ROW_KEYS } from '../trackers/github/actions'
 import { cellWidth } from '../ux/text/cell-width'
-import { GAP, GLYPH_BOX, INDENT, resetWidths } from '../ux/tree-data-table/columns'
+import { resetWidths } from '../ux/tree-data-table/columns'
 import { footerRows } from '../ux/tree-data-table/footer'
 import { helpModel } from '../ux/tree-data-table/help'
-import { DEFAULT_BODY_COLUMNS, GUTTER, NOTHING_MORE, TreeDataTable, UNAVAILABLE } from '../ux/tree-data-table/table'
+import { layout } from '../ux/tree-data-table/layout'
+import { DEFAULT_BODY_COLUMNS, GUTTER, TreeDataTable, UNAVAILABLE } from '../ux/tree-data-table/table'
 import { EMPTY_TEXT } from '../ux/tree-data-table/text'
 import {
   buttonOf,
@@ -98,14 +99,12 @@ test('handles are r0, r1, … across sections in pane order (U5)', () => {
   expect(handlesOf(drawn.tree)).toEqual(['r0', 'r1', 'r2'])
 })
 
-test('every drawn row has exactly one Button; the header and detail lines have none', () => {
+test('every drawn row has exactly one Button; the header has none', () => {
   const sections = [group('web', webRows(3))]
-  const { drawn } = draw(sections, { expanded: new Set(['w1']) })
+  const { drawn } = draw(sections)
   const rows = rowBoxes(drawn.tree)
   expect(rows).toHaveLength(3)
   for (const r of rows) expect(nodes(r, 'Button')).toHaveLength(1)
-  expect(detailBoxes(drawn.tree).length).toBeGreaterThan(0)
-  for (const d of detailBoxes(drawn.tree)) expect(nodes(d, 'Button')).toHaveLength(0)
   for (const h of headerBoxes(drawn.tree)) expect(nodes(h, 'Button')).toHaveLength(0)
   expect(nodes(drawn.tree, 'Button')).toHaveLength(3 + FOOTER_CORE.length)
 })
@@ -296,106 +295,6 @@ test('a leaf draws ›, and a row with children draws ▸ closed and ▾ open (B
 test('an expandedByDefault row with no child draws ›: a glyph of a fold needs something to fold (B9)', () => {
   const sections = [group('web', [row('p', { name: 'parent' }, { expandedByDefault: true, children: [] })])]
   expect(buttonOf(draw(sections).drawn.tree, 'r0').props.label).toBe('›')
-})
-
-test('an open leaf with detail() draws its lines; without detail it draws the default detail (U1)', () => {
-  const withDetail = row(
-    'a',
-    { name: 'k' },
-    { detail: () => [{ label: 'Body', cell: { text: 'Hello', fg: 'error' } }] },
-  )
-  const lines = draw([group('web', [withDetail])], { expanded: new Set(['a']) })
-  const box = only(detailBoxes(lines.drawn.tree))
-  expect(box.props).toMatchObject({ columnGap: 1 })
-  expect(texts(box)).toEqual([
-    [{ dimColor: true }, 'Body:'],
-    [{ wrap: 'wrap', color: 'error' }, 'Hello'],
-  ])
-
-  const plain = draw([group('web', [row('b', { name: 'k', description: 't' })])], { expanded: new Set(['b']) })
-  expect(leaves(only(detailBoxes(plain.drawn.tree)))).toEqual([NOTHING_MORE])
-})
-
-test('a detail line is indented under the tree text of its row', () => {
-  const kid = row('c', { name: 'child' }, { detail: () => [{ cell: { text: 'info' } }] })
-  const parent = row('p', { name: 'parent' }, { expandedByDefault: true, children: [kid] })
-  const { drawn } = draw([group('web', [parent])], { expanded: new Set(['c']) })
-  const box = only(detailBoxes(drawn.tree))
-  // The gutter, the control column and its gap, one tree level, then the glyph box.
-  expect(box.props.paddingLeft).toBe(GUTTER + (2 + GAP) + INDENT + GLYPH_BOX)
-  expect(box.children).toHaveLength(1)
-})
-
-test('a detail line keeps room for its text in a narrow pane', () => {
-  let node = row('d4', { name: 'deepest' }, { detail: () => [{ cell: { text: 'info' } }] })
-  for (let i = 3; i >= 0; i--) node = row(`d${i}`, { name: `k${i}` }, { expandedByDefault: true, children: [node] })
-  const { drawn } = draw([group('web', [node])], { bodyColumns: 30, expanded: new Set(['d4']) })
-  expect(only(detailBoxes(drawn.tree)).props.paddingLeft).toBe(30 - 20)
-})
-
-test('the default detail lists clipped and dropped cells and the link; else (nothing more to show) (G13)', () => {
-  const key: Cell = { text: 'one.example/a', href: 'https://one.example/a' }
-  const long = row('w', { control: '', name: key, description: 'x'.repeat(60) })
-  const { drawn } = draw([group('web', [long])], { bodyColumns: 40, expanded: new Set(['w']) })
-  expect(detailBoxes(drawn.tree).flatMap(leaves)).toEqual([
-    'Description:',
-    'x'.repeat(60),
-    'link:',
-    'https://one.example/a',
-  ])
-
-  const short = row('s', { control: '', name: 'k', description: 't' })
-  const none = draw([group('web', [short])], { expanded: new Set(['s']) })
-  const dim = texts(only(detailBoxes(none.drawn.tree)))
-  expect(dim).toEqual([[{ wrap: 'wrap', dimColor: true }, '(nothing more to show)']])
-})
-
-test('the default detail names a dropped column by its header, gives each badge a line with no label, and lists a link once', () => {
-  const href = 'https://a.example/'
-  const r = row(
-    'a',
-    { name: { text: 'key', href }, description: { text: 'title', href }, type: 'kind-text' },
-    { extras: [{ text: '✓ checks' }, { text: 'by me', fg: 'error' }] },
-  )
-  const { drawn } = draw([group('s', [r])], { bodyColumns: 20, expanded: new Set(['a']) })
-  expect(cellsOf(only(headerBoxes(drawn.tree)))).toHaveLength(3) // control, name, description: the type and the extras dropped
-  // The extras column has no header word and its id is not for the person: each badge is a line of its own, with no
-  // label, in its own color.
-  expect(detailBoxes(drawn.tree).flatMap(leaves)).toEqual(['Type:', 'kind-text', '✓ checks', 'by me', 'link:', href])
-  expect(
-    detailBoxes(drawn.tree)
-      .flatMap(b => texts(b))
-      .filter(([p]) => p.color === 'error'),
-  ).toHaveLength(1)
-})
-
-test('the default detail lists the badges that the column clipped, and none when they all show', () => {
-  const badges = [{ text: '✗ conflicts' }, { text: '✗ checks' }, { text: 'no worktree' }]
-  const r = row('a', { name: 'k', description: 'd' }, { extras: badges })
-  const clipped = draw([group('s', [r])], { bodyColumns: 96, expanded: new Set(['a']) })
-  // A badge line has no label: the extras column has no header word, and its id is not for the person.
-  expect(detailBoxes(clipped.drawn.tree).flatMap(leaves)).toEqual(['✗ conflicts', '✗ checks', 'no worktree'])
-  const fits = row('b', { name: 'k', description: 'd' }, { extras: [{ text: '✓ ok' }, { text: 'two' }] })
-  const whole = draw([group('s', [fits])], { bodyColumns: 96, expanded: new Set(['b']) })
-  expect(leaves(only(detailBoxes(whole.drawn.tree)))).toEqual(['(nothing more to show)'])
-})
-
-test('a 5000-character title costs at most its column in the row and 500 cells in the detail (Review Focus 2)', () => {
-  const big = 'x'.repeat(5000)
-  const sections = [group('web', [row('a', { name: 'k', description: big })])]
-  const closed = draw(sections)
-  const head = headerBoxes(closed.drawn.tree)[0] as Node
-  const titleWidth = (head.children[3] as Node).props.width as number
-  const titleText = leaves(cellsOf(only(rowBoxes(closed.drawn.tree)))[2])[0] ?? ''
-  expect(cellWidth(titleText)).toBeLessThanOrEqual(titleWidth)
-  expect(titleText.endsWith('…')).toBe(true)
-
-  const open = draw(sections, { expanded: new Set(['a']) })
-  const detail = leaves(only(detailBoxes(open.drawn.tree)))
-  expect(detail[0]).toBe('Description:')
-  expect(cellWidth(detail[1] ?? '')).toBe(500)
-  expect((detail[1] ?? '').endsWith('…')).toBe(true)
-  expect(leaves(open.drawn.tree).join('').length).toBeLessThan(1200)
 })
 
 test('a title with a newline and an ANSI code draws on one line (Review Focus 1)', () => {
@@ -779,101 +678,7 @@ test('unavailable draws one dim line', () => {
   expect(UNAVAILABLE).toBe('Tracking is unavailable. Run /track to try again.')
 })
 
-// ---------------------------------------------------------------- reasons in the detail (issue #62)
-
-const REASONS = { first: 'mentioned', all: ['updated', 'read', 'mentioned'], strongest: 'updated' } as const
-
-test('the detail of an open row lists all its reasons, strongest first (#62)', () => {
-  const r = row('a', { control: '', name: 'k', description: 't' }, { reasons: REASONS })
-  const { drawn } = draw([group('web', [r])], { expanded: new Set(['a']) })
-  // The row has nothing else to say, so the reasons are the whole detail: no "nothing more" line.
-  expect(detailBoxes(drawn.tree).flatMap(leaves)).toEqual(['reasons:', 'updated, read, mentioned'])
-})
-
-test('the reasons line follows the default detail and the detail() of a tracker', () => {
-  const key: Cell = { text: 'one.example/a', href: 'https://one.example/a' }
-  const long = row('w', { control: '', name: key, description: 'x'.repeat(60) }, { reasons: REASONS })
-  const dflt = draw([group('web', [long])], { bodyColumns: 40, expanded: new Set(['w']) })
-  expect(detailBoxes(dflt.drawn.tree).flatMap(leaves)).toEqual([
-    'Description:',
-    'x'.repeat(60),
-    'link:',
-    'https://one.example/a',
-    'reasons:',
-    'updated, read, mentioned',
-  ])
-  const own = row('b', { name: 'k' }, { reasons: REASONS, detail: () => [{ label: 'Body', cell: { text: 'Hello' } }] })
-  const custom = draw([group('web', [own])], { expanded: new Set(['b']) })
-  expect(detailBoxes(custom.drawn.tree).flatMap(leaves)).toEqual([
-    'Body:',
-    'Hello',
-    'reasons:',
-    'updated, read, mentioned',
-  ])
-})
-
-test('a row with children lists its reasons when open; a row with no reasons gets no such line', () => {
-  const kid = row('c', { name: 'child' })
-  const parent = row('p', { name: 'parent' }, { reasons: REASONS, children: [kid] })
-  const open = draw([group('web', [parent])], { expanded: new Set(['p']) })
-  expect(detailBoxes(open.drawn.tree).flatMap(leaves)).toEqual(['reasons:', 'updated, read, mentioned'])
-  const bare = row('q', { name: 'bare' }, { children: [kid] })
-  expect(detailBoxes(draw([group('web', [bare])], { expanded: new Set(['q']) }).drawn.tree)).toHaveLength(0)
-  const plain = draw([group('web', [row('b', { name: 'k', description: 't' })])], { expanded: new Set(['b']) })
-  expect(leaves(only(detailBoxes(plain.drawn.tree)))).toEqual([NOTHING_MORE])
-})
-
-// ---------------------------------------------------------------- turns in the detail (issue #69)
-
-test('R6: the detail lists the first and the last turn of an item, one line after the reasons line', () => {
-  const r = row('a', { control: '', name: 'k', description: 't' }, { reasons: REASONS, turns: { first: 3, last: 7 } })
-  const { drawn } = draw([group('web', [r])], { expanded: new Set(['a']) })
-  expect(detailBoxes(drawn.tree).flatMap(leaves)).toEqual([
-    'reasons:',
-    'updated, read, mentioned',
-    'turns:',
-    'first 3 · last 7',
-  ])
-})
-
-test('R6: an item that one turn tracked says so with the same turn twice; a row with no turns has no such line', () => {
-  const once = row('a', { name: 'k' }, { reasons: REASONS, turns: { first: 2, last: 2 } })
-  const { drawn } = draw([group('web', [once])], { expanded: new Set(['a']) })
-  expect(detailBoxes(drawn.tree).flatMap(leaves).slice(-2)).toEqual(['turns:', 'first 2 · last 2'])
-  const none = row('b', { name: 'k' }, { reasons: REASONS })
-  const plain = draw([group('web', [none])], { expanded: new Set(['b']) })
-  expect(detailBoxes(plain.drawn.tree).flatMap(leaves)).not.toContain('turns:')
-})
-
-test('R6: the turns line follows the detail() of a tracker and the default detail, and a row with children lists it too', () => {
-  const key: Cell = { text: 'one.example/a', href: 'https://one.example/a' }
-  const turns = { first: 1, last: 4 }
-  const long = row('w', { control: '', name: key, description: 'x'.repeat(60) }, { reasons: REASONS, turns })
-  const dflt = draw([group('web', [long])], { bodyColumns: 40, expanded: new Set(['w']) })
-  expect(detailBoxes(dflt.drawn.tree).flatMap(leaves).slice(-4)).toEqual([
-    'reasons:',
-    'updated, read, mentioned',
-    'turns:',
-    'first 1 · last 4',
-  ])
-  const own = row(
-    'b',
-    { name: 'k' },
-    { reasons: REASONS, turns, detail: () => [{ label: 'Body', cell: { text: 'Hello' } }] },
-  )
-  const custom = draw([group('web', [own])], { expanded: new Set(['b']) })
-  expect(detailBoxes(custom.drawn.tree).flatMap(leaves)).toEqual([
-    'Body:',
-    'Hello',
-    'reasons:',
-    'updated, read, mentioned',
-    'turns:',
-    'first 1 · last 4',
-  ])
-  const parent = row('p', { name: 'parent' }, { reasons: REASONS, turns, children: [row('c', { name: 'child' })] })
-  const open = draw([group('web', [parent])], { expanded: new Set(['p']) })
-  expect(detailBoxes(open.drawn.tree).flatMap(leaves).slice(-2)).toEqual(['turns:', 'first 1 · last 4'])
-})
+// The reasons and the turns of a row show in the quick view and the detail view (tests/quick-view.test.ts, tests/detail-view.test.ts).
 
 test('a footer key passes the surface of its press to the action; a press with no event names none', () => {
   const reg = new KeyRegistry()
@@ -887,4 +692,38 @@ test('a footer key passes the surface of its press to the action; a press with n
   press(key)
   expect(calls).toEqual(['press:a.open', 'press:a.open'])
   expect(surfaces).toEqual(['desktop', undefined])
+})
+
+// Issue #278, C1 and C3. A leaf has no open state: its id in `expanded` changes nothing, and an open row draws its children and no
+// detail lines. The detail of a row is the quick view and the detail view.
+test('a 5000-character title costs at most its column in the row (Review Focus 2)', () => {
+  const sections = [group('web', [row('a', { name: 'k', description: 'x'.repeat(5000) })])]
+  const { drawn } = draw(sections)
+  const head = headerBoxes(drawn.tree)[0] as Node
+  const titleWidth = (head.children[3] as Node).props.width as number
+  const titleText = leaves(cellsOf(only(rowBoxes(drawn.tree)))[2])[0] ?? ''
+  expect(cellWidth(titleText)).toBeLessThanOrEqual(titleWidth)
+  expect(titleText.endsWith('…')).toBe(true)
+  expect(leaves(drawn.tree).join('').length).toBeLessThan(1200)
+})
+
+test('a leaf in expanded draws no detail lines and stays a leaf (C1, C3)', () => {
+  const withDetail = row('a', { name: 'k' }, { detail: () => [{ label: 'Body', cell: { text: 'Hello' } }] })
+  const plain = row('b', { name: 'k', description: 't' }, { expandedByDefault: true })
+  const sections = [group('web', [withDetail, plain])]
+  const { drawn } = draw(sections, { expanded: new Set(['a', 'b']) })
+  expect(detailBoxes(drawn.tree)).toHaveLength(0)
+  expect(rowBoxes(drawn.tree)).toHaveLength(2)
+  expect(buttonOf(drawn.tree, 'r0').props.label).toBe('›')
+  expect(buttonOf(drawn.tree, 'r1').props.label).toBe('›')
+  expect(layout(sections, view({ expanded: new Set(['a', 'b']) }))[0]?.rows.map(r => r.open)).toEqual([false, false])
+})
+
+test('an open row with children draws the children and no detail lines of its own or of a child (C1)', () => {
+  const kid = row('c', { name: 'child' }, { detail: () => [{ cell: { text: 'info' } }] })
+  const parent = row('p', { name: 'parent' }, { detail: () => [{ cell: { text: 'more' } }], children: [kid] })
+  const { drawn } = draw([group('web', [parent])], { expanded: new Set(['p', 'c']) })
+  expect(rowBoxes(drawn.tree)).toHaveLength(2)
+  expect(detailBoxes(drawn.tree)).toHaveLength(0)
+  expect(buttonOf(drawn.tree, 'r0').props.label).toBe('▾')
 })

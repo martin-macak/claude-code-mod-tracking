@@ -12,17 +12,7 @@ import { normaliseCell } from '../text/cell-width'
 import { wrapRows } from '../text/wrap'
 import { box, button, text } from './el'
 import { glyphOf, type LaidGroup, type LaidRow } from './layout'
-import {
-  bareParts,
-  type Draw,
-  groupTitle,
-  moreRowOf,
-  rowLines,
-  rowParts,
-  type Solving,
-  solving,
-  tableHeader,
-} from './rows'
+import { bareParts, type Draw, groupTitle, moreRowOf, rowParts, type Solving, solving, tableHeader } from './rows'
 import { DEFAULT_BODY_COLUMNS, GUTTER, HEADER_ROWS, TITLE_ROWS } from './shape'
 import { bottomRows, statusRows } from './status'
 import { type Plan, planWindow, rowsIn, type Unit } from './window'
@@ -62,8 +52,8 @@ function unitsOf(d: Draw, laid: readonly LaidGroup[]): Pick<Windowed, 'units' | 
       return
     }
     chrome.push(CHROME)
-    for (const [at, r] of s.rows.entries()) {
-      units.push({ section, kind: 'row', at, rows: 1, lines: rowLines(d, solved, r) })
+    for (const at of s.rows.keys()) {
+      units.push({ section, kind: 'row', at, rows: 1, lines: 1 })
     }
     if (s.more > 0) units.push({ section, kind: 'more', at: 0, rows: 0, lines: 1 })
   })

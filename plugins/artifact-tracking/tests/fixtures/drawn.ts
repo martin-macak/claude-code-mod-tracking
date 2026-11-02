@@ -24,7 +24,7 @@ export function leaves(node: unknown): string[] {
   return isNode(node) ? node.children.flatMap(leaves) : []
 }
 
-/** The Boxes of the detail lines of an open row: they hold a Text that wraps. */
+/** The Boxes that hold a Text that wraps. A row draws none (issue #278): a test asserts that there is none. */
 export const detailBoxes = (tree: unknown): Node[] =>
   nodes(tree, 'Box').filter(b => b.children.some(c => isNode(c) && c.type === 'Text' && c.props.wrap === 'wrap'))
 

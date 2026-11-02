@@ -616,6 +616,24 @@ test('o on a leaf, or with no row, does nothing and writes no atom (B8)', async 
   expect(t.w.state.get('expanded') ?? []).toEqual([])
 })
 
+// Issue #278, C1 and C3. The `expanded` atom holds rows with children (and the group ids of #256). An id of a leaf in it, kept from an
+// older version, changes nothing: the leaf stays a leaf, draws no detail line, and no key writes the atom for it.
+test('an old leaf id in expanded changes nothing: no detail line, the glyph of a leaf, and the atom is not written (C1, C3)', async () => {
+  const t = setup([web('a', { detail: () => [{ label: 'Body', cell: { text: 'Hello' } }] }), web('b')])
+  t.w.state.set('expanded', ['a'])
+  t.w.state.set('selected', 'a')
+  const tree = await t.draw()
+  expect(handlesOf(tree)).toEqual(['r0', 'r1'])
+  expect(buttonOf(tree, 'r0').props.label).toBe('›')
+  expect(leaves(tree)).not.toContain('Hello')
+  await t.pressKey('open') // `o` is not live on a leaf
+  expect(t.w.state.get('expanded')).toEqual(['a'])
+  press(buttonOf(await t.draw(), 'r0')) // Enter on the row that holds the ring opens the detail view, not a fold
+  await t.session.idle()
+  expect(t.w.state.get('preview')).toEqual({ rowId: 'a', owner: 'web', mode: 'detail' })
+  expect(t.w.state.get('expanded')).toEqual(['a'])
+})
+
 // Issue #108, option 2, and issue #277 (rule of the click, B7). A press of a row Button is Enter or a click. A press on a row that is not
 // the selected one selects it, and the ring follows, as after `x` and the digits, so Tab and the arrows go on from the row the person
 // chose. A press on the row that holds the ring opens its detail view.

@@ -4,7 +4,7 @@
 // and every other row as a bare focus stop (windowed.ts). Pure.
 import { HEADER_ROWS, ROW_GAP, TITLE_ROWS } from './shape'
 
-/** One thing the window moves over: a row with its detail lines, the "N more" row of a section, or a section with no row. */
+/** One thing the window moves over: a row, the "N more" row of a section, or a section with no row. */
 export interface Unit {
   /** The index of its section. Units run in section order. */
   readonly section: number

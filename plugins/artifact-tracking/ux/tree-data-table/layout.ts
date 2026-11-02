@@ -45,7 +45,8 @@ export function layout(groups: readonly GroupSpec[], view: LayoutView, halve = 0
     left -= take
     const rows: LaidRow[] = []
     const visit = (row: TreeRow, depth: number): void => {
-      const open = (row.expandedByDefault === true) !== view.expanded.has(row.id)
+      // A leaf has no open state (issue #278): its id in `expanded`, or `expandedByDefault`, changes nothing.
+      const open = canOpen(row) && (row.expandedByDefault === true) !== view.expanded.has(row.id)
       rows.push({ row, depth, open, handle: `r${next++}` })
       if (open) for (const child of row.children ?? []) visit(child, depth + 1)
     }

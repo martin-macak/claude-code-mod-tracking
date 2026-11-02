@@ -529,9 +529,9 @@ test('the tree is as tall as the body with the quick view on, in both forms and 
   }
 })
 
-// Review of PR #284 (Codex P2): an open selected row keeps its detail lines in the list, so the quick view leaves them. The pane with
-// the quick view on is never taller than the pane with the Selected: line alone, and the footer stays in view.
-test('an open selected row with a long detail: the tree is as tall as with the quick view hidden, the footer in view, in both forms', async () => {
+// Review of PR #284 (Codex P2), after issue #278: a selected row with a long detail and an old id in `expanded` draws no detail line in the
+// list. The pane with the quick view on is never taller than the pane with the Selected: line alone, and the footer stays in view.
+test('a selected row with a long detail and an old id in expanded: the tree is as tall as with the quick view hidden, the footer in view, in both forms', async () => {
   const note = (n: number) => ({ label: `note ${n}`, cell: { text: `text of note ${n}` } })
   const open = web('open', { detail: () => [1, 2, 3, 4, 5, 6, 7, 8].map(note) })
   const t = setup([open, ...webs(10)], LINKS)
@@ -551,7 +551,7 @@ test('an open selected row with a long detail: the tree is as tall as with the q
     // The compact form has no `Selected:` line while the quick view is hidden: `e` adds that one row, which it cannot give back.
     expect(heightOf(tree, cols), at).toBeLessThanOrEqual(Math.max(rows, hidden + (form === 'compact' ? 1 : 0)))
     expect(footerOf(tree).length, at).toBeGreaterThan(0)
-    expect(words(tree), at).toContain('text of note 1') // the open row shows its own detail lines
+    expect(words(tree), at).toContain('text of note 1') // the quick view shows the lines, the list none
   }
 })
 
