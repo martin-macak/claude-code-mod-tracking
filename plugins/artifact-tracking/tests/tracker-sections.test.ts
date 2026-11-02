@@ -297,6 +297,26 @@ test('process rows: the name in the Name cell, no description, the kind with a s
   expect(s.band).toEqual({ label: 'Processes', count: 3, failing: 1, rank: 10 })
 })
 
+test('an unfindable docker row in state unknown says why in the Description cell; findable and detached rows keep it empty', async () => {
+  const t = await paneWorld()
+  const docker = WORLD_PROCESSES[1]!
+  t.w.state.set('processes', [
+    { ...docker, id: 'docker:ctr:docker run -d nginx', name: 'docker run -d nginx', state: 'unknown' },
+    { ...docker, id: 'docker:ctr:with-id', name: 'docker run -d redis', containerId: 'a1b2c3d4e5f6', state: 'unknown' },
+    docker,
+    { ...WORLD_PROCESSES[2]!, state: 'unknown' },
+  ] as unknown as Json)
+  const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'processes')
+  expect(s.rows.map(r => [r.id, cell(r, 'description').text, cell(r, 'status').text])).toEqual([
+    ['docker:ctr:docker run -d nginx', 'no id or --name: Docker cannot find it', 'unknown'],
+    ['docker:ctr:with-id', '', 'unknown'],
+    ['docker:db', '', 'up'],
+    ['pid:77', '', 'unknown'],
+  ])
+  // `unknown` is the gone token, not the failed one: the band does not count it red.
+  expect(s.band?.failing).toBe(0)
+})
+
 test('the processes note is the docker issue when there is one, else the count', async () => {
   const t = await paneWorld()
   const note = async () => section(await t.m.paneData(t.w.ports, NO_VIEW), 'processes').note?.text

@@ -12,7 +12,10 @@ export type ProcessKind =
   | 'screen'
   | 'detached-process'
 
-/** `unknown`: a detached process whose command names a variable that the mod could not expand, and none was found. */
+/**
+ * `unknown`: a detached process whose command names a variable that the mod could not expand, and none was found; or a docker
+ * row with no id and no name that Docker allows, which the probe cannot find (issue #241).
+ */
 export type ProcessState = 'running' | 'up' | 'completed' | 'failed' | 'killed' | 'exited' | 'unhealthy' | 'unknown'
 
 export type ProcessRecord = {

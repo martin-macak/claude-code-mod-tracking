@@ -10,6 +10,7 @@ import { sweptAway } from '../../core/lib/hidden'
 import { textCells } from '../../core/lib/rows'
 import type { ProcessesConfig } from './config'
 import { displayName } from './names'
+import { dockerRowIsFindable, UNSEEN_REASON } from './probe'
 import { processReasons } from './reasons'
 import { asRows, expired, overCap } from './rows'
 import { ENDED_STATES, STATE_TOKEN } from './states'
@@ -22,7 +23,8 @@ const failing = (r: ProcessRecord): boolean => STATE_TOKEN[r.state] === 'failed'
 /**
  * A process row can be neither dismissed nor marked. The Name cell is the name of the process, shown from `./` for a path
  * under the session root and from `~/` for a path under the home folder, and it keeps both ends when it is cut. The Type
- * cell is the kind. The Description cell is empty: the kind was once the Name cell too, as a short word (`bg`, `docker`),
+ * cell is the kind. The Description cell is empty, except for a docker row that reads `unknown` because the probe cannot find it: it
+ * says why (issue #241). The kind was once the Name cell too, as a short word (`bg`, `docker`),
  * and the name was the Description (issue #63, L2). The row has no level, so its facets hold none.
  */
 function processRow(r: ProcessRecord, root: string | undefined, home: string | undefined): TreeRow {
@@ -33,7 +35,7 @@ function processRow(r: ProcessRecord, root: string | undefined, home: string | u
     cells: textCells({
       key: displayName(r.name, root, home),
       keyClip: 'middle',
-      title: '',
+      title: r.kind === 'docker-container' && r.state === 'unknown' && !dockerRowIsFindable(r) ? UNSEEN_REASON : '',
       type: r.kind.replace('-', ' '),
       status,
     }),
