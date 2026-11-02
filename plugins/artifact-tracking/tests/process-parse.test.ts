@@ -2205,11 +2205,51 @@ test('time: the command after time -p or time -- is read as the command', () => 
   expect(names('time -p sleep 10 &')).toEqual(['sleep 10'])
   expect(names('time -- sleep 10 &')).toEqual(['sleep 10'])
   expect(names('time -p ! sleep 10 &')).toEqual(['sleep 10'])
-  // Only `setsid time -p ...` reaches the second `stripWrappers` call, after `stripSetsid`. `time -p setsid ...` is the
-  // other order.
+  // `setsid time -p ...` is stripped in the loop of `stripWrappers`, which reads the whole and redir flags for `time`.
+  // `time -p setsid ...` is the other order.
   expect(names('setsid time -p sleep 10 &')).toEqual(['sleep 10'])
   expect(names('time -p setsid sleep 10 &')).toEqual(['sleep 10'])
   expect(composeProject('time -p docker compose up -d')).toBe('app')
+})
+
+// A wrapper that runs the next command gives its row the name of that command (issue #242).
+test('timeout, ionice and other wrappers: the row is named after the command behind them', () => {
+  expect(names('timeout 600 npm run dev &')).toEqual(['npm run dev'])
+  expect(names('timeout -s KILL 600 npm run dev &')).toEqual(['npm run dev'])
+  expect(names('ionice -c3 npm run dev &')).toEqual(['npm run dev'])
+  expect(names('stdbuf -oL npm run dev &')).toEqual(['npm run dev'])
+  expect(names('timeout 5 setsid -f node w.js')).toEqual(['node w.js'])
+  expect(names('setsid -f timeout 5 node w.js')).toEqual(['node w.js'])
+  // `ionice --pid=123 456 &` changes running processes: the row is the ionice call, as for `-p`, not the word 456.
+  expect(names('ionice --pid=123 456 &')).toEqual(['ionice --pid=123 456'])
+  // `doas -C FILE` checks the policy and runs no command: the row is the doas call, not the command behind it.
+  expect(names('doas -C /etc/doas.conf npm run dev &')).toEqual(['doas -C /etc/doas.conf npm run dev'])
+})
+
+// `setsid -f` forks on its own, also behind another wrapper and in the glued and long forms (issue #242). Without -f the
+// row is no detached process.
+test('setsid behind a wrapper: -f, -fw and --fork fork; the row has no pid and gets no pid', () => {
+  for (const cmd of [
+    'timeout 5 setsid -f node worker.js',
+    'timeout 5 setsid -fw node worker.js',
+    'sudo setsid --fork node worker.js',
+  ]) {
+    const rows = parseBashProcesses(`${cmd}; echo $!`, out('4242\n'), { toolUseId: 't' })
+    expect(
+      rows.map(r => [r.fingerprint, r.pid]),
+      cmd,
+    ).toEqual([['node worker.js', undefined]])
+  }
+  expect(parseBashProcesses('timeout 5 setsid node worker.js', out(''))).toEqual([])
+})
+
+// The external `time` takes `-f FMT` and `-o FILE` (issue #242, R6).
+test('an external time (quoted, or behind a wrapper) gives the row the name of the command behind it', () => {
+  expect(names("'time' -f %e npm run dev &")).toEqual(['npm run dev'])
+  expect(names('\\time -o out.txt npm run dev &')).toEqual(['npm run dev'])
+  expect(names('sudo time -v make dev &')).toEqual(['make dev'])
+  expect(names('nohup time -f %e npm start &')).toEqual(['npm start'])
+  expect(names('time -x sleep 10 &')).toEqual(['-x sleep 10'])
 })
 
 // An `echo $!` that prints to the tool result gives the pid line. One whose output goes to a file, to a pipe or into a
@@ -2602,18 +2642,19 @@ test('parseBashProcesses reads a quoted or escaped reserved word as a command', 
 
 // Bash reads an option of `time` only when it was typed whole. `time "-p" sleep 10 &` runs a command named `-p` with the
 // arguments `sleep 10`, so the job is not `sleep` and a compose command after it starts no project (Codex review of the
-// PR). `setsid time ...` reaches the second `stripWrappers` call, after `stripSetsid`, and must read the flags too.
+// PR). `setsid time ...` is stripped in the same loop of `stripWrappers`, which must read the flags too.
 test('parseBashProcesses reads a quoted or escaped option of time as the command', () => {
   expect(detachedOf('time "-p" sleep 10 &').map(r => r.name)).toEqual(['-p sleep 10'])
   expect(detachedOf("time '-p' sleep 10 &").map(r => r.name)).toEqual(['-p sleep 10'])
   expect(detachedOf('time \\-p sleep 10 &').map(r => r.name)).toEqual(['-p sleep 10'])
   expect(detachedOf('time "--" sleep 10 &').map(r => r.name)).toEqual(['-- sleep 10'])
   expect(detachedOf('time -p "--" sleep 10 &').map(r => r.name)).toEqual(['-- sleep 10'])
-  expect(detachedOf('setsid time "-p" sleep 10 &').map(r => r.name)).toEqual(['-p sleep 10'])
-  expect(detachedOf('setsid time -p "--" sleep 10 &').map(r => r.name)).toEqual(['-- sleep 10'])
+  // Behind a program wrapper it is the external `time`, which reads its options after the shell removed the quotes.
+  expect(detachedOf('setsid time "-p" sleep 10 &').map(r => r.name)).toEqual(['sleep 10'])
+  expect(detachedOf('setsid time -p "--" sleep 10 &').map(r => r.name)).toEqual(['sleep 10'])
   expect(composeProject('time "-p" docker compose up -d')).toBeUndefined()
   expect(composeProject('time -p "--" docker compose up -d')).toBeUndefined()
-  expect(composeProject('setsid time "-p" docker compose up -d')).toBeUndefined()
+  expect(composeProject('setsid time "-p" docker compose up -d')).toBe('app')
   // The controls: the same options typed whole are still skipped.
   expect(detachedOf('setsid time -p -- sleep 10 &').map(r => r.name)).toEqual(['sleep 10'])
   expect(composeProject('time -p -- docker compose up -d')).toBe('app')
@@ -2621,17 +2662,17 @@ test('parseBashProcesses reads a quoted or escaped option of time as the command
 
 // A redirection between `time` and an option ends the options: `time >/dev/null -p sleep 10 &` runs a command named `-p`
 // with the arguments `sleep 10` (bash 3.2 and 5.3), so the job is not `sleep` and a compose command after it starts no
-// project (Codex review of the PR). `setsid time ...` reaches the second `stripWrappers` call, which must read the flags too.
+// project (Codex review of the PR). `setsid time ...` is stripped in the same loop of `stripWrappers`, which must read the flags too.
 test('parseBashProcesses reads a word behind a redirection as the command, not as an option of time', () => {
   expect(detachedOf('time >/dev/null -p sleep 10 &').map(r => r.name)).toEqual(['-p sleep 10'])
   expect(detachedOf('time 2>&1 -p sleep 10 &').map(r => r.name)).toEqual(['-p sleep 10'])
   expect(detachedOf('time -p >/dev/null -- sleep 10 &').map(r => r.name)).toEqual(['-- sleep 10'])
   expect(detachedOf('time <<EOF -p sleep 10 &\nbody\nEOF').map(r => r.name)).toEqual(['-p sleep 10'])
-  expect(detachedOf('setsid time >/dev/null -p sleep 10 &').map(r => r.name)).toEqual(['-p sleep 10'])
-  expect(detachedOf('setsid time -p >/dev/null -- sleep 10 &').map(r => r.name)).toEqual(['-- sleep 10'])
+  expect(detachedOf('setsid time >/dev/null -p sleep 10 &').map(r => r.name)).toEqual(['sleep 10'])
+  expect(detachedOf('setsid time -p >/dev/null -- sleep 10 &').map(r => r.name)).toEqual(['sleep 10'])
   expect(composeProject('time >/dev/null -p docker compose up -d')).toBeUndefined()
   expect(composeProject('time -p >/dev/null -- docker compose up -d')).toBeUndefined()
-  expect(composeProject('setsid time >/dev/null -p docker compose up -d')).toBeUndefined()
+  expect(composeProject('setsid time >/dev/null -p docker compose up -d')).toBe('app')
   // The controls: a redirection behind the options, in front of the command, is no matter.
   expect(detachedOf('setsid time -p >/dev/null sleep 10 &').map(r => r.name)).toEqual(['sleep 10'])
   expect(detachedOf('time -p -- >/dev/null sleep 10 &').map(r => r.name)).toEqual(['sleep 10'])
@@ -2648,4 +2689,13 @@ test('parseBashProcesses reads the lines after an arithmetic shift', () => {
   expect(detachedOf('x=$((1<<2))\nnohup node srv.js &').map(r => r.name)).toEqual(['node srv.js'])
   // A heredoc next to it still hides its body.
   expect(project('x=$((1<<2))\ncat <<EOF\ncd /y\nEOF\ncd /x\ndocker compose up -d')).toBe('x')
+})
+
+// An external wrapper reads its options after the shell removed quotes and redirections (Codex review of the PR).
+test('timeout, ionice and setsid read a quoted option as an option', () => {
+  expect(detachedOf('ionice "-c3" npm run dev &').map(r => r.name)).toEqual(['npm run dev'])
+  expect(detachedOf('timeout "-s" KILL 600 npm run dev &').map(r => r.name)).toEqual(['npm run dev'])
+  expect(detachedOf('ionice >/dev/null -c3 npm run dev &').map(r => r.name)).toEqual(['npm run dev'])
+  const rows = parseBashProcesses('setsid "-f" node worker.js; echo $!', out('4242\n'), { toolUseId: 'toolu_q' })
+  expect(rows.map(r => [r.fingerprint, r.pid])).toEqual([['node worker.js', undefined]])
 })

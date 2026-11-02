@@ -7,7 +7,6 @@ import {
   scopedVars,
   splitShell,
   stripLead,
-  stripWrappers,
   unmarkDollars,
 } from '../../core/lib/shell'
 import { nameOfId } from './probe'
@@ -385,18 +384,6 @@ function substitutedNames(command: string): ReadonlySet<string> {
 const plainEnv = (env: Record<string, string>): Record<string, string> =>
   Object.fromEntries(Object.entries(env).map(([k, v]) => [k, unmarkDollars(v)]))
 
-/** `setsid [-f] [-w] cmd`: forks on its own only with -f. */
-function stripSetsid(words: string[]): { words: string[]; fork: boolean } {
-  if (words[0] !== 'setsid') return { words, fork: false }
-  let i = 1
-  let fork = false
-  while (i < words.length && words[i]!.startsWith('-')) {
-    if (words[i] === '-f' || words[i] === '--fork') fork = true
-    i++
-  }
-  return { words: words.slice(i), fork }
-}
-
 /** Shell builtins end with the shell: `echo x &` is no process to follow. `[[` is a keyword that works as one. */
 const BUILTINS = new Set([
   'echo',
@@ -506,14 +493,9 @@ export function parseBashProcesses(
     if (seg.bg) sawBg = true
     // The marked words tell `'$F'` and `\$F` (as typed) from `$F` and `"$F"` (expanded). Only the variables read them.
     const pre = stripLead({ words: seg.marked, whole: seg.whole, redir: seg.redir })
-    const ss = stripSetsid(pre.words)
-    // `pre.words` is the end of `seg.marked` and `stripSetsid` drops from the front, so `ss.words` is the end too: its
-    // flags are the end of `seg.whole` and `seg.redir`. `stripWrappers` reads them for the options of `time`.
-    const from = seg.whole.length - ss.words.length
-    const inner = stripWrappers(ss.words, seg.whole.slice(from), seg.redir.slice(from))
-    const marked = inner.words
+    const marked = pre.words
     const words = marked.map(unmarkDollars)
-    const env = { ...exported, ...plainEnv(pre.env), ...plainEnv(inner.env) }
+    const env = { ...exported, ...plainEnv(pre.env) }
     if (words.length === 0) {
       // A line of assignments only (`L=/x`) sets shell variables. `L=/x cmd` sets them for `cmd` alone.
       if (pre.words.length === 0) for (const [k, v] of Object.entries(pre.env)) setVar(k, v, seg.scope)
@@ -600,11 +582,11 @@ export function parseBashProcesses(
       continue
     }
 
-    if ((seg.bg || ss.fork) && !BUILTINS.has(head)) {
+    if ((seg.bg || pre.fork) && !BUILTINS.has(head)) {
       // The shell expands the variables before it runs the command, and `ps` shows the result.
       const pwd = dirs.get(seg.scope)
       const typed = marked.map(w => unmarkDollars(expandVars(w, n => vars.get(seg.scope, n), pwd))).join(' ')
-      const d: Detached = { fingerprint: typed.slice(0, FINGERPRINT_MAX), viaShell: ss.fork && !seg.bg }
+      const d: Detached = { fingerprint: typed.slice(0, FINGERPRINT_MAX), viaShell: pre.fork && !seg.bg }
       detached.push(d)
       lastBg = d
     }

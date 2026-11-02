@@ -121,6 +121,89 @@ function skipTimeOptions(words: readonly string[], from: number, plain: (i: numb
 }
 
 /**
+ * How a wrapper that runs the next command reads its own words (issue #242). `short`: the letters of the options that take
+ * a value (`-s KILL`, `-sKILL`). `long`: the long options that take a value in the next word (`--signal KILL`; the glued
+ * `--signal=KILL` is one word and needs no entry). `inert`: letters of an option that makes the wrapper run no command
+ * (`ionice -p PID` changes a process that runs). `inertLong`: the long forms of those (`--pid`). `positional`: how many
+ * words follow the options (`timeout` has its DURATION). `fork`: the option that forks on its own, in both forms
+ * (`setsid -f`, `setsid --fork`). `needsCommand`: with no word left, the wrapper runs no command and stays
+ * (`caffeinate -t 60` only holds the system awake).
+ */
+type WrapperSpec = {
+  short: string
+  long?: readonly string[]
+  inert?: string
+  inertLong?: readonly string[]
+  positional?: number
+  fork?: { short: string; long: string }
+  needsCommand?: boolean
+}
+
+/**
+ * The wrappers that share one option grammar. `sudo`, `env`, `nice`, `nohup`, `time`, `command`, `exec` and `builtin`
+ * need rules of their own and stay in `stripWrappers`.
+ */
+const WRAPPER_SPECS: Readonly<Record<string, WrapperSpec>> = {
+  timeout: { short: 'sk', long: ['--signal', '--kill-after'], positional: 1 },
+  gtimeout: { short: 'sk', long: ['--signal', '--kill-after'], positional: 1 },
+  ionice: {
+    short: 'cnpPu',
+    long: ['--class', '--classdata', '--pid', '--pgid', '--uid'],
+    inert: 'pPu',
+    inertLong: ['--pid', '--pgid', '--uid'],
+  },
+  stdbuf: { short: 'ioe', long: ['--input', '--output', '--error'] },
+  setsid: { short: '', fork: { short: 'f', long: '--fork' } },
+  caffeinate: { short: 'tw', inert: 'w', needsCommand: true },
+  // `doas -C FILE` only checks the policy file: "No command is executed."
+  doas: { short: 'uC', inert: 'C' },
+}
+
+/** The options of the external `time` (`/usr/bin/time`) that take a value: `-f FMT`, `-o FILE`. */
+const EXTERNAL_TIME: WrapperSpec = { short: 'fo', long: ['--format', '--output'] }
+
+/**
+ * Where the command starts behind the wrapper `spec` whose words begin at `from` (the word after the name), and whether
+ * it forks on its own. `at` is -1 when the wrapper runs no command (`ionice -p 1`). Options come first, `--` ends them,
+ * then come the positional words. A short option may be glued to the next ones (`-dimsu`) or to its value (`-sKILL`).
+ * The wrapper is an external program, so quotes and redirections do not matter: the shell removes them before it starts
+ * the program (`ionice "-c3" cmd` passes `-c3`). Only the reserved word `time` reads typed flags (`skipTimeOptions`).
+ */
+function skipWrapperOptions(spec: WrapperSpec, words: readonly string[], from: number): { at: number; fork: boolean } {
+  let i = from
+  let fork = false
+  let inert = false
+  for (; i < words.length; i++) {
+    const w = words[i]!
+    if (w === '--') {
+      i++
+      break
+    }
+    if (w.startsWith('--')) {
+      if (w === spec.fork?.long) fork = true
+      // `--pid=123` is inert too: the name is the part before the `=`.
+      if (spec.inertLong?.includes(w.split('=', 1)[0]!)) inert = true
+      if (spec.long?.includes(w)) i++
+      continue
+    }
+    if (!w.startsWith('-') || w === '-') break
+    for (let k = 1; k < w.length; k++) {
+      const c = w[k]!
+      if (c === spec.fork?.short) fork = true
+      if (spec.short.includes(c)) {
+        if (spec.inert?.includes(c)) inert = true
+        if (k === w.length - 1) i++
+        break
+      }
+    }
+  }
+  if (inert) return { at: -1, fork }
+  const at = Math.min(i + (spec.positional ?? 0), words.length)
+  if (spec.needsCommand && at >= words.length) return { at: -1, fork }
+  return { at, fork }
+}
+
+/**
  * The compounds that a segment opens, in order, and the index of the word of the last one. The scan starts at the first
  * word and goes past the reserved words and `time [-p]` up to the command. A quoted or escaped word is no reserved word.
  */
@@ -1041,10 +1124,18 @@ export function stripReserved(words: readonly string[], whole?: readonly boolean
 }
 
 /**
- * Strips `VAR=x`, `sudo`, `env`, `time`, `command`, `exec`, `builtin`, `nice`, `nohup` from the front. Returns the env
- * it set. `time` takes its options with it (`time -p`, `time --`), but only the ones that were typed whole and have no
- * redirection right before them: `time "-p" git` and `time >/dev/null -p git` run a command named `-p`. `command`,
- * `exec` and `builtin` leave their options in place.
+ * Strips `VAR=x`, `sudo`, `env`, `time`, `command`, `exec`, `builtin`, `nice`, `nohup`, `timeout`, `gtimeout`, `ionice`,
+ * `stdbuf`, `setsid`, `caffeinate`, `doas` from the front. Returns the env it set, and `fork`: a `setsid -f` was stripped.
+ *
+ * `time` takes its options with it (`time -p`, `time --`), but only the ones that were typed whole and have no
+ * redirection right before them: `time "-p" git` and `time >/dev/null -p git` run a command named `-p`. A `time` that
+ * runs behind a program wrapper (`sudo time -v make`) or that was quoted (`'time' -f %e git`) is the external
+ * `/usr/bin/time`: it also takes `-f FMT` and `-o FILE`, and any other flag, quoted or not. `command`, `exec` and `builtin` leave their
+ * options in place.
+ *
+ * `timeout` and the like take their options and positional words (`timeout -s KILL 5`) with them (issue #242). They
+ * are external programs and read quoted options too. `ionice -p` and `caffeinate -t 60` run no command, so they stay.
+ *
  * `whole` says for each word that it was typed whole (`Segment.whole`, as for `stripReserved`), and `redir` that a
  * redirection stood right before it (`Segment.redir`). Without them, every word counts as typed and no redirection stood
  * anywhere. A caller that has the flags must pass them: `stripLead` does.
@@ -1057,9 +1148,12 @@ export function stripWrappers(
   words: string[]
   env: Record<string, string>
   nohup: boolean
+  fork: boolean
 } {
   const env: Record<string, string> = {}
   let nohup = false
+  let fork = false
+  let program = false
   let i = 0
   while (i < words.length) {
     const w = words[i]!
@@ -1070,6 +1164,7 @@ export function stripWrappers(
       continue
     }
     if (w === 'sudo' || w === 'env' || w === 'nice') {
+      program = true
       i++
       // Their own flags. `-u user`, `-n 10` take a value.
       while (i < words.length && words[i]!.startsWith('-')) {
@@ -1080,7 +1175,11 @@ export function stripWrappers(
     }
     // `time` has options of its own: `-p` and `--` belong to it, as `compoundLead` reads them too (issue #227).
     if (w === 'time') {
-      i = skipTimeOptions(words, i + 1, k => whole?.[k] !== false && redir?.[k] !== true)
+      const plain = (k: number) => whole?.[k] !== false && redir?.[k] !== true
+      if (whole?.[i] === false || program) {
+        program = true
+        i = skipWrapperOptions(EXTERNAL_TIME, words, i + 1).at
+      } else i = skipTimeOptions(words, i + 1, plain)
       continue
     }
     // The options of these three stay: `command -v git` looks `git` up and runs nothing.
@@ -1089,13 +1188,25 @@ export function stripWrappers(
       continue
     }
     if (w === 'nohup') {
+      program = true
       nohup = true
       i++
       continue
     }
+    // `timeout`, `ionice`, `stdbuf`, `setsid`, `caffeinate` and `doas` run the next command with options of their own
+    // (issue #242).
+    const spec = Object.hasOwn(WRAPPER_SPECS, w) ? WRAPPER_SPECS[w] : undefined
+    if (spec) {
+      const got = skipWrapperOptions(spec, words, i + 1)
+      if (got.at === -1) break
+      program = true
+      fork ||= got.fork
+      i = got.at
+      continue
+    }
     break
   }
-  return { words: words.slice(i), env, nohup }
+  return { words: words.slice(i), env, nohup, fork }
 }
 
 /**
@@ -1115,6 +1226,7 @@ export function stripLead(seg: {
   const { words, whole, redir } = seg
   const env: Record<string, string> = {}
   let nohup = false
+  let fork = false
   let rest = words
   for (;;) {
     // Both helpers only drop words from the front, so `rest` is always the end of `words`: its flags are the end of `whole`.
@@ -1123,7 +1235,8 @@ export function stripLead(seg: {
     const got = stripWrappers(kept, whole.slice(words.length - kept.length), redir.slice(words.length - kept.length))
     Object.assign(env, got.env)
     nohup ||= got.nohup
-    if (got.words.length === rest.length) return { words: got.words, env, nohup }
+    fork ||= got.fork
+    if (got.words.length === rest.length) return { words: got.words, env, nohup, fork }
     rest = got.words
   }
 }

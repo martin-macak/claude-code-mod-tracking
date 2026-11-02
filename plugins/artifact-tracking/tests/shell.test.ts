@@ -76,8 +76,13 @@ test('stripWrappers gives time only -p and then --, each once: any other word is
 
 test('stripWrappers drops only the options right behind time', () => {
   expect(stripWrappers(['time', 'git', '-p', 'push']).words).toEqual(['git', '-p', 'push'])
-  expect(stripWrappers(['git', 'time', '-p'])).toEqual({ words: ['git', 'time', '-p'], env: {}, nohup: false })
-  expect(stripWrappers(['time', '-p'])).toEqual({ words: [], env: {}, nohup: false })
+  expect(stripWrappers(['git', 'time', '-p'])).toEqual({
+    words: ['git', 'time', '-p'],
+    env: {},
+    nohup: false,
+    fork: false,
+  })
+  expect(stripWrappers(['time', '-p'])).toEqual({ words: [], env: {}, nohup: false, fork: false })
 })
 
 // Bash reads an option of `time` only when it was typed whole: `time "-p" printf ok` fails with `-p: command not found`.
@@ -213,11 +218,13 @@ test('stripLead ends the options of time at an assignment, a reserved word, a gl
     words: ['-p', 'git', 'push'],
     env: { FOO: '1' },
     nohup: false,
+    fork: false,
   })
   expect(stripLead(splitShell('time -p FOO=1 git push')[0]!)).toEqual({
     words: ['git', 'push'],
     env: { FOO: '1' },
     nohup: false,
+    fork: false,
   })
   // A reserved word: `time ! -p printf ok` runs a command named `-p`, but `time -p ! printf ok` negates `printf`.
   expect(words('time ! -p git push')).toEqual(['-p', 'git', 'push'])
@@ -239,6 +246,7 @@ test('stripWrappers keeps the env and the nohup flag of what follows time -p', (
     words: ['sleep', '9'],
     env: { A: '1' },
     nohup: true,
+    fork: false,
   })
 })
 
@@ -260,14 +268,14 @@ test('stripLead drops time and its options in any order with the reserved words'
 
 test('stripLead adds up the env and the nohup flag of every round', () => {
   const got = stripLead(typed(['A=1', 'time', '!', 'B=2', 'A=3', 'nohup', 'sleep', '9']))
-  expect(got).toEqual({ words: ['sleep', '9'], env: { A: '3', B: '2' }, nohup: true })
+  expect(got).toEqual({ words: ['sleep', '9'], env: { A: '3', B: '2' }, nohup: true, fork: false })
 })
 
 test('stripLead leaves a command with nothing in front as it is, and an assignment line empty', () => {
-  expect(stripLead(typed(['git', 'status']))).toEqual({ words: ['git', 'status'], env: {}, nohup: false })
-  expect(stripLead(typed(['L=/x']))).toEqual({ words: [], env: { L: '/x' }, nohup: false })
-  expect(stripLead(typed(['time', 'done']))).toEqual({ words: [], env: {}, nohup: false })
-  expect(stripLead(typed([]))).toEqual({ words: [], env: {}, nohup: false })
+  expect(stripLead(typed(['git', 'status']))).toEqual({ words: ['git', 'status'], env: {}, nohup: false, fork: false })
+  expect(stripLead(typed(['L=/x']))).toEqual({ words: [], env: { L: '/x' }, nohup: false, fork: false })
+  expect(stripLead(typed(['time', 'done']))).toEqual({ words: [], env: {}, nohup: false, fork: false })
+  expect(stripLead(typed([]))).toEqual({ words: [], env: {}, nohup: false, fork: false })
 })
 
 // The scope of a segment is the subshell it runs in. Segments with the same scope run in the same shell.
@@ -1788,3 +1796,133 @@ for (const [family, make] of Object.entries(MARK_FAMILIES)) {
     await expectLinear({ label: family, make, run: text => splitShell(text) })
   })
 }
+
+// A wrapper that runs the next command is stripped with its own options and positional words, so a reader sees the real
+// command (issue #242). `timeout DURATION` takes one positional word; `ionice -c N` and `stdbuf -o MODE` take values.
+test('stripWrappers drops timeout with its options and its duration', () => {
+  const cmd = ['git', '-C', '/x', 'status']
+  expect(stripWrappers(['timeout', '5', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['gtimeout', '5s', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['timeout', '-s', 'KILL', '-k', '2', '5', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['timeout', '-sKILL', '--kill-after=2', '--foreground', '-v', '5', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['timeout', '--signal', 'TERM', '--preserve-status', '--', '5', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['timeout', '5']).words).toEqual([])
+})
+
+test('stripWrappers drops ionice, stdbuf, setsid, caffeinate and doas with their options', () => {
+  const cmd = ['git', '-C', '/x', 'status']
+  expect(stripWrappers(['ionice', '-c3', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['ionice', '-c', '2', '-n', '4', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['ionice', '-t', '-c2', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['stdbuf', '-oL', '-eL', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['stdbuf', '-o', 'L', '--input=0', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['setsid', '-w', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['caffeinate', '-dimsu', '-t', '60', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['doas', '-u', 'root', '-n', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['timeout', '5', 'ionice', '-c3', 'nice', '-n', '5', 'stdbuf', '-oL', ...cmd]).words).toEqual(
+    cmd,
+  )
+})
+
+// `ionice -p PID` changes a running process and runs nothing, as `command -v` runs nothing.
+test('stripWrappers leaves ionice -p alone: it runs no command', () => {
+  expect(stripWrappers(['ionice', '-p', '123']).words).toEqual(['ionice', '-p', '123'])
+  expect(stripWrappers(['ionice', '-c3', '-p', '123']).words).toEqual(['ionice', '-c3', '-p', '123'])
+})
+
+// `doas -C FILE` only checks the policy file ("No command is executed"), so it runs nothing.
+test('stripWrappers leaves doas -C alone: it only checks a config file', () => {
+  const cmd = ['doas', '-C', '/etc/doas.conf', 'docker', 'compose', '-p', 'app', 'up']
+  expect(stripWrappers(cmd).words).toEqual(cmd)
+  const glued = ['doas', '-nC', '/etc/doas.conf', 'git', 'status']
+  expect(stripWrappers(glued).words).toEqual(glued)
+})
+
+test('stripWrappers keeps the long and glued inert options of ionice, and strips a class with no pid', () => {
+  expect(stripWrappers(['ionice', '--pid', '123']).words).toEqual(['ionice', '--pid', '123'])
+  expect(stripWrappers(['ionice', '--pgid', '5']).words).toEqual(['ionice', '--pgid', '5'])
+  expect(stripWrappers(['ionice', '--uid', '5']).words).toEqual(['ionice', '--uid', '5'])
+  expect(stripWrappers(['ionice', '-p123']).words).toEqual(['ionice', '-p123'])
+  expect(stripWrappers(['ionice', '-c3', '-p']).words).toEqual(['ionice', '-c3', '-p'])
+  expect(stripWrappers(['ionice', '-c3']).words).toEqual([])
+})
+
+test('stripWrappers keeps ionice with an attached --pid=, --pgid= or --uid= value: it runs no command', () => {
+  expect(stripWrappers(['ionice', '--pid=123', '456']).words).toEqual(['ionice', '--pid=123', '456'])
+  expect(stripWrappers(['ionice', '--pgid=1', 'git', '-C', '/x', 'status']).words).toEqual([
+    'ionice',
+    '--pgid=1',
+    'git',
+    '-C',
+    '/x',
+    'status',
+  ])
+  expect(stripWrappers(['ionice', '--uid=5']).words).toEqual(['ionice', '--uid=5'])
+  // A class with an attached value still strips.
+  expect(stripWrappers(['ionice', '--class=3', 'cmd']).words).toEqual(['cmd'])
+})
+
+// A wrapper that has no command, or that stands before a wrapper of another kind.
+test('stripWrappers handles a wrapper with no command and a wrapper before sudo, env and nice', () => {
+  expect(stripWrappers(['timeout']).words).toEqual([])
+  expect(stripWrappers(['setsid']).words).toEqual([])
+  expect(stripWrappers(['doas', '-u', 'root']).words).toEqual([])
+  expect(stripWrappers(['timeout', '5', 'env', 'A=1', 'git', 'status'])).toMatchObject({
+    words: ['git', 'status'],
+    env: { A: '1' },
+  })
+  expect(stripWrappers(['timeout', '5', 'sudo', '-u', 'root', 'git']).words).toEqual(['git'])
+})
+
+// `caffeinate -t 60` and `caffeinate -w PID` run no command: nothing remains to strip them for.
+test('stripWrappers keeps caffeinate when it runs no command', () => {
+  expect(stripWrappers(['caffeinate', '-t', '60']).words).toEqual(['caffeinate', '-t', '60'])
+  expect(stripWrappers(['caffeinate', '-w', '99']).words).toEqual(['caffeinate', '-w', '99'])
+  expect(stripWrappers(['caffeinate']).words).toEqual(['caffeinate'])
+  expect(stripWrappers(['caffeinate', '-t', '60', 'make']).words).toEqual(['make'])
+})
+
+// A wrapper is an external program. The shell removes quotes and redirections before it starts the program, so
+// `ionice "-c3" cmd` and `timeout "-s" KILL 5 cmd` pass the options as typed, and the wrapper reads them (Codex review).
+test('stripWrappers reads a quoted option of timeout, ionice or setsid, or one behind a redirection, as an option', () => {
+  const no = (w: readonly string[]) => w.map(() => false)
+  const w = ['timeout', '-s', 'KILL', '5', 'cmd']
+  expect(stripWrappers(w, [true, false, true, true, true], no(w)).words).toEqual(['cmd'])
+  expect(stripWrappers(w, [true, true, true, true, true], [false, true, false, false, false]).words).toEqual(['cmd'])
+  const i = ['ionice', '-c3', 'cmd']
+  expect(stripWrappers(i, [true, false, true], no(i)).words).toEqual(['cmd'])
+  expect(stripWrappers(i, [true, true, true], [false, true, false]).words).toEqual(['cmd'])
+  const s = ['setsid', '-f', 'node', 'w.js']
+  expect(stripWrappers(s, [true, false, true, true], no(s))).toMatchObject({ words: ['node', 'w.js'], fork: true })
+  expect(stripWrappers(['setsid', '--fork', 'node'], [true, false, true], [false, false, false])).toMatchObject({
+    fork: true,
+  })
+  // `ionice "-p" 1` still runs no command.
+  const p = ['ionice', '-p', '1']
+  expect(stripWrappers(p, [true, false, true], no(p)).words).toEqual(p)
+})
+
+// The external `time` (`/usr/bin/time`) runs behind a program wrapper or when it was quoted. It takes `-f FMT`,
+// `-o FILE` and any flag. The reserved word `time` keeps only `-p` and `--` (issue #227).
+test('stripWrappers reads the options of an external time', () => {
+  const f = (n: number) => Array.from({ length: n }, () => true)
+  const q = ['time', '-f', '%e', 'git', 'status']
+  expect(stripWrappers(q, [false, true, true, true, true]).words).toEqual(['git', 'status'])
+  const o = ['time', '-o', 'out.txt', 'npm', 'run', 'dev']
+  expect(stripWrappers(o, [false, ...f(5)]).words).toEqual(['npm', 'run', 'dev'])
+  expect(stripWrappers(['sudo', 'time', '-v', 'make']).words).toEqual(['make'])
+  expect(stripWrappers(['nohup', 'time', '-f', '%e', 'npm', 'start']).words).toEqual(['npm', 'start'])
+  expect(stripWrappers(['timeout', '5', 'time', '--output', 'o', 'make']).words).toEqual(['make'])
+  // The reserved word: `time -x git` runs a command named `-x`.
+  expect(stripWrappers(['time', '-x', 'git', 'push']).words).toEqual(['-x', 'git', 'push'])
+  expect(stripWrappers(['time', '-f', '%e', 'git']).words).toEqual(['-f', '%e', 'git'])
+})
+
+test('stripWrappers reports that setsid -f forks on its own', () => {
+  expect(stripWrappers(['setsid', '-f', 'node', 'w.js'])).toMatchObject({ words: ['node', 'w.js'], fork: true })
+  expect(stripWrappers(['setsid', '--fork', 'node'])).toMatchObject({ fork: true })
+  expect(stripWrappers(['setsid', '-fw', 'node'])).toMatchObject({ words: ['node'], fork: true })
+  expect(stripWrappers(['setsid', 'node'])).toMatchObject({ fork: false })
+  const f = [true, true, true, true]
+  expect(stripLead({ words: ['sudo', 'setsid', '-f', 'a'], whole: f, redir: f.map(() => false) }).fork).toBe(true)
+})
