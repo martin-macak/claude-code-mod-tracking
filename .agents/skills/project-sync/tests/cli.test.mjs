@@ -663,6 +663,73 @@ test('status never sets Done, whatever the item or the letter case: GitHub sets 
   }
 })
 
+// #64 has Wave 2 stored here, so the tests of wave can raise and refuse to lower it.
+function at2() {
+  const project = fresh()
+  setValue(project, 64, 'Wave', 'Wave 2')
+  return fakeGh({ project })
+}
+
+test('wave is a dry run: it names the raise and writes nothing', () => {
+  const r = run(['wave', '64', 'Wave 3'], at2())
+  assert.equal(r.code, 0)
+  assert.deepEqual(writes(r.gh), [])
+  assert.match(r.out, /Would set #64 Take the plugin version from the release tag: Wave Wave 2 -> Wave 3/)
+  assert.match(r.out, /Dry run: nothing was written\./)
+})
+
+test('wave --apply raises the Wave of one issue item and writes one field', () => {
+  const r = run(['wave', '64', 'Wave 3', '--apply'], at2())
+  assert.equal(r.code, 0)
+  assert.deepEqual(writes(r.gh), [editArgs(nodeOf(fresh(), 64).id, 'Wave', '--single-select-option-id', '801796d4')])
+  assert.match(r.out, /#64 .*: Wave Wave 2 -> Wave 3/)
+})
+
+test('wave refuses to lower a Wave: exit 2, a message, nothing written, also with --apply', () => {
+  for (const args of [
+    ['wave', '64', 'Wave 1'],
+    ['wave', '64', 'Wave 1', '--apply'],
+  ]) {
+    const r = run(args, at2())
+    assert.equal(r.code, 2, args.join(' '))
+    assert.match(r.err, /refusing to lower the Wave of #64 .*: it is Wave 2, and Wave 1 is lower\. A Wave never goes down\./)
+    assert.deepEqual(writes(r.gh), [])
+  }
+})
+
+test('wave says so and writes nothing when the Wave is set already', () => {
+  const r = run(['wave', '64', 'Wave 2', '--apply'], at2())
+  assert.equal(r.code, 0)
+  assert.deepEqual(writes(r.gh), [])
+  assert.match(r.out, /#64 .* is already Wave 2\./)
+})
+
+test('wave checks its input: the option, the item, the argument count and the kind of item', () => {
+  const bad = run(['wave', '64', 'Wave 9'], at2())
+  assert.equal(bad.code, 2)
+  assert.match(bad.err, /not a Wave option/)
+  assert.equal(run(['wave', '64'], at2()).code, 2)
+  assert.equal(run(['wave', '999', 'Wave 3']).code, 1)
+  const pr = run(['wave', '60', 'Wave 3', '--apply'])
+  assert.equal(pr.code, 2)
+  assert.match(pr.err, /is not one/)
+  assert.deepEqual(writes(pr.gh), [])
+})
+
+test('wave --json says what it wrote', () => {
+  const done = JSON.parse(run(['wave', '64', 'Wave 3', '--apply', '--json'], at2()).out)
+  assert.deepEqual([done.from, done.to, done.written], ['Wave 2', 'Wave 3', true])
+  assert.equal(JSON.parse(run(['wave', '64', 'Wave 3', '--json'], at2()).out).written, false)
+})
+
+test('sync does not lower a Wave that is higher than the links give', () => {
+  const r = run(['sync', '--json'], at2())
+  assert.equal(
+    JSON.parse(r.out).changes.some(c => c.number === 64 && c.field === 'Wave'),
+    false,
+  )
+})
+
 test('status reads the project twice, counts its items a second way, writes one field, and makes no other call', () => {
   const r = run(['status', '64', 'In progress'])
   assert.equal(r.code, 0)
@@ -742,7 +809,7 @@ test('add without --apply plans Wave, Status and Blocked by from the blockers of
 
 test('add without --apply on an item that is in the project shows its field changes and the plan with the new values', () => {
   const project = inOrder(fresh())
-  setValue(project, 64, 'Wave', 'Wave 2') // #64 has no open blocker, so sync plans Wave 0, Ready and the dash
+  setValue(project, 64, 'Wave', 'Wave 2') // #64 has no open blocker, so sync plans Ready and the dash, and keeps Wave 2 (a Wave never goes down)
   setValue(project, 64, 'Status', 'Blocked')
   setValue(project, 64, 'Blocked by', '#55')
   const r = run(['add', '64', '--order', '9.5', '--area', 'ux', '--release', 'Later'], fakeGh({ project }))
@@ -753,7 +820,7 @@ test('add without --apply on an item that is in the project shows its field chan
   assert.match(r.out, /\n {2}Order: 4 -> 9\.5\n {2}Area: release -> ux\n {2}Release: 0\.2\.0 -> Later\n/)
   assert.match(
     r.out,
-    /Planned changes \(3\):\n {2}#64 .*\n {4}Wave: Wave 2 -> Wave 0\n {4}Status: Blocked -> Ready\n {4}Blocked by: "#55" -> "—"\n/,
+    /Planned changes \(3\):\n {2}#64 .*\n {4}Status: Blocked -> Ready\n {4}Blocked by: "#55" -> "—"\n {2}#65 .*\n {4}Wave: Wave 1 -> Wave 3\n/,
   )
   // The new Order puts #64 between the draft with Order 9 and #56 with Order 10.
   assert.match(

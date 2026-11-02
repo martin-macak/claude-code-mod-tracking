@@ -52,6 +52,97 @@ test('a blocker with the lower Wave does not lower the Wave of an issue', () => 
   assert.equal(to(res, 3, 'Wave'), 'Wave 2')
 })
 
+// A Wave never goes down: wave(k) = max(stored, 1 + highest Wave of the open blockers).
+
+test('a stored Wave stays when the last open blocker closes (a closed gate)', () => {
+  const res = run(
+    project()
+      .issue(1, { state: 'CLOSED', wave: 'Wave 0' })
+      .issue(2, { blockedBy: [1], wave: 'Wave 2', status: 'Blocked' }),
+  )
+  assert.equal(find(res, 2, 'Wave'), undefined)
+  assert.equal(to(res, 2, 'Status'), 'Ready')
+})
+
+test('a stored Wave stays when a blocker has a lower Wave', () => {
+  const res = run(
+    project()
+      .issue(1, { wave: 'Wave 0' })
+      .issue(2, { blockedBy: [1], wave: 'Wave 3' }),
+  )
+  assert.equal(find(res, 2, 'Wave'), undefined)
+})
+
+test('a blocker that rises lifts its dependent above the stored Wave, through its final Wave', () => {
+  const res = run(
+    project()
+      .issue(1, { wave: 'Wave 1' })
+      .issue(2, { blockedBy: [1], wave: 'Wave 0' })
+      .issue(3, { blockedBy: [2], wave: 'Wave 0' }),
+  )
+  assert.equal(find(res, 1, 'Wave'), undefined)
+  assert.equal(to(res, 2, 'Wave'), 'Wave 2')
+  assert.equal(to(res, 3, 'Wave'), 'Wave 3')
+})
+
+test('a blocker with a stored floor feeds its own final Wave to the dependent', () => {
+  const res = run(
+    project()
+      .issue(1, { wave: 'Wave 1' })
+      .issue(2, { blockedBy: [1], wave: 'Wave 0' }),
+  )
+  assert.equal(to(res, 2, 'Wave'), 'Wave 2')
+})
+
+test('an issue with no stored Wave takes the lowest stored Wave of the other open issues as its floor', () => {
+  const res = run(
+    project()
+      .issue(1, { wave: 'Wave 2' })
+      .issue(2, { wave: 'Wave 1' })
+      .issue(3, { state: 'CLOSED', wave: 'Wave 0' })
+      .issue(4),
+  )
+  assert.equal(to(res, 4, 'Wave'), 'Wave 1')
+})
+
+test('a new issue with a blocker gets the larger of the floor and the blocker term', () => {
+  const res = run(
+    project()
+      .issue(1, { wave: 'Wave 1' })
+      .issue(2, { wave: 'Wave 2' })
+      .issue(3, { blockedBy: [2] })
+      .issue(4, { blockedBy: [1] }),
+  )
+  assert.equal(to(res, 3, 'Wave'), 'Wave 3')
+  assert.equal(to(res, 4, 'Wave'), 'Wave 2')
+})
+
+test('a new issue is Wave 0 when no other open issue has a Wave', () => {
+  assert.equal(to(run(project().issue(1).issue(2, { state: 'CLOSED', wave: 'Wave 2' })), 1, 'Wave'), 'Wave 0')
+})
+
+test('a cycle still gets no Wave, whatever the stored Wave', () => {
+  const res = run(
+    project()
+      .issue(1, { blockedBy: [2], wave: 'Wave 2' })
+      .issue(2, { blockedBy: [1], wave: 'Wave 2' }),
+  )
+  assert.equal(find(res, 1, 'Wave'), undefined)
+  assert.equal(res.cycles.length, 1)
+})
+
+test('sync never lowers a Wave, whatever the links', () => {
+  for (const stored of [0, 1, 2, 3]) {
+    const res = run(
+      project()
+        .issue(1, { wave: 'Wave 0' })
+        .issue(2, { blockedBy: [1], wave: `Wave ${stored}` }),
+    )
+    const written = to(res, 2, 'Wave')
+    assert.ok(written === undefined || Number(written.slice(5)) > stored, `stored ${stored}, written ${written}`)
+  }
+})
+
 test('a closed blocker does not count', () => {
   const res = run(
     project()

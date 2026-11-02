@@ -122,11 +122,15 @@ function components(nodes, edges) {
   return out
 }
 
-// Wave per open issue: 0 with no open blocker, else 1 + the highest Wave of the open
-// blockers. null for an issue in a cycle and for an issue that depends on a cycle.
-function analyse(graph) {
+// Wave per open issue: the larger of its floor and 1 + the highest Wave of the open blockers.
+// The floor is the stored Wave, so a Wave never goes down. An issue with no stored Wave takes
+// `fresh` (the lowest stored Wave of the open issues of the project, or 0). An issue that is
+// not in the project has no stored Wave and takes 0. null for an issue in a cycle and for an
+// issue that depends on a cycle.
+function analyse(graph, stored = new Map(), fresh = 0) {
   const isOpen = k => graph[k]?.state === 'OPEN'
   const blockersOf = k => (graph[k]?.blockedBy ?? []).filter(isOpen)
+  const floorOf = k => (stored.has(k) ? stored.get(k) : fresh)
   const wave = new Map()
   const cycles = []
   for (const comp of components(Object.keys(graph).filter(isOpen), blockersOf)) {
@@ -136,7 +140,8 @@ function analyse(graph) {
       continue
     }
     const waves = blockersOf(comp[0]).map(k => wave.get(k))
-    wave.set(comp[0], waves.some(w => w === null) ? null : waves.length === 0 ? 0 : 1 + Math.max(...waves))
+    const floor = floorOf(comp[0])
+    wave.set(comp[0], waves.some(w => w === null) ? null : Math.max(floor, ...waves.map(w => w + 1)))
   }
   return { blockersOf, wave, cycles }
 }
@@ -207,7 +212,12 @@ export function positionPlan(items, repo) {
 // issues, are left alone. Order is never written.
 export function plan({ items, graph, options, repo, milestoneIssues = [] }) {
   assertGraph(graph)
-  const { blockersOf, wave, cycles } = analyse(graph)
+  const stored = new Map()
+  for (const i of items) {
+    const n = i.kind === 'issue' && i.state === 'OPEN' ? waveNumber(i.fields.Wave) : null
+    if (n !== null) stored.set(i.key, n)
+  }
+  const { blockersOf, wave, cycles } = analyse(graph, stored, stored.size > 0 ? Math.min(...stored.values()) : 0)
   const label = k => refLabel(k, repo)
   const needed = { Wave: new Map(), Status: new Map() }
   const need = (field, name, item) => {

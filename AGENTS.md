@@ -56,7 +56,7 @@ The delivery order lives in three places: the public [GitHub Project 3](https://
 - **Blockers.** Record a dependency as a native "blocked by" link (`gh issue create --blocked-by`, `gh issue edit --add-blocked-by`), not as text. These commands need gh 2.94 or newer. A PR or a draft item cannot be a native blocker. Link the issue behind it. When the work can start earlier, add a note to "Blocked by", for example `#55 (can start when L3 merges)`.
 - **Fields.**
   - `Status`: Blocked, Ready, In progress, In review or Done.
-  - `Wave`: 0 when the issue has no open blocker. Else 1 plus the highest Wave of its open blockers.
+  - `Wave`: fixed, it never goes down. The Wave of an issue is the larger of its stored Wave and 1 plus the highest Wave of its open blockers. A closed blocker does not lower it: done waves stay as history. An issue with no stored Wave starts at the lowest Wave of the other open issues, or 0 when there is none. Then the blocker rule applies.
   - `Order`: the owner's priority. A lower number goes first. Set it only when the owner gives the number.
   - `Release`: 0.2.0, Later or Tooling. Take it from the milestone: `artifact-tracking 0.2.0` gives `0.2.0`. With no milestone, use `Tooling` for repo tooling and `Later` for the rest.
   - `Area`: core, ux, trackers, tooling or release.
@@ -69,7 +69,7 @@ The delivery order lives in three places: the public [GitHub Project 3](https://
   - PR ready: when the PR closes its issue, set the issue to `In review`. A PR with `Refs #N` (partial work) leaves the issue alone. A stack layer PR closes its own sub-issue, so the sub-issue moves and the parent stays. When you cannot write, or the issue has no item yet, name the move in your report. Do not add the item: that needs an `Order`. The `pr-shepherd` skill does it.
   - Merge: GitHub sets `Done`. Never set `Done` yourself.
   - Release: the milestone closes. The guard for it is [#64](https://github.com/martin-macak/claude-code-mod-tracking/issues/64).
-- **Tool.** The `project-sync` skill (`.agents/skills/project-sync/`) holds the commands and the rules of the script. Do not set the Wave of an issue by hand: the skill computes it from the native links.
+- **Tool.** The `project-sync` skill (`.agents/skills/project-sync/`) holds the commands and the rules of the script. Do not set the Wave of an issue by hand: the skill computes it from the native links and keeps it. To restore a lost Wave, run `project-sync wave <n> "Wave N"`. It only raises a Wave.
 - **Order and positions.** `Order` also sets the manual position of each item, so a view with no sort shows the same sequence. Change `Order` to move an item. A drag in the web UI does not last.
 - **Who writes.** Only a session whose `gh` token has the `project` scope (`gh auth refresh -s project`, or put a classic token with the project scope in `GH_TOKEN`; `make init` warns when it is missing). Copilot, Codex and Actions read the project when their token can (see No access), and report each change they want in the PR.
 - **No access.** Pick by milestone, then by native links (no open blocker), then by the lowest issue number. It is unverified whether a token without the `project` scope can read this public project with `gh api graphql`.
