@@ -356,6 +356,25 @@ test('lane: the last proof going away leaves the lane PRs of the session repo an
   expect(t.calls.map(c => c.repo)).toEqual(['acme/web', 'acme-org/foreign-repo'])
 })
 
+test('lane: one rule for the lane PRs of the session repo: a step with no tracked branch holds them, whatever else it asks (issue #273)', async () => {
+  const t = rig({ foreign: [{ ...FOREIGN, branches: ['feat/one'] }] })
+  t.repos['acme/web'] = session7
+  t.repos['acme-org/foreign-repo'] = foreign31
+  await t.step()
+  expect(t.items().map(i => [i.key, i.lane])).toEqual([
+    [K7, true],
+    [K31, true],
+  ])
+  // No tracked branch, a foreign repo still proven: the step asks nothing of the session branches, so #7 stays.
+  t.setBranches([])
+  await t.step()
+  expect(t.items().map(i => i.key)).toEqual([K7, K31])
+  // The proof goes too: the step skips, and #7 still stays. The foreign PR goes.
+  t.setForeign([])
+  await t.step()
+  expect(t.items().map(i => i.key)).toEqual([K7])
+})
+
 test('lane: the last proof going away prunes the foreign PR when the session has branches but no GitHub repo', async () => {
   const t = rig({ repo: null, branches: ['feat/x'], foreign: [{ ...FOREIGN, branches: ['feat/one'] }] })
   t.repos['acme-org/foreign-repo'] = foreign31Conflicting

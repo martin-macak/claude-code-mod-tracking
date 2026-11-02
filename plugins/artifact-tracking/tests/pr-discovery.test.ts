@@ -447,6 +447,13 @@ test('discoverPrs: a PR found by a branch alone is not marked created', async ()
   expect(r.ok && r.prs.map(p => ['created' in p, 'otherRepo' in p])).toEqual([[false, false]])
 })
 
+test('discoverPrs: a session repo with no tracked branch is not complete, even for a created PR of that repo (issue #273)', async () => {
+  const { gh, calls } = repoGh({ repos: { [SESSION]: { 7: prNode({ number: 7 }) } } })
+  const r = await discoverPrs(gh, REPO, [], NOW, 'main', PR_LANE_DEFAULTS, { created: [ref(REPO, 7)] })
+  expect(calls.map(c => c.repo)).toEqual([SESSION]) // the created PR is still asked
+  expect(r).toMatchObject({ ok: true, complete: false })
+})
+
 test('discoverPrs: created PRs are polled with no branch to poll, and with no session repo', async () => {
   const { gh, calls } = repoGh({ repos: { [FOREIGN]: { 657: prNode({ number: 657 }) } } })
   const none = await discoverPrs(gh, REPO, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] })
@@ -472,9 +479,10 @@ test('discoverPrs: tracked branches and no session repo make the reply incomplet
   expect(calls.map(c => c.repo)).toEqual([FOREIGN])
   expect(r.ok && r.prs.map(p => p.number)).toEqual([657]) // the sure answer of the other repo still lands
   expect(r).toMatchObject({ ok: true, complete: false })
-  // No branch to ask, so nothing of the session repo is left unasked: the reply is complete.
+  // No branch to ask: nothing is asked of the session repo, so the reply says nothing of its lane PRs, as a skipped step
+  // does (issue #273). One rule, whatever else the step asks.
   const none = await discoverPrs(gh, null, [], NOW, 'main', PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] })
-  expect(none).toMatchObject({ ok: true, complete: true })
+  expect(none).toMatchObject({ ok: true, complete: false })
   // A tracked branch that equals the default branch is no exception here. With no session repo the default branch is
   // the one that an in-process /resume carried from another session (the lane state is restored), so it proves nothing
   // about this session: its stored branch PRs and refs are not asked, and a prune must leave them be (Codex review of #186).
@@ -618,7 +626,7 @@ test('discoverPrs: a step that asks foreign hosts only does not wait for the hom
   const r = await discoverPrs(gh, ghes, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(OTHER, 657)] })
   expect(calls.map(c => c.host)).toEqual(['github.com'])
   expect(r.ok && r.prs.map(p => p.number)).toEqual([657])
-  expect(r).toMatchObject({ ok: true, complete: true })
+  expect(r).toMatchObject({ ok: true, complete: false }) // no tracked branch (issue #273)
   // No session repo: github.com is the home host, so a GHES PR goes on and a github.com PR waits.
   const bare = await discoverPrs(gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(ghe, 3)] })
   expect(bare.ok && bare.prs.map(p => [p.host, p.number])).toEqual([['ghe.corp', 3]])
@@ -760,7 +768,7 @@ test('discoverPrs: the created PRs of one repo ask at most 50 aliases a query, t
     created: many(60).map(i => ref(OTHER, i)),
   })
   expect(f.ok && f.prs).toHaveLength(50)
-  expect(f).toMatchObject({ ok: true, complete: true })
+  expect(f).toMatchObject({ ok: true, complete: false }) // no tracked branch (issue #273)
   expect(f.ok && f.held).toEqual(
     many(60)
       .slice(50)

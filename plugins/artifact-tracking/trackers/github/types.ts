@@ -162,8 +162,8 @@ export type PartialFailures = { failed: PartialFailure[]; more?: number }
  * that the reply did not return. A PR that the reply returned was read: its body still reconciles its refs and its marker
  * follows the reply.
  * `complete` (issue #195): the reply is sure of the lane PRs of the session repo. It is false when the session repo was not
- * asked for its branches (no GitHub repo) or got no sure answer. The lane PRs of the session repo are then held, and each
- * other repo is still reconciled by its own answer (`held`, `heldRepos`).
+ * asked for its branches (no GitHub repo, or no tracked branch: issue #273) or got no sure answer. The lane PRs of the
+ * session repo are then held, and each other repo is still reconciled by its own answer (`held`, `heldRepos`).
  * `host` (a failed outcome): the host that said no, for the skips `host-not-authed` and `not-logged-in` of a query. The
  * note of the lane names it: the session repo may be on another host (issue #158).
  */
