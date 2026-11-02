@@ -12,6 +12,7 @@ import {
   recordPr,
   recordSpawn,
   recordTurnEnd,
+  recordVisit,
   setRootTop,
 } from '../trackers/auto/ledger'
 import type { AutoState, SpawnFacts } from './fixtures/contracts'
@@ -120,6 +121,13 @@ test('recordExit stamps the proof of a known path and makes none: an unknown pat
   expect(recordExit(a, '/r/.claude/worktrees/other', 5)).toBe(a)
   expect(recordExit(a, '/r', 5)).toBe(a)
   expect(recordExit(rooted(), W, 5).worktrees).toEqual([])
+})
+
+test('recordVisit keeps the branch of a known proof and makes no proof (issue #270)', () => {
+  const a = recordEnter(rooted(), { path: W, branch: 'wt-a' }, AT, LIMITS.maxProofs, 3)
+  const b = recordVisit(a, W, 5)
+  expect(b.worktrees).toEqual([{ path: W, origin: 'enter', provenAt: AT, branch: 'wt-a', firstTurn: 3, lastTurn: 5 }])
+  expect(recordVisit(rooted(), W, 5).worktrees).toEqual([])
 })
 
 test('proofs and agents are capped at the newest', () => {
