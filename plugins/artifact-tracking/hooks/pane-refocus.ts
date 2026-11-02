@@ -92,11 +92,11 @@ export type FocusOrigin = 'person' | 'plugin'
 
 /**
  * The engine timer, and behind it a wake that no hook can refuse (`Ports.clock.wake`, a timer of the mod's own runtime). The
- * first of them to fire runs `fn`, once, and cancels the other. The engine gives no sign of a refused timer (`Timer` has
+ * first of them to fire runs `fn`, once. Without `late` it cancels the other. The engine gives no sign of a refused timer (`Timer` has
  * `cancel` and no more), so the wake is the bound when no drawing comes: `ms + WAKE_SLACK_MS` after the arming at most. When
  * the wake wins it writes one line to the log, named by `label`, and the line says only what is known: the engine timer did
  * not fire in time. The mod cannot tell a late timer from a refused one, so a count of the lines counts both, and the
- * ring request after a late one may name a Button of a frame the engine has not taken yet (issue #140). Cancel stops both.
+ * ring request after a late one may name a Button of a frame the engine has not taken yet (issue #140). Cancel stops both, except a late timer; `drop` ends that too.
  *
  * With `late`, a wake that wins leaves the engine timer armed, and `late` runs if it fires after all (issue #286). The engine
  * fires a timer in a turn after the one that took the frame it was armed behind, so a late timer proves the frame is taken.

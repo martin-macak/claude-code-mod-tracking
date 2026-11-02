@@ -2360,6 +2360,17 @@ test('a closing drops the late engine timer', async () => {
   expect(t.w.clock.held()).toBe(0)
 })
 
+test('a newer wake-ended pause drops the held late timer of the older one', async () => {
+  const t = await ringOn('web.resolve')
+  await lateWake(t) // press 1: the wake won, its engine timer is held
+  expect(t.w.clock.held()).toBe(1)
+  await t.session.focused(t.w.ports, 'help', 'plugin')
+  await lateWake(t) // press 2: the wake won again
+  expect(t.w.clock.held()).toBe(1) // the late timer of press 1 is gone, that of press 2 is held
+  await t.session.closed(t.w.ports)
+  expect(t.w.clock.held()).toBe(0)
+})
+
 test('a frame bound whose timer the engine refuses ends by the wake with no drawing, and the press reads the state', async () => {
   const t = await ringOn('web.resolve')
   t.w.clock.refuse('after', NEXT_DRAWING_MS)
