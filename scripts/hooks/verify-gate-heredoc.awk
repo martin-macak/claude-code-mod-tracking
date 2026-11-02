@@ -28,6 +28,14 @@
 #     name the file in a way the scan cannot read: a glob, a brace, a substitution or a
 #     backtick (* ? [ { $ `), xargs or parallel (they read names from a pipe), or a FIFO
 #     in the command (mkfifo, mknod: a reader may open it before the write).
+# One general rule comes first: the scan strips text only when every command word of the
+# whole input is plain (no quote, backslash, $ expansion, backtick or glob). A command
+# word is the first word of a simple command (after ; && || | a newline, in $( ) and in
+# backticks), a word behind an assignment, and any word after a wrapper (env, sudo,
+# time, xargs ...). If one is not plain, the scan keeps all text, as for exec. Review
+# rounds kept finding spellings that hide a command from a literal match: printf -v
+# built with quotes or a variable, ex\ec, "exec", e'x'ec, $x >run. A list of spellings
+# never ends, so a word that the scan cannot read as literal keeps the text.
 # Any other reader keeps the text: a shell, an interpreter, make, ssh, xargs, a
 # variable, a compound command (while read ... done <<EOF), or a command we do not know.
 # The scan follows quotes, $( ), ( ), $(( )) and comments. A << inside one of them, or a
@@ -219,6 +227,15 @@ function wend() {
     return
   }
   cwn[curc]++
+  # A command word that is not plain text may spell exec, eval or a text sink in a way
+  # the scan cannot read (ex\ec, "exec", e'x'ec, $x). It keeps every body and string.
+  # A command word is the first word, a word behind an assignment, and every word after
+  # a wrapper or an option (the wrapper may take any command).
+  if (!cnotcmd[curc]) {
+    if (!wlit) nodrop = 1
+    else if (wtxt ~ "^[A-Za-z_][A-Za-z0-9_]*=" ) { }
+    else if (wtxt !~ "^(env|sudo|command|builtin|time|nohup|nice|xargs|timeout|stdbuf|doas|setsid|ionice|watch|!|-.*)$") cnotcmd[curc] = 1
+  }
   # exec, eval and the opener of a compound command, as a word at any place (time { ... }
   # and ! if ... put it behind another word): they keep every body and string (see the
   # header).

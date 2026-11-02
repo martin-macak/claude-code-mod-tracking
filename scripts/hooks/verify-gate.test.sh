@@ -595,6 +595,14 @@ run_case 'heredoc runs: a loop after time, piped to sh' "time while true; do${nl
 run_case 'heredoc runs: a brace group written to a file that is run' "{${nl}cat <<'EOF'${nl}git push${nl}EOF${nl}} > run${nl}bash run" 2
 run_case 'heredoc runs: exec redirects the output to a file that is run' "exec > run${nl}cat <<'EOF'${nl}git push${nl}EOF${nl}bash run" 2
 run_case 'heredoc runs: command exec redirects the output' "command exec > run${nl}cat <<'EOF'${nl}git push${nl}EOF${nl}bash run" 2
+hd_git="cat <<'EOF'${nl}git push${nl}EOF${nl}bash run"
+run_case 'heredoc runs: escaped exec' "ex\\ec >run; ${hd_git}" 2
+run_case 'heredoc runs: quoted exec' "\"exec\" >run; ${hd_git}" 2
+run_case 'heredoc runs: split-quote exec' "e'x'ec >run; ${hd_git}" 2
+run_case 'heredoc runs: a variable as the command' "\$x >run; ${hd_git}" 2
+run_case 'heredoc runs: escaped exec behind a wrapper' "env ex\\ec >run; ${hd_git}" 2
+run_case 'heredoc runs: escaped exec behind an assignment' "X=1 ex\\ec >run; ${hd_git}" 2
+run_case 'heredoc runs: a quoted command word in a substitution' "echo \$(\"exec\" >run); ${hd_git}" 2
 run_case 'heredoc runs: eval runs an exec' "eval 'exec > run'${nl}cat <<'EOF'${nl}git push${nl}EOF${nl}bash run" 2
 # A quote or a plain word after the file does not keep the body.
 run_case 'heredoc body: a quoted message after the file' "${hd_run}git commit -m \"Add notes\"" 0
