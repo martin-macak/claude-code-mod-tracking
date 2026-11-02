@@ -269,3 +269,19 @@ test('with two groups the header costs one row in all, each title one row and th
   expect(rowBoxes(drawn.tree)).toHaveLength(3)
   expect(bold(drawn.tree)).toEqual(['Name', 'Description', 'A'])
 })
+
+test('docked at 40 cells the host of a partial failure stays in view when it leads the note, and is cut when it trails (issue #222)', () => {
+  const DOCKED_40 = { bodyColumns: 40, bodyRows: 20, placement: 'dock' } as const
+  const shown = (text: string, failing: number) =>
+    texts(
+      draw([group('prs', webRows(2), { title: 'Pull requests', failing, note: { text, fg: 'warning' } })], DOCKED_40)
+        .drawn.tree,
+    )
+      .map(([, s]) => s)
+      .join(' ')
+  const lead = 'ghe.corp not logged in · gh · refreshed 2m ago'
+  const tail = 'gh · refreshed 2m ago · ghe.corp not logged in'
+  expect(shown(lead, 0)).toContain('ghe.corp')
+  expect(shown(lead, 1)).toContain('ghe.corp') // with a failed PR the room is 13 cells: the host still fits
+  expect(shown(tail, 0)).not.toContain('ghe.corp') // the negative control
+})

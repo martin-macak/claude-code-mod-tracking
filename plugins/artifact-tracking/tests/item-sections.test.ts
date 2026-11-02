@@ -874,3 +874,71 @@ test('refreshManual kicks the items and sends manual to the trackers', async () 
   expect(log).toEqual(['command:manual:false'])
   expect(t.m.items.ready).toBe(true) // the entry started the load
 })
+
+const failedState = (...f: { host: string; why: string; repo?: string }[]) => ({
+  prs: { ok: true, partial: { failed: f } },
+})
+const PARTIAL_CASES: [string, Json, string][] = [
+  [
+    'not logged in',
+    failedState({ host: 'ghe.corp', why: 'not-logged-in' }),
+    'ghe.corp not logged in · gh · refreshed 2m ago',
+  ],
+  ['paused', failedState({ host: 'ghe.corp', why: 'paused' }), 'ghe.corp paused · gh · refreshed 2m ago'],
+  ['failed', failedState({ host: 'ghe.corp', why: 'error' }), 'ghe.corp failed · gh · refreshed 2m ago'],
+  [
+    'unreadable repo',
+    failedState({ host: 'ghe.corp', why: 'unreadable', repo: 'team/svc' }),
+    'team/svc unreadable · gh · refreshed 2m ago',
+  ],
+  [
+    'a home repo that failed',
+    failedState({ host: 'github.com', why: 'error', repo: 'team/svc' }),
+    'team/svc failed · gh · refreshed 2m ago',
+  ],
+  [
+    'two hosts',
+    failedState({ host: 'ghe.corp', why: 'not-logged-in' }, { host: 'ghe2.corp', why: 'paused' }),
+    'ghe.corp not logged in, ghe2.corp paused · gh · refreshed 2m ago',
+  ],
+  [
+    'more',
+    { prs: { ok: true, partial: { failed: [{ host: 'ghe.corp', why: 'error' }], more: 2 } } },
+    'ghe.corp failed, +2 more · gh · refreshed 2m ago',
+  ],
+]
+
+test('the Pull requests note has no lead and no color when nothing failed (issue #222)', async () => {
+  const t = await paneWorld()
+  expect(section(await t.m.paneData(t.w.ports, NO_VIEW), 'prs').note).toEqual({ text: 'gh · refreshed 2m ago' })
+})
+
+for (const [name, state, text] of PARTIAL_CASES)
+  test(`the Pull requests note leads with the failure, then the tool status, in the warning color: ${name} (issue #222)`, async () => {
+    const t = await paneWorld()
+    t.w.state.set('github', state)
+    expect(section(await t.m.paneData(t.w.ports, NO_VIEW), 'prs').note).toEqual({ text, fg: 'warning' })
+  })
+
+test('the Pull requests note names a foreign host that is paused alone, and a home pause keeps the tool status', async () => {
+  const t = await paneWorld()
+  const note = async () => section(await t.m.paneData(t.w.ports, NO_VIEW), 'prs').note?.text
+  t.w.state.set('github', { prs: { ok: false, skipped: 'paused', host: 'ghe.corp' } })
+  expect(await note()).toBe('gh · ghe.corp paused')
+  t.w.state.set('github', { prs: { ok: false, skipped: 'paused' } })
+  expect(await note()).toBe('gh · refreshed 2m ago')
+})
+
+test('the Pull requests section shows for a partial failure with no PR row, and not without one (issue #222)', async () => {
+  const t = await paneWorld()
+  const items = (t.w.state.get('items') as unknown as { lane?: true }[]).filter(i => i.lane !== true)
+  t.w.state.set('items', items as unknown as Json)
+  const has = async () => ids(await t.m.paneData(t.w.ports, NO_VIEW)).includes('prs')
+  t.w.state.set('github', { prs: { ok: true } })
+  expect(await has()).toBe(false)
+  t.w.state.set('github', { prs: { ok: true, partial: { failed: [{ host: 'ghe.corp', why: 'not-logged-in' }] } } })
+  expect(await has()).toBe(true) // the first ask of a created PR: no row, and the note says why
+  setBranches(t.m, { branches: [] })
+  t.m.facts.publish('auto.prs', [])
+  expect(await has()).toBe(false) // nothing was asked: nothing failed
+})

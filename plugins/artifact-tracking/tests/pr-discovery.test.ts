@@ -881,3 +881,138 @@ test('discoverPrs: a repo on a host that gh is not logged in to is skipped, and 
   const alone = await discoverPrs(gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(ghe, 3)] })
   expect(alone).toEqual({ ok: false, skipped: 'host-not-authed', host: 'ghe.corp' })
 })
+
+// Issue #222: a foreign failure beside an answered session repo is carried in `partial`, one entry per host and reason.
+const GHE = { host: 'ghe.corp', owner: 'team', repo: 'svc' }
+const sessionOk = { [SESSION]: { 12: prNode({ number: 12 }) } }
+const askPartial = (g: GitHubDiscoveryApi, created: PrRef[]) =>
+  discoverPrs(g, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created: [ref(REPO, 12), ...created] })
+
+test('discoverPrs: a refused foreign host is a partial failure of the ok outcome, with its host', async () => {
+  const { gh } = repoGh({ repos: sessionOk, authed: h => h !== 'ghe.corp' })
+  const r = await askPartial(gh, [ref(GHE, 3)])
+  expect(r).toMatchObject({ ok: true, held: ['gh:ghe.corp/team/svc#3'] })
+  expect(r.ok && r.partial).toEqual({ failed: [{ host: 'ghe.corp', why: 'not-logged-in' }] })
+})
+
+test('discoverPrs: a check that cannot run, a blocked host and a failed query read error, paused and error', async () => {
+  const lost = repoGh({ repos: sessionOk, unreachable: h => h === 'ghe.corp' })
+  const l = await askPartial(lost.gh, [ref(GHE, 3)])
+  expect(l.ok && l.partial).toEqual({ failed: [{ host: 'ghe.corp', why: 'error' }] })
+  for (const [kind, why] of [
+    ['blocked', 'paused'],
+    ['auth', 'not-logged-in'],
+    ['transport', 'error'],
+    ['truncated', 'error'],
+    ['query-error', 'error'],
+  ] as const) {
+    const t = repoGh({ repos: sessionOk, fail: { 'team/svc': { ok: false, kind } } })
+    const r = await askPartial(t.gh, [ref(GHE, 3)])
+    expect(r.ok && r.partial).toEqual({ failed: [{ host: 'ghe.corp', why }] })
+  }
+})
+
+test('discoverPrs: several failing hosts list in order, a host and reason once, at most four, then more', async () => {
+  const hosts = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].map(host => ({ host, owner: 'o', repo: 'r' }))
+  const six = repoGh({ repos: sessionOk, authed: h => h === 'github.com' })
+  const r = await askPartial(
+    six.gh,
+    hosts.map(h => ref(h, 1)),
+  )
+  expect(r.ok && r.partial).toEqual({
+    failed: ['h1', 'h2', 'h3', 'h4'].map(host => ({ host, why: 'not-logged-in' })),
+    more: 2,
+  })
+  // Two repos of one host and one reason are one entry.
+  const two = repoGh({ repos: sessionOk, authed: h => h === 'github.com' })
+  const same = await askPartial(two.gh, [ref(GHE, 3), ref({ ...GHE, repo: 'b' }, 4)])
+  expect(same.ok && same.partial).toEqual({ failed: [{ host: 'ghe.corp', why: 'not-logged-in' }] })
+})
+
+test('discoverPrs: more counts distinct entries past the cap, with a host in any case once', async () => {
+  const none = (h: string) => h === 'github.com'
+  const h = (host: string, repo = 'r') => ({ host, owner: 'o', repo })
+  // The fifth host holds two repos of one reason: one entry cut, not two.
+  const five = repoGh({ repos: sessionOk, authed: none })
+  const a = await askPartial(five.gh, [1, 2, 3, 4, 5].map(i => ref(h(`h${i}`), 1)).concat(ref(h('h5', 'b'), 2)))
+  expect(a.ok && a.partial?.more).toBe(1)
+  // Six hosts and a second repo on the fifth: two cut entries.
+  const six = repoGh({ repos: sessionOk, authed: none })
+  const b = await askPartial(six.gh, [1, 2, 3, 4, 5, 6].map(i => ref(h(`h${i}`), 1)).concat(ref(h('h5', 'b'), 2)))
+  expect(b.ok && b.partial?.more).toBe(2)
+  // A repo of the sixth host with 51 PRs asks in two groups: one entry cut.
+  const chunks = repoGh({ repos: sessionOk, authed: none })
+  const many = Array.from({ length: 51 }, (_, i) => ref(h('h6'), i + 1))
+  const c = await askPartial(chunks.gh, [1, 2, 3, 4].map(i => ref(h(`h${i}`), 1)).concat(many))
+  expect(c.ok && c.partial?.more).toBe(1)
+  // The host name has no case: GHE.corp and ghe.corp are one entry, also past the cap.
+  const mixed = repoGh({ repos: sessionOk, authed: none })
+  const d = await askPartial(
+    mixed.gh,
+    [1, 2, 3, 4].map(i => ref(h(`h${i}`), 1)).concat(ref(h('H9'), 1), ref(h('h9'), 2)),
+  )
+  expect(d.ok && d.partial?.more).toBe(1)
+})
+
+test('discoverPrs: a home-host group that fails keeps the tool status: a pause says nothing, another reason names the repo', async () => {
+  const other = { host: 'github.com', owner: 'other', repo: 'repo' }
+  const paused = repoGh({ repos: sessionOk, fail: { 'other/repo': { ok: false, kind: 'blocked' } } })
+  const p = await askPartial(paused.gh, [ref(other, 5)])
+  expect(p.ok && 'partial' in p).toBe(false)
+  const broken = repoGh({ repos: sessionOk, fail: { 'other/repo': { ok: false, kind: 'transport' } } })
+  const e = await askPartial(broken.gh, [ref(other, 5)])
+  expect(e.ok && e.partial).toEqual({ failed: [{ host: 'github.com', why: 'error', repo: 'other/repo' }] })
+  // A later query of the session repo that fails names the repo, never only the host.
+  let n = 0
+  const own = repoGh({
+    repos: { [SESSION]: Object.fromEntries(Array.from({ length: 60 }, (_, i) => [i + 1, prNode({ number: i + 1 })])) },
+  })
+  const real = own.gh.graphql.bind(own.gh)
+  Object.assign(own.gh, {
+    graphql: async (host: string, q: string): Promise<GraphqlOutcome> =>
+      n++ === 1 ? { ok: false, kind: 'transport', error: 'timeout' } : real(host, q),
+  })
+  const created = Array.from({ length: 60 }, (_, i) => ref(REPO, i + 1))
+  const s = await discoverPrs(own.gh, REPO, ['feat/root'], NOW, 'main', PR_LANE_DEFAULTS, { created })
+  expect(s.ok && s.partial).toEqual({ failed: [{ host: 'github.com', why: 'error', repo: 'acme/web' }] })
+})
+
+test('discoverPrs: a foreign repo that answers null is unreadable, and a null session repo or PR says nothing', async () => {
+  const { gh } = repoGh({ repos: sessionOk })
+  const r = await askPartial(gh, [ref(GHE, 3), ref({ ...GHE, repo: 'b' }, 4)])
+  expect(r.ok && r.partial).toEqual({
+    failed: [
+      { host: 'ghe.corp', why: 'unreadable', repo: 'team/svc' },
+      { host: 'ghe.corp', why: 'unreadable', repo: 'team/b' },
+    ],
+  })
+  // A PR of an answering foreign repo that has no verdict: no clause.
+  const one = repoGh({ repos: { ...sessionOk, 'team/svc': {} } })
+  const n = await askPartial(one.gh, [ref(GHE, 3)])
+  expect(n).toMatchObject({ ok: true, held: ['gh:ghe.corp/team/svc#3'] })
+  expect('partial' in n).toBe(false)
+  // The session repo that answers null: no clause either.
+  const gone = repoGh({ repos: { 'team/svc': { 3: prNode({ number: 3 }) } } })
+  const g = await askPartial(gone.gh, [ref(GHE, 3)])
+  expect('partial' in g).toBe(false)
+})
+
+test('discoverPrs: with every host answered there is no partial key', async () => {
+  const { gh } = repoGh({ repos: { ...sessionOk, 'team/svc': { 3: prNode({ number: 3 }) } } })
+  const r = await askPartial(gh, [ref(GHE, 3)])
+  expect(r.ok && 'partial' in r).toBe(false)
+})
+
+test('discoverPrs: a foreign host that is blocked and asked alone names itself, the home host does not', async () => {
+  const block: GraphqlOutcome = { ok: false, kind: 'blocked' }
+  const foreign = repoGh({ repos: {}, fail: { 'team/svc': block } })
+  expect(await discoverPrs(foreign.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(GHE, 3)] })).toEqual(
+    {
+      ok: false,
+      skipped: 'paused',
+      host: 'ghe.corp',
+    },
+  )
+  const home = repoGh({ repos: {}, fail: { [SESSION]: block } })
+  expect(await discoverPrs(home.gh, REPO, ['feat/root'], NOW)).toEqual({ ok: false, skipped: 'paused' })
+})

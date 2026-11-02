@@ -105,7 +105,7 @@ const message = (err: unknown): string => (err instanceof Error ? err.message : 
 
 /** A note without its time, so a quiet step compares equal (A22). */
 const prsSig = (p: Prs): string =>
-  JSON.stringify([p.ok, p.skipped ?? null, p.error ?? null, p.host ?? null, p.untracked ?? 0])
+  JSON.stringify([p.ok, p.skipped ?? null, p.error ?? null, p.host ?? null, p.untracked ?? 0, p.partial ?? null])
 
 /**
  * What a good step adds to the lane state. `merge` holds the new merge notes, `merge: undefined` meaning none are left; no
@@ -251,7 +251,12 @@ export class PrLane {
     const saved = await d.save(cur =>
       withPrs(
         cur,
-        { at, ok: true, ...(r.untracked > 0 ? { untracked: r.untracked } : {}) },
+        {
+          at,
+          ok: true,
+          ...(r.untracked > 0 ? { untracked: r.untracked } : {}),
+          ...(out.partial ? { partial: out.partial } : {}),
+        },
         {
           ...(out.defaultBranch !== undefined ? { defaultBranch: out.defaultBranch } : {}),
           // The notes of the PRs that lost the marker go, an incomplete reply or not: the lane lists them no more.

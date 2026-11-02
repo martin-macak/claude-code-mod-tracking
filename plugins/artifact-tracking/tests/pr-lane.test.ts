@@ -1411,6 +1411,27 @@ test('lane: one unsure created PR of a repo does not keep the stale refs of its 
   expect(t.state().prs).toMatchObject({ ok: true })
 })
 
+test('lane: a foreign host with a blocked breaker is saved with its host, a home pause is not', async () => {
+  const ghe = { host: 'ghe.corp', owner: 'team', repo: 'svc' }
+  const t = laneRig({ created: [{ ...ghe, number: 3 }] })
+  let home = false
+  Object.assign(t.deps.gh, {
+    graphql: async (host: string): Promise<GraphqlOutcome> =>
+      host === 'ghe.corp' || home ? { ok: false, kind: 'blocked' } : { ok: false, kind: 'transport' },
+  })
+  t.setFact({ seq: 1, reasons: ['start'], branches: [], overflow: 0 })
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.state().prs).toMatchObject({ ok: false, skipped: 'paused', host: 'ghe.corp' })
+  home = true
+  t.setCreated([])
+  t.setFact({ seq: 2, reasons: ['start'], branches: ['feat/x'], overflow: 0 })
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.state().prs).toMatchObject({ ok: false, skipped: 'paused' })
+  expect(t.state().prs.host).toBeUndefined()
+})
+
 test('lane: the note of a host that gh is not logged in to keeps that host, and a quiet step does not rewrite it', async () => {
   const ghe = { host: 'ghe.corp', owner: 'team', repo: 'svc' }
   const t = laneRig({ created: [{ ...ghe, number: 3 }] })
@@ -1753,4 +1774,26 @@ test('lane: a created PR survives an in-process /resume into a stored session: t
   const text = (await t.m.track(t.w.ports, '')).text
   expect(sectionOf(text, 'Pull requests').some(l => l.includes('VerticeOne/vertice-iam#657'))).toBe(true)
   expect(sectionOf(text, 'GitHub')).toEqual([])
+})
+
+test('lane: a foreign host that refuses its login is a partial failure of the note, written once and gone when it answers', async () => {
+  const ghe = { host: 'ghe.corp', owner: 'team', repo: 'svc' }
+  const t = laneRig({ created: [{ ...ghe, number: 3 }] })
+  t.nodes['head:feat/x'] = [prNode({ number: 7, headRefName: 'feat/x' })]
+  let authed = false
+  Object.assign(t.deps.gh, { checkHost: async () => authed, isHostAuthed: () => authed })
+  t.lane.request()
+  await t.lane.idle()
+  // The first ask: the PR of ghe.corp has no row, and the session repo answered, so the step is ok with the partial.
+  expect(t.items().map(i => i.key)).toEqual([K7])
+  expect(t.state().prs).toMatchObject({ ok: true, partial: { failed: [{ host: 'ghe.corp', why: 'not-logged-in' }] } })
+  const saves = t.log.saves
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.log.saves).toBe(saves) // the same failure: no write
+  authed = true
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.log.saves).toBe(saves + 1) // healthy again: the note is written once
+  expect(t.state().prs.partial).toBeUndefined()
 })

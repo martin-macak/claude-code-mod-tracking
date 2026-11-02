@@ -16,7 +16,7 @@ import { EMPTY_LANE } from './lane'
 import { isLanePr } from './lane-pr'
 import { conflictCount, type MergeEnv, mergeEnvOf } from './merge'
 import { githubRow, prRow } from './rows'
-import type { GitHubRecord, LaneState } from './types'
+import type { GitHubRecord, LaneState, PartialFailures } from './types'
 
 type Ctx = ViewContext<GithubConfig, LaneState>
 
@@ -44,6 +44,23 @@ function bandOf(label: string, list: readonly GitHubRecord[], env: MergeEnv, ran
   return { label, count: list.length, failing: failing(list), ...(conflicts > 0 ? { conflicts } : {}), rank }
 }
 
+const WHY_TEXT = {
+  'not-logged-in': 'not logged in',
+  paused: 'paused',
+  error: 'failed',
+  unreadable: 'unreadable',
+} as const
+
+/**
+ * The failures of a step that answered, as the lead of the note (issue #222): the pane clips a note at its end, so the host
+ * leads. One clause for each host and reason, `team/svc unreadable` for a repo, then `+N more`. A repo that is named stands in for its host.
+ */
+function partialLead(partial: PartialFailures | undefined): string | undefined {
+  if (!partial || partial.failed.length === 0) return undefined
+  const clauses = partial.failed.map(f => `${f.repo ?? f.host} ${WHY_TEXT[f.why]}`)
+  return [...clauses, ...(partial.more ? [`+${partial.more} more`] : [])].join(', ')
+}
+
 function prsNote(ctx: Ctx, lane: LaneState, prs: readonly GitHubRecord[]): string {
   const p = lane.prs
   const overflow = branchesOf(ctx.facts.read<Json>(FACT_BRANCHES))?.overflow ?? 0
@@ -56,13 +73,16 @@ function prsNote(ctx: Ctx, lane: LaneState, prs: readonly GitHubRecord[]): strin
   else if (p.skipped === 'no-repo') head = 'no GitHub repo'
   else if (p.skipped === 'no-gh') head = 'gh not installed'
   else if (p.skipped === 'not-logged-in' || p.skipped === 'host-not-authed') head = `gh not logged in to ${host}`
+  // a foreign host has its own breaker
+  else if (p.skipped === 'paused' && p.host) head = `gh · ${p.host} paused`
   else head = `gh · ${toolNote(ctx.tools.gh ?? IDLE, ctx.now, lastRefreshOf(prs))}`
   const tail = [
     ...(overflow > 0 ? [`+${overflow} branches not polled`] : []),
     ...(reposOver > 0 ? [`+${reposOver} repos not polled`] : []),
     ...(p.untracked ? [`+${p.untracked} not tracked`] : []),
   ]
-  return [head, ...tail].join(' · ')
+  const lead = partialLead(p.partial)
+  return [...(lead ? [lead] : []), head, ...tail].join(' · ')
 }
 
 /** The Pull requests section. Left out when no PR was found and the lane has no reason to show. */
@@ -76,7 +96,10 @@ function prsSection(ctx: Ctx): SectionSpec | null {
     createdOf(ctx.facts.read<Json>(FACT_PRS)).length > 0 ||
     foreignOf(ctx.facts.read<Json>(FACT_REPO_BRANCHES)).repos.length > 0
   const showHeader =
-    hasAsked && ((lane.prs.skipped !== undefined && SKIPS_WITH_HEADER.has(lane.prs.skipped)) || !!lane.prs.error)
+    hasAsked &&
+    ((lane.prs.skipped !== undefined && SKIPS_WITH_HEADER.has(lane.prs.skipped)) ||
+      !!lane.prs.error ||
+      lane.prs.partial !== undefined)
   if (prs.length === 0 && !showHeader) return null
   const open = prs.filter(i => i.state === 'open')
   const env = mergeEnvOf(ctx)
@@ -84,7 +107,7 @@ function prsSection(ctx: Ctx): SectionSpec | null {
   return {
     id: 'prs',
     title: 'Pull requests',
-    note: { text: prsNote(ctx, lane, prs) },
+    note: { text: prsNote(ctx, lane, prs), ...(lane.prs.partial ? { fg: 'warning' as const } : {}) },
     rank: 12,
     band: bandOf('PRs', open, env, 9),
     rows: prs.map(rec => prRow(rec, rowEnv, lane.defaultBranch)),
