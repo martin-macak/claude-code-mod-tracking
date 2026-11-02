@@ -139,6 +139,37 @@ export interface CompactForm {
    * pane, so a group shares a row with its title. Issue #265: the groups of two trackers share one row.
    */
   readonly merge?: number
+  /**
+   * Where the version line goes. Absent: on a line of its own, as in the full form. `'joined'`: on the last line of the form (the
+   * count line, else the last problem named, else the config line), after `JOIN`, so it takes no row of its own. The search sets it
+   * only when no form with the version on its own line fits, so a view that fitted before looks the same (issue #287: the 80-cell
+   * view with the version line needed 12 rows of an 11-row body). `compactRows` and `renderHelp` read it.
+   */
+  readonly version?: 'joined'
+}
+
+/** What stands between the last line of the compact form and the version line that is joined to it. */
+const JOIN = ' · '
+
+/** The width of the inline pane. A body this wide or wider keeps the version line on its own line: the 96-cell numbers hold (issue #287). */
+const INLINE_COLUMNS = 96
+
+/**
+ * The last line of the compact form when it names `named` problems: the line the version line joins. It is the count line, else the
+ * last problem named, else the config line (the form has no problem to name or count).
+ */
+function lastLine(m: HelpModel, named: number): string {
+  const hidden = hiddenOf(m, named)
+  if (hidden > 0) return hiddenText(hidden, named > 0)
+  return named > 0 ? (m.problems[named - 1] as string) : configLine(m.configPath)
+}
+
+/** The rows the version line adds to the compact form that names `named` problems: a line of its own, or the rows its join adds. */
+function versionRows(m: HelpModel, columns: number, named: number, joined: boolean): number {
+  if (m.version === undefined) return 0
+  if (!joined) return wrapRows(versionLine(m.version), columns)
+  const last = lastLine(m, named)
+  return wrapRows(`${last}${JOIN}${versionLine(m.version)}`, columns) - wrapRows(last, columns)
 }
 
 /** The line that counts the problems the view does not name and says where to read them. It says `more` only after a named problem. */
@@ -210,7 +241,7 @@ export function sharedRows(groups: readonly HelpGroup[], columns: number): HelpR
 const entriesOf = (m: HelpModel, merge: number | undefined, columns: number): readonly HelpRow[] =>
   merge === undefined ? m.groups : sharedRows(m.groups, Math.min(merge, columns))
 
-/** The rows of everything but the problems in the compact form: the titles, the lines of keys, the config and version lines. */
+/** The rows of everything but the problems and the version line in the compact form: the titles, the lines of keys and the config line. */
 function listRows(m: HelpModel, columns: number, perLine: number, merge?: number): number {
   const groups = entriesOf(m, merge, columns).reduce(
     (n, entry) =>
@@ -220,10 +251,7 @@ function listRows(m: HelpModel, columns: number, perLine: number, merge?: number
         : wrapRows(entry.title, columns) + Math.ceil(entry.keys.length / columnsOf(m, entry, columns, perLine).per)),
     0,
   )
-  const lines =
-    wrapRows(configLine(m.configPath), columns) +
-    (m.version === undefined ? 0 : wrapRows(versionLine(m.version), columns))
-  return groups + lines
+  return groups + wrapRows(configLine(m.configPath), columns)
 }
 
 /**
@@ -233,7 +261,11 @@ function listRows(m: HelpModel, columns: number, perLine: number, merge?: number
 export function compactRows(m: HelpModel, form: CompactForm): number {
   const { columns } = form
   const named = Math.min(form.problems, m.problems.length)
-  return listRows(m, columns, form.perLine, form.merge) + problemRows(m, columns, problemWraps(m, columns), named)
+  return (
+    listRows(m, columns, form.perLine, form.merge) +
+    problemRows(m, columns, problemWraps(m, columns), named) +
+    versionRows(m, columns, named, form.version === 'joined')
+  )
 }
 
 /** The widest `key  label` text of a group: the cells of one column of its keys. */
@@ -315,8 +347,8 @@ export function compactForm(
   const wraps = problemWraps(m, columns)
   // The rows of the keys, titles and config lines (`list`) do not depend on the problems that the form names, so each form
   // counts them once and the cap loop adds only the rows of the problems (`columnsOf` makes a count of them dear).
-  const fits = (list: number, problems: number): boolean =>
-    list + problemRows(m, columns, wraps, problems) + footerRows <= bodyRows
+  const fits = (list: number, problems: number, joined: boolean): boolean =>
+    list + problemRows(m, columns, wraps, problems) + versionRows(m, columns, problems, joined) + footerRows <= bodyRows
   // The form with the fewest rows so far, for a body too short for every form. It holds the whole form, so the fallback keeps the
   // `merge` of a shared form, and a tie keeps the form found first: the one with every group on rows of its own.
   let tightest: { form: CompactForm; rows: number } = {
@@ -325,18 +357,27 @@ export function compactForm(
   }
   // Every group on rows of its own first, then the shared rows of the trackers (`merge`). A form that fits ends the search.
   // Else the form with the fewest rows is the fallback, and a tie keeps the one found first (issue #265).
-  for (const merge of [undefined, columns]) {
-    for (let perLine = first; perLine <= most; perLine++) {
-      const list = listRows(m, columns, perLine, merge)
-      const formOf = (problems: number): CompactForm =>
-        merge === undefined ? { columns, perLine, problems } : { columns, perLine, problems, merge }
-      if (fits(list, 0)) {
-        let problems = m.problems.length
-        while (!fits(list, problems)) problems--
-        return formOf(problems)
+  // Then the same search with the version line joined to the last line, only in a body narrower than the inline pane, when it has a version to join and no form above fits
+  // (issue #287). It never makes the fallback: the fallback keeps the version on its line.
+  for (const joined of m.version === undefined || columns >= INLINE_COLUMNS ? [false] : [false, true]) {
+    for (const merge of [undefined, columns]) {
+      for (let perLine = first; perLine <= most; perLine++) {
+        const list = listRows(m, columns, perLine, merge)
+        const formOf = (problems: number): CompactForm => ({
+          columns,
+          perLine,
+          problems,
+          ...(merge === undefined ? {} : { merge }),
+          ...(joined ? { version: 'joined' as const } : {}),
+        })
+        if (fits(list, 0, joined)) {
+          let problems = m.problems.length
+          while (!fits(list, problems, joined)) problems--
+          return formOf(problems)
+        }
+        const rows = list + problemRows(m, columns, wraps, 0) + versionRows(m, columns, 0, false)
+        if (!joined && rows < tightest.rows) tightest = { form: formOf(0), rows }
       }
-      const rows = list + problemRows(m, columns, wraps, 0)
-      if (rows < tightest.rows) tightest = { form: formOf(0), rows }
     }
   }
   return tightest.form
@@ -369,16 +410,17 @@ function keyLines(
  * The problems: a bold title and every one in the full form, then the count line of the ones the config left out. The
  * compact form names the first `form.problems` and counts the rest.
  */
-function problemLines(el: TableElements, m: HelpModel, form: CompactForm | undefined): RenderElement[] {
+function problemLines(el: TableElements, m: HelpModel, form: CompactForm | undefined, tail: string): RenderElement[] {
   if (m.problems.length + leftOut(m) === 0) return []
   if (form === undefined)
     return [text(el, { weight: 'bold' }, 'Problems'), ...problemList(m).map(p => text(el, { wrap: 'wrap' }, p))]
   const named = Math.min(form.problems, m.problems.length)
   const hidden = hiddenOf(m, named)
+  // `tail` is the version line joined to the last line (issue #287): the count line, else the last problem named.
+  const lines = [...m.problems.slice(0, named), ...(hidden > 0 ? [hiddenText(hidden, named > 0)] : [])]
   return [
     ...(named > 0 ? [text(el, { weight: 'bold' }, 'Problems')] : []),
-    ...m.problems.slice(0, named).map(p => text(el, { wrap: 'wrap' }, p)),
-    ...(hidden > 0 ? [text(el, { wrap: 'wrap' }, hiddenText(hidden, named > 0))] : []),
+    ...lines.map((line, i) => text(el, { wrap: 'wrap' }, i === lines.length - 1 ? `${line}${tail}` : line)),
   ]
 }
 
@@ -398,6 +440,9 @@ export function renderHelp(
   // A group on a shared row: its bold title, then its keys, `KEY_GAP` apart, with no indent.
   const sharedGroup = (g: HelpGroup): RenderElement =>
     box(el, { columnGap: KEY_GAP }, text(el, { weight: 'bold' }, g.title), ...g.keys.map(k => text(el, {}, keyText(k))))
+  // A joined version line ends the last line of the form instead of standing on its own (issue #287).
+  const tail = form?.version === 'joined' && m.version !== undefined ? `${JOIN}${versionLine(m.version)}` : ''
+  const problemsDrawn = m.problems.length + leftOut(m) > 0
   return [
     ...(form ? entriesOf(m, form.merge, form.columns) : m.groups).flatMap(entry => {
       if (Array.isArray(entry)) {
@@ -413,8 +458,8 @@ export function renderHelp(
             )),
       ]
     }),
-    text(el, {}, configLine(m.configPath)),
-    ...(m.version === undefined ? [] : [text(el, {}, versionLine(m.version))]),
-    ...problemLines(el, m, form),
+    text(el, {}, `${configLine(m.configPath)}${problemsDrawn ? '' : tail}`),
+    ...(m.version === undefined || tail !== '' ? [] : [text(el, {}, versionLine(m.version))]),
+    ...problemLines(el, m, form, tail),
   ]
 }

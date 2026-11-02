@@ -8,7 +8,7 @@ import type { RenderElement } from 'claude-code'
 import type { GroupSpec } from '../../core/interfaces/view'
 import { guard } from './budget'
 import { box, type TableElements, text } from './el'
-import { footerBox, footerRows, moveHintFits } from './footer'
+import { footerBox, footerRows, helpFooterKeys, moveHintFits } from './footer'
 import { groupRefOf } from './group-row'
 import { compactForm, renderHelp } from './help'
 import { hasStop, type LaidGroup, layout, refOf, stopRowsOf } from './layout'
@@ -73,8 +73,10 @@ export const TreeDataTable = {
   render(groups: readonly GroupSpec[], view: TableView, el: TableElements, actions: TableActions): Drawn {
     const columns = view.bodyColumns ?? DEFAULT_BODY_COLUMNS
     // The move hint only where it adds no footer row (issue #108), so it never turns the help view compact by itself.
-    const hint = moveHintFits(view.footer, columns)
-    const keys = footerBox(el, view.footer, actions, hint)
+    // Narrow help view: the dim keys shrink to their letters (issue #287).
+    const footerKeys = view.help === null ? view.footer : helpFooterKeys(view.footer, columns)
+    const hint = moveHintFits(footerKeys, columns)
+    const keys = footerBox(el, footerKeys, actions, hint)
     // The view line sits right above the keys, in the same Box, so the gap above the bottom is one and the window counts the
     // rows of both. The help view has no view line: its footer draws the keys of the view line as dim Buttons (issue #200), so
     // a letter of it does not reach the prompt. Only `r` and `h` work, and the compact form is budgeted to the footer rows.
@@ -99,12 +101,12 @@ export const TreeDataTable = {
     const compact =
       view.help === null
         ? undefined
-        : compactForm(view.help, footerRows(view.footer, columns, hint), columns, view.bodyRows)
+        : compactForm(view.help, footerRows(footerKeys, columns, hint), columns, view.bodyRows)
     // The plan view (issue #199) is one tree too, cut to the body under the footer: a plan that fits whole keeps the gap, a cut plan has none.
     const planned =
       view.help !== null || view.plan === undefined
         ? undefined
-        : shapePlan(view.plan, footerRows(view.footer, columns, hint), columns, view.bodyRows)
+        : shapePlan(view.plan, footerRows(footerKeys, columns, hint), columns, view.bodyRows)
     const laids: (readonly LaidGroup[])[] = []
     const windows: (Windowed | undefined)[] = []
     const attempt = (halve: number) => (): RenderElement[] => {
