@@ -149,6 +149,24 @@ export class Tmux {
     return this.run(['capture-pane', '-e', '-p', '-t', this.target])
   }
 
+  // Makes the server keep an OSC 52 write of a program in a paste buffer (`set-clipboard on`). The default, `external`, drops it.
+  // The buffer lives in the server of this socket, so it is never the clipboard of the machine.
+  takeClipboardWrites(): void {
+    this.run(['set-option', '-s', 'set-clipboard', 'on'])
+  }
+
+  // The newest paste buffer of the server, or undefined while it holds none. A program writes one with OSC 52
+  // (`takeClipboardWrites`) or with `tmux load-buffer`.
+  buffer(): string | undefined {
+    try {
+      return this.run(['show-buffer'])
+    } catch (e) {
+      // Only an empty server is "no buffer". A dead server or a wrong socket must not look like one.
+      if (/no buffers/i.test(String((e as { stderr?: unknown }).stderr ?? e))) return undefined
+      throw e
+    }
+  }
+
   clients(): string[] {
     return this.run(['list-clients', '-F', '#{client_name}']).split('\n').filter(Boolean)
   }

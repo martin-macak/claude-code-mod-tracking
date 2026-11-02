@@ -97,6 +97,27 @@ Feature: The questions that Claude asks are listed with their answers
     And the copy log holds "- [x] **State only**: Choose State only."
     And the screen matches /Copied Q1 as Markdown/
 
+  # Issue #207: no probe answers the event, so the engine takes its own routes. The clipboard of the machine is guarded: the
+  # tmux server of the scenario keeps an OSC 52 write (the pbcopy route is macOS-only; the step passes through any one tool), and the clipboard tools and the native addon cannot reach the clipboard.
+  Scenario: The copy key puts the Markdown of the selected call where the engine writes a clipboard
+    Given the clipboard of this machine is guarded
+    And a fake model that asks "Where should the records live?" under the header "Storage" with the options "State only" and "State and store"
+    And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
+    When I type "Ask me where"
+    Then the screen shows "Where should the records live?"
+    When I press "Enter"
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "Q1"
+    And the tmux buffer is empty
+    When I press "y"
+    Then the screen matches /Copied Q1 as Markdown/
+    And the tmux buffer holds "Q1 · turn 1 · answered"
+    And the tmux buffer holds "- [x] **State only**: Choose State only."
+    And a clipboard tool got "Q1 · turn 1 · answered"
+    And the routes of the copy are noted
+    And the clipboard of this machine did not change
+
   Scenario: Esc on the dialog is a declined call
     Given a fake model that asks "Where should the records live?" under the header "Storage" with the options "State only" and "State and store"
     And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
