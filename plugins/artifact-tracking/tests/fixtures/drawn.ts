@@ -126,7 +126,7 @@ export function view(over: Partial<TableView> = {}): TableView {
 }
 
 /**
- * `calls` lists each action as `toggle:<id>`, `more:<section>` or `press:<buttonKey>`. `asks` counts the presses that only
+ * `calls` lists each action as `enter:<id>`, `back`, `more:<section>` or `press:<buttonKey>`. `asks` counts the presses that only
  * ask for the keys (a dim footer key), which are not work.
  */
 export function recorder(): {
@@ -143,7 +143,8 @@ export function recorder(): {
     surfaces,
     asks,
     actions: {
-      toggle: id => void calls.push(`toggle:${id}`),
+      enter: id => void calls.push(`enter:${id}`),
+      back: () => void calls.push('back'),
       more: id => void calls.push(`more:${id}`),
       press: (key, surface) => {
         calls.push(`press:${key}`)

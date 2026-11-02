@@ -65,7 +65,6 @@ test('modes: a tracked file has the view and the diff (issue #254); a row that i
     { id: 'diff', enabled: true },
   ])
   expect(await t.m.previewModes(t.w.ports, 'file', 'file:/work/none.ts')).toBeUndefined()
-  expect(t.m.keys.hasPreview('file')).toBe(true) // so the rows of the file tracker draw `v`
 })
 
 test('view: the source of a text file, one code block with a line gutter, the path for the language, and a header that names the file', async () => {

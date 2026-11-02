@@ -30,6 +30,7 @@ import { viewLineBox } from './viewline'
 import { drawWindowed, pageOf, shownRows, type Windowed, windowOf } from './windowed'
 
 export {
+  findDetailRow,
   findRow,
   findTreeRow,
   handleOf,

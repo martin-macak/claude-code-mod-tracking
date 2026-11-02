@@ -61,7 +61,10 @@ const footerKeys = async (ui: PaneUi) => (await footerOf(ui)).map(b => b.key)
 const helpFooterOf = async (ui: PaneUi) =>
   (await ui.findAll({ type: 'Button' })).filter(b => b.props.hotkey !== undefined)
 const helpFooterKeys = async (ui: PaneUi) => (await helpFooterOf(ui)).map(b => b.key)
-const HELP_FOOTER_KEYS = [...['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'], ...VIEW_LINE_KEYS]
+const HELP_FOOTER_KEYS = [
+  ...['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0', 'open'],
+  ...VIEW_LINE_KEYS,
+]
 /**
  * The hotkey and label of every Button of the help footer that the pane drew, and of every key of `HELP_FOOTER` (the model that
  * `HELP_FOOTER_ROWS` counts). A test that fits the help view to the body takes `HELP_FOOTER_ROWS` and asserts the two lists equal,
@@ -71,7 +74,7 @@ const drawnHelpFooter = async (ui: PaneUi) =>
   (await helpFooterOf(ui)).map(b => ({ key: String(b.props.hotkey), label: String(b.props.label) }))
 const modelHelpFooter = HELP_FOOTER.map(k => ({ key: k.key, label: k.label }))
 const hotkeysOf = async (ui: PaneUi) => (await footerOf(ui)).map(b => b.props.hotkey)
-const HOTKEYS = ['r', 'h', 'x', '1', '2', '3', '0']
+const HOTKEYS = ['r', 'h', 'x', '1', '2', '3', '0', 'o']
 const lineOf = (text: string, s: string) => text.split('\n').findIndex(l => l.includes(s))
 
 // ---------------------------------------------------------------- rows
@@ -98,31 +101,36 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-test('pane: Enter on a Jira root hides its children and shows them again', async ($, on) => {
+test('pane: o on a Jira root hides its children and shows them again; Enter opens its detail view (issue #277)', async ($, on) => {
   const w = world(on)
   await listed($, w, 'Look at issue #5 and https://acme.atlassian.net/browse/ISS-1', prompt)
   const ui = await mountPane($)
   expect(await ui.find({ text: 'PROJ-201' })).toBeDefined()
-  await ui.press({ key: await handleFor(ui, 'ISS-1') })
+  await select($, ui, 'ISS-1')
+  await ui.press({ key: 'open' })
   expect(await ui.find({ text: 'PROJ-201' })).toBeUndefined()
   expect(await ui.find({ text: 'ISS-1' })).toBeDefined()
-  await ui.press({ key: await handleFor(ui, 'ISS-1') })
+  await ui.press({ key: 'open' })
   expect(await ui.find({ text: 'PROJ-201' })).toBeDefined()
   await ui.unmount()
 })
 
-// The compact body (17 rows) has no quick view (issue #276): the lines under the open row are the only `link:` on the screen.
-test('pane: Enter on a leaf shows its default detail and the link; Enter again hides it', async ($, on) => {
+// Enter on a row opens its detail view in the pane body (issue #277, B1): the link is whole there, and `↩ back` goes back to the list.
+test('pane: Enter on a leaf opens its detail view with the link; ↩ back returns to the list', async ($, on) => {
   const w = world(on)
   await listed($, w, 'See https://one.example/')
   const ui = await mountPane($, { bodyRows: 17 })
-  expect(await ui.find({ text: 'link:' })).toBeUndefined()
+  expect(await ui.find({ text: 'Source' })).toBeUndefined()
+  await select($, ui, 'one.example')
   await ui.press({ key: await handleFor(ui, 'one.example') })
-  expect(await ui.find({ text: 'link:' })).toBeDefined()
+  await ui.redraw()
+  expect(await ui.find({ text: 'Source' })).toBeDefined()
   expect((await ui.findAll({ type: 'Text' })).some(t => t.text === 'https://one.example/')).toBe(true)
-  await ui.press({ key: await handleFor(ui, 'one.example') })
-  expect(await ui.find({ text: 'link:' })).toBeUndefined()
-  expect((await ui.findAll({ type: 'Text' })).some(t => t.text === 'https://one.example/')).toBe(false)
+  expect(rowsOf(await ui.drawn())).toEqual([]) // the list is not drawn
+  await ui.press({ key: 'back' })
+  await ui.redraw()
+  expect(await ui.find({ text: 'Source' })).toBeUndefined()
+  expect(rowsOf(await ui.drawn()).length).toBeGreaterThan(0)
   await ui.unmount()
 })
 
@@ -154,8 +162,9 @@ test('pane: autoFocus sits on the first handle until a row is selected, then on 
   await ui.unmount()
 })
 
-// Issue #108, option 2: a click is a press. A press on a row selects it, besides opening or closing it.
-test('pane: a press on a row selects that row and opens it', async ($, on) => {
+// Issue #108, option 2, and issue #277: a click is a press. A press on a row that is not selected selects it and opens nothing; the
+// quick view follows the selection. A press on the selected row opens its detail view.
+test('pane: a press on a row selects that row; a second press on it opens its detail view', async ($, on) => {
   const { ui } = await paneOver($, on, THREE)
   expect(rowsOf(await ui.drawn()).map(r => r.selected)).toEqual([false, false, false])
   await ui.press({ key: await handleFor(ui, 'two.example') })
@@ -167,6 +176,11 @@ test('pane: a press on a row selects that row and opens it', async ($, on) => {
   await ui.press({ key: await handleFor(ui, 'three.example') })
   await ui.redraw()
   expect(rowsOf(await ui.drawn()).map(r => r.selected)).toEqual([false, false, true])
+  expect(await ui.find({ text: 'Source' })).toBeUndefined() // only a selection: no detail view
+  await ui.press({ key: await handleFor(ui, 'three.example') })
+  await ui.redraw()
+  expect(rowsOf(await ui.drawn())).toEqual([]) // the second press opened the detail view of the row
+  expect(await ui.find({ text: 'Source' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -176,17 +190,17 @@ test('pane: a press on a row selects that row and opens it', async ($, on) => {
 test('pane: a press on a row of a pane with no keys asks the engine for the keys; a pane with the keys asks for none', async ($, on) => {
   const w = world(on)
   await listed($, w, THREE)
-  for (const [isFocused, asked] of [
-    [false, 1],
-    [true, 0],
+  for (const [isFocused, asked, target, selected] of [
+    [false, 1, 'two.example', [false, true, false]],
+    [true, 0, 'three.example', [false, false, true]],
   ] as const) {
     const ui = await mountPane($, { isFocused })
     const before = w.opened.length
-    await ui.press({ key: await handleFor(ui, 'two.example') })
+    await ui.press({ key: await handleFor(ui, target) })
     if (asked > 0) await until(() => w.opened.length > before, 'the ask for the keys')
     await ui.redraw()
     await quiet(w.calls) // no more calls come: a pane with the keys asks for none
-    expect(rowsOf(await ui.drawn()).map(r => r.selected)).toEqual([false, true, false])
+    expect(rowsOf(await ui.drawn()).map(r => r.selected)).toEqual(selected)
     expect(w.opened.slice(before)).toHaveLength(asked)
     if (asked > 0) expect(w.opened.at(-1)).toMatchObject({ id: 'track', focus: true })
     await ui.unmount()
@@ -248,18 +262,15 @@ test('pane: the help view of a pane with no keys draws no hint line, so it still
   await ui.unmount()
 })
 
-test('pane: /track clear forgets the selection and the open rows; a row tracked again starts plain', async ($, on) => {
+test('pane: /track clear forgets the selection; a row tracked again starts plain', async ($, on) => {
   const { w, ui } = await paneOver($, on, LINKS)
   await select($, ui, 'two.example')
-  await ui.press({ key: await handleFor(ui, 'two.example') })
-  expect(await ui.find({ text: 'link:' })).toBeDefined()
   await track($, 'clear')
   await listed($, w, LINKS)
   await ui.redraw()
   const rows = rowsOf(await ui.drawn())
   expect(rows.map(r => r.selected)).toEqual([false, false])
   expect(rows.map(r => r.autoFocus)).toEqual([true, false])
-  expect(await ui.find({ text: 'link:' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -365,7 +376,7 @@ test('pane: x and the digits are dim and inert on a process row', async ($, on) 
 test('pane: every core key has one footer Button; their hotkeys are r h x 1 2 3 0', async ($, on) => {
   const { ui } = await paneOver($, on, LINKS)
   expect(await hotkeysOf(ui)).toEqual(HOTKEYS)
-  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0', 'open'])
   const handles = (await ui.findAll({ type: 'Button' })).filter(b => /^r\d+$/.test(b.key ?? ''))
   expect(handles.length).toBe(2)
   for (const b of handles) expect(b.props.hotkey).toBeUndefined()
@@ -452,7 +463,7 @@ test('pane: h in a short inline pane draws the compact help view, so Pane keys a
   expect(JSON.stringify(help[0])).toContain('Pane keys')
   expect(footer).toBeDefined()
   expect(await helpFooterKeys(ui)).toEqual(HELP_FOOTER_KEYS)
-  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0', 'open'])
   expect(await ui.find({ text: 'Row keys (act on the selected or marked rows)' })).toBeDefined()
   await ui.unmount()
 })
@@ -489,7 +500,7 @@ test('pane: h in a docked pane keeps the full help view, one key to a line', asy
   const { gap, help } = await helpTree(ui)
   expect(gap).toBe(1)
   // 4 titles, 18 keys (g, a, t, p, m and e, v and d of the preview, the github keys c and f and the questions key y of the started mod), the config line, the version line
-  expect(help).toHaveLength(24)
+  expect(help).toHaveLength(25)
   expect(JSON.stringify(help[0])).toContain('Pane keys')
   expect(JSON.stringify(help[1])).toContain('refresh')
   await ui.unmount()
@@ -638,7 +649,7 @@ test('pane: inline 100x40 with 12 links shows the title, the header and the foot
   expect(rowsOf(tree)).toHaveLength(5)
   expect(await ui.find({ text: 'Web links' })).toBeDefined()
   expect(headersOf(tree)).toContainEqual(['Name', 'Description'])
-  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0', 'open'])
   expect(await ui.find({ text: '▼ 7 more below' })).toBeDefined()
   expect(await ui.find({ text: /more above/ })).toBeUndefined()
   expect(await ui.find({ text: 'View: list' })).toBeDefined()
@@ -656,7 +667,7 @@ test('pane: docked 120x37 with 36 links shows the title, the header and the foot
   expect(rowsOf(tree)).toHaveLength(22)
   expect(await ui.find({ text: 'Web links' })).toBeDefined()
   expect(headersOf(tree)).toContainEqual(['Name', 'Description'])
-  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0', 'open'])
   expect(await ui.find({ text: '▼ 14 more below' })).toBeDefined()
   await ui.unmount()
 })
@@ -675,7 +686,7 @@ test('pane: docked 120x37 draws the summary, the selected row and the health bes
   expect(text).toContain('No row selected') // nothing is selected when the pane opens
   expect(text).toContain('Health:')
   expect(text).toContain('View: list')
-  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0', 'open'])
   // A ring move onto a row selects it: the line names it, after its label.
   await select($, ui, 'site3.example')
   const after = await lines(ui)
@@ -789,6 +800,7 @@ test('pane: inline 100x60 (18 body rows) draws the full form, also while the key
       'prio-2',
       'prio-3',
       'prio-0',
+      'open',
     ])
     await ui.unmount()
   }
@@ -845,7 +857,7 @@ test('pane: a windowed pane with no keys keeps the title, the header, the hint a
   expect(headersOf(tree)).toContainEqual(['Name', 'Description'])
   expect((await ui.findAll({ type: 'Text' })).some(t => t.text === NO_KEYS_HINT)).toBe(true)
   expect(await ui.find({ text: '▼ 8 more below' })).toBeDefined()
-  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0', 'open'])
   // The hint line, the title, the header, the rows, the hint below, the gap, the view line and the footer are the body, to the line.
   expect(1 + 2 + rows + 1 + 1 + 1 + 1).toBe(INLINE.bodyRows)
   await ui.unmount()
@@ -893,7 +905,7 @@ test('pane: docked with 3 links, the footer sits at the bottom of the body', asy
     expect.objectContaining({ minHeight: DOCKED.bodyRows - SUMMARY_ROWS }), // the body less the summary row of the full status area
     expect.objectContaining({ flexGrow: 1, justifyContent: 'flex-end' }),
   ])
-  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0'])
+  expect(await footerKeys(ui)).toEqual(['refresh', 'help', 'dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0', 'open'])
   await ui.unmount()
 })
 
@@ -947,7 +959,7 @@ test('pane: the ring walks down every row and back up; the window follows and th
     const rows = rowsOf(await ui.drawn())
     expect(rows.length, `row ${at}`).toBeLessThanOrEqual(6)
     expect(rows.find(r => r.selected)?.handle, `row ${at}`).toBe(`r${at}`)
-    expect(await footerKeys(ui), `row ${at}`).toHaveLength(7)
+    expect(await footerKeys(ui), `row ${at}`).toHaveLength(8)
     expect(await ui.find({ text: 'Web links' }), `row ${at}`).toBeDefined()
   }
   await ui.unmount()
@@ -1071,7 +1083,7 @@ test('pane: the largest list the store allows draws whole in a tall body', { tim
   expect(rowsOf(tree).length).toBe(500)
   const keys = await buttons()
   expect(keys.filter(k => /^r\d+$/.test(k)).length).toBe(500)
-  expect((await footerOf(ui)).length).toBe(7)
+  expect((await footerOf(ui)).length).toBe(8)
   expect(keys.some(k => /^m\d+$/.test(k))).toBe(false)
   expect(fits(measure(tree), BUDGET)).toBe(true)
   await ui.unmount()
@@ -1094,7 +1106,7 @@ test(
     const tree = await ui.drawn()
     expect(rowsOf(tree).length).toBe(22) // the status area takes three of the 25 rows
     expect((await handlesIn(ui)).length).toBe(500)
-    expect((await footerOf(ui)).length).toBe(7)
+    expect((await footerOf(ui)).length).toBe(8)
     expect(fits(measure(tree), BUDGET)).toBe(true)
     await ui.unmount()
   },

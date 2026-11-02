@@ -10,30 +10,21 @@ const WAIT_MS = 3000
 const SETTLE_MS = 500
 const TRIES = 3
 
-// A click on the arrow of a row. The pane takes a click on a Button only, and the arrow is the Button of the row. A click
-// is a press: it selects the row and opens or closes it. A click that lands while the pane still draws its first frames
-// can be lost, and one that lands late is followed by another that undoes it, because the click toggles. So the step is
-// done when the row is selected and its arrow differs from the one it had before the first click, and that state holds for
-// SETTLE_MS (support/click.ts). It fails, with the screen, when it never does.
-When('I click the arrow of the row showing {string}', async function (this: DemoWorld, text: string) {
+// Issue #277. A click on the glyph of a row is a press of its Button. A press on a row that is not selected only selects it, and a press
+// on the selected row opens its detail view (the rule of the click, spike S1 of issue #275). The step is done when the row is selected,
+// or when the detail view shows (`↩ back`): a click that selected a row that was selected already opened its view. The glyph does not
+// change, so a click is not retried once it landed: a second click would open the view.
+When('I click the row showing {string}', async function (this: DemoWorld, text: string) {
   this.tl.phase('normal')
-  let before: string | undefined
   await clickUntil({
     capture: () => this.tmux.capture(),
-    locate: screen => {
-      const at = arrowOf(screen, text)
-      before ??= at?.glyph
-      return at
-    },
+    locate: screen => arrowOf(screen, text),
     click: (column, row) => this.tmux.click(column, row),
-    landed: screen => {
-      const now = arrowOf(screen, text)?.glyph
-      return selectedLine(screen)?.includes(text) === true && now !== undefined && now !== before
-    },
+    landed: screen => selectedLine(screen)?.includes(text) === true || screen.includes('↩ back'),
     tries: TRIES,
     waitMs: WAIT_MS,
     settleMs: SETTLE_MS,
-    what: `a click on the arrow of the row showing "${text}" did not select and toggle the row`,
+    what: `a click on the row showing "${text}" did not select it`,
   })
 })
 

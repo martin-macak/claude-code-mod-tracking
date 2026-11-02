@@ -133,7 +133,7 @@ test('the view line sits between the rows and the footer, in the Box of the foot
   const { drawn } = draw(web(3), { ...INLINE, viewLine: LINE })
   const bottom = root(drawn.tree).children.at(-1) as Node
   expect(texts(bottom).map(([, s]) => s)).toContain('View: list')
-  expect(hotkeys(bottom)).toEqual(['g', 'a', 't', 'p', 'm', 'e', 'r', 'h', 'x', '1', '2', '3', '0'])
+  expect(hotkeys(bottom)).toEqual(['g', 'a', 't', 'p', 'm', 'e', 'r', 'h', 'x', '1', '2', '3', '0', 'o'])
   expect(hotkeys(drawn.tree)).toEqual(hotkeys(bottom)) // no other Button has a hotkey
   expect(footerOf(drawn.tree).map(b => b.props.hotkey)).toEqual(NO_ROW_FOOTER.map(k => k.key)) // the footer is its own keys
   expect(viewLineOf(drawn.tree).map(b => b.props.hotkey)).toEqual(['g', 'a', 't', 'p', 'm', 'e'])
@@ -169,7 +169,7 @@ test('m on the view line adds no footer row at 96 cells: an item, a question and
       96,
       false,
     )
-  expect([rows('web'), rows('questions'), rows('github')]).toEqual([1, 1, 2])
+  expect([rows('web'), rows('questions'), rows('github')]).toEqual([1, 2, 2])
   expect(footerKeys(reg, rowOf('web'), o => o === 'web', false).some(k => k.key === 'm')).toBe(false)
 })
 
@@ -200,7 +200,7 @@ test('docked: the view line is pinned with the footer, at the bottom of the body
   const { drawn } = draw(web(3), { ...DOCKED, viewLine: LINE })
   const pinned = root(drawn.tree).children.at(-1) as Node
   expect(pinned.props).toMatchObject({ flexGrow: 1, flexShrink: 0, justifyContent: 'flex-end' })
-  expect(hotkeys(pinned)).toEqual(['g', 'a', 't', 'p', 'm', 'e', 'r', 'h', 'x', '1', '2', '3', '0'])
+  expect(hotkeys(pinned)).toEqual(['g', 'a', 't', 'p', 'm', 'e', 'r', 'h', 'x', '1', '2', '3', '0', 'o'])
   expect(root(drawn.tree).props.minHeight).toBe(DOCKED.bodyRows)
 })
 
@@ -245,12 +245,12 @@ test('the help view draws no view line: its footer holds the six keys as dim But
   const footer = footerKeys(reg, undefined, () => false, true)
   const { drawn } = draw(web(2), { ...INLINE, help, footer, viewLine: LINE })
   expect(hotkeys(drawn.tree)).toEqual(footer.map(k => k.key)) // the footer, in order, and no Button of the view line on top
-  expect(hotkeys(drawn.tree)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'g', 'a', 't', 'p', 'm', 'e'])
+  expect(hotkeys(drawn.tree)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'o', 'g', 'a', 't', 'p', 'm', 'e'])
   expect(texts(drawn.tree).some(([, s]) => s.startsWith('View:'))).toBe(false)
   const footerBox = (drawn.tree as unknown as Node).children.at(-1) as Node
   expect(
     nodes(footerBox, 'Button')
       .filter(b => b.props.dimColor === true)
       .map(b => b.props.hotkey),
-  ).toEqual(['x', '1', '2', '3', '0', 'g', 'a', 't', 'p', 'm', 'e'])
+  ).toEqual(['x', '1', '2', '3', '0', 'o', 'g', 'a', 't', 'p', 'm', 'e'])
 })

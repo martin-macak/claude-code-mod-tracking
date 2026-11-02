@@ -43,6 +43,8 @@ export interface KeyRowOptions {
   /** The last words of the row. Default `Esc close`; the key line of the preview says `Esc back`. */
   readonly close?: string
   readonly pressOff?: boolean
+  /** Elements before the first key: the `↩ back` Button of the preview body (issue #277). It is the first Tab stop of the row. */
+  readonly lead?: readonly RenderElement[]
 }
 
 /**
@@ -53,11 +55,12 @@ export function footerBox(
   keys: readonly FooterKey[],
   actions: TableActions,
   hint: boolean,
-  { close = ESC_HINT, pressOff = false }: KeyRowOptions = {},
+  { close = ESC_HINT, pressOff = false, lead = [] }: KeyRowOptions = {},
 ): RenderElement {
   return box(
     el,
     { columnGap: KEY_GAP, flexWrap: 'wrap' },
+    ...lead,
     ...keys.map(k => keyButton(el, k, actions, pressOff)),
     ...(hint ? [text(el, { dimColor: true }, MOVE_HINT)] : []),
     text(el, { dimColor: true }, close),

@@ -1,18 +1,18 @@
 // The preview body (issue #57, L2): what the pane draws in place of the table while a preview shows. A header (the title in bold,
-// a dim second part), the key line (`v`, `d`, `r` and the hint `Esc back`), then the notices, then the blocks. The order is the
-// design: keys first, notices next, content last, so the cut of the budget guard and the scroll of the engine never take a key or
-// a notice. The engine scrolls a tall body (the header and the key line scroll away, their hotkeys still fire). Every string is made
+// a dim second part), the key line (`↩ back`, `v`, `d`, `r` and the hint `Esc back`), the other keys as dim Buttons (issue #277), then
+// the notices, then the blocks. The order is the design: keys first, notices next, content last, so the cut of the budget guard and
+// the scroll of the engine never take a key or a notice. The detail view of a row (issue #277) is this body with the block `fields`. The engine scrolls a tall body (the header and the key line scroll away, their hotkeys still fire). Every string is made
 // safe first: one control character in a `Code` source makes the engine refuse the whole tree. Pure.
 // Design study of issue #57, comment 6414682787 (R10, G4, G9, G10).
 import type { RenderElement } from 'claude-code'
-import type { PreviewBlock } from '../../core/interfaces/preview'
+import type { PreviewBlock, PreviewField } from '../../core/interfaces/preview'
 import type { FooterKey } from '../../core/interfaces/view'
-import { cellWidth, clipMiddle, normaliseCell } from '../text/cell-width'
+import { cellWidth, clipMiddle, clipTo, normaliseCell } from '../text/cell-width'
 import { sanitize } from '../text/sanitize'
 import { COLOR } from '../theme'
 import { BUDGET, type Cost, guard } from './budget'
-import { box, code, markdown, type TableElements, text } from './el'
-import { footerBox } from './footer'
+import { box, button, code, markdown, type TableElements, text } from './el'
+import { footerBox, ITEM_GAP, keyButton } from './footer'
 import { DEFAULT_BODY_COLUMNS, type TableActions } from './shape'
 
 /**
@@ -30,6 +30,10 @@ export const PREVIEW_TOO_LARGE = 'The preview is too large to draw.'
 export const BACK_HINT = 'Esc back'
 /** The cells that a title keeps at least, before the second part of the header gives way. */
 const MIN_TITLE = 10
+/** The words of the first Button of the key line. It has no hotkey, so Enter on it (the ring is there when the view opens) goes back. */
+export const BACK_LABEL = '↩ back'
+/** The cells of the label column of a `fields` block, at most: a longer label is cut, and the text keeps the room that is left. */
+const MAX_LABEL = 14
 
 export interface PreviewView {
   /** The first part of the header: a path, a name. Cut in the middle when the header is too long. */
@@ -38,6 +42,13 @@ export interface PreviewView {
   readonly subtitle?: string | undefined
   /** The Buttons of the key line: the modes of the row, then `r: reload` (`previewKeys`). */
   readonly keys: readonly FooterKey[]
+  /** The Button key of `↩ back`, drawn first on the key line. Absent: no such Button (the file preview before issue #277). */
+  readonly back?: string | undefined
+  /**
+   * The keys that are no key of the view, as dim Buttons on a line of their own (issue #277, the rule of issue #200): the view has no
+   * footer and no view line, so a letter with no Button would leave the pane for the prompt. A press only gives the pane the keys.
+   */
+  readonly dim?: readonly FooterKey[] | undefined
   /** The blocks, or `undefined` while they load. */
   readonly blocks: readonly PreviewBlock[] | undefined
   /** The cells of a body row. Absent: the table's default. */
@@ -65,6 +76,37 @@ function noticeText(el: TableElements, block: Extract<PreviewBlock, { kind: 'not
   return text(el, { wrap: 'wrap', ...tone }, safe(block.text))
 }
 
+/**
+ * The rows of a `fields` block (issue #277): a label column, as wide as the longest label up to `MAX_LABEL` cells, and beside it a text
+ * that wraps. The label is dim. The text is made safe but keeps its newlines (a plan has lines), and a tab becomes two spaces, so the
+ * engine wraps it by its own rule. One Box for each field, in one column Box: the labels stand under each other.
+ */
+function fieldsBox(el: TableElements, fields: readonly PreviewField[]): RenderElement {
+  const labels = fields.map(f => clipTo(safe(f.label), MAX_LABEL))
+  const width = Math.max(1, ...labels.map(cellWidth))
+  return box(
+    el,
+    { flexDirection: 'column' },
+    ...fields.map((f, i) => {
+      const label = labels[i] ?? ''
+      return box(
+        el,
+        { columnGap: 1 },
+        box(el, { width, flexShrink: 0 }, ...(label === '' ? [] : [text(el, { dimColor: true }, label)])),
+        text(el, { wrap: 'wrap' }, sanitize(f.text).replaceAll('\t', '  ')),
+      )
+    }),
+  )
+}
+
+/** The Button `↩ back`: the first of the key line. It has no hotkey (Esc leaves the view too), so it takes no letter of the keys. */
+const backButton = (el: TableElements, key: string, actions: TableActions): RenderElement =>
+  button(el, { key, plain: true, label: BACK_LABEL, onPress: () => actions.back() })
+
+/** The dim keys: one line of Buttons that wraps like the footer. A press does no work and only gives the pane the keys. */
+const dimBox = (el: TableElements, keys: readonly FooterKey[], actions: TableActions): RenderElement =>
+  box(el, { columnGap: ITEM_GAP, flexWrap: 'wrap' }, ...keys.map(k => keyButton(el, { ...k, enabled: false }, actions)))
+
 /** The element of one block that is no notice. A prop is set only when the block has it: the engine refuses an odd prop. */
 function contentOf(el: TableElements, block: Exclude<PreviewBlock, { kind: 'notice' }>): RenderElement {
   switch (block.kind) {
@@ -85,6 +127,8 @@ function contentOf(el: TableElements, block: Exclude<PreviewBlock, { kind: 'noti
       })
     case 'markdown':
       return markdown(el, { text: sanitize(block.text) })
+    case 'fields':
+      return fieldsBox(el, block.fields)
     default:
       return block satisfies never
   }
@@ -100,7 +144,9 @@ export function renderPreview(el: TableElements, view: PreviewView, actions: Tab
   const header = headerBox(el, view, columns)
   // The key line is the footer row of the preview. A mode that is off draws dim, but its press still goes to the pane: the pane says
   // why in a toast (`PreviewMode.reason`), where a dim key of the footer only asks for the keys.
-  const keys = footerBox(el, view.keys, actions, false, { close: BACK_HINT, pressOff: true })
+  const lead = view.back === undefined ? [] : [backButton(el, view.back, actions)]
+  const keys = footerBox(el, view.keys, actions, false, { close: BACK_HINT, pressOff: true, lead })
+  const dim = view.dim === undefined || view.dim.length === 0 ? [] : [dimBox(el, view.dim, actions)]
   const blocks = view.blocks ?? []
   const notices = blocks.flatMap(b => (b.kind === 'notice' ? [noticeText(el, b)] : []))
   const content = blocks.flatMap(b => (b.kind === 'notice' ? [] : [contentOf(el, b)]))
@@ -108,10 +154,10 @@ export function renderPreview(el: TableElements, view: PreviewView, actions: Tab
     view.blocks === undefined
       ? [text(el, { dimColor: true }, LOADING)]
       : guard(
-          [header, keys],
+          [header, keys, ...dim],
           [() => [...notices, ...content]],
           () => [...notices, text(el, { dimColor: true }, PREVIEW_TOO_LARGE)],
           view.budget ?? BUDGET,
         ).body
-  return box(el, { flexDirection: 'column' }, header, keys, ...body)
+  return box(el, { flexDirection: 'column' }, header, keys, ...dim, ...body)
 }

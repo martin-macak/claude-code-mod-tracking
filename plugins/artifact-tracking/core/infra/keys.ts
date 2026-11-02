@@ -1,13 +1,14 @@
 // KeyRegistry and the key routing. The registry collects the core keys and each tracker's static keys at init and drops
 // an invalid or taken key with a problem: the engine lets the later of two equal hotkeys win in silence (E11). `route`
 // says where a pressed key goes. `footerKeys` says which Buttons the footer draws and which are live.
-// Imports only core/interfaces. Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Keys".
-// Plan: L6 Task 6, G6, G7, G16.
+// Imports core/interfaces, and the mode id of the detail view from core/lib/preview. Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md,
+// section 5.10 "Keys". Plan: L6 Task 6, G6, G7, G16.
 
 import type { Level } from '../interfaces/items'
-import type { PreviewMode } from '../interfaces/preview'
+import type { PreviewMode, PreviewModeId } from '../interfaces/preview'
 import type { KeySpec } from '../interfaces/tracker'
 import type { FooterKey, PaneKey, RowRef } from '../interfaces/view'
+import { DETAIL_MODE } from '../lib/preview'
 
 const core = (id: string, key: string, label: string, scope: PaneKey['scope'], bar?: PaneKey['bar']): PaneKey => ({
   id,
@@ -30,11 +31,14 @@ const core = (id: string, key: string, label: string, scope: PaneKey['scope'], b
  * problems, a 90-cell path, the keys of two trackers) takes 10 rows of the 11-row inline body beside a footer of 1 row, and
  * 11 beside the footer of 2 rows that issue #200 draws. With `touched only` it takes 11 and 12, so the second would not fit.
  *
- * `v` and `d` are the keys of the preview (issue #57, L2). `v` opens the preview of the selected row and sits last of the footer keys,
- * but only for a row whose tracker has a preview. `d` is the diff mode and sits on the key line of the preview, so it is on no footer.
- * Core takes both: no tracker can, so a second provider never meets a key that the registry turned off. `mode` is the one table of
- * the modes: the key that picks a mode names it. The key line, the press and the route read it, so a mode that core adds later
- * (issue #275, `detail`) is one more entry here.
+ * `o` (issue #277, L2 of #275) opens or closes the children of the selected row. It sits last of the footer keys and is live only on a
+ * row with children (`RowRef.can.open`); on a leaf it is dim. Enter no longer folds a row: it opens the detail view of any row.
+ *
+ * `v` and `d` are the keys of the preview (issue #57, L2). Both sit on the key line of the preview, so both are on no footer: Enter
+ * reaches the view of a file in two keys, Enter and `v` (issue #277 takes `v` off the list footer, which changes the decision Q4 of
+ * issue #57). Core takes both: no tracker can, so a second provider never meets a key that the registry turned off. `mode` is the one
+ * table of the modes: the key that picks a mode names it. The key line, the press and the route read it. `detail`, the core mode of
+ * issue #275, has no key: Enter opens it.
  */
 export const CORE_KEYS: readonly PaneKey[] = [
   core('refresh', 'r', 'refresh', 'pane'),
@@ -50,7 +54,8 @@ export const CORE_KEYS: readonly PaneKey[] = [
   core('prio-2', '2', 'normal', 'row'),
   core('prio-3', '3', 'low', 'row'),
   core('prio-0', '0', 'auto', 'row'),
-  { ...core('preview', 'v', 'preview', 'row'), mode: 'view' },
+  core('open', 'o', 'open', 'row'),
+  { ...core('preview', 'v', 'preview', 'row', 'preview'), mode: 'view' },
   { ...core('diff', 'd', 'diff', 'row', 'preview'), mode: 'diff' },
 ]
 
@@ -71,8 +76,6 @@ export function buttonKeyOf(k: PaneKey): string {
 
 export class KeyRegistry {
   private readonly list: PaneKey[] = []
-  /** The owners whose tracker has a `preview`: only their rows draw `v` (issue #57, L2). */
-  private readonly previews = new Set<string>()
   private readonly byButton = new Map<string, PaneKey>()
   private readonly byKey = new Map<string, PaneKey>()
   private readonly notes: string[] = []
@@ -109,15 +112,6 @@ export class KeyRegistry {
     }
   }
 
-  /** Says that the tracker `owner` has a `preview`, so a row of it draws `v`. A tracker that is off or failed is never named. */
-  addPreview(owner: string): void {
-    this.previews.add(owner)
-  }
-
-  hasPreview(owner: string): boolean {
-    return this.previews.has(owner)
-  }
-
   /** Core first, then the tracker keys in add order. */
   all(): readonly PaneKey[] {
     return this.list
@@ -148,7 +142,7 @@ export type Route =
   | { readonly to: 'clean' }
   | { readonly to: 'quick' }
   | { readonly to: 'mark'; readonly rowId: string }
-  | { readonly to: 'preview'; readonly rowId: string; readonly owner: string; readonly mode: string }
+  | { readonly to: 'open'; readonly rowId: string }
   | { readonly to: 'dismiss'; readonly rowId: string }
   | { readonly to: 'priority'; readonly rowId: string; readonly level: Level | undefined }
   | { readonly to: 'owner'; readonly owner: string; readonly id: string; readonly rowId: string | null }
@@ -217,10 +211,10 @@ export function route(
   if (k.id === 'clean') return { to: 'clean' }
   if (k.id === 'quick') return { to: 'quick' }
   if (row === undefined) return NONE
-  // A key with a mode and no bar opens the preview in that mode: `v`. It routes for any row. The footer draws it only for an owner that
-  // has a preview (`footerKeys`), so no other row presses it. `d` is a key of the preview line (`bar`): the list has no Button for it.
-  if (k.mode !== undefined && k.bar === undefined)
-    return { to: 'preview', rowId: row.id, owner: row.owner, mode: k.mode }
+  // `v` and `d` pick a mode of the preview and sit on its key line (`bar: 'preview'`): the list has no Button for them, so they never
+  // route from the list. The preview takes their press itself (`PanePreview.key`). `o` folds a row that has children (issue #277).
+  if (k.mode !== undefined) return NONE
+  if (k.id === 'open') return row.can?.open === true ? { to: 'open', rowId: row.id } : NONE
   if (k.id === 'mark') {
     return isMarked || takesMark(row, isItemOwner) ? { to: 'mark', rowId: row.id } : NONE
   }
@@ -278,10 +272,9 @@ const onViewLine = (k: PaneKey): boolean => k.bar === 'view'
  * every key of the view line (`bar: 'view'`: `g`, `a`, `t`, `p`, `m` and `e`), last and dim: a press does nothing and takes the keys, so
  * the letter does not type into the prompt (issue #200). The rule reads `bar`, not a list of letters, so a new key of the view
  * line gets its dim Button with no edit here. They come after `0`, so the Tab walk and the first stop do not move. A key of
- * the key line of the preview (`bar: 'preview'`: `d`) is on neither footer: the preview draws it.
+ * the key line of the preview (`bar: 'preview'`: `v` and `d`, issue #277) is on neither footer: the preview draws it.
  *
- * A key that opens the preview (`v`) is drawn only for a row whose owner has a preview. It is live when the row itself has one
- * (`previewable`, from the `modes()` of the provider): a provider that previews some rows only gets a dim `v` on the others.
+ * `o` is live on a row with children (`RowRef.can.open`, through `route`) and dim on a leaf.
  */
 export function footerKeys(
   reg: KeyRegistry,
@@ -290,24 +283,15 @@ export function footerKeys(
   help: boolean,
   state?: (owner: string, id: string) => 'enabled' | 'disabled',
   markedRows: readonly RowRef[] = [],
-  previewable = true,
 ): readonly FooterKey[] {
   const shown = reg
     .all()
-    .filter(
-      k =>
-        k.bar === undefined &&
-        (k.mode === undefined || (row !== undefined && reg.hasPreview(row.owner))) &&
-        (k.owner === 'core' || (row !== undefined && k.owner === row.owner)),
-    )
+    .filter(k => k.bar === undefined && (k.owner === 'core' || (row !== undefined && k.owner === row.owner)))
   const dimmed = help ? reg.all().filter(onViewLine) : [] // the help view has no view line: its keys stay as dim Buttons
   return [...shown, ...dimmed].map(k => {
     const core = k.owner === 'core'
     const bulk = bulkTargets(k, markedRows, isItemOwner)
-    const routed =
-      bulk === undefined
-        ? route(k, row, isItemOwner).to !== 'none' && (k.mode === undefined || previewable)
-        : bulk.rowIds.length > 0
+    const routed = bulk === undefined ? route(k, row, isItemOwner).to !== 'none' : bulk.rowIds.length > 0
     const live = help
       ? core && (k.id === 'refresh' || k.id === 'help')
       : routed && (core || state?.(k.owner, k.id) !== 'disabled')
@@ -368,13 +352,21 @@ export function viewKeys(
  * of a mode is the one that names it in `PaneKey.mode`: a mode that no core key picks has no Button. `buttonKey` is the key of the
  * Button: the registry finds the core key by it.
  */
-export function previewKeys(reg: KeyRegistry, modes: readonly PreviewMode[]): readonly FooterKey[] {
+export function previewKeys(
+  reg: KeyRegistry,
+  modes: readonly PreviewMode[],
+  shown?: PreviewModeId,
+): readonly FooterKey[] {
   const keys: FooterKey[] = []
   for (const mode of modes) {
     const key = reg.all().find(k => k.owner === 'core' && k.mode === mode.id)
     if (key !== undefined) keys.push({ ...key, label: mode.id, enabled: mode.enabled, buttonKey: buttonKeyOf(key) })
   }
+  // In the detail view `r` reads the row again (a refresh of the trackers), in a file mode it reads the file again.
   const reload = reg.get('refresh')
-  if (reload !== undefined) keys.push({ ...reload, label: 'reload', enabled: true, buttonKey: buttonKeyOf(reload) })
+  if (reload !== undefined) {
+    const label = shown === DETAIL_MODE ? reload.label : 'reload'
+    keys.push({ ...reload, label, enabled: true, buttonKey: buttonKeyOf(reload) })
+  }
   return keys
 }

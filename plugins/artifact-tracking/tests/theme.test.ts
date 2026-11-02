@@ -51,7 +51,7 @@ test('accent is suggestion and selected is blue', () => {
 })
 
 test('the glyphs are one cell each, the mark of a row (issue #138) a plain *, no emoji', () => {
-  expect(Object.values(GLYPH).map(cellWidth)).toEqual([1, 1, 1, 1, 1])
+  expect(Object.values(GLYPH).map(cellWidth)).toEqual([1, 1, 1, 1, 1, 1])
   expect(GLYPH.marked).toBe('*')
 })
 

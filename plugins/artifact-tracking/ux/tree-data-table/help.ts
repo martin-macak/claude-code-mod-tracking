@@ -302,7 +302,13 @@ export function compactForm(
   bodyRows: number | undefined,
 ): CompactForm | undefined {
   if (bodyRows === undefined || !compactHelp(m, footerRows, columns, bodyRows)) return undefined
-  const most = Math.max(1, ...m.groups.map(g => holds(widestOf(g), columns)))
+  // The most keys to a line that any group can use: what its widest key holds, or all its keys when they fit one row at their own
+  // widths (`columnsOf`). The second keeps the row keys on one row of 96 cells with `o` of issue #277 (nine keys, 88 cells), where the
+  // widest key would hold eight and push `v` and `d` to a second row.
+  const most = Math.max(
+    1,
+    ...m.groups.map(g => Math.max(holds(widestOf(g), columns), naturalWidth(g) <= columns ? g.keys.length : 0)),
+  )
   const first = Math.min(PER_LINE, holds(widestKey(m), columns)) // the start does not depend on the shorter keys of a group
   // The rows of every prefix of the problems are counted once: a malformed config gives one problem per unknown key, with no
   // limit, and the search below asks for the rows of many candidates (a rescan of the named problems for each is quadratic).

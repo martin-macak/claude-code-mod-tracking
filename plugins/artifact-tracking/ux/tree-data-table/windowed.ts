@@ -10,9 +10,8 @@
 import type { RenderElement } from 'claude-code'
 import { normaliseCell } from '../text/cell-width'
 import { wrapRows } from '../text/wrap'
-import { GLYPH } from '../theme'
 import { box, button, text } from './el'
-import type { LaidGroup, LaidRow } from './layout'
+import { glyphOf, type LaidGroup, type LaidRow } from './layout'
 import {
   bareParts,
   type Draw,
@@ -125,8 +124,8 @@ function stopOf(d: Draw, s: LaidGroup, u: Placed): RenderElement | undefined {
     button(d.el, {
       key: row?.handle ?? `m${s.index}`,
       plain: true,
-      label: row === undefined ? `${s.more} more` : GLYPH.closed,
-      onPress: row === undefined ? () => d.actions.more(s.spec.id) : () => d.actions.toggle(row.row.id),
+      label: row === undefined ? `${s.more} more` : glyphOf(row),
+      onPress: row === undefined ? () => d.actions.more(s.spec.id) : () => d.actions.enter(row.row.id),
     }),
   )
 }

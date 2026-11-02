@@ -9,7 +9,7 @@ import type { Engine } from 'claude-code/testing'
 import { expect, mock } from 'claude-code/testing'
 import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
-import { buttonKeys, mountPane, type PaneUi, seen, select } from './fixtures/pane'
+import { buttonKeys, handleFor, mountPane, type PaneUi, seen, select } from './fixtures/pane'
 import {
   fileTool,
   graphqlCalls,
@@ -58,6 +58,8 @@ async function opened(
   const { w, reads } = await withFile($, on, text, opts)
   const ui = await mountPane($, mount)
   await select($, ui, 'a.ts')
+  await ui.press({ key: await handleFor(ui, 'a.ts') }) // Enter: the detail view (issue #277), where v sits on the key line
+  await seen(ui, '· detail')
   await ui.press({ key: 'preview' })
   await until(() => reads.length > 0, 'the read of the file') // the read runs apart from the press
   await seen(ui, 'Esc back') // the preview is drawn: its key line ends in the hint

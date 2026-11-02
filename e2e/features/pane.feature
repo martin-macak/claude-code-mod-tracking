@@ -39,20 +39,43 @@ Feature: Drive the /track pane with the keys
     And the screen stops showing "marked"
     And the selected row shows "two.example"
 
-  # Issue #276: the docked pane shows the quick view of the selected row by default, and it has the link of the row too. `e` hides it
-  # first, so the `link:` line that the scenario waits for can only be the detail under the open row.
-  Scenario: Enter expands a leaf into its detail, and h shows the help view
+  # Issue #277, L2 of #275. Enter opens the detail view of the selected row in the body of the pane: the row and the mode on the first
+  # line, the keys on the second, then the fields in a label column. `↩ back` holds the ring. The first Esc goes back to the list with the
+  # keys in the pane (the hook answers deny and opens the pane again), and the second Esc closes the pane. A view taller than the body
+  # scrolls in the engine (decision Q3 of issue #57), so the scenario reads the first fields only. It runs inline and docked.
+  Scenario Outline: Enter opens the detail view of a row, Esc goes back to the list and a second Esc closes the pane at <cols>x<rows>
+    Given a terminal of <cols> columns by <rows> rows
+    And a Claude Code session with the artifact-tracking mod
+    When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
+    And Claude finishes
+    And I type "/track"
+    Then the selected row shows "one.example"
+    And the pane is <placement>
+    When I press "Enter"
+    Then the screen shows "↩ back"
+    And the screen shows "· detail"
+    And the screen matches /Link +https:\/\/one\.example\/a/
+    And the screen stops showing "Esc close"
+    And the focus ring is on "↩ back"
+    When I press "Escape"
+    Then the screen stops showing "↩ back"
+    And the selected row shows "one.example"
+    And the screen shows "Esc close"
+    When I press "Escape"
+    Then the screen stops showing "Esc close"
+
+    Examples:
+      | cols | rows | placement |
+      | 120  | 36   | docked    |
+      | 100  | 40   | inline    |
+
+  # The help view keeps its job: h opens it, h again returns to the row.
+  Scenario: h shows the help view and h again returns to the selected row
     Given a Claude Code session with the artifact-tracking mod
     When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
     And Claude finishes
     And I type "/track"
     Then the selected row shows "one.example"
-    When I press "e"
-    Then the screen stops showing "link: https://one.example/a"
-    When I press "Enter"
-    Then the screen matches /│.*link: https:\/\/one\.example\/a/
-    When I press "Enter"
-    Then the screen stops showing "link: https://one.example/a"
     When I press "h"
     Then the screen shows "Row keys (act on the selected or marked rows)"
     And the screen shows "Config file:"
@@ -61,7 +84,7 @@ Feature: Drive the /track pane with the keys
     Then the screen stops showing "Row keys"
     And the selected row shows "one.example"
 
-  # Issue #57, L2. `v` on a file row opens the file in place of the table, with a key line and the source. The first Esc goes back to
+  # Issue #57, L2, and issue #277. Enter opens the detail view of a file row, and `v` on its key line opens the file in place of the table, with a key line and the source (`v` is on no list footer). The first Esc goes back to
   # the list with the keys in the pane (the hook answers deny and opens the pane again), and the second Esc closes the pane.
   # /etc/hosts exists on every host the harness runs on, and it names localhost.
   Scenario: v opens the preview of a file, Esc goes back to the list and a second Esc closes the pane
@@ -70,16 +93,17 @@ Feature: Drive the /track pane with the keys
     And Claude finishes
     And I type "/track"
     Then the selected row shows "hosts"
-    And the screen shows "v: preview"
-    When I press "v"
-    Then the screen shows "Esc back"
+    And the screen stops showing "v: preview"
+    When I press "Enter"
+    Then the screen shows "↩ back"
     And the screen shows "v: view"
-    And the screen shows "localhost"
+    When I press "v"
+    Then the screen shows "localhost"
     And the screen stops showing "x: dismiss"
     When I press "Escape"
     Then the screen stops showing "Esc back"
     And the selected row shows "hosts"
-    And the screen shows "v: preview"
+    And the screen shows "Esc close"
     When I press "Escape"
     Then the screen stops showing "Esc close"
 
@@ -94,6 +118,8 @@ Feature: Drive the /track pane with the keys
     And Claude finishes
     And I type "/track"
     Then the selected row shows "README.md"
+    When I press "Enter"
+    Then the screen shows "↩ back"
     When I press "v"
     Then the screen shows "v: view"
     And the screen shows "d: diff"
@@ -114,6 +140,8 @@ Feature: Drive the /track pane with the keys
     And Claude finishes
     And I type "/track"
     Then the selected row shows "hosts"
+    When I press "Enter"
+    Then the screen shows "↩ back"
     When I press "v"
     Then the screen shows "localhost"
     When I press "d"
@@ -151,7 +179,7 @@ Feature: Drive the /track pane with the keys
     Then the focus ring is on "2 more"
     When I press "Enter"
     Then the screen stops showing "2 more"
-    And the screen matches /│ +▸ +g\.example\/7/
+    And the screen matches /│ +› +g\.example\/7/
 
   # Issue #108. A letter that is no key goes to the prompt box and the pane loses the keyboard. The pane says so. ctrl+x Tab
   # gives the keyboard back, and the ring starts on the selected row, so Up goes to the row above it.
@@ -175,25 +203,26 @@ Feature: Drive the /track pane with the keys
     When I press "C-x"
     And I press "Tab"
     Then the screen stops showing "Keys go to the prompt."
-    And the focus ring is on "▸"
+    And the focus ring is on the row showing "three.example"
     When I press "Up"
     Then the selected row shows "two.example"
 
-  # Issue #108. A click is a press: a click on the arrow of a row selects the row and opens it. Issue #276: the quick view shows the
-  # link of the selected row too, two cells in from the border. The detail under the open row sits further in, so the pattern of the
-  # link line wants four spaces at least and the scenario cannot pass on the quick view alone.
-  Scenario: A click on the arrow of a row selects the row and opens it
+  # Issue #277, the rule of the click. A press on the row that holds the ring opens its detail view, and a press on another row only selects
+  # it. Spike S1 of issue #275 (live, 120x36 and 100x40): a click raises no ui.focus before its press, so the first click on an
+  # unselected row only selects it, and a second click on the same row opens its detail view.
+  Scenario: A click selects a row, and a second click opens its detail
     Given a Claude Code session with the artifact-tracking mod
     When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
     And Claude finishes
     And I type "/track"
     Then the selected row shows "one.example"
-    When I click the arrow of the row showing "three.example"
+    When I click the row showing "three.example"
     Then the selected row shows "three.example"
-    And the screen matches /│ {4,}link: https:\/\/three\.example\/c/
-    And the focus ring is on "▾"
-    When I press "Up"
-    Then the selected row shows "two.example"
+    And the screen stops showing "↩ back"
+    And the focus ring is on the row showing "three.example"
+    When I click the row showing "three.example"
+    Then the screen shows "↩ back"
+    And the screen matches /Link +https:\/\/three\.example\/c/
 
   # Issue #109: the engine scrolls a pane tree as a whole, so rows taller than the pane pushed the title, the header and the
   # footer keys out of view. The pane draws a window of the rows instead: the three stay on one screen, and Tab walks every
@@ -311,18 +340,18 @@ Feature: Drive the /track pane with the keys
     Then the selected row shows "a1.io/x"
     And the pane is inline
     And the screen stops showing "Selected:"
-    And the screen matches /│ +▸ a5\.io\/x/
+    And the screen matches /│ +› a5\.io\/x/
     When I press "e"
     Then the screen matches /│ +Selected: a1\.io\/x/
     And the screen matches /│ +link: https:\/\/a1\.io\/x · \+2 more/
-    And the screen matches /│ +▸ a3\.io\/x/
+    And the screen matches /│ +› a3\.io\/x/
     And the pane stops showing "a4.io/x"
     And the screen stops showing "Health:"
     And the screen shows "View: list"
     And the screen shows "r: refresh"
     When I press "e"
     Then the screen stops showing "Selected:"
-    And the screen matches /│ +▸ a5\.io\/x/
+    And the screen matches /│ +› a5\.io\/x/
     And the screen shows "r: refresh"
 
   # Issue #138, PR 2. The form follows the engine body: 18 rows or more draw the status area, inline as well (a 100x60 terminal
@@ -366,7 +395,7 @@ Feature: Drive the /track pane with the keys
     When I press "Tab"
     Then the focus ring is on "10 more"
     When I press "Enter"
-    Then the focus ring is on "▸"
+    Then the focus ring is on the row showing "a30.io/x"
     And the selected row shows "a30.io/x"
     And the screen shows "▼ 10 more below"
 
@@ -382,15 +411,15 @@ Feature: Drive the /track pane with the keys
     When I press "C-x"
     And I press "Tab"
     Then the screen shows "Keys go to the prompt."
-    When I click the arrow of the row showing "two.example"
+    When I click the row showing "two.example"
     Then the selected row shows "two.example"
     And the screen stops showing "Keys go to the prompt."
-    And the focus ring is on "▾"
+    And the focus ring is on the row showing "two.example"
     When I press "Down"
     Then the selected row shows "three.example"
 
   # Issue #115, the refusal. The engine gives no keys while the composer holds text (issue #108, case C). The click still
-  # selects and opens the row. The hint stays, the text stays in the prompt, and nothing else happens: no error, no loop.
+  # selects the row. The hint stays, the text stays in the prompt, and nothing else happens: no error, no loop.
   Scenario: A click on a row keeps the hint and the text in the prompt when the engine refuses the keys
     Given a Claude Code session with the artifact-tracking mod
     When I type "Note https://one.example/a, https://two.example/b and https://three.example/c for later. Reply ok."
@@ -399,9 +428,9 @@ Feature: Drive the /track pane with the keys
     Then the selected row shows "one.example"
     When I press "j"
     Then the screen shows "Keys go to the prompt."
-    When I click the arrow of the row showing "three.example"
+    When I click the row showing "three.example"
     Then the selected row shows "three.example"
-    And the screen matches /│ {4,}link: https:\/\/three\.example\/c/
+    And the screen matches /│ +link: https:\/\/three\.example\/c/
     And the screen shows "Keys go to the prompt."
     And the screen matches /^❯\s+j\s*$/
 
@@ -428,7 +457,7 @@ Feature: Drive the /track pane with the keys
     When I click "x: dismiss" in the pane to give it the keys
     Then the screen matches /Web links 2 +2 links/
     And the selected row shows "three.example"
-    And the focus ring is on "▸"
+    And the focus ring is on the row showing "three.example"
     When I press "Up"
     Then the selected row shows "one.example"
 
@@ -497,7 +526,7 @@ Feature: Drive the /track pane with the keys
     Then the screen shows "Keys go to the prompt."
     When I click "2 more" in the pane to give it the keys
     Then the screen stops showing "2 more"
-    And the screen matches /│ +▸ +g\.example\/7/
+    And the screen matches /│ +› +g\.example\/7/
     When I press "Down"
     Then the selected row shows "b.example"
 
@@ -536,7 +565,7 @@ Feature: Drive the /track pane with the keys
     When I press "h"
     Then the screen stops showing "Row keys"
     And the selected row shows "#7"
-    And the focus ring is on "▸"
+    And the focus ring is on the row showing "#7"
     When I press "Tab" until the focus ring is on "c: resolve"
     Then the focus ring is on "c: resolve"
     When I press "h"
@@ -648,7 +677,7 @@ Feature: Drive the /track pane with the keys
     Then the selected row shows "#7"
     And the pane stops showing "Clean plan. Nothing changed."
     And the screen shows "p: clean plan"
-    And the focus ring is on "▸"
+    And the focus ring is on the row showing "#7"
     And the fake gh answered no unsupported call
 
   # Issue #140. `x` on the only row takes the row and every tracker key out of the footer. The ring sat on `c: resolve`, a
@@ -728,9 +757,8 @@ Feature: Drive the /track pane with the keys
     Then the screen matches /│No status +3/
     And the screen shows "View: status"
     And the selected row shows "two.example"
-    And the focus ring is on "▸"
-    # Every row Button draws "▸", so the step above passes with the ring on any row. By status the order is one, three, two.
-    # The ring is on two, the last row: Up goes to three. A ring left at the old place (the second Button, now three) would go
+    And the focus ring is on the row showing "two.example"
+    # By status the order is one, three, two. The ring is on two, the last row: Up goes to three. A ring left at the old place (the second Button, now three) would go
     # to one.
     When I press "Up"
     Then the selected row shows "three.example"

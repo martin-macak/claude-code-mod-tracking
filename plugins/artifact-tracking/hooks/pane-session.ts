@@ -6,13 +6,15 @@
 
 import type { RenderElement } from 'claude-code'
 import { NOT_READY } from '../core/infra/command-text'
-import { type Bulk, bulkTargets, dismissTargets, planFooter, previewKeys, route, viewKeys } from '../core/infra/keys'
+import { type Bulk, bulkTargets, dismissTargets, planFooter, route, viewKeys } from '../core/infra/keys'
+import { BACK_BUTTON, previewBody } from '../core/infra/preview-body'
 import { reason } from '../core/infra/steps'
 import { bandSections } from '../core/infra/views'
 import type { Ports } from '../core/interfaces/ports'
-import type { PreviewState } from '../core/interfaces/preview'
-import type { FooterKey, GroupSpec, RowRef } from '../core/interfaces/view'
+import type { PreviewContent, PreviewState } from '../core/interfaces/preview'
+import type { GroupSpec, RowRef } from '../core/interfaces/view'
 import type { PlanLine } from '../core/lib/clean-text'
+import { detailContent, GONE } from '../core/lib/detail'
 import {
   flipQuick,
   flipShowAll,
@@ -24,6 +26,7 @@ import {
 } from '../core/lib/grouping'
 import { healthLine } from '../core/lib/health'
 import { dismissQuestion, markedSummary, pruned, relabelDismiss, rowIdsOf, toggled } from '../core/lib/marks'
+import { DETAIL_MODE } from '../core/lib/preview'
 import { bandText } from '../ux/band'
 import { resetWidths } from '../ux/tree-data-table/columns'
 import type { TableElements } from '../ux/tree-data-table/el'
@@ -36,6 +39,7 @@ import {
   DEFAULT_BODY_COLUMNS,
   type Drawn,
   type DrawnRow,
+  findDetailRow,
   findRow,
   findTreeRow,
   layout,
@@ -52,7 +56,7 @@ import { type CloseAnswer, PanePreview } from './pane-preview'
 import { BulkQuestion } from './pane-question'
 import { WorkQueue } from './pane-queue'
 import { type Frame, frameFromState, type Press, Refocus, unlessClosed, type ViewKind } from './pane-refocus'
-import { helpOf, type PaneHost, paneGroups, paneModel, problemCount, shownOf } from './pane-text'
+import { helpOf, type PaneHost, paneGroups, paneModel, problemCount, shownOf, TEXT_VIEW } from './pane-text'
 import { type MarkedTurn, openTurn, type TurnPaneHost } from './pane-turn'
 
 export { helpOf, helpTextOf, listText, type PaneHost, TEXT_VIEW, turnLabels } from './pane-text'
@@ -318,22 +322,34 @@ export class PaneSession {
     shown: PreviewState,
     props: PaneDrawProps,
   ): Promise<RenderElement> {
-    const keys: readonly FooterKey[] = previewKeys(m.keys, (await m.previewModes(p, shown.owner, shown.rowId)) ?? [])
-    const content = this.preview.content(p, m, shown)
+    const body = previewBody(m.keys, (await m.previewModes(p, shown.owner, shown.rowId)) ?? [], shown.mode, shown.owner)
+    // The detail view (issue #277) is built from the row at each drawing: nothing is read, stored or cached. A row that left the pane
+    // while its view is open (a TTL, `/track clear`) gives `This row is gone` and keeps `↩ back`.
+    const content = shown.mode === DETAIL_MODE ? await this.detailOf(p, m, shown) : this.preview.content(p, m, shown)
     const tree = renderPreview(
       el,
       {
         title: content?.title ?? 'Preview',
         subtitle: content?.subtitle,
-        keys,
+        keys: body.keys,
+        back: body.dim === undefined ? undefined : BACK_BUTTON,
+        dim: body.dim,
         blocks: content?.blocks,
         columns: props.bodyColumns,
       },
       // A press while the preview shows goes to `PanePreview.key` before any `e` flips a flag, so the form is only the one the pane has.
       this.actionsOf(p, m, props.focused === false, ++this.drawing, statusForm(props.bodyRows)),
     )
-    this.refocus.frame({ view: 'preview', rows: new Map(), keys: keys.map(k => k.buttonKey), stops: [] })
+    this.refocus.frame({ view: 'preview', rows: new Map(), keys: body.buttons, stops: [] })
     return props.focused === false ? withKeysHint(el, tree) : tree
+  }
+
+  /** The content of the detail view of the row that `shown` names, or `GONE` when no group holds it any more. Reads only. */
+  private async detailOf(p: Ports, m: PaneHost, shown: PreviewState): Promise<PreviewContent> {
+    // The row is found by id among all rows, drawn or not, so the selection and the folds do not matter: the plain view serves.
+    const groups = await paneGroups(p, m, TEXT_VIEW)
+    const hit = findDetailRow(groups, shown.rowId)
+    return hit === undefined ? GONE : detailContent(hit.row, { group: hit.title, now: p.clock.wall() })
   }
 
   /**
@@ -510,15 +526,50 @@ export class PaneSession {
    */
   private actionsOf(p: Ports, m: PaneHost, keysInPrompt: boolean, drawing: number, form: StatusForm): TableActions {
     return {
-      // A press is a click or Enter. It opens or closes the row and selects it (issue #108): the row stays selected
-      // whether it opens or closes, and the ring goes to the handle the drawing gives the row. The keys come before the
-      // ring, as the ring is refused for a pane that has none.
-      toggle: id => {
+      // A press of a row Button is Enter or a click (issue #277). A press on the row that holds the ring opens its detail view. A press
+      // on another row only selects it, and the ring goes to its handle: so Enter opens, a first click selects, a second click opens.
+      // Spike S1 of issue #275, live (Claude Code 2.1.316, 120x36 and 100x40): a click on an unselected row raises no `ui.focus` before
+      // its press, so the selection at the press is still the old row. The rule reads the selection at the press and holds either way.
+      // The keys come before the ring, as the ring is refused for a pane that has none.
+      enter: id => {
         this.disarm(p)
         const press = this.pressOf(keysInPrompt)
-        this.work.detach(p, 'toggle', async () => {
-          await p.state.expanded.update(unlessClosed(press, cur => toggled(cur, id)))
+        this.work.detach(p, 'enter', async () => {
+          if (this.plan !== undefined) return // the plan view draws no row: a press from a drawing before `p` changes nothing
+          // The press selects its row at once, as the toggle it replaces did, and reads what was selected in the same write: a press
+          // on another row must not lose the selection to a press that read the atom before it (`more`, `x`).
+          let before: string | null = null
+          await p.state.selected.update(
+            unlessClosed<string | null>(press, cur => {
+              before = cur
+              return id
+            }),
+          )
+          if (!press.still()) return
+          // The row the pane treated as selected, not the atom: after a row hid, the drawing fell to another row (issue #49).
+          const held = (this.chosen?.atom === before ? this.chosen.id : before) === id
+          const row = findRow(this.groups, id)
+          if (held && row !== undefined) {
+            await this.refocus.askKeys(p, press)
+            await this.preview.openDetail(
+              p,
+              { rowId: id, owner: row.owner, mode: DETAIL_MODE },
+              'enter',
+              { ...press, keys: false },
+              m,
+            )
+            return
+          }
           await this.refocus.to(p, m, id, press)
+        })
+      },
+      // `↩ back`: the way back of Esc, with the ring on the selected row.
+      back: () => {
+        this.disarm(p)
+        const press = this.pressOf(keysInPrompt)
+        this.work.detach(p, 'back', async () => {
+          await this.refocus.askKeys(p, press)
+          await this.preview.back(p, m, { ...press, keys: false })
         })
       },
       // The new rows come in before the N more Button, so the position the ring sits on now holds the stop of the first new
@@ -677,11 +728,14 @@ export class PaneSession {
         await writeMarks(p, afterAsk, cur => pruned(toggled(cur, to.rowId), known))
         return this.redrawn(p, m, selected, afterAsk)
       }
-      // `v` (issue #57, L2). The read may take long, so it runs outside the chain: it must not hold `x` and the digits. The plan view
-      // shows no `v`, so a press from a drawing before `p` opens nothing over it, as with the help view.
-      case 'preview':
-        if (this.plan !== undefined) return
-        return this.preview.open(p, m, { rowId: to.rowId, owner: to.owner, mode: to.mode }, buttonKey, afterAsk)
+      // `o` (issue #277) opens or closes the children of a row that has some, and keeps the row selected: the ring goes to the handle the
+      // drawing gives the row. It writes the session atom `expanded` and nothing else. Over the help view and the plan view a press from an
+      // older drawing changes nothing, as `e` does.
+      case 'open':
+        if (this.plan !== undefined || (await p.state.help.get())) return
+        await p.state.expanded.update(unlessClosed(afterAsk, cur => toggled(cur, to.rowId)))
+        await this.refocus.to(p, m, to.rowId, afterAsk)
+        return
       case 'owner':
         // A tracker's own work may take long. It must not hold the keys that come after it.
         this.work.detach(p, buttonKey, async () => {

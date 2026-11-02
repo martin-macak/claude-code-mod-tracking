@@ -2,7 +2,7 @@
 // drew. Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10. Plan: L6 Task 8.
 import type { RenderElement } from 'claude-code'
 import type { PlanLine } from '../../core/interfaces/clean'
-import type { FooterKey, HelpModel, StatusForm, StatusLine, TreeRow } from '../../core/interfaces/view'
+import type { FooterKey, HelpModel, RowRef, StatusForm, StatusLine } from '../../core/interfaces/view'
 import type { Cost } from './budget'
 import { GLYPH_BOX, INDENT } from './columns'
 
@@ -115,7 +115,13 @@ export const textView = (view: Pick<TableView, 'help' | 'plan'>): boolean =>
   view.help !== null || view.plan !== undefined
 
 export interface TableActions {
-  toggle(rowId: string): void
+  /**
+   * A press of a row Button: Enter on the row that holds the ring, or a click (issue #277). A press on the selected row opens its detail
+   * view. A press on another row only selects it, as a click does: the engine moves the ring after the press (spike S1 of issue #275).
+   */
+  enter(rowId: string): void
+  /** A press of `↩ back` in the preview body: the view goes back to the list, with the ring on the same row. */
+  back(): void
   more(groupId: string): void
   /** A press of a footer key. `surface` is the one the press came from (`UiPressArgument.surface`): absent when the press names none. */
   press(buttonKey: string, surface?: string): void
@@ -128,7 +134,7 @@ export interface DrawnRow {
   readonly owner: string
   /** The id of the group the row sits in. */
   readonly group: string
-  readonly can: TreeRow['can']
+  readonly can: RowRef['can']
   readonly handle: string
   readonly depth: number
 }

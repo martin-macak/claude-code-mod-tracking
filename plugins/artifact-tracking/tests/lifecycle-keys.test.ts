@@ -13,7 +13,7 @@ import { IDLE_ITEMS } from './fixtures/items-host'
 import { fakePorts } from './fixtures/ports'
 import { fake } from './fixtures/tracker-host'
 
-const OPEN: KeySpec = { id: 'open', key: 'o', label: 'open', scope: 'row' }
+const OPEN: KeySpec = { id: 'open', key: 'w', label: 'open', scope: 'row' }
 const ROW: RowRef = { id: 'row-1', owner: 't', group: 'web', can: {} }
 
 /** An item host that does nothing: the keys do not need the item list. */
@@ -78,7 +78,7 @@ test('start builds the key registry from the live trackers', async () => {
       .all()
       .slice(0, CORE_KEYS.length)
       .map(k => k.key),
-  ).toEqual(['r', 'h', 'g', 'a', 't', 'p', 'm', 'e', 'x', '1', '2', '3', '0', 'v', 'd'])
+  ).toEqual(['r', 'h', 'g', 'a', 't', 'p', 'm', 'e', 'x', '1', '2', '3', '0', 'o', 'v', 'd'])
   expect(keysOf(m).at(-1)).toBe('t.open')
 })
 
@@ -241,9 +241,9 @@ test('footer with no row, or for an owner with no key, reads no action', async (
     fake('quiet', 20),
   ])
   const none = await t.m.footer(t.w.ports, undefined, false)
-  expect(none.map(k => k.key)).toEqual(['r', 'h', 'x', '1', '2', '3', '0'])
+  expect(none.map(k => k.key)).toEqual(['r', 'h', 'x', '1', '2', '3', '0', 'o'])
   const quiet = await t.m.footer(t.w.ports, { ...ROW, owner: 'quiet' }, false)
-  expect(quiet).toHaveLength(7)
+  expect(quiet).toHaveLength(8)
   expect(reads).toBe(0)
 })
 
@@ -366,38 +366,19 @@ const spec = (over: Partial<PreviewSpec> = {}): PreviewSpec => ({
   ...over,
 })
 
-test('a live tracker with a preview makes its rows draw v; a tracker without one, one that is off and one that failed do not', async () => {
-  const config = { defaults: { enabled: true }, normalise: (raw: JsonObject) => ({ enabled: raw.enabled !== false }) }
-  const bad = fake('bad', 40, {
-    preview: spec(),
-    init: () => {
-      throw new Error('boom')
-    },
-  })
-  const t = await started(
-    [fake('on', 10, { preview: spec() }), fake('plain', 20), fake('off', 30, { preview: spec(), config }), bad],
-    { trackers: { off: { enabled: false } } },
-  )
-  expect([t.m.keys.hasPreview('on'), t.m.keys.hasPreview('plain')]).toEqual([true, false])
-  expect([t.m.keys.hasPreview('off'), t.m.keys.hasPreview('bad')]).toEqual([false, false])
+test('v is on no footer, whatever the tracker: it sits on the key line of the detail view (issue #277)', async () => {
+  const t = await started([fake('on', 10, { preview: spec() }), fake('plain', 20)])
   const keys = async (owner: string) => (await t.m.footer(t.w.ports, { ...ROW, owner }, false)).map(k => k.key).join('')
-  expect(await keys('on')).toBe('rhx1230v')
-  expect(await keys('plain')).toBe('rhx1230')
+  expect(await keys('on')).toBe('rhx1230o')
+  expect(await keys('plain')).toBe('rhx1230o')
 })
 
-test('the footer draws v dim for a row that the provider skips, and live for a row it has: the row decides, not the owner (R11)', async () => {
+test('the modes of a row come from the provider: a row it skips has none, a row it has lists them (R11)', async () => {
   const t = await started([
     fake('t', 10, { preview: spec({ modes: (_ctx, rowId) => (rowId === 'row-1' ? VIEW_ONLY : undefined) }) }),
   ])
-  const v = async (id: string) =>
-    (await t.m.footer(t.w.ports, { ...ROW, owner: 't', id }, false)).find(k => k.buttonKey === 'preview')
-  expect(await v('row-1')).toMatchObject({ key: 'v', enabled: true })
-  expect(await v('row-2')).toMatchObject({ key: 'v', enabled: false })
-  // The help view reads no modes: it draws no row, so a provider is never asked for it.
-  expect(
-    (await t.m.footer(t.w.ports, { ...ROW, owner: 't', id: 'row-2' }, true)).find(k => k.buttonKey === 'preview')
-      ?.enabled,
-  ).toBe(false)
+  expect(await t.m.previewModes(t.w.ports, 't', 'row-1')).toEqual(VIEW_ONLY)
+  expect(await t.m.previewModes(t.w.ports, 't', 'row-2')).toBeUndefined()
 })
 
 test('previewModes and loadPreview of a tracker that is off or failed ask nothing of it: no modes, a notice, and no read (R9)', async () => {

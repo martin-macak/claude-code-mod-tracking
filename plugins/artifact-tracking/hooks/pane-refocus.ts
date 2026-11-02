@@ -11,7 +11,8 @@
 // PaneSession owns one; nothing here touches the engine but the `ui.focus` and `ui.open` ports.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Selection". Plan: L6 Task 11, G8.
 
-import { planFooter, previewKeys, viewButtonKeys } from '../core/infra/keys'
+import { planFooter, viewButtonKeys } from '../core/infra/keys'
+import { previewBody } from '../core/infra/preview-body'
 import { reason } from '../core/infra/steps'
 import type { Ports, Timer } from '../core/interfaces/ports'
 import { type Drawn, findRow, handleOf } from '../ux/tree-data-table/table'
@@ -158,7 +159,8 @@ export async function frameFromState(
     return {
       view: 'preview',
       rows: new Map(),
-      keys: previewKeys(m.keys, modes).map(k => k.buttonKey),
+      // The same list the drawing names: `↩ back` first in the detail view (issue #277), so the ring lands on it.
+      keys: previewBody(m.keys, modes, shown?.mode ?? '', shown?.owner ?? '').buttons,
       stops: [], // no pause follows the bound, so nothing compares this frame
     }
   }

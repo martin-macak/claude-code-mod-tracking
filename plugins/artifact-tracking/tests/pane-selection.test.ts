@@ -53,7 +53,7 @@ test('laidRefs lists the rows of a full drawing as the key routing sees them: op
 test('refOf is the one RowRef of a row: findRow, laidRefs and the drawn rows give the same one', () => {
   const sections = [group('web', webs('a', 'b'))]
   const ref = refOf(web('a'), 'web')
-  expect(ref).toEqual({ id: 'a', owner: 'web', group: 'web', can: { dismiss: true, priority: true } })
+  expect(ref).toEqual({ id: 'a', owner: 'web', group: 'web', can: { dismiss: true, priority: true, open: false } })
   expect(laidRefs(sections, view())[0]).toEqual(ref)
 })
 

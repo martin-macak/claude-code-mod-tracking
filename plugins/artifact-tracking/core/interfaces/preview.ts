@@ -24,10 +24,17 @@ export interface PreviewMode {
   readonly reason?: string
 }
 
+/** One row of a `fields` block: a label for the label column, and a text that wraps beside it. The text may hold newlines. */
+export interface PreviewField {
+  readonly label: string
+  readonly text: string
+}
+
 /**
  * One block of the content, in the order they are drawn. `code` is source with a line gutter (the language comes from `path`
- * or `language`). `diff` is a unified diff. `markdown` is Markdown. `notice` is one line of words that says what the person
- * cannot see (a truncated file, a binary one, a secret): it is drawn before the content, so a cut never takes it.
+ * or `language`). `diff` is a unified diff. `markdown` is Markdown. `fields` is a label column and wrapped text, one row for each
+ * field: the detail view of a row (issue #277). `notice` is one line of words that says what the person cannot see (a truncated
+ * file, a binary one, a secret): it is drawn before the content, so a cut never takes it.
  */
 export type PreviewBlock =
   | {
@@ -39,6 +46,7 @@ export type PreviewBlock =
     }
   | { readonly kind: 'diff'; readonly source: string; readonly path?: string }
   | { readonly kind: 'markdown'; readonly text: string }
+  | { readonly kind: 'fields'; readonly fields: readonly PreviewField[] }
   | { readonly kind: 'notice'; readonly text: string; readonly tone?: 'info' | 'warning' }
 
 /** What one mode shows: a title line, a dim second part of the line, and the blocks. Never stored. */

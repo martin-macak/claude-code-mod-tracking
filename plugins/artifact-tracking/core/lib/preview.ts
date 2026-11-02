@@ -1,6 +1,13 @@
 // The numbers and the stand-in contents of the preview (issue #57, L2). Pure: no state, no I/O.
 
-import type { PreviewContent, PreviewLimits } from '../interfaces/preview'
+import type { PreviewContent, PreviewLimits, PreviewModeId } from '../interfaces/preview'
+
+/**
+ * The core mode of the preview body (issue #275, L2): the detail view of a row. Every row has it, so no provider lists it and none
+ * loads it. Core builds its content from the row itself at each drawing (`core/lib/detail.ts`), so it is never in the cache and a
+ * hot reload cannot lose it. Enter opens it. No key picks it: the `↩ back` Button and Esc leave it.
+ */
+export const DETAIL_MODE: PreviewModeId = 'detail'
 
 /**
  * The most that core draws of one preview. The engine draws 100,000 characters in all, and the guard of the pane keeps 80,000 of
