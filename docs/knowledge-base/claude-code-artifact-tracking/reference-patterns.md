@@ -43,7 +43,7 @@ Item key: `github:<host>/<owner>/<repo>#<n>`, all lower case except the number. 
 
 ## 3. Bare `#N`
 
-The spec asks for bare `#N` from the person or Claude. The scanner has **no** bare `#N` rule today. It has `owner/repo#N` (`ISSUE_REF`), which runs on the masked plain text ([links.ts:174](../claude-code-link-capture/example/link-capture/hooks/links.ts#L174), [links.ts:423](../claude-code-link-capture/example/link-capture/hooks/links.ts#L423)). *observed*
+The spec asks for bare `#N` from the person or Claude. The scanner has **no** bare `#N` rule today. It has `owner/repo#N` (`ISSUE_REF`), which runs on the masked plain text ([links.ts:174](../claude-code-link-capture/example/link-capture/hooks/links.ts#L174 "// `owner/repo#12`. The renderer makes it a link"), [links.ts:423](../claude-code-link-capture/example/link-capture/hooks/links.ts#L423 "// Plain text only: `owner/repo#12`.")). *observed*
 
 Proposed rule, run on the same `mask` text (*inference*):
 
@@ -111,7 +111,7 @@ What the scanner already gives (*observed*, [link-capture §6](../claude-code-li
 
 What to add (*inference*):
 
-1. A `BARE_REF` pass at the same place as `ISSUE_REF` ([links.ts:423-433](../claude-code-link-capture/example/link-capture/hooks/links.ts#L423)). Emit `{ via: 'bare-ref', number }` with no URL. The classifier resolves the repo.
+1. A `BARE_REF` pass at the same place as `ISSUE_REF` ([links.ts:423-433](../claude-code-link-capture/example/link-capture/hooks/links.ts#L423-L433 "// Plain text only: `owner/repo#12`.")). Emit `{ via: 'bare-ref', number }` with no URL. The classifier resolves the repo.
 2. A classifier `classify(found, repo) → GitHubRef | JiraRef | WebRef | null`. Keep it a pure function with its own tests.
 3. The label of a `[label](url)` link is the web link name (decision D6). A bare URL has no label; show host + path.
 4. `ISSUE_REF` builds `/issues/N` for every `owner/repo#N`. Keep the `owner/repo` and number; drop the guessed path.

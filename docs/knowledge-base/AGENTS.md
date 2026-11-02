@@ -18,6 +18,7 @@ Research knowledge bases. One folder per problem, named by a kebab-case slug.
 - `README.md`: index for humans, scope, version pin, status.
 - `sources/<origin>-<version>/`: verbatim snapshots of primary sources. Never edit them. Refresh by adding a new versioned folder.
 - Topic pages cite sources as relative links with line anchors, e.g. `[d.ts:3955](../sources/<folder>/types/claude-code.d.ts#L3955)`.
+- A link with a line anchor into repo code (not into `sources/`) carries a title with the start of that line (at least 8 characters, no `"`, not only `/**`): `[shell.ts:199](../../plugins/example/shell.ts#L199 "export function splitShell")`. The contract test `scripts/contracts/kb-code-links.test.mjs` (in `make test-scripts`) fails when the line no longer holds the text. A PR that moves a linked line remaps the link. Take the excerpt from the line that the sentence relies on, and make it name one line in its file. The end line of a range is not checked. A link to a missing file fails. The scan skips a link into `plugins/example/` (a doc example). The link text may name the same numbers (`shell.ts:199`); they must equal the anchor.
 - Tag each claim's origin when it is not obvious: primary source, public docs, or inference.
 - `open-questions.md`: what is unknown or unverified.
 
