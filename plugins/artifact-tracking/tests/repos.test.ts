@@ -1659,3 +1659,17 @@ test('a non-git root: a nested repo is a visit', async () => {
   const t = new RepoTracker({ run: nestedRunner([], NOT_ROOT), now: () => 1, rootPath: '/work' })
   expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toMatchObject({ key: 'remote:github.com/acme/sdk' })
 })
+
+// A reserved word behind a redirection is the command: `time >/dev/null ! git -C /x status` fails with `!: command not
+// found` (bash 3.2 and 5.3), so no `git` runs (issue #259).
+test('parseRepoHintsFromBash reads a reserved word behind a redirection as the command', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('>/dev/null ! git -C /x status')).toEqual([])
+  expect(paths('time >/dev/null ! git -C /x status')).toEqual([])
+  expect(paths('time 2>&1 ! git -C /x status')).toEqual([])
+  expect(paths('time ! >/dev/null git -C /x status')).toEqual(['/x'])
+  expect(paths('time ! git -C /x status')).toEqual(['/x'])
+  const ghRepos = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').repos
+  expect(ghRepos('time >/dev/null ! gh pr create -R acme/sdk')).toHaveLength(0)
+  expect(ghRepos('time ! >/dev/null gh pr create -R acme/sdk')).toHaveLength(1)
+})

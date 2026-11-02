@@ -61,7 +61,10 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
   `time >/dev/null -p git status` and `time -p 2>&1 -- git status` run the
   command `-p` and the command `--` (bash 3.2 and 5.3), also with a heredoc or
   a here-string. The splitter drops the redirection from the words, so it marks
-  the word behind it (`Segment.redir`). A redirection behind the options, in
+  the word behind it (`Segment.redir`). A reserved word behind a redirection
+  is the command too: `time >/dev/null ! git push` fails with `!: command not
+  found` (bash 3.2 and 5.3), so no reader sees `git push` (issue #259). A
+  redirection behind the options, in
   front of the command, changes nothing: `time -p >/dev/null git status` is
   `git status`. A word glued to a redirection (`time -p>/dev/null git status`)
   stays one word, as for every other command, so no option is read there. The

@@ -2699,3 +2699,12 @@ test('timeout, ionice and setsid read a quoted option as an option', () => {
   const rows = parseBashProcesses('setsid "-f" node worker.js; echo $!', out('4242\n'), { toolUseId: 'toolu_q' })
   expect(rows.map(r => [r.fingerprint, r.pid])).toEqual([['node worker.js', undefined]])
 })
+
+// A reserved word behind a redirection is the command: `time >/dev/null ! sleep 10 &` runs a command named `!` (issue #259).
+test('parseBashProcesses reads a reserved word behind a redirection as the command', () => {
+  expect(detachedOf('time >/dev/null ! sleep 10 &').map(r => r.name)).toEqual(['! sleep 10'])
+  expect(detachedOf('>/dev/null ! sleep 10 &').map(r => r.name)).toEqual(['! sleep 10'])
+  expect(composeProject('time >/dev/null ! docker compose up -d')).toBeUndefined()
+  expect(detachedOf('time ! >/dev/null sleep 10 &').map(r => r.name)).toEqual(['sleep 10'])
+  expect(composeProject('time ! >/dev/null docker compose up -d')).toBe('app')
+})
