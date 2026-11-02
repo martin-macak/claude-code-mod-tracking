@@ -1145,6 +1145,30 @@ test('a running agent is in the tree where the pane draws it: its spawn cwd, its
   }
 })
 
+// Issue #255. On macOS `/var` is `/private/var`: git lists the canonical path, an agent can name the folder by the alias.
+test('a running agent whose spawn cwd is a symlink alias of the tree holds it, and so does a session cwd that is an alias', async () => {
+  const alias = '/alias/live'
+  const byAgent = await liveWorld({ agents: [agentOf('a1', { cwd: `${alias}/src` })] })
+  byAgent.w.realPaths[`${alias}/src`] = `${LIVE}/src`
+  expect((await byAgent.run('clean --yes worktrees')).text).toContain(
+    `  ${LIVE}: skipped: an agent still works in it\n`,
+  )
+  expect(byAgent.removes()).toEqual([])
+
+  const bySession = await liveWorld({ cwd: `${alias}/src` })
+  bySession.w.realPaths[`${alias}/src`] = `${LIVE}/src`
+  expect((await bySession.run('clean --yes worktrees')).text).toContain(`  ${LIVE}: skipped: the session works in it\n`)
+  expect(bySession.removes()).toEqual([])
+})
+
+test('a running agent whose worktree path is a symlink alias of the proof path holds the tree', async () => {
+  const alias = '/alias/live'
+  const t = await liveWorld({ agents: [agentOf('a1', { worktreePath: alias })] })
+  t.w.realPaths[alias] = LIVE
+  expect((await t.run('clean --yes worktrees')).text).toContain(`  ${LIVE}: skipped: an agent still works in it\n`)
+  expect(t.removes()).toEqual([])
+})
+
 test('an agent that is not in the tree does not hold it: ended, in another folder, or placed by its own cwd under a parent in the tree', async () => {
   const cases: [string, AgentProof[]][] = [
     ['an ended agent whose spawn cwd is in the tree', [agentOf('a1', { cwd: `${LIVE}/src`, endedAt: 5 })]],

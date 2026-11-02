@@ -171,6 +171,7 @@ function build(ctx: Ctx, tally: Tally): Services {
         ...(a.teammateId !== undefined ? { teammateId: a.teammateId } : {}),
       })),
     sessionCwd: () => ctx.session.cwd(),
+    realPath: async path => (await ctx.fs.stat(path, { resolve: true }))?.realPath,
   })
   const scheduler = new AutoScheduler({
     now: () => ctx.clock.wall(),

@@ -6,10 +6,11 @@
 // `auto.branches` that the tracker publishes (spec 5.9, the PR lane). Auto never calls `gh`.
 
 import type { Now, RunResult } from '../../core/interfaces/ports'
-import { parsePorcelain } from '../../core/lib/porcelain'
-import { trackAgents } from './agents'
+import { normPath, parsePorcelain, type Real } from '../../core/lib/porcelain'
+import { agentPaths, trackAgents } from './agents'
 import type { AutoConfig } from './config'
 import { setRootTop } from './ledger'
+import { makeRealResolver } from './real'
 import type { AutoSnapshot, AutoState, GitWorktree, Health, LiveAgent } from './types'
 import { trackWorktrees } from './worktrees'
 
@@ -25,6 +26,8 @@ export type RoundDeps = {
   git: (argv: readonly string[], cwd: string) => Promise<RunResult> // rejects like Runner
   listAgents: () => Promise<LiveAgent[]>
   sessionCwd: () => Promise<string>
+  /** The canonical path of a folder (a symlink alias resolved), or undefined or a throw when it cannot be read (issue #255). Absent: no alias is joined. */
+  realPath?: (path: string) => Promise<string | undefined>
   /** Read at each step, so a changed config file shows at the next round. Absent: today's numbers. */
   caps?: () => RoundCaps
 }
@@ -49,8 +52,12 @@ function sig(x: AutoSnapshot): string {
 export class AutoRound {
   /** The last porcelain list that git answered. Used when git fails. */
   private lastList: GitWorktree[] = []
+  /** The canonical path of each path the rules compare, read once and again after a time to live (issue #255). */
+  private readonly resolver: ReturnType<typeof makeRealResolver> | undefined
 
-  constructor(private readonly d: RoundDeps) {}
+  constructor(private readonly d: RoundDeps) {
+    this.resolver = d.realPath ? makeRealResolver(d.realPath, () => d.now()) : undefined
+  }
 
   /**
    * One round. Never rejects. Settles after the snapshot save. True when the round reached the save, so the branches it
@@ -130,7 +137,15 @@ export class AutoRound {
       masterCwd = null
     }
     const caps = this.d.caps?.()
-    await this.save(cur => this.snapshotOf(cur, list, live, masterCwd, at, git, agentList, caps))
+    // The ledger is read again, so an agent that a hook recorded since the start of this round is resolved now (issue #255).
+    const fresh = this.resolver ? await this.d.load().catch(() => s) : s
+    const real = this.resolver
+      ? await this.resolver.resolve([
+          ...agentPaths(fresh.agents, fresh.worktrees, list, masterCwd),
+          ...agentPaths(s.agents, s.worktrees, list, masterCwd),
+        ])
+      : normPath
+    await this.save(cur => this.snapshotOf(cur, list, live, masterCwd, at, git, agentList, caps, real))
     return true
   }
 
@@ -144,9 +159,10 @@ export class AutoRound {
     git: Health,
     agentList: Health,
     caps: RoundCaps | undefined,
+    real: Real,
   ): AutoState {
     const wv = trackWorktrees(cur, list, at, caps)
-    const av = trackAgents(wv.state, live, list, masterCwd, at, caps?.workflowIdleMs)
+    const av = trackAgents(wv.state, live, list, masterCwd, at, caps?.workflowIdleMs, real)
     const prev = cur.snapshot
     const next: AutoSnapshot = {
       at,
