@@ -288,6 +288,38 @@ test('any other call is unsupported: exit 1, a message, and a name for the log',
   assert.equal(answer([], SPEC).call, 'unsupported')
 })
 
+test('the issue list that Claude Code makes on anthropics/claude-code gets an empty list, not unsupported (issue #274)', () => {
+  const argv = [
+    'issue',
+    'list',
+    '-R',
+    'anthropics/claude-code',
+    '--author',
+    '@me',
+    '--state',
+    'closed',
+    '--search',
+    'closed:>2026-09-27',
+    '--json',
+    'number,title,closedAt,stateReason',
+    '--limit',
+    '30',
+  ]
+  const r = answer(argv, SPEC)
+  assert.equal(r.exitCode, 0)
+  assert.equal(r.call, 'engine issue list')
+  assert.deepEqual(JSON.parse(r.stdout), [])
+  assert.equal(answer(['issue', 'list', '--repo', 'anthropics/claude-code'], SPEC).call, 'engine issue list')
+  assert.equal(answer(['issue', 'list', '--repo=anthropics/claude-code'], SPEC).call, 'engine issue list')
+})
+
+test('only that engine call is answered: the same call on another repo, and other calls on that repo, stay unsupported', () => {
+  assert.equal(answer(['issue', 'list', '-R', 'e2e-owner/e2e-repo'], SPEC).call, 'unsupported')
+  assert.equal(answer(['pr', 'list', '-R', 'anthropics/claude-code'], SPEC).call, 'unsupported')
+  assert.equal(answer(['issue', 'create', '-R', 'anthropics/claude-code'], SPEC).call, 'unsupported')
+  assert.equal(answer(['issue', 'list', '--repo=e2e-owner/e2e-repo'], SPEC).call, 'unsupported')
+})
+
 test('fakeGhSpec builds the spec from owner/repo and the PRs', () => {
   assert.deepEqual(fakeGhSpec('e2e-owner/e2e-repo', 'main', [PR]), SPEC)
   assert.throws(() => fakeGhSpec('no-slash', 'main', []), /owner\/repo/)
@@ -469,6 +501,7 @@ test('FAKE_GH_CALLS names every call that answer() logs, except unsupported', ()
     ['pr', 'create', '--title', 'x'],
     graphql('query { repository(owner: "o", name: "r") { defaultBranchRef { name } } }'),
     graphql('query { a0: repository(owner: "o", name: "r") { issueOrPullRequest(number: 1) { x } } }'),
+    ['issue', 'list', '-R', 'anthropics/claude-code'],
   ]
   assert.deepEqual(
     argvs.map(a => answer(a, SPEC).call),

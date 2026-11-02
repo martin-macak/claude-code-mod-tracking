@@ -1,5 +1,6 @@
 // A fake `gh` for a scenario. The harness puts `e2e/fake-gh/bin` first on PATH of claude, so the mod's `gh` is this one.
 // It answers only the calls that the github tracker makes, from a spec file, and it never reaches the network.
+// A background call of Claude Code itself is answered with an empty list (`engine issue list`, issue #274).
 // Any other call is refused and logged as unsupported, so a scenario that needs more fails loud (the step
 // "the fake gh answered no unsupported call").
 // The query formats come from `buildDiscoveryQuery` (trackers/github/pr-discovery.ts: the branch aliases `h`/`b` and the
@@ -58,6 +59,7 @@ export const FAKE_GH_CALLS = [
   'pr create',
   'graphql discovery',
   'graphql refresh',
+  'engine issue list',
 ] as const
 
 /** The call name or an error that lists the valid names, so a typo in a hold fails loud and not as a fast, passing run. */
@@ -226,6 +228,18 @@ function refresh(query: string, spec: FakeGhSpec): FakeGhResult {
   return reply('graphql refresh', data, errors)
 }
 
+/** The repo that Claude Code itself asks about, on its own, with the `gh` on its PATH (issue #274). The mod never asks it. */
+const ENGINE_REPO = 'anthropics/claude-code'
+
+/** The repo of `-R <repo>`, `--repo <repo>` or `--repo=<repo>`, or undefined when the call names none. */
+function repoFlagOf(argv: readonly string[]): string | undefined {
+  for (const [i, a] of argv.entries()) {
+    if (a === '-R' || a === '--repo') return argv[i + 1]
+    if (a.startsWith('--repo=')) return a.slice('--repo='.length)
+  }
+  return undefined
+}
+
 /** The query text of `gh api graphql ... -f query=<text>`, or undefined when the call has none. */
 function queryOf(argv: readonly string[]): string | undefined {
   const i = argv.findIndex((a, at) => a === '-f' && argv[at + 1]?.startsWith('query='))
@@ -254,6 +268,9 @@ export function answer(argv: readonly string[], spec: FakeGhSpec): FakeGhResult 
     const pr = spec.prs.at(-1)
     return pr ? ok('pr create', `${prUrl(spec, pr.number)}\n`) : unsupported(argv)
   }
+  // Issue #274. Claude Code lists the closed issues of the user in its own repo, in the background. An empty list
+  // answers it. The match is narrow (this command, this repo), so any other unexpected call still shows as unsupported.
+  if (first === 'issue' && second === 'list' && repoFlagOf(argv) === ENGINE_REPO) return ok('engine issue list', '[]\n')
   if (first === 'api' && second === 'graphql') {
     const query = queryOf(argv)
     if (query?.includes('defaultBranchRef')) return discovery(query, spec)
