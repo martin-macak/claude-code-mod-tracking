@@ -576,7 +576,6 @@ test('splitShell keeps the flag of a & that ends a group inside the scope that r
     'a & x=$({ :; } &) | cat; echo $!',
     'a & { x=$({ :; } &); }; echo $!',
     'a & b && x=$({ :; } &); echo $!',
-    'a & cat <({ :; } &) > /dev/null; echo $!', // `$!` is the process substitution's here: a limit that every `<( )` has
   ])
     expect({ cmd, flagged: after(cmd) }).toEqual({ cmd, flagged: [] })
   // The `&` of the scope itself still flags what comes after the scope, and a pipeline that a `&` ends keeps its flag.
@@ -584,6 +583,15 @@ test('splitShell keeps the flag of a & that ends a group inside the scope that r
   expect(after('a & ( { :; } & ) & c')).toEqual(['c'])
   expect(after('a & cat | { { :; } & } & c')).toEqual(['c'])
   expect(after('a & cat | { :; } & c')).toEqual(['c'])
+  // A process substitution sets `$!` in its parent whatever it holds, and so does a bare redirection with `&` (issue #263).
+  // A part of a pipeline and a scope drop it, as for a group.
+  expect(after('a & cat <({ :; } &) > /dev/null; echo $!')).toEqual(['echo $!'])
+  expect(after('a & exec 3< <(b); c')).toEqual(['c'])
+  expect(after('a & cat >(b) | cat; c')).toEqual([])
+  expect(after('a & x=$(cat <(b)); c')).toEqual([])
+  expect(after('a & > f & c')).toEqual(['c'])
+  expect(after('a & 2>/dev/null & c')).toEqual(['c'])
+  expect(after('a & b > f & c')).toEqual([])
   // A group in the shell of its parent keeps the flag over the `}`, with or without a pipeline in front of it.
   expect(after('a & { { :; } & }; c')).toEqual(['c'])
   expect(after('a & { { :; } & } && c')).toEqual(['c'])
@@ -1950,4 +1958,75 @@ test('stripLead keeps a reserved word that stands behind a redirection as the co
   expect(words('! >/dev/null git push')).toEqual(['git', 'push'])
   expect(words('time ! >/dev/null git push')).toEqual(['git', 'push'])
   expect(words('time ! git push')).toEqual(['git', 'push'])
+})
+
+// `Segment.shell` is the innermost `(`, `$(`, backtick or process substitution that holds the segment, `shellUp` the one around it
+// (issue #263). A `&` list and a pipeline part move `scope`, not `shell`.
+test('splitShell numbers the shell that reads each segment', () => {
+  const shells = (cmd: string) => splitShell(cmd).map(s => [s.words.join(' '), s.shell === 0 ? 0 : 1, s.shellUp === 0])
+  expect(shells('a & b | c')).toEqual([
+    ['a', 0, true],
+    ['b', 0, true],
+    ['c', 0, true],
+  ])
+  const segs = splitShell('a; ( b; ( c ) ); x=$(d)')
+  const by = Object.fromEntries(segs.map(s => [s.words.join(' '), s]))
+  expect(by.a!.shell).toBe(0)
+  expect(by.b!.shell).not.toBe(0)
+  expect(by.c!.shellUp).toBe(by.b!.shell)
+  expect(by.d!.shell).not.toBe(by.b!.shell)
+  expect(by.d!.shellUp).toBe(0)
+  // Backtick, process substitution and sibling `( )` get numbers of their own, and each shellUp is the shell around it.
+  const mix = Object.fromEntries(
+    splitShell('x=`b`; cat <(c) > f; ( d ) | ( e ); ( g; ( h ) )').map(seg => [seg.words.join(' ')[0], seg]),
+  )
+  const nums = ['b', 'c', 'd', 'e', 'g', 'h'].map(key => mix[key]!.shell)
+  expect(new Set(nums).size).toBe(6)
+  expect(nums.every(n => n !== 0)).toBe(true)
+  for (const key of ['b', 'c', 'd', 'e', 'g']) expect(mix[key]!.shellUp).toBe(0)
+  expect(mix.h!.shellUp).toBe(mix.g!.shell)
+})
+
+// A shell with no segment of its own changes no `$!`, so shellUp skips it (a reader walks no chain).
+test('splitShell skips a shell with no segment when it names the shell around', () => {
+  const by = Object.fromEntries(splitShell('( ( ( c ) ) ); ( a; ( ( b ) ) )').map(seg => [seg.words.join(' '), seg]))
+  expect(by.c!.shellUp).toBe(0)
+  expect(by.b!.shellUp).toBe(by.a!.shell)
+})
+
+test('splitShell flags the segment that ends an and-or list with bgList', () => {
+  const flags = (cmd: string) => splitShell(cmd).map(seg => [seg.words.join(' '), seg.bgList])
+  expect(flags('a && b &')).toEqual([
+    ['a', false],
+    ['b', true],
+  ])
+  expect(flags('a || b | c &')).toEqual([
+    ['a', false],
+    ['b', false],
+    ['c', true],
+  ])
+  expect(flags('a | b &')).toEqual([
+    ['a', false],
+    ['b', false],
+  ])
+  expect(flags('a && b; c &')).toEqual([
+    ['a', false],
+    ['b', false],
+    ['c', false],
+  ])
+  // An `&&` before a group or a subshell is not in the list of the `&` inside it.
+  for (const cmd of ['a && { b & }', 'a && (b &)', 'a && $(b &)', 'a && (b & echo $!)'])
+    expect(flags(cmd).find(f => f[0] === 'b')).toEqual(['b', false])
+  expect(flags('a && b &').find(f => f[0] === 'b')).toEqual(['b', true])
+})
+
+// The last command of an and-or list can make no segment (`a && > f`). The marker must not live on into the next list.
+test('splitShell drops the and-or marker when a list ends with no segment after the &&', () => {
+  for (const sep of [';', '\n'])
+    expect(
+      splitShell(`true && > /dev/null${sep}sleep 101 & echo $!`).find(seg => seg.words[0] === 'sleep')?.bgList,
+    ).toBe(false)
+  expect(splitShell('true && > /dev/null & sleep 101 & echo $!').find(seg => seg.words[0] === 'sleep')?.bgList).toBe(
+    false,
+  )
 })

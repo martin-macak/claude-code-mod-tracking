@@ -386,6 +386,34 @@ const plainEnv = (env: Record<string, string>): Record<string, string> =>
 
 /** Shell builtins end with the shell: `echo x &` is no process to follow. `[[` is a keyword that works as one. */
 const BUILTINS = new Set([
+  // The ones that set a variable or print, and the rest of the builtins that bash lists. When `&` follows one, bash runs it in
+  // a subshell and `$!` names that shell, so it makes no row (issue #263).
+  'pwd',
+  'source',
+  '.',
+  'kill',
+  'exit',
+  'return',
+  'break',
+  'continue',
+  'shift',
+  'declare',
+  'typeset',
+  'local',
+  'readonly',
+  'let',
+  'trap',
+  'type',
+  'alias',
+  'unalias',
+  'umask',
+  'ulimit',
+  'hash',
+  'eval',
+  'getopts',
+  'jobs',
+  'disown',
+  'history',
   'echo',
   'printf',
   'true',
@@ -409,8 +437,8 @@ type Detached = { fingerprint: string; pid?: number; viaShell: boolean }
  * subshell whose last command is a builtin or a compound (`( sleep 3; : ) &`, `( : ) &`), or a `coproc` of a group or of a
  * builtin (`coproc NAME { a; }`, `coproc :`). Two forms make no row although `$!` names a process, because bash runs their
  * last command in place when it is an external simple command: a subshell (`( sleep 3 ) &`, `( true; sleep 3 ) &`) and a
- * `coproc` (`coproc sleep 3`). Both are limits, like `sleep $(a) &`. A builtin outside `BUILTINS`
- * (`pwd &`, `source f &`) does make a row, with the pid of its shell (a limit). The `echo $!` that prints it eats one pid
+ * `coproc` (`coproc sleep 3`). Both are limits, like `sleep $(a) &`. A builtin that bash lists is in `BUILTINS` (issue #263), so it
+ * makes no row and takes no pid line (`pwd &`, `source f &`). The `echo $!` that prints it eats one pid
  * line of stdout: the next `echo $!` must not take that line (issue #132). An `echo $!` that prints elsewhere eats none.
  */
 const NO_ROW: Detached = { fingerprint: '', viaShell: true }
@@ -454,15 +482,27 @@ export function parseBashProcesses(
   // whole call is this one `docker run -d` and nothing else (`isLoneRun`, issue #123).
   const runs: { name?: string; text: string; printed: boolean; alone: boolean }[] = []
   const detached: Detached[] = []
-  let lastBg: Detached | undefined
   const pids = pidLines(stdout)
   // One entry for each `echo $!` that prints a pid line, in order: the job that takes the line, or none when it names no row.
   // The lines pair with the entries after the scan, and only when there is one line for each entry (issue #231).
   const echoed: (Detached | undefined)[] = []
   const claimed = new Set<Detached>()
-  // A `&` came before the segment, so `$!` is set and an `echo $!` prints a line. Before any `&` it prints an empty line, and
-  // `setsid -f` forks on its own and sets no `$!`.
-  let sawBg = false
+  // `lastBg`: the job that `$!` names. `sawBg`: a `&` came before the segment, so `$!` is set and an `echo $!` prints a line.
+  // Before any `&` it prints an empty line, and `setsid -f` forks on its own and sets no `$!`. `$!` belongs to a shell: a
+  // `( )`, `$( )`, backtick or process substitution starts with the `$!` of the shell around it and sets none back (issue
+  // #263). `Segment.shell` names the shell that reads the segment, and `Segment.shellUp` the one around it. The top level is `0`.
+  type BgState = { lastBg: Detached | undefined; sawBg: boolean }
+  const bgStates = new Map<number, BgState>([[0, { lastBg: undefined, sawBg: false }]])
+  const bgOf = (seg: Segment): BgState => {
+    let st = bgStates.get(seg.shell)
+    if (!st) {
+      // The first segment of a shell: its `$!` is the one of the shell around it at that moment (its parent ran before).
+      const up = bgStates.get(seg.shellUp) ?? bgStates.get(0)!
+      st = { lastBg: up.lastBg, sawBg: up.sawBg }
+      bgStates.set(seg.shell, st)
+    }
+    return st
+  }
   // `export` stays global on purpose: a subshell scope is not tracked for env, only for the directory. The shell variables
   // below follow the scope of the directory, so a variable set in a background list (`D=/x & srv $D/a.js &`) does not
   // reach the commands after the `&`, as in bash.
@@ -481,16 +521,17 @@ export function parseBashProcesses(
 
   const segments = splitShell(command)
   for (const seg of segments) {
+    const bg = bgOf(seg)
     // A `&` ended a group, subshell or substitution right before this segment (`{ a; } & echo $!`). Like `done &`, that sends a
     // shell to the background: `$!` names it, and no row has its pid, so no job before it may take the next pid line. For
     // `sleep $(a) &`, `( sleep 3 ) &` and `( true; sleep 3 ) &` `$!` names the command itself, which has no row either (a limit):
     // the earlier job must still not take it.
     if (seg.afterBgShell) {
-      lastBg = NO_ROW
-      sawBg = true
+      bg.lastBg = NO_ROW
+      bg.sawBg = true
     }
-    const jobBefore = sawBg
-    if (seg.bg) sawBg = true
+    const jobBefore = bg.sawBg
+    if (seg.bg) bg.sawBg = true
     // The marked words tell `'$F'` and `\$F` (as typed) from `$F` and `"$F"` (expanded). Only the variables read them.
     const pre = stripLead({ words: seg.marked, whole: seg.whole, redir: seg.redir })
     const marked = pre.words
@@ -500,19 +541,25 @@ export function parseBashProcesses(
       // A line of assignments only (`L=/x`) sets shell variables. `L=/x cmd` sets them for `cmd` alone.
       if (pre.words.length === 0) for (const [k, v] of Object.entries(pre.env)) setVar(k, v, seg.scope)
       // `done &` backgrounds the whole loop: `$!` is then the pid of the loop shell, not of an earlier background command.
-      if (seg.bg) lastBg = NO_ROW
+      if (seg.bg) bg.lastBg = NO_ROW
       continue
     }
     const head = words[0]!
     // `echo $! &` prints the pid of the job before it, so it keeps that job. Any other `&` job is a row (the detached
     // branch below replaces this) or no row: either way `$!` is no longer the job before it. An `echo $! > f &` is one of
     // them: it prints no line, and the `$!` after it is the pid of its own shell.
-    if (seg.bg && !echoesPid(seg, words)) lastBg = NO_ROW
+    if (seg.bg && !echoesPid(seg, words)) bg.lastBg = NO_ROW
     // `coproc` runs its command as a job of its own and sets `$!`. The parser makes no row for it, so the pid line that an
     // `echo $!` after it prints is no earlier job's.
     if (head === 'coproc') {
-      lastBg = NO_ROW
-      sawBg = true
+      bg.lastBg = NO_ROW
+      bg.sawBg = true
+    }
+    // `eval "a &"` sets `$!` in the shell that runs it, to a job that the parser cannot name (issue #263). Any `&` that is not
+    // part of `&&`, `>&`, `<&` or `&>` can be a job, so it counts: a miss loses a pid, and gives no wrong one.
+    if (head === 'eval' && !seg.bg && words.slice(1).some(w => /(?<![&>|<])&(?![&>])/.test(w))) {
+      bg.lastBg = NO_ROW
+      bg.sawBg = true
     }
 
     if (head === 'cd' || head === 'pushd') {
@@ -533,7 +580,7 @@ export function parseBashProcesses(
       if (jobBefore) {
         // The line names a row only for a job that `&` started (`NO_ROW` and a `setsid -f` job are `viaShell`), and only for the
         // first echo of it. A later echo prints the same line again, and keeps its place.
-        const job = lastBg && !lastBg.viaShell && !claimed.has(lastBg) ? lastBg : undefined
+        const job = bg.lastBg && !bg.lastBg.viaShell && !claimed.has(bg.lastBg) ? bg.lastBg : undefined
         if (job) claimed.add(job)
         echoed.push(job)
       }
@@ -586,9 +633,16 @@ export function parseBashProcesses(
       // The shell expands the variables before it runs the command, and `ps` shows the result.
       const pwd = dirs.get(seg.scope)
       const typed = marked.map(w => unmarkDollars(expandVars(w, n => vars.get(seg.scope, n), pwd))).join(' ')
-      const d: Detached = { fingerprint: typed.slice(0, FINGERPRINT_MAX), viaShell: pre.fork && !seg.bg }
+      // `$!` names a subshell, not the command, when `&` ends a list (`a && b &`) or a `time` job (`time a &`): the row takes no
+      // pid then, and the probe finds the process by its fingerprint (issue #263; bash 5.3.20).
+      const timed =
+        seg.marked.slice(0, seg.marked.length - marked.length).find(w => w !== '!' && !/^\w+=/.test(w)) === 'time'
+      const d: Detached = {
+        fingerprint: typed.slice(0, FINGERPRINT_MAX),
+        viaShell: (pre.fork && !seg.bg) || (seg.bg && (seg.bgList || timed)),
+      }
       detached.push(d)
-      lastBg = d
+      bg.lastBg = d
     }
   }
 
