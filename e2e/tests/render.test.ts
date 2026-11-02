@@ -26,6 +26,46 @@ test('redact blanks the plan name and usage notices with spaces of the same widt
   ])
 })
 
+for (const plan of ['Ultra', 'Free']) {
+  test(`redact blanks the ${plan} plan name`, () => {
+    const cast = redact({
+      header: { version: 2, width: 80, height: 24 },
+      events: [[0, 'o', `Haiku 5.5 · Claude ${plan}\r\n`]],
+    })
+    assert.deepEqual(cast.events, [[0, 'o', `Haiku 5.5${' '.repeat(10 + plan.length)}\r\n`]])
+  })
+
+  test(`leakError flags the ${plan} plan name`, () => {
+    assert.match(leakError(leakCast(`Haiku · Claude ${plan}`)) ?? '', new RegExp(`Claude ${plan}`))
+  })
+}
+
+test('redact leaves a longer word after a plan name whole, and leakError ignores it', () => {
+  const cast = redact({
+    header: { version: 2, width: 80, height: 24 },
+    events: [[0, 'o', 'Haiku · Claude Freedom']],
+  })
+  assert.deepEqual(cast.events, [[0, 'o', 'Haiku · Claude Freedom']])
+  assert.equal(leakError(leakCast('Haiku · Claude Freedom')), undefined)
+})
+
+test('leakError flags the hook-skipped notices of a host plugin', () => {
+  assert.match(leakError(leakCast('artifact-tracking: its session.append hook was skipped.')) ?? '', /hook was skipped/)
+  assert.match(leakError(leakCast('"cc-plugin-sec-default" runs first and sent the event on')) ?? '', /runs first/)
+  assert.match(leakError(leakCast('"cc-plugin-sec-default"')) ?? '', /cc-plugin-/)
+})
+
+test('redact blanks the free-uses count of the slash menu and the agents count of the footer', () => {
+  const cast = redact({
+    header: { version: 2, width: 80, height: 24 },
+    events: [[0, 'o', '/ultrareview  3 free left ($5-$25 USD)\r\nesc · ← 3 agents\r\n']],
+  })
+  const text = (cast.events[0]?.[2] ?? '') as string
+  assert.doesNotMatch(text, /free left|agents/)
+  assert.equal(text.length, '/ultrareview  3 free left ($5-$25 USD)\r\nesc · ← 3 agents\r\n'.length)
+  assert.equal(leakError(cast), undefined)
+})
+
 test('redact catches a notice that asciinema split over two output events', () => {
   const cast = redact({
     header: { version: 2, width: 80, height: 24 },
