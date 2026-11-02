@@ -491,6 +491,56 @@ test('pollRepos caps the polled repos, edit before read, and the fact counts the
   expect(t.m.facts.read(FACT)).toEqual({ repos: [{ ...LIB_REF, branches: ['main'] }], overflow: 1 })
 })
 
+test('a non-git launch folder: an Edit in a nested repo adds a row in edit mode', async () => {
+  const t = setup()
+  gitAt(t.w, { '/work/sdk': SDK_REMOTE })
+  await t.call('Edit', { file_path: '/work/sdk/a.ts' })
+  await drain(t.w)
+  expect(t.rows()).toMatchObject([{ key: SDK_KEY, root: '/work/sdk', mode: 'edit' }])
+})
+
+test('a non-git launch folder: the branches of a nested repo reach the fact, with one worktree list', async () => {
+  const t = setup()
+  const seen = gitAt(t.w, { '/work/sdk': SDK_REMOTE })
+  await t.call('Edit', { file_path: '/work/sdk/a.ts' })
+  await drain(t.w)
+  seen.lists.length = 0
+  await t.m.tick()
+  await drain(t.w)
+  expect(seen.lists).toEqual(['git -C /work/sdk/.git worktree list --porcelain'])
+  expect(t.m.facts.read(FACT)).toEqual({ repos: [{ ...SDK_REF, branches: ['main'] }], overflow: 0 })
+})
+
+test('a non-git launch folder: pollRepos caps the nested repos, edit before read', async () => {
+  const t = setup({ repos: { pollRepos: 1 } })
+  const seen = gitAt(t.w, { '/work/sdk': SDK_REMOTE, '/work/lib': LIB_REMOTE })
+  await t.call('Read', { file_path: '/work/lib/a.ts' })
+  await t.call('Edit', { file_path: '/work/sdk/a.ts' })
+  await drain(t.w)
+  seen.lists.length = 0
+  await t.m.tick()
+  await drain(t.w)
+  expect(seen.lists).toEqual(['git -C /work/sdk/.git worktree list --porcelain'])
+  expect(t.m.facts.read(FACT)).toEqual({ repos: [{ ...SDK_REF, branches: ['main'] }], overflow: 1 })
+})
+
+test('a git launch folder: a repo nested in it still adds no row', async () => {
+  const t = setup()
+  gitAt(t.w, { '/work/vendor/sub': SDK_REMOTE, '/work': 'git@gitlab.com:grp/app.git' })
+  await t.call('Edit', { file_path: '/work/vendor/sub/a.ts' })
+  await drain(t.w)
+  expect(t.rows()).toEqual([])
+})
+
+test('a non-git launch folder: two reads of one nested directory make one rev-parse', async () => {
+  const t = setup()
+  const seen = gitAt(t.w, { '/work/sdk': SDK_REMOTE })
+  await t.call('Read', { file_path: '/work/sdk/a.ts' })
+  await t.call('Read', { file_path: '/work/sdk/b.ts' })
+  await drain(t.w)
+  expect(seen.revParse.filter(d => d === '/work/sdk')).toHaveLength(1)
+})
+
 test('pollRepos 0 turns the poll off: no list and an empty fact', async () => {
   const t = setup({ repos: { pollRepos: 0 } })
   const seen = gitAt(t.w, { '/x/sdk': SDK_REMOTE })

@@ -165,7 +165,12 @@ export class RepoTracker {
     const own = await this.ownIdentity()
     if (own === 'retry') return null
     const here = normPath(abs)
-    if (within(here, normPath(this.d.rootPath!)) || (own?.root !== undefined && within(here, own.root))) return null
+    const rootNorm = normPath(this.d.rootPath!)
+    // Only a root that is a repo shields what is nested in it. A non-git root lets the walk find nested repos.
+    // null is "git said: no repo here". A fault that stops git from running is 'retry' and returned above.
+    if (own !== null && (within(here, rootNorm) || (own.root !== undefined && within(here, own.root)))) {
+      return null
+    }
     // A file (README, Makefile) or a path not created yet is not a directory. Walk up to the nearest one that is.
     let dir = maybeDir(abs)
     for (let up = 0; up <= MAX_WALK; up++) {
@@ -188,7 +193,7 @@ export class RepoTracker {
 
   /**
    * The own repo: same git common dir (a worktree), same key (a clone with the same origin) or the `rootRepo` remote.
-   * A repo nested inside the root folder never gets here: it is under the root path.
+   * A repo nested inside the root folder never gets here when the root is a repo: it is under the root path.
    */
   private isOwn(r: ResolvedRepo, own: ResolvedRepo | null): boolean {
     if (own && (r.common === own.common || r.key === own.key)) return true
