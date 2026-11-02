@@ -74,6 +74,14 @@ test('claudeCommand gives claude the exact argv, prompt last', () => {
   assert.ok(argv.includes('--append-system-prompt'))
 })
 
+test('claudeCommand names the permission mode only when the spec has one, before --settings', () => {
+  assert.ok(!argvOf({ tools: ['Bash'] }).includes('--permission-mode'))
+  const argv = argvOf({ tools: ['Agent', 'Bash'], permissionMode: 'default', prompt: 'go' })
+  assert.equal(argv[argv.indexOf('--permission-mode') + 1], 'default')
+  assert.ok(argv.indexOf('--permission-mode') < argv.indexOf('--settings'))
+  assert.equal(argv.at(-1), 'go')
+})
+
 test('claudeCommand with tools: the tools system prompt and an allow list, prompt still last', () => {
   const argv = argvOf({ prompt: 'go', tools: ['Read', 'Artifact'] })
   assert.equal(argv[argv.indexOf('--append-system-prompt') + 1], TOOLS_SYSTEM_PROMPT)

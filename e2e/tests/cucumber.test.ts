@@ -156,6 +156,17 @@ test('the default profile selects scenarios, and none of them is an @artifacts s
   assert.deepEqual(artifactScenarios(selected), [])
 })
 
+test('the default profile selects the four scenarios of features/slot-turns.feature (issue #206), and none is an @artifacts scenario', () => {
+  const slot = select().filter(s => s.uri === 'features/slot-turns.feature')
+  assert.equal(slot.length, 4)
+  for (const kind of ['process row', 'repo row', 'process row that a subagent', 'worktree row'])
+    assert.ok(
+      slot.some(s => s.name.startsWith(`A ${kind}`)),
+      `a scenario for the ${kind}`,
+    )
+  assert.deepEqual(artifactScenarios(slot), [])
+})
+
 test('a bare feature path selects no @artifacts scenario', () => {
   assert.deepEqual(artifactScenarios(select(PANE)), [])
   // Naming the feature file of the scenario does not select it either: the tag expression of the default profile wins.

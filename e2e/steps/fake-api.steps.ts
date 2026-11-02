@@ -1,7 +1,27 @@
 import { Given, Then } from '@cucumber/cucumber'
 import { copiedText } from '../support/copy-probe.ts'
+import type { FakeTurn } from '../support/fake-api.ts'
 import { waitUntil } from '../support/wait.ts'
 import type { DemoWorld } from '../support/world.ts'
+
+/**
+ * Starts a fake model that reads the README of the second repo with the Read tool in each of `prompts` prompts, and ends each
+ * prompt in "Done n." (issues #195 and #206).
+ */
+async function readsReadme(world: DemoWorld, prompts: number): Promise<void> {
+  const readme = world.foreignRepo?.readme
+  if (readme === undefined) throw new Error('fake model: start with the step "a second fake GitHub repo ..."')
+  const turns: FakeTurn[] = []
+  for (let n = 1; n <= prompts; n++)
+    turns.push(
+      [
+        { type: 'text', text: `Read ${n}.` },
+        { type: 'tool_use', id: `toolu_e2e_read_${n}`, name: 'Read', input: { file_path: readme } },
+      ],
+      [{ type: 'text', text: `Done ${n}.` }],
+    )
+  await world.startFakeApi(turns)
+}
 
 // A model that is a script (support/fake-api.ts): Claude asks one question with the AskUserQuestion tool, the scenario
 // answers it in the real dialog of the real session, and Claude then says "Noted." and stops. Put the step before the step
@@ -41,15 +61,7 @@ Given(
 // says "Read.". The session did not start there, so the repos tracker sees a repo that it did not start in. The session
 // needs the tool: `and the tools "Read"`. Put the step after the one that makes the second repo.
 Given('a fake model that reads the README of the second repo', async function (this: DemoWorld) {
-  const readme = this.foreignRepo?.readme
-  if (readme === undefined) throw new Error('fake model: start with the step "a second fake GitHub repo ..."')
-  await this.startFakeApi([
-    [
-      { type: 'text', text: 'I will read it.' },
-      { type: 'tool_use', id: 'toolu_e2e_read', name: 'Read', input: { file_path: readme } },
-    ],
-    [{ type: 'text', text: 'Read.' }],
-  ])
+  await readsReadme(this, 1)
 })
 
 // What the engine told the model about the tool: the answer of the dialog, as the model reads it. It proves the round trip
@@ -111,4 +123,95 @@ Then('the copy log holds {string}', async function (this: DemoWorld, text: strin
     what: `the copy log to hold "${text}"`,
     last: () => JSON.stringify(copiedText(probe.logFile) ?? null),
   })
+})
+
+// Issue #206. The model starts a background task with the Bash tool in its first prompt, and stops it with TaskStop in its
+// second one. The id of the task is the engine's, so the second turn reads it from the Bash result (`FakeStep` is a function).
+// The session needs both tools: `and the tools "Bash TaskStop"`. The first prompt gets the turn "Started." after the call,
+// the second one "Stopped.".
+Given(
+  'a fake model that starts the background task {string} and stops it with TaskStop in the next prompt',
+  async function (this: DemoWorld, command: string) {
+    await this.startFakeApi([
+      [
+        { type: 'text', text: 'I will start it.' },
+        { type: 'tool_use', id: 'toolu_e2e_bg', name: 'Bash', input: { command, run_in_background: true } },
+      ],
+      [{ type: 'text', text: 'Started.' }],
+      results => {
+        // Only the Bash result of the first prompt, and the engine's own words for it.
+        const bash = results.find(r => r.id === 'toolu_e2e_bg')
+        const taskId = bash === undefined ? undefined : /running in background with ID: (\w+)/.exec(bash.text)?.[1]
+        if (taskId === undefined)
+          throw new Error(`fake model: no task id in the tool results ${JSON.stringify(results)}`)
+        return [
+          { type: 'text', text: 'I will stop it.' },
+          { type: 'tool_use', id: 'toolu_e2e_stop', name: 'TaskStop', input: { task_id: taskId } },
+        ]
+      },
+      [{ type: 'text', text: 'Stopped.' }],
+    ])
+  },
+)
+
+// Issue #206. The model enters a worktree with EnterWorktree in its first prompt and leaves it with ExitWorktree (keep) in its
+// second one. The session needs both tools: `and the tools "EnterWorktree ExitWorktree"`. The first prompt ends in "Entered.",
+// the second in "Left.".
+Given(
+  'a fake model that enters the worktree {string} and leaves it in the next prompt',
+  async function (this: DemoWorld, name: string) {
+    await this.startFakeApi([
+      [
+        { type: 'text', text: 'I will enter it.' },
+        { type: 'tool_use', id: 'toolu_e2e_enter', name: 'EnterWorktree', input: { name } },
+      ],
+      [{ type: 'text', text: 'Entered.' }],
+      [
+        { type: 'text', text: 'I will leave it.' },
+        {
+          type: 'tool_use',
+          id: 'toolu_e2e_exit',
+          name: 'ExitWorktree',
+          input: { action: 'keep' },
+        },
+      ],
+      [{ type: 'text', text: 'Left.' }],
+    ])
+  },
+)
+
+// Issue #206. The subagent case. The model spawns a subagent with the Agent tool, and the subagent starts a background task with
+// its own Bash call. The fake plays the subagent too: its requests come in order, after the spawn and before the answer to it,
+// because the main loop waits for the agent. The session needs both tools: `and the tools "Agent Bash"`.
+Given(
+  'a fake model that spawns a subagent which starts the background task {string}',
+  async function (this: DemoWorld, command: string) {
+    await this.startFakeApi([
+      [
+        { type: 'text', text: 'I will ask an agent.' },
+        {
+          type: 'tool_use',
+          id: 'toolu_e2e_agent',
+          name: 'Agent',
+          input: {
+            description: 'Start the task',
+            prompt: 'Start the background task.',
+            subagent_type: 'general-purpose',
+          },
+        },
+      ],
+      [
+        { type: 'text', text: 'I will start it.' },
+        { type: 'tool_use', id: 'toolu_e2e_sub_bg', name: 'Bash', input: { command, run_in_background: true } },
+      ],
+      [{ type: 'text', text: 'The task runs.' }],
+      [{ type: 'text', text: 'The agent started it.' }],
+    ])
+  },
+)
+
+// Issue #206. The model reads the README of the second repo in each of two prompts (the Read tool), so the repos tracker sees
+// the repo in turn 1 and again in turn 2. The first prompt ends in "Done 1.", the second in "Done 2.".
+Given('a fake model that reads the README of the second repo in each of two prompts', async function (this: DemoWorld) {
+  await readsReadme(this, 2)
 })
