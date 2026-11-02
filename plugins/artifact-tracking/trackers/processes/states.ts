@@ -30,8 +30,9 @@ export const ENDED_STATES: ReadonlySet<ProcessState> = statesOf(k => k !== 'live
 export const FAILED_STATES: ReadonlySet<ProcessState> = statesOf(k => k === 'failed')
 
 /**
- * The status token of each state (design study of issue #63, section 5.4). `failed`, `killed`, `exited` and `unhealthy` are
- * the red set of the pane, and the band counts them. `unknown` is gone: the mod could not find the process. `Record` names
+ * The status token of each state (design study of issue #63, section 5.4). `failed`, `killed` and `unhealthy` are
+ * the red set of the pane, and the band counts them. `exited` is gone with no known exit code, so it is not a failure and
+ * reads `done` like `completed` (issue #258). `unknown` is gone: the mod could not find the process. `Record` names
  * every `ProcessState`, so a state that joins the union is a compile error until it has a token.
  */
 export const STATE_TOKEN: Readonly<Record<ProcessState, StatusToken>> = {
@@ -41,6 +42,6 @@ export const STATE_TOKEN: Readonly<Record<ProcessState, StatusToken>> = {
   unknown: 'gone',
   failed: 'failed',
   killed: 'failed',
-  exited: 'failed',
+  exited: 'done',
   unhealthy: 'failed',
 }

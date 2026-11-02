@@ -727,7 +727,7 @@ const MONITOR_EXPIRED = '[Monitor expired'
  * The same update from a notification row's text. The engine stores no `task` field on the row (in the types it
  * is a render prop only), so the text is the source: `<task-id>`, `<tool-use-id>`, `<status>`.
  * A Monitor that reached its deadline has no `<status>`: its event says so, and the row ends as `completed`. The deadline is
- * the bound the caller set, not a failure, so the row must not draw red like `killed` or `exited` (`sections.ts`).
+ * the bound the caller set, not a failure, so the row must not draw red like `killed` or `unhealthy` (`sections.ts`).
  * The caller checks `origin.kind === 'task-notification'`: the person can type the same text.
  */
 export function processUpdateFromNotificationText(text: string): TaskBackedUpdate | null {

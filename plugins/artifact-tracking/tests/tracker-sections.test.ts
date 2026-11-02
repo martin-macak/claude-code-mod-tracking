@@ -336,7 +336,7 @@ test('the processes section needs a row or a docker issue; with only the issue i
   expect(ids(await t.m.paneData(t.w.ports, NO_VIEW))).not.toContain('processes')
 })
 
-test('every process state has its token color: the bad ones red, running and up green, the rest muted', async () => {
+test('every process state has its token color: the bad ones red, running and up green, the rest muted (exited too, #258)', async () => {
   const t = await paneWorld()
   // `unknown` (#56): a detached process with a variable the mod cannot read, and no process found. It is no failure.
   const states = ['running', 'up', 'completed', 'failed', 'killed', 'exited', 'unhealthy', 'unknown'] as const
@@ -349,11 +349,17 @@ test('every process state has its token color: the bad ones red, running and up 
     { text: 'completed', fg: 'inactive' },
     { text: 'failed', fg: 'error' },
     { text: 'killed', fg: 'error' },
-    { text: 'exited', fg: 'error' },
+    { text: 'exited', fg: 'inactive' },
     { text: 'unhealthy', fg: 'error' },
     { text: 'unknown', fg: 'inactive' },
   ])
-  expect(s.band?.failing).toBe(4) // failed, killed, exited and unhealthy; `unknown` is not counted
+  expect(s.band?.failing).toBe(3) // failed, killed and unhealthy; `exited` (no known code) and `unknown` are not counted
+  // The reported symptom (#258): in the status view an `exited` row is under Done, not under Failed.
+  const { groups } = viewGroups(await t.m.paneData(t.w.ports, NO_VIEW), 'status', { touchedOnly: false })
+  const inGroup = (k: string) =>
+    (groups.find(x => x.id === `status:${k}`)?.rows ?? []).map(r => r.id).filter(id => id.startsWith('bg:'))
+  expect(inGroup('failed')).toEqual(['bg:3', 'bg:4', 'bg:6'])
+  expect(inGroup('done')).toEqual(expect.arrayContaining(['bg:2', 'bg:5']))
 })
 
 test('a process row cannot be dismissed or prioritised', async () => {
