@@ -1013,6 +1013,32 @@ for (const [what, nameIt] of [
     expect(text).toMatch(/\n {2}again {2}.*probe-wt.* {2}created$/)
   })
 
+test('an EnterWorktree with a path in turn 3 makes no proof and no entry, and its row has no created reason (issue #270)', async () => {
+  const t = await worktrees()
+  await t.idle(1)
+  await t.idle(2)
+  await t.start('turn-3', 'switch into a worktree that exists')
+  await t.enter({ path: WT })
+  await t.end('turn-3')
+  expect(t.proof()).toBeUndefined()
+  expect(t.rec(3)).toMatchObject({ new: [], seen: [] })
+  await t.round() // the listing shows the worktree: a row, but no proof
+  expect(t.proof()).toBeUndefined()
+  expect(all(await t.rows()).find(r => r.id === WT_ID)?.turns).toBeUndefined()
+  expect(await t.text('worktrees')).not.toMatch(/created/)
+  expect(await t.text('clean')).not.toMatch(/probe-wt/) // /track clean plans no step for it
+})
+
+test('an EnterWorktree with an empty path still makes a proof (issue #270)', async () => {
+  const t = await worktrees()
+  await t.idle(1)
+  await t.idle(2)
+  await t.start('turn-3', 'enter')
+  await t.enter({ path: '' })
+  await t.end('turn-3')
+  expect(t.proof()).toMatchObject({ path: WT, origin: 'enter', firstTurn: 3 })
+})
+
 /** A worktree that turn 3 entered and turn 5 left again. `round`: the round that draws its row has run. */
 async function enteredAndLeft(o: { round?: boolean } = {}) {
   const t = await worktrees()

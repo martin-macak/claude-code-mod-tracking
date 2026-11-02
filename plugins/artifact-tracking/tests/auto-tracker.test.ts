@@ -11,6 +11,7 @@ import { autoConfig, auto as autoTracker } from '../trackers/auto'
 import { autoDismiss } from '../trackers/auto/dismiss-store'
 import { fromAgentText } from '../trackers/auto/events'
 import { emptyAuto } from '../trackers/auto/ledger'
+import { autoReasonsOf } from '../trackers/auto/reasons'
 import { PR_REASONS } from '../trackers/github/lane'
 import { fakeConfig } from './fixtures/config-fs'
 import type { AgentProof, AutoState, WorktreeProof } from './fixtures/contracts'
@@ -169,6 +170,27 @@ test('EnterWorktree records a proof and kicks worktree', async () => {
   expect(t.rounds()).toBe(before + 1)
   await t.call('EnterWorktree', { name: 'x' }, { result: { message: 'refused' } }) // no path: no proof
   expect(t.auto()?.worktrees).toHaveLength(1)
+})
+
+test('EnterWorktree with a path enters a worktree that exists: no proof, so no created and no clean (issue #270)', async () => {
+  const t = setup()
+  const before = await t.running()
+  await t.call('EnterWorktree', { path: '/x/repo/.claude/worktrees/probe-wt' }, ev.ENTER_RAN)
+  expect(t.auto()?.worktrees).toEqual([])
+  expect(autoReasonsOf(t.auto(), 'wt:/x/repo/.claude/worktrees/probe-wt')).toBeUndefined()
+  await t.settle(WINDOW)
+  expect(t.rounds()).toBe(before + 1) // a round still runs: the cwd changed
+})
+
+test('EnterWorktree with a path names a worktree that this run made again and keeps its proof (issue #270)', async () => {
+  const t = setup()
+  await t.running()
+  await t.call('EnterWorktree', { name: 'probe-wt' }, ev.ENTER_RAN)
+  const made = t.auto()?.worktrees
+  expect(made).toHaveLength(1)
+  await t.call('EnterWorktree', { path: '/x/repo/.claude/worktrees/probe-wt' }, ev.ENTER_RAN)
+  expect(t.auto()?.worktrees).toEqual(made)
+  expect(autoReasonsOf(t.auto(), `wt:${made?.[0]?.path}`)).toBeDefined() // still created
 })
 
 test('ExitWorktree kicks worktree', async () => {

@@ -51,6 +51,7 @@ import {
   recordPr,
   recordSpawn,
   recordTurnEnd,
+  recordVisit,
 } from './ledger'
 import { autoReasonsOf } from './reasons'
 import { AutoRound } from './round'
@@ -220,11 +221,17 @@ async function nameWorktree(
   if (turn !== undefined && before !== undefined) await turn.note(worktreeSightings(turn.ord, path, before, after))
 }
 
+/** An `EnterWorktree` input with a non-empty `path`. */
+const entersByPath = (input: unknown): boolean => isRecord(input) && typeof input.path === 'string' && input.path !== ''
+
 const onEnter: H<ToolCallEvent> = soft('EnterWorktree', async (ctx, ev) => {
   const f = fromEnterResult(ev.result, ev.agentId)
+  // `path` switches into a worktree that exists: a visit, never a proof of creation (issue #270).
+  // A known proof only gets the turn and keeps its branch.
+  const visit = entersByPath(ev.input)
   if (f)
     await nameWorktree(ctx, f.path, (s, turn) =>
-      recordEnter(s, f, ctx.clock.wall(), ctx.config.slice().maxProofs, turn),
+      visit ? recordVisit(s, f.path, turn) : recordEnter(s, f, ctx.clock.wall(), ctx.config.slice().maxProofs, turn),
     )
   await touch(ctx, ev.agentId)
   kick(ctx, 'worktree')

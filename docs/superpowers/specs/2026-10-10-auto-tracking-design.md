@@ -698,8 +698,13 @@ sequenceDiagram
   M->>R: EnterWorktree {name} or {path}
   R->>R: ran = await next(e)
   R->>R: f = fromEnterResult(ran, e.agentId)
-  R->>L: f set: recordEnter(f)
-  Note over L: ignores the root's own path
+  alt {name}: f set
+    R->>L: recordEnter(f)
+    Note over L: ignores the root's own path
+  else {path} not empty: f set
+    R->>L: recordVisit(path, turn)
+    Note over L: no proof, no entry; stamps a known proof only (issue #270)
+  end
   R->>Sch: kick('worktree')
   M->>R: ExitWorktree {action}
   R->>R: ran = await next(e)
@@ -1228,7 +1233,7 @@ T10 stays one task. A split into wiring and kit tests was considered and rejecte
 | K9 | The kit's `$.tool.call` drops `tool_use_id` and `agentId` ([d.ts:12640](../../knowledge-base/claude-code-mods/sources/claude-code-2.1.295/types/claude-code.d.ts#L12640)). | Kit tests cannot raise a subagent's tool calls (`recordAgentBranch`, a subagent's `EnterWorktree`). | `events.test.ts`, `ledger.test.ts`, `agents.test.ts`, and live smoke step 1 (section 13.3). The kit does raise `agent.spawn` from `$.agent.spawn` ([d.ts:15011](../../knowledge-base/claude-code-mods/sources/claude-code-2.1.295/types/claude-code.d.ts#L15011)), so the earlier doubt is settled. |
 | K10 | Session cwd and porcelain paths differ by a symlink. | Master location misses. | `locate` falls back to no location; the master row shows no worktree. Root uses `rev-parse` (A3). |
 | K11 | `$.agent.list()` status words may change (`idle` for done). | Wrong running counts. | Status mapping is one table in `agents.ts`; an unknown word maps to Running. |
-| K12 | Multi-repo workspace: `EnterWorktree {path}` may enter a worktree of a repo nested in the launch directory ([d.ts:16300](../../knowledge-base/claude-code-mods/sources/claude-code-2.1.295/types/claude-code.d.ts#L16300)). That path is not in `git worktree list` of `root.top`. If the launch directory is no git repo, `root.top` is null. | The child shows as `removed` while it is live; or the Worktrees section is hidden although the session works in worktrees. | Accept for v1 (section 17). Later: for a proof path not under `<main>`, run `git worktree list` in that path's toplevel too. Status: the PR lane polls the branches of other repos that the session visited, with one `git worktree list` per repo in its git common dir (issue #195, [KB](../../knowledge-base/claude-code-auto-tracking/pull-requests.md#5-branches-of-other-repos)). A repo nested in a launch directory that is no git repo stays open (issue #249). |
+| K12 | Multi-repo workspace: `EnterWorktree {path}` (which makes no proof, issue #270) may enter a worktree of a repo nested in the launch directory ([d.ts:16300](../../knowledge-base/claude-code-mods/sources/claude-code-2.1.295/types/claude-code.d.ts#L16300)). That path is not in `git worktree list` of `root.top`. If the launch directory is no git repo, `root.top` is null. | The child shows as `removed` while it is live; or the Worktrees section is hidden although the session works in worktrees. | Accept for v1 (section 17). Later: for a proof path not under `<main>`, run `git worktree list` in that path's toplevel too. Status: the PR lane polls the branches of other repos that the session visited, with one `git worktree list` per repo in its git common dir (issue #195, [KB](../../knowledge-base/claude-code-auto-tracking/pull-requests.md#5-branches-of-other-repos)). A repo nested in a launch directory that is no git repo stays open (issue #249). |
 | K13 | A discovery reply over 4 MiB (180 PR bodies). | The step is incomplete every tick: no new PRs, no prune. The breaker stays closed (A21). | Note `discovery failed: reply over 4 MiB`. Lower `headPrsPerBranch` and `basePrsPerBranch` if it shows. A body-only second query for new or changed PRs is the larger fix; not in v1. |
 
 ## 17. Out of scope

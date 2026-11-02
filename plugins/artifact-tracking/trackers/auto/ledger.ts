@@ -108,6 +108,9 @@ export function recordExit(s: AutoState, path: string, turn?: number): AutoState
   return i < 0 ? s : putWorktree(s, i, stampedTurn(s.worktrees[i]!, turn))
 }
 
+/** A call names a known worktree again, with no claim that the run made it: the turn is stamped, a proof is never made and the branch stays (issues #205, #270). */
+export const recordVisit = recordExit
+
 /** The identity of a PR proof: host, owner, repo and number, lower case, as the item key lowers them. */
 const prProofKey = (p: PrFacts): string => `${p.host}/${p.owner}/${p.repo}#${p.number}`.toLowerCase()
 
