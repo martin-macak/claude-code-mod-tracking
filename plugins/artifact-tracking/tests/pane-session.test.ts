@@ -2636,13 +2636,43 @@ test('help titles a tracker by its sections, whatever the view draws: never by F
   t.w.state.set('help', true)
   const byList = leaves(await t.draw())
   expect(byList).toContain('web') // the section of the tracker, as the by-list view titles it
-  for (const view of ['status', 'tracker', 'reason', 'flat']) {
+  for (const view of ['status', 'tracker', 'reason', 'kind', 'flat']) {
     await t.w.ports.state.view.update(() => view)
     expect(leaves(await t.draw()), view).toEqual(byList)
     expect(await helpTextOf(t.w.ports, t.m), view).toContain('\nweb\n  w  open')
   }
   const text = await helpTextOf(t.w.ports, t.m)
   expect(text).not.toMatch(/Failed|No status|Pinned/)
+})
+
+test('the kind view draws one group for each kind, in the order of the rows, and the rest as no kind', async () => {
+  const t = setup([
+    web('a', { facets: { kind: 'pr' } }),
+    web('b', { facets: { kind: 'issue' } }),
+    web('c', { facets: { kind: 'pr' } }),
+    web('d'),
+  ])
+  await t.w.ports.state.view.update(() => 'kind')
+  const tree = await t.draw()
+  const all = texts(tree).map(([, s]) => s)
+  expect(all).toContain('View: kind')
+  const titles = ['web · pr', 'web · issue', 'web · no kind'].map(title => all.findIndex(s => s.includes(title)))
+  expect(titles.every(i => i >= 0)).toBe(true)
+  expect([...titles].sort((x, y) => x - y)).toEqual(titles) // drawn in this order
+  const hosts = ['a', 'c', 'b', 'd'].map(id => all.findIndex(s => s.includes(`https://${id}.example/`)))
+  expect([...hosts].sort((x, y) => x - y)).toEqual(hosts) // rows a, c under pr, b under issue, d under no kind
+  expect(handlesOf(tree)).toHaveLength(4)
+})
+
+test('the kind view of a section with no kind draws as the list view does, bar the view line', async () => {
+  const t = await views()
+  const body = async () =>
+    texts(await t.draw())
+      .map(([, s]) => s)
+      .filter(s => !s.startsWith('View:'))
+  const byList = await body()
+  await t.w.ports.state.view.update(() => 'kind')
+  expect(await body()).toEqual(byList)
 })
 
 test('g takes the next view of global.ui.views, keeps the row selected and asks for the ring on its new handle', async () => {

@@ -32,6 +32,7 @@ export function sections(ctx: ViewContext<FileConfig, Json>): readonly SectionSp
     {
       id: 'file',
       title: 'Files',
+      kindOrder: FILE_TYPES,
       note: { text: reads.length > 0 ? `${shown} files · ${reads.length} read` : `${shown} files` },
       rank: 70,
       band: { label: 'Files', count: shown, failing: 0, rank: 5 },

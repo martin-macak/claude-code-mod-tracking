@@ -131,8 +131,9 @@ test('a lifted child of a quiet row stays quiet in every view: no row of a text-
       rows.every(r => r.quiet === true),
       view,
     ).toBe(true)
-    // In a view other than by list the lift makes `q1:0` a row of its own (its child stays below it): it is there, and quiet.
-    if (view !== LIST_VIEW) expect(rows.map(r => r.id).sort(), view).toEqual(['q1', 'q1:0', 'q2'])
+    // In a view other than by list and by kind (a section with no kind is its list group) the lift makes `q1:0` a row of its own
+    // (its child stays below it): it is there, and quiet.
+    if (view !== LIST_VIEW && view !== 'kind') expect(rows.map(r => r.id).sort(), view).toEqual(['q1', 'q1:0', 'q2'])
     expect(rows.find(r => r.id === 'q1:0')?.children?.[0]?.quiet ?? true, view).toBe(true)
     // groupsText prints none of them: no title for a group of quiet rows either.
     expect(groupsText(groups), view).toBe(view === LIST_VIEW ? 'QA  2 calls' : '')

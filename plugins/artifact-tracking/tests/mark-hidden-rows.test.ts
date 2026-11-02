@@ -166,7 +166,7 @@ test('a dismissed row is gone from the tracker: its mark ends with the next mark
 // The pruning reads the sections, so none of them can end a mark. A pass here pins that: a change that reads the groups, as the
 // first version of the pruning read `paneData` through a rule of the view, fails it.
 test('the filter t and each view leave the marks of the rows they hide alone', async () => {
-  for (const view of ['list', 'tracker', 'status', 'reason', 'flat'] as const) {
+  for (const view of ['list', 'tracker', 'status', 'reason', 'kind', 'flat'] as const) {
     const t = await paneWorld()
     t.w.state.set('marks', [KEYS.head]) // a PR that the lane found and the session never touched: `t` leaves it out
     await t.w.ports.state.view.update(() => view)

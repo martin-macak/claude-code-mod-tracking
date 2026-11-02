@@ -1,5 +1,5 @@
-// The views of the pane (issue #63, L3): by list, by tracker, by status, by reason and flat. A view groups, sorts and filters on
-// the facets of the top-level rows and never on the text of a cell. Pure.
+// The views of the pane (issue #63, L3; #248): by list, by tracker, by status, by reason, by kind and flat. A view groups,
+// sorts and filters on the facets of the top-level rows and never on the text of a cell. Pure.
 import { expect, test } from 'claude-code/testing'
 import type { Effective } from '../core/interfaces/items'
 import type { CoreReason } from '../core/interfaces/reasons'
@@ -53,8 +53,8 @@ const level = (l: Effective): Facets => ({ level: l })
 
 // ---------------------------------------------------------------- the ids and the cycle
 
-test('the five views are by list, by tracker, by status, by reason and flat', () => {
-  expect(VIEW_IDS).toEqual(['list', 'tracker', 'status', 'reason', 'flat'])
+test('the six views are by list, by tracker, by status, by reason, by kind and flat', () => {
+  expect(VIEW_IDS).toEqual(['list', 'tracker', 'status', 'reason', 'kind', 'flat'])
   for (const v of VIEW_IDS) expect(isViewId(v)).toBe(true)
   for (const bad of ['', 'List', 'type', 'level', 'toString', 7, null, undefined]) expect(isViewId(bad)).toBe(false)
 })
@@ -175,7 +175,7 @@ test('a sub-task that the person set to high stays below its parent in every vie
     {},
     { children: [withStatus('low', 'active'), withStatus('sub', 'active', level({ level: 'high' }))] },
   )
-  const only = { list: 'jira', tracker: 't', status: 'active', reason: 'context', flat: 'all' } as const
+  const only = { list: 'jira', tracker: 't', status: 'active', reason: 'context', kind: 'jira', flat: 'all' } as const
   for (const view of VIEW_IDS) {
     const { groups } = viewGroups([section('jira', [epic])], view, OFF)
     expect(
@@ -500,4 +500,128 @@ test('every group id is <view>:<key>, so the caps never mistake a status group f
   expect(viewGroups(sections, 'status', OFF).groups[0]?.id).toBe('status:failed')
   expect(viewGroups(sections, 'list', OFF).groups[0]?.id).toBe('list:prs')
   expect(viewGroups(sections, 'flat', OFF).groups[0]?.id).toBe('flat:all')
+})
+
+// ---------------------------------------------------------------- the kind view (issue #248)
+
+const kinded = (id: string, kind?: string, extra: Parameters<typeof row>[2] = {}): TreeRow =>
+  row(id, kind === undefined ? {} : { kind }, extra)
+
+test('kind view: a section with kinds gives one group for each kind, and each row lands once', () => {
+  const s = section('x', [kinded('a', 'pr'), kinded('b', 'issue'), kinded('c', 'pr')])
+  const { groups } = viewGroups([s], 'kind', OFF)
+  expect(byId(groups)).toEqual({ 'kind:x:pr': ['a', 'c'], 'kind:x:issue': ['b'] })
+  expect(groups.map(g => [g.title, g.count])).toEqual([
+    ['X · pr', 2],
+    ['X · issue', 1],
+  ])
+})
+
+test('kind view: kindOrder comes first, other kinds follow by first row', () => {
+  const s = section('x', [kinded('a', 'docs'), kinded('b', 'zzz'), kinded('c', 'code'), kinded('d', 'aaa')], {
+    kindOrder: ['code', 'config', 'docs'],
+  })
+  const { groups } = viewGroups([s], 'kind', OFF)
+  expect(groups.map(g => g.id)).toEqual(['kind:x:code', 'kind:x:docs', 'kind:x:zzz', 'kind:x:aaa'])
+})
+
+test('kind view: a section with no kind is one group like the list group, trees whole, no note or text', () => {
+  const tree = row('root', {}, { children: [row('child')] })
+  const s = section('w', [tree], { count: 2, note: { text: 'a note' }, empty: 'none', text: 'title' })
+  const { groups } = viewGroups([s], 'kind', OFF)
+  expect(groups).toHaveLength(1)
+  expect(groups[0]).toMatchObject({ id: 'kind:w', title: 'W', count: 2 })
+  expect(ids(groups[0]?.rows ?? [])).toEqual(['root'])
+  expect(groups[0]?.rows[0]?.children).toHaveLength(1)
+  expect(groups[0]?.note).toBeUndefined()
+  expect(groups[0]?.empty).toBeUndefined()
+  expect(viewGroups([section('e', [])], 'kind', OFF).groups).toEqual([])
+})
+
+test('kind view: rows with no kind in a kinded section go to a last no kind group', () => {
+  const s = section('x', [kinded('a'), kinded('b', 'pr'), kinded('c')])
+  const { groups } = viewGroups([s], 'kind', OFF)
+  expect(groups.map(g => [g.id, g.title])).toEqual([
+    ['kind:x:pr', 'X · pr'],
+    ['kind:x', 'X · no kind'],
+  ])
+  expect(byId(groups)['kind:x']).toEqual(['a', 'c'])
+})
+
+test('kind view: rows keep the order of the tracker; a pinned row goes first in Pinned', () => {
+  const s = section('x', [kinded('b', 'pr'), kinded('a', 'pr'), row('p', { kind: 'pr', ...level({ level: 'top' }) })])
+  const { groups } = viewGroups([s], 'kind', OFF)
+  expect(groups.map(g => g.id)).toEqual(['kind:pinned', 'kind:x:pr'])
+  expect(byId(groups)['kind:x:pr']).toEqual(['b', 'a'])
+  expect(byId(groups)['kind:pinned']).toEqual(['p'])
+})
+
+test('kind view: sections never pool, and every group id is unique', () => {
+  const a = section('a', [kinded('a1', 'pr')])
+  const b = section('b', [kinded('b1', 'pr'), kinded('b2')])
+  const c = section('c', [kinded('c1')])
+  const { groups } = viewGroups([a, b, c], 'kind', OFF)
+  const all = groups.map(g => g.id)
+  expect(new Set(all).size).toBe(all.length)
+  expect(all).toEqual(['kind:a:pr', 'kind:b:pr', 'kind:b', 'kind:c'])
+})
+
+test('kind view: lift splits a kinded tree', () => {
+  const sub = kinded('sub', 'subagent')
+  const master = kinded('master', 'master', { lift: true, children: [sub] })
+  const s = section('agents', [master])
+  const { groups } = viewGroups([s], 'kind', OFF)
+  expect(byId(groups)).toEqual({ 'kind:agents:master': ['master'], 'kind:agents:subagent': ['sub'] })
+})
+
+test('kind view: a lift tree in a section with no kind stays whole', () => {
+  const m = row('m', {}, { lift: true, children: [row('c')] })
+  const { groups } = viewGroups([section('a', [m])], 'kind', OFF)
+  expect(groups[0]?.id).toBe('kind:a')
+  expect(groups[0]?.rows[0]?.children).toHaveLength(1)
+})
+
+test('kind view: a pinned row in a section with no kind goes to Pinned and leaves the count of the section', () => {
+  const s = section('w', [row('a'), row('p', level({ level: 'top' }))], { count: 5 })
+  const { groups } = viewGroups([s], 'kind', OFF)
+  expect(groups.map(g => g.id)).toEqual(['kind:pinned', 'kind:w'])
+  expect(byId(groups)).toEqual({ 'kind:pinned': ['p'], 'kind:w': ['a'] })
+  expect(groups[1]?.count).toBe(4)
+})
+
+test('kind view: a long kind is cut in the title and whole in the id; a colon in a key makes no other id', () => {
+  const long = 'k'.repeat(60)
+  const a = section('a', [kinded('a1', long)])
+  const colon = section('a:b', [kinded('c1', 'x'), kinded('c2')])
+  const plain = section('a', [kinded('d1', 'b:x')])
+  const { groups } = viewGroups([a], 'kind', OFF)
+  expect(groups[0]?.title).toBe(`A · ${'k'.repeat(39)}…`)
+  expect(groups[0]?.id).toBe(`kind:a:${long}`)
+  const all = viewGroups([colon, plain], 'kind', OFF).groups.map(g => g.id)
+  expect(new Set(all).size).toBe(all.length)
+})
+
+test('kind view: touchedOnly hides and counts like the list view', () => {
+  const s = section('x', [kinded('a', 'pr', { reason: 'discovered' }), kinded('b', 'pr', { reason: 'created' })])
+  const kind = viewGroups([s], 'kind', { touchedOnly: true })
+  expect(kind.hidden).toBe(viewGroups([s], 'list', { touchedOnly: true }).hidden)
+  expect(byId(kind.groups)).toEqual({ 'kind:x:pr': ['b'] })
+})
+
+test('viewSummary names the kind view', () => {
+  expect(viewSummary({ view: 'kind', touchedOnly: false, hidden: 0, ended: 0, showAll: false })).toBe('View: kind')
+})
+
+test('kind view: control characters in a kind make a one-line title, and an empty kind is no kind', () => {
+  const s = section('x', [
+    kinded('a', 'Bug\n\u001b[31mfix'),
+    kinded('b', 'Bug fix'),
+    kinded('c', '  '),
+    kinded('d', ''),
+  ])
+  const { groups } = viewGroups([s], 'kind', OFF)
+  expect(groups.map(g => [g.title, g.count])).toEqual([
+    ['X · Bug fix', 2],
+    ['X · no kind', 2],
+  ])
 })

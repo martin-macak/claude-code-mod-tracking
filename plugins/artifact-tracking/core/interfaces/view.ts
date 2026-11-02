@@ -61,9 +61,10 @@ export type StatusToken = 'failed' | 'waiting' | 'active' | 'done' | 'gone' | 'n
 /**
  * The views of the pane (issue #63, L3): how the one table groups its rows. `list`: one group for each section of a tracker,
  * today's pane. `tracker`: one group for each tracker. `status`: one group for each status token. `reason`: one group for each
- * strongest reason. `flat`: one group of every row. Every view puts the pinned rows in a group of their own, first.
+ * strongest reason. `kind`: each section cut into one group for each kind of its rows. `flat`: one group of every row. Every
+ * view puts the pinned rows in a group of their own, first.
  */
-export type ViewId = 'list' | 'tracker' | 'status' | 'reason' | 'flat'
+export type ViewId = 'list' | 'tracker' | 'status' | 'reason' | 'kind' | 'flat'
 
 /** A state as the status cell says it: a free word, and the token that sorts it. */
 export interface RowStatus {
@@ -146,6 +147,8 @@ export interface TreeRow {
 export interface SectionSpec {
   readonly id: string
   readonly title: string
+  /** The order of the kind groups of the by-kind view. A kind it does not list follows in the order of its first row. */
+  readonly kindOrder?: readonly string[]
   /** E.g. `tool · ok 2m ago`, from the tool status. */
   readonly note?: Cell
   /**

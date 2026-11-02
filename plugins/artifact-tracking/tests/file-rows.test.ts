@@ -4,9 +4,11 @@
 import { expect, test } from 'claude-code/testing'
 import type { Effective, Json, StoredItem } from '../core/interfaces/items'
 import type { ViewContext } from '../core/interfaces/view'
+import { viewGroups } from '../core/lib/grouping'
 import { reasonSet } from '../core/lib/reasons'
 import { fileRank } from '../trackers/file/activity'
 import type { FileConfig } from '../trackers/file/config'
+import { FILE_TYPES } from '../trackers/file/file-type'
 import { fileKind, fileRecord } from '../trackers/file/kind'
 import { filePrompt } from '../trackers/file/prompt'
 import { fileRow } from '../trackers/file/rows'
@@ -243,6 +245,21 @@ test('the prompt has no count line without a read-only file, and a dismissed fil
   const recs = [file('/work/a.ts', 'created'), file('/work/r.ts', 'viewed', { views: 1 })]
   expect(filePrompt(promptCtx(recs, ['file:/work/r.ts']))).toEqual(['file: "a.ts" (created)'])
   expect(filePrompt(promptCtx([]))).toEqual([])
+})
+
+test('the Files section sets kindOrder to the file types, and the kind view groups by them in that order (issue #248)', () => {
+  const s = sec([
+    file('/work/README.md', 'edited', { edits: 1 }),
+    file('/work/src/a.ts', 'edited', { edits: 1 }),
+    file('/work/biome.json', 'edited', { edits: 1 }),
+  ])
+  expect(s.kindOrder).toEqual(FILE_TYPES)
+  const { groups } = viewGroups([s], 'kind', { touchedOnly: false })
+  expect(groups.map(g => [g.id, g.count])).toEqual([
+    ['kind:file:code', 1],
+    ['kind:file:config', 1],
+    ['kind:file:docs', 1],
+  ])
 })
 
 test('the kind row is the file row', () => {

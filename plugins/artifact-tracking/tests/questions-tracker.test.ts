@@ -680,7 +680,7 @@ test('/track holds no question, answer or note in any view the person chose: the
   const t = setup()
   await t.hear(ANSWERED_ASK)
   await t.hear(LIVE_ESC)
-  for (const view of ['list', 'tracker', 'status', 'reason', 'flat']) {
+  for (const view of ['list', 'tracker', 'status', 'reason', 'kind', 'flat']) {
     const text = (await t.m.track(t.w.ports, `view ${view}`)).text
     for (const word of ['Where should', 'State only', 'Lint', 'keep it simple', 'Storage', 'Ship it', 'Declined'])
       expect(text, `${view}: ${word}`).not.toContain(word)
