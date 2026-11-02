@@ -15,6 +15,8 @@ import type {
   GitHubState,
   GraphqlOutcome,
   GraphqlReply,
+  PartialFailure,
+  PartialWhy,
   PrRef,
 } from './types'
 import { prKey, repoKey } from './urls'
@@ -297,11 +299,28 @@ function groupsOf(
 
 type Failed = Extract<DiscoveryOutcome, { ok: false }>
 
-/** A failed `graphql` outcome of `host` as a skip or an error. An `auth` skip names the host that refused. */
-function failedOutcome(gh: DiscoveryTool, out: Extract<GraphqlOutcome, { ok: false }>, host: string): Failed {
+/** The most failed hosts that a step lists (issue #222). */
+const MAX_PARTIAL = 4
+
+/** The reason that a failed group gives in the note: only a denial or an `auth` answer is "not logged in". */
+const whyOf = (f: Failed): PartialWhy =>
+  f.skipped === 'host-not-authed' || f.skipped === 'not-logged-in'
+    ? 'not-logged-in'
+    : f.skipped === 'paused'
+      ? 'paused'
+      : 'error'
+
+/** A failed `graphql` outcome of `host` as a skip or an error. An `auth` skip names the host that refused, a `paused` one a foreign host. */
+function failedOutcome(
+  gh: DiscoveryTool,
+  out: Extract<GraphqlOutcome, { ok: false }>,
+  host: string,
+  homeHost: string,
+): Failed {
   switch (out.kind) {
     case 'blocked':
-      return { ok: false, skipped: 'paused' }
+      // The home breaker shows in the tool status. A foreign host has its own, so the note names it (issue #222).
+      return { ok: false, skipped: 'paused', ...(lower(host) !== homeHost ? { host } : {}) }
     case 'auth':
       return { ok: false, skipped: 'not-logged-in', host }
     case 'no-gh':
@@ -352,8 +371,9 @@ export type Asks = {
  * tracked branch nor a session repo. A foreign repo with no sure answer for its branches (a failed query, a host `gh` is not
  * logged in to, `repository: null`, an alias with an error) is listed in `heldRepos`: the prune leaves its lane PRs alone,
  * except a PR that the reply returned (it was read, so its body still reconciles its refs and its marker follows the reply),
- * and the rest of the reply stays `complete`. It is silent: only a failed query that also holds a created PR can be the
- * failure of the step. `asks.foreignDefaults` holds the default branch that each foreign repo named (by `repoKey`): it gets no alias,
+ * and the rest of the reply stays `complete`. Only a failed query that also holds a created PR can be the failure of
+ * the step, but every failed group of another repo is listed in `partial` (issue #222), which the note shows. A pause of the home host is left out: the tool status shows it.
+ * `asks.foreignDefaults` holds the default branch that each foreign repo named (by `repoKey`): it gets no alias,
  * and a repo with only that branch is not asked. The default branch that a reply names goes back in the outcome
  * (`foreignDefaults`).
  */
@@ -419,8 +439,24 @@ export async function discoverPrs(
    * whole (`applyDiscovery` skips a PR of it that the reply returned). A failure is the step's only when a created PR hangs
    * on it: a foreign repo with branches alone fails silently.
    */
+  const partialFailed: PartialFailure[] = []
+  const seen = new Set<string>()
+  let more = 0
+  /** One entry for each host, reason and repo, also past `MAX_PARTIAL` entries: then only the count of new entries grows. */
+  const addFailed = (f: PartialFailure): void => {
+    const key = `${lower(f.host)}|${f.why}|${f.repo ?? ''}`
+    if (seen.has(key)) return
+    seen.add(key)
+    if (partialFailed.length < MAX_PARTIAL) partialFailed.push(f)
+    else more++
+  }
   const holdGroup = (g: Group, why: Failed): void => {
     if (g.numbers.length > 0) failure ??= why
+    // The home breaker shows in the tool status. Another failure of the home host names its repo: the host alone says nothing.
+    const reason = whyOf(why)
+    if (lower(g.repo.host) !== homeHost) addFailed({ host: g.repo.host, why: reason })
+    else if (reason !== 'paused')
+      addFailed({ host: g.repo.host, why: reason, repo: `${g.repo.owner}/${g.repo.repo}`.toLowerCase() })
     hold(g)
     if (!g.session && g.asks.length > 0) heldRepos.push(repoKey(g.repo))
   }
@@ -446,12 +482,15 @@ export async function discoverPrs(
     }
     const out = await gh.graphql(g.repo.host, query)
     if (!out.ok) {
-      const failed = failedOutcome(gh, out, g.repo.host)
-      if (g.session && g.first) return failed // the first query of the session repo fails the step
-      holdGroup(g, failed)
+      const outcome = failedOutcome(gh, out, g.repo.host, homeHost)
+      if (g.session && g.first) return outcome // the first query of the session repo fails the step
+      holdGroup(g, outcome)
       continue
     }
     answered++
+    // A repo that is not the session repo and answers `repository: null` is deleted, or the token cannot read it.
+    if (!g.session && !isRecord(out.reply.data.repository))
+      addFailed({ host: g.repo.host, why: 'unreadable', repo: `${g.repo.owner}/${g.repo.repo}`.toLowerCase() })
     const parsed = parseDiscovery(out.reply, g.repo, aliases, lane.closingRefsPerPr)
     if (g.session) complete &&= parsed.complete
     else {
@@ -474,6 +513,7 @@ export async function discoverPrs(
     ok: true,
     prs,
     complete,
+    ...(partialFailed.length > 0 ? { partial: { failed: partialFailed, ...(more > 0 ? { more } : {}) } } : {}),
     ...(held.length > 0 ? { held } : {}),
     ...(heldRepos.length > 0 ? { heldRepos } : {}),
     ...(Object.keys(learned).length > 0 ? { foreignDefaults: learned } : {}),

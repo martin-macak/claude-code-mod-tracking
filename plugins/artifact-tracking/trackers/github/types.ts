@@ -144,6 +144,15 @@ export type ReplyClass =
   | { kind: 'data'; data: Record<string, unknown>; errors: unknown[] }
   | { kind: 'auth' | 'truncated' | 'query-error' | 'unparsable'; detail?: string }
 
+/** Why a host or repo of a step failed, beside the ones that answered (issue #222). */
+export type PartialWhy = 'not-logged-in' | 'paused' | 'error' | 'unreadable'
+
+/** One failed host. `repo` (`owner/repo`) is set for `unreadable`, and for a failure of the home host (it names the repo, not the host). An error text is not kept: it can change each step. */
+export type PartialFailure = { host: string; why: PartialWhy; repo?: string }
+
+/** The failures of one step, at most four, then `more` counts the other distinct entries (host, reason and repo). In the order of the groups, so a quiet step compares equal. */
+export type PartialFailures = { failed: PartialFailure[]; more?: number }
+
 /**
  * `held` (absent when empty): the keys of the created PRs of another repo that got no sure answer: all of a repo with a
  * failed query, a host `gh` is not logged in to or `repository: null`, and in a repo that did answer only the PRs with
@@ -161,6 +170,8 @@ export type ReplyClass =
 export type DiscoveryOutcome =
   | {
       ok: true
+      /** A foreign host or repo that failed while the step went on (issue #222). Absent when nothing failed. */
+      partial?: PartialFailures
       prs: DiscoveredPr[]
       complete: boolean
       held?: string[]
@@ -237,6 +248,8 @@ export type LaneState = {
     host?: string
     /** Auto-only items not added over `maxAutoItems` (A11). */
     untracked?: number
+    /** The hosts and repos that failed while the step answered (issue #222). Absent when none did. */
+    partial?: PartialFailures
   }
   /** The default branch the last discovery reply named. It gets no alias in the next query. */
   defaultBranch?: string
