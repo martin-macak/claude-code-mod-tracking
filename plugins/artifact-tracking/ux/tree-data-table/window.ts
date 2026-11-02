@@ -12,6 +12,8 @@ export interface Unit {
   readonly lines: number
   /** The rows it holds: 1 for a row, 0 for the others. The hints count these. */
   readonly rows: number
+  /** The group row of a foldable group (issue #256). It is the title line of its group, so it needs no chrome line above it. */
+  readonly head?: true
 }
 
 /** The lines of a hint ("N more above", "N more below"). */
@@ -40,7 +42,8 @@ export interface WindowInput {
 }
 
 /**
- * The lines the units `a` to `b` take with what they need around them: the title line of each group that shows a unit,
+ * The lines the units `a` to `b` take with what they need around them: the title line of each group that shows a unit (a group
+ * row that is one of them is its own title line, issue #256),
  * one gap between two shown groups (the root Box has `rowGap`), and a hint on each side that has hidden units. The one
  * header of the table is not counted here: `windowOf` takes it off the budget.
  */
@@ -51,7 +54,7 @@ export function linesOf(units: readonly Unit[], chrome: readonly number[], a: nu
     const unit = units[i]
     if (unit === undefined) break
     if (unit.section !== last) {
-      lines += (chrome[unit.section] ?? 0) + (last === -1 ? 0 : ROW_GAP)
+      lines += (unit.head === true ? 0 : (chrome[unit.section] ?? 0)) + (last === -1 ? 0 : ROW_GAP)
       last = unit.section
     }
     lines += unit.lines

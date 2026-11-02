@@ -131,6 +131,10 @@ export interface DrawnRow {
   readonly can: RowRef['can']
   readonly handle: string
   readonly depth: number
+  /** The row is the group row of a foldable group (issue #256); `id` is the id of the group. */
+  readonly head?: true
+  /** The `key` of the group of a group row (`GroupSpec.key`): the section the row stands for, in every view that draws it. */
+  readonly section?: string
 }
 
 /**

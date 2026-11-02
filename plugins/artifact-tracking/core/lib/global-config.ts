@@ -31,13 +31,13 @@ export const GLOBAL_SCHEMA = {
   // draws the counts and an open Button on the duration line. Off by default (owner decision of 2026-10-21).
   // `view` and `views` (issue #63, L3): the view the pane opens in, and the views that `g` cycles. The live choice is a session
   // atom, so no key press writes this file. By tracker, by reason and by kind (issue #248) are reachable with `/track view`
-  // and this list.
+  // and this list. The tree view (issue #256) ends the default cycle.
   ui: obj({
     maxRows: int(300, 50, 1000),
     sectionRows: int(50, 5, 300),
     turnStrip: oneOf('off', ['off', 'text', 'interactive']),
     view: oneOf(LIST_VIEW, VIEW_IDS),
-    views: enums(['list', 'status', 'flat'], VIEW_IDS),
+    views: enums(['list', 'status', 'flat', 'tree'], VIEW_IDS),
   }),
 } as const satisfies Schema
 

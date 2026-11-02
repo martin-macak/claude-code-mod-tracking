@@ -19,7 +19,7 @@ import type {
   ViewId,
 } from '../core/interfaces/view'
 import type { PlanLine } from '../core/lib/clean-text'
-import { LIST_VIEW, listGroups, resolveView, viewGroups, viewSummary } from '../core/lib/grouping'
+import { isListLike, LIST_VIEW, listGroups, resolveView, viewGroups, viewSummary } from '../core/lib/grouping'
 import { namedProblems } from '../core/lib/problems'
 import { helpModel, helpText } from '../ux/tree-data-table/help'
 import { groupsText, moreLines, quietTitles } from '../ux/tree-data-table/text'
@@ -129,7 +129,7 @@ export const TEXT_VIEW: PaneView = { selected: null, expanded: new Set() }
 export async function listText(p: Ports, m: Pick<PaneHost, 'paneData' | 'config'>): Promise<string> {
   const model = await paneModel(p, m, TEXT_VIEW)
   const body = groupsText(model.groups)
-  const tail = model.view === LIST_VIEW ? [] : [...quietTitles(model.sections), ...moreLines(model.sections)]
+  const tail = isListLike(model.view) ? [] : [...quietTitles(model.sections), ...moreLines(model.sections)]
   const text = [body, ...tail].filter(part => part !== '').join('\n\n')
   return model.view === LIST_VIEW && !model.touchedOnly ? text : `${viewSummary(model)}\n\n${text}`
 }

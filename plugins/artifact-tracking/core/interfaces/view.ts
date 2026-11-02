@@ -61,10 +61,11 @@ export type StatusToken = 'failed' | 'waiting' | 'active' | 'done' | 'gone' | 'n
 /**
  * The views of the pane (issue #63, L3): how the one table groups its rows. `list`: one group for each section of a tracker,
  * today's pane. `tracker`: one group for each tracker. `status`: one group for each status token. `reason`: one group for each
- * strongest reason. `kind`: each section cut into one group for each kind of its rows. `flat`: one group of every row. Every
- * view puts the pinned rows in a group of their own, first.
+ * strongest reason. `kind`: each section cut into one group for each kind of its rows. `flat`: one group of every row. `tree`
+ * (issue #256): the groups of `list`, each drawn as a level-0 row that folds. Every view puts the pinned rows in a group of their
+ * own, first.
  */
-export type ViewId = 'list' | 'tracker' | 'status' | 'reason' | 'kind' | 'flat'
+export type ViewId = 'list' | 'tracker' | 'status' | 'reason' | 'kind' | 'flat' | 'tree'
 
 /** A state as the status cell says it: a free word, and the token that sorts it. */
 export interface RowStatus {
@@ -214,6 +215,16 @@ export interface TextMore {
 export interface GroupSpec {
   /** `<view>:<group key>`, e.g. `list:prs`. The table keys the rows that "N more" opened by it. */
   readonly id: string
+  /**
+   * The key of the group inside its view: the section id in the by-list and tree views, `pinned` for the Pinned group. Two views that
+   * draw the same section share the key, so a selected group row finds its section in the next view (issue #256).
+   */
+  readonly key?: string
+  /**
+   * The tree view (issue #256): the group is drawn as a row of the table, with a fold Button when it has rows, and not as a title line.
+   * The id of the group is in the session atom `expanded` while it is folded. Absent: a plain title line.
+   */
+  readonly foldable?: true
   readonly title: string
   /** The note of the section, in the by-list view. */
   readonly note?: Cell

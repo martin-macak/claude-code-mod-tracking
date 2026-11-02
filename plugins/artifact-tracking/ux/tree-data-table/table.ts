@@ -9,8 +9,9 @@ import type { GroupSpec } from '../../core/interfaces/view'
 import { guard } from './budget'
 import { box, type TableElements, text } from './el'
 import { footerBox, footerRows, moveHintFits } from './footer'
+import { groupRefOf } from './group-row'
 import { compactForm, renderHelp } from './help'
-import { type LaidGroup, layout, refOf } from './layout'
+import { hasStop, type LaidGroup, layout, refOf, stopRowsOf } from './layout'
 import { renderPlan, shapePlan } from './plan'
 import { type Draw, drawGroups } from './rows'
 import {
@@ -33,6 +34,7 @@ export {
   findDetailRow,
   findRow,
   findTreeRow,
+  foldableOf,
   handleOf,
   type LaidGroup,
   type LaidRow,
@@ -123,7 +125,7 @@ export const TreeDataTable = {
       }
       const laid = layout(groups, view, halve)
       laids.push(laid)
-      const rows = laid.flatMap(s => s.rows)
+      const rows = stopRowsOf(laid)
       // A body shorter than the tree shows a window of it (windowed.ts). The ring goes to the selected row when it is drawn
       // (issue #108), else to the first row in view.
       const win = windowOf({ el, view, actions, focus: undefined }, laid)
@@ -139,9 +141,22 @@ export const TreeDataTable = {
         : [attempt(0), ...Array.from({ length: halvings(groups, view) }, (_, i) => attempt(i + 1))]
     const { body, step } = guard(footer, attempts, () => [text(el, { dimColor: true }, TOO_LARGE)], view.budget)
     const win = windows[step]
-    const rows: DrawnRow[] = (laids[step] ?? []).flatMap(s =>
-      s.rows.map(r => ({ ...refOf(r.row, s.spec.id), handle: r.handle, depth: r.depth })),
-    )
+    // A group row that takes a Button (issue #256) is a drawn row of its own, before the rows of its group: Tab, the arrows, the
+    // refocus and the selection reach it. One with no row to fold has no Button and is not here.
+    const rows: DrawnRow[] = (laids[step] ?? []).flatMap(s => [
+      ...(!hasStop(s.head)
+        ? []
+        : [
+            {
+              ...groupRefOf(s.spec),
+              handle: s.head.handle,
+              depth: 0,
+              head: true as const,
+              ...(s.spec.key === undefined ? {} : { section: s.spec.key }),
+            },
+          ]),
+      ...s.rows.map(r => ({ ...refOf(r.row, s.spec.id), handle: r.handle, depth: r.depth })),
+    ])
     // A docked body has a fixed height: the tree takes all of it and the footer grows to the end of the column (issue #109).
     // The wrapper replaces the footer in the root, so it adds no child and no gap row. `minHeight` never clips: a tree that
     // counts taller than the body only loses the pad.
@@ -156,7 +171,11 @@ export const TreeDataTable = {
       tree: box(el, root, ...body, pinned ? box(el, end, footer) : footer),
       handles: new Map(rows.map(r => [r.handle, r.id])),
       rows,
-      stops: (laids[step] ?? []).flatMap(s => [...s.rows.map(r => r.handle), ...(s.more > 0 ? [`m${s.index}`] : [])]),
+      stops: (laids[step] ?? []).flatMap(s => [
+        ...(hasStop(s.head) ? [s.head.handle] : []),
+        ...s.rows.map(r => r.handle),
+        ...(s.more > 0 ? [`m${s.index}`] : []),
+      ]),
       top: win?.plan.from ?? 0,
       page: win === undefined ? undefined : pageOf(win),
     }

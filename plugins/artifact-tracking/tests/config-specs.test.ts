@@ -86,7 +86,7 @@ test("the values outside LIMITS equal today's constants", () => {
     sectionRows: 50,
     turnStrip: 'off',
     view: 'list',
-    views: ['list', 'status', 'flat'],
+    views: ['list', 'status', 'flat', 'tree'],
   })
 })
 
@@ -392,7 +392,7 @@ test('the defaults of every spec are deeply frozen', () => {
 
 test('global.ui.view is the view the pane starts in: list by default, and any view of VIEW_IDS', () => {
   expect(GLOBAL_DEFAULTS.ui.view).toBe('list')
-  for (const view of ['list', 'tracker', 'status', 'reason', 'kind', 'flat']) {
+  for (const view of ['list', 'tracker', 'status', 'reason', 'kind', 'flat', 'tree']) {
     const out: string[] = []
     expect(normaliseGlobal({ ui: { view } }, p => void out.push(p)).ui.view).toBe(view)
     expect(out).toEqual([])
@@ -404,13 +404,13 @@ test('a bad global.ui.view is a config problem and reads as list', () => {
     const out: string[] = []
     expect(normaliseGlobal({ ui: { view: bad } }, p => void out.push(p)).ui.view).toBe('list')
     expect(out).toEqual([
-      `global.ui.view: ${JSON.stringify(bad)} is not one of list, tracker, status, reason, kind, flat. Using list.`,
+      `global.ui.view: ${JSON.stringify(bad)} is not one of list, tracker, status, reason, kind, flat, tree. Using list.`,
     ])
   }
 })
 
-test('global.ui.views is the list that g cycles: list, status and flat by default; by tracker and by reason are opt-in', () => {
-  expect(GLOBAL_DEFAULTS.ui.views).toEqual(['list', 'status', 'flat'])
+test('global.ui.views is the list that g cycles: list, status, flat and tree by default; by tracker, by reason and by kind are opt-in', () => {
+  expect(GLOBAL_DEFAULTS.ui.views).toEqual(['list', 'status', 'flat', 'tree'])
   const out: string[] = []
   const got = normaliseGlobal({ ui: { views: ['reason', 'list', 'reason', 'tracker'] } }, p => void out.push(p))
   expect(got.ui.views).toEqual(['reason', 'list', 'tracker'])
@@ -424,22 +424,23 @@ test('an unknown name in global.ui.views is left out with one problem; a list wi
     'flat',
   ])
   expect(out).toEqual([
-    'global.ui.views: "type" is not one of list, tracker, status, reason, kind, flat. The mod leaves it out.',
+    'global.ui.views: "type" is not one of list, tracker, status, reason, kind, flat, tree. The mod leaves it out.',
   ])
   const none: string[] = []
   expect(normaliseGlobal({ ui: { views: ['type'] } }, p => void none.push(p)).ui.views).toEqual([
     'list',
     'status',
     'flat',
+    'tree',
   ])
   expect(none).toEqual([
-    'global.ui.views: "type" is not one of list, tracker, status, reason, kind, flat. The mod leaves it out.',
+    'global.ui.views: "type" is not one of list, tracker, status, reason, kind, flat, tree. The mod leaves it out.',
     'global.ui.views: no listed word is left. Using the default list.',
   ])
   // Through the file reader: the problem reaches `/track`.
   const cfg = fakeConfig({ specs: TRACKERS, file: { global: { ui: { views: ['status', 'bogus'] } } } })
   expect(cfg.problems()).toEqual([
-    'global.ui.views: "bogus" is not one of list, tracker, status, reason, kind, flat. The mod leaves it out.',
+    'global.ui.views: "bogus" is not one of list, tracker, status, reason, kind, flat, tree. The mod leaves it out.',
   ])
   expect(cfg.global().ui.views).toEqual(['status'])
 })

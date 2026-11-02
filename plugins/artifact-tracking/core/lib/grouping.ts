@@ -1,8 +1,8 @@
 // The groups of the pane: what the one table draws from the sections of the trackers. A view turns the sections into
 // groups.
-// Six views (issue #63, L3; #248): by list (each section is one group, the pane as it was), by tracker, by status, by
-// reason, by kind (each section cut by the kind its rows give) and flat. Every view puts the pinned rows in a group of
-// their own, first, and may hide the rows nobody touched. A view groups, sorts and filters on the facets of the top-level
+// Seven views (issue #63, L3; #248; #256): by list (each section is one group, the pane as it was), by tracker, by status, by
+// reason, by kind (each section cut by the kind its rows give), flat and tree (the groups of list, each drawn as a foldable row).
+// Every view puts the pinned rows in a group of their own, first, and may hide the rows nobody touched. A view groups, sorts and filters on the facets of the top-level
 // rows, the owner and the section: never on the text of a cell. Pure: no `$`, no I/O, no tracker named.
 // Design study of issue #63, sections 5.2 and 5.8; owner decisions of 2026-10-21.
 
@@ -26,8 +26,17 @@ import { countFailed } from './status'
 /** The view the pane draws by default: one group for each section of a tracker. */
 export const LIST_VIEW: ViewId = 'list'
 
+/** The tree view (issue #256): the groups of the by-list view, each drawn as a level-0 row that folds. */
+export const TREE_VIEW: ViewId = 'tree'
+
+/**
+ * Whether the view draws the groups of the by-list view: `list` and `tree`. They share the sections, the notes, the `text` lines and
+ * the ended-row notes, so the `/track` text and the view line treat them alike.
+ */
+export const isListLike = (view: ViewId): boolean => view === LIST_VIEW || view === TREE_VIEW
+
 /** The views, in the order the docs name them. `ui.views` takes any of them. */
-export const VIEW_IDS: readonly ViewId[] = ['list', 'tracker', 'status', 'reason', 'kind', 'flat']
+export const VIEW_IDS: readonly ViewId[] = ['list', 'tracker', 'status', 'reason', 'kind', 'flat', 'tree']
 
 export const isViewId = (v: unknown): v is ViewId =>
   typeof v === 'string' && (VIEW_IDS as readonly string[]).includes(v)
@@ -63,11 +72,12 @@ export interface ViewSummary {
 
 /**
  * `View: status · touched only · 2 hidden · 3 ended hidden`: the line of the pane and the first line of `/track`. The ended
- * rows are counted in every view but by list, because only the by-list view draws the notes that say it already
- * (`(3 hidden)`, owner decision of 2026-10-22, Q37). While `a` is on, the line says `showing all` and no count.
+ * rows are counted in every view but by list and tree, because only those views draw the notes that say it already
+ * (`(3 hidden)`, owner decision of 2026-10-22, Q37; the group row of the tree view, issue #256). While `a` is on, the line says
+ * `showing all` and no count.
  */
 export function viewSummary(s: ViewSummary): string {
-  const ended = s.view !== LIST_VIEW && s.ended > 0 ? [`${s.ended} ended hidden`] : []
+  const ended = !isListLike(s.view) && s.ended > 0 ? [`${s.ended} ended hidden`] : []
   const parts = [
     `View: ${s.view}`,
     ...(s.touchedOnly ? ['touched only', ...(s.hidden > 0 ? [`${s.hidden} hidden`] : [])] : []),
@@ -79,15 +89,20 @@ export function viewSummary(s: ViewSummary): string {
 /** `<view>:<group key>`, e.g. `list:prs`. The caps of the table key the rows that "N more" opened by it. */
 export const groupId = (view: string, key: string): string => `${view}:${key}`
 
+/** The one rule that makes a group foldable (issue #256): only the tree view's groups are. Every builder of groups spreads it. */
+const foldFlag = (view: ViewId): { readonly foldable?: true } => (view === TREE_VIEW ? { foldable: true } : {})
+
 /**
  * The by-list view: a group for each section, in the order given. The count is the one the section sets, else its
  * top-level rows, and the failing count is the failures read from the status token `failed`, each once (issue #63, L2,
  * `countFailed`). The band of the section counts on its own terms and keeps its numbers: the band line above the prompt
  * does not change.
  */
-export function listGroups(sections: readonly SectionSpec[]): readonly GroupSpec[] {
+export function listGroups(sections: readonly SectionSpec[], view: ViewId = LIST_VIEW): readonly GroupSpec[] {
   return sections.map(s => ({
-    id: groupId(LIST_VIEW, s.id),
+    id: groupId(view, s.id),
+    key: s.id,
+    ...foldFlag(view),
     title: s.title,
     ...(s.note !== undefined ? { note: s.note } : {}),
     rows: s.rows,
@@ -242,6 +257,7 @@ function withoutPinned({ s, rows, gone }: { s: SectionSpec; rows: readonly TreeR
 function listView(
   kept: readonly { s: SectionSpec; rows: readonly TreeRow[]; gone: number }[],
   make: (key: string, title: string, rows: readonly TreeRow[]) => GroupSpec,
+  view: ViewId,
 ): readonly GroupSpec[] {
   const pinned: TreeRow[] = []
   const sections = kept.map(entry => {
@@ -251,7 +267,7 @@ function listView(
   })
   return [
     ...(pinned.length === 0 ? [] : [make('pinned', 'Pinned', [...pinned].sort(byOrder))]),
-    ...listGroups(sections),
+    ...listGroups(sections, view),
   ]
 }
 
@@ -314,6 +330,7 @@ function kindView(
  *
  * - By list: one group for each section, in the order given, with its note and its empty text. The rows keep the order the
  *   tracker gave them, and every tree stays whole.
+ * - Tree (issue #256): the groups of the by-list view with `tree:` ids, each `foldable`: the table draws it as a row.
  * - By tracker: one group for each owner of a row, in the order the owners first show, titled by the sections they hold rows in.
  * - By status: one group for each token that a row has, failed first. A tree is in the failed group when a row below it failed.
  * - By reason: one group for each strongest reason, strongest first, then the rows with none (context).
@@ -340,12 +357,14 @@ export function viewGroups(sections: readonly SectionSpec[], view: ViewId, optio
   })
   const make = (key: string, title: string, rows: readonly TreeRow[]): GroupSpec => ({
     id: groupId(view, key),
+    key,
+    ...foldFlag(view),
     title,
     rows,
     count: rows.length,
     failing: countFailed(rows),
   })
-  if (view === 'list') return { groups: listView(kept, make), hidden: tally.hidden }
+  if (isListLike(view)) return { groups: listView(kept, make, view), hidden: tally.hidden }
   if (view === 'kind') return { groups: kindView(kept, make), hidden: tally.hidden }
   const units: Unit[] = kept.flatMap(({ s, rows }) => lifted(rows).map(row => ({ row, section: s })))
   const pinned = units.filter(u => isPinned(u.row)).map(u => u.row)

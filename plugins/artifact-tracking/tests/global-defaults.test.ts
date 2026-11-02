@@ -27,7 +27,7 @@ test('GLOBAL_DEFAULTS holds the values of spec 5.7 that LIMITS has no twin for',
     sectionRows: 50,
     turnStrip: 'off',
     view: 'list',
-    views: ['list', 'status', 'flat'],
+    views: ['list', 'status', 'flat', 'tree'],
   })
 })
 
