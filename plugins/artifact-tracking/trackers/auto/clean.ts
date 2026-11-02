@@ -39,12 +39,14 @@ import {
   locate,
   normPath,
   parsePorcelain,
+  type Real,
   workflowWorktreeName,
 } from '../../core/lib/porcelain'
 import { firstLine, message } from '../../core/lib/text'
-import { agentWorksIn } from './agents'
+import { agentPaths, agentWorksIn } from './agents'
 import type { AutoConfig } from './config'
 import { worktreeId } from './ids'
+import { makeRealResolver } from './real'
 import type { AgentProof, AutoState, WorktreeProof, WorktreeRow } from './types'
 import { matchProofs } from './worktrees'
 
@@ -329,6 +331,8 @@ type Guards = {
   list: readonly GitWorktree[]
   cwd(): Promise<{ cwd: string } | { error: string }>
   ledger(): Promise<Ledger | { error: string }>
+  /** The canonical path of each given path, read once for the apply (issue #255). A path it cannot read stays as it is. */
+  real(paths: readonly string[]): Promise<Real>
   bases(): Promise<string[]>
 }
 
@@ -356,11 +360,15 @@ type Guards = {
 async function unsafeOf(g: Guards, proof: WorktreeProof, rec: GitWorktree): Promise<Verdict> {
   const where = await g.cwd()
   if ('error' in where) return { skip: where.error }
-  if (holds(rec.path, where.cwd) || holds(proof.path, where.cwd)) return { skip: 'the session works in it' }
+  const cwdReal = await g.real([rec.path, proof.path, where.cwd])
+  if (holds(rec.path, where.cwd, cwdReal) || holds(proof.path, where.cwd, cwdReal))
+    return { skip: 'the session works in it' }
   const ledger = await g.ledger()
   if ('error' in ledger) return { skip: ledger.error }
+  const agentReal = await g.real([...agentPaths(ledger.agents, ledger.worktrees, g.list, where.cwd), proof.path])
   const works =
-    agentWorks(ledger.agents, proof) ?? (agentWorksIn(ledger, g.list, where.cwd, rec) ? AGENT_WORKS : undefined)
+    agentWorks(ledger.agents, proof) ??
+    (agentWorksIn(ledger, g.list, where.cwd, rec, agentReal) ? AGENT_WORKS : undefined)
   if (works !== undefined) return { skip: works }
   const inner = await holdsOf(g.git, proof, rec)
   if (inner !== undefined) return { skip: inner }
@@ -454,6 +462,11 @@ export const autoCleanup: Cleanup<AutoConfig, AutoState> = {
         value => ({ cwd: value }),
         () => ({ error: 'cannot read the session cwd' }),
       )
+    const realResolver = makeRealResolver(
+      async p => (await ctx.fs.stat(p, { resolve: true }))?.realPath,
+      () => ctx.clock.wall(),
+    )
+    const realFor = (paths: readonly string[]): Promise<Real> => realResolver.resolve(paths)
     const ledgerOf = async (): ReturnType<Guards['ledger']> => {
       try {
         const now = await ctx.data.get()
@@ -503,6 +516,7 @@ export const autoCleanup: Cleanup<AutoConfig, AutoState> = {
             list,
             cwd: cwdOf,
             ledger: ledgerOf,
+            real: realFor,
             bases: () => (bases ??= basesOf(git, list)),
           }
           outcome = await liveOutcome(guards, proof, rec)

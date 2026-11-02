@@ -50,20 +50,26 @@ export function parsePorcelain(text: string): GitWorktree[] {
   return out
 }
 
+/**
+ * The canonical spelling of a path (a symlink alias resolved), or the path without trailing slashes when none is known. Sync
+ * and pure: whoever builds it did the I/O before (`trackers/auto/real.ts`, issue #255).
+ */
+export type Real = (path: string) => string
+
 /** Whether `inner` is `outer` or a folder inside it. A path that only starts with the same letters is not inside. */
-export function holds(outer: string, inner: string): boolean {
-  const o = normPath(outer)
-  const i = normPath(inner)
+export function holds(outer: string, inner: string, real: Real = normPath): boolean {
+  const o = real(outer)
+  const i = real(inner)
   return i === o || i.startsWith(o === '/' ? o : `${o}/`)
 }
 
-/** The record whose path equals `path` or holds it (longest prefix wins). */
-export function locate(list: readonly GitWorktree[], path: string): GitWorktree | undefined {
+/** The record whose path equals `path` or holds it (longest prefix wins). `real` joins two names of one folder. */
+export function locate(list: readonly GitWorktree[], path: string, real: Real = normPath): GitWorktree | undefined {
   let best: GitWorktree | undefined
   let bestLen = -1
   for (const w of list) {
-    const len = normPath(w.path).length
-    if (holds(w.path, path) && len > bestLen) {
+    const len = real(w.path).length
+    if (holds(w.path, path, real) && len > bestLen) {
       best = w
       bestLen = len
     }
@@ -76,9 +82,10 @@ export function findByPath(
   list: readonly GitWorktree[],
   path: string,
   skip?: ReadonlySet<GitWorktree>,
+  real: Real = normPath,
 ): GitWorktree | undefined {
-  const p = normPath(path)
-  return list.find(x => !skip?.has(x) && normPath(x.path) === p)
+  const p = real(path)
+  return list.find(x => !skip?.has(x) && real(x.path) === p)
 }
 
 /** The record whose checked-out branch is `branch`. A prunable record has no directory left, so it never counts. */

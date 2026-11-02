@@ -94,6 +94,8 @@ export type FakeWorld = {
   /** Answers a `tasks.stop` call. undefined falls through to the default: the task stopped. */
   stop?: (taskId: string) => StopResult | Promise<StopResult>
   files: Record<string, string>
+  /** Symlink aliases of folders: the path to its canonical path. `fs.stat` with `resolve` gives it (issue #255). */
+  realPaths: Record<string, string>
   /** The path of every `fs.read`, in order. */
   reads: string[]
   env: Record<string, string>
@@ -208,6 +210,11 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
         return world.files[path] !== undefined
       },
       async stat(path, opts) {
+        const alias = world.realPaths[path]
+        if (alias !== undefined) {
+          const dir: FsStat = { kind: 'dir', size: 0, mtimeMs: 0, isLink: true }
+          return opts?.resolve ? { ...dir, realPath: alias } : dir
+        }
         const text = world.files[path]
         if (text === undefined) return null
         const stat: FsStat = { kind: 'file', size: text.length, mtimeMs: mtimes.get(path) ?? 0, isLink: false }
@@ -358,6 +365,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
     stops: [],
     prompts: [],
     files: { ...(o.files ?? {}) },
+    realPaths: {},
     reads: [],
     env: { ...(o.env ?? {}) },
     settings: o.settings,

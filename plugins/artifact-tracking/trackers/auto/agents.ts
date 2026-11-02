@@ -7,6 +7,7 @@ import {
   findByPath,
   locate,
   normPath,
+  type Real,
   workflowWorktreePath,
 } from '../../core/lib/porcelain'
 import { AUTO_DEFAULTS } from './config'
@@ -79,27 +80,28 @@ function agentLocations(
   worktrees: readonly WorktreeProof[],
   list: readonly GitWorktree[],
   masterLoc: Loc | undefined,
+  real: Real,
 ): { locs: Map<string, Loc | undefined>; proven: Map<string, string> } {
   const main = list[0] ? normPath(list[0].path) : undefined
-  const proofBranch = (path: string): string | undefined => worktrees.find(w => w.path === normPath(path))?.branch
+  const proofBranch = (path: string): string | undefined => worktrees.find(w => real(w.path) === real(path))?.branch
   const locs = new Map<string, Loc | undefined>()
   // A resume restarts `agentIndex`, so two agents of one run can share a convention path. The first agent that holds a
   // path keeps it, and `proven` collects the paths this round found, to write them to their agents.
-  const held = new Set(agents.flatMap(a => (a.worktreePath ? [normPath(a.worktreePath)] : [])))
+  const held = new Set(agents.flatMap(a => (a.worktreePath ? [real(a.worktreePath)] : [])))
   const proven = new Map<string, string>()
   for (const a of agents) {
     let loc: Loc | undefined
     if (a.worktreePath) {
-      const r = findByPath(list, a.worktreePath)
+      const r = findByPath(list, a.worktreePath, undefined, real)
       loc = r
         ? fromRecord(r)
         : { name: basename(a.worktreePath), branch: a.branch ?? proofBranch(a.worktreePath), live: false }
     }
     if (!loc && main) {
       const conv = agentWorktreePath(main, a.id)
-      const r = findByPath(list, conv)
+      const r = findByPath(list, conv, undefined, real)
       if (r) loc = fromRecord(r)
-      else if (worktrees.some(w => w.path === conv))
+      else if (worktrees.some(w => real(w.path) === real(conv)))
         loc = { name: basename(conv), branch: a.branch ?? proofBranch(conv), live: false }
     }
     // A workflow agent that runs in a worktree of its own: `<runId>-<agentIndex>`. A path in porcelain is proof, so keep
@@ -107,10 +109,10 @@ function agentLocations(
     // that checks out the same branch does not take it.
     if (!loc && main && a.workflow) {
       const wf = workflowWorktreePath(main, a.workflow.runId, a.workflow.agentIndex)
-      const r = held.has(wf) ? undefined : findByPath(list, wf)
+      const r = held.has(real(wf)) ? undefined : findByPath(list, wf, undefined, real)
       if (r) {
         loc = fromRecord(r)
-        held.add(wf)
+        held.add(real(wf))
         proven.set(a.id, wf)
       }
     }
@@ -119,7 +121,7 @@ function agentLocations(
       if (r) loc = fromRecord(r)
     }
     if (!loc && a.cwd) {
-      const r = locate(list, a.cwd)
+      const r = locate(list, a.cwd, real)
       if (r) loc = fromRecord(r)
     }
     if (!loc) loc = a.parentId !== undefined && locs.has(a.parentId) ? locs.get(a.parentId) : masterLoc
@@ -139,14 +141,40 @@ export function agentWorksIn(
   list: readonly GitWorktree[],
   masterCwd: string,
   rec: GitWorktree,
+  real: Real = normPath,
 ): boolean {
-  const masterRec = locate(list, masterCwd)
-  const { locs } = agentLocations(s.agents, s.worktrees, list, masterRec ? fromRecord(masterRec) : undefined)
-  const here = normPath(rec.path)
+  const masterRec = locate(list, masterCwd, real)
+  const { locs } = agentLocations(s.agents, s.worktrees, list, masterRec ? fromRecord(masterRec) : undefined, real)
+  const here = real(rec.path)
   return s.agents.some(a => {
     const at = locs.get(a.id)?.path
-    return a.endedAt === undefined && at !== undefined && normPath(at) === here
+    return a.endedAt === undefined && at !== undefined && real(at) === here
   })
+}
+
+/**
+ * Every path that the rules of A6 compare: the records of `list`, the folder of the session, and per agent its worktree path,
+ * its convention path, its workflow path and its spawn cwd. The round resolves them before it draws (issue #255).
+ */
+export function agentPaths(
+  agents: readonly AgentProof[],
+  worktrees: readonly WorktreeProof[],
+  list: readonly GitWorktree[],
+  masterCwd: string | null,
+): string[] {
+  const main = list[0]?.path
+  const out = list.map(w => w.path)
+  for (const w of worktrees) out.push(w.path)
+  if (masterCwd !== null) out.push(masterCwd)
+  for (const a of agents) {
+    if (a.worktreePath) out.push(a.worktreePath)
+    if (a.cwd) out.push(a.cwd)
+    if (main) {
+      out.push(agentWorktreePath(main, a.id))
+      if (a.workflow) out.push(workflowWorktreePath(main, a.workflow.runId, a.workflow.agentIndex))
+    }
+  }
+  return out
 }
 
 /** `idleMs` is `workflowIdleMs`: a workflow agent with no sign of life for that long ends as stale. */
@@ -157,6 +185,7 @@ export function trackAgents(
   masterCwd: string | null,
   at: number,
   idleMs: number = AUTO_DEFAULTS.workflowIdleMs,
+  real: Real = normPath,
 ): { state: AutoState; rows: AgentRow[] } {
   // 1. Status and end per agent.
   let changed = false
@@ -169,7 +198,7 @@ export function trackAgents(
 
   // 2. The master location. A failed cwd read keeps the last drawn location.
   const prevMaster = s.snapshot?.agents.find(r => r.id === MASTER_ID)
-  const masterRec = masterCwd === null ? undefined : locate(list, masterCwd)
+  const masterRec = masterCwd === null ? undefined : locate(list, masterCwd, real)
   const masterLoc: Loc | undefined =
     masterCwd === null && prevMaster
       ? { name: prevMaster.worktree, branch: prevMaster.branch, live: prevMaster.worktreeLive }
@@ -178,7 +207,7 @@ export function trackAgents(
         : undefined
 
   // 3. Locations (A6).
-  const { locs, proven } = agentLocations(agents, s.worktrees, list, masterLoc)
+  const { locs, proven } = agentLocations(agents, s.worktrees, list, masterLoc, real)
 
   // 4. Rows: master first, then a depth-first tree by spawnedAt. A dismissed agent hides its subtree.
   const dismissed = new Set(s.dismissed)
