@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { focusedTexts } from '../support/pane.ts'
 import { Tmux, tmuxLiteral } from '../support/tmux.ts'
-import { waitUntil } from '../support/wait.ts'
+import { waitForExit, waitUntil } from '../support/wait.ts'
 
 const skip = spawnSync('tmux', ['-V']).status === 0 ? false : 'tmux is not installed'
 
@@ -117,6 +117,16 @@ test('Tmux buffer is undefined before any write, and holds an OSC 52 write once 
   tmux.respawn("printf '\\033]52;c;Y29waWVkLWJ5LW9zYzUy\\a'; sleep 5")
   await waitUntil(() => tmux.buffer(), { timeoutMs: 5000, what: 'the tmux buffer' })
   assert.equal(tmux.buffer(), 'copied-by-osc52')
+})
+
+test('Tmux panePid names the pane process, and waitForExit sees it gone after a respawn', { skip }, async t => {
+  const tmux = await shell('pane-pid')
+  t.after(() => tmux.kill())
+  const old = tmux.panePid()
+  assert.ok(old > 1)
+  tmux.respawn('sleep 600')
+  await waitForExit(old, { timeoutMs: 5000 })
+  assert.notEqual(tmux.panePid(), old)
 })
 
 test('Tmux buffer throws when the server is gone, instead of reporting an empty buffer', { skip }, async () => {

@@ -120,8 +120,14 @@ const prProofKey = (p: PrFacts): string => `${p.host}/${p.owner}/${p.repo}#${p.n
 export function recordPr(s: AutoState, pr: PrFacts, maxProofs: number = AUTO_DEFAULTS.maxProofs): AutoState {
   const held = s.prs ?? []
   const key = prProofKey(pr)
-  if (held.some(p => prProofKey(p) === key)) return s
   const proof: PrFacts = { host: pr.host, owner: pr.owner, repo: pr.repo, number: pr.number }
+  if (pr.via === 'text') proof.via = 'text'
+  const at = held.findIndex(p => prProofKey(p) === key)
+  if (at >= 0) {
+    // A live proof replaces the guess of the same PR and drops its mark. A guess never replaces a proof (issue #247).
+    if (held[at]!.via !== 'text' || proof.via === 'text') return s
+    return { ...s, prs: held.map((p, i) => (i === at ? proof : p)) }
+  }
   return { ...s, prs: [...held, proof].slice(-maxProofs) }
 }
 

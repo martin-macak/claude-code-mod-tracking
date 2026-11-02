@@ -180,3 +180,49 @@ export const turnEnd = (reason: 'answer' | 'aborted' | 'error' | 'refusal', agen
   isAborted: reason === 'aborted',
   answer: '',
 })
+
+/** An `Agent` use of the main transcript as a cold `--resume` gives it: the id is in `result.agentId` (replay probe, seq3). */
+export const agentUse = (id: string, agentId?: string): SessionRow =>
+  ({
+    role: 'assistant',
+    text: '',
+    toolUses: [
+      {
+        tool_use_id: id,
+        tool: 'Agent',
+        input: { prompt: 'x' },
+        ...(agentId !== undefined ? { result: { isAsync: true, status: 'async_launched', agentId } } : {}),
+      },
+    ],
+  }) as SessionRow
+
+/**
+ * A Bash use of a subagent transcript: the use stores the output as `text` and no `result`, and the answer comes in the
+ * next user message as a `toolResults` entry (replay probe, `logs/ev-66ef6d5e.jsonl`). Two rows, like the engine gives them.
+ */
+export const subBash = (id: string, command: string, text: string, isError = false, tool = 'Bash'): SessionRow[] => [
+  {
+    role: 'assistant',
+    text: '',
+    toolUses: [{ tool_use_id: id, tool, input: { command }, text }],
+  } as SessionRow,
+  { role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: id, text, isError }] },
+]
+
+/**
+ * A foreground `Agent` use (the d.ts of 2.1.302: `status: "completed"` starts with `agentId`, and a use summary has `agentId` once
+ * answered). `where: 'result'` puts the id in the completed result, `'use'` on the use alone with no result.
+ */
+export const agentUseFg = (id: string, agentId: string, where: 'result' | 'use'): SessionRow =>
+  ({
+    role: 'assistant',
+    text: '',
+    toolUses: [
+      {
+        tool_use_id: id,
+        tool: 'Agent',
+        input: { prompt: 'x' },
+        ...(where === 'result' ? { result: { status: 'completed', agentId, content: [] } } : { agentId }),
+      },
+    ],
+  }) as SessionRow

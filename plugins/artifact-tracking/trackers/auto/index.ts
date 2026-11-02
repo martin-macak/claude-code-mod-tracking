@@ -27,7 +27,16 @@ import { LoadState } from '../../core/lib/load-state'
 import { autoCleanup } from './clean'
 import { type AutoConfig, autoConfig } from './config'
 import { autoIds } from './dismiss'
-import { fromAgentResult, fromBash, fromEnterResult, fromExitResult, fromSpawn, fromTurnEnd } from './events'
+import {
+  commandOf,
+  fromAgentResult,
+  fromAgentText,
+  fromBash,
+  fromEnterResult,
+  fromExitResult,
+  fromSpawn,
+  fromTurnEnd,
+} from './events'
 import { FACT_AGENTS, FACT_BRANCHES, FACT_CHECKED_AT, FACT_PRS, FACT_ROOT } from './facts'
 import { MASTER_ID } from './ids'
 import {
@@ -257,10 +266,20 @@ const onBash: H<ToolCallEvent> = soft('Bash', async (ctx, ev) => {
 // used: a replayed merge, comment or `git worktree` command must not start a round. One `pr-event` follows a write that
 // added a proof instead. The start round can run before the replay ends (a slow read), and its PR step then has no proof
 // to ask for: this kick makes the next step ask for the created PRs. When the run held every proof already (a carry),
-// the first round asked for them, so there is no kick. A call of a subagent is not in this transcript (its own
-// transcript has no result), and a call from before the last `/compact` or past the newest 4096 messages is gone.
+// the first round asked for them, so there is no kick. A call of a subagent is not in this transcript, and its own
+// transcript has no result: its PR comes from the URL text, marked `via: 'text'` (issue #247). A call from before the
+// last `/compact` or past the newest 4096 messages is gone.
 const onReplay: H<readonly ReplayItem[]> = soft('replay', async (ctx, batch) => {
-  const found = batch.flatMap(item => {
+  // The guesses of the subagents go first: `recordPr` keeps the newest `max`, so at the cap an old guess leaves before a
+  // PR that the main transcript confirmed. Each group keeps its transcript order.
+  const ordered = [...batch.filter(i => i.kind === 'agentCall'), ...batch.filter(i => i.kind !== 'agentCall')]
+  const found = ordered.flatMap(item => {
+    // A regular subagent's own transcript has no `gitOperation`: its PR comes from the URL text (issue #247).
+    if (item.kind === 'agentCall') {
+      if (item.tool !== 'Bash') return []
+      const guess = fromAgentText(commandOf(item.input), item.text, item.isError)
+      return guess === undefined ? [] : [guess]
+    }
     if (item.kind !== 'toolCall' || item.ev.tool !== 'Bash') return []
     // `command` only feeds the `git` kick, which a replay drops. `pr` reads the stored `gitOperation` of the whole use.
     const { pr } = fromBash('', item.ev.result)

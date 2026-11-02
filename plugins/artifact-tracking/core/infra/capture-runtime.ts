@@ -78,6 +78,7 @@ export class Capture {
         claims.push(...(await this.row(item.ev, { quick: true })))
         continue
       }
+      if (item.kind === 'agentCall') continue // a subagent's call is for the tracker that reads its text (issue #247)
       claims.push(...(await this.toolCall(item.ev)))
       const use = item.ev.result
       const text = isRecord(use) && typeof use.text === 'string' ? use.text : ''

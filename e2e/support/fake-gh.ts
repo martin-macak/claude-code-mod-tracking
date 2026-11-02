@@ -55,6 +55,7 @@ export const FAKE_GH_CALLS = [
   'auth status',
   'auth token',
   'repo view',
+  'pr create',
   'graphql discovery',
   'graphql refresh',
 ] as const
@@ -247,6 +248,12 @@ export function answer(argv: readonly string[], spec: FakeGhSpec): FakeGhResult 
         url: `https://github.com/${spec.owner}/${spec.repo}`,
       })}\n`,
     )
+  // Issue #247. A session that runs `gh pr create` (a subagent does) reads the URL of the PR from the last line of the output,
+  // as the real gh prints it. The fake makes no PR: it names the last PR of the spec, which the scenario put there.
+  if (first === 'pr' && second === 'create') {
+    const pr = spec.prs.at(-1)
+    return pr ? ok('pr create', `${prUrl(spec, pr.number)}\n`) : unsupported(argv)
+  }
   if (first === 'api' && second === 'graphql') {
     const query = queryOf(argv)
     if (query?.includes('defaultBranchRef')) return discovery(query, spec)

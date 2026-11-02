@@ -34,7 +34,7 @@ import { Timeline } from './timeline.ts'
 import { type TimerRefuser, timerRefuserRefusal, writeTimerRefuser } from './timer-refuser.ts'
 import { Tmux } from './tmux.ts'
 import { writeTurnEndProbe } from './turn-end-probe.ts'
-import { waitUntil } from './wait.ts'
+import { waitForExit, waitUntil } from './wait.ts'
 
 // Each wait inside a step has its own, shorter timeout from Config.
 const STEP_TIMEOUT_MS = 10 * 60 * 1000
@@ -147,10 +147,10 @@ export class DemoWorld extends World {
    * Makes the next launch talk to a fake model that plays `turns`, in a config folder of its own. Before the session starts:
    * the model of a running session cannot change. The scenario closes it at the end (`tearDown`).
    */
-  async startFakeApi(turns: readonly FakeStep[]): Promise<void> {
+  async startFakeApi(turns: readonly FakeStep[], agentTurns?: readonly FakeStep[]): Promise<void> {
     if (this.launched) throw new Error('fake api: start it before the step that starts the session')
     await this.fakeApi?.close()
-    this.fakeApi = await FakeApi.start(turns)
+    this.fakeApi = await FakeApi.start(turns, agentTurns)
     if (this.fakeHome === '') {
       this.fakeHome = mkdtempSync(join(tmpdir(), 'cc-fake-home-'))
       writeFileSync(homeFile(this.fakeHome), FAKE_HOME_TEXT)
@@ -307,8 +307,30 @@ export class DemoWorld extends World {
     return this.clipboardGuard ? withClipboardGuard(this.clipboardGuard, env) : env
   }
 
-  async launch(prompt?: string, tools?: readonly string[]): Promise<void> {
+  /** The tools of the last launch, so a cold resume gives the new process the same allow list. */
+  private launchTools: readonly string[] | undefined
+
+  /**
+   * Ends the session and starts claude again in the same pane with `--continue`: a cold resume, in a new process, with the same
+   * folder, config and fake model, and without the state that the mod stored (issue #247). The log of the fake gh starts empty, so a step that reads it sees only the calls
+   * of the new process. A resumed session fires no hook for the old calls: the mod reads the transcript back.
+   */
+  async resumeCold(): Promise<void> {
+    if (!this.launched) throw new Error('resume: start the session first')
+    if (this.fakeHome === '') throw new Error("resume: needs a fake model, whose config folder is the scenario's own")
+    // End the old process first. The mod keeps its state per session in the store of the config folder, and a new process would carry
+    // it: remove it, so the replay of the transcripts is the only source of what the new process lists.
+    const oldPid = this.tmux.panePid()
+    this.tmux.respawn('sleep 600')
+    await waitForExit(oldPid, { timeoutMs: this.config.turnTimeoutMs }) // The old process may still write its store until it is gone.
+    rmSync(join(this.fakeHome, 'plugins', 'store'), { recursive: true, force: true })
+    if (this.fakeGh !== undefined) writeFileSync(this.fakeGhFiles.logFile, '')
+    await this.launch(undefined, this.launchTools, true)
+  }
+
+  async launch(prompt?: string, tools?: readonly string[], resume = false): Promise<void> {
     this.launched = true
+    this.launchTools = tools
     this.tl.phase('cut')
     await launchClaude(
       {
@@ -320,6 +342,7 @@ export class DemoWorld extends World {
         model: this.config.model,
         timeoutMs: this.config.turnTimeoutMs,
         ...(tools ? { tools } : {}),
+        ...(resume ? { resume } : {}),
         ...(this.permissionMode === undefined ? {} : { permissionMode: this.permissionMode }),
         env: {
           CLAUDE_TRACKER_CONFIG_DIR: this.configDir,

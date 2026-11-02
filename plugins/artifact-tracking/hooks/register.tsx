@@ -20,6 +20,7 @@ import { renderStrip } from '../ux/strip'
 import { TreeDataTable } from '../ux/tree-data-table/table'
 import { rowEvent, spawnEvent, toolCallEvent, turnEvent, turnStartEvent } from './events'
 import { helpTextOf, listText, PaneSession, turnLabels } from './pane-session'
+import { sessionMessages } from './session-messages'
 
 // Working set in $.state (survives hot reload, reset by /clear). Persistence copies it to $.store, one key per session.
 // The contract (types/index.d.ts): `items` and `tools` are atoms; each tracker's data is one member of the `trackers`
@@ -142,7 +143,7 @@ function portsOf($: EngineInterface): Ports {
         const info = await $.session.repo()
         return (info?.remote ? parseRemote(info.remote) : null) ?? null
       },
-      messages: () => $.session.messages(),
+      messages: o => sessionMessages(a => (a === undefined ? $.session.messages() : $.session.messages(a)), o),
       surfaces: () => $.session.surfaces(),
     },
     // A submit never waits: a press that awaits its own prompt hangs when it runs inside a turn. The answer comes in a

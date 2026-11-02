@@ -271,6 +271,14 @@ test('repo view names the session repo, whatever other repos the fake answers fo
   assert.equal(body(r.stdout).nameWithOwner, 'e2e-owner/e2e-repo')
 })
 
+test('pr create prints the URL of the last PR of the spec as its last line, and is unsupported with no PR (issue #247)', () => {
+  const r = answer(['pr', 'create', '--title', 'x', '--body', 'y'], SPEC)
+  assert.equal(r.exitCode, 0)
+  assert.equal(r.call, 'pr create')
+  assert.equal(r.stdout, 'https://github.com/e2e-owner/e2e-repo/pull/7\n')
+  assert.equal(answer(['pr', 'create'], { ...SPEC, prs: [] }).call, 'unsupported')
+})
+
 test('any other call is unsupported: exit 1, a message, and a name for the log', () => {
   const r = answer(['pr', 'list', '--json', 'number'], SPEC)
   assert.equal(r.exitCode, 1)
@@ -458,6 +466,7 @@ test('FAKE_GH_CALLS names every call that answer() logs, except unsupported', ()
     ['auth', 'status'],
     ['auth', 'token'],
     ['repo', 'view'],
+    ['pr', 'create', '--title', 'x'],
     graphql('query { repository(owner: "o", name: "r") { defaultBranchRef { name } } }'),
     graphql('query { a0: repository(owner: "o", name: "r") { issueOrPullRequest(number: 1) { x } } }'),
   ]

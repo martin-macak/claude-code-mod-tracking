@@ -104,8 +104,16 @@ export interface DismissedEvent {
   readonly ids: readonly string[]
 }
 
-/** One item of a transcript replay: a row or a tool call, in transcript order. */
-export type ReplayItem = { kind: 'row'; ev: RowEvent } | { kind: 'toolCall'; ev: ToolCallEvent }
+/**
+ * One item of a transcript replay: a row or a tool call, in transcript order. After them come the tool calls of the
+ * subagents' own transcripts (`agentCall`, issue #247), of any tool: the text of the answer and its error flag, never a row,
+ * never a claim. A subagent transcript stores no `result`, so only a tracker that reads that text takes it, and it keeps the
+ * calls it needs (the auto tracker keeps `Bash`).
+ */
+export type ReplayItem =
+  | { kind: 'row'; ev: RowEvent }
+  | { kind: 'toolCall'; ev: ToolCallEvent }
+  | { kind: 'agentCall'; tool: string; input: Json; text: string; isError: boolean }
 
 /** A fact took a new value. `undefined` means the fact is not set: `previous` for a first publish, `value` for a withdraw. */
 export interface FactEvent {

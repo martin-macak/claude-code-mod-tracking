@@ -43,6 +43,8 @@ export type FakeOpts = {
     cwd?: string
     repo?: RepoRemote | null
     messages?: SessionRow[]
+    /** The transcript of each subagent, by agent id. `{ deny }` makes the read throw. */
+    agentMessages?: Record<string, SessionRow[] | { deny: string }>
     surfaces?: readonly string[]
   }
   /** Seeds the store. */
@@ -96,7 +98,16 @@ export type FakeWorld = {
   reads: string[]
   env: Record<string, string>
   settings?: Json
-  session: { id: string; cwd: string; repo: RepoRemote | null; messages: SessionRow[]; surfaces: readonly string[] }
+  session: {
+    id: string
+    cwd: string
+    repo: RepoRemote | null
+    messages: SessionRow[]
+    agentMessages: Record<string, SessionRow[] | { deny: string }>
+    /** The agent ids read, in order. */
+    agentReads: string[]
+    surfaces: readonly string[]
+  }
   agents: AgentInfo[]
   /**
    * `placed` is what `ui.open` answers: false when the terminal is too narrow for the pane. `openedWith` holds the selected
@@ -225,7 +236,14 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       id: async () => world.session.id,
       cwd: async () => world.session.cwd,
       repo: async () => world.session.repo,
-      messages: async () => world.session.messages,
+      messages: async o => {
+        if (o?.agentId === undefined) return world.session.messages
+        world.session.agentReads.push(o.agentId)
+        const held = world.session.agentMessages[o.agentId]
+        if (held === undefined) return []
+        if (!Array.isArray(held)) throw new Error(held.deny)
+        return held
+      },
       surfaces: async () => world.session.surfaces,
     },
     agents: { list: async () => world.agents },
@@ -348,6 +366,8 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       cwd: o.session?.cwd ?? '/work',
       repo: o.session?.repo ?? null,
       messages: o.session?.messages ?? [],
+      agentMessages: { ...(o.session?.agentMessages ?? {}) },
+      agentReads: [],
       surfaces: o.session?.surfaces ?? [],
     },
     agents: o.agents ?? [],

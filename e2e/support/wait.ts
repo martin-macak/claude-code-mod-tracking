@@ -27,3 +27,17 @@ export function idleMs(file: string, now: number = Date.now()): number | undefin
     return undefined
   }
 }
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+// Waits until the process and its process group (the children of a pane process share it) are gone. The timeout is a hang guard.
+export async function waitForExit(pid: number, opts: { timeoutMs: number; intervalMs?: number }): Promise<void> {
+  await waitUntil(() => (alive(pid) || alive(-pid) ? undefined : true), { ...opts, what: `process ${pid} to exit` })
+}

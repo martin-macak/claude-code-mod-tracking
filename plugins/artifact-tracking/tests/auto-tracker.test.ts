@@ -9,6 +9,7 @@ import type { ItemsHost, Json, StoredItem } from '../core/interfaces/items'
 import type { RunResult } from '../core/interfaces/ports'
 import { autoConfig, auto as autoTracker } from '../trackers/auto'
 import { autoDismiss } from '../trackers/auto/dismiss-store'
+import { fromAgentText } from '../trackers/auto/events'
 import { emptyAuto } from '../trackers/auto/ledger'
 import { PR_REASONS } from '../trackers/github/lane'
 import { fakeConfig } from './fixtures/config-fs'
@@ -18,6 +19,7 @@ import { porcelain } from './fixtures/git'
 import { IDLE_ITEMS } from './fixtures/items-host'
 import { LIMITS } from './fixtures/limits'
 import { fakePorts } from './fixtures/ports'
+import { PROBE_AGENT, PROBE_AGENT_ID, PROBE_MAIN } from './fixtures/probe-subagent'
 import { DISCOVERED, reasonsOfSources } from './fixtures/reasons'
 import { hostWorld } from './fixtures/tracker-host'
 
@@ -600,3 +602,166 @@ test('normalise keeps a valid slice, clamps numbers, falls back per field and na
   expect(autoConfig.normalise({ enabled: 'yes' }, autoConfig.defaults, warn).enabled).toBe(true)
   expect(warns).toHaveLength(6)
 })
+
+// Issue #247: a PR that a regular subagent created comes back from the URL in the text of its own transcript. The proof
+// is marked `via: 'text'` (a guess, kept in the state, not drawn).
+const TEXT_7 = { ...DEMO_7, via: 'text' }
+const subCreate = (n: number) => ev.subBash(`s_c${n}`, 'gh pr create --title sub', `${ev.DEMO_PULL}/${n}`)
+const withAgent = (t: ReturnType<typeof setup>, agentId: string, rows: ReturnType<typeof ev.subBash>) => {
+  t.w.session.messages = [...t.w.session.messages, ev.agentUse(`a_${agentId}`, agentId)]
+  t.w.session.agentMessages[agentId] = rows
+}
+
+test('a replay lists a PR that a subagent created, marked via text, and starts one pr-event round', async () => {
+  const t = setup()
+  const before = await t.running()
+  withAgent(t, 'ag-1', subCreate(7))
+  await t.m.replay()
+  expect(t.auto()?.prs).toEqual([TEXT_7])
+  expect(t.m.facts.read('auto.prs')).toEqual([TEXT_7])
+  await t.settle(WINDOW)
+  expect(t.rounds()).toBe(before + 1)
+  expect(t.branches()?.reasons).toEqual(['pr-event'])
+})
+
+test('a live proof before the replay of the same PR stays unmarked; a text proof gives way to a later live proof', async () => {
+  const t = setup()
+  await t.running()
+  await liveCreate7(t)
+  withAgent(t, 'ag-1', subCreate(7))
+  await t.m.replay()
+  expect(t.auto()?.prs).toEqual([DEMO_7])
+  const u = setup()
+  await u.running()
+  withAgent(u, 'ag-1', subCreate(7))
+  await u.m.replay()
+  expect(u.auto()?.prs).toEqual([TEXT_7])
+  await liveCreate7(u)
+  expect(u.auto()?.prs).toEqual([DEMO_7]) // the mark is dropped
+  await u.m.replay()
+  expect(u.auto()?.prs).toEqual([DEMO_7]) // a text proof never replaces a live one
+})
+
+test('a subagent call of another tool than Bash gives no proof, though its text is a created PR URL', async () => {
+  const t = setup()
+  const before = await t.running()
+  withAgent(t, 'ag-1', ev.subBash('s_t', 'gh pr create --title sub', `${ev.DEMO_PULL}/7`, false, 'Task'))
+  await t.m.replay()
+  expect(t.auto()?.prs ?? []).toEqual([])
+  await t.settle(WINDOW)
+  expect(t.rounds()).toBe(before)
+})
+
+test('a replay twice gives one text proof', async () => {
+  const t = setup()
+  await t.running()
+  withAgent(t, 'ag-1', subCreate(7))
+  await t.m.replay()
+  const sets = t.w.stateSets.auto
+  await t.m.replay()
+  expect(t.auto()?.prs).toEqual([TEXT_7])
+  expect(t.w.stateSets.auto).toBe(sets)
+})
+
+test('a subagent transcript with no created PR URL adds nothing and starts no round', async () => {
+  const t = setup()
+  const before = await t.running()
+  withAgent(t, 'ag-1', [
+    ...ev.subBash('s1', 'gh pr view 7', `${ev.DEMO_PULL}/7`),
+    ...ev.subBash('s2', 'gh pr list', `${ev.DEMO_PULL}/7`),
+    ...ev.subBash('s3', 'gh pr create --title x', 'a pull request already exists', true),
+    ...ev.subBash('s4', 'gh pr create --title y', 'Creating pull request'),
+    ...ev.subBash('s5', 'gh pr create --title z', `${ev.DEMO_PULL}/8\nTrailing note`),
+    ...ev.subBash('s6', 'gh pr merge 7', `${ev.DEMO_PULL}/7`),
+  ])
+  const sets = t.w.stateSets.auto
+  await t.m.replay()
+  expect(t.auto()?.prs).toBeUndefined()
+  expect(t.w.stateSets.auto).toBe(sets)
+  await t.settle(WINDOW)
+  expect(t.rounds()).toBe(before)
+})
+
+test('an Agent use with no agentId is skipped, and a throwing agent read does not stop the others', async () => {
+  const t = setup()
+  await t.running()
+  t.w.session.messages = [ev.agentUse('a_none'), ev.agentUse('a_bad', 'ag-bad'), ev.agentUse('a_ok', 'ag-ok')]
+  t.w.session.agentMessages['ag-bad'] = { deny: 'no transcript' }
+  t.w.session.agentMessages['ag-ok'] = subCreate(7)
+  await t.m.replay()
+  expect(t.w.session.agentReads).toEqual(['ag-bad', 'ag-ok'])
+  expect(t.auto()?.prs).toEqual([TEXT_7])
+})
+
+test('a replay at the cap keeps the confirmed PR of the main transcript over the guesses of a subagent', async () => {
+  const t = setup()
+  await t.running()
+  const max = autoConfig.defaults.maxProofs
+  const main = ev.bashUse('t_main', 'gh pr create', ev.createdPr(`${ev.DEMO_PULL}/${max + 1}`, max + 1))
+  t.w.session.messages = [main, ev.agentUse('a_ag', 'ag-1')]
+  t.w.session.agentMessages['ag-1'] = Array.from({ length: max }, (_, i) => subCreate(i + 1)).flat()
+  await t.m.replay()
+  const prs = t.auto()?.prs ?? []
+  expect(prs).toHaveLength(max)
+  expect(prs.at(-1)).toMatchObject({ number: max + 1 })
+  expect(prs.at(-1)?.via).toBeUndefined()
+})
+
+test('a replay lists a PR that a foreground subagent created, whichever shape holds its agent id', async () => {
+  const t = setup()
+  await t.running()
+  t.w.session.messages = [ev.agentUseFg('a_r', 'fg-result', 'result'), ev.agentUseFg('a_u', 'fg-use', 'use')]
+  t.w.session.agentMessages['fg-result'] = subCreate(7)
+  t.w.session.agentMessages['fg-use'] = subCreate(8)
+  await t.m.replay()
+  expect(t.auto()?.prs).toEqual([TEXT_7, { ...DEMO_7, number: 8, via: 'text' }])
+})
+
+// The golden case: the transcripts that a live cold resume gave in the replay probe (verbatim, tests/fixtures/probe-subagent.ts).
+test('a replay of the probe transcripts of a live cold resume lists the PR of its subagent, marked via text', async () => {
+  const t = setup()
+  await t.running()
+  t.w.session.messages = PROBE_MAIN
+  t.w.session.agentMessages[PROBE_AGENT_ID] = PROBE_AGENT
+  await t.m.replay()
+  expect(t.w.session.agentReads).toEqual([PROBE_AGENT_ID])
+  expect(t.auto()?.prs).toEqual([{ host: 'github.com', owner: 'octo', repo: 'demo', number: 9, via: 'text' }])
+})
+
+// `fromAgentText` is a guess: each row says what it must take and what it must not.
+const CREATE = 'gh pr create --title x'
+const URL_7 = 'https://github.com/octo/demo/pull/7'
+for (const [name, command, text, isError, want] of [
+  ['a plain create', CREATE, URL_7, false, 7],
+  ['a create chained after another command', `git status && ${CREATE}`, URL_7, false, 7],
+  [
+    'a create whose output has warnings before the URL',
+    CREATE,
+    `Warning: 1 uncommitted change\n\n${URL_7}\n`,
+    false,
+    7,
+  ],
+  ['CRLF output', CREATE, `Creating\r\n${URL_7}\r\n`, false, 7],
+  ['a www.github.com URL', CREATE, 'https://www.github.com/octo/demo/pull/7', false, 7],
+  ['a failed create', CREATE, URL_7, true, undefined],
+  ['a command that only mentions gh pr create', 'echo "gh pr create"', URL_7, false, undefined],
+  ['gh pr view', 'gh pr view 7', URL_7, false, undefined],
+  ['a URL that is not the last line', CREATE, `${URL_7}\nnote`, false, undefined],
+  // The URL rules are those of the live route (`createdPr`): a tail after the number still names the same PR.
+  ['a URL with a trailing slash', CREATE, `${URL_7}/`, false, 7],
+  ['a URL with a query', CREATE, `${URL_7}?x=1`, false, 7],
+  ['a repo flag before the subcommands', 'gh -R octo/demo pr create --title x', URL_7, false, 7],
+  ['a long repo flag with =value before the subcommands', 'gh --repo=octo/demo pr create --title x', URL_7, false, 7],
+  ['a repo flag between the subcommands', 'gh pr -R octo/demo create --title x', URL_7, false, 7],
+  ['a repo flag with another subcommand', 'gh -R octo/demo pr view 7', URL_7, false, undefined],
+  ['an env prefix before the create', `GH_TOKEN=x ${CREATE}`, URL_7, false, 7],
+  ['a URL that is not a pull request', CREATE, 'https://github.com/octo/demo/issues/7', false, undefined],
+  ['an empty text', CREATE, '', false, undefined],
+  ['a blank text', CREATE, ' \n  \n', false, undefined],
+] as const) {
+  test(`fromAgentText: ${name}`, () => {
+    const got = fromAgentText(command, text, isError)
+    expect(got?.number).toBe(want)
+    if (got !== undefined) expect(got.via).toBe('text')
+  })
+}

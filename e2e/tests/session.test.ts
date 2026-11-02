@@ -82,6 +82,13 @@ test('claudeCommand names the permission mode only when the spec has one, before
   assert.equal(argv.at(-1), 'go')
 })
 
+test('claudeCommand resumes the last conversation of the folder only when the spec says so, before --settings (issue #247)', () => {
+  assert.ok(!argvOf({ tools: ['Bash'] }).includes('--continue'))
+  const argv = argvOf({ tools: ['Bash'], resume: true })
+  assert.equal(argv.filter(a => a === '--continue').length, 1)
+  assert.ok(argv.indexOf('--continue') < argv.indexOf('--settings'))
+})
+
 test('claudeCommand with tools: the tools system prompt and an allow list, prompt still last', () => {
   const argv = argvOf({ prompt: 'go', tools: ['Read', 'Artifact'] })
   assert.equal(argv[argv.indexOf('--append-system-prompt') + 1], TOOLS_SYSTEM_PROMPT)
