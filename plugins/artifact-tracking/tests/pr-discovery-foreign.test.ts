@@ -109,7 +109,7 @@ test('discoverPrs: foreign branches are asked with no tracked branch', async () 
   const r = await run(only.gh, { branches: [], foreign: [{ ...F, branches: ['feat/one'] }] })
   expect(only.calls.map(c => c.repo)).toEqual([FOREIGN])
   expect(r.ok && r.prs.map(p => p.number)).toEqual([31])
-  expect(r).toMatchObject({ ok: true, complete: true })
+  expect(r).toMatchObject({ ok: true, complete: false }) // no tracked branch: nothing asked of the session repo (issue #273)
 })
 
 test('discoverPrs: foreign branches are asked with no session repo', async () => {

@@ -359,9 +359,10 @@ export type Asks = {
  * alias that is null with no `NOT_FOUND`, or that an error names): a PR that parsed takes its new refs. None of this
  * stops every prune for the run. It fails the step only when nothing else was asked or answered. The tool-wide check
  * `canCall` gates the step only when a group of the home host will be asked. An unsure answer of the session repo makes
- * the reply not `complete`. So do tracked branches with no session repo: they are not asked. `complete` says only that the
- * reply is sure of the lane PRs of the session repo: `applyDiscovery` holds them when it is false, and still reconciles
- * each other repo by its own answer, so a foreign repo that answered is pruned also then (issue #195).
+ * the reply not `complete`. So do tracked branches with no session repo, and a session repo with no tracked branch (issue
+ * #273): the branches are not asked. `complete` says only that the reply is sure of the lane PRs of the session repo:
+ * `applyDiscovery` holds them when it is false, and still reconciles each other repo by its own answer, so a foreign repo
+ * that answered is pruned also then (issue #195).
  *
  * A skip of `no-branches` or `no-repo` asks nothing, and this function has no list to prune. The lane (`PrLane`) reconciles
  * the lane PRs of other repos that earlier steps found, as the last proof of them may be gone (issue #195).
@@ -412,11 +413,14 @@ export async function discoverPrs(
 
   const createdKeys = new Set(created.map(prKey))
   const prs: DiscoveredPr[] = []
-  // With no session repo the branches are never asked: a reply that holds only the PRs of other repos says nothing of the PRs
-  // of the branches, so the reply is not `complete` and the prune leaves those be. The PRs of other repos are reconciled all
-  // the same (`applyDiscovery`). The default branch is no exception here: with no repo it is the one that an in-process
-  // /resume carried from another session, and it proves nothing about this one.
-  let complete = repo !== null || polled.length === 0
+  // One rule (issue #273): the reply is sure of the lane PRs of the session repo only when the session repo was asked for
+  // tracked branches. With no session repo the branches are never asked. With no tracked branch nothing is asked of them,
+  // even when a created PR or another repo is: the reply says nothing of the PRs of the branches, so it is not `complete` and
+  // the prune leaves those be, as a `no-branches` skip does. The PRs of other repos are reconciled all the same
+  // (`applyDiscovery`). A step whose branches are all the known default branch asks no alias but still counts as asked. With
+  // no repo the default branch is no exception: it is the one that an in-process /resume carried from another session, and
+  // it proves nothing about this one.
+  let complete = repo !== null && polled.length > 0
   let answered = 0
   let failure: Failed | undefined
   let defaultName: string | undefined
