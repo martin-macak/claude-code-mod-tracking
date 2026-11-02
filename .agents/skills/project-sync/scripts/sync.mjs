@@ -20,6 +20,7 @@ import {
   plural,
   positionPlan,
   refLabel,
+  waveNumber,
   withNewItem,
 } from './core.mjs'
 import {
@@ -51,12 +52,14 @@ Commands:
                                            Needs --order, --area, --release. A dry run: --apply writes.
                                            A PR gets the Status "In review", unless --status says otherwise.
   status <number|"draft title"> <Status>   Set the Status of one item. Never Done: GitHub sets it.
+  wave <number> "Wave N"                   Raise the Wave of one issue item. It refuses to lower it (exit 2).
+                                           sync never lowers a Wave either. A dry run: --apply writes.
 
 Options:
   --owner <login>       Owner of the project. Default ${DEFAULTS.owner}.
   --project <number>    Project number. Default ${DEFAULTS.project}.
   --repo <owner/name>   Repository of the issues. Default ${DEFAULTS.repo}.
-  --apply               Write the planned changes (sync, next, add). add also adds the item and sets its fields.
+  --apply               Write the planned changes (sync, next, add, wave). add also adds the item and sets its fields.
   --json                Print one JSON document on stdout.
   --order <n>  --area <name>  --release <name>  --status <name>   Fields for add.
   -h, --help            Show this text.
@@ -414,6 +417,34 @@ function cmdStatus(ctx, args) {
   return 0
 }
 
+// wave: set the Wave of one issue item, and never lower it. sync keeps a Wave from going down
+// (the floor rule in core.mjs), so this is the one tool that restores a Wave that was lost.
+// A dry run unless --apply is given.
+function cmdWave(ctx, args) {
+  if (args.length !== 2) throw usageError('wave needs an issue and a Wave: wave <number> "Wave N".')
+  const state = readState(ctx)
+  const to = pickOption(state.options.Wave, args[1], 'Wave')
+  const item = findItem(state.items, args[0], ctx.repo)
+  if (item.kind !== 'issue') throw usageError(`wave sets the Wave of an issue item, and ${nameOf(item, ctx.repo)} is not one.`)
+  const from = item.fields.Wave
+  const fromN = waveNumber(from)
+  if (fromN !== null && waveNumber(to) < fromN) {
+    throw usageError(
+      `refusing to lower the Wave of ${nameOf(item, ctx.repo)}: it is ${from}, and ${to} is lower. A Wave never goes down.`,
+    )
+  }
+  const same = from === to
+  if (!same && ctx.apply) {
+    writing([], () => setField(ctx.gh, { projectId: state.project.id, itemId: item.id, field: state.fields.Wave, value: to }))
+  }
+  const written = !same && ctx.apply
+  if (ctx.json) ctx.emit({ item, from, to, written })
+  else if (same) ctx.say(`${nameOf(item, ctx.repo)} is already ${to}.`)
+  else if (written) ctx.say(`${nameOf(item, ctx.repo)}: Wave ${shown(from)} -> ${to}`)
+  else ctx.say(`Would set ${nameOf(item, ctx.repo)}: Wave ${shown(from)} -> ${to}\nDry run: nothing was written. Pass --apply to write it.`)
+  return 0
+}
+
 // The project item for an issue or PR key, if the project has one.
 const isItem = key => i => i.key === key && (i.kind === 'issue' || i.kind === 'pr')
 
@@ -593,8 +624,10 @@ export function main(argv, io = {}) {
         return cmdAdd(ctx, args)
       case 'status':
         return cmdStatus(ctx, args)
+      case 'wave':
+        return cmdWave(ctx, args)
       case undefined:
-        throw new Fail('Give a command: sync, next, add or status.', 2, { usage: true })
+        throw new Fail('Give a command: sync, next, add, status or wave.', 2, { usage: true })
       default:
         throw new Fail(`Unknown command "${command}".`, 2, { usage: true })
     }
