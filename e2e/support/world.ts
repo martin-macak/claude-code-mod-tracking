@@ -27,6 +27,7 @@ import { Recorder } from './recorder.ts'
 import { countLines, FAKE_ORIGIN_NAME, fakeForeignRepo, launchClaude, prepareClone, waitForTurnEnd } from './session.ts'
 import { sizeRefusal } from './size.ts'
 import { slug } from './slug.ts'
+import { type TaskStopProbe, writeTaskStopProbe } from './task-stop-probe.ts'
 import { Timeline } from './timeline.ts'
 import { type TimerRefuser, timerRefuserRefusal, writeTimerRefuser } from './timer-refuser.ts'
 import { Tmux } from './tmux.ts'
@@ -77,6 +78,8 @@ export class DemoWorld extends World {
   timerRefuser: TimerRefuser | undefined
   /** Whether the scenario installed the probe plugin that marks the end of a turn (support/turn-end-probe.ts). */
   turnEndProbe: { readonly pluginDir: string } | undefined
+  /** The probe plugin that logs the origin of TaskStop calls (support/task-stop-probe.ts). Absent: nothing is logged. */
+  taskStopProbe: TaskStopProbe | undefined
   /** The file the session writes its debug log to (`--debug-file`, support/debug-log.ts). Absent: the session writes none. */
   debugLog: string | undefined
   /** The second repo of the scenario (issue #195, `fakeForeignRepo`). Absent: the scenario has none. */
@@ -220,6 +223,12 @@ export class DemoWorld extends World {
   installTurnEndProbe(): void {
     if (this.turnEndProbe !== undefined) return
     this.turnEndProbe = this.installProbe('turn end probe', writeTurnEndProbe)
+  }
+
+  /** Adds the probe plugin that logs tool_use_id and next.origin of each TaskStop (issue #209). Before the session starts. */
+  installTaskStopProbe(): void {
+    if (this.taskStopProbe !== undefined) return
+    this.taskStopProbe = this.installProbe('task stop probe', writeTaskStopProbe)
   }
 
   get tl(): Timeline {
