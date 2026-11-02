@@ -1,0 +1,4 @@
+#!/bin/sh
+# A fake acli for the e2e harness. It must be first on PATH of claude. See e2e/support/fake-acli.ts.
+# FAKE_ACLI_NODE is the node that runs the harness. Without it, the node on PATH runs the program.
+exec "${FAKE_ACLI_NODE:-node}" --disable-warning=ExperimentalWarning "$(dirname "$0")/../main.ts" "$@"

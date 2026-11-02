@@ -25,6 +25,12 @@ Then('the pane stops showing {string}', async function (this: DemoWorld, text: s
   await this.waitScreen(screen => !paneShows(screen, text), `the pane to stop showing "${text}"`)
 })
 
+// Issue #226. The pane draws the text. The transcript can hold the same words (the output of a command), so a row that the pane
+// built from a tool refresh is shown by this step, and not by `the screen shows`.
+Then('the pane shows {string}', async function (this: DemoWorld, text: string) {
+  await this.waitScreen(screen => paneShows(screen, text), `the pane to show "${text}"`)
+})
+
 Then('the screen does not show {string}', function (this: DemoWorld, text: string) {
   const screen = this.tmux.capture()
   if (screen.includes(text)) throw new Error(`the screen shows "${text}"\n--- screen ---\n${screen}`)

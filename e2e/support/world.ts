@@ -17,6 +17,8 @@ import { type ClipboardGuard, pasteboardStamp, withClipboardGuard, writeClipboar
 import { CLONE_NAME, type Config, loadConfig, PLUGIN_DIR, REPO_ROOT } from './config.ts'
 import { CONFIG_FILE, makeConfigDir, pathWidthRefusal } from './config-dir.ts'
 import { type CopyProbe, writeCopyProbe } from './copy-probe.ts'
+import type { FakeAcliSpec } from './fake-acli.ts'
+import { fakeAcliEnv } from './fake-acli-env.ts'
 import { FakeApi, type FakeStep } from './fake-api.ts'
 import { FAKE_HOME_TEXT, fakeApiEnv, homeFile, PARENT_SESSION_VARS } from './fake-api-env.ts'
 import type { FakeGhSpec } from './fake-gh.ts'
@@ -62,6 +64,8 @@ export class DemoWorld extends World {
   artifact: string | undefined
   /** The fake gh of this scenario (support/fake-gh.ts). Absent: claude runs the real gh. */
   fakeGh: FakeGhSpec | undefined
+  /** The fake acli of this scenario (support/fake-acli.ts). Absent: claude runs the real acli. */
+  fakeAcli: FakeAcliSpec | undefined
   /** The refs of the local copy that stands for the origin, as the scenario started (steps/fake-gh.steps.ts). */
   fakeOriginRefs: string | undefined
   /** The age in seconds of the last refresh as the screen showed it when the scenario noted it (steps/screen.steps.ts). */
@@ -112,6 +116,25 @@ export class DemoWorld extends World {
     this.fakeGh = spec
     writeFileSync(this.fakeGhFiles.specFile, JSON.stringify(spec))
     writeFileSync(this.fakeGhFiles.logFile, '')
+  }
+
+  /** The files the fake acli reads and writes: the spec it answers from, and the log of its calls. */
+  get fakeAcliFiles(): { specFile: string; logFile: string } {
+    return { specFile: join(this.outDir, 'fake-acli.json'), logFile: join(this.outDir, 'fake-acli.log') }
+  }
+
+  /** Sets what the fake acli answers. Claude gets the fake from the next launch. The log starts empty, as the one of the fake gh. */
+  setFakeAcli(spec: FakeAcliSpec): void {
+    this.fakeAcli = spec
+    writeFileSync(this.fakeAcliFiles.specFile, JSON.stringify(spec))
+    writeFileSync(this.fakeAcliFiles.logFile, '')
+  }
+
+  /** The environment of the fakes on the PATH of claude. The fake acli extends the PATH of the fake gh, so both are found. */
+  private fakeCliEnv(): Record<string, string> {
+    const gh: Record<string, string> = this.fakeGh ? fakeGhEnv(this.fakeGhFiles) : {}
+    const acli = this.fakeAcli ? fakeAcliEnv(this.fakeAcliFiles, gh.PATH) : {}
+    return { ...gh, ...acli }
   }
 
   /** Sets the permission mode of the next launch. Before the session starts: the mode of a running session cannot change. */
@@ -301,7 +324,7 @@ export class DemoWorld extends World {
         env: {
           CLAUDE_TRACKER_CONFIG_DIR: this.configDir,
           ...this.guardedEnv({
-            ...(this.fakeGh ? fakeGhEnv(this.fakeGhFiles) : {}),
+            ...this.fakeCliEnv(),
             ...(this.fakeApi ? fakeApiEnv(this.fakeApi.url, this.fakeHome) : {}),
           }),
         },

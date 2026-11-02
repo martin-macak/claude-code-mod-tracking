@@ -6,7 +6,10 @@
 // `pullRequest(number:)` alias `p` of a PR the session created) and `buildQuery` (trackers/github/gh-tool.ts).
 // The contract test `scripts/contracts/fake-gh-contract.test.mjs` runs the real tool of the mod against
 // `answer()`, so a change there shows in `make verify`, not only in a local `make e2e`.
-// This file imports nothing, so the plugin tests can import it. `fake-gh-env.ts` holds what needs node.
+// This file imports only `fake-cli.ts` (the call result and the call log that both fakes share),
+// so the plugin tests can import it. `fake-gh-env.ts` holds what needs node.
+
+import { callsOf, type FakeCall, type FakeResult, logLineOf } from './fake-cli.ts'
 
 export type Mergeable = 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
 
@@ -70,9 +73,9 @@ export function delayOf(call: string, spec: FakeGhSpec): number {
 }
 
 /** What one call gets. `call` names the kind of call for the log: `unsupported` for one the fake does not answer. */
-export type FakeGhResult = { exitCode: number; stdout: string; stderr: string; call: string }
+export type FakeGhResult = FakeResult
 
-export type FakeGhCall = { call: string; exit: number; argv: string[] }
+export type FakeGhCall = FakeCall
 
 /** One plain name for an owner or a repo: what a GitHub URL and a git argument take without quoting. */
 const OWNER_REPO = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/
@@ -261,25 +264,4 @@ export function isQuiet(calls: readonly FakeGhCall[], idle: number | undefined, 
   return calls.length > 0 && idle !== undefined && idle >= seconds * 1000
 }
 
-const MAX_ARG = 200
-
-/** One line of the call log. A long argument (the query) is cut, because the call name says what it was. */
-export function logLineOf(argv: readonly string[], result: FakeGhResult): string {
-  const short = argv.map(a => (a.length > MAX_ARG ? `${a.slice(0, MAX_ARG - 1)}…` : a))
-  return JSON.stringify({ call: result.call, exit: result.exitCode, argv: short })
-}
-
-/** The calls of a log file, one per line. A line that is not a call is skipped. */
-export function callsOf(text: string): FakeGhCall[] {
-  const calls: FakeGhCall[] = []
-  for (const line of text.split('\n')) {
-    if (line === '') continue
-    try {
-      const c: unknown = JSON.parse(line)
-      if (typeof c === 'object' && c !== null && 'call' in c && 'exit' in c && 'argv' in c) calls.push(c as FakeGhCall)
-    } catch {
-      // A half-written line: the next read has it whole.
-    }
-  }
-  return calls
-}
+export { callsOf, logLineOf }

@@ -28,6 +28,15 @@ Given(
   },
 )
 
+// One tool, with a rule in its parentheses, such as `Bash(acli jira workitem view:*)`. The rule holds spaces, and the step above
+// splits its tools at spaces, so it cannot carry a rule.
+Given(
+  'a Claude Code session with the artifact-tracking mod and the tool {string}',
+  async function (this: DemoWorld, tool: string) {
+    await this.launch(undefined, [tool])
+  },
+)
+
 // Before the session step. The session starts in the default permission mode, not the mode of the machine. In auto mode the spawn
 // of a subagent opens a notice about the classifier when the API is not Anthropic's (the fake model), and it blocks the session
 // (issue #206). A tool of the allow list still runs with no dialog.
