@@ -697,3 +697,21 @@ test('#256 Q9: a folded group that holds the entry opens although the folded gro
   expect(t.w.state.get('expanded')).toEqual([groups.f0]) // only the group of the entry opens; the other fold stays
   expect(t.w.ui.toasts).toEqual([])
 })
+
+test('#256 Q9: when the row cap blocks the all-open lookup, the entry first in turn order opens, not the first group in pane order', async () => {
+  // Review of PR 315: the single-fold fallback took the first group of the pane that lists any entry, not the first entry of the turn.
+  const t = world({ global: { ui: { sectionRows: 50, maxRows: 50 } } })
+  await t.turn(1, `one ${url('c')} and ${url('b')}`)
+  const [c, b] = [t.keyOf(url('c')), t.keyOf(url('b'))]
+  reshape(t, sections => {
+    const [s] = sections as [SectionSpec]
+    const row = (id: string) => ({ ...(s.rows[0] as TreeRow), id })
+    const filler = { ...s, id: 'filler', title: 'Filler', rows: Array.from({ length: 50 }, (_, i) => row(`f${i}`)) }
+    return [filler, { ...s, id: 'sb', title: 'B', rows: [row(b)] }, { ...s, id: 'sc', title: 'C', rows: [row(c)] }]
+  })
+  const groups = await treeGroups(t, [c, b, 'f0'])
+  t.w.state.set('expanded', [groups.f0 as string, groups[b] as string, groups[c] as string])
+  await t.press()
+  expect(t.selected()).toBe(c)
+  expect(t.w.state.get('expanded')).toEqual([groups.f0, groups[b]]) // only the group of c opens; the other folds stay
+})

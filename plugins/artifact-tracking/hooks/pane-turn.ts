@@ -56,12 +56,17 @@ async function listedOf(
   }
   const allOpen = new Set([...expanded].filter(id => !folds.has(id)))
   // With every fold open, the folded groups before the entry may use up the row cap. Then the entry is looked for with one fold
-  // open at a time, so the folds that stay do not count against it.
+  // open at a time, so the folds that stay do not count against it. The entry that is first in the order of the turn wins, not the
+  // first fold of the pane that lists any entry.
   const firstGroup =
     listedIn(allOpen)[0]?.group ??
     [...folds]
       .filter(id => expanded.has(id))
-      .find(id => listedIn(new Set([...expanded].filter(f => f !== id))).some(r => r.group === id))
+      .flatMap(id => {
+        const own = listedIn(new Set([...expanded].filter(f => f !== id))).find(r => r.group === id)
+        return own === undefined ? [] : [{ id, at: keys.indexOf(own.id) }]
+      })
+      .sort((x, y) => x.at - y.at)[0]?.id
   const unfold = firstGroup !== undefined && expanded.has(firstGroup) ? firstGroup : undefined
   const open = unfold === undefined ? expanded : new Set([...expanded].filter(id => id !== unfold))
   const laid = new Set(laidRefs(groups, { ...view, expanded: open }).map(r => r.id))
