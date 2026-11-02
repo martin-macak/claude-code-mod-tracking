@@ -42,8 +42,17 @@ into simple commands first ([`core/lib/shell.ts`](../../../../plugins/artifact-t
 - Quoted text stays one word. So `bash -c '...'`, `ssh host '...'` and
   `echo "...; ..."` start nothing local and are not tracked.
 - Heredoc bodies and comments are skipped.
-- `VAR=x`, `sudo`, `env`, `nice`, `nohup`, `time`, `command`, `exec` and
-  `builtin` in front are stripped. `time` takes its options with it: `-p`,
+- `VAR=x`, `sudo`, `env`, `nice`, `nohup`, `timeout`, `gtimeout`, `ionice`, `stdbuf`, `setsid`, `caffeinate`, `doas`, `time`, `command`, `exec` and
+  `builtin` in front are stripped. `timeout`, `ionice`, `stdbuf`, `caffeinate`
+  and `doas` take their own options and positional words with them (`timeout
+  -s KILL 5 npm run dev` is `npm run dev`). `ionice -p PID` runs no command, so
+  it stays, and so does `caffeinate -t 60`. These are external programs, so they read an
+  option in quotes or behind a redirection as an option: the shell removes both
+  first (`ionice "-c3" cmd`, `setsid "-f" cmd`). A `time` that is quoted or
+  that runs behind `sudo`, `env`, `nice`, `nohup` or another wrapper is the
+  external `/usr/bin/time`: it also takes `-f FMT`, `-o FILE` and other flags,
+  quoted or not.
+  The reserved word `time` takes its options with it: `-p`,
   then `--`, each at most once, as bash reads them, and only when typed whole
   with no redirection right before them. So `time -p git status` is
   `git status`. `time -x git status` is the command `-x`, and so is

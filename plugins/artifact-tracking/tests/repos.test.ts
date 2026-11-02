@@ -1548,6 +1548,25 @@ test('parseRepoHintsFromBash reads a quoted or escaped reserved word as a comman
   expect(paths('time ! git -C /x status')).toEqual(['/x'])
 })
 
+// A wrapper such as `timeout` runs the command behind it, so its folder counts (issue #242).
+test('parseRepoHintsFromBash sees the command behind timeout, ionice and similar wrappers', () => {
+  const paths = (cmd: string) => parseRepoHintsFromBash(cmd, '/session/proj').paths.map(h => h.path)
+  expect(paths('timeout 5 git -C /x status')).toEqual(['/x'])
+  expect(paths('timeout -s KILL -k 2 5s git -C /x status')).toEqual(['/x'])
+  expect(paths('ionice -c3 git -C /x status')).toEqual(['/x'])
+  expect(paths('stdbuf -oL git -C /x status')).toEqual(['/x'])
+  expect(paths('caffeinate -i git -C /x status')).toEqual(['/x'])
+  expect(paths('setsid git -C /x status')).toEqual(['/x'])
+  expect(paths('doas -u root git -C /x status')).toEqual(['/x'])
+  expect(paths('timeout 5 ionice -c3 nice -n 5 git -C /x status')).toEqual(['/x'])
+  expect(paths('ionice -p 123')).toEqual([])
+  // `doas -C FILE` checks the policy and runs no command.
+  expect(paths('doas -C /etc/doas.conf git -C /x status')).toEqual([])
+  expect(paths('ionice --pid=123 git -C /x status')).toEqual([])
+  // The shell removes the quotes before ionice reads its options.
+  expect(paths('ionice "-c3" git -C /x status')).toEqual(['/x'])
+})
+
 // Bash reads an option of `time` only when it was typed whole. `time "-p" git -C /x status` runs a command named `-p`, so
 // no `git` runs and no folder is read (Codex review of the PR).
 test('parseRepoHintsFromBash reads a quoted or escaped option of time as the command', () => {
