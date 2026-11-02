@@ -97,24 +97,32 @@ export async function probeProcesses(ctx: ProbeCtx, state: ProbeState): Promise<
       if (ps.exitCode !== 0) throw new ExitError(ps.stderr.trim() || `docker ps failed (${ps.exitCode})`)
       const seen = parseDockerPs(ps.stdout)
       const found = new Map<string, ProcessRecord['state']>()
-      for (const r of dockerRows)
-        found.set(
-          r.id,
-          seen.find(x => dockerEntryMatchesRow(x, r))?.state ?? (dockerRowIsFindable(r) ? 'exited' : 'unknown'),
-        )
+      // A listing that the runner cut may lack the line of a live container (issue #295): a missing line proves no absence,
+      // so such a row gets no state here and keeps its last one.
+      const psCut = ps.isStdoutTruncated === true
+      for (const r of dockerRows) {
+        const entry = seen.find(x => dockerEntryMatchesRow(x, r))
+        if (entry !== undefined) found.set(r.id, entry.state)
+        else if (!psCut) found.set(r.id, dockerRowIsFindable(r) ? 'exited' : 'unknown')
+      }
       for (const r of composeRows) {
         const label = `label=com.docker.compose.project=${r.project ?? r.name}`
         const listed = await run('docker', 'ps', '-a', '--filter', label, '--format', '{{.Status}}')
         if (listed.exitCode !== 0) throw new ExitError(listed.stderr.trim() || `docker ps failed (${listed.exitCode})`)
-        found.set(r.id, composeState(listed.stdout))
+        const state = composeState(listed.stdout)
+        // A cut compose listing proves a running line, never its absence (issue #295).
+        if (listed.isStdoutTruncated !== true || state === 'up' || state === 'unhealthy') found.set(r.id, state)
       }
-      for (const r of [...dockerRows, ...composeRows]) mark(r, found.get(r.id) as ProcessRecord['state'])
+      for (const r of [...dockerRows, ...composeRows]) {
+        const next = found.get(r.id)
+        if (next !== undefined) mark(r, next)
+      }
       // Whether the container of a row still exists is a question of its id alone (issue #123, R8): a container of the same
       // name with another id is not it, and `ps -a --no-trunc` prints full ids. A row with no id is never marked. A failed
       // `ps` threw above, so a probe that learned nothing changes nothing. A listing that the runner cut may lack the line of a
       // container that exists, so it proves no absence: a cut listing leaves every mark as it was.
       const psIds = new Set(seen.map(x => x.id.toLowerCase()))
-      if (ps.isStdoutTruncated !== true)
+      if (!psCut)
         for (const r of dockerRows)
           if (r.containerId !== undefined) markGone(r, r.containerId, !psIds.has(r.containerId.toLowerCase()))
     })
