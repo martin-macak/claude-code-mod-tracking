@@ -31,9 +31,10 @@ export type TurnPaneHost = PaneHost & {
  * caps leave out, a row the TTL hides, a child of a closed row and an item that was dismissed are not listed (`laidRefs` is the
  * list that the marks, the labels and the press read).
  *
- * A folded group of the tree view (issue #256) does not hide the first entry: `unfold` is the id of the group of the first entry that
- * the drawing lists when no group is folded, when that group is folded. `laid` and `marks` are those of the drawing with that one group
- * open, so the press that opens it counts what the pane then draws. The other folds stay.
+ * A folded group of the tree view (issue #256) does not hide the first entry. The first entry is the first key of the turn that the
+ * drawing lists as it is now, or that it lists when its own folded group opens (the other folds stay). `unfold` is that group, when the
+ * entry needs it. `laid` and `marks` are those of the drawing with that one group open (or the drawing as it is, with no unfold), so the
+ * press that opens it counts what the pane then draws.
  */
 async function listedOf(
   p: Ports,
@@ -54,28 +55,28 @@ async function listedOf(
     const laid = new Map(laidRefs(groups, { ...view, expanded: open }).map(r => [r.id, r] as const))
     return keys.flatMap(k => laid.get(k) ?? [])
   }
-  const allOpen = new Set([...expanded].filter(id => !folds.has(id)))
-  // With every fold open, the folded groups before an entry may use up the row cap and hide it. So the entry is also looked for with
-  // one fold open at a time, so the folds that stay do not count against it. The candidates are the first entry of the all-open view
-  // and the first entry that each single fold lists. The entry that is first in the order of the turn wins, whichever way it was found.
-  const candidates = [
-    ...listedIn(allOpen)
-      .slice(0, 1)
-      .map(r => ({ id: r.group, at: keys.indexOf(r.id) })),
-    ...[...folds]
-      .filter(id => expanded.has(id))
-      .flatMap(id => {
-        const own = listedIn(new Set([...expanded].filter(f => f !== id))).find(r => r.group === id)
-        return own === undefined ? [] : [{ id, at: keys.indexOf(own.id) }]
-      }),
-  ]
-  const firstGroup = candidates.sort((x, y) => x.at - y.at)[0]?.id
-  const unfold = firstGroup !== undefined && expanded.has(firstGroup) ? firstGroup : undefined
+  // The entry is the first key of the turn that the pane lists as it is drawn now, or that it lists when its own folded group opens
+  // (the other folds stay, and an open group stays open). So an entry that is visible already is never hidden by an unfold, and the
+  // folds that stay count against the row cap as they do when the pane is drawn.
+  const here = new Map(listedIn(expanded).map(r => [r.id, r] as const))
+  const foldedGroups = [...folds].filter(id => expanded.has(id))
+  const alone = new Map(
+    foldedGroups.map(id => [
+      id,
+      new Map(listedIn(new Set([...expanded].filter(f => f !== id))).map(r => [r.id, r] as const)),
+    ]),
+  )
+  const pick = keys.flatMap((k): { id: string; unfold: string | undefined }[] => {
+    if (here.has(k)) return [{ id: k, unfold: undefined }]
+    const g = foldedGroups.find(id => alone.get(id)?.get(k)?.group === id)
+    return g === undefined ? [] : [{ id: k, unfold: g }]
+  })[0]
+  const unfold = pick?.unfold
   const open = unfold === undefined ? expanded : new Set([...expanded].filter(id => id !== unfold))
   const laid = new Set(laidRefs(groups, { ...view, expanded: open }).map(r => r.id))
   const listed = listedIn(open)
   return {
-    first: listed[0]?.id,
+    first: pick?.id,
     marks: listed.filter(r => takesMark(r, o => m.isItemOwner(o))).map(r => r.id),
     laid,
     unfold,

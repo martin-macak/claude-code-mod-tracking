@@ -741,6 +741,37 @@ test('#256 Q9: an earlier turn entry that the cap hides in the all-open view sti
   expect(t.w.state.get('expanded')).toEqual([groups.f0, groups[b]])
 })
 
+/** A folded group A with `b` and 49 filler rows, an open group B with `c`: opening A would push `c` out of the cap of 50. */
+async function visible(order: 'cb' | 'bc') {
+  const t = world({ global: { ui: { sectionRows: 50, maxRows: 50 } } })
+  const [x, y] = order === 'cb' ? ['c', 'b'] : ['b', 'c']
+  await t.turn(1, `one ${url(x as string)} and ${url(y as string)}`)
+  const [c, b] = [t.keyOf(url('c')), t.keyOf(url('b'))]
+  reshape(t, sections => {
+    const [s] = sections as [SectionSpec]
+    const row = (id: string) => ({ ...(s.rows[0] as TreeRow), id })
+    const a = { ...s, id: 'sa', title: 'A', rows: [row(b), ...Array.from({ length: 49 }, (_, i) => row(`f${i}`))] }
+    return [a, { ...s, id: 'sb', title: 'B', rows: [row(c)] }]
+  })
+  const groups = await treeGroups(t, [c, b])
+  t.w.state.set('expanded', [groups[b] as string]) // A is folded, B is open
+  await t.press()
+  return { t, c, b, groups }
+}
+
+test('#256 Q9: an earlier turn entry that is drawn already is selected and no fold opens, though a later entry sits in a folded group', async () => {
+  // Review of PR 315: the unfold of the group of b would push c, which is listed already, out of the row cap.
+  const { t, c, groups, b } = await visible('cb')
+  expect(t.selected()).toBe(c)
+  expect(t.w.state.get('expanded')).toEqual([groups[b]])
+})
+
+test('#256 Q9: the first turn entry sits in a folded group: the group opens although that hides a later entry that is drawn now', async () => {
+  const { t, b } = await visible('bc')
+  expect(t.selected()).toBe(b)
+  expect(t.w.state.get('expanded')).toEqual([])
+})
+
 test('#256 Q9: the first turn entry wins when the all-open view lists it and the other group needs the single-fold try', async () => {
   const { t, b, groups, c } = await capped('bc')
   expect(t.selected()).toBe(b)
