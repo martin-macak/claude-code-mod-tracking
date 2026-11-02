@@ -9,12 +9,16 @@ import { COLOR, cellBox, cellText, GLYPH } from '../theme'
 import { cellNode, headerRow, titleRow } from './cells'
 import { cellOf, GAP, GLYPH_BOX, SHARED_COLUMNS, type Solved, type SolvedColumn, solveColumns } from './columns'
 import { box, button, type TableElements, text } from './el'
-import { glyphOf, type LaidGroup, type LaidRow } from './layout'
+import { glyphOf, hasStop, type LaidGroup, type LaidRow, solverRowsOf } from './layout'
 import { DEFAULT_BODY_COLUMNS, GUTTER, indentOf, type TableActions, type TableView } from './shape'
 
 const EMPTY: Cell = { text: '' }
-/** The id of the one table in the width memo of the solver. */
+/**
+ * The id of the one table in the width memo of the solver. The tree view (issue #256) has its own: its group rows widen the
+ * columns, and the by-list view keeps its widths.
+ */
 const TABLE = 'pane'
+const TREE_TABLE = 'pane:tree'
 
 /** What one drawing of the table needs besides its groups. */
 export interface Draw {
@@ -28,22 +32,38 @@ export interface Draw {
 /** How a cell is cut when it is too wide: the cell's own `clip` first, then the column's. Default: at the end. */
 const clipFor = (cell: Cell, col: SolvedColumn) => ((cell.clip ?? col.clip) === 'middle' ? clipMiddle : clipTo)
 
-function treeCell(d: Draw, col: SolvedColumn, cell: Cell, r: LaidRow, dim: boolean): RenderElement {
+/**
+ * `bare` draws the glyph as text, with no Button and so no Tab stop: the copy of a group row above a window that starts inside its
+ * section (issue #256), whose Button sits out of the window. A group row with no handle has no Button either.
+ */
+function treeCell(
+  d: Draw,
+  col: SolvedColumn,
+  cell: Cell,
+  r: LaidRow,
+  dim: boolean,
+  bare: boolean,
+  after: RenderElement | null = null,
+): RenderElement {
   const indent = indentOf(col.width, r.depth)
   const room = col.width - indent - GLYPH_BOX
   const label = clipFor(cell, col)(normaliseCell(cell.text), room)
-  const handle = button(d.el, {
-    key: r.handle,
-    plain: true,
-    label: glyphOf(r),
-    ...(r.handle === d.focus ? { autoFocus: true as const } : {}),
-    onPress: () => d.actions.enter(r.row.id),
-  })
+  const handle =
+    !hasStop(r) || bare
+      ? text(d.el, {}, glyphOf(r))
+      : button(d.el, {
+          key: r.handle,
+          plain: true,
+          label: glyphOf(r),
+          ...(r.handle === d.focus ? { autoFocus: true as const } : {}),
+          onPress: () => d.actions.enter(r.row.id),
+        })
   return box(
     d.el,
     { width: col.width, flexShrink: 0, paddingLeft: indent, ...cellBox(cell) },
     box(d.el, { width: GLYPH_BOX, flexShrink: 0 }, handle),
     label === '' ? null : cellNode(d.el, cell, label, dim),
+    after,
   )
 }
 
@@ -81,27 +101,74 @@ function markedControl(d: Draw, col: SolvedColumn, cell: Cell, dim: boolean): Re
   )
 }
 
-function rowLine(d: Draw, solved: Solved, r: LaidRow): RenderElement {
+/**
+ * The title of a group row that the name column cuts (issue #256, R14): it spans the name and the description columns, so a
+ * narrow pane keeps the whole title and the count. The note follows the title in the room that is left, and is left out when
+ * none is. Undefined when the title fits in the name column (the note then stands in the description column) or the row has no
+ * description column after the name.
+ */
+function spanOf(
+  solved: Solved,
+  r: LaidRow,
+): { readonly col: SolvedColumn; readonly note: Cell | undefined } | undefined {
+  const at = solved.columns.findIndex(c => c.tree)
+  const name = solved.columns[at]
+  const next = solved.columns[at + 1]
+  if (r.head !== true || name === undefined || next?.id !== 'description') return undefined
+  const title = normaliseCell(cellOf(r.row, name.id)?.text ?? '')
+  if (cellWidth(title) <= name.width - indentOf(name.width, r.depth) - GLYPH_BOX) return undefined
+  return { col: { ...name, width: name.width + GAP + next.width }, note: cellOf(r.row, next.id) }
+}
+
+/** The note of a spanned group row, clipped to the room the title leaves in the cell (three cells at least), or none. */
+function noteAfter(
+  d: Draw,
+  span: { readonly col: SolvedColumn; readonly note: Cell | undefined },
+  r: LaidRow,
+): RenderElement | null {
+  const { col, note } = span
+  if (note === undefined) return null
+  const title = cellOf(r.row, col.id)?.text ?? ''
+  const used =
+    GLYPH_BOX + Math.min(cellWidth(normaliseCell(title)), col.width - indentOf(col.width, r.depth) - GLYPH_BOX)
+  const room = col.width - indentOf(col.width, r.depth) - used - GAP
+  if (room < 3) return null
+  return box(
+    d.el,
+    { paddingLeft: GAP },
+    cellNode(d.el, note, clipTo(normaliseCell(note.text), room), r.row.dim === true),
+  )
+}
+
+function rowLine(d: Draw, solved: Solved, r: LaidRow, bare = false): RenderElement {
   const selected = r.row.id === d.view.selected
   // A pane that has no keys keeps the marker, dim, and drops the background: nothing here answers a key (issue #108).
   const live = d.view.focused !== false
   const dim = r.row.dim === true
-  const cells = solved.columns.map(col => {
-    if (col.id === 'extras') return extrasCell(d, col, r, dim)
-    const cell = cellOf(r.row, col.id) ?? EMPTY
-    if (col.tree) return treeCell(d, col, cell, r, dim)
-    if (col.id === 'control' && d.view.marked?.has(r.row.id) === true) return markedControl(d, col, cell, dim)
-    return box(
-      d.el,
-      { width: col.width, flexShrink: 0, justifyContent: col.justify, ...cellBox(cell) },
-      cellNode(d.el, cell, clipFor(cell, col)(normaliseCell(cell.text), col.width), dim),
-    )
+  const span = spanOf(solved, r)
+  const cells = solved.columns.flatMap(col => {
+    if (span !== undefined && col.id === 'description') return []
+    if (span !== undefined && col.tree)
+      return [treeCell(d, span.col, cellOf(r.row, col.id) ?? EMPTY, r, dim, bare, noteAfter(d, span, r))]
+    return [cellFor(d, col, r, dim, bare)]
   })
   return box(
     d.el,
     { columnGap: 1, ...(selected && live ? { backgroundColor: COLOR.selected } : {}) },
     text(d.el, selected && !live ? { dimColor: true } : {}, selected ? GLYPH.selected : GLYPH.unselected),
     ...cells,
+  )
+}
+
+function cellFor(d: Draw, col: SolvedColumn, r: LaidRow, dim: boolean, bare: boolean): RenderElement {
+  if (col.id === 'extras') return extrasCell(d, col, r, dim)
+  const cell = cellOf(r.row, col.id) ?? EMPTY
+  if (col.tree) return treeCell(d, col, cell, r, dim, bare)
+  if (col.id === 'control' && d.view.marked?.has(r.row.id) === true) return markedControl(d, col, cell, dim)
+  return box(
+    d.el,
+    { width: col.width, flexShrink: 0, justifyContent: col.justify, ...cellBox(cell) },
+    cellNode(d.el, cell, clipFor(cell, col)(normaliseCell(cell.text), col.width), dim),
   )
 }
 
@@ -150,9 +217,9 @@ export function solving(d: Draw, laid: readonly LaidGroup[]): Solving {
  */
 export const solvedOf = (laid: readonly LaidGroup[], width: number): Solved =>
   solveColumns(
-    TABLE,
+    laid.some(g => g.spec.foldable === true) ? TREE_TABLE : TABLE,
     SHARED_COLUMNS,
-    laid.flatMap(g => g.rows),
+    solverRowsOf(laid),
     width - GUTTER,
   )
 
@@ -161,6 +228,19 @@ export const rowParts = (d: Draw, g: Solving, r: LaidRow): RenderElement[] => [r
 
 /** The one header row of the table, over the columns of the rows. */
 export const tableHeader = (d: Draw, g: Solving): RenderElement => headerRow(d.el, SHARED_COLUMNS, g.solved)
+
+/**
+ * The group row of a foldable group (issue #256): a row of the table, with the Button of its glyph. `bare` draws a copy with no
+ * Button, for a window that starts inside the section: the Button keeps its place among the stops (windowed.ts).
+ */
+export const groupRowLine = (g: Solving, d: Draw, head: LaidRow, bare = false): RenderElement =>
+  rowLine(d, g.solved, head, bare)
+
+/** The text of a group with no row, under its group row (issue #256): what the title line path draws after the title. */
+export const emptyOf = (d: Draw, s: LaidGroup): RenderElement | null =>
+  s.spec.rows.length === 0 && s.spec.empty !== undefined
+    ? text(d.el, { dimColor: true }, normaliseCell(s.spec.empty))
+    : null
 
 /** The title row of a group that has a row to draw. */
 export const groupTitle = (d: Draw, s: LaidGroup, g: Solving): RenderElement => titleRow(d.el, s.spec, g.width)
@@ -185,9 +265,21 @@ export function bareParts(d: Draw, s: LaidGroup): RenderElement[] {
  */
 export function drawGroups(d: Draw, laid: readonly LaidGroup[]): RenderElement[] {
   const g = solving(d, laid)
-  const headed = laid.some(s => s.rows.length > 0)
+  // A group row is a row of the table: a pane of folded groups keeps its header and draws every group row in the columns.
+  const headed = laid.some(s => s.rows.length > 0 || s.head !== undefined)
   return laid.map((s, i) => {
     const lead = i === 0 && headed ? [tableHeader(d, g)] : []
+    if (s.head !== undefined) {
+      return box(
+        d.el,
+        { flexDirection: 'column' },
+        ...lead,
+        groupRowLine(g, d, s.head),
+        emptyOf(d, s),
+        ...s.rows.flatMap(r => rowParts(d, g, r)),
+        ...(s.more > 0 ? [moreRowOf(d, s, g)] : []),
+      )
+    }
     if (s.rows.length === 0) return box(d.el, { flexDirection: 'column' }, ...lead, ...bareParts(d, s))
     return box(
       d.el,

@@ -88,6 +88,15 @@ test('clear runs the tracker commands, then clears the list and the stored copy'
   expect(t.w.store.has('v2:s:sess-1')).toBe(false)
 })
 
+test('clear unfolds every group of the tree view and leaves the choice of the view alone (issue #256)', async () => {
+  const t = world()
+  await t.w.ports.state.expanded.update(() => ['tree:prs', 'tree:files', 'a-row'])
+  await t.w.ports.state.view.update(() => 'tree')
+  await t.run('clear')
+  expect(await t.w.ports.state.expanded.get()).toEqual([])
+  expect(await t.w.ports.state.view.get()).toBe('tree')
+})
+
 test('prio sets a level by ref and saves it before the reply', async () => {
   const t = world()
   await t.see('see https://github.com/acme/web/issues/9')
@@ -261,10 +270,18 @@ test('view sets the session view after the config check, and prints the list wit
   expect((await said.commands.run(said.ports, ' View  STATUS ')).text).toBe('View: status\n\nLIST')
 })
 
+test('view tree sets the tree view and prints the list with View: tree first (issue #256)', async () => {
+  const t = fakeHost()
+  expect((await t.commands.run(t.ports, 'view tree')).text).toBe('View: tree\n\nLIST')
+  expect(await t.ports.state.view.get()).toBe('tree')
+})
+
 test('view with an unknown name, with no name or with more words prints the usage and sets nothing', async () => {
   const t = fakeHost()
   for (const args of ['view', 'view type', 'view status flat', 'view constructor'])
-    expect((await t.commands.run(t.ports, args)).text).toBe('Usage: /track view <list|tracker|status|reason|kind|flat>')
+    expect((await t.commands.run(t.ports, args)).text).toBe(
+      'Usage: /track view <list|tracker|status|reason|kind|flat|tree>',
+    )
   expect(await t.ports.state.view.get()).toBeNull()
   expect(t.calls).toEqual(['entry', 'entry', 'entry', 'entry']) // no config check, no list
 })

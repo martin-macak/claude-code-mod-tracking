@@ -4,6 +4,7 @@
 import { expect, test } from 'claude-code/testing'
 import { footerKeys, KeyRegistry } from '../core/infra/keys'
 import type { GroupSpec, RowRef } from '../core/interfaces/view'
+import { viewSummary } from '../core/lib/grouping'
 import { KEYS as GITHUB_ROW_KEYS } from '../trackers/github/actions'
 import { QUESTION_KEYS } from '../trackers/questions/actions'
 import { resetWidths } from '../ux/tree-data-table/columns'
@@ -56,6 +57,26 @@ test('viewLineRows: none without a line, one row where the words and the six key
   expect(viewLineRows(LINE, 49)).toBe(2) // a docked pane of 49 cells: `View: list g a t` fill row one, `p m e` the second (issues #138, #199 and #276)
   expect(viewLineRows(LINE, 40)).toBe(3) // `View: list g a`, then `t p m`, then `e`: the sixth key takes the row that two rows held before
   expect(viewLineRows(LINE, 24)).toBe(4)
+})
+
+// Issue #256 (R16): the tree view takes the rows of the list view on the view line, at every width the line has a threshold at, and its
+// words are no longer than `View: list`: the label `View: tree` is the same 10 cells.
+test('viewLineRows: the tree view takes the same rows as the list view at every width, with every kind of words', () => {
+  const tail = [
+    '',
+    ' · 3 marked',
+    ' · touched only',
+    ' · touched only · 3 hidden',
+    ' · touched only · 12 hidden · 3 marked',
+  ]
+  for (const width of [96, 83, 82, 58, 49, 40, 24])
+    for (const more of tail)
+      expect(viewLineRows({ text: `View: tree${more}`, keys: KEYS }, width), `${width} ${more}`).toBe(
+        viewLineRows({ text: `View: list${more}`, keys: KEYS }, width),
+      )
+  const base = { touchedOnly: false, showAll: false, hidden: 0 }
+  expect(viewSummary({ ...base, view: 'tree', ended: 5 })).toBe('View: tree') // no `ended hidden`: the group row says it
+  expect(viewSummary({ ...base, view: 'list', ended: 5 })).toBe('View: list')
 })
 
 test('viewLineRows with the count of the marked rows: the words grow but the line stays at one row at 96 cells and two at 49', () => {

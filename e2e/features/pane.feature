@@ -782,3 +782,40 @@ Feature: Drive the /track pane with the keys
     Then the screen matches /│Files · config +1/
     And the screen matches /│Files · docs +1/
     And the screen matches /│View: kind/
+
+  # Issue #256. `/track view tree` draws each section as a group row of the table: a fold glyph, the title and the count, with the
+  # rows one level right. Enter on the group row that holds the ring folds it: its rows go, the glyph turns to `▸` and the ring stays on
+  # the row, so Down goes to the next group row and not to a row of the folded group. A second Enter brings the rows back. The pane that
+  # opens has the ring on its first group row. It runs docked (49 cells wide, where the group row keeps its glyph, title and count) and
+  # inline. The rows of the web links name their host (`one.example`), which the transcript holds too, so the checks read the pane only.
+  Scenario Outline: In the tree view Enter folds a group row and the ring stays on it at <cols>x<rows>
+    Given a terminal of <cols> columns by <rows> rows
+    And a Claude Code session with the artifact-tracking mod
+    When I type "Note https://one.example/a, https://two.example/b and the file README.md for later. Reply ok."
+    And Claude finishes
+    And I type "/track view tree"
+    Then the screen shows "View: tree"
+    When I type "/track"
+    Then the pane is <placement>
+    And the pane shows "Web links"
+    And the pane shows "Files"
+    And the pane shows "one.example"
+    When I press "Tab" until the focus ring is on "▾"
+    Then the focus ring is on "▾"
+    When I press "Enter"
+    Then the focus ring is on "▸"
+    And the pane stops showing "one.example"
+    And the pane shows "Web links"
+    When I press "Down"
+    Then the focus ring is on "▾"
+    And the pane shows "README.md"
+    When I press "Up"
+    Then the focus ring is on "▸"
+    When I press "Enter"
+    Then the focus ring is on "▾"
+    And the pane shows "one.example"
+
+    Examples:
+      | cols | rows | placement |
+      | 120  | 36   | docked    |
+      | 100  | 40   | inline    |

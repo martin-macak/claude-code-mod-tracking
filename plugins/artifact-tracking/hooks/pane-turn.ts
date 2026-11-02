@@ -11,6 +11,7 @@ import { takesMark } from '../core/infra/keys'
 import type { TurnBand } from '../core/infra/turn-ledger'
 import type { ItemsHost } from '../core/interfaces/items'
 import type { Ports } from '../core/interfaces/ports'
+import type { RowRef } from '../core/interfaces/view'
 import { turnMarked } from '../core/lib/marks'
 import { laidRefs } from '../ux/tree-data-table/table'
 import { writeMarks } from './pane-marks'
@@ -29,22 +30,47 @@ export type TurnPaneHost = PaneHost & {
  * keys that `m` could mark (`takesMark`), in the order of the turn, and `laid`, every row that the drawing counts. A row that the
  * caps leave out, a row the TTL hides, a child of a closed row and an item that was dismissed are not listed (`laidRefs` is the
  * list that the marks, the labels and the press read).
+ *
+ * A folded group of the tree view (issue #256) does not hide the first entry: `unfold` is the id of the group of the first entry that
+ * the drawing lists when no group is folded, when that group is folded. `laid` and `marks` are those of the drawing with that one group
+ * open, so the press that opens it counts what the pane then draws. The other folds stay.
  */
 async function listedOf(
   p: Ports,
   m: TurnPaneHost,
   keys: readonly string[],
-): Promise<{ first: string | undefined; marks: readonly string[]; laid: ReadonlySet<string> }> {
+): Promise<{
+  first: string | undefined
+  marks: readonly string[]
+  laid: ReadonlySet<string>
+  unfold: string | undefined
+}> {
   const expanded = new Set(await p.state.expanded.get())
   const groups = await paneGroups(p, m, { selected: null, expanded })
   const shown = await shownOf(p, groups)
   const view = { expanded, shown: (id: string) => shown.get(id) ?? 0, limits: m.config.global().ui }
-  const laid = new Map(laidRefs(groups, view).map(r => [r.id, r] as const))
-  const listed = keys.flatMap(k => laid.get(k) ?? [])
+  const folds = new Set(groups.filter(g => g.foldable === true).map(g => g.id))
+  const listedIn = (open: ReadonlySet<string>): readonly RowRef[] => {
+    const laid = new Map(laidRefs(groups, { ...view, expanded: open }).map(r => [r.id, r] as const))
+    return keys.flatMap(k => laid.get(k) ?? [])
+  }
+  const allOpen = new Set([...expanded].filter(id => !folds.has(id)))
+  // With every fold open, the folded groups before the entry may use up the row cap. Then the entry is looked for with one fold
+  // open at a time, so the folds that stay do not count against it.
+  const firstGroup =
+    listedIn(allOpen)[0]?.group ??
+    [...folds]
+      .filter(id => expanded.has(id))
+      .find(id => listedIn(new Set([...expanded].filter(f => f !== id))).some(r => r.group === id))
+  const unfold = firstGroup !== undefined && expanded.has(firstGroup) ? firstGroup : undefined
+  const open = unfold === undefined ? expanded : new Set([...expanded].filter(id => id !== unfold))
+  const laid = new Set(laidRefs(groups, { ...view, expanded: open }).map(r => r.id))
+  const listed = listedIn(open)
   return {
     first: listed[0]?.id,
     marks: listed.filter(r => takesMark(r, o => m.isItemOwner(o))).map(r => r.id),
-    laid: new Set(laid.keys()),
+    laid,
+    unfold,
   }
 }
 
@@ -91,13 +117,28 @@ export async function openTurn(
   ord?: number,
 ): Promise<void> {
   const turn = await m.bandTurn(ord)
-  const { first, marks, laid } =
-    turn === undefined ? { first: undefined, marks: [], laid: new Set<string>() } : await listedOf(p, m, turn.keys)
+  const { first, marks, laid, unfold } =
+    turn === undefined
+      ? { first: undefined, marks: [], laid: new Set<string>(), unfold: undefined }
+      : await listedOf(p, m, turn.keys)
   const before = await p.state.selected.get()
   const want = turn === undefined ? before : (first ?? null)
   if (want !== before) await p.state.selected.update(unlessClosed(press, () => want))
+  // The group of the first entry opens before the pane does (issue #256): a removal, never a toggle, so an open group stays open.
+  let unfolded = false
+  if (unfold !== undefined) {
+    await p.state.expanded.update(
+      unlessClosed(press, cur => {
+        unfolded = cur.includes(unfold)
+        return cur.filter(id => id !== unfold)
+      }),
+    )
+  }
   if (!(await p.ui.open())) {
     if (want !== before) await p.state.selected.update(unlessClosed(press, cur => (cur === want ? before : cur)))
+    if (unfold !== undefined && unfolded) {
+      await p.state.expanded.update(unlessClosed(press, cur => (cur.includes(unfold) ? cur : [...cur, unfold])))
+    }
     p.ui.toast(NO_ROOM)
     return
   }

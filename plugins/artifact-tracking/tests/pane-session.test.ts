@@ -2704,6 +2704,8 @@ test('g takes the next view of global.ui.views, keeps the row selected and asks 
   await t.pressKey('view')
   expect(t.w.state.get('view')).toBe('flat')
   await t.pressKey('view')
+  expect(t.w.state.get('view')).toBe('tree') // issue #256: the tree view ends the default cycle
+  await t.pressKey('view')
   expect(t.w.state.get('view')).toBe('list')
   expect(t.selected()).toBe('b')
   expect(t.w.ui.focused.at(-1)).toBe('r1')
@@ -3635,4 +3637,196 @@ test('the help view draws no question', async () => {
   t.w.state.set('help', true)
   const tree = await t.draw()
   expect(texts(tree).some(([, s]) => s.startsWith('Dismiss '))).toBe(false)
+})
+
+// ---------------------------------------------------------------- the tree view (issue #256)
+
+/** `a`, `b`, `c` in the tree view: the group row `tree:web` is r0 and its rows are r1 to r3. */
+async function treeView(over: Partial<{ selected: string | null }> = {}) {
+  const t = setup(webs('a', 'b', 'c'))
+  await t.w.ports.state.view.update(() => 'tree')
+  t.w.state.set('selected', over.selected === undefined ? 'tree:web' : over.selected)
+  await t.draw()
+  t.w.stateSets = {}
+  return t
+}
+
+test('#256: a press of the group row that holds the ring folds it, keeps it selected and asks for the ring on its handle', async () => {
+  const t = await treeView()
+  expect(handlesOf(await t.draw())).toEqual(['r0', 'r1', 'r2', 'r3'])
+  press(buttonOf(await t.draw(), 'r0'))
+  await t.session.idle()
+  expect(t.w.state.get('expanded')).toEqual(['tree:web'])
+  expect(t.selected()).toBe('tree:web')
+  expect(t.w.ui.focused.at(-1)).toBe('r0')
+  expect(t.w.state.get('preview') ?? null).toBeNull() // a group row has no detail view
+  const folded = await t.draw()
+  expect(handlesOf(folded)).toEqual(['r0'])
+  expect(buttonOf(folded, 'r0').props.label).toBe('▸')
+  press(buttonOf(folded, 'r0'))
+  await t.session.idle()
+  expect(t.w.state.get('expanded')).toEqual([])
+  expect(handlesOf(await t.draw())).toEqual(['r0', 'r1', 'r2', 'r3'])
+})
+
+test('#256: a press of a group row that is not the selected one only selects it', async () => {
+  const t = await treeView({ selected: 'b' })
+  press(buttonOf(await t.draw(), 'r0'))
+  await t.session.idle()
+  expect(t.selected()).toBe('tree:web')
+  expect(t.w.ui.focused.at(-1)).toBe('r0')
+  expect(t.w.state.get('expanded') ?? []).toEqual([]) // the first click selected; the second folds
+})
+
+test('#256: o folds the selected group row and is dim on a group with no row; x, the digits and m are dim on a group row', async () => {
+  const t = await treeView()
+  const tree = await t.draw()
+  expect(buttonOf(tree, 'open').props.dimColor).toBeUndefined()
+  for (const key of ['dismiss', 'prio-1', 'prio-2', 'prio-3', 'prio-0']) {
+    expect(buttonOf(tree, key).props.dimColor, key).toBe(true)
+  }
+  expect(buttonOf(tree, 'mark').props.dimColor).toBe(true)
+  await t.pressKey('dismiss')
+  expect(t.host.calls).toEqual([])
+  await t.pressKey('open')
+  expect(t.w.state.get('expanded')).toEqual(['tree:web'])
+  expect(t.selected()).toBe('tree:web')
+  expect(t.w.ui.focused.at(-1)).toBe('r0')
+  const empty = setup([])
+  await empty.w.ports.state.view.update(() => 'tree')
+  empty.w.state.set('selected', 'tree:web')
+  await empty.draw()
+  await empty.pressKey('open')
+  expect(empty.w.state.get('expanded') ?? []).toEqual([])
+})
+
+test('#256: with a row marked, x and the digits stay live on a group row and act on the marked rows; the group row keeps the selection and the ring', async () => {
+  const t = await treeView()
+  t.w.state.set('marks', ['b'])
+  const tree = await t.draw()
+  for (const key of ['dismiss', 'prio-1']) expect(buttonOf(tree, key).props.dimColor, key).toBeUndefined()
+  await t.pressKey('prio-1')
+  expect(t.host.calls).toEqual(['setPriorities b high'])
+  expect(t.selected()).toBe('tree:web')
+  t.host.calls.length = 0
+  t.w.state.set('marks', ['b'])
+  t.host.onDismiss = ids => t.host.setRows(webs('a', 'b', 'c').filter(r => !ids.includes(r.id)))
+  await t.pressKey('dismiss') // asks
+  await t.pressKey('dismiss') // dismisses the marked row only
+  expect(t.host.calls.filter(c => c.startsWith('setPriorities'))).toEqual([])
+  expect(t.host.calls.some(c => c.includes('b'))).toBe(true)
+  expect(t.selected()).toBe('tree:web') // the group row stays, so the selection and the ring stay on it
+  expect(t.w.ui.focused.at(-1)).toBe('r0')
+})
+
+test('#256: the help view of the tree view is the help view of the list: the same keys, groups and footer', async () => {
+  const drawOf = async (view: 'list' | 'tree') => {
+    const t = setup(webs('a'), { path: '/p/config.json', version: '1.2.3' })
+    t.m.keys.add('web', GITHUB_ROW_KEYS) // a tracker's keys are titled by the groups that hold its rows
+    await t.w.ports.state.view.update(() => view)
+    t.w.state.set('help', true)
+    return leaves(await t.draw())
+  }
+  const list = await drawOf('list')
+  expect(list.length).toBeGreaterThan(10)
+  expect(await drawOf('tree')).toEqual(list)
+})
+
+test('#256: the ring on a group row selects it, also on a pane that opens with no selection', async () => {
+  const t = await treeView({ selected: null })
+  await t.session.focused(t.w.ports, 'r0')
+  expect(t.selected()).toBe('tree:web')
+})
+
+test('#256: a fold survives a close, a refresh and a switch to another view and back; the list view never sees it', async () => {
+  const t = await treeView()
+  press(buttonOf(await t.draw(), 'r0'))
+  await t.session.idle()
+  await t.session.closed(t.w.ports)
+  expect(t.w.state.get('expanded')).toEqual(['tree:web'])
+  t.w.state.set('selected', 'tree:web')
+  await t.pressKey('refresh')
+  expect(t.w.state.get('expanded')).toEqual(['tree:web'])
+  await t.pressKey('view') // tree -> list
+  expect(t.w.state.get('view')).toBe('list')
+  expect(handlesOf(await t.draw())).toEqual(['r0', 'r1', 'r2']) // a fold in the tree view does not change the list view
+  await t.w.ports.state.view.update(() => 'tree')
+  expect(handlesOf(await t.draw())).toEqual(['r0']) // and the fold is still there
+})
+
+test('#256: a new row, or a failed row, in a folded group leaves it folded and changes its count', async () => {
+  const t = await treeView()
+  press(buttonOf(await t.draw(), 'r0'))
+  await t.session.idle()
+  t.host.setRows([...webs('a', 'b', 'c', 'd'), failing('e')])
+  const tree = await t.draw()
+  expect(handlesOf(tree)).toEqual(['r0'])
+  expect(leaves(tree)).toContain('5 (1 failed)')
+})
+
+test('#256: g from the list to the tree keeps the selected row; a row in a folded group falls to its group row', async () => {
+  const t = await treeView({ selected: 'b' })
+  await t.w.ports.state.view.update(() => 'flat')
+  await t.draw()
+  await t.pressKey('view') // flat -> tree
+  expect(t.w.state.get('view')).toBe('tree')
+  expect(t.selected()).toBe('b')
+  expect(t.w.ui.focused.at(-1)).toBe('r2') // r0 is the group row, a is r1, b is r2
+  await t.w.ports.state.view.update(() => 'flat')
+  t.w.state.set('expanded', ['tree:web'])
+  await t.draw()
+  await t.pressKey('view') // flat -> tree, where b sits in a folded group
+  expect(t.selected()).toBe('tree:web')
+  expect(t.w.ui.focused.at(-1)).toBe('r0')
+})
+
+test('#256: g from the tree with a group row selected selects the first row of that section in the list', async () => {
+  const t = await treeView()
+  await t.pressKey('view')
+  expect(t.w.state.get('view')).toBe('list')
+  expect(t.selected()).toBe('a')
+  expect(t.w.ui.focused.at(-1)).toBe('r0')
+})
+
+test('#256: the view switch writes no config file and no store key; the choice is the session atom', async () => {
+  const t = await treeView()
+  await t.w.clock.advance(5000)
+  const files = { ...t.w.files }
+  const sets = t.w.storeSets
+  await t.pressKey('view')
+  await t.w.clock.advance(5000)
+  expect(t.w.files).toEqual(files)
+  expect(t.w.storeSets).toBe(sets)
+})
+
+test('#256: global.ui.view = tree opens the tree view, and its /track text is the list text with View: tree first', async () => {
+  const t = setup(webs('a', 'b'), { file: { global: { ui: { view: 'tree' } } } })
+  expect(handlesOf(await t.draw())).toEqual(['r0', 'r1', 'r2'])
+  const plain = setup(webs('a', 'b'))
+  const byList = await listText(plain.w.ports, plain.m)
+  expect(await listText(t.w.ports, t.m)).toBe(`View: tree\n\n${byList}`)
+})
+
+test('#256: /track of the tree view prints a section with text: title once, as the list does, behind View: tree', async () => {
+  const sec = { ...section('q', webs('a', 'b')), text: 'title' as const }
+  const textOf = async (view: 'list' | 'tree') => {
+    const t = setup([])
+    t.host.sections = [sec]
+    await t.w.ports.state.view.update(() => view)
+    return listText(t.w.ports, t.m)
+  }
+  const byList = await textOf('list')
+  const byTree = await textOf('tree')
+  expect(byTree).toBe(`View: tree\n\n${byList}`)
+  expect(byTree.split(sec.title).length - 1).toBe(byList.split(sec.title).length - 1)
+})
+
+test('#256: a press of the selected row of a plain group still opens its detail view and folds nothing', async () => {
+  const t = setup(webs('a', 'b'))
+  t.w.state.set('selected', 'a')
+  await t.draw()
+  press(buttonOf(await t.draw(), 'r0'))
+  await t.session.idle()
+  expect(t.w.state.get('expanded') ?? []).toEqual([])
+  expect(t.w.state.get('preview')).toEqual({ rowId: 'a', owner: 'web', mode: 'detail' })
 })

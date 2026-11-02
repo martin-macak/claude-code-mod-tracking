@@ -6,6 +6,7 @@ import type { TurnLedger } from '../core/interfaces/turns'
 import type { SectionSpec, TreeRow } from '../core/interfaces/view'
 import { MAX_ENTRIES } from '../core/lib/turn-entries'
 import { type PaneHost, PaneSession } from '../hooks/pane-session'
+import { paneGroups } from '../hooks/pane-text'
 import { type FakeConfig, fakeConfig } from './fixtures/config-fs'
 import { buttonOf, press as pressButton, rowBoxes, starsOf, viewWords } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
@@ -606,4 +607,93 @@ test('#232 AC4: the order of a press: the selection, the open, the refresh, the 
   await t.press() // the second press: the same order, and the marks write is the clear
   expect(seen.slice(firstPress)).toEqual(['open', 'refresh', 'marks', 'selected', 'ring']) // the first selection write is gone: same row
   expect(t.marks()).toEqual([])
+})
+
+// ---------------------------------------------------------------- the tree view (issue #256, Q9)
+
+/** The ids of the foldable groups of the tree view, by the keys of the rows they hold: `{ [key]: groupId }`. */
+async function treeGroups(t: ReturnType<typeof world>, keys: readonly string[]): Promise<Record<string, string>> {
+  t.w.state.set('view', 'tree')
+  const groups = await paneGroups(t.w.ports, t.m, { selected: null, expanded: new Set() })
+  return Object.fromEntries(keys.map(k => [k, groups.find(g => g.rows.some(r => r.id === k))?.id ?? '']))
+}
+
+test('#256 Q9: the band press unfolds the folded group of the first entry and selects the entry; other folds stay', async () => {
+  const t = world()
+  await t.turn(1, `one ${url('a')}`)
+  const a = t.keyOf(url('a'))
+  const { [a]: group } = await treeGroups(t, [a])
+  expect(group).toMatch(/^tree:/)
+  t.w.state.set('expanded', [group as string, 'tree:elsewhere'])
+  await t.press()
+  expect(t.selected()).toBe(a)
+  expect(t.w.state.get('expanded')).toEqual(['tree:elsewhere']) // a removal: the other fold stays
+  expect(t.w.ui.toasts).toEqual([])
+  expect(t.w.ui.focused).toHaveLength(1)
+  expect(t.marks()).toEqual([a]) // the entry is drawn now, so it counts for the marks of #232
+})
+
+test('#256 Q9: the band press leaves an open group open: it removes the fold and never toggles', async () => {
+  const t = world()
+  await t.turn(1, `one ${url('a')}`)
+  const a = t.keyOf(url('a'))
+  await treeGroups(t, [a])
+  t.w.state.set('expanded', [])
+  await t.press()
+  expect(t.selected()).toBe(a)
+  expect(t.w.state.get('expanded')).toEqual([]) // an open group stays open
+})
+
+test('#256 Q9: the first entry sits below a closed row of a folded group: the press unfolds the group and selects the row that is drawn', async () => {
+  const t = world()
+  await t.turn(1, `one ${url('a')} and ${url('b')}`)
+  const [a, b] = [t.keyOf(url('a')), t.keyOf(url('b'))]
+  reshape(t, sections => {
+    const child = sections.flatMap(s => s.rows).find(r => r.id === a)
+    return sections.map(s => ({
+      ...s,
+      rows: s.rows.filter(r => r.id !== a).map(r => (r.id === b && child ? { ...r, children: [child] } : r)),
+    }))
+  })
+  const { [b]: group } = await treeGroups(t, [b])
+  t.w.state.set('expanded', [group as string])
+  await t.press()
+  expect(t.w.state.get('expanded')).toEqual([]) // the group of the first row that is drawn is open now
+  expect(t.selected()).toBe(b) // a is below the closed b: the row that the pane draws is b
+  expect(t.marks()).toEqual([b])
+})
+
+test('#256 Q9: a refused open puts the fold back with the selection', async () => {
+  const t = world()
+  await t.turn(1, `one ${url('a')}`)
+  const a = t.keyOf(url('a'))
+  const { [a]: group } = await treeGroups(t, [a])
+  t.w.state.set('expanded', [group as string])
+  t.w.ui.placed = false
+  await t.press()
+  expect(t.w.state.get('expanded')).toEqual([group])
+  expect(t.selected() ?? null).toBeNull()
+})
+
+test('#256 Q9: a folded group that holds the entry opens although the folded groups before it would use up the row cap', async () => {
+  // Review of PR 315: with every fold open, the 50 rows of the first group take the whole cap, so the lookup found no entry.
+  const t = world({ global: { ui: { sectionRows: 50, maxRows: 50 } } })
+  await t.turn(1, `one ${url('a')}`)
+  const a = t.keyOf(url('a'))
+  reshape(t, sections => {
+    const [s] = sections as [SectionSpec]
+    const filler = {
+      ...s,
+      id: 'filler',
+      title: 'Filler',
+      rows: Array.from({ length: 50 }, (_, i) => ({ ...(s.rows[0] as TreeRow), id: `f${i}` })),
+    }
+    return [filler, s]
+  })
+  const groups = await treeGroups(t, [a, 'f0'])
+  t.w.state.set('expanded', [groups.f0 as string, groups[a] as string])
+  await t.press()
+  expect(t.selected()).toBe(a)
+  expect(t.w.state.get('expanded')).toEqual([groups.f0]) // only the group of the entry opens; the other fold stays
+  expect(t.w.ui.toasts).toEqual([])
 })

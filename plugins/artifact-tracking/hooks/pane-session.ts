@@ -42,6 +42,7 @@ import {
   findDetailRow,
   findRow,
   findTreeRow,
+  foldableOf,
   layout,
   neighbourOf,
   refsOf,
@@ -548,6 +549,13 @@ export class PaneSession {
           if (!press.still()) return
           // The row the pane treated as selected, not the atom: after a row hid, the drawing fell to another row (issue #49).
           const held = (this.chosen?.atom === before ? this.chosen.id : before) === id
+          // A group row of the tree view (issue #256) folds on a press of the row that holds the ring, as the row of #275 B8 says: it has
+          // no detail view. The row stays selected and the ring goes to its handle, which the next drawing gives it.
+          if (held && foldableOf(this.groups, id) !== undefined) {
+            await p.state.expanded.update(unlessClosed(press, cur => toggled(cur, id)))
+            await this.refocus.to(p, m, id, press)
+            return
+          }
           const row = findRow(this.groups, id)
           if (held && row !== undefined) {
             await this.refocus.askKeys(p, press)

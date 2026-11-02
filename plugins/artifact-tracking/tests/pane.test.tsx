@@ -579,7 +579,7 @@ test('pane: a section over its cap ends in an N more row; Enter shows the next c
 
 // ---------------------------------------------------------------- the views (issue #63, L3)
 
-test('pane: g cycles by list, by status and flat: the group titles and the view line change, the row stays selected', async ($, on) => {
+test('pane: g cycles by list, by status, flat and tree: the group titles and the view line change, the row stays selected', async ($, on) => {
   const { ui } = await paneOver($, on, LINKS)
   await focusOn($, 'r1')
   expect(await ui.find({ text: 'Web links' })).toBeDefined()
@@ -594,8 +594,27 @@ test('pane: g cycles by list, by status and flat: the group titles and the view 
   expect(await ui.find({ text: 'All' })).toBeDefined()
   expect(await ui.find({ text: 'View: flat' })).toBeDefined()
   await ui.press({ key: 'view' })
+  // The tree view (issue #256) draws the title as the group row of the table, with a fold Button before the rows.
+  expect(await ui.find({ text: 'Web links' })).toBeDefined()
+  expect(await ui.find({ text: 'View: tree' })).toBeDefined()
+  expect(rowsOf(await ui.drawn()).length).toBe(3) // the group row and the two links
+  await ui.press({ key: 'view' })
   expect(await ui.find({ text: 'Web links' })).toBeDefined()
   expect(await ui.find({ text: 'View: list' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('pane: in the tree view a press of the group row that holds the ring folds it, and a second press brings the rows back', async ($, on) => {
+  const { ui } = await paneOver($, on, LINKS)
+  for (let i = 0; i < 3; i++) await ui.press({ key: 'view' }) // list -> status -> flat -> tree
+  expect(await ui.find({ text: 'View: tree' })).toBeDefined()
+  await focusOn($, 'r0') // the ring walks onto the group row: it is selected
+  expect(rowsOf(await ui.drawn()).find(r => r.selected)?.handle).toBe('r0')
+  await ui.press({ key: 'r0' })
+  expect(rowsOf(await ui.drawn()).map(r => r.handle)).toEqual(['r0']) // the links left the drawing; the group row stays selected
+  expect(rowsOf(await ui.drawn())[0]?.selected).toBe(true)
+  await ui.press({ key: 'r0' })
+  expect(rowsOf(await ui.drawn()).length).toBe(3)
   await ui.unmount()
 })
 

@@ -53,8 +53,8 @@ const level = (l: Effective): Facets => ({ level: l })
 
 // ---------------------------------------------------------------- the ids and the cycle
 
-test('the six views are by list, by tracker, by status, by reason, by kind and flat', () => {
-  expect(VIEW_IDS).toEqual(['list', 'tracker', 'status', 'reason', 'kind', 'flat'])
+test('the seven views are by list, by tracker, by status, by reason, by kind, flat and tree', () => {
+  expect(VIEW_IDS).toEqual(['list', 'tracker', 'status', 'reason', 'kind', 'flat', 'tree'])
   for (const v of VIEW_IDS) expect(isViewId(v)).toBe(true)
   for (const bad of ['', 'List', 'type', 'level', 'toString', 7, null, undefined]) expect(isViewId(bad)).toBe(false)
 })
@@ -175,7 +175,15 @@ test('a sub-task that the person set to high stays below its parent in every vie
     {},
     { children: [withStatus('low', 'active'), withStatus('sub', 'active', level({ level: 'high' }))] },
   )
-  const only = { list: 'jira', tracker: 't', status: 'active', reason: 'context', kind: 'jira', flat: 'all' } as const
+  const only = {
+    list: 'jira',
+    tracker: 't',
+    status: 'active',
+    reason: 'context',
+    kind: 'jira',
+    flat: 'all',
+    tree: 'jira',
+  } as const
   for (const view of VIEW_IDS) {
     const { groups } = viewGroups([section('jira', [epic])], view, OFF)
     expect(

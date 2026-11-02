@@ -11,18 +11,34 @@ import type { RenderElement } from 'claude-code'
 import { normaliseCell } from '../text/cell-width'
 import { wrapRows } from '../text/wrap'
 import { box, button, text } from './el'
-import { glyphOf, type LaidGroup, type LaidRow } from './layout'
-import { bareParts, type Draw, groupTitle, moreRowOf, rowParts, type Solving, solving, tableHeader } from './rows'
+import { glyphOf, hasStop, type LaidGroup, type LaidRow } from './layout'
+import {
+  bareParts,
+  type Draw,
+  emptyOf,
+  groupRowLine,
+  groupTitle,
+  moreRowOf,
+  rowParts,
+  type Solving,
+  solving,
+  tableHeader,
+} from './rows'
 import { DEFAULT_BODY_COLUMNS, GUTTER, HEADER_ROWS, TITLE_ROWS } from './shape'
 import { bottomRows, statusRows } from './status'
 import { type Plan, planWindow, rowsIn, type Unit } from './window'
 
-type Kind = 'row' | 'more' | 'block'
+type Kind = 'row' | 'more' | 'block' | 'head' | 'empty'
 
-/** A unit with what draws it: a row of the group (`at` indexes its laid rows), its "N more" row, or the group itself. */
+/**
+ * A unit with what draws it: a row of the group (`at` indexes its laid rows), its "N more" row, the group itself, or, in a foldable
+ * group (issue #256), its group row (`head`) and the empty text under it (`empty`).
+ */
 interface Placed extends Unit {
   readonly kind: Kind
   readonly at: number
+  /** A group row that takes a Button: a page key moves over it as over a row. */
+  readonly stop?: true
 }
 
 export interface Windowed {
@@ -41,10 +57,32 @@ const CHROME = TITLE_ROWS
 function unitsOf(d: Draw, laid: readonly LaidGroup[]): Pick<Windowed, 'units' | 'solved'> & { chrome: number[] } {
   const units: Placed[] = []
   const chrome: number[] = []
-  const solved = laid.some(s => s.rows.length > 0) ? solving(d, laid) : undefined
+  const solved = laid.some(s => s.rows.length > 0 || s.head !== undefined) ? solving(d, laid) : undefined
+  const width = d.view.bodyColumns ?? DEFAULT_BODY_COLUMNS
   laid.forEach((s, section) => {
+    if (s.head !== undefined) {
+      // The group row is the title line of the group (issue #256): a unit of one line that counts no row, so no chrome line stands
+      // above it. A window that starts after it draws a copy of it as chrome, so the chrome of the group is one line.
+      chrome.push(CHROME)
+      units.push({
+        section,
+        kind: 'head',
+        at: 0,
+        rows: 0,
+        lines: 1,
+        head: true,
+        ...(hasStop(s.head) ? { stop: true as const } : {}),
+      })
+      if (s.spec.rows.length === 0 && s.spec.empty !== undefined) {
+        units.push({ section, kind: 'empty', at: 0, rows: 0, lines: wrapRows(normaliseCell(s.spec.empty), width) })
+      }
+      for (const at of s.rows.keys()) {
+        units.push({ section, kind: 'row', at, rows: 1, lines: 1 })
+      }
+      if (s.more > 0) units.push({ section, kind: 'more', at: 0, rows: 0, lines: 1 })
+      return
+    }
     if (s.rows.length === 0 || solved === undefined) {
-      const width = d.view.bodyColumns ?? DEFAULT_BODY_COLUMNS
       const empty =
         s.spec.rows.length === 0 && s.spec.empty !== undefined ? wrapRows(normaliseCell(s.spec.empty), width) : 0
       units.push({ section, kind: 'block', at: 0, rows: 0, lines: 1 + empty + (s.more > 0 ? 1 : 0) })
@@ -83,30 +121,46 @@ export function windowOf(d: Draw, laid: readonly LaidGroup[]): Windowed | undefi
   // An `onMore` whose Button is gone (Enter showed the rest of the rows, and the drawing ran before the press cleared the
   // mark) matches no unit: the window then follows the selected row.
   const more =
-    view.onMore === undefined ? -1 : find((u, s) => u.kind !== 'row' && s.more > 0 && view.onMore === `m${s.index}`)
-  const focus = more >= 0 ? more : find((u, s) => u.kind === 'row' && s.rows[u.at]?.row.id === view.selected)
+    view.onMore === undefined
+      ? -1
+      : find((u, s) => (u.kind === 'more' || u.kind === 'block') && s.more > 0 && view.onMore === `m${s.index}`)
+  const focus =
+    more >= 0
+      ? more
+      : find(
+          (u, s) =>
+            (u.kind === 'row' && s.rows[u.at]?.row.id === view.selected) ||
+            (u.kind === 'head' && hasStop(s.head) && s.head.row.id === view.selected),
+        )
   const plan = planWindow({ units, chrome, budget, anchor: view.top ?? 0, focus: focus < 0 ? undefined : focus })
   return plan === undefined ? undefined : { plan, units, solved }
 }
 
-/** The rows drawn in full, in order. */
+/** The rows drawn in full that take a Button, in order: the group rows (issue #256) and the rows. */
 export function shownRows(w: Windowed, laid: readonly LaidGroup[]): LaidRow[] {
   return w.units
     .slice(w.plan.from, w.plan.to)
-    .flatMap(u => (u.kind === 'row' ? [laid[u.section]?.rows[u.at]] : []))
+    .flatMap(u => {
+      if (u.kind === 'head') return [laid[u.section]?.head].filter(hasStop)
+      return u.kind === 'row' ? [laid[u.section]?.rows[u.at]] : []
+    })
     .filter((r): r is LaidRow => r !== undefined)
 }
 
-/** The rows drawn in full: a page of the list, for the keys that move by a page. */
-export const pageOf = (w: Windowed): number => rowsIn(w.units, w.plan.from, w.plan.to)
+/**
+ * The rows drawn in full that the ring can stop on: a page of the list, for the keys that move by a page. A group row (issue #256)
+ * counts, so a window of folded groups pages by the group rows it shows. The hints count data rows only (`rowsIn`).
+ */
+export const pageOf = (w: Windowed): number =>
+  rowsIn(w.units, w.plan.from, w.plan.to) + w.units.slice(w.plan.from, w.plan.to).filter(u => u.stop === true).length
 
 /**
  * The focus stop of a unit that is out of the window: the one Button, in a Box that has no height and clips. It does what
  * the Button it stands for does, so an Enter that lands before the next drawing still acts.
  */
 function stopOf(d: Draw, s: LaidGroup, u: Placed): RenderElement | undefined {
-  const row = u.kind === 'row' ? s.rows[u.at] : undefined
-  const more = u.kind !== 'row' && s.more > 0
+  const row = u.kind === 'row' ? s.rows[u.at] : u.kind === 'head' && hasStop(s.head) ? s.head : undefined
+  const more = (u.kind === 'more' || u.kind === 'block') && s.more > 0
   if (row === undefined && !more) return undefined
   return box(
     d.el,
@@ -152,7 +206,21 @@ export function drawWindowed(d: Draw, laid: readonly LaidGroup[], w: Windowed): 
     const first = i === 0
     const last = i === groups.length - 1
     const parts: RenderElement[] = first ? [...(g === undefined ? [] : [tableHeader(d, g)]), ...lead] : []
-    if (g === undefined || s.rows.length === 0) {
+    if (g !== undefined && s.head !== undefined) {
+      // A foldable group (issue #256): its group row opens the Box. When the window starts inside the group, the Button of the row is a
+      // stop before the window (`lead`), so the row is drawn as a copy with no Button here, and the Tab order stays.
+      const units = shown.get(index) ?? []
+      parts.push(groupRowLine(g, d, s.head, !units.some(u => u.kind === 'head')))
+      if (first && above > 0) parts.push(hint(d, LESS, above, 'above'))
+      for (const u of units) {
+        const hold = u.kind === 'row' ? s.rows[u.at] : undefined
+        if (u.kind === 'empty') {
+          const e = emptyOf(d, s)
+          if (e !== null) parts.push(e)
+        } else if (hold !== undefined) parts.push(...rowParts(d, g, hold))
+        else if (u.kind === 'more') parts.push(moreRowOf(d, s, g))
+      }
+    } else if (g === undefined || s.rows.length === 0) {
       parts.push(...bareParts(d, s))
       if (first && above > 0) parts.push(hint(d, LESS, above, 'above'))
     } else {

@@ -1,7 +1,7 @@
 // The groups of the by-list view (issue #63, L1): today's sections as the groups the one table draws. Pure.
 import { expect, test } from 'claude-code/testing'
 import type { SectionSpec, TreeRow } from '../core/interfaces/view'
-import { groupId, LIST_VIEW, listGroups, VIEW_IDS, viewGroups } from '../core/lib/grouping'
+import { groupId, isListLike, LIST_VIEW, listGroups, VIEW_IDS, viewGroups } from '../core/lib/grouping'
 import { groupsText } from '../ux/tree-data-table/text'
 
 const row = (id: string, children?: TreeRow[]): TreeRow => ({
@@ -35,6 +35,7 @@ test('each section is one group, in the order it came, keyed by the list view', 
   ])
   expect(groups[0]).toEqual({
     id: 'list:prs',
+    key: 'prs',
     title: 'PRS',
     note,
     rows: [row('a')],
@@ -133,10 +134,10 @@ test('a lifted child of a quiet row stays quiet in every view: no row of a text-
     ).toBe(true)
     // In a view other than by list and by kind (a section with no kind is its list group) the lift makes `q1:0` a row of its own
     // (its child stays below it): it is there, and quiet.
-    if (view !== LIST_VIEW && view !== 'kind') expect(rows.map(r => r.id).sort(), view).toEqual(['q1', 'q1:0', 'q2'])
+    if (!isListLike(view) && view !== 'kind') expect(rows.map(r => r.id).sort(), view).toEqual(['q1', 'q1:0', 'q2'])
     expect(rows.find(r => r.id === 'q1:0')?.children?.[0]?.quiet ?? true, view).toBe(true)
     // groupsText prints none of them: no title for a group of quiet rows either.
-    expect(groupsText(groups), view).toBe(view === LIST_VIEW ? 'QA  2 calls' : '')
+    expect(groupsText(groups), view).toBe(isListLike(view) ? 'QA  2 calls' : '')
   }
 })
 
