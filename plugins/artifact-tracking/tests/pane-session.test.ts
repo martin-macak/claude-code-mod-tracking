@@ -1805,7 +1805,7 @@ function bareKeep(at: string, next: Next, atBound: () => Promise<Frame>) {
     log: w.ports.log,
   } as unknown as Ports
   const refocus = new Refocus()
-  refocus.noted(at)
+  refocus.noted(at, 'person')
   const drawn = refocus.awaitFrame(ports, () => true)
   const done = refocus.keep(ports, next, { keys: false, still: () => true }, drawn, atBound)
   return { refocus, w, asked, done }
@@ -2196,6 +2196,168 @@ test('a pause whose timer the engine refuses ends by the wake with no drawing, a
   await t.session.idle() // it ended the pause: it would hang here otherwise
   expect(t.calls).toEqual(['focus help'])
   expect(t.w.logs).toEqual([WAKE_LOG.pause(RING_PAUSE_MS)])
+})
+
+// Issue #286. Under heavy load the engine timer is late, not refused: the wake wins, the request goes out, and the engine has
+// not taken the frame yet, so it lands on the old frame and the ring ends one Button off. When the late timer fires, the engine
+// has taken the frame (its timer comes after that turn), so the press asks again. `hold`/`release` order the engine timer
+// after the wake. No wall time is read.
+test('a pause whose engine timer is late asks for the ring again when the timer fires', async () => {
+  const t = await ringOn('web.resolve')
+  t.w.clock.hold(RING_PAUSE_MS)
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.draw()
+  await turn()
+  await t.w.clock.advance(RING_PAUSE_MS) // the engine timer is due but held
+  await t.w.clock.advance(WAKE_SLACK_MS) // the wake wins
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help'])
+  await t.w.clock.release() // the late engine timer fires: the engine has taken the frame
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help', 'focus help'])
+})
+
+test('a late engine timer asks again for nothing when the person moved the ring since', async () => {
+  const t = await ringOn('web.resolve')
+  t.w.clock.hold(RING_PAUSE_MS)
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.draw()
+  await turn()
+  await t.w.clock.advance(RING_PAUSE_MS + WAKE_SLACK_MS)
+  await t.session.idle()
+  await t.session.focused(t.w.ports, 'refresh') // the person walked on
+  await t.w.clock.release()
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help'])
+})
+
+test('a late engine timer asks again for nothing after the pane closed', async () => {
+  const t = await ringOn('web.resolve')
+  t.w.clock.hold(RING_PAUSE_MS)
+  press(buttonOf(await t.draw(), 'help'))
+  await turn()
+  await t.draw()
+  await turn()
+  await t.w.clock.advance(RING_PAUSE_MS + WAKE_SLACK_MS)
+  await t.session.idle()
+  await t.session.closed(t.w.ports)
+  await t.w.clock.release()
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help'])
+})
+
+/** A press of `key` whose engine timer is late: the wake won and sent the first request. `release` fires the late timer. */
+async function lateWake(t: Awaited<ReturnType<typeof ringOn>>, key = 'help'): Promise<void> {
+  t.w.clock.hold(RING_PAUSE_MS)
+  press(buttonOf(await t.draw(), key))
+  await turn()
+  await t.draw()
+  await turn()
+  await t.w.clock.advance(RING_PAUSE_MS + WAKE_SLACK_MS)
+  await t.session.idle()
+}
+
+test("the echo of the mod's own ring request is no move of the person: the late timer still asks again", async () => {
+  const t = await ringOn('web.resolve')
+  await lateWake(t)
+  await t.session.focused(t.w.ports, 'help', 'plugin') // the engine reports the landing of the first request
+  await t.w.clock.release()
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help', 'focus help'])
+})
+
+test('a late engine timer asks again for the Button the ring stays on', async () => {
+  const t = await ringOn('refresh') // the help footer holds r: the press keeps the ring there
+  await lateWake(t)
+  expect(t.calls).toEqual(['focus refresh'])
+  await t.w.clock.release()
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus refresh', 'focus refresh'])
+})
+
+test('a late engine timer asks again for the row the second h sends the ring home to', async () => {
+  const t = await ringOn('web.resolve')
+  await pressDraw(t, 'help')
+  await t.session.focused(t.w.ports, 'help', 'plugin')
+  await lateWake(t)
+  expect(t.calls).toEqual(['focus help', 'focus r0'])
+  await t.w.clock.release()
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help', 'focus r0', 'focus r0'])
+})
+
+test('a late engine timer of an older press asks for nothing once a newer press asked', async () => {
+  const t = await ringOn('web.resolve')
+  await lateWake(t) // press 1: the wake won, `focus help`
+  await t.session.focused(t.w.ports, 'help', 'plugin')
+  await pressDraw(t, 'help') // press 2: its pause ends by the engine, the ring goes home to the row
+  expect(t.calls).toEqual(['focus help', 'focus r0'])
+  await t.w.clock.release() // the late timer of press 1 must not pull the ring back to `h: back`
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help', 'focus r0'])
+})
+
+test('a late engine timer of a press whose request is still in flight asks for nothing once a newer request began', async () => {
+  const t = await ringOn('web.resolve')
+  let open: () => void = () => {}
+  const first = new Promise<void>(resolve => {
+    open = resolve
+  })
+  let n = 0
+  ;(t.w.ports.ui as { focus: unknown }).focus = async (key: string) => {
+    t.calls.push(`focus ${key}`)
+    if (n++ === 0) await first // the first request stays in flight
+    return true
+  }
+  t.w.clock.hold(RING_PAUSE_MS)
+  press(buttonOf(await t.draw(), 'help')) // press 1
+  await turn()
+  await t.draw()
+  await turn()
+  await t.w.clock.advance(RING_PAUSE_MS + WAKE_SLACK_MS) // the wake wins: request 1 is sent and not answered
+  await turn()
+  press(buttonOf(await t.draw(), 'help')) // press 2 starts its request while request 1 is in flight
+  await turn()
+  await t.draw()
+  await turn()
+  await t.w.clock.advance(WAKE_SLACK_MS * 2)
+  await turn()
+  open() // the answer of request 1 comes after request 2 began
+  await t.session.idle()
+  const before = t.calls.length
+  await t.w.clock.release() // the late timer of press 1 must not repeat its request
+  await t.session.idle()
+  expect(t.calls.length).toBe(before)
+})
+
+test('a late engine timer asks again for nothing when the first request was refused', async () => {
+  const t = await ringOn('web.resolve')
+  ;(t.w.ports.ui as { focus: unknown }).focus = async (key: string) => {
+    t.calls.push(`focus ${key}`)
+    return false
+  }
+  await lateWake(t)
+  await t.w.clock.release()
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help'])
+})
+
+test('a pause that the engine timer ends makes one request', async () => {
+  const t = await ringOn('web.resolve')
+  await pressDraw(t, 'help')
+  await t.w.clock.advance(WAKE_SLACK_MS * 2)
+  await t.session.idle()
+  expect(t.calls).toEqual(['focus help'])
+})
+
+test('a closing drops the late engine timer', async () => {
+  const t = await ringOn('web.resolve')
+  await lateWake(t)
+  expect(t.w.clock.held()).toBe(1)
+  await t.session.closed(t.w.ports)
+  expect(t.w.clock.held()).toBe(0)
 })
 
 test('a frame bound whose timer the engine refuses ends by the wake with no drawing, and the press reads the state', async () => {

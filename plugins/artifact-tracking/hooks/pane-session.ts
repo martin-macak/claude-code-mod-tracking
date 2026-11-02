@@ -56,7 +56,15 @@ import { clearMarks, writeMarks } from './pane-marks'
 import { type CloseAnswer, PanePreview } from './pane-preview'
 import { BulkQuestion } from './pane-question'
 import { WorkQueue } from './pane-queue'
-import { type Frame, frameFromState, type Press, Refocus, unlessClosed, type ViewKind } from './pane-refocus'
+import {
+  type FocusOrigin,
+  type Frame,
+  frameFromState,
+  type Press,
+  Refocus,
+  unlessClosed,
+  type ViewKind,
+} from './pane-refocus'
 import { helpOf, type PaneHost, paneGroups, paneModel, problemCount, shownOf, TEXT_VIEW } from './pane-text'
 import { type MarkedTurn, openTurn, type TurnPaneHost } from './pane-turn'
 
@@ -73,9 +81,6 @@ export type PaneDrawProps = {
   /** `Pane.placement`: a docked pane has a fixed body, an inline one is as tall as its tree. */
   readonly placement?: 'dock' | 'inline'
 }
-
-/** Who moved the ring: the person (Tab, arrows, click) or the plugin itself (`UiFocusOrigin.kind`). */
-export type FocusOrigin = 'person' | 'plugin'
 
 /** The key of the "N more" Button of a group. */
 const MORE_KEY = /^m\d+$/
@@ -368,7 +373,7 @@ export class PaneSession {
    */
   async focused(p: Ports, element: string | undefined, origin: FocusOrigin = 'person'): Promise<void> {
     try {
-      this.refocus.noted(element)
+      this.refocus.noted(element, origin)
       if (element === undefined) return
       // The person's ring on a row or an "N more" row ends the question. A footer Button does not: Tab to `x` and Enter answers it.
       if (origin === 'person' && (MORE_KEY.test(element) || this.drawn?.handles.has(element) === true)) this.disarm(p)

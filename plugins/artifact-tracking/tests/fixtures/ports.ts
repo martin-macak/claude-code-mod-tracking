@@ -68,6 +68,14 @@ export type FakeWorld = {
     advance(ms: number): Promise<void>
     /** The next due `after` or `every` period of `ms` is refused: an `after` never fires, an `every` ends (E18). */
     refuse(kind: 'after' | 'every', ms: number): void
+    /**
+     * The next due `after` of `ms` is held, not dropped: a timer that the engine fires late. `release` fires it, in the order
+     * the test chooses (a loaded engine fires its timer after the mod's own `wake`).
+     */
+    hold(ms: number): void
+    release(): Promise<void>
+    /** The held timers that nobody cancelled. */
+    held(): number
   }
   store: Map<string, Json>
   /** Calls of `store.set`. */
@@ -142,6 +150,8 @@ type Pending = {
   at: number
   fn: () => void
   cancelled: boolean
+  /** `cancel` was called: a held timer stays held, and `release` skips it only then. */
+  dropped?: boolean
 }
 
 const clone = <T extends Json | undefined>(v: T): T => (v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T))
@@ -150,6 +160,8 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
   let timers: Pending[] = []
   let seq = 0
   const refusals: { kind: 'after' | 'every'; ms: number }[] = []
+  const holds: number[] = []
+  const held: Pending[] = []
   const mtimes = new Map<string, number>()
 
   const arm = (kind: 'after' | 'every' | 'wake', ms: number, fn: () => void): Timer => {
@@ -165,6 +177,7 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
     return {
       cancel() {
         t.cancelled = true
+        t.dropped = true
       },
     }
   }
@@ -342,6 +355,12 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
           // An `every` is armed for its next period before its callback runs, so a callback that cancels it wins.
           if (due.kind === 'every') due.at += due.ms
           else due.cancelled = true
+          const holding = due.kind === 'after' ? holds.indexOf(due.ms) : -1
+          if (holding >= 0) {
+            holds.splice(holding, 1)
+            held.push(due)
+            continue
+          }
           const refused = refusals.findIndex(r => r.kind === due.kind && r.ms === due.ms)
           if (refused >= 0) {
             refusals.splice(refused, 1)
@@ -355,6 +374,13 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       refuse(kind, ms) {
         refusals.push({ kind, ms })
       },
+      hold(ms) {
+        holds.push(ms)
+      },
+      async release() {
+        for (const t of held.splice(0)) if (!t.dropped) await t.fn()
+      },
+      held: () => held.filter(t => !t.dropped).length,
     },
     store: new Map(Object.entries(o.store ?? {}).map(([k, v]) => [k, clone(v)])),
     storeSets: 0,
