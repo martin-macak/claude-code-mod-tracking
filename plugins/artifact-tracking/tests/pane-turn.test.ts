@@ -715,3 +715,34 @@ test('#256 Q9: when the row cap blocks the all-open lookup, the entry first in t
   expect(t.selected()).toBe(c)
   expect(t.w.state.get('expanded')).toEqual([groups.f0, groups[b]]) // only the group of c opens; the other folds stay
 })
+
+/** Three folded groups with 49 filler rows in the first: with every fold open the cap of 50 lists the entry of the second group, not the third. */
+async function capped(order: 'cb' | 'bc') {
+  const t = world({ global: { ui: { sectionRows: 50, maxRows: 50 } } })
+  const [x, y] = order === 'cb' ? ['c', 'b'] : ['b', 'c']
+  await t.turn(1, `one ${url(x as string)} and ${url(y as string)}`)
+  const [c, b] = [t.keyOf(url('c')), t.keyOf(url('b'))]
+  reshape(t, sections => {
+    const [s] = sections as [SectionSpec]
+    const row = (id: string) => ({ ...(s.rows[0] as TreeRow), id })
+    const filler = { ...s, id: 'filler', title: 'Filler', rows: Array.from({ length: 49 }, (_, i) => row(`f${i}`)) }
+    return [filler, { ...s, id: 'sb', title: 'B', rows: [row(b)] }, { ...s, id: 'sc', title: 'C', rows: [row(c)] }]
+  })
+  const groups = await treeGroups(t, [c, b, 'f0'])
+  t.w.state.set('expanded', [groups.f0 as string, groups[b] as string, groups[c] as string])
+  await t.press()
+  return { t, c, b, groups }
+}
+
+test('#256 Q9: an earlier turn entry that the cap hides in the all-open view still wins, when a later entry is listed there', async () => {
+  // Review of PR 315: the all-open lookup listed b, so the single-fold search never ran and c (first in the turn) stayed shut.
+  const { t, c, groups, b } = await capped('cb')
+  expect(t.selected()).toBe(c)
+  expect(t.w.state.get('expanded')).toEqual([groups.f0, groups[b]])
+})
+
+test('#256 Q9: the first turn entry wins when the all-open view lists it and the other group needs the single-fold try', async () => {
+  const { t, b, groups, c } = await capped('bc')
+  expect(t.selected()).toBe(b)
+  expect(t.w.state.get('expanded')).toEqual([groups.f0, groups[c]])
+})

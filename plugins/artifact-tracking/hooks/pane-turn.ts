@@ -55,18 +55,21 @@ async function listedOf(
     return keys.flatMap(k => laid.get(k) ?? [])
   }
   const allOpen = new Set([...expanded].filter(id => !folds.has(id)))
-  // With every fold open, the folded groups before the entry may use up the row cap. Then the entry is looked for with one fold
-  // open at a time, so the folds that stay do not count against it. The entry that is first in the order of the turn wins, not the
-  // first fold of the pane that lists any entry.
-  const firstGroup =
-    listedIn(allOpen)[0]?.group ??
-    [...folds]
+  // With every fold open, the folded groups before an entry may use up the row cap and hide it. So the entry is also looked for with
+  // one fold open at a time, so the folds that stay do not count against it. The candidates are the first entry of the all-open view
+  // and the first entry that each single fold lists. The entry that is first in the order of the turn wins, whichever way it was found.
+  const candidates = [
+    ...listedIn(allOpen)
+      .slice(0, 1)
+      .map(r => ({ id: r.group, at: keys.indexOf(r.id) })),
+    ...[...folds]
       .filter(id => expanded.has(id))
       .flatMap(id => {
         const own = listedIn(new Set([...expanded].filter(f => f !== id))).find(r => r.group === id)
         return own === undefined ? [] : [{ id, at: keys.indexOf(own.id) }]
-      })
-      .sort((x, y) => x.at - y.at)[0]?.id
+      }),
+  ]
+  const firstGroup = candidates.sort((x, y) => x.at - y.at)[0]?.id
   const unfold = firstGroup !== undefined && expanded.has(firstGroup) ? firstGroup : undefined
   const open = unfold === undefined ? expanded : new Set([...expanded].filter(id => id !== unfold))
   const laid = new Set(laidRefs(groups, { ...view, expanded: open }).map(r => r.id))
