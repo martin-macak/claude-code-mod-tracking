@@ -167,6 +167,13 @@ test('the default profile selects the four scenarios of features/slot-turns.feat
   assert.deepEqual(artifactScenarios(slot), [])
 })
 
+test('the default profile selects the Jira capture scenario of features/jira.feature (issue #226), and it is not an @artifacts scenario', () => {
+  const jira = select().filter(s => s.uri === 'features/jira.feature')
+  assert.equal(jira.length, 1)
+  assert.match(jira[0]?.name ?? '', /acli jira workitem view tracks the work item/)
+  assert.deepEqual(artifactScenarios(jira), [])
+})
+
 test('a bare feature path selects no @artifacts scenario', () => {
   assert.deepEqual(artifactScenarios(select(PANE)), [])
   // Naming the feature file of the scenario does not select it either: the tag expression of the default profile wins.

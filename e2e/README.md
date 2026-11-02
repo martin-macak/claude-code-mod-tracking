@@ -146,6 +146,23 @@ The fake `gh` can hold a call back (issue [#210](https://github.com/martin-macak
 
 `Given the fake gh holds back "--version" for N seconds` sets it. Put it after the step that makes the fake repo and before the step that starts the session. `gh --version` is the first call of the mod, so a hold on it delays the first PR discovery. The `@slow-start` scenario of `features/pane.feature` uses a 5 s hold to show that the refresh scenario waits for the discovery call and not for a fixed time. Run it alone with `npx cucumber-js -p one features/pane.feature:<line>`.
 
+## A fake acli
+
+The Jira capture reads `acli` (issue [#226](https://github.com/martin-macak/claude-code-mod-tracking/issues/226)). `fake-acli/bin/acli` is a fake `acli` next to the fake `gh`. The harness puts `fake-acli/bin` first on the `PATH` of claude when the scenario has a fake acli, so the `acli` of the mod and the `acli` of a Bash call of the model are the fake. It never reaches the network and reads no credential and no acli config. It refuses to run without `FAKE_ACLI_SPEC`, and the env sets the Atlassian tokens empty. When both fakes run, the `PATH` holds both shim dirs (`fakeAcliEnv` extends the `PATH` of the fake gh).
+
+- The spec (`FakeAcliSpec` of `support/fake-acli.ts`) is the one site that acli is logged in to (`null`: not logged in) and its work items: key, summary, type, status, status category and subtasks.
+- It answers `acli --version`, `acli jira auth status` (a `Site:` line) and `acli jira workitem view KEY` (with `--json`: one Jira REST object, limited by `--fields`; without it: four plain lines). An unknown key fails with the text of acli. Every other call exits 1, prints `fake acli: unsupported call: ...` and logs the call as `unsupported`. `workitem search` is one of them, so an Epic cannot be faked yet.
+- `FAKE_ACLI_LOG` gets one JSON line per call (`call`, `exit`, `argv`), read with `callsOf` of `support/fake-cli.ts` (shared with the fake gh).
+
+Steps (`steps/fake-acli.steps.ts`). Put the `Given` steps before the step that starts the session:
+
+- `a fake acli logged in to "site" with the work item "KEY" "summary" of type "type" in status "status" of category indeterminate` sets the spec (`new`, `indeterminate` or `done`).
+- `a fake model that runs the command "…"` plays a Bash call, then says `Ran.`. The tool needs a rule that spares the dialog, and a rule holds spaces, so use `a Claude Code session with the artifact-tracking mod and the tool "Bash(acli jira workitem view:*)"` (one tool; the step with `the tools` splits at spaces).
+- `Then the fake acli answered "jira workitem view"` polls the log for a call with exit 0. `... answered "jira workitem view" for "jira workitem view ABC-1"` also matches the exact argv: the refresh of the mod makes the same call with `--fields` and `--json`, so only the argv shows that the Bash call of the model reached the fake. `Then the fake acli answered no unsupported call` fails on any other call, and on a log with no call.
+- `Then the pane shows "…"` reads the pane only. The transcript can hold the output of the command, so the title of a row must be checked with this step.
+
+`features/jira.feature` shows the capture: the model runs `acli jira workitem view ABC-1`, and the pane shows the row `ABC-1` with the title from the fake. To extend the fake: add the call to `answer()` and its name to `FAKE_ACLI_CALLS` (the type of `FakeAcliResult.call` makes the compiler check the list), add a test to `tests/fake-acli.test.ts`, and run the real `AcliTool` against it in `scripts/contracts/fake-acli-contract.test.mjs`. Run the scenario alone with `DEMO_SOCKET=<name> DEMO_DIR=/tmp/<folder> npx cucumber-js -p one features/jira.feature`.
+
 ## Run one scenario
 
 `make e2e-safe` and `npx cucumber-js` run every scenario except `@artifacts`. `make e2e` runs every scenario. Pick fewer with a tag, a name or a file position:
@@ -157,6 +174,8 @@ The fake `gh` can hold a call back (issue [#210](https://github.com/martin-macak
 | One scenario by its line | `npx cucumber-js -p one features/pane.feature:42` |
 | The `@artifacts` scenario alone | `npx cucumber-js -p artifacts` |
 | Check what runs, with no run | add `--dry-run` to any of them |
+
+The out dir of a scenario keeps only the last run. For "N passes in a row", loop and keep each result: `for i in 1 2 3 4 5; do npx cucumber-js -p one features/jira.feature --format summary:out/private/run-$i.txt || break; done`. The loop stops at the first failure, so N files mean N passes in a row.
 
 A positional argument such as `features/pane.feature:42` does not replace the paths of the default profile. It merges with them. So `npx cucumber-js features/pane.feature:42` runs that scenario and also every scenario of the other feature files. The profile `one` has no `paths`: with `-p one` only the position that you name runs. (With no position at all, cucumber runs every feature file.)
 
