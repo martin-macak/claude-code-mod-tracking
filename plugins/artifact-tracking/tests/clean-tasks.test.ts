@@ -51,12 +51,21 @@ test('a running task with no task id is skipped: no task id', async () => {
   expect(t.w.stops).toEqual(['t1']) // the row with no id is never sent
 })
 
-test('a Monitor task is skipped: its stop is not tested yet', async () => {
-  const t = await taskWorld([proc('monitor:m1', 'running', { kind: 'monitor', name: 'tail -f log', taskId: 'm1' })])
-  expect((await t.run('clean')).text).toContain('  tail -f log: skipped: a Monitor task is not stopped yet')
+test('a Monitor task is stopped like a Bash task: one TaskStop with its task id, and the row reads killed', async () => {
+  const t = await taskWorld([proc('monitor:m1', 'running', { kind: 'monitor', name: 'Monitor', taskId: 'm1' })])
+  expect((await t.run('clean')).text).toContain('  Monitor: stop\n')
+  expect(t.w.stops).toEqual([]) // a plan stops nothing
+  expect((await t.run('clean --yes tasks')).text).toContain('  Monitor: done')
+  expect(t.w.stops).toEqual(['m1'])
+  expect(t.row('monitor:m1')).toMatchObject({ state: 'killed', endedAt: NOW })
+})
+
+test('a Monitor row with no task id is skipped: no task id', async () => {
+  const t = await taskWorld([proc('monitor:x', 'running', { kind: 'monitor', name: 'Monitor' })])
+  expect((await t.run('clean')).text).toContain('  Monitor: skipped: no task id')
   await t.run('clean --yes tasks')
   expect(t.w.stops).toEqual([])
-  expect(t.row('monitor:m1')?.state).toBe('running')
+  expect(t.row('monitor:x')?.state).toBe('running')
 })
 
 test('--yes tasks sends one TaskStop with the task id, the row reads killed, and the log gains one entry', async () => {

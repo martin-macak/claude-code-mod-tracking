@@ -1,10 +1,11 @@
 // `/track clean` for processes: the cleanup of the processes tracker. It has two kinds.
 //
-// `tasks` (issue #122): the plan lists each running background Bash task for a TaskStop. `--yes tasks` stops them one by one
+// `tasks` (issue #122): the plan lists each running background Bash task and Monitor for a TaskStop. `--yes tasks` stops them one by one
 // through the narrow `tasks.stop` port and marks the row `killed` itself: the mod's own `tool.call` hook hears the call too, as a
-// call that a plugin raised (design study of #204, S2: kit-verified, not yet seen live, #209), so it stamps no turn, and the two
-// writes are the same (the first end time stays). A Monitor task is listed and skipped: its stop is not tested (design study of
-// #49, R11b). tmux, screen and detached processes are not touched: the study found no proof of who owns them.
+// call that a plugin raised (design study of #204, S2; seen live in issue #209: `next.origin.plugin` names the mod), so it stamps
+// no turn, and the two writes are the same (the first end time stays). A Monitor task is stopped the same way: TaskStop takes its
+// task id (issue #209, e2e/features/clean-tasks.feature). tmux, screen and detached processes are not touched: the study found
+// no proof of who owns them.
 //
 // `containers` (issue #123): the plan lists each docker-container row that is over and has a proven id (`containerIdExact`, the
 // mark of the parser: issue #231), unless the container is gone (`containerGone`). It is off until `trackers.processes.
@@ -44,11 +45,10 @@ const NOT_PROVEN = 'the container id is not proven'
 const GONE = 'the container is gone'
 const UNREADABLE = 'docker gave an answer the mod cannot read'
 
-/** The step of a running task row. A row with no task id or a Monitor row is listed with the reason it is not stopped. */
+/** The step of a running task row, a Bash task or a Monitor. A row with no task id is listed with the reason it is not stopped. */
 function stepOf(r: ProcessRecord): CleanStep | undefined {
   if (r.state !== 'running' || (r.kind !== 'background-task' && r.kind !== 'monitor')) return undefined
   const base = { kind: 'tasks', id: r.id, label: r.name, action: 'stop' } as const
-  if (r.kind === 'monitor') return { ...base, skip: 'a Monitor task is not stopped yet' }
   return r.taskId === undefined || r.taskId === '' ? { ...base, skip: 'no task id' } : base
 }
 
