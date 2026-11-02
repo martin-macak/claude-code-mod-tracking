@@ -20,8 +20,6 @@ import { mergeRepoRows, upsertRepoRows } from '../trackers/repos/rows'
 import { repoSightings, repoTurnsOf } from '../trackers/repos/turns'
 import { fakeConfig } from './fixtures/config-fs'
 import type { AgentProof, ProcessRecord, RepoRecord, WorktreeProof } from './fixtures/contracts'
-import { detailBoxes, leaves } from './fixtures/drawn'
-import { EL } from './fixtures/elements'
 import * as ev from './fixtures/events'
 import { porcelain } from './fixtures/git'
 import { BG_START_ASYNC_AGENT, BG_START_MAIN } from './fixtures/notices'
@@ -723,7 +721,7 @@ test('a plain subagent of the turn of a run still takes its own entry beside the
   ])
 })
 
-test('a run that turns 2 and 4 spawned in: new in turn 2, seen again in turn 4, and its drawn row shows both turns', async () => {
+test('a run that turns 2 and 4 spawned in: new in turn 2, seen again in turn 4, and its row carries both turns', async () => {
   const t = workflows()
   await t.idle(1)
   await t.start('turn-2', 'run it')
@@ -738,11 +736,8 @@ test('a run that turns 2 and 4 spawned in: new in turn 2, seen again in turn 4, 
   expect(t.rec(4).new).toEqual([])
   expect(t.rec(4).seen).toEqual([{ k: RUN_ROW, c: 'workflow', r: 'created' }])
   t.seedRun(RUN, 3, 'ended', 1)
-  // The run row is drawn from its agents: its turns are the span of their stamps, and the open row prints them in its detail.
+  // The run row is drawn from its agents: its turns are the span of their stamps; the quick view and the detail view print them.
   expect(all(await t.rows()).find(r => r.id === RUN_ROW)?.turns).toEqual({ first: 2, last: 4 })
-  t.w.state.set('expanded', [RUN_ROW]) // the master row is open by default, so the run row is drawn
-  const drawn = await new PaneSession().draw(t.w.ports, t.m, EL, { bodyColumns: 120 })
-  expect(detailBoxes(drawn).flatMap(leaves).slice(-2)).toEqual(['turns:', 'first 2 · last 4'])
   const text = await t.text('turn 2')
   expect(text).toMatch(/\n {2}new {4}.*wf_a35565.*3 agents · 1 failed/) // the words of the drawn row
   expect(text).not.toContain(RUN_ROW)
@@ -1061,12 +1056,9 @@ test('a quiet round writes nothing', async () => {
   expect(t.proof()).toMatchObject({ firstTurn: 3, lastTurn: 5 })
 })
 
-test('the pane row of a worktree carries its turns, and the detail prints them', async () => {
+test('the pane row of a worktree carries its turns', async () => {
   const t = await enteredAndLeft()
   expect(all(await t.rows()).find(r => r.id === WT_ID)?.turns).toEqual({ first: 3, last: 5 })
-  t.w.state.set('expanded', [WT_ID])
-  const drawn = await new PaneSession().draw(t.w.ports, t.m, EL, { bodyColumns: 120 })
-  expect(detailBoxes(drawn).flatMap(leaves).slice(-2)).toEqual(['turns:', 'first 3 · last 5'])
 })
 
 test('the root row of the worktrees has no turns', async () => {

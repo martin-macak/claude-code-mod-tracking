@@ -18,11 +18,8 @@ export const ROW_GAP = 1
 export const HEADER_ROWS = 1
 /** The title row of a group that has a row to draw. */
 export const TITLE_ROWS = 1
-/** A detail line is cut at this many cells. */
-export const DETAIL_CELLS = 500
 export const TOO_LARGE = 'The pane is too large to draw. /track prints the list.'
 export const UNAVAILABLE = 'Tracking is unavailable. Run /track to try again.'
-export const NOTHING_MORE = '(nothing more to show)'
 
 /** The indent of a row in its tree column: two cells a level, never more than the column holds beside the glyph. */
 export const indentOf = (columnWidth: number, depth: number): number =>
@@ -46,11 +43,8 @@ export interface StatusArea {
   readonly health?: StatusLine
   /**
    * The quick view of the selected row (issue #276): its lines below `selected`, and the form that caps them. Absent: it is hidden.
-   * `open` is the rows that the detail lines of the selected row take under it when it is open: they are rows of the list, so the list
-   * keeps them as well as its data rows and the quick view has the room that is left. `TreeDataTable.render` sets it from the layout; a
-   * caller leaves it out (0).
    */
-  readonly quick?: { readonly form: StatusForm; readonly lines: readonly StatusLine[]; readonly open?: number }
+  readonly quick?: { readonly form: StatusForm; readonly lines: readonly StatusLine[] }
 }
 
 export interface TableView {

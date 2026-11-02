@@ -218,18 +218,6 @@ test('a stale onMore, with its Button gone, lets the window follow the selected 
   expect(rowTexts(drawn.tree).at(-1)).toContain('s11.example')
 })
 
-test('the detail lines of an open row count against the body', () => {
-  const rows = webRows(12).map((r, i) =>
-    i === 0
-      ? { ...r, detail: () => [{ cell: { text: 'one' } }, { cell: { text: 'two' } }, { cell: { text: 'three' } }] }
-      : r,
-  )
-  const { drawn } = draw([group('web', rows)], { ...INLINE, expanded: new Set(['w0']) })
-  // 3 detail lines and the row take 4, two more rows 2, the title and header 2 and the hint 1: 9 lines for the budget of 9.
-  expect(rowBoxes(drawn.tree)).toHaveLength(3)
-  expect(texts(drawn.tree).filter(([, s]) => ['one', 'two', 'three'].includes(s))).toHaveLength(3)
-})
-
 test('a footer of two rows leaves the table one row less', () => {
   const columns = 40
   const footer = footerRows(NO_ROW_FOOTER, columns, false)

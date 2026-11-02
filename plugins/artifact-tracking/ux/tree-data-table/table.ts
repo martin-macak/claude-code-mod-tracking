@@ -12,7 +12,7 @@ import { footerBox, footerRows, moveHintFits } from './footer'
 import { compactForm, renderHelp } from './help'
 import { type LaidGroup, layout, refOf } from './layout'
 import { renderPlan, shapePlan } from './plan'
-import { type Draw, drawGroups, openLinesOf } from './rows'
+import { type Draw, drawGroups } from './rows'
 import {
   DEFAULT_BODY_COLUMNS,
   type Drawn,
@@ -46,11 +46,9 @@ export {
 } from './layout'
 export {
   DEFAULT_BODY_COLUMNS,
-  DETAIL_CELLS,
   type Drawn,
   type DrawnRow,
   GUTTER,
-  NOTHING_MORE,
   type TableActions,
   type TableView,
   TOO_LARGE,
@@ -65,25 +63,12 @@ function halvings(groups: readonly GroupSpec[], view: TableView): number {
   return k
 }
 
-/**
- * The view with the rows of the open selected row set on its quick view (`quick.open`, issue #276, review of PR #284): the detail lines
- * of an open row take room from the list, and the window cannot give them back, so the quick view leaves them. The footer and the
- * window both read this one view, so they count the quick view alike. Any other view is as it was.
- */
-function withOpenLines(groups: readonly GroupSpec[], view: TableView): TableView {
-  const quick = view.status?.quick
-  if (view.status === undefined || quick === undefined || view.bodyRows === undefined || textView(view)) return view
-  const open = openLinesOf(layout(groups, view, 0), view.selected, view.bodyColumns ?? DEFAULT_BODY_COLUMNS)
-  return open === 0 ? view : { ...view, status: { ...view.status, quick: { ...quick, open } } }
-}
-
 export const TreeDataTable = {
   /**
-   * The guard tries a full drawing, one with no detail lines, then the caps halved until each is 1, then one dim
-   * line. `handles` and `rows` describe the drawing that was kept.
+   * The guard tries a full drawing, then the caps halved until each is 1, then one dim line. `handles` and `rows` describe the
+   * drawing that was kept.
    */
-  render(groups: readonly GroupSpec[], given: TableView, el: TableElements, actions: TableActions): Drawn {
-    const view = withOpenLines(groups, given)
+  render(groups: readonly GroupSpec[], view: TableView, el: TableElements, actions: TableActions): Drawn {
     const columns = view.bodyColumns ?? DEFAULT_BODY_COLUMNS
     // The move hint only where it adds no footer row (issue #108), so it never turns the help view compact by itself.
     const hint = moveHintFits(view.footer, columns)
@@ -120,7 +105,7 @@ export const TreeDataTable = {
         : shapePlan(view.plan, footerRows(view.footer, columns, hint), columns, view.bodyRows)
     const laids: (readonly LaidGroup[])[] = []
     const windows: (Windowed | undefined)[] = []
-    const attempt = (halve: number, detail: boolean) => (): RenderElement[] => {
+    const attempt = (halve: number) => (): RenderElement[] => {
       if (view.help !== null) {
         laids.push([])
         windows.push(undefined)
@@ -141,21 +126,17 @@ export const TreeDataTable = {
       const rows = laid.flatMap(s => s.rows)
       // A body shorter than the tree shows a window of it (windowed.ts). The ring goes to the selected row when it is drawn
       // (issue #108), else to the first row in view.
-      const win = windowOf({ el, view, actions, detail, focus: undefined }, laid)
+      const win = windowOf({ el, view, actions, focus: undefined }, laid)
       windows.push(win)
       const shown = win === undefined ? rows : shownRows(win, laid)
       const focus = (rows.find(r => r.row.id === view.selected) ?? shown[0])?.handle
-      const draw: Draw = { el, view, actions, detail, focus }
+      const draw: Draw = { el, view, actions, focus }
       return win === undefined ? drawGroups(draw, laid) : drawWindowed(draw, laid, win)
     }
     const attempts =
       textView(view) || groups.length === 0
-        ? [attempt(0, true)]
-        : [
-            attempt(0, true),
-            attempt(0, false),
-            ...Array.from({ length: halvings(groups, view) }, (_, i) => attempt(i + 1, false)),
-          ]
+        ? [attempt(0)]
+        : [attempt(0), ...Array.from({ length: halvings(groups, view) }, (_, i) => attempt(i + 1))]
     const { body, step } = guard(footer, attempts, () => [text(el, { dimColor: true }, TOO_LARGE)], view.budget)
     const win = windows[step]
     const rows: DrawnRow[] = (laids[step] ?? []).flatMap(s =>

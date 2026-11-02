@@ -46,8 +46,7 @@ export function bottomRows(view: Pick<TableView, 'bodyColumns' | 'footer' | 'vie
 /**
  * The rows the quick view may take, the selected-row line included (at least that one). The cap of the form, the lines the row has,
  * and the room the body leaves: the list must keep its data rows (`LIST_ROWS`) with what `listFloor` says they need (the header, the
- * title of one group and a hint on each side, as the selection in the middle of a list shows them), the detail lines of the selected
- * row when it is open (`quick.open`: the window shows that unit whatever its height, so it cannot give them back), the health line and
+ * title of one group and a hint on each side, as the selection in the middle of a list shows them), the health line and
  * the bottom. The room is the same for any selection of a closed row, so the quick view holds still while the person moves between
  * rows of the same lines. With a second group in view the window spends a title and a gap more, which the room does not give back: at the first rows of a later
  * group the list keeps fewer data rows than the floor (3 at 96x18). No body height is known: no room limit.
@@ -55,11 +54,7 @@ export function bottomRows(view: Pick<TableView, 'bodyColumns' | 'footer' | 'vie
 function quickRows(view: StatusInput, quick: NonNullable<StatusArea['quick']>): number {
   const wanted = Math.min(QUICK_ROWS[quick.form], quick.lines.length + 1)
   if (view.bodyRows === undefined) return wanted
-  const around =
-    bottomRows(view) +
-    (view.status?.health === undefined ? 0 : 1) +
-    listFloor(LIST_ROWS[quick.form]) +
-    (quick.open ?? 0)
+  const around = bottomRows(view) + (view.status?.health === undefined ? 0 : 1) + listFloor(LIST_ROWS[quick.form])
   return Math.max(1, Math.min(wanted, view.bodyRows - around))
 }
 

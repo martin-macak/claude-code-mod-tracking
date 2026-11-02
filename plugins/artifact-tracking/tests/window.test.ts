@@ -71,7 +71,7 @@ test('the plan is stable: planning again from its own result gives it back', () 
 
 test('a unit taller than one line counts its lines: an open row with detail shows fewer rows', () => {
   const units: Unit[] = rows(12)
-  units[1] = { section: 0, lines: 4, rows: 1 } // row 1 is open with three detail lines
+  units[1] = { section: 0, lines: 4, rows: 1 } // row 1 is four lines tall (a unit of the window can be taller than a row)
   // rows 0..2 take 1 + 4 + 1 = 6, with the title and header 2 and the hint below 1: 9. A fourth row makes 10.
   expect(plan(units, 9)).toEqual({ from: 0, to: 3 })
 })

@@ -19,7 +19,7 @@ import {
 import { itemRowId, questionReasons } from './reasons'
 import type { QuestionCall } from './types'
 
-/** A detail line is cut by the pane at 500 cells. A line of this many characters fits in that, a wide character included. */
+/** A line of a call is cut by the pane at 500 cells. A line of this many characters fits in that, a wide character included. */
 const CHUNK = 240
 
 const OPTION_OK = 'success' as const

@@ -132,7 +132,8 @@ test('budget at 1,400 rows: the guard cuts, the footer stays, every drawn row ke
   expect(handlesOf(drawn.tree)).toEqual([...drawn.handles.keys()])
 })
 
-test('budget: detail lines go first', () => {
+// Issue #278, C2. The guard has no attempt "no detail lines": a row draws none. It tries the full drawing, then the halved caps.
+test('budget: an expanded leaf with a huge cell draws no detail line and costs one row; the full drawing is kept', () => {
   const rows = Array.from({ length: 200 }, (_, i) => row(`a${i}`, { name: `k${i}`, description: 'x'.repeat(2000) }))
   const open = new Set(rows.map(r => r.id))
   const { drawn } = draw([group('web', rows)], { expanded: open, limits: { sectionRows: 300, maxRows: 300 } })
@@ -140,18 +141,28 @@ test('budget: detail lines go first', () => {
   expect(nodes(drawn.tree, 'Box').filter(b => b.children.some(c => isNode(c) && c.props.wrap === 'wrap'))).toHaveLength(
     0,
   )
+  expect(nodes(drawn.tree, 'Button').some(b => b.props.key === 'm0')).toBe(false) // no halving step was needed
   expect(fits(measure(drawn.tree), BUDGET)).toBe(true)
 })
 
-test('budget: a halved drawing keeps no detail lines either', () => {
+// The case above gives the same drawing on the old guard (its detail-free attempt came second). This one fails on the old guard: the
+// full drawing fits the budget, so the old attempt 0 drew the detail line of every expanded leaf.
+test('budget: an expanded leaf that would fit with its cell open still draws one row and no detail line', () => {
+  const rows = Array.from({ length: 5 }, (_, i) => row(`a${i}`, { name: `k${i}`, description: 'x'.repeat(300) }))
+  const { drawn } = draw([group('web', rows)], { expanded: new Set(rows.map(r => r.id)) })
+  expect(rowBoxes(drawn.tree)).toHaveLength(5)
+  expect(nodes(drawn.tree, 'Box').filter(b => b.children.some(c => isNode(c) && c.props.wrap === 'wrap'))).toHaveLength(
+    0,
+  )
+  expect(drawn.rows).toHaveLength(5)
+})
+
+test('budget: a tight budget keeps 200 of 400 rows and a "200 more" button', () => {
   const rows = Array.from({ length: 400 }, (_, i) => row(`a${i}`, { name: `k${i}`, description: 'x'.repeat(2000) }))
   const budget = { values: 3000, chars: 10_000_000 }
   const limits = { sectionRows: 400, maxRows: 400 }
   const { drawn } = draw([group('web', rows)], { expanded: new Set(rows.map(r => r.id)), budget, limits })
   expect(rowBoxes(drawn.tree)).toHaveLength(200)
-  expect(nodes(drawn.tree, 'Box').filter(b => b.children.some(c => isNode(c) && c.props.wrap === 'wrap'))).toHaveLength(
-    0,
-  )
   expect(buttonOf(drawn.tree, 'm0').props.label).toBe('200 more')
 })
 

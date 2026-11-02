@@ -1,21 +1,17 @@
-// The pane as elements: the one header row of the table, the title row of each group, a row per laid row with its detail
-// lines and the "N more" row. The columns are solved once for every row of every group (`solving`), so the cells of two
+// The pane as elements: the one header row of the table, the title row of each group, a row per laid row
+// and the "N more" row. The columns are solved once for every row of every group (`solving`), so the cells of two
 // groups stand under the same header. The row Box starts with the gutter that marks the selected row. Spec 5.10 "Rows".
 // Decisions G10, G19 of plan L6. Design study of issue #63, section 5.
 import type { RenderElement } from 'claude-code'
-import type { Cell, DetailLine } from '../../core/interfaces/view'
+import type { Cell } from '../../core/interfaces/view'
 import { cellWidth, clipMiddle, clipTo, normaliseCell } from '../text/cell-width'
-import { wrapRows } from '../text/wrap'
 import { COLOR, cellBox, cellText, GLYPH } from '../theme'
-import { cellNode, headerRow, shown, titleRow } from './cells'
-import { cellOf, GAP, GLYPH_BOX, INDENT, SHARED_COLUMNS, type Solved, type SolvedColumn, solveColumns } from './columns'
-import { detailOf } from './detail'
+import { cellNode, headerRow, titleRow } from './cells'
+import { cellOf, GAP, GLYPH_BOX, SHARED_COLUMNS, type Solved, type SolvedColumn, solveColumns } from './columns'
 import { box, button, type TableElements, text } from './el'
 import { glyphOf, type LaidGroup, type LaidRow } from './layout'
-import { DEFAULT_BODY_COLUMNS, DETAIL_CELLS, GUTTER, indentOf, type TableActions, type TableView } from './shape'
+import { DEFAULT_BODY_COLUMNS, GUTTER, indentOf, type TableActions, type TableView } from './shape'
 
-/** A detail line keeps at least this many cells for its text. */
-const MIN_DETAIL = 20
 const EMPTY: Cell = { text: '' }
 /** The id of the one table in the width memo of the solver. */
 const TABLE = 'pane'
@@ -25,8 +21,6 @@ export interface Draw {
   readonly el: TableElements
   readonly view: TableView
   readonly actions: TableActions
-  /** Draw the detail lines of open rows. The budget guard turns this off first. */
-  readonly detail: boolean
   /** The handle that gets `autoFocus`, if any. */
   readonly focus: string | undefined
 }
@@ -111,17 +105,6 @@ function rowLine(d: Draw, solved: Solved, r: LaidRow): RenderElement {
   )
 }
 
-function detailLine(d: Draw, line: DetailLine, pad: number, dim: boolean): RenderElement {
-  const label = line.label === undefined ? null : text(d.el, { dimColor: true }, `${normaliseCell(line.label)}:`)
-  const body = clipTo(normaliseCell(line.cell.text), DETAIL_CELLS)
-  return box(
-    d.el,
-    { columnGap: 1, paddingLeft: pad },
-    label,
-    text(d.el, { ...cellText(line.cell, dim), wrap: 'wrap' }, shown(d.el, line.cell, body)),
-  )
-}
-
 /** The cells between the gutter and the tree column: their widths and the gaps after them. */
 function treeOffset(solved: Solved): number {
   const before = solved.columns.slice(
@@ -143,7 +126,7 @@ function moreRow(d: Draw, g: LaidGroup, pad: number): RenderElement {
   )
 }
 
-/** The solved columns of the table and where its rows start: what a row and its detail lines need. */
+/** The solved columns of the table and where its rows start: what a row needs. */
 export interface Solving {
   readonly solved: Solved
   /** The cells before the tree column, the gutter included. */
@@ -155,11 +138,8 @@ export interface Solving {
  * The columns come from every row of every group, drawn or not, so they hold still while a window moves over them and
  * the cells of two groups stand under the same header.
  */
-export const solving = (d: Draw, laid: readonly LaidGroup[]): Solving =>
-  solvingOf(laid, d.view.bodyColumns ?? DEFAULT_BODY_COLUMNS)
-
-/** `solving` for a body `width` wide, with no drawing: the quick view asks it for the lines of the open selected row (`openLinesOf`). */
-function solvingOf(laid: readonly LaidGroup[], width: number): Solving {
+export function solving(d: Draw, laid: readonly LaidGroup[]): Solving {
+  const width = d.view.bodyColumns ?? DEFAULT_BODY_COLUMNS
   const solved = solvedOf(laid, width)
   return { solved, offset: GUTTER + treeOffset(solved), width }
 }
@@ -176,54 +156,8 @@ export const solvedOf = (laid: readonly LaidGroup[], width: number): Solved =>
     width - GUTTER,
   )
 
-/** The detail lines under a row and their indent. */
-interface Details {
-  readonly lines: readonly DetailLine[]
-  readonly pad: number
-}
-
-/** The detail lines of a row and their indent. None when the budget guard turned detail off or the row is closed. */
-export function detailsOf(d: Draw, g: Solving, r: LaidRow): Details {
-  return d.detail ? openDetailsOf(g, r) : { lines: [], pad: 0 }
-}
-
-/** The detail lines of a row and their indent: none for a closed row. */
-function openDetailsOf(g: Solving, r: LaidRow): Details {
-  if (!r.open) return { lines: [], pad: 0 }
-  const pad = Math.min(g.offset + INDENT * r.depth + GLYPH_BOX, Math.max(0, g.width - MIN_DETAIL))
-  return { lines: detailOf(r.row, SHARED_COLUMNS, g.solved, r.depth), pad }
-}
-
-/**
- * The rows a detail line takes: its text wraps in what the indent and the label leave of the body. The window counts
- * them before it draws, so it must wrap as the engine does.
- */
-export function detailRows(line: DetailLine, pad: number, width: number): number {
-  const label = line.label === undefined ? 0 : cellWidth(`${normaliseCell(line.label)}:`) + 1
-  return wrapRows(clipTo(normaliseCell(line.cell.text), DETAIL_CELLS), width - pad - label)
-}
-
-const heightOfDetails = ({ lines, pad }: Details, width: number): number =>
-  lines.reduce((sum, line) => sum + detailRows(line, pad, width), 0)
-
-/** The rows a laid row takes: its own line and its detail lines. */
-export const rowLines = (d: Draw, g: Solving, r: LaidRow): number => 1 + heightOfDetails(detailsOf(d, g, r), g.width)
-
-/**
- * The rows that the detail lines of the open row `id` take below its own line, as `rowLines` counts them in a body `width` wide: 0 for
- * a row that is closed or not laid. The window shows at least the selected unit whatever its height, so these rows are rows of the
- * list that the quick view must leave (issue #276, review of PR #284). Calls the `detail()` of that one row, and only when it is open.
- */
-export function openLinesOf(laid: readonly LaidGroup[], id: string | null, width: number): number {
-  const r = laid.flatMap(g => g.rows).find(x => x.row.id === id)
-  return r === undefined || !r.open ? 0 : heightOfDetails(openDetailsOf(solvingOf(laid, width), r), width)
-}
-
-/** A row and its detail lines. */
-export function rowParts(d: Draw, g: Solving, r: LaidRow): RenderElement[] {
-  const { lines, pad } = detailsOf(d, g, r)
-  return [rowLine(d, g.solved, r), ...lines.map(line => detailLine(d, line, pad, r.row.dim === true))]
-}
+/** A row: its own line. A row has no detail lines under it (issue #278): the quick view and the detail view show its detail. */
+export const rowParts = (d: Draw, g: Solving, r: LaidRow): RenderElement[] => [rowLine(d, g.solved, r)]
 
 /** The one header row of the table, over the columns of the rows. */
 export const tableHeader = (d: Draw, g: Solving): RenderElement => headerRow(d.el, SHARED_COLUMNS, g.solved)
