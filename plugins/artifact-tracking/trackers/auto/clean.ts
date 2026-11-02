@@ -17,8 +17,11 @@
 // reachable from a base ref (the branch of the main tree, and `origin/HEAD` when it is set and still resolves). The `HEAD`
 // sha, the cwd of the session, the agent ledger and the list for the tree-in-tree check are read from the world at the step
 // of each tree: the list of the apply is as old as every remove before this step, and a remove can run 120 s. A squash- or
-// rebase-merged branch leaves commits off the base, so its tree is skipped. Git deletes the ignored files of the tree with
-// it. The branch stays. Every git call runs with `LC_ALL=C`, so the words of a refusal are English in any locale.
+// rebase-merged branch leaves commits off the base: its tree still counts as merged when `git merge-tree --write-tree` of the
+// base and `HEAD` gives the tree of the base (issue #243: the changes are on the base; no fetch, no `gh`, no remote-ref test).
+// The call runs last, and only after `rev-list` counted commits off the base: a failed count keeps its reason. The outcome is
+// then `done: squash-merged, changes already on <base>`; the dry plan runs no git, so only `--yes` says it.
+// Git deletes the ignored files of the tree with it. The branch stays. Every git call runs with `LC_ALL=C`, so the words of a refusal are English in any locale.
 //
 // There is no `--force` and no `-f`, never a branch delete. A live, locked or main record is never removed by the first
 // action, and the second never touches the root or the main tree.
@@ -243,19 +246,75 @@ async function headOf(git: Git, path: string): Promise<{ sha: string } | { error
   }
 }
 
-/** The reason when a commit of `head` is on no base ref, or when git could not count them. `undefined`: every commit is merged. */
-async function unmergedOf(git: Git, head: string, bases: readonly string[]): Promise<string | undefined> {
+/**
+ * The reason when a commit of `head` is on no base ref, or when git could not count them. `undefined`: every commit is merged.
+ * `counted` is true only when git really counted commits off the base: a failed or unreadable count is never `counted`.
+ */
+async function unmergedOf(
+  git: Git,
+  head: string,
+  bases: readonly string[],
+): Promise<{ why: string; counted: boolean } | undefined> {
   try {
     const r = await git(['rev-list', '--count', head, '--not', ...bases])
-    if (r.exitCode !== 0) return `git failed: ${firstLine(r.stderr) || `exit ${r.exitCode}`}`
+    if (r.exitCode !== 0) return { why: `git failed: ${firstLine(r.stderr) || `exit ${r.exitCode}`}`, counted: false }
     const text = r.stdout.trim()
     const n = /^\d+$/.test(text) ? Number(text) : Number.NaN
-    if (Number.isNaN(n)) return 'git failed: unexpected answer'
-    return n === 0 ? undefined : `${n} ${n === 1 ? 'commit' : 'commits'} not on ${bases.join(' or ')}`
+    if (Number.isNaN(n)) return { why: 'git failed: unexpected answer', counted: false }
+    return n === 0
+      ? undefined
+      : { why: `${n} ${n === 1 ? 'commit' : 'commits'} not on ${bases.join(' or ')}`, counted: true }
   } catch (e) {
-    return `git could not run: ${message(e)}`
+    return { why: `git could not run: ${message(e)}`, counted: false }
   }
 }
+
+/**
+ * Whether no custom merge driver is configured (`merge.<name>.driver`, any scope). `merge-tree --write-tree` runs the drivers
+ * that `.gitattributes` names, and a driver that keeps one side can give the tree of the base for a merge that is not applied:
+ * the proof would be wrong. Exit 1 of `git config` is "no such key"; a driver, any other exit or a throw is "not safe".
+ */
+async function noMergeDriver(git: Git): Promise<boolean> {
+  try {
+    return (await git(['config', '--get-regexp', '^merge\\..+\\.driver$'])).exitCode === 1
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The first base ref that already holds the changes of `head`, or `undefined`. `git merge-tree --write-tree <base> <head>`
+ * merges them in memory (no index, no working tree, no ref; it writes loose tree objects that `git gc` removes). Exit 0 and a
+ * printed tree equal to the tree of the base mean the merge changes nothing: a squash or rebase merge brought every change in.
+ * A configured custom merge driver skips the proof (`noMergeDriver`). A conflict (exit 1), a git older than 2.38 (exit 129), any other failure, or a change that the base reverted later is
+ * "not applied": the tree stays skipped. No fetch runs, so the base must already know the merge. The caller asks only after
+ * `rev-list` counted commits off the base: a failed count never leads here.
+ */
+export async function appliedOf(git: Git, head: string, bases: readonly string[]): Promise<string | undefined> {
+  if (!(await noMergeDriver(git))) return undefined
+  for (const base of bases) {
+    try {
+      const merged = await git(['merge-tree', '--write-tree', base, head])
+      if (merged.exitCode !== 0) continue
+      const tree = merged.stdout.split('\n')[0]?.trim() ?? ''
+      if (tree === '') continue
+      const own = await git(['rev-parse', '--verify', '-q', `${base}^{tree}`])
+      if (own.exitCode === 0 && own.stdout.trim() === tree) return base
+    } catch {
+      // No answer is not applied: the safe side.
+    }
+  }
+  return undefined
+}
+
+/**
+ * What the guards decide: skip with a reason, or go on. `applied` is the base that already holds the changes of a `HEAD` that is
+ * no ancestor of it (a squash or rebase merge, issue #243); it is absent for a `HEAD` that every base reaches.
+ */
+type Verdict = { skip: string } | { ok: true; applied?: string }
+
+/** Whether an outcome says that the tree is gone: the bare `done` of a removal, or `done: <how>`. */
+const isDone = (outcome: string): boolean => outcome === 'done' || outcome.startsWith('done: ')
 
 /** The part of the state that the agent guard reads: the agents of the run and the proofs that their places refer to. */
 type Ledger = Pick<AutoState, 'agents' | 'worktrees'>
@@ -274,7 +333,8 @@ type Guards = {
 }
 
 /**
- * Why the live tree of `rec` must not be removed now, or `undefined` when every guard holds. The first that fails is the
+ * `{ skip }`: why the live tree of `rec` must not be removed now. `{ ok: true }`: every guard holds (`applied` names the base
+ * that holds the changes of a squash- or rebase-merged `HEAD`, issue #243). The first guard that fails is the
  * answer, and git never hears of a remove. The order is the one of the study (#123, section 5.4), with one check added: the
  * cwd of the session, a running agent, another registered worktree inside the tree, a change in the working tree, then the
  * merge state of `HEAD`. The lock and the record were checked before. The cwd is compared with the path that git lists and
@@ -293,27 +353,33 @@ type Guards = {
  * old sha would count as merged and the remove would leave the new commit on no ref. A commit that lands between the status
  * and this read counts as unmerged. Git has no atomic check-and-remove, so a gap of milliseconds remains.
  */
-async function unsafeOf(g: Guards, proof: WorktreeProof, rec: GitWorktree): Promise<string | undefined> {
+async function unsafeOf(g: Guards, proof: WorktreeProof, rec: GitWorktree): Promise<Verdict> {
   const where = await g.cwd()
-  if ('error' in where) return where.error
-  if (holds(rec.path, where.cwd) || holds(proof.path, where.cwd)) return 'the session works in it'
+  if ('error' in where) return { skip: where.error }
+  if (holds(rec.path, where.cwd) || holds(proof.path, where.cwd)) return { skip: 'the session works in it' }
   const ledger = await g.ledger()
-  if ('error' in ledger) return ledger.error
+  if ('error' in ledger) return { skip: ledger.error }
   const works =
     agentWorks(ledger.agents, proof) ?? (agentWorksIn(ledger, g.list, where.cwd, rec) ? AGENT_WORKS : undefined)
-  if (works !== undefined) return works
+  if (works !== undefined) return { skip: works }
   const inner = await holdsOf(g.git, proof, rec)
-  if (inner !== undefined) return inner
+  if (inner !== undefined) return { skip: inner }
   const dirty = await dirtyOf(g.git, rec.path)
-  if (dirty !== undefined) return dirty
+  if (dirty !== undefined) return { skip: dirty }
   // A record with no `HEAD` line is the cheap first test. The sha, not the branch: a detached tree has none, and a remove
   // would leave its commits on no ref.
-  if (rec.head === undefined || rec.head === '') return 'no HEAD'
+  if (rec.head === undefined || rec.head === '') return { skip: 'no HEAD' }
   const head = await headOf(g.git, rec.path)
-  if ('error' in head) return head.error
+  if ('error' in head) return { skip: head.error }
   const bases = await g.bases()
-  if (bases.length === 0) return 'no base branch'
-  return unmergedOf(g.git, head.sha, bases)
+  if (bases.length === 0) return { skip: 'no base branch' }
+  const unmerged = await unmergedOf(g.git, head.sha, bases)
+  if (unmerged === undefined) return { ok: true }
+  // A failed or unreadable count keeps its reason. Only a real count of commits off the base asks for the merge-tree (#243):
+  // a squash or rebase merge leaves such commits, but the base may hold their changes.
+  if (!unmerged.counted) return { skip: unmerged.why }
+  const applied = await appliedOf(g.git, head.sha, bases)
+  return applied === undefined ? { skip: unmerged.why } : { ok: true, applied }
 }
 
 /**
@@ -353,9 +419,12 @@ async function recordOutcome(git: Git, rec: GitWorktree): Promise<string> {
  */
 async function liveOutcome(g: Guards, proof: WorktreeProof, rec: GitWorktree): Promise<string> {
   if (rec.prunable !== undefined) return 'skipped: the directory is gone'
-  const why = await unsafeOf(g, proof, rec)
-  if (why !== undefined) return `skipped: ${why}`
-  return removeOf(g.git, rec.path, REMOVE_TIMEOUT_MS)
+  const verdict = await unsafeOf(g, proof, rec)
+  if ('skip' in verdict) return `skipped: ${verdict.skip}`
+  const outcome = await removeOf(g.git, rec.path, REMOVE_TIMEOUT_MS)
+  return outcome === 'done' && verdict.applied !== undefined
+    ? `done: squash-merged, changes already on ${verdict.applied}`
+    : outcome
 }
 
 /** What a step finds before its action: its outcome already (`gone`: the row has no record left), or its proof and record. */
@@ -438,7 +507,7 @@ export const autoCleanup: Cleanup<AutoConfig, AutoState> = {
           }
           outcome = await liveOutcome(guards, proof, rec)
         } else outcome = await recordOutcome(git, rec)
-        if (outcome === 'done') gone.add(step.id)
+        if (isDone(outcome)) gone.add(step.id)
       }
       out.push({ id: step.id, outcome })
     }
