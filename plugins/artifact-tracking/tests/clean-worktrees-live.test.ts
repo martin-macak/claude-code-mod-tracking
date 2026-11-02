@@ -77,6 +77,12 @@ type Opts = {
   /** The answer of `git rev-parse --verify -q <ref>^{commit}`: whether a base ref resolves. Default: `SHA`. */
   baseAlive?: (ref: string) => RunResult | Promise<RunResult>
   remove?: (path: string) => RunResult | Promise<RunResult>
+  /** The answer of `git merge-tree --write-tree <base> <head>`, by base. Default: exit 129 (no such option, git before 2.38). */
+  mergeTree?: (base: string) => RunResult | Promise<RunResult>
+  /** The answer of `git rev-parse --verify -q <base>^{tree}`, by base. Default: `TREE`. */
+  baseTree?: (base: string) => RunResult | Promise<RunResult>
+  /** The answer of `git config --get-regexp` for merge drivers: exit 0 lists a custom merge driver, exit 1 none. Default: exit 1. */
+  mergeDrivers?: () => RunResult | Promise<RunResult>
   cwd?: string
 }
 
@@ -103,6 +109,10 @@ async function liveWorld(o: Opts = {}) {
     if (a === '-C' && argv[3] === 'rev-parse') return (await o.head?.(argv[2] ?? '')) ?? ok(`${SHA}\n`)
     if (a === 'symbolic-ref')
       return (await (typeof o.originHead === 'function' ? o.originHead() : o.originHead)) ?? fail('', 1)
+    if (a === 'config') return (await o.mergeDrivers?.()) ?? fail('', 1)
+    if (a === 'merge-tree') return (await o.mergeTree?.(argv[3] ?? '')) ?? fail('usage', 129)
+    if (a === 'rev-parse' && argv.at(-1)?.endsWith('^{tree}'))
+      return (await o.baseTree?.(argv.at(-1)?.replace('^{tree}', '') ?? '')) ?? ok('TREE\n')
     if (a === 'rev-parse') return (await o.baseAlive?.(argv.at(-1)?.replace('^{commit}', '') ?? '')) ?? ok(`${SHA}\n`)
     if (a === 'rev-list') return (await o.revList?.(argv)) ?? ok('0\n')
     return fail(`unexpected git call: ${argv.join(' ')}`)
@@ -289,6 +299,133 @@ test('the guards run in order, each by argument vector: list, list again, status
     ['git', 'rev-list', '--count', SHA, '--not', 'refs/heads/main', 'refs/remotes/origin/main'],
     ['git', 'worktree', 'remove', LIVE],
   ])
+})
+
+// #243, option B: a squash or rebase merge leaves commits off the base, but the base can hold the changes. `merge-tree` of the
+// base and HEAD gives the tree of the base then. Each case checks the order of the calls and the outcome, no wall time.
+const NOT_ANCESTOR = { revList: () => ok('2\n') }
+
+test('squash-merged: commits off the base but merge-tree gives the base tree: done: squash-merged, and the remove runs after it', async () => {
+  const t = await liveWorld({ ...NOT_ANCESTOR, mergeTree: () => ok('TREE\n') })
+  expect((await t.run('clean --yes worktrees')).text).toContain(
+    `  ${LIVE}: done: squash-merged, changes already on refs/heads/main`,
+  )
+  const order = t.gits().map(c => c.slice(0, 3).join(' '))
+  expect(order.indexOf('git merge-tree --write-tree')).toBeGreaterThan(order.indexOf('git rev-list --count'))
+  expect(order.indexOf('git worktree remove')).toBeGreaterThan(order.indexOf('git merge-tree --write-tree'))
+  expect(t.gits().find(c => c[1] === 'merge-tree')).toEqual([
+    'git',
+    'merge-tree',
+    '--write-tree',
+    'refs/heads/main',
+    SHA,
+  ])
+  expect(t.removes()).toEqual([['git', 'worktree', 'remove', LIVE]])
+  expect(t.log().map(e => e.outcome)).toEqual(['done: squash-merged, changes already on refs/heads/main'])
+  expect(t.row()).toMatchObject({ state: 'removed' })
+})
+
+test('changes not on the base: merge-tree gives another tree, so the old reason stays and nothing is removed', async () => {
+  const t = await liveWorld({ ...NOT_ANCESTOR, mergeTree: () => ok('OTHER\n') })
+  expect((await t.run('clean --yes worktrees')).text).toContain(`  ${LIVE}: skipped: 2 commits not on refs/heads/main`)
+  expect(t.removes()).toEqual([])
+})
+
+test('a conflict (exit 1), an old git (exit 129) or a throw keep the old reason', async () => {
+  for (const mergeTree of [
+    () => fail('CONFLICT', 1),
+    () => fail('usage', 129),
+    () => Promise.reject(new Error('boom')),
+  ]) {
+    const t = await liveWorld({ ...NOT_ANCESTOR, mergeTree })
+    expect((await t.run('clean --yes worktrees')).text).toContain(
+      `  ${LIVE}: skipped: 2 commits not on refs/heads/main`,
+    )
+    expect(t.removes()).toEqual([])
+  }
+})
+
+test('a custom merge driver: merge-tree honors it and can hide unmerged changes, so it is never asked and the skip stays', async () => {
+  for (const mergeDrivers of [
+    () => ok('merge.keepbase.driver true\n'),
+    () => fail('fatal: bad config', 128),
+    () => Promise.reject(new Error('boom')),
+  ]) {
+    const t = await liveWorld({ ...NOT_ANCESTOR, mergeTree: () => ok('TREE\n'), mergeDrivers })
+    expect((await t.run('clean --yes worktrees')).text).toContain(
+      `  ${LIVE}: skipped: 2 commits not on refs/heads/main`,
+    )
+    expect(t.subs()).not.toContain('merge-tree')
+    expect(t.removes()).toEqual([])
+  }
+})
+
+test('every commit on the base (option A): merge-tree is never called', async () => {
+  const t = await liveWorld({ mergeTree: () => ok('TREE\n') })
+  expect((await t.run('clean --yes worktrees')).text).toContain(`  ${LIVE}: done\n`)
+  expect(t.subs()).not.toContain('merge-tree')
+})
+
+test('two bases: the first does not hold the changes, the second does, and the outcome names the second', async () => {
+  const t = await liveWorld({
+    ...NOT_ANCESTOR,
+    originHead: ok('refs/remotes/origin/main\n'),
+    mergeTree: base => (base === 'refs/remotes/origin/main' ? ok('TREE\n') : ok('OTHER\n')),
+  })
+  expect((await t.run('clean --yes worktrees')).text).toContain(
+    `  ${LIVE}: done: squash-merged, changes already on refs/remotes/origin/main`,
+  )
+})
+
+test('a rev-list that fails, throws or answers nonsense keeps its reason even when merge-tree gives the base tree', async () => {
+  const cases: [() => RunResult | Promise<RunResult>, string][] = [
+    [() => fail('fatal: bad revision', 128), 'skipped: git failed: fatal: bad revision'],
+    [() => ok('abc\n'), 'skipped: git failed: unexpected answer'],
+    [() => Promise.reject(new Error('spawn git ENOENT')), 'skipped: git could not run: spawn git ENOENT'],
+  ]
+  for (const [revList, text] of cases) {
+    const t = await liveWorld({ revList, mergeTree: () => ok('TREE\n') })
+    expect((await t.run('clean --yes worktrees')).text, text).toContain(`  ${LIVE}: ${text}`)
+    expect(t.removes(), text).toEqual([])
+    expect(t.subs(), text).not.toContain('merge-tree')
+  }
+})
+
+test('the base tree is read by rev-parse and compared: another tree, a failed rev-parse or an empty merge-tree answer keep the skip', async () => {
+  const squash = await liveWorld({ ...NOT_ANCESTOR, mergeTree: () => ok('TREE\n') })
+  await squash.run('clean --yes worktrees')
+  expect(squash.gits()).toContainEqual(['git', 'rev-parse', '--verify', '-q', 'refs/heads/main^{tree}'])
+  const variants = [
+    { mergeTree: () => ok('TREE\n'), baseTree: () => ok('OTHER\n') },
+    { mergeTree: () => ok('TREE\n'), baseTree: () => fail('', 1) },
+    { mergeTree: () => ok('\n') },
+  ]
+  for (const v of variants) {
+    const t = await liveWorld({ ...NOT_ANCESTOR, ...v })
+    expect((await t.run('clean --yes worktrees')).text).toContain(
+      `  ${LIVE}: skipped: 2 commits not on refs/heads/main`,
+    )
+    expect(t.removes()).toEqual([])
+  }
+})
+
+test('squash-merged but git refuses the remove: the refusal is the outcome, no squash text, and the row stays', async () => {
+  const t = await liveWorld({
+    ...NOT_ANCESTOR,
+    mergeTree: () => ok('TREE\n'),
+    remove: () => fail('fatal: cannot remove: contains modified or untracked files', 128),
+  })
+  const text = (await t.run('clean --yes worktrees')).text
+  expect(text).not.toContain('squash-merged')
+  expect(text).toContain(`  ${LIVE}: skipped:`)
+  expect(t.row()).not.toMatchObject({ state: 'removed' })
+})
+
+test('a failed guard (dirty tree, agent) runs before: merge-tree is never called', async () => {
+  const dirty = await liveWorld({ ...NOT_ANCESTOR, mergeTree: () => ok('TREE\n'), status: () => ok(' M a\n') })
+  await dirty.run('clean --yes worktrees')
+  expect(dirty.subs()).not.toContain('merge-tree')
+  expect(dirty.removes()).toEqual([])
 })
 
 // A removed tree is gone for the plan at once, as `removedRows` makes it for a record, so a second --yes has no step.
