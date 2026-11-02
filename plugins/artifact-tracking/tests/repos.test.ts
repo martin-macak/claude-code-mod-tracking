@@ -1592,3 +1592,51 @@ test('parseRepoHintsFromBash reads the lines after an arithmetic shift', () => {
   // A heredoc next to it still hides its body.
   expect(paths('x=$((1<<2))\ncat <<EOF\ncd /y\nEOF\ncd /x\ngit -C . status')).toEqual(['/x', '/x'])
 })
+
+// ---------------------------------------------------------------- nested repos under a non-git launch folder (#249)
+
+const ROOT_SDK: RepoRef = { host: 'github.com', owner: 'acme', repo: 'sdk' }
+/** An existing folder that is no repo: git says "not a git repository". */
+const NOT_ROOT = notRepo
+const GONE = { exitCode: 128, stdout: '', stderr: "fatal: cannot change to '/work/gone'" }
+
+function nestedRunner(probed: string[], rootAnswer: RunResult | 'throw') {
+  return async (argv: readonly string[]): Promise<RunResult> => {
+    if (argv[3] === 'rev-parse') {
+      probed.push(String(argv[2]))
+      if (argv[2] === '/work') {
+        if (rootAnswer === 'throw') throw new Error('spawn failed')
+        return rootAnswer
+      }
+      if (argv[2] === '/work/sdk') return ok('/work/sdk\n/work/sdk/.git\n')
+      return String(argv[2]).includes('/gone') ? GONE : notRepo
+    }
+    if (argv[3] === 'remote') return ok('git@github.com:acme/sdk.git\n')
+    return ok('main\n')
+  }
+}
+
+test('a non-git root: a file in no repo adds no visit and the probes stay bounded', async () => {
+  const probed: string[] = []
+  const t = new RepoTracker({ run: nestedRunner(probed, NOT_ROOT), now: () => 1, rootPath: '/work' })
+  expect(await t.resolvePath('/work/notes.md', 'main')).toBeNull()
+  expect(await t.resolvePath('/work/gone/er/notes.md', 'main')).toBeNull()
+  // The walk ends at the first existing directory: the root is a known non-repo and stops it. Nothing above is probed.
+  expect(probed.every(d => d === '/work' || d.startsWith('/work/'))).toBe(true)
+  expect(probed.length).toBeLessThanOrEqual(4)
+})
+
+test('a non-git root: the rootRepo remote still makes a nested clone of it own', async () => {
+  const t = new RepoTracker({ run: nestedRunner([], NOT_ROOT), now: () => 1, rootPath: '/work', rootRepo: ROOT_SDK })
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toBeNull()
+})
+
+test('a root that git could not probe keeps the shield: a nested repo adds no visit', async () => {
+  const t = new RepoTracker({ run: nestedRunner([], 'throw'), now: () => 1, rootPath: '/work' })
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toBeNull()
+})
+
+test('a non-git root: a nested repo is a visit', async () => {
+  const t = new RepoTracker({ run: nestedRunner([], NOT_ROOT), now: () => 1, rootPath: '/work' })
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toMatchObject({ key: 'remote:github.com/acme/sdk' })
+})
