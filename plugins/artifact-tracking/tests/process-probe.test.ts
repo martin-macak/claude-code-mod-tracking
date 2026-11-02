@@ -1,7 +1,9 @@
 import { expect, test } from 'claude-code/testing'
+import { parseBashProcesses } from '../trackers/processes/parse'
 import {
   composeState,
   dockerEntryMatchesRow,
+  dockerRowIsFindable,
   dockerStateFromStatus,
   findDetachedPid,
   hasUnexpandedVariable,
@@ -201,4 +203,22 @@ test('a variable stands for one word: a value of several words fits nothing', ()
   const several = '   11 Tue Oct 13 20:26:39 2026 node a b server.js\n'
   expect(findDetachedPid(one, 'node $ARGS server.js', first)).toBe(11)
   expect(findDetachedPid(several, 'node $ARGS server.js', first)).toBeUndefined()
+})
+
+test('dockerRowIsFindable: a row needs an id or a name that Docker could give', () => {
+  expect(dockerRowIsFindable({ name: 'api' })).toBe(true)
+  expect(dockerRowIsFindable({ name: 'my_app-1.web' })).toBe(true)
+  expect(dockerRowIsFindable({ name: 'docker run -d nginx', containerId: 'a1b2c3d4e5f6' })).toBe(true)
+  expect(dockerRowIsFindable({ name: 'docker run -d nginx' })).toBe(false) // named by its command: no container has this name
+  for (const name of ['', '-x', '_x', '.x', 'api\n']) expect(dockerRowIsFindable({ name })).toBe(false)
+})
+
+// The probe infers "no real --name" from the name text. This pins the parser side: the fallback name of a run with no --name
+// and no id has a space, so it is not findable, and the same run with --name is (issue #241).
+test('dockerRowIsFindable follows the parser: the fallback name is unfindable, a --name is findable', () => {
+  const [unnamed] = parseBashProcesses('docker run -d nginx > /dev/null', { result: { stdout: '' } })
+  const [named] = parseBashProcesses('docker run -d --name api nginx > /dev/null', { result: { stdout: '' } })
+  expect(unnamed?.kind).toBe('docker-container')
+  expect(dockerRowIsFindable(unnamed as never)).toBe(false)
+  expect(dockerRowIsFindable(named as never)).toBe(true)
 })

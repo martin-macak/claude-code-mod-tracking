@@ -204,8 +204,9 @@ test('a second sighting of a named container replaces the exact id of the first,
 })
 
 // A run that got no id (issue #231) is found by its `--name` in `docker ps`, not by the id of another container. A run with no id
-// and no name is named by its command, so the probe finds no container for it and the row reads `exited` (README, "Container ids").
-test('a run that got no id is found by its --name, and an unnamed one reads exited after the probe', async () => {
+// and no name is named by its command, so the probe cannot find a container for it: the row reads `unknown`, not `exited`, because
+// the probe never saw the container (issue #241; README, "Container ids").
+test('a run that got no id is found by its --name, and an unnamed one reads unknown after the probe', async () => {
   const OTHER = 'd'.repeat(64)
   const t = setup()
   t.w.run = argv =>
@@ -217,7 +218,17 @@ test('a run that got no id is found by its --name, and an unnamed one reads exit
   await t.probe()
   expect(t.rows().map(r => [r.name, r.containerId, r.state])).toEqual([
     ['api', undefined, 'up'], // found by its name, not by the id of web
-    ['docker run -d nginx', undefined, 'exited'], // no id and no name: nothing to find
+    ['docker run -d nginx', undefined, 'unknown'], // no id and no name: the probe cannot see it
+  ])
+  // A second probe says the same. A later run that prints its id is a row of its own (named by the short id): it is found by the id.
+  await t.probe()
+  expect(t.rows().map(r => r.state)).toEqual(['up', 'unknown'])
+  await t.bash('docker run -d nginx', `${CID}\n`)
+  await t.probe()
+  expect(t.rows().map(r => [r.name, r.state])).toEqual([
+    ['api', 'up'],
+    ['cccccccccccc', 'up'],
+    ['docker run -d nginx', 'unknown'],
   ])
 })
 

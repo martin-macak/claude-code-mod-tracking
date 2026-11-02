@@ -7,6 +7,7 @@ import type { Breaker, TrackerContext } from '../../core/interfaces/tracker'
 import {
   composeState,
   dockerEntryMatchesRow,
+  dockerRowIsFindable,
   findDetachedPid,
   hasUnexpandedVariable,
   parseDockerPs,
@@ -96,7 +97,11 @@ export async function probeProcesses(ctx: ProbeCtx, state: ProbeState): Promise<
       if (ps.exitCode !== 0) throw new ExitError(ps.stderr.trim() || `docker ps failed (${ps.exitCode})`)
       const seen = parseDockerPs(ps.stdout)
       const found = new Map<string, ProcessRecord['state']>()
-      for (const r of dockerRows) found.set(r.id, seen.find(x => dockerEntryMatchesRow(x, r))?.state ?? 'exited')
+      for (const r of dockerRows)
+        found.set(
+          r.id,
+          seen.find(x => dockerEntryMatchesRow(x, r))?.state ?? (dockerRowIsFindable(r) ? 'exited' : 'unknown'),
+        )
       for (const r of composeRows) {
         const label = `label=com.docker.compose.project=${r.project ?? r.name}`
         const listed = await run('docker', 'ps', '-a', '--filter', label, '--format', '{{.Status}}')

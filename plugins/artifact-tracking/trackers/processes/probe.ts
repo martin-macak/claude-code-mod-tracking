@@ -33,6 +33,18 @@ export function dockerEntryMatchesRow(
   return idMatches(entry.id, row.containerId) || entry.name === row.name
 }
 
+/** Why the pane shows an unfindable docker row as `unknown` (issue #241). */
+export const UNSEEN_REASON = 'no id or --name: Docker cannot find it'
+
+/**
+ * Whether the probe can find the container of a row. A row with an id is findable by it. A row with no id is findable only by a
+ * name that Docker allows (`[a-zA-Z0-9][a-zA-Z0-9_.-]*`). The parser names a `docker run -d` that has no `--name` and no id after
+ * its command, which holds spaces: no container has that name, so the probe can say nothing about the row (issue #241).
+ */
+export function dockerRowIsFindable(row: { name: string; containerId?: string }): boolean {
+  return row.containerId !== undefined || /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(row.name)
+}
+
 /** One compose project from the `{{.Status}}` lines of its containers: any unhealthy, else any up, else exited. */
 export function composeState(stdout: string): DockerProbeState {
   const states = stdout
