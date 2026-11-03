@@ -123,6 +123,7 @@ export function perRepoGh(o: PerRepoGhOptions) {
   const gh = {
     isAvailable: true,
     canCall: () => true,
+    canCallHost: () => true,
     status: (): ToolStatus => ({ name: 'gh', available: true, loggedIn: true, breaker: 'closed', lastError: 'boom' }),
     checkHost: async (host: string) => {
       const authed = o.authed?.(host) ?? true

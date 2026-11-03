@@ -60,6 +60,7 @@ function discoveryOf(ctx: Ctx): DiscoveryTool {
       return tool()?.isAvailable ?? false
     },
     canCall: now => need().canCall(now),
+    canCallHost: (host, now) => need().canCallHost(host, now),
     status: () => need().status(),
     checkHost: host => need().checkHost(host),
     isHostAuthed: host => need().isHostAuthed(host),

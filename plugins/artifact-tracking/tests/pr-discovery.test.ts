@@ -148,6 +148,7 @@ function fakeGh(over: {
   const gh = {
     isAvailable: over.available ?? true,
     canCall: () => over.can ?? true,
+    canCallHost: () => true,
     status: (): ToolStatus => ({
       name: 'gh',
       available: true,
@@ -345,6 +346,10 @@ function repoGh(o: {
   authed?: boolean | ((host: string) => boolean)
   /** The hosts whose check cannot run (a timeout, a network error): `checkHost` says false and the login stays unknown. */
   unreachable?: (host: string) => boolean
+  /** The hosts at rest (their breaker is open): `canCallHost` says false, and no call may reach them. */
+  resting?: (host: string) => boolean
+  /** The hosts whose login is already known to be denied (an earlier check said so), before this run asks. */
+  knownDenied?: (host: string) => boolean
 }) {
   const calls: { host: string; repo: string; query: string }[] = []
   /** The hosts that were checked: a host is not known to be authed until `checkHost` asked (as the real tool). */
@@ -354,6 +359,7 @@ function repoGh(o: {
   const gh = {
     isAvailable: true,
     canCall: () => true,
+    canCallHost: (host: string) => !o.resting?.(host),
     status: (): ToolStatus => ({ name: 'gh', available: true, loggedIn: true, breaker: 'closed', lastError: 'boom' }),
     checkHost: async (host: string) => {
       checked.push(host)
@@ -362,7 +368,7 @@ function repoGh(o: {
       known.set(host, authed)
       return authed
     },
-    isHostAuthed: (host: string) => known.get(host),
+    isHostAuthed: (host: string) => (o.knownDenied?.(host) && !checked.includes(host) ? false : known.get(host)),
     graphql: async (host: string, q: string): Promise<GraphqlOutcome> => {
       const m = /repository\(owner: "([^"]+)", name: "([^"]+)"\)/.exec(q)
       const repo = `${m?.[1]}/${m?.[2]}`.toLowerCase()
@@ -1023,4 +1029,32 @@ test('discoverPrs: a foreign host that is blocked and asked alone names itself, 
   )
   const home = repoGh({ repos: {}, fail: { [SESSION]: block } })
   expect(await discoverPrs(home.gh, REPO, ['feat/root'], NOW)).toEqual({ ok: false, skipped: 'paused' })
+})
+
+test('discoverPrs: a foreign host at rest reads paused, a check that ran and failed reads error (issue #325)', async () => {
+  const hostAtRest = (h: string) => h === 'ghe.corp'
+  // Whole step: only a created PR on the resting host. No call ran, so nothing failed.
+  const rest = repoGh({ repos: {}, resting: hostAtRest })
+  expect(await discoverPrs(rest.gh, null, [], NOW, undefined, PR_LANE_DEFAULTS, { created: [ref(GHE, 3)] })).toEqual({
+    ok: false,
+    skipped: 'paused',
+    host: 'ghe.corp',
+  })
+  expect(rest.checked).toEqual([])
+  expect(rest.calls).toEqual([])
+  // Partial: the session repo answers, the resting host is held and named as paused.
+  const part = repoGh({ repos: sessionOk, resting: hostAtRest })
+  const r = await askPartial(part.gh, [ref(GHE, 3)])
+  expect(r).toMatchObject({ ok: true, held: ['gh:ghe.corp/team/svc#3'] })
+  expect(r.ok && r.partial).toEqual({ failed: [{ host: 'ghe.corp', why: 'paused' }] })
+  expect(part.checked).toEqual([])
+  expect(part.calls.every(c => c.host !== 'ghe.corp')).toBe(true)
+  // A check that ran and failed (the breaker is still closed) stays a failure.
+  const lost = repoGh({ repos: sessionOk, unreachable: hostAtRest })
+  const l = await askPartial(lost.gh, [ref(GHE, 3)])
+  expect(l.ok && l.partial).toEqual({ failed: [{ host: 'ghe.corp', why: 'error' }] })
+  // A host with a known denial stays "not logged in" even when it is also at rest: the login clause of the guard.
+  const denied = repoGh({ repos: sessionOk, resting: hostAtRest, authed: false, knownDenied: hostAtRest })
+  const d = await askPartial(denied.gh, [ref(GHE, 3)])
+  expect(d.ok && d.partial).toEqual({ failed: [{ host: 'ghe.corp', why: 'not-logged-in' }] })
 })

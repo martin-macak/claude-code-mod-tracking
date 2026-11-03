@@ -206,11 +206,12 @@ export interface GitHubDiscoveryApi extends GitHubToolApi {
 /**
  * What the PR lane asks of `gh`: whether it can be called, who is logged in, whether a host is authed (`checkHost` asks
  * once per host and caches it, so a host that only a created PR names is checked too; `isHostAuthed` tells a denial from a
- * check that could not run), and the one discovery query.
+ * check that could not run), whether a host can be called now (`canCallHost`: false at rest, so the lane reads `paused` and
+ * does not call), and the one discovery query.
  */
 export type DiscoveryTool = Pick<
   GitHubDiscoveryApi,
-  'isAvailable' | 'canCall' | 'status' | 'checkHost' | 'isHostAuthed' | 'graphql'
+  'isAvailable' | 'canCall' | 'canCallHost' | 'status' | 'checkHost' | 'isHostAuthed' | 'graphql'
 >
 
 /**
