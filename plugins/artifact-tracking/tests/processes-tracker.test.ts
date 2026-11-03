@@ -1292,3 +1292,66 @@ test('containerGone: a truncated ps -a listing infers no absence, and leaves the
   await t.probe()
   expect('containerGone' in (t.rows()[0] as ProcessRecord)).toBe(false)
 })
+
+// Issue #295: a row that a cut listing omits must not read `exited`. A missing line proves nothing, so the row keeps its last
+// state. A complete listing still marks it `exited`.
+test('a truncated ps -a listing leaves the state of an omitted row as it was (issue #295)', async () => {
+  const t = setup()
+  await t.bash('docker run -d --name api nginx', `${CID}\n`)
+  const cut = (stdout: string): RunResult => ({ ...res(stdout), isStdoutTruncated: true })
+  dockerPs(t, () => res(psOf([CID, 'api', 'Up 1 second'])))
+  await t.probe()
+  expect(t.rows()[0]?.state).toBe('up')
+  dockerPs(t, () => cut(psOf(['f'.repeat(64), 'other', 'Up 1 second']))) // the line of `api` was cut away
+  await t.probe()
+  expect(t.rows()[0]?.state).toBe('up')
+  dockerPs(t, () => res(psOf(['f'.repeat(64), 'other', 'Up 1 second']))) // complete: it is gone
+  await t.probe()
+  expect(t.rows()[0]?.state).toBe('exited')
+})
+
+test('a truncated ps -a listing still updates a row it lists (issue #295)', async () => {
+  const t = setup()
+  await t.bash('docker run -d --name api nginx', `${CID}\n`)
+  dockerPs(t, () => res(psOf([CID, 'api', 'Up 1 second'])))
+  await t.probe()
+  dockerPs(t, () => ({ ...res(psOf([CID, 'api', 'Exited (1) 2 seconds ago'])), isStdoutTruncated: true }))
+  await t.probe()
+  expect(t.rows()[0]?.state).toBe('exited')
+})
+
+test('a truncated ps -a listing does not turn a row with no id and no name into unknown (issue #295)', async () => {
+  const t = setup()
+  await t.bash('docker run -d nginx') // no id line, no --name: the probe cannot find it
+  dockerPs(t, () => ({ ...res(''), isStdoutTruncated: true }))
+  await t.probe()
+  expect(t.rows()[0]?.state).not.toBe('unknown')
+  dockerPs(t, () => res('')) // a complete listing: the row reads unknown (issue #241)
+  await t.probe()
+  expect(t.rows()[0]?.state).toBe('unknown')
+})
+
+test('a truncated compose listing leaves the state of the project as it was (issue #295)', async () => {
+  const t = setup()
+  const composePs = (answer: () => RunResult) => {
+    t.w.run = argv =>
+      argvIs(argv, 'docker', 'ps', '-a', '--filter', 'label=com.docker.compose.project=track-compose')
+        ? answer()
+        : argvIs(argv, 'docker', 'ps')
+          ? res('')
+          : undefined
+  }
+  composePs(() => res('Up 2 seconds\n'))
+  await t.bash('docker compose -p track-compose up -d')
+  await t.probe()
+  expect(t.rows()[0]?.state).toBe('up')
+  composePs(() => ({ ...res(''), isStdoutTruncated: true })) // the running lines were cut away
+  await t.probe()
+  expect(t.rows()[0]?.state).toBe('up')
+  composePs(() => ({ ...res('Up 2 seconds\nExited (0) 1 second ago\n'), isStdoutTruncated: true })) // a listed running line still counts
+  await t.probe()
+  expect(t.rows()[0]?.state).toBe('up')
+  composePs(() => res('')) // complete: nothing runs
+  await t.probe()
+  expect(t.rows()[0]?.state).toBe('exited')
+})
