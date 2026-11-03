@@ -1425,6 +1425,11 @@ test('screen variants: split and reordered flags; -D -m (foreground) is not trac
 
 // ---------------------------------------------------------------- detached process variants
 
+test('parseBashProcesses reads the pid of a & job in a group after &&', () => {
+  const rows = parseBashProcesses('cd d && { sleep 101 & echo $!; }', out('4242\n'))
+  expect(rows[0]).toMatchObject({ pid: 4242, fingerprint: 'sleep 101' })
+})
+
 test('detached: plain cmd & echo $! is tracked (no nohup needed)', () => {
   const rows = parseBashProcesses('sleep 1800 & echo $!', out('4242\n'))
   expect(rows).toHaveLength(1)
@@ -2061,27 +2066,182 @@ test('group: echo $! after a backgrounded command that ends in a substitution gi
   }
 })
 
-// Limits, pinned. A builtin outside the set makes a row, with the pid of the subshell that runs it (bash 5.3.20: `pwd &` names
-// a shell). A bare redirection with `&` sets `$!` to a shell, but the parser reads no job and no flag, so the earlier job takes
-// the line. A fix changes these rows.
-test('limits: a builtin outside the set makes a row, and a bare redirection with & leaves the earlier job the line', () => {
+// A builtin outside the first set runs in a subshell too: `$!` names that shell, which is no process of the command. So it makes
+// no row, and no earlier job takes the line (issue #263; bash 5.3.20 names a subshell for each of them).
+test('builtin: a backgrounded builtin outside the first set makes no row and takes no pid', () => {
   for (const builtin of [
     'pwd',
+    'source /dev/null',
     'source f',
     '. ./env',
     'kill 1',
     'exit 0',
     'declare -x A=1',
+    'local x=1',
     'trap : EXIT',
     'type ls',
+    'eval "sleep 101"',
+    'return',
+    'break',
+    'continue',
+    'shift',
+    'typeset -i n',
+    'readonly A=1',
+    'let n=1',
+    'alias ll=ls',
+    'unalias ll',
+    'umask 022',
+    'ulimit -n',
+    'hash -r',
+    'getopts ab o',
+    'jobs',
+    'disown',
+    'history',
   ]) {
-    const rows = detachedOf(`${builtin} & echo $!`, undefined, '4242\n')
-    expect({ builtin, rows: rows.map(r => [r.name, r.pid]) }).toEqual({ builtin, rows: [[builtin, 4242]] })
+    expect({ builtin, rows: detachedOf(`${builtin} & echo $!`, undefined, '4242\n') }).toEqual({ builtin, rows: [] })
+    const rows = detachedOf(`sleep 100 & ${builtin} & echo $!`, undefined, '4242\n')
+    expect({ builtin, rows: rows.map(r => [r.name, r.pid]) }).toEqual({ builtin, rows: [['sleep 100', undefined]] })
   }
-  for (const redir of ['> f &', '<f &', '2>/dev/null &']) {
+})
+
+// A bare redirection with `&` sends a shell to the background: `$!` names it (bash 5.3.20), so no earlier job takes the line.
+test('redirection: a bare redirection with & gives no earlier job its pid', () => {
+  for (const redir of ['> f &', '<f &', '2>/dev/null &', '>> f 2>&1 &']) {
     const rows = detachedOf(`sleep 100 & ${redir} echo $!`, undefined, '4242\n')
-    expect({ redir, rows: rows.map(r => [r.name, r.pid]) }).toEqual({ redir, rows: [['sleep 100', 4242]] })
+    expect({ redir, rows: rows.map(r => [r.name, r.pid]) }).toEqual({ redir, rows: [['sleep 100', undefined]] })
+    const next = detachedOf(`sleep 100 & ${redir} echo $!; sleep 101 & echo $!`, undefined, '4242\n4243\n')
+    expect({ redir, rows: next.map(r => [r.name, r.pid]) }).toEqual({
+      redir,
+      rows: [
+        ['sleep 100', undefined],
+        ['sleep 101', 4243],
+      ],
+    })
   }
+})
+
+// A process substitution with no `&` behind it, and an `eval` of text with a `&`, set `$!` too (bash 5.3.20: `sleep 3 & exec 3<
+// <(sleep 4)` names `sleep 4`). The parser reads no row for them, so no earlier job takes the line. The job after them gets its own.
+test('process substitution and eval: they set $!, so no earlier job takes the pid line', () => {
+  for (const setter of [
+    'exec 3< <(sleep 101);',
+    'cat <(sleep 101) > /dev/null;',
+    'cat <(:) <(:) > /dev/null;',
+    'cat <({ :; } &) > /dev/null;',
+    'x=$(cat <(:));',
+    'eval "sleep 101 &";',
+    "eval 'sleep 101 & wait';",
+  ]) {
+    const rows = detachedOf(`sleep 100 & ${setter} echo $!`, undefined, '4242\n')
+    expect({ setter, rows: rows.map(r => [r.name, r.pid]) }).toEqual({
+      setter,
+      rows: [['sleep 100', setter.startsWith('x=$(') ? 4242 : undefined]],
+    })
+  }
+  const next = detachedOf('sleep 100 & exec 3< <(:); echo $!; sleep 101 & echo $!', undefined, '4242\n4243\n')
+  expect(next.map(r => [r.name, r.pid])).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', 4243],
+  ])
+})
+
+// `eval` with no job `&` in its text, and a process substitution that a pipeline part holds, leave `$!` alone.
+test('process substitution and eval: text with no job ampersand leaves $! alone', () => {
+  for (const keep of [
+    'eval "echo a && echo b";',
+    'eval "echo a 2>&1";',
+    'eval "echo a &> f";',
+    'eval "echo a >&2";',
+    'eval "cat <&3";',
+    'eval "a |& b";',
+    'cat <(:) | cat > /dev/null;',
+  ]) {
+    const rows = detachedOf(`sleep 100 & ${keep} echo $!`, undefined, '4242\n')
+    expect({ keep, rows: rows.map(r => [r.name, r.pid]) }).toEqual({ keep, rows: [['sleep 100', 4242]] })
+  }
+})
+
+// A job that a `&` starts inside `( )`, `$( )` or backticks sets `$!` in that shell only. The shell after it still names the job
+// before (bash 5.3.20), and the job inside gets the line of an `echo $!` in the same shell.
+test('subshell: a job inside ( ), $( ) or backticks takes no pid line of the shell around it', () => {
+  const pid = (cmd: string, stdout = '4242\n') => detachedOf(cmd, undefined, stdout).map(r => [r.name, r.pid])
+  const both = [
+    ['sleep 100', 4242],
+    ['sleep 101', undefined],
+  ]
+  const first = [['sleep 100', 4242]]
+  const table: [string, unknown[][]][] = [
+    ['( sleep 101 & );', both],
+    ['x=$( sleep 101 & );', both],
+    ['x=`sleep 101 &`;', both],
+    ['( ( sleep 101 & ) );', both],
+    ['( coproc sleep 101 );', first],
+    ['x=$( { :; } & echo hi );', first],
+  ]
+  for (const [inner, rows] of table) {
+    expect({ inner, rows: pid(`sleep 100 & ${inner} echo $!`) }).toEqual({ inner, rows })
+  }
+  expect(pid('( sleep 101 & echo $! )')).toEqual([['sleep 101', 4242]])
+  expect(pid('sleep 100 & ( sleep 101 & echo $! ); echo $!', '4243\n4242\n')).toEqual([
+    ['sleep 100', 4242],
+    ['sleep 101', 4243],
+  ])
+  // A child shell reads the `$!` of its parent, and the line is printed once for each echo.
+  expect(pid('sleep 100 & ( echo $! ); echo $!', '4242\n4242\n')).toEqual([['sleep 100', 4242]])
+  // A `coproc` in a subshell sets `$!` there: the echo after it names no earlier job.
+  expect(pid('sleep 100 & ( coproc sleep 101; echo $! ); echo $!', '4243\n4242\n')).toEqual([['sleep 100', 4242]])
+  // A shell inherits the `$!` of the shell around it, also through shells that hold no segment.
+  expect(pid('sleep 100 & x=$(echo $!); echo $!')).toEqual([['sleep 100', 4242]])
+  expect(pid('sleep 100 & x=`echo $!`; echo $!')).toEqual([['sleep 100', 4242]])
+  expect(pid('sleep 100 & ( sleep 101 & ); ( echo $! )')).toEqual([
+    ['sleep 100', 4242],
+    ['sleep 101', undefined],
+  ])
+  expect(pid('sleep 100 & ( ( echo $! ) )')).toEqual([['sleep 100', 4242]])
+  expect(pid('sleep 100 & ( sleep 101 & ( ( echo $! ) ) )')).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', 4242],
+  ])
+})
+
+// `$!` names the subshell that runs the whole list for `a && b &` and `time a &`, so the row gets no pid. The probe finds the
+// process by its fingerprint. A plain job, a pipeline and `! a &` keep the pid (bash 5.3.20).
+test('list and time: a job whose $! names a shell gets no pid', () => {
+  const rows = (cmd: string) => detachedOf(`${cmd} echo $!`, undefined, '4242\n').map(r => [r.name, r.pid])
+  for (const cmd of [
+    'sleep 100 && sleep 101 &',
+    'true || sleep 101 &',
+    'cd /tmp && sleep 101 &',
+    'a | b && sleep 101 &',
+    'time sleep 101 &',
+    'time -p sleep 101 &',
+    '! time sleep 101 &',
+  ]) {
+    const got = rows(cmd)
+    expect(got.length).toBeGreaterThan(0)
+    expect({ cmd, pids: got.map(r => r[1]) }).toEqual({ cmd, pids: got.map(() => undefined) })
+  }
+  for (const cmd of [
+    'sleep 101 &',
+    '! sleep 101 &',
+    'nohup sleep 101 > /dev/null 2>&1 &',
+    'sleep 100 & sleep 101 | cat &',
+  ]) {
+    expect({ cmd, pid: rows(cmd).at(-1)?.[1] }).toEqual({ cmd, pid: 4242 })
+  }
+  // The list ends at `;`: a later job is plain again.
+  expect(rows('a && b; sleep 101 &').at(-1)?.[1]).toBe(4242)
+})
+
+// Limits, pinned: the parser lets a `&` job in a pipeline part take the line of the reader (bash names the job before), and
+// `f &` keeps the pid of the shell that runs it. A fix changes these rows.
+test('limits: a job in a pipeline part and a function call are not fixed', () => {
+  const rows = (cmd: string) => detachedOf(cmd, undefined, '4242\n').map(r => [r.name, r.pid])
+  expect(rows('sleep 100 & { sleep 101 & } | cat; echo $!')).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', 4242],
+  ])
+  expect(rows('f & echo $!')).toEqual([['f', 4242]])
 })
 
 test('group: the job after a backgrounded group or subshell gets its own pid line', () => {

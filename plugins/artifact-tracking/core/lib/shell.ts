@@ -40,10 +40,12 @@ export type Segment = {
   bg: boolean
   /**
    * A single `&` ended a group, a subshell, an arithmetic command or a substitution right before this segment (`{ a; } & b`,
-   * `( a ) & b`, `x=$(a) & b`, `sleep $(a) & b`). `}` and `)` make no segment, so that `&` has none to say `bg` on. The
-   * flag tells a reader that this `&` set `$!` to something that is not the job before it (issue #231). What `$!` names
-   * depends on the command. For a group (`{ a; } &`, `{ true; sleep 3; } &`: a group is never run in place), a subshell whose
-   * last command is a builtin or a compound (`( sleep 3; : ) &`, `( : ) &`), `(( ))`, and a command that is only assignments
+   * `( a ) & b`, `x=$(a) & b`, `sleep $(a) & b`), or it ended a bare redirection (`> f & b`), or a process substitution
+   * closed there, with or without a `&` (`exec 3< <(a); b`, `cat <(a) > f; b`): the shell sets `$!` for it too (issue #263).
+   * `}` and `)` make no segment, so that `&` has none to say `bg` on.
+   * The flag tells a reader that this `&` set `$!` to something that is not the job before it (issue #231).
+   * What `$!` names depends on the command. For a group (`{ a; } &`, `{ true; sleep 3; } &`: a group is never run in
+   * place), a subshell whose last command is a builtin or a compound (`( sleep 3; : ) &`, `( : ) &`), `(( ))`, and a command that is only assignments
    * or a builtin (`x=$(a) &`, `: $(a) &`) it names the shell that runs the list. For a subshell whose last command is an
    * external simple command (`( sleep 3 ) &`, `( true; sleep 3 ) &`, also with a redirection) bash runs that command in
    * place, and an external command that ends in a substitution or a process substitution (`sleep $(a) &`, `cat <(a) &`) is a
@@ -54,6 +56,21 @@ export type Segment = {
    * the pid of `a`).
    */
   afterBgShell: boolean
+  /**
+   * The segment ended with a single `&`, and the list that it ends holds an `&&` or `||` before it (`a && b &`). Bash runs the
+   * whole list in a subshell, so `$!` names that shell, not the last command (issue #263; bash 5.3.20). A reader gives the
+   * segment no pid. A pipeline (`a | b &`) is no such list: `$!` names its last part.
+   */
+  bgList: boolean
+  /**
+   * The shell that reads the segment, for the `$!` of the parser (issue #263): the number of the innermost open `(`, `$(`,
+   * backtick or process substitution scope, and `0` at the top level. A `&` list and a pipeline part run in a subshell, but
+   * they set `$!` in the shell that reads them, so `scope` is no help here. `shellUp` is the number of the nearest shell around
+   * it that holds a segment by then (`0` if none), as a shell with no segment of its own changes no `$!`.
+   * A number is a key that stays O(1) in a deep nest, where the text of `scope` grows.
+   */
+  shell: number
+  shellUp: number
   /**
    * The subshell the segment runs in. `''` is the top level. `(`, `$(` and a backtick pair open a child scope
    * `${parent}.${n}`. `{ }` is the same shell, so it keeps the scope. A list that ends with `&` runs in a subshell
@@ -306,6 +323,7 @@ export function splitShell(command: string): Segment[] {
     id: string
     tick: boolean
     saved: Place
+    andOr: number
     compounds: number
     arith: boolean
     sub: boolean
@@ -314,6 +332,12 @@ export function splitShell(command: string): Segment[] {
     outerOut: boolean
     bgPending: boolean
     from: number
+    n: number
+    /** A process substitution (`<(`, `>(`): the shell that holds it gets a `$!` from it, whatever it holds. */
+    proc: boolean
+    /** A segment sat in this shell. `anc`: the number of the nearest shell around it that held one by the time it opened, else `0`. */
+    seen: boolean
+    anc: number
   }[] = []
   let scopes = 0
   const scope = () => stack.at(-1)?.id ?? ''
@@ -323,6 +347,8 @@ export function splitShell(command: string): Segment[] {
   // does the same in `compounds`: its `;` inside reset the list, so `done`, `fi` or `esac` gives back the list that
   // holds the whole compound, and the `&` after it backgrounds the loop as a unit.
   let listFrom = 0
+  // `out.length` at the last `&&` or `||`. The list that a `&` ends holds one when this is not before `listFrom`.
+  let andOrAt = -1
   // The first segment of the pipeline part that is open now, and whether a `|` or `|&` made it part of a pipeline. A
   // `|` closes the part before it, and the end of the pipeline closes the last part. A part is a whole command: a group,
   // a compound or a subshell with all its segments. So a scope, a group and a compound save this with the list, and the
@@ -330,7 +356,7 @@ export function splitShell(command: string): Segment[] {
   let partFrom = 0
   let piped = false
   // `from`: the index of the first segment in the group.
-  const groups: (Place & { from: number })[] = []
+  const groups: (Place & { from: number; andOr: number })[] = []
   // `isCase`: the compound is a `case`. Its `arm` says where the reader is in it: `head` is the subject (`case $(x)`, before
   // the `in`), `pattern` the pattern list of an arm (`in`, or `;;`, up to the `)`), `arm` the commands after the `)`. The
   // words of a pattern are no command, and the `)` that ends one is no end of a subshell. `fresh`: no word of this pattern
@@ -406,12 +432,15 @@ export function splitShell(command: string): Segment[] {
   // A scope opens a list and a pipeline part of its own. Its close gives back the place it sat in.
   // `sub`: the shell takes the output of the commands inside (`$(`, a backtick and `<(`). A scope inside one keeps it.
   // `moved`: the output of the command around it is redirected before it, and it is a `>(`. A scope inside one keeps it.
-  const openScope = (tick: boolean, arith: boolean, sub: boolean, moved = false) => {
+  const openScope = (tick: boolean, arith: boolean, sub: boolean, moved = false, proc = false) => {
     const parent = stack.at(-1)
     stack.push({
       id: `${scope()}.${++scopes}`,
+      n: scopes,
+      proc,
       tick,
       saved: here(),
+      andOr: andOrAt,
       compounds: compounds.length,
       arith,
       sub: sub || (parent?.sub ?? false),
@@ -420,8 +449,11 @@ export function splitShell(command: string): Segment[] {
       outerOut: cmdOut,
       bgPending: bgShellEnded,
       from: out.length,
+      seen: false,
+      anc: parent ? (parent.seen ? parent.n : parent.anc) : 0,
     })
     listFrom = partFrom = out.length
+    andOrAt = -1 // an `&&` outside is not in the list of the scope
     piped = false
     cmdHead = -1
     cmdOut = false
@@ -522,10 +554,11 @@ export function splitShell(command: string): Segment[] {
     const top = stack.pop()
     if (top) {
       back(top.saved)
+      andOrAt = top.andOr
       closedFrom = top.from
       cmdHead = top.outerHead
       cmdOut = top.outerOut
-      bgShellEnded = top.bgPending
+      bgShellEnded = top.bgPending || top.proc
     }
   }
   // The `case` that the reader is in right now: the innermost open compound, when it is a `case` that opened inside the
@@ -625,7 +658,8 @@ export function splitShell(command: string): Segment[] {
     // The words after the `}` or `)` of a group that only redirect (`{ a; } > f`) make no segment: the group is redirected.
     if (clean.length === 0 && stdout && closedFrom >= 0) redirected(closedFrom)
     // A `&` behind the close, with no word of its own (`{ a; } &`, `( a ) 2>&1 &`, `x=$(a) &`), sends that shell to the background.
-    if (bg && clean.length === 0 && closedFrom >= 0) bgShellEnded = true
+    // A bare redirection (`> f &`) runs as a shell of its own, and so sets `$!` (issue #263).
+    if (bg && clean.length === 0 && (closedFrom >= 0 || words.length > 0)) bgShellEnded = true
     if (clean.length > 0) {
       out.push({
         words: clean.map(unmarkDollars),
@@ -634,12 +668,17 @@ export function splitShell(command: string): Segment[] {
         redir: cleanHeads.map(h => h.redir),
         bg,
         afterBgShell: bgShellEnded,
+        bgList: bg && andOrAt >= listFrom,
+        shell: stack.at(-1)?.n ?? 0,
+        shellUp: stack.at(-1)?.anc ?? 0,
         scope: scope(),
         stdoutRedirected: stdout || (stack.at(-1)?.moved ?? false),
         stdoutPiped: false,
         substituted: stack.at(-1)?.sub ?? false,
       })
       bgShellEnded = false
+      const holder = stack.at(-1)
+      if (holder) holder.seen = true
       if (stdout && bareExec(clean, cleanHeads)) execs.push(out.length - 1)
       const lead = compoundLead(clean, cleanHeads)
       if (lead.opens.length > 0) {
@@ -810,7 +849,9 @@ export function splitShell(command: string): Segment[] {
       // is a `>(`, whose commands write where the command around it writes. A `<(` and any other form that reaches here (`2>(`)
       // are read as before: the shell takes the output of the commands in them.
       let outputSub = false
+      let procSub = false
       if (op === '(' && typedRedir === i - 1 && heads.at(-1)?.head === 1 && /^[<>]$/.test(words.at(-1) ?? '')) {
+        procSub = true
         outputSub = words.pop() === '>'
         heads.pop()
       }
@@ -858,6 +899,7 @@ export function splitShell(command: string): Segment[] {
             inArith() || (s[i + 1] === '(' && !/[<>]/.test(s[i - 1] ?? '') && arithFollows(i + 2)),
             typedRedir === i - 1 && !outputSub,
             outputSub && movedBefore,
+            procSub,
           )
       } else if (op === '$(') {
         openScope(false, s[i + 2] === '(' && arithFollows(i + 3), true)
@@ -872,7 +914,8 @@ export function splitShell(command: string): Segment[] {
           closeScope()
         } else openScope(true, false, true)
       } else if (op === '{') {
-        groups.push({ ...here(), from: out.length })
+        groups.push({ ...here(), from: out.length, andOr: andOrAt })
+        andOrAt = -1
         listFrom = partFrom = out.length // the group opens a list and a part of its own; `}` gives back the outer ones
         piped = false
       } else if (op === '}') {
@@ -880,6 +923,7 @@ export function splitShell(command: string): Segment[] {
         const outer = groups.pop()
         if (outer) {
           back(outer)
+          andOrAt = outer.andOr
           closedFrom = outer.from
         }
       } else if (op === '|' || op === '|&') {
@@ -892,13 +936,18 @@ export function splitShell(command: string): Segment[] {
         endPipe(true)
         moveToChild(listFrom)
         listFrom = out.length
+        andOrAt = -1 // the list ends here, even when its last command made no segment (`a && > f &`)
       } else if (op === ';' || op === ';;' || op === ';&' || op === ';;&' || (op === '\n' && !wantsMore)) {
         endPipe()
         listFrom = out.length
+        andOrAt = -1 // the same (`a && > f; b &`)
         // The end of an arm: the next words are a pattern list.
         const arm = theCase()
         if (op.length > 1 && arm?.arm === 'arm') startPattern(arm)
-      } else if (op === '&&' || op === '||') endPipe()
+      } else if (op === '&&' || op === '||') {
+        endPipe()
+        andOrAt = out.length
+      }
       if (op !== '\n') wantsMore = op === '&&' || op === '||' || op === '|' || op === '|&'
       i += op.length
       if (op === '\n') skipHeredocs()
