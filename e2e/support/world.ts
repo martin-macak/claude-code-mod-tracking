@@ -26,7 +26,15 @@ import { fakeGhEnv } from './fake-gh-env.ts'
 import { makeClaimer } from './lock.ts'
 import { withFocus } from './pane.ts'
 import { Recorder } from './recorder.ts'
-import { countLines, FAKE_ORIGIN_NAME, fakeForeignRepo, launchClaude, prepareClone, waitForTurnEnd } from './session.ts'
+import {
+  countLines,
+  FAKE_ORIGIN_NAME,
+  fakeForeignRepo,
+  launchClaude,
+  prepareClone,
+  submitPrompt,
+  waitForTurnEnd,
+} from './session.ts'
 import { sizeRefusal } from './size.ts'
 import { slug } from './slug.ts'
 import { type TaskStopProbe, writeTaskStopProbe } from './task-stop-probe.ts'
@@ -60,6 +68,8 @@ export class DemoWorld extends World {
   /** CLAUDE_TRACKER_CONFIG_DIR of this scenario: an empty folder, so no run touches the real config file. */
   configDir = ''
   turnMark = 0
+  /** The prompt that `typePrompt` typed last: `finishTurn` presses Enter again if it sits in the box (issue #269). */
+  lastPrompt: string | undefined
   /** The artifact a scenario published and did not delete yet. A failed run deletes it (artifact.steps.ts). */
   artifact: string | undefined
   /** The fake gh of this scenario (support/fake-gh.ts). Absent: claude runs the real gh. */
@@ -330,6 +340,7 @@ export class DemoWorld extends World {
 
   async launch(prompt?: string, tools?: readonly string[], resume = false): Promise<void> {
     this.launched = true
+    this.lastPrompt = undefined
     this.launchTools = tools
     this.tl.phase('cut')
     await launchClaude(
@@ -361,17 +372,27 @@ export class DemoWorld extends World {
   async typePrompt(text: string): Promise<void> {
     this.tl.phase('normal')
     this.turnMark = countLines(this.signalFile)
+    this.lastPrompt = text
     await this.tmux.type(text, this.config.typeDelayMs)
-    this.tmux.key('Enter')
+    await submitPrompt(this.tmux, text, { timeoutMs: this.config.screenTimeoutMs })
   }
 
   async finishTurn(): Promise<void> {
     this.tl.phase('fast')
     try {
-      await waitForTurnEnd(this.signalFile, this.turnMark, this.config.turnTimeoutMs, () => this.tmux.capture())
+      await waitForTurnEnd(
+        this.signalFile,
+        this.turnMark,
+        this.config.turnTimeoutMs,
+        () => this.tmux.capture(),
+        this.lastPrompt === undefined ? undefined : { prompt: this.lastPrompt, io: this.tmux },
+      )
     } catch (error) {
       // A script step that threw is the cause of a turn that went wrong: name it, not the timeout.
       throw this.fakeApi?.scriptError ?? error
+    } finally {
+      // Only the turn that typed the prompt may send it again.
+      this.lastPrompt = undefined
     }
     const scriptError = this.fakeApi?.scriptError
     if (scriptError !== undefined) throw scriptError

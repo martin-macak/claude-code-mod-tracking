@@ -99,13 +99,53 @@ export function countLines(file: string): number {
   return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).length : 0
 }
 
+/** Default gap between two Enter retries (issue #269). */
+const RETRY_MS = 2000
+
+type PromptIo = { capture: () => string; key: (name: string) => void }
+
+/**
+ * Issue #269. Gives a `tick()` for one typed prompt. While `text` sits in the box, `tick` presses Enter again, at most once per
+ * `retryMs`, and gives true. Once the box is empty, it gives false and presses no key.
+ */
+function makeResender(io: PromptIo, text: string, retryMs: number = RETRY_MS): () => boolean {
+  let pressedAt = Date.now()
+  return () => {
+    if (!promptInBox(io.capture(), text)) return false
+    if (Date.now() - pressedAt >= retryMs) {
+      io.key('Enter')
+      pressedAt = Date.now()
+    }
+    return true
+  }
+}
+
 export async function waitForTurnEnd(
   signalFile: string,
   before: number,
   timeoutMs: number,
   last?: () => string,
+  /**
+   * Issue #269. A prompt that left the box can come back, with no turn started (the session was not ready for it). While the
+   * text sits in the box, press Enter again through `io`, at most once per `retryMs`. A turn that runs has an empty box, so it
+   * gets no key.
+   */
+  resend?: { prompt: string; io: PromptIo; retryMs?: number; intervalMs?: number },
 ): Promise<void> {
-  await waitUntil(() => (countLines(signalFile) > before ? true : undefined), { timeoutMs, what: 'turn end', last })
+  const tick = resend && makeResender(resend.io, resend.prompt, resend.retryMs)
+  await waitUntil(
+    () => {
+      if (countLines(signalFile) > before) return true
+      tick?.()
+      return undefined
+    },
+    {
+      timeoutMs,
+      what: 'turn end',
+      last,
+      ...(resend?.intervalMs === undefined ? {} : { intervalMs: resend.intervalMs }),
+    },
+  )
 }
 
 /** Runs git in `cwd` and gives its trimmed output. Each `config` entry is a `-c` option: a commit needs an author. */
@@ -248,4 +288,34 @@ export async function launchClaude(ctx: LaunchContext, prompt?: string): Promise
     },
     { timeoutMs: ctx.timeoutMs, what: 'claude to start', last: () => ctx.tmux.capture() },
   )
+}
+
+/**
+ * True while `text` sits in the prompt box: the last line that starts with the prompt marker holds the start of it. After a
+ * send, that line is the empty box, and the text is only in the history above it.
+ */
+export function promptInBox(screen: string, text: string): boolean {
+  const last = screen.split('\n').findLast(line => /^❯\s/.test(line))
+  return text.trim() !== '' && last?.replace(/^❯\s/, '').startsWith(text.slice(0, 24)) === true
+}
+
+/**
+ * Presses Enter on a typed prompt, and again while the text stays in the box (issue #269). A session that shows the prompt marker
+ * can still drop the first Enter, and no turn starts then. The wait ends on the event that the box empties, never on a turn.
+ * A second Enter on an empty box does nothing, so a slow redraw cannot do harm.
+ */
+export async function submitPrompt(
+  io: PromptIo,
+  text: string,
+  opts: { timeoutMs: number; intervalMs?: number; retryMs?: number },
+): Promise<void> {
+  const tick = makeResender(io, text, opts.retryMs)
+  io.key('Enter')
+  await waitUntil(() => (tick() ? undefined : true), {
+    timeoutMs: opts.timeoutMs,
+    intervalMs: opts.intervalMs ?? 200,
+    what: 'the prompt to leave the box',
+    // Not `io.capture` bare: a `Tmux` method needs its `this`.
+    last: () => io.capture(),
+  })
 }

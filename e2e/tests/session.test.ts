@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 import {
   claudeCommand,
   countLines,
@@ -16,9 +16,11 @@ import {
   listRefs,
   pinOriginHead,
   prepareClone,
+  promptInBox,
   READY_MARKERS,
   shellQuote,
   stopHookSettings,
+  submitPrompt,
   TOOLS_SYSTEM_PROMPT,
   trustKey,
   waitForTurnEnd,
@@ -245,6 +247,101 @@ test('waitForTurnEnd times out with the last screen', async () => {
   )
 })
 
+// Issue #269. The first Enter can leave the box and the text can come back, with no turn started. The wait for the turn end
+// presses Enter again while the typed text sits in the box.
+test('waitForTurnEnd presses Enter again while the typed text is back in the box, and resolves at the turn end', async () => {
+  const signal = join(tempDir('turn-'), 'signal')
+  let enters = 0
+  await waitForTurnEnd(signal, 0, 2000, undefined, {
+    prompt: 'Note https://a.example/1 for later.',
+    io: {
+      capture: () => STUCK_SCREEN,
+      key: name => {
+        assert.equal(name, 'Enter')
+        if (++enters === 2) appendFileSync(signal, 'stop\n')
+      },
+    },
+    retryMs: 5,
+    intervalMs: 1,
+  })
+  assert.equal(enters, 2)
+})
+
+// Causal, no timer race: the signal comes from inside the 6th capture, so the box was empty for several polls past the retry window.
+test('waitForTurnEnd presses no Enter while the box is empty', async () => {
+  const signal = join(tempDir('turn-'), 'signal')
+  let enters = 0
+  let captures = 0
+  await waitForTurnEnd(signal, 0, 2000, undefined, {
+    prompt: 'Note https://a.example/1 for later.',
+    io: {
+      capture: () => {
+        if (++captures === 6) appendFileSync(signal, 'stop\n')
+        return SENT_SCREEN
+      },
+      key: () => void enters++,
+    },
+    retryMs: 0,
+    intervalMs: 1,
+  })
+  assert.ok(captures >= 6)
+  assert.equal(enters, 0)
+})
+
+// The first window starts at the call: the retry window is longer than the wait, so no key is pressed. A stale clock is pinned by the next test.
+test('waitForTurnEnd presses no Enter before the retry window has passed', async () => {
+  const signal = join(tempDir('turn-'), 'signal')
+  let enters = 0
+  await assert.rejects(
+    waitForTurnEnd(signal, 0, 50, () => STUCK_SCREEN, {
+      prompt: 'Note https://a.example/1 for later.',
+      io: { capture: () => STUCK_SCREEN, key: () => void enters++ },
+      retryMs: 60000,
+      intervalMs: 1,
+    }),
+    /turn end/,
+  )
+  assert.equal(enters, 0)
+})
+
+/**
+ * A clock that only the polls move: each `capture` adds `stepMs`, whatever the load. A retry-window test counts presses against
+ * this clock, so a slow event loop cannot change the count.
+ */
+function fakeClock(stepMs: number): { capture: () => string; restore: () => void } {
+  let now = 1_000_000
+  const spy = mock.method(Date, 'now', () => now)
+  return {
+    capture: () => {
+      now += stepMs
+      return STUCK_SCREEN
+    },
+    restore: () => spy.mock.restore(),
+  }
+}
+
+// A stale clock (never restarted after a press) presses on every poll once the first window has passed. The fake clock moves 10 ms
+// per poll: a 30 ms window over a 120 ms wait gives 3 or 4 presses, a stale clock gives about 9.
+test('waitForTurnEnd presses Enter at most once per retry window', async () => {
+  const signal = join(tempDir('turn-'), 'signal')
+  const clock = fakeClock(10)
+  let enters = 0
+  try {
+    await assert.rejects(
+      waitForTurnEnd(signal, 0, 120, () => STUCK_SCREEN, {
+        prompt: 'Note https://a.example/1 for later.',
+        io: { capture: clock.capture, key: () => void enters++ },
+        retryMs: 30,
+        intervalMs: 1,
+      }),
+      /turn end/,
+    )
+  } finally {
+    clock.restore()
+  }
+  assert.ok(enters >= 2 && enters <= 120 / 30 + 1, `pressed ${enters} times`)
+})
+
 test('prepareClone checks out HEAD on main with the real origin', () => {
   const repo = tempDir('repo-')
   const git = (args: string[], cwd = repo) =>
@@ -401,4 +498,107 @@ test('fakeForeignRepo refuses an owner/repo that is not two plain names', () => 
 test('fakeGithubClone refuses an owner/repo that is not two plain names', () => {
   for (const bad of ['no-slash', 'a/b/c', '/b', 'a/', 'a b/c', 'a/b;c'])
     assert.throws(() => fakeGithubClone('/x', '/y', { branch: 'b', ownerRepo: bad }), /owner\/repo/)
+})
+
+// Issue #269. A session that shows the prompt marker can still drop the Enter of a typed prompt, and the text stays in the box.
+const BOX = '────\n❯\u00a0'
+const SENT_SCREEN = '❯\u00a0Note https://a.example/1 for later.\n⏺ ok\n' + BOX + '\n────'
+const STUCK_SCREEN = '▐▛███▛█   Claude Code\n────\n❯\u00a0Note https://a.example/1 for later.\n────\n  ⏵⏵ auto mode on'
+
+test('promptInBox is true while the typed text sits in the prompt box, and false once the box is empty', () => {
+  assert.equal(promptInBox(STUCK_SCREEN, 'Note https://a.example/1 for later.'), true)
+  assert.equal(promptInBox(SENT_SCREEN, 'Note https://a.example/1 for later.'), false)
+  assert.equal(promptInBox('no prompt at all', 'x'), false)
+  // A short prompt matches by its whole text; a long one that wraps in the box matches by its first 24 characters.
+  assert.equal(promptInBox('────\n❯\u00a0Note\n────', 'Note'), true)
+  const long = 'Note https://a.example/1 for later, and then a second sentence that wraps.'
+  assert.equal(promptInBox('────\n❯\u00a0Note https://a.example/1 for later, and\n  then a second\n────', long), true)
+  // An empty prompt is never "in the box": it would press Enter on any box.
+  assert.equal(promptInBox(STUCK_SCREEN, ''), false)
+  assert.equal(promptInBox(SENT_SCREEN, '  '), false)
+})
+
+test('submitPrompt presses Enter again while the text stays in the box, and stops when the box empties', async () => {
+  const text = 'Note https://a.example/1 for later.'
+  let enters = 0
+  await submitPrompt(
+    {
+      capture: () => (enters >= 3 ? SENT_SCREEN : STUCK_SCREEN),
+      key: name => {
+        assert.equal(name, 'Enter')
+        enters++
+      },
+    },
+    text,
+    { timeoutMs: 1000, intervalMs: 1, retryMs: 2 },
+  )
+  assert.equal(enters, 3)
+})
+
+test('submitPrompt presses Enter once when the first Enter works', async () => {
+  let enters = 0
+  await submitPrompt({ capture: () => SENT_SCREEN, key: () => void enters++ }, 'Note https://a.example/1 for later.', {
+    timeoutMs: 1000,
+    intervalMs: 1,
+    retryMs: 2,
+  })
+  assert.equal(enters, 1)
+})
+
+test('submitPrompt presses Enter once, not on every poll, inside the retry window', async () => {
+  let enters = 0
+  await assert.rejects(
+    submitPrompt({ capture: () => STUCK_SCREEN, key: () => void enters++ }, 'Note https://a.example/1 for later.', {
+      timeoutMs: 40,
+      intervalMs: 1,
+      retryMs: 60000,
+    }),
+    /the prompt to leave the box/,
+  )
+  assert.equal(enters, 1)
+})
+
+// Same bound for submitPrompt: a stale clock presses on every poll after the first window.
+test('submitPrompt presses Enter at most once per retry window', async () => {
+  const clock = fakeClock(10)
+  let enters = 0
+  try {
+    await assert.rejects(
+      submitPrompt({ capture: clock.capture, key: () => void enters++ }, 'Note https://a.example/1 for later.', {
+        timeoutMs: 120,
+        intervalMs: 1,
+        retryMs: 30,
+      }),
+      /the prompt to leave the box/,
+    )
+  } finally {
+    clock.restore()
+  }
+  assert.ok(enters >= 3 && enters <= 120 / 30 + 1, `pressed ${enters} times`)
+})
+
+// A `Tmux` instance reads `this` in `capture`: the timeout error must call it as a method, not detached.
+test('submitPrompt keeps the screen in the timeout error when capture is a method that reads this', async () => {
+  class Pane {
+    screen = STUCK_SCREEN
+    capture(): string {
+      return this.screen
+    }
+    key(): void {}
+  }
+  await assert.rejects(
+    submitPrompt(new Pane(), 'Note https://a.example/1 for later.', { timeoutMs: 30, intervalMs: 1, retryMs: 5 }),
+    /timed out after 30 ms waiting for the prompt to leave the box[\s\S]*last screen[\s\S]*Claude Code/,
+  )
+})
+
+test('submitPrompt fails with the screen when the text never leaves the box', async () => {
+  await assert.rejects(
+    submitPrompt({ capture: () => STUCK_SCREEN, key: () => {} }, 'Note https://a.example/1 for later.', {
+      timeoutMs: 30,
+      intervalMs: 1,
+      retryMs: 5,
+    }),
+    /timed out after 30 ms waiting for the prompt to leave the box[\s\S]*last screen/,
+  )
 })
