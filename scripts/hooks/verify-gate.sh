@@ -206,17 +206,32 @@ strip_heredocs() {
 # The gate does not parse them: any words up to the next operator may sit between the
 # wrapper and the command. This errs toward a deny, and a deny only runs make verify.
 # Text that only names the command (echo, a commit message) does not match.
-push_match() {
+push_match_words() {
   quote="[\"']"
   arg="(\"[^\"]*\"|'[^']*'|[^[:space:]]+)" # a quoted path may hold spaces
   start='(^|[;&|(){`])[[:space:]]*'
   words='([[:space:]]+[^[:space:];&|()`]+)*'
   shell_c='(bash|sh|zsh|dash)([[:space:]]+-[-a-z]+)*[[:space:]]+-[a-z]*c'
-  wrap='(([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*|!|if|elif|while|until|then|else|do|(exec|command|sudo|doas|time|nohup|nice|ionice|timeout|gtimeout|setsid|stdbuf|caffeinate|env|xargs|eval)'"$words"'|'"$shell_c"')[[:space:]]+'"$quote"'?)*'
+  wrap='(([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*|!|if|elif|while|until|then|else|do|([^[:space:]]*/)?(exec|command|sudo|doas|time|nohup|nice|ionice|timeout|gtimeout|setsid|stdbuf|caffeinate|env|xargs|eval)'"$words"'|'"$shell_c"')[[:space:]]+'"$quote"'?)*'
   end='([[:space:];&|)`"'"'"']|$)' # a closing quote ends the command in bash -c '...'
   printf '%s' "$1" | grep -Eq \
     -e "$start$wrap([^[:space:]]*/)?git([[:space:]]+(-[Cc][[:space:]]+$arg|--(git-dir|work-tree|namespace)[[:space:]]+$arg|-[^[:space:]]+))*[[:space:]]+push$end" \
     -e "$start$wrap([^[:space:]]*/)?gh[[:space:]]+stack[[:space:]]+($gh_stack_push)$end"
+}
+
+# bash removes quotes and backslashes from a word before it looks up the command, so
+# \git, "git", git "push" and "env" git push all run a plain push. push_match tries the
+# command as it came, then with every quote and backslash dropped (this sees env -S
+# "git push" and bash -c "git push"), then read like bash words (verify-gate-dequote.awk:
+# a quoted path with a space stays one word, $'git' loses its $, a backslash-newline
+# joins). The later tries only add denies: text in a quote that names a push
+# (echo "git push") is no command in any spelling, and a quote that holds ; or | had
+# the same effect before. Such text stays denied when ; or | splits it (echo "a; git push").
+push_match() {
+  push_match_words "$1" && return 0
+  push_match_words "$(printf '%s' "$1" | tr -d "\"'\\\\")" && return 0
+  deq="$(printf '%s' "$1" | awk -f "$here/verify-gate-dequote.awk" 2>/dev/null)" || return 1
+  push_match_words "$deq"
 }
 
 # Print the home repo, when there is one: where a push with no known target runs.

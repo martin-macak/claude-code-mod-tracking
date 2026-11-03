@@ -298,6 +298,49 @@ run_case 'command --' 'command -- git push' 2
 run_case 'time -p' 'time -p git push' 2
 run_case 'exec -a with an argument' 'exec -a pusher git push' 2
 run_case 'xargs -n 1' 'echo origin | xargs -n 1 git push' 2
+# Quotes and backslashes that bash removes do not hide the command word or the subcommand.
+run_case 'backslash before git' '\git push' 2
+run_case 'double-quoted git' '"git" push origin feat/x' 2
+run_case 'single-quoted git' "'git' push" 2
+run_case 'quoted push' 'git "push" origin feat/x' 2
+run_case 'single-quoted push' "git 'push'" 2
+run_case 'backslash inside push' 'git pu\sh' 2
+run_case 'quoted git and push' '"git" "push"' 2
+run_case 'quoted path to git' '"/usr/bin/git" push' 2
+run_case 'quoted git after a chain' 'make test && "git" push' 2
+run_case 'backslash before gh' '\gh stack push' 2
+run_case 'quoted gh' '"gh" stack submit' 2
+run_case 'quoted gh stack word' 'gh "stack" sync' 2
+run_case 'quoted gh subcommand' "gh stack 'merge'" 2
+run_case 'quoted gh link' 'gh stack "link" a b' 2
+# env with a path, options and assignments.
+run_case '/usr/bin/env git push' '/usr/bin/env git push' 2
+run_case '/usr/bin/env with an assignment' '/usr/bin/env GIT_TRACE=1 git push' 2
+run_case '/usr/bin/env -i with an assignment' '/usr/bin/env -i HOME=/tmp git push' 2
+run_case '/usr/bin/env gh stack' '/usr/bin/env gh stack submit' 2
+run_case 'env with quoted git' 'env "git" push' 2
+run_case 'env with backslash git' 'env FOO=1 \git push' 2
+run_case 'quoted env' '"env" git push' 2
+run_case '/usr/bin/env, then a push-free step' '/usr/bin/env make test; echo done' 0
+run_case 'echo names a quoted push' 'echo "\"git\" push"' 0
+run_case 'echo names an env push' 'echo "/usr/bin/env git push"' 0
+run_case 'commit message names a quoted push' 'git commit -m "Never run \"git\" \"push\" by hand"' 0
+# A quoted path with a space after -C, quotes inside a word, ANSI-C quoting, continuations.
+run_case 'quoted push after a spaced -C path' 'git -C "a b" "push"' 2
+run_case 'single-quoted -C path, backslash push' "git -C 'a b' \\push" 2
+run_case 'quoted -C, spaced path' 'git "-C" "a b" push' 2
+run_case 'quote inside git' 'g"it" push' 2
+run_case 'quote inside push' 'git p"ush"' 2
+run_case 'env -S string' '/usr/bin/env -S "git push"' 2
+run_case 'ANSI-C git' "\$'git' push" 2
+run_case 'backslash-newline between words' $'git \\\npush' 2
+run_case 'backslash-newline inside a word' $'gi\\\nt push' 2
+# The path prefix works for every wrapper, not only env.
+run_case '/usr/bin/sudo git push' '/usr/bin/sudo git push' 2
+run_case '/usr/bin/nice git push' '/usr/bin/nice -n 5 git push' 2
+# Accepted over-deny: a quote that holds ; or | splits the command for the matcher.
+run_case 'quoted ; before a push is denied (conservative)' 'echo "run; git push"' 2
+run_case 'quote joins words, no push' 'echo "a" "git" "b push"' 0
 run_case 'wrappers in a row' 'sudo -u root env -i git push' 2
 run_case 'wrapper with options in a chain' 'make verify && env -i git push' 2
 run_case 'wrapper with options in a subshell' '(sudo -u root gh stack link feat/a feat/b)' 2
@@ -944,6 +987,17 @@ run_cwd 'drifted: the process directory holds the gate, a plain push from here' 
 # CLAUDE_PROJECT_DIR in one checkout and its tool directory in a worktree.
 run_cwd 'home: the tool directory repo (red), the process directory green' "$passing" "$repo" 'git push $(echo origin)' 2
 run_cwd 'home: the tool directory repo (green), the process directory red' "$repo" "$passing" 'git push $(echo origin)' 0
+run_cwd 'red repo denies a backslash git push' "$repo" "$repo" '\git push' 2
+run_cwd 'red repo denies a quoted git "push"' "$repo" "$repo" '"git" "push"' 2
+run_cwd 'red repo denies /usr/bin/env git push' "$repo" "$repo" '/usr/bin/env FOO=1 git push' 2
+run_cwd 'red repo denies a quoted gh stack subcommand' "$repo" "$repo" 'gh stack "submit"' 2
+run_cwd 'red session, quoted git -C a green repo' "$repo" "$repo" "\"git\" -C \"$passing\" push" 0
+run_cwd 'red session, git -C a green repo with a quoted push' "$repo" "$repo" "git -C \"$passing\" \"push\"" 0
+run_cwd 'green session, quoted git -C a red repo' "$passing" "$passing" "\"git\" -C \"$repo\" push" 2
+run_cwd 'green repo allows a backslash git push' "$passing" "$passing" '\git push' 0
+run_cwd 'green repo allows a quoted git "push"' "$passing" "$passing" '"git" "push"' 0
+run_cwd 'green repo allows /usr/bin/env git push' "$passing" "$passing" '/usr/bin/env FOO=1 git push' 0
+run_cwd 'green repo allows a quoted gh stack subcommand' "$passing" "$passing" 'gh stack "submit"' 0
 run_env 'home: CLAUDE_PROJECT_DIR green, the tool directory red' "$plain" "CLAUDE_PROJECT_DIR=$passing" 'git push $(echo origin)' 2 "$repo"
 run_env 'home: CLAUDE_PROJECT_DIR red, the tool directory green' "$plain" "CLAUDE_PROJECT_DIR=$repo" 'git push $(echo origin)' 0 "$passing"
 # Settings in the environment of the gate move every repo. The gate gives up on a path.
