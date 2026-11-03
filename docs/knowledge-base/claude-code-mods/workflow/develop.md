@@ -64,7 +64,7 @@ Module rules ([ref:14](../sources/claude-code-2.1.295/reference.md#L14), [types:
   ```
 
 - Add each new folder to `include` in the tsconfig (`"core/**/*.ts"`).
-- A zip or `git archive` of the plugin folder carries every file, so `core/` ships. This repo's `make dist` archives `HEAD:plugins/artifact-tracking` with no whitelist ([Makefile:160](../../../../Makefile#L160)).
+- A zip or `git archive` of the plugin folder carries every file, so `core/` ships. This repo's `make dist` archives `HEAD:plugins/artifact-tracking` with no whitelist ([dist.sh:12](../../../../scripts/release/dist.sh#L12 "git archive --prefix=artifact-tracking/ HEAD:plugins/artifact-tracking")).
 - *verified-live:* a save of a file in `core/` reloads the mod, exactly like a save of `hooks/register.tsx`. The same holds for a file that `core/` imports and for `trackers/a.ts`. A file that nothing imports does not reload it. Watching follows the import graph. See [lifecycle: what triggers a reload](../concepts/lifecycle.md#what-triggers-a-reload). [reference.md:73](../sources/claude-code-2.1.302/reference.md#L73) adds that a save which leaves a loaded file unchanged reloads nothing.
 
 ### plugin.json fields that matter to a mod
