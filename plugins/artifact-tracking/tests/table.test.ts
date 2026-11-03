@@ -6,7 +6,7 @@ import type { Cell, RowRef } from '../core/interfaces/view'
 import { KEYS as GITHUB_ROW_KEYS } from '../trackers/github/actions'
 import { cellWidth } from '../ux/text/cell-width'
 import { resetWidths } from '../ux/tree-data-table/columns'
-import { footerRows } from '../ux/tree-data-table/footer'
+import { footerRows, TERSE_LABEL } from '../ux/tree-data-table/footer'
 import { helpModel } from '../ux/tree-data-table/help'
 import { layout } from '../ux/tree-data-table/layout'
 import { DEFAULT_BODY_COLUMNS, GUTTER, TreeDataTable, UNAVAILABLE } from '../ux/tree-data-table/table'
@@ -32,6 +32,8 @@ import {
   viewLineOf,
 } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
+import { heightOf } from './fixtures/height'
+import { DOCK_MIN_BODY, narrowModel } from './fixtures/narrow-help'
 import { group, row, webRows } from './fixtures/sections'
 
 // The first title of the help view: it names Tab, Shift+Tab and the arrows (issue #108).
@@ -480,6 +482,69 @@ test('the help footer of 14 Buttons draws the move hint only where it adds no ro
     expect(footerRows(HELP_FOOTER, bodyColumns, true), `${bodyColumns} cells`).toBeGreaterThan(
       footerRows(HELP_FOOTER, bodyColumns, false),
     )
+  }
+})
+
+test('a narrow help footer draws its dim Buttons as letters and keeps the words of the live ones (issue #287)', () => {
+  const labels = (bodyColumns: number) =>
+    Object.fromEntries(
+      nodes(
+        draw([], { footer: HELP_FOOTER, help: helpModel([], [], undefined, []), bodyColumns }).drawn.tree,
+        'Button',
+      ).map(b => [b.props.hotkey, b.props.label]),
+    )
+  expect(labels(96).g).toBe('view')
+  for (const bodyColumns of [80, 49, 40]) {
+    const l = labels(bodyColumns)
+    expect(l.g, `${bodyColumns} cells`).toBe(TERSE_LABEL)
+    expect(l.m).toBe(TERSE_LABEL)
+    expect(l.r).toBe('refresh')
+    expect(l.h).toBe('back')
+  }
+})
+
+test('a pane that is no help view keeps the words of its footer Buttons in a narrow body (issue #287)', () => {
+  for (const bodyColumns of [80, 49, 40]) {
+    const labels = nodes(draw([], { footer: HELP_FOOTER, bodyColumns }).drawn.tree, 'Button').map(b => b.props.label)
+    expect(labels, `${bodyColumns} cells`).not.toContain(TERSE_LABEL)
+  }
+})
+
+/** The rows the drawn help view takes in a body `bodyColumns` wide and `bodyRows` rows (the view, the gap and the footer). */
+function helpHeight(bodyColumns: number, bodyRows: number, version?: string, problems = 3): number {
+  const { drawn } = draw([], { footer: HELP_FOOTER, help: narrowModel(version, problems), bodyColumns, bodyRows })
+  return heightOf(drawn.tree, bodyColumns)
+}
+
+test('at 80 cells the drawn help view fits the 11-row body, with the version line and 0 to 3 problems (issue #287)', () => {
+  for (const problems of [0, 1, 2, 3]) {
+    expect(helpHeight(80, 11, undefined, problems), `${problems} problems`).toBeLessThanOrEqual(11)
+    expect(helpHeight(80, 11, '0.1.0', problems), `${problems} problems, with a version`).toBeLessThanOrEqual(11)
+  }
+  const tree = draw([], { footer: HELP_FOOTER, help: narrowModel('0.1.0'), bodyColumns: 80, bodyRows: 11 }).drawn.tree
+  expect(leaves(tree).some(t => t.startsWith('Pane keys'))).toBe(true)
+  expect(leaves(tree).some(t => t.includes('Version: 0.1.0'))).toBe(true)
+})
+
+test('at 96 cells the drawn help view keeps the version line on its own line (issue #287)', () => {
+  const tree = draw([], { footer: HELP_FOOTER, help: narrowModel('0.1.0'), bodyColumns: 96, bodyRows: 11 }).drawn.tree
+  expect(helpHeight(96, 11, '0.1.0')).toBeLessThanOrEqual(11)
+  expect(leaves(tree)).toContain('Version: 0.1.0')
+})
+
+test('the drawn help view fits the smallest docked body at 49 and 40 cells, with the version line (issue #287)', () => {
+  for (const bodyColumns of [49, 40]) {
+    expect(helpHeight(bodyColumns, DOCK_MIN_BODY, '0.1.0'), `${bodyColumns} cells`).toBeLessThanOrEqual(DOCK_MIN_BODY)
+  }
+})
+
+// The shortest docked body each width fits whole: a shorter body scrolls the help view, which the issue accepts. The numbers fail
+// on the footer of the base (it overflowed up to 18 rows at 49 cells and 21 at 40).
+test('the drawn help view fits a docked body of 17 rows at 49 cells and 20 at 40, and no shorter one (issue #287)', () => {
+  const smallest = { 49: 17, 40: 20 }
+  for (const [columns, rows] of Object.entries(smallest).map(([c, r]) => [Number(c), r] as const)) {
+    expect(helpHeight(columns, rows, '0.1.0'), `${columns} cells, ${rows} rows`).toBeLessThanOrEqual(rows)
+    expect(helpHeight(columns, rows - 1, '0.1.0'), `${columns} cells, ${rows - 1} rows`).toBeGreaterThan(rows - 1)
   }
 })
 

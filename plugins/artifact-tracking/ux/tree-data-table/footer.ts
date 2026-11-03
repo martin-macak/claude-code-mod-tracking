@@ -97,3 +97,19 @@ export function footerRows(keys: readonly FooterKey[], columns: number, hint: bo
 export function moveHintFits(keys: readonly FooterKey[], columns: number): boolean {
   return footerRows(keys, columns, true) === footerRows(keys, columns, false)
 }
+
+/** The rows the footer of the help view keeps its labels in: the 2 rows it takes at 96 cells (issue #200). */
+const HELP_LABELLED_ROWS = 2
+/** The label of a dim key in a narrow help footer: the letter stays, the word does not (the list above it names the key). */
+export const TERSE_LABEL = '·'
+
+/**
+ * The keys the help footer draws in a body `columns` wide (issue #287). Its dim Buttons (`g`, `a`, `t`, `p`, `m`, `e`, the row keys)
+ * only keep the letters from the prompt, and the list above names them, so where the labelled footer takes more than
+ * `HELP_LABELLED_ROWS` rows they shrink to `key: ·` and flow in fewer rows. The live keys keep their words. At 96 cells the
+ * footer is labelled, as before.
+ */
+export function helpFooterKeys(keys: readonly FooterKey[], columns: number): readonly FooterKey[] {
+  if (footerRows(keys, columns, moveHintFits(keys, columns)) <= HELP_LABELLED_ROWS) return keys
+  return keys.map(k => (k.enabled ? k : { ...k, label: TERSE_LABEL }))
+}

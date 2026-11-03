@@ -7,7 +7,7 @@ import { KEYS as GITHUB_ROW_KEYS } from '../trackers/github/actions'
 import { QUESTION_KEYS } from '../trackers/questions/actions'
 import { cellWidth } from '../ux/text/cell-width'
 import { wrapRows } from '../ux/text/wrap'
-import { footerRows, moveHintFits } from '../ux/tree-data-table/footer'
+import { footerRows, helpFooterKeys, moveHintFits, TERSE_LABEL } from '../ux/tree-data-table/footer'
 import {
   type CompactForm,
   compactForm,
@@ -22,6 +22,7 @@ import {
 import { DEFAULT_BODY_COLUMNS, ROW_GAP } from '../ux/tree-data-table/shape'
 import { HELP_FOOTER, HELP_FOOTER_ROWS, leaves } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
+import { narrowModel } from './fixtures/narrow-help'
 import { row, section } from './fixtures/sections'
 
 const PATH = '/h/.config/claude-code/mods/tracker/config.json'
@@ -1285,4 +1286,84 @@ test('a merge wider than the body counts the shared rows as the width of the bod
       }
     }
   }
+})
+
+// ---------------------------------------------------------------- the footer in a narrow pane (issue #287)
+// The fit of the whole view (the footer and the form together) is pinned in `table.test.ts`, through `TreeDataTable.render`.
+
+test('the help footer keeps its words at 96 cells (issue #287)', () => {
+  expect(helpFooterKeys(HELP_FOOTER, 96)).toBe(HELP_FOOTER)
+  expect(footerRows(HELP_FOOTER, 96, moveHintFits(HELP_FOOTER, 96))).toBe(2)
+})
+
+test('the help footer takes 2 rows at 80 cells and 3 at 49 and 40: the dim keys shrink to their letters (issue #287)', () => {
+  const rows = { 80: 2, 49: 3, 40: 3 }
+  for (const [columns, expected] of Object.entries(rows).map(([c, r]) => [Number(c), r] as const)) {
+    const keys = helpFooterKeys(HELP_FOOTER, columns)
+    expect(footerRows(HELP_FOOTER, columns, false), `${columns} before`).toBeGreaterThan(expected)
+    expect(footerRows(keys, columns, moveHintFits(keys, columns)), `${columns} cells`).toBe(expected)
+  }
+})
+
+test('the shrunk help footer keeps every key and the words of the live ones (issue #287)', () => {
+  for (const columns of [80, 49, 40]) {
+    const keys = helpFooterKeys(HELP_FOOTER, columns)
+    expect(keys.map(k => k.key)).toEqual(HELP_FOOTER.map(k => k.key))
+    for (const k of keys)
+      expect(k.label, `${columns} cells, ${k.key}`).toBe(
+        k.enabled ? HELP_FOOTER.find(h => h.key === k.key)?.label : TERSE_LABEL,
+      )
+  }
+})
+
+test('the compact form joins the version line to the last line where the line of its own does not fit (issue #287)', () => {
+  const m = narrowModel('0.1.0')
+  const form = compactForm(m, 2, 80, 11)
+  expect(form?.version).toBe('joined')
+  expect(compactRows(m, form as CompactForm) + 2).toBeLessThanOrEqual(11)
+  const text = linesOf(renderHelp(EL, m, form as CompactForm))
+  expect(text.some(t => t.startsWith('3 problems: /track help') && t.endsWith('Version: 0.1.0'))).toBe(true)
+  expect(text.filter(t => t === 'Version: 0.1.0')).toEqual([])
+})
+
+test('the version line stays on its own line where the form fits that way, at 96 cells and with no version to join (issue #287)', () => {
+  expect(compactForm(narrowModel('0.1.0'), HELP_FOOTER_ROWS, 96, 11)?.version).toBeUndefined()
+  expect(compactForm(narrowModel(undefined), 2, 80, 11)?.version).toBeUndefined()
+})
+
+test('the joined version line goes to the last problem named, or to the config line when there is no problem (issue #287)', () => {
+  for (const problems of [0, 1, 2, 3]) {
+    const m = narrowModel('0.1.0', problems)
+    const form = compactForm(m, 2, 80, 11) as CompactForm
+    expect(compactRows(m, form) + 2, `${problems} problems`).toBeLessThanOrEqual(11)
+    const text = linesOf(renderHelp(EL, m, form))
+    expect(
+      text.filter(t => t.includes('Version: 0.1.0')),
+      `${problems} problems`,
+    ).toHaveLength(1)
+    // The row count the form claims is the row count it draws.
+    expect(drawnRows(m, form)).toBe(compactRows(m, form))
+  }
+})
+
+// The widths the README names (issue #287): the labelled footer takes 2 rows from 82 cells, the shrunk one 2 rows from 51 and 3 from 35 to 50; the labelled footer takes 1 row from 161.
+test('the help footer row counts per width are the ones the README gives (issue #287)', () => {
+  const rows = (columns: number): number => {
+    const keys = helpFooterKeys(HELP_FOOTER, columns)
+    return footerRows(keys, columns, moveHintFits(keys, columns))
+  }
+  const labelled = (columns: number): number => footerRows(HELP_FOOTER, columns, moveHintFits(HELP_FOOTER, columns))
+  expect([161, 160, 82, 81].map(labelled)).toEqual([1, 2, 2, 3])
+  expect([51, 50, 34, 33].map(rows)).toEqual([2, 3, 3, 4])
+  expect([50, 40, 35].map(rows)).toEqual([3, 3, 3])
+})
+
+test('the version line joins the last line from 84 cells down and stays on its own at 85, with an 11-row body (issue #287)', () => {
+  const m = narrowModel('0.1.0')
+  const form = (columns: number) => {
+    const keys = helpFooterKeys(HELP_FOOTER, columns)
+    return compactForm(m, footerRows(keys, columns, moveHintFits(keys, columns)), columns, 11)?.version
+  }
+  expect([96, 85].map(form)).toEqual([undefined, undefined])
+  expect(form(84)).toBe('joined')
 })

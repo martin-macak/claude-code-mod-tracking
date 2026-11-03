@@ -615,6 +615,9 @@ Feature: Drive the /track pane with the keys
   # the keyboard; a keyboard in the prompt would take the `h` as a letter and the help view would stay. The ring stays on the dim
   # Button that had it when `h` opens the help view, and the second `h` leaves it on the same Button of the view line.
   # Issue #276 added the dim `e: quick view` to that footer, so the scenario presses `e` too, after `m`, with the same causal check.
+  # Issue #287: the docked pane at 120x36 is about 47 cells wide, where the labelled footer takes more than 2 rows, so its dim Buttons
+  # draw as `g: ·`, `m: ·` and `e: ·`. The inline pane at 100x40 keeps the words. The ring is on `g` in both; the second `h` leaves it
+  # on `g: view` of the view line.
   @help-view-keys
   Scenario Outline: In the help view g, a, t, p, m and e keep the keyboard in the pane, and the ring stays on its Button, at <cols>x<rows>
     Given a terminal of <cols> columns by <rows> rows
@@ -627,9 +630,9 @@ Feature: Drive the /track pane with the keys
     When I press "Tab" until the focus ring is on "g: view"
     And I press "h"
     Then the screen shows "Row keys (act on the selected or marked rows)"
-    And the screen shows "m: mark"
-    And the screen shows "e: quick view"
-    And the focus ring is on "g: view"
+    And the screen shows "<mark>"
+    And the screen shows "<quick>"
+    And the focus ring is on "<view>"
     When I press "g"
     And I press "a"
     And I press "t"
@@ -645,9 +648,9 @@ Feature: Drive the /track pane with the keys
     And the fake gh answered no unsupported call
 
     Examples:
-      | cols | rows | placement |
-      | 120  | 36   | docked    |
-      | 100  | 40   | inline    |
+      | cols | rows | placement | view    | mark    | quick         |
+      | 120  | 36   | docked    | g: ·    | m: ·    | e: ·          |
+      | 100  | 40   | inline    | g: view | m: mark | e: quick view |
 
   # Issue #199. `p` shows the plan of `/track clean` in the pane, in the place of the rows, and changes nothing. The session has no
   # tool, so no task runs and the plan is the empty one: the title and `Nothing to stop or remove.`. The kit cannot show the ring or
