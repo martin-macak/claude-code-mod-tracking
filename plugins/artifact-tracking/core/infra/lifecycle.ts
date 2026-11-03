@@ -237,7 +237,10 @@ export class LifecycleManager extends PaneApi {
       this.started = this.sequence.run(ports, launch)
       return this.started
     }
-    return this.started.then(() => this.sequence.run(ports, launch))
+    // The run after a lazy start is the new flight: `session.start` no longer waits for it (issue #360), so a hook that
+    // comes next must wait for it through `ensureStarted`.
+    this.started = this.started.then(() => this.sequence.run(ports, launch))
+    return this.started
   }
 
   /**

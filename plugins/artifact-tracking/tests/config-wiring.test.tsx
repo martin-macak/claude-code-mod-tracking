@@ -8,7 +8,7 @@ import { MAX_PROBLEMS } from '../core/lib/problems'
 import { PROCESSES_DEFAULTS } from '../trackers/processes/config'
 import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
-import { graphqlCalls, prompt, quiet, SESSION, START, track, until, world } from './fixtures/world'
+import { graphqlCalls, prompt, quiet, SESSION, START, startSettled, track, until, world } from './fixtures/world'
 
 /** The config file under `HOME = /home/u`. */
 const C = '/home/u/.config/claude-code/mods/tracker/config.json'
@@ -27,7 +27,7 @@ const written = (w: { fake: { fsWrites: { path: string; text: string }[] } }, at
 test('first start writes the default config file once', async ($, on) => {
   const w = world(on)
   mock.env(on, { HOME: '/home/u' })
-  await $.session.start(START)
+  await startSettled($)
   expect(w.fake.fsWrites.length).toBe(1)
   expect(w.fake.fsWrites[0]!.path).toBe(C)
   const doc = written(w)
@@ -35,7 +35,7 @@ test('first start writes the default config file once', async ($, on) => {
   expect(Object.keys(doc.trackers)).toEqual(IDS)
   expect(doc.global.refresh.tickMs).toBe(30000)
   expect(w.fake.fsWrites[0]!.text.endsWith('}\n')).toBe(true)
-  await $.session.start(START)
+  await startSettled($)
   expect(w.fake.fsWrites.length).toBe(1)
 })
 
@@ -50,7 +50,7 @@ test('no HOME: no fs call for the config file', async ($, on) => {
 test('CLAUDE_TRACKER_CONFIG_DIR names the folder', async ($, on) => {
   const w = world(on)
   mock.env(on, { CLAUDE_TRACKER_CONFIG_DIR: '/cfg/t', HOME: '/home/u' })
-  await $.session.start(START)
+  await startSettled($)
   expect(w.fake.fsWrites.map(x => x.path)).toEqual(['/cfg/t/config.json'])
 })
 
@@ -129,7 +129,7 @@ test('session.end as the first hook writes no config file', async ($, on) => {
 test('an edited file reaches the next tick', async ($, on) => {
   const w = world(on)
   mock.env(on, { HOME: '/home/u' })
-  await $.session.start(START)
+  await startSettled($)
   expect(w.fake.fsWrites.length).toBe(1)
   const doc = written(w)
   doc.global.refresh.captureDebounceMs = 5000

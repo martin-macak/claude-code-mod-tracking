@@ -261,17 +261,22 @@ function managerOf($: EngineInterface): LifecycleManager {
 }
 
 export const register: Register = on => {
-  // Once per process: register the command, then the start sequence (the run record, the trackers, the stored session
+  // Once per process: start the sequence and register the command (the run record, the trackers, the stored session
   // and the transcript of a resume, the tick and the pane).
-  on('session.start', async ($, e, next) => {
-    await soft(() =>
+  // The hook does not wait for the sequence: `next(e)` goes first, so the start can never block the startup of the
+  // engine (issue #360). The manager keeps the sequence as one flight, and every other entry awaits it (`ensureStarted`),
+  // so no hook, turn or /track sees a half-started load. `soft` keeps a rejection from going unhandled.
+  on('session.start', ($, e, next) => {
+    // `start` sets the flight synchronously, so no entry can take a lazy flight between the hook and the start. The
+    // command registers beside it: neither waits for the other, and neither can reject (`soft`).
+    void soft(() => managerOf($).start(portsOf($), { cwd: e.cwd, fromSessionStart: true }))
+    void soft(() =>
       $.command.register({
         name: 'track',
         description: 'Show tracked GitHub, Jira, artifacts, web links and files',
         argumentHint: managerOf($).commands.hint(),
       }),
     ) // a refused command: capture and restore still work
-    await soft(() => managerOf($).start(portsOf($), { cwd: e.cwd, fromSessionStart: true }))
     return next(e)
   }).catch((_$, e, next) => next(e))
 

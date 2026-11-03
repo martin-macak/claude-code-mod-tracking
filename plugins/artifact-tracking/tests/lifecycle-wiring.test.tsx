@@ -15,7 +15,10 @@ import {
   response,
   SESSION,
   START,
+  spin,
+  startSettled,
   track,
+  until,
   world,
   writeCreated,
 } from './fixtures/world'
@@ -24,7 +27,7 @@ test('the first start deletes the s:* and index keys of the old layout', async (
   const { store } = world(on, {
     seed: { 's:old': { items: [] }, index: ['old'], 'v2:s:sess-1': { items: [] }, 'v2:index': ['sess-1'] },
   })
-  await $.session.start(START)
+  await startSettled($)
   expect(store.has('s:old')).toBe(false)
   expect(store.has('index')).toBe(false)
   expect(store.has('v2:s:sess-1')).toBe(true)
@@ -161,4 +164,118 @@ test('a tool no tracker declared passes straight through and starts nothing', as
   await fileTool($, w.fake, 'Write', writeCreated('/work/a.md')) // a declared tool starts it
   await quiet(w.calls)
   expect(w.calls.length).toBeGreaterThan(0)
+})
+
+// The start sequence stays open until the test lets it go, and the tests wait on the hold itself, not on a clock: they
+// check the order (issue #360). `session.start` must return while the sequence is open, and the sequence must still
+// finish after.
+test('session.start returns before the start sequence settles', async ($, on) => {
+  let release = () => {}
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { store, fake, calls } = world(on)
+  store.set('s:old', { items: [] }) // the legacy sweep is a step of the sequence
+  fake.storeHold = held
+  let returned = false
+  const started = $.session.start(START).then(() => {
+    returned = true
+  })
+  try {
+    await until(() => fake.storeHoldHits > 0, 'the start sequence to reach the hold')
+    await spin(() => returned)
+    expect(returned).toBe(true) // the hook did not wait for it
+    expect(store.has('s:old')).toBe(true) // the sequence did not reach the sweep yet
+  } finally {
+    release()
+  }
+  await started
+  await quiet(calls)
+  expect(store.has('s:old')).toBe(false) // the sequence ran to its end after the return
+})
+
+/**
+ * Dispatches /track while the start is held and returns once the plugin has handled a later request. That request
+ * (a tool no tracker declared) passes straight through and never waits for the start, so it is the in-order proof that
+ * the command was dispatched. `fake.order` then shows what the command did while the start was held: nothing.
+ */
+async function trackWhileHeld($: Engine, fake: { order: string[]; tools: Record<string, unknown> }) {
+  fake.tools.mcp__demo__ping = { ok: true }
+  fake.order.length = 0
+  const pending = track($)
+  await $.tool.call({ tool: 'mcp__demo__ping' } as never)
+  expect(fake.order).not.toContain('session.id') // the command did not pass the start wait: its first read comes after it
+  fake.order.push('released')
+  return { pending }
+}
+
+const readsAfterRelease = (order: string[]) => order.indexOf('session.id') > order.indexOf('released')
+
+test('a command that follows session.start waits for the start sequence', async ($, on) => {
+  let release = () => {}
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { store, fake } = world(on)
+  store.set('s:old', { items: [] })
+  fake.storeHold = held
+  try {
+    await $.session.start(START)
+    await until(() => fake.storeHoldHits > 0, 'the start sequence to reach the hold')
+    const { pending } = await trackWhileHeld($, fake) // /track waits for the in-flight start
+    release()
+    await pending
+    expect(readsAfterRelease(fake.order)).toBe(true)
+    expect(fake.order.indexOf('store.delete')).toBeLessThan(fake.order.indexOf('session.id')) // after the sweep
+    expect(store.has('s:old')).toBe(false)
+  } finally {
+    release()
+  }
+})
+
+const KEPT_WEB = {
+  key: 'web:https://kept.test/x',
+  category: 'web',
+  url: 'https://kept.test/x',
+  label: 'Kept late',
+  sources: ['response'],
+  reasons: reasonsOfSources(['response']),
+  firstSeen: 1,
+  lastSeen: 1,
+  seenCount: 1,
+}
+
+// D5: a hot reload delivers `session.start` after a lazy start. The run it makes is the new flight, so a later entry
+// waits for it, and the stored session of the run is there when the entry runs.
+test('an entry after a late session.start waits for the run that start makes', async ($, on) => {
+  let release = () => {}
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const { fake } = world(on, {
+    seed: { 'v2:index': [SESSION], ['v2:s:' + SESSION]: { items: [KEPT_WEB] } },
+  })
+  const lazy = await track($) // a lazy start: it loads no stored session
+  expect(lazy.text).not.toContain('Kept late')
+  fake.storeHold = held // the run of the late session.start only
+  try {
+    await $.session.start(START)
+    await until(() => fake.storeHoldHits > 0, 'the start sequence to reach the hold')
+    const { pending } = await trackWhileHeld($, fake) // it waits for the replaced flight
+    release()
+    expect((await pending).text).toContain('Kept late') // the session of the late start is loaded
+    expect(readsAfterRelease(fake.order)).toBe(true)
+  } finally {
+    release()
+  }
+})
+
+// `soft` wraps the detached register and start, so a refusal never escapes as an unhandled rejection (the test file
+// would fail if it did).
+test('a refused command does not stop the start sequence', async ($, on) => {
+  const { store } = world(on, { denyRegister: true })
+  store.set('s:old', { items: [] })
+  await $.session.start(START) // resolves although the register is refused
+  await track($) // waits for the start sequence
+  expect(store.has('s:old')).toBe(false) // the sequence ran to its end
 })

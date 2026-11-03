@@ -10,7 +10,7 @@ import { PROMPT_FRAME, PROMPT_SECTION_ID } from '../core/infra/prompt'
 import type { PromptTrait } from '../core/interfaces/prompt'
 import { GLOBAL_DEFAULTS } from '../core/lib/global-config'
 import { test } from './fixtures/kit'
-import { clearSession, prompt, quiet, SESSION, START, toolResult, track, world } from './fixtures/world'
+import { clearSession, prompt, quiet, SESSION, START, startSettled, toolResult, track, world } from './fixtures/world'
 
 /** The config file under `HOME = /home/u`. */
 const C = '/home/u/.config/claude-code/mods/tracker/config.json'
@@ -189,7 +189,7 @@ test('the /track text does not carry the section', async ($, on) => {
 
 test('a pre-L7 config file gains the prompt keys', async ($, on) => {
   const w = setup(on, { disk: { [C]: cfg({ web: { enabled: false }, github: { enabled: true } }) } })
-  await $.session.start(START)
+  await startSettled($)
   expect(w.fake.fsWrites.length).toBe(1)
   const doc = JSON.parse(w.fake.fsWrites[0]!.text) as { trackers: Record<string, Record<string, unknown>> }
   expect(doc.trackers.github!.prompt).toEqual({ enabled: false, maxItems: 20 })
