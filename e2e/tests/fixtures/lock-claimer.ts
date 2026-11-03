@@ -2,9 +2,11 @@
 // support/world.ts does. It speaks one line per message on stdio:
 //   child -> parent: "ready" once the module is loaded
 //   parent -> child: "claim" (a scenario takes the lock), "release" (the scenario ends and lets go of the lock),
-//                    "leave" (the AfterAll hook: the run leaves the queue), "end" (the process ends)
+//                    "leave" (the AfterAll hook: the run leaves the queue), "end" (the process ends),
+//                    "hold" (the next sleep of a waiting claim parks, so the claim is in no try), "resume" (a parked claim goes on)
 //   child -> parent: "poll <n>" at each sleep of a waiting claim, "note <text>" at each note about the wait,
-//                    "taken" or "error <kind> <text>" for a claim, "released", "left"
+//                    "taken" or "error <kind> <text>" for a claim, "released", "left",
+//                    "held" once a sleep has parked
 // The parent counts these lines and never reads a clock. The child sleeps 20 ms between two polls of a waiting claim.
 // argv: the lock folder and the folder of the scenario. env:
 //   LOCK_WAIT_MS  how long a claim waits (default 60000, 0: do not wait)
@@ -13,6 +15,7 @@
 import { createInterface } from 'node:readline'
 import { LockBusyError, makeClaimer } from '../../support/lock.ts'
 import { type FaultPlan, installFaults } from './lock-faults.ts'
+import { parkableSleep } from './parkable-sleep.ts'
 
 const [lockDir, runDir] = process.argv.slice(2) as [string, string]
 const say = (line: string) => process.stdout.write(`${line.replace(/\n/g, ' ')}\n`)
@@ -20,12 +23,14 @@ const plan = process.env.LOCK_FAULTS
 const faults = plan === undefined ? undefined : installFaults(JSON.parse(plan) as FaultPlan)
 
 let polls = 0
+// `hold` parks the next sleep of a waiting claim (see parkable-sleep.ts), and the child says `held` then.
+const parker = parkableSleep({ onParked: () => say('held') })
 const claim = makeClaimer({
   waitMs: Number(process.env.LOCK_WAIT_MS ?? 60_000),
   pollMs: 20,
   sleep: async ms => {
     say(`poll ${++polls}`)
-    await new Promise(resolve => setTimeout(resolve, ms))
+    await parker.sleep(ms)
   },
   onWait: note => say(`note ${note}`),
   describeHolder: pid => `run ${pid}`,
@@ -49,6 +54,10 @@ input.on('line', async line => {
     release?.()
     release = undefined
     say('released')
+  } else if (line === 'hold') {
+    parker.hold()
+  } else if (line === 'resume') {
+    parker.resume()
   } else if (line === 'leave') {
     claim.leave()
     say('left')

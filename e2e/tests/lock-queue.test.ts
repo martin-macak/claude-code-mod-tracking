@@ -653,6 +653,10 @@ class Run {
   }
 
   release = () => this.command('release', 'released')
+  // Parks the claim in its next sleep and resolves once it is there: the claim is in no try then, so a lock that it waits for
+  // can be let go of without the claim taking it in that instant. `resume` lets the claim go on.
+  hold = () => this.command('hold', 'held')
+  resume = () => this.send('resume')
   leave = () => this.command('leave', 'left')
 
   async end() {
@@ -770,7 +774,11 @@ test('runs wait for a holder with no ticket, then take the lock in order, and th
     assert.match(await c.claim(), /^note .*is ahead of this run in the queue/)
     assert.deepEqual(ticketPids(dir), [b.pid, c.pid])
     // The older run lets go and lives on: its gap. B waits for the process, as before, and C does not take the gap either.
+    // B is parked in a sleep when the older run lets go. A B in the middle of a try could take the free lock in that instant,
+    // and then it would not poll again: `morePolls` would wait for ever (issue #343).
+    await b.hold()
     await old.release()
+    b.resume()
     await b.morePolls(3)
     await c.morePolls(3)
     assert.equal(lockOwner(dir), undefined)
@@ -987,4 +995,26 @@ test('support/world.ts leaves the queue in an AfterAll hook', () => {
   const imports = /import \{([^}]*)\} from '@cucumber\/cucumber'/.exec(world)?.[1] ?? ''
   assert.match(imports, /\bAfterAll\b/)
   assert.match(world, /\bAfterAll\(\s*\(\)\s*=>\s*\{\s*claimRun\.leave\(\)\s*\}\s*\)/)
+})
+
+// The claimer's hold/resume protocol (issue #343): a parked claim takes no lock, and it polls again after `resume`.
+test('a parked claim takes no free lock and polls on after resume', { timeout: 60_000 }, async t => {
+  const dir = tempDir()
+  const old = new Run(lockChildPath, [dir], t.signal)
+  const [b] = claimers(dir, t.signal, 1) as [Run]
+  try {
+    await Promise.all([old.ready(), b.ready()])
+    await old.command('go', 'won')
+    assert.match(await b.claim(), /^note .*another demo run holds /)
+    await b.hold()
+    b.send('hold') // a second hold must not drop the first gate: resume still lets the claim go on
+    await old.release()
+    assert.equal(lockOwner(dir), undefined)
+    assert.equal(b.lines.includes('taken'), false)
+    b.resume()
+    await b.morePolls(3)
+    assert.equal(b.lines.includes('taken'), false)
+  } finally {
+    for (const run of [old, b]) run.proc.kill('SIGKILL')
+  }
 })
