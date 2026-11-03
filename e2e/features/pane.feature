@@ -99,7 +99,7 @@ Feature: Drive the /track pane with the keys
     And the screen shows "v: view"
     When I press "v"
     Then the screen shows "localhost"
-    And the screen stops showing "x: dismiss"
+    And the screen shows "d: diff"
     # Issue #300. The core keys are dim Buttons in the preview, so `e` and `g` do not reach the prompt. If they did, the pane would lose
     # the keyboard and the Esc below would not go back to the list.
     When I press "e"
