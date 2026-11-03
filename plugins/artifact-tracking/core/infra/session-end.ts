@@ -76,7 +76,8 @@ export class SessionEnd {
     const wait = RESUME_CHECKS_MS[i]
     if (wait === undefined) return
     try {
-      ports.clock.after(wait, () =>
+      // `wake`, not `after`: a refused `after` never fires, and check i arms check i+1, so one refusal would end the chain (issue #271).
+      ports.clock.wake(wait, () =>
         this.d.watch
           .check()
           .then(moved => {

@@ -334,3 +334,77 @@ test('an answer that a session switch dropped is not lost: the record has none, 
   expect(t.asked).toHaveLength(2)
   expect(t.rec('/work/run')?.mime).toBe('text/plain')
 })
+
+test('a type lookup whose timer the engine refused starts again after 30 s, on the next call', async () => {
+  const HOLD_MS = 30_000 // the same rule as the probe of git-diff: a lost timer must not stop the lookup for the whole load
+  const t = world()
+  await t.w.clock.advance(1000) // the wall clock starts at 0: the age is a difference
+  t.w.clock.refuse('after', 1) // `after(0)` is armed as 1 ms: the engine drops the timer, so the job never ends
+  await t.touch('Write', '/work/run')
+  await t.settle()
+  expect(t.asked).toEqual([])
+  await t.w.clock.advance(HOLD_MS - 1)
+  await t.touch('Read', '/work/run')
+  await t.settle()
+  expect(t.asked).toEqual([]) // a millisecond before the hold ends: the job still counts as running
+  await t.w.clock.advance(1)
+  await t.touch('Read', '/work/run')
+  await t.settle()
+  expect(t.asked).toEqual(['-b --mime-type -- /work/run'])
+  expect(t.rec('/work/run')?.mime).toBe('text/x-script.python')
+})
+
+test('an `after` that throws leaves no running job: the next call asks', async () => {
+  const t = world()
+  const after = t.w.ports.clock.after
+  t.w.ports.clock.after = () => {
+    throw new Error('timer refused')
+  }
+  await t.touch('Write', '/work/run')
+  await t.settle()
+  expect(t.asked).toEqual([])
+  t.w.ports.clock.after = after
+  await t.touch('Read', '/work/run')
+  await t.settle()
+  expect(t.asked).toEqual(['-b --mime-type -- /work/run'])
+})
+
+test('a timer that fires late, after the job was armed again, does not run a second job', async () => {
+  const t = world()
+  await t.w.clock.advance(1000)
+  const after = t.w.ports.clock.after
+  const held: Array<() => unknown> = []
+  t.w.ports.clock.after = ((ms: number, fn: () => unknown) => {
+    if (ms > 1) return after(ms, fn as () => void) // other users of the clock go on
+    held.push(fn) // the engine has not fired this timer yet
+    return 0
+  }) as typeof after
+  await t.touch('Write', '/work/run')
+  await t.w.clock.advance(30_000)
+  await t.touch('Read', '/work/run') // armed again: a second timer is held
+  expect(held).toHaveLength(2)
+  await held[0]?.() // the stale timer fires: it must do nothing
+  expect(t.asked).toEqual([])
+  await held[1]?.()
+  await t.settle()
+  expect(t.asked).toEqual(['-b --mime-type -- /work/run'])
+})
+
+test('a lookup that already runs for 30 s or more is not armed again: one job, no second file call', async () => {
+  let release!: (r: RunResult) => void
+  const held = new Promise<RunResult>(resolve => (release = resolve))
+  const answers = [held, res('text/plain\n')]
+  const t = world({ answer: () => answers.shift() ?? res('text/plain\n') })
+  await t.w.clock.advance(1000)
+  await t.touch('Write', '/work/a')
+  const job = t.settle() // the timer fired: the job is inside its first call
+  await t.reached(1)
+  await t.w.clock.advance(31_000) // a slow batch: older than the hold, but the timer did fire
+  await t.touch('Write', '/work/b')
+  await t.settle()
+  expect(t.asked).toEqual(['-b --mime-type -- /work/a']) // no second job ran beside the first
+  release(res('text/plain\n'))
+  await job
+  expect(t.asked).toEqual(['-b --mime-type -- /work/a', '-b --mime-type -- /work/b'])
+  expect(t.rec('/work/b')?.mime).toBe('text/plain')
+})

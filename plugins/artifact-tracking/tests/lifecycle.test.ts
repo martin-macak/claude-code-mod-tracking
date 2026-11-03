@@ -304,6 +304,16 @@ test('after a resume the switch is carried within seconds, with no hook entry an
   expect(t.w.ui.invalidated).toBe(before + 1) // the chain stopped at the first check that saw the id move
 })
 
+test('a refused resume check still carries the switch', async () => {
+  const t = setup({ seed: { 'v2:s:sess-b': { items: ['b-item'] } } })
+  await t.m.entry(t.w.ports)
+  t.w.clock.refuse('after', 250) // a hook refuses the first check: an `after` timer never fires
+  await leave(t, 'sess-b', 'resume')
+  t.items.live = []
+  await t.w.clock.advance(1000)
+  expect(t.items.live).toEqual(['b-item']) // the chain does not rest on `after`, so no refusal ends it
+})
+
 test('the check after a resume tries again while the id has not moved, and stops after the last wait', async () => {
   const t = setup({ seed: { 'v2:s:sess-b': { items: ['b-item'] } } })
   await t.m.entry(t.w.ports)

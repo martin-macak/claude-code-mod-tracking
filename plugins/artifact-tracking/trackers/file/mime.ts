@@ -4,8 +4,9 @@
 // so the call is made once for a record. A record that goes (`/track clear`, a cap, a session switch that drops the answer)
 // takes its answer with it, and the next record of that path is asked again. A tick looks again, for a record that a restore
 // or a replay brought back with no answer and for a call that came before the probe of `file` settled.
-// One job runs at a time for a load. A path whose call failed is not tried again until the generation moves (`/track clear` or
-// a session switch). No `file` on the host, `mime: false` or an open breaker: the type stays `other`.
+// One job runs at a time for a load. A timer that the engine refused never fires: a call that comes 30 s after the arm starts
+// the job again (the same hold as the probe of the git diff). A job whose timer fired is never armed again, however long it runs.
+// A path whose call failed is not tried again until the generation moves (`/track clear` or a session switch). No `file` on the host, `mime: false` or an open breaker: the type stays `other`.
 
 import type { Json, StoredItem } from '../../core/interfaces/items'
 import type { ToolSpec, TrackerContext } from '../../core/interfaces/tracker'
@@ -27,7 +28,19 @@ type Ctx = TrackerContext<FileConfig, Json>
  * next record of that path is asked again. The failed keys go when the generation moves (`/track clear`, a session switch):
  * each path whose call failed gets one more chance then, and the breaker bounds the calls.
  */
-type Job = { running: boolean; again: boolean; tried: Set<string>; generation: number }
+type Job = {
+  running: boolean
+  again: boolean
+  tried: Set<string>
+  generation: number
+  /** When the timer of the running job was armed, and which timer is the live one (a refused timer never fires). */
+  armedAt: number
+  armed: number
+  /** The live timer has fired: the job runs, and a late call must not arm a second one. */
+  started: boolean
+}
+/** A job that was armed and has not ended counts for this long; a timer that the engine refused then does not stop the lookup for good. */
+const JOB_HOLD_MS = 30_000
 const jobs = new LoadState<Job>()
 
 /** The records that wait for an answer: a name the map does not know, still there, with no answer and no failed try. */
@@ -46,17 +59,36 @@ function pending(list: readonly StoredItem[], tried: ReadonlySet<string>): FileR
  */
 export function typeUnknownFiles(ctx: Ctx): void {
   if (!ctx.config.slice().mime) return
-  const job = jobs.of(ctx, () => ({ running: false, again: false, tried: new Set(), generation: ctx.generation }))
+  const job = jobs.of(ctx, () => ({
+    running: false,
+    again: false,
+    tried: new Set(),
+    generation: ctx.generation,
+    armedAt: 0,
+    armed: 0,
+    started: false,
+  }))
+  const now = ctx.clock.wall()
   if (job.running) {
     job.again = true
-    return
+    // A timer the engine refused never fires, so `running` would stay set for the load: after the hold, arm again.
+    if (job.started || now - job.armedAt < JOB_HOLD_MS) return
   }
   job.running = true
-  // The engine runs the callback and ignores what it returns; the mini clock of the tests awaits it.
-  ctx.clock.after(0, (() => run(ctx, job)) as () => void)
+  job.armedAt = now
+  job.started = false
+  const token = ++job.armed
+  try {
+    // The engine runs the callback and ignores what it returns; the mini clock of the tests awaits it.
+    ctx.clock.after(0, (() => run(ctx, job, token)) as () => void)
+  } catch {
+    job.running = false
+  }
 }
 
-async function run(ctx: Ctx, job: Job): Promise<void> {
+async function run(ctx: Ctx, job: Job, token: number): Promise<void> {
+  if (job.armed !== token) return // an older timer that fired late: the newer one owns the job
+  job.started = true
   try {
     do {
       job.again = false
@@ -66,7 +98,7 @@ async function run(ctx: Ctx, job: Job): Promise<void> {
     // The job is best effort: a record with no answer is `other`. The next call or tick looks again. The log says why.
     ctx.log(`file: type lookup failed: ${message(e)}`)
   } finally {
-    job.running = false
+    if (job.armed === token) job.running = false
   }
 }
 
