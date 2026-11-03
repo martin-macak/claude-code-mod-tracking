@@ -8,6 +8,8 @@
 // drawing that never comes (the bound) makes it read the state. Each wait has a second wake-up behind its engine timer, a
 // timer of the mod's own runtime that no hook can refuse (`afterOrWake`, issue #193), so a refused timer with no drawing at
 // all does not hold the press until the pane closes.
+// When the wake wins and the engine timer fires later (a loaded machine, issue #286), that timer proves the engine took the
+// frame, so the press asks for the ring once more, unless the person moved it or the pane closed.
 // PaneSession owns one; nothing here touches the engine but the `ui.focus` and `ui.open` ports.
 // Spec: docs/superpowers/specs/2026-10-18-arch-hardening-design.md, section 5.10 "Selection". Plan: L6 Task 11, G8.
 
@@ -85,32 +87,59 @@ function sameControls(a: Frame, b: Frame): boolean {
   return [...a.rows].every(([id, handle], i) => rows[i]?.[0] === id && rows[i]?.[1] === handle)
 }
 
+/** Who moved the ring: the person (Tab, arrows, click) or the plugin itself (`UiFocusOrigin.kind`). */
+export type FocusOrigin = 'person' | 'plugin'
+
 /**
  * The engine timer, and behind it a wake that no hook can refuse (`Ports.clock.wake`, a timer of the mod's own runtime). The
- * first of them to fire runs `fn`, once, and cancels the other. The engine gives no sign of a refused timer (`Timer` has
+ * first of them to fire runs `fn`, once. Without `late` it cancels the other. The engine gives no sign of a refused timer (`Timer` has
  * `cancel` and no more), so the wake is the bound when no drawing comes: `ms + WAKE_SLACK_MS` after the arming at most. When
  * the wake wins it writes one line to the log, named by `label`, and the line says only what is known: the engine timer did
  * not fire in time. The mod cannot tell a late timer from a refused one, so a count of the lines counts both, and the
- * ring request after a late one may name a Button of a frame the engine has not taken yet (issue #140). Cancel stops both.
+ * ring request after a late one may name a Button of a frame the engine has not taken yet (issue #140). Cancel stops both, except a late timer; `drop` ends that too.
+ *
+ * With `late`, a wake that wins leaves the engine timer armed, and `late` runs if it fires after all (issue #286). The engine
+ * fires a timer in a turn after the one that took the frame it was armed behind, so a late timer proves the frame is taken.
+ * `drop` ends the late timer too; `cancel` leaves it.
  */
-function afterOrWake(p: Ports, ms: number, fn: () => void, label: string): Timer {
+function afterOrWake(
+  p: Ports,
+  ms: number,
+  fn: (byWake: boolean) => void,
+  label: string,
+  late?: () => void,
+): Timer & { readonly drop: () => void } {
   let done = false
+  let lateArmed = false
   const fire = (byWake: boolean): void => {
     if (done) return
     done = true
-    engine.cancel()
     wake.cancel()
+    if (byWake && late !== undefined) lateArmed = true
+    else engine.cancel()
     if (byWake)
       p.log(
         `${label}: the engine timer of ${ms} ms did not fire in ${ms + WAKE_SLACK_MS} ms (late or refused); the wake ended the wait`,
       )
-    fn()
+    fn(byWake)
   }
-  const engine = p.clock.after(ms, () => fire(false))
+  const engine = p.clock.after(ms, () => {
+    if (!lateArmed) return fire(false)
+    lateArmed = false
+    late?.()
+  })
   const wake = p.clock.wake(ms + WAKE_SLACK_MS, () => fire(true))
   return {
+    // Ends the wait, not the late timer: after a wake that won with `late`, this does nothing, and only `drop` ends the engine timer.
     cancel: () => {
+      if (lateArmed) return
       done = true
+      engine.cancel()
+      wake.cancel()
+    },
+    drop: () => {
+      done = true
+      lateArmed = false
       engine.cancel()
       wake.cancel()
     },
@@ -193,6 +222,15 @@ export class Refocus {
   private displaced: string | undefined
   /** The presses that wait for a drawing (`awaitFrame`) or for the pause after it (`pause`). */
   private waiting: Waiter[] = []
+  /** The ring moves that the person made. A late ring request (issue #286) is dropped when this changed since it was armed. */
+  private moves = 0
+  /**
+   * The late engine timer of the last pause that the wake ended (`afterOrWake`), as its `drop`. A newer one replaces it, so the
+   * timers of a run of presses never pile up when the engine refuses them. A closing ends it.
+   */
+  private lateDrop: (() => void) | undefined
+  /** The ring requests so far. A late re-request (issue #286) is dropped when a newer request came after the one it repeats. */
+  private requests = 0
   /** The last drawing that returned. A press that runs on after its frame wait starts its pause from it (`pause`). */
   private latest: Frame | undefined
 
@@ -200,7 +238,8 @@ export class Refocus {
    * The ring moved to `element` (the `ui.focus` hook, any origin). A move off the Button that `keep` chose ends its claim:
    * the person walked on, so the next `keep` leaves the ring where the person put it.
    */
-  noted(element: string | undefined): void {
+  noted(element: string | undefined, origin: FocusOrigin): void {
+    if (origin === 'person') this.moves++
     this.at = element
     if (element !== this.displaced) this.displaced = undefined
   }
@@ -223,6 +262,8 @@ export class Refocus {
     this.at = undefined
     this.displaced = undefined
     this.latest = undefined
+    this.lateDrop?.()
+    this.lateDrop = undefined
     for (const { close } of [...this.waiting]) close() // a press that waits for a drawing or a pause ends: the pane closed
   }
 
@@ -293,22 +334,30 @@ export class Refocus {
    * wake of `afterOrWake` ends the pause `WAKE_SLACK_MS` after the engine timer was due (issue #193), and each restart arms a wake
    * of its own.
    */
-  private pause(p: Ports, first: Frame): Promise<Frame> {
-    return new Promise<Frame>(resolve => {
+  private pause(p: Ports, first: Frame): Promise<{ frame: Frame; late?: Promise<void> }> {
+    return new Promise(resolve => {
       let latest = this.latest ?? first
-      let timer: Timer | undefined
+      let timer: ReturnType<typeof afterOrWake> | undefined
       let deadline = 0
       const limit = p.clock.wall() + NEXT_DRAWING_MS
-      const end = (): void => {
+      let engineLate: () => void = () => {}
+      const end = (byWake = false): void => {
         timer?.cancel()
         this.leave(waiter)
-        resolve(latest)
+        if (byWake && timer !== undefined) {
+          this.lateDrop?.()
+          this.lateDrop = timer.drop
+          const late = new Promise<void>(r => {
+            engineLate = r
+          })
+          resolve({ frame: latest, late })
+        } else resolve({ frame: latest })
       }
       const start = (): void => {
         timer?.cancel()
         const ms = Math.min(RING_PAUSE_MS, limit - p.clock.wall()) // positive: `offer` starts it only before its deadline
         deadline = p.clock.wall() + ms
-        timer = afterOrWake(p, ms, end, 'pane ring pause')
+        timer = afterOrWake(p, ms, end, 'pane ring pause', () => engineLate())
       }
       const waiter: Waiter = {
         offer: frame => {
@@ -317,7 +366,7 @@ export class Refocus {
           if (p.clock.wall() >= deadline) end()
           else if (changed) start()
         },
-        close: end,
+        close: () => end(),
       }
       this.waiting.push(waiter)
       start()
@@ -332,7 +381,8 @@ export class Refocus {
    * `press` says what the press knew when it began. When its drawing had no keys, the keys go to the prompt box, where
    * `ui.focus` is refused (issue #115): the pane asks for them first (`askKeys`), unless the pane closed since. The engine
    * may refuse the ask too (text in the composer, issue #108 case C): the row stays selected and the pane keeps its hint.
-   * A press asks once and never again by itself.
+   * A press asks once, and once more when a late engine timer fires after the wake sent the first request (issue #286),
+   * unless the person moved the ring, the pane closed or a newer request came since.
    *
    * A press that began before a closing writes nothing after it (issue #130): no selection, no ask, no ring request. The
    * check comes at the start, in the write (the engine may apply it after the closing) and before the request. A call that
@@ -402,7 +452,9 @@ export class Refocus {
   ): Promise<void> {
     if (this.at === undefined || !press.still()) return
     const first = await drawn
-    const drawing = first === undefined ? undefined : await this.pause(p, first) // the latest frame of the pause
+    const paused = first === undefined ? undefined : await this.pause(p, first)
+    const drawing = paused?.frame // the latest frame of the pause
+    const moves = this.moves
     const at = this.at // the person may have moved the ring while the press waited
     if (at === undefined || !press.still()) return // or the pane closed
     const frame = drawing ?? (await atBound())
@@ -410,17 +462,29 @@ export class Refocus {
     const toRow = next.view === 'rows' && next.row !== null
     const home = this.displaced !== undefined && toRow
     this.displaced = undefined
+    // The request that the wake sent may have named a Button of a frame the engine had not taken: it goes again when the late
+    // timer fires, unless the person moved the ring, the pane closed or a newer request came since (issue #286). A refused first
+    // request is not repeated, on any branch.
+    const ask = async (key: string, id?: string): Promise<boolean> => {
+      const seq = this.requests + 1 // `request` counts at once, before its first await: a newer request may start while this one waits
+      const moved = await this.request(p, key, id, press)
+      if (moved)
+        void paused?.late?.then(async () => {
+          if (press.still() && this.moves === moves && this.requests === seq) await this.request(p, key, id, press)
+        })
+      return moved
+    }
     if (frame.keys.includes(at) && !home) {
-      await this.request(p, at, undefined, press)
+      await ask(at)
     } else if (toRow) {
       const key = frame.rows.get(next.row as string)
-      if (key !== undefined) await this.request(p, key, next.row as string, press)
+      if (key !== undefined) await ask(key, next.row as string)
     } else {
       // the help footer always holds `h`, the plan footer `p`, the key line of the preview `v` or `r`
       const key = next.view === 'help' ? 'help' : next.view === 'plan' ? 'clean' : frame.keys[0]
       if (key === undefined) return
       if (next.view !== 'rows') this.displaced = key
-      if (!(await this.request(p, key, undefined, press))) this.displaced = undefined
+      if (!(await ask(key))) this.displaced = undefined
     }
   }
 
@@ -437,6 +501,7 @@ export class Refocus {
    */
   private async request(p: Ports, key: string, id: string | undefined, press: Press): Promise<boolean> {
     if (!press.still()) return false
+    this.requests++
     this.pending = id === undefined ? undefined : { key, id }
     try {
       if (await p.ui.focus(key)) return true
