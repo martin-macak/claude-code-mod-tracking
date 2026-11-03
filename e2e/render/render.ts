@@ -39,8 +39,20 @@ export function budgetError(bytes: number, budget = GIF_BUDGET_BYTES): string | 
 }
 
 // Account data that Claude Code 2.1.296 prints: the plan name in the banner and usage notices.
+const PLANS = 'Max|Pro|Team|Enterprise|Ultra|Free'
+
 export const REDACTIONS: readonly RegExp[] = [
-  / · Claude (Max|Pro|Team|Enterprise)/g,
+  new RegExp(` · Claude (?:${PLANS})\\b`, 'g'),
+  // The slash menu counts the free uses of the account, and the footer counts its agents.
+  /\d+ free left[^\u001b\r\n]*/g,
+  /(?: · )?← \d+ agents?/g,
+  // Engine notices about the guard plugins of the recording machine: "<plugin>: its <hook> hook was skipped. ...".
+  // To the end of the run of text, like the usage notice.
+  // The lookbehind keeps the match out of the tail of an escape code: "246m" is a run of word characters too.
+  /(?<!\u001b\[[\d;]*)[a-z][\w@./-]*: its [\w.-]+ hook was skipped[^\u001b\r\n]*/g,
+  // The notice wraps. The engine draws each wrapped line as a run of its own, after escape codes.
+  /"cc-plugin-[\w-]+" runs first[^\u001b\r\n]*/g,
+  /(?:on )?past it\./g,
   // To the end of the run of text, so a notice cut short to a narrow column goes too.
   /You've used \d+%[^\u001b\r\n]*/g,
   // The reset time names the viewer's time zone. It can wrap onto its own line.
@@ -76,7 +88,13 @@ export function redact(cast: Cast, patterns: readonly RegExp[] = REDACTIONS): Ca
 export const LEAKS: readonly RegExp[] = [
   /\/(?:Users|home)\/[^/\s]+/,
   /[\w.+-]+@[\w-]+\.[\w.-]+/,
-  /Claude (?:Max|Pro|Team|Enterprise)/,
+  new RegExp(`Claude (?:${PLANS})\\b`),
+  // Notices of the engine about the plugins of the recording machine. Fail on them: blanking leaves holes.
+  /hook was skipped/,
+  /runs first and sent the event/,
+  /cc-plugin-[\w-]+/,
+  /\d+ free left/,
+  /← \d+ agents?/,
   /used \d+% of/,
   /resets \d/,
   /Organization/,

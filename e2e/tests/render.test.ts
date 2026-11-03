@@ -26,6 +26,84 @@ test('redact blanks the plan name and usage notices with spaces of the same widt
   ])
 })
 
+for (const plan of ['Ultra', 'Free']) {
+  test(`redact blanks the ${plan} plan name`, () => {
+    const cast = redact({
+      header: { version: 2, width: 80, height: 24 },
+      events: [[0, 'o', `Haiku 5.5 · Claude ${plan}\r\n`]],
+    })
+    assert.deepEqual(cast.events, [[0, 'o', `Haiku 5.5${' '.repeat(10 + plan.length)}\r\n`]])
+  })
+
+  test(`leakError flags the ${plan} plan name`, () => {
+    assert.match(leakError(leakCast(`Haiku · Claude ${plan}`)) ?? '', new RegExp(`Claude ${plan}`))
+  })
+}
+
+test('redact leaves a longer word after a plan name whole, and leakError ignores it', () => {
+  const cast = redact({
+    header: { version: 2, width: 80, height: 24 },
+    events: [[0, 'o', 'Haiku · Claude Freedom']],
+  })
+  assert.deepEqual(cast.events, [[0, 'o', 'Haiku · Claude Freedom']])
+  assert.equal(leakError(leakCast('Haiku · Claude Freedom')), undefined)
+})
+
+test('leakError flags the hook-skipped notices of a host plugin', () => {
+  assert.match(leakError(leakCast('artifact-tracking: its session.append hook was skipped.')) ?? '', /hook was skipped/)
+  assert.match(leakError(leakCast('"cc-plugin-sec-default" runs first and sent the event on')) ?? '', /runs first/)
+  assert.match(leakError(leakCast('"cc-plugin-sec-default"')) ?? '', /cc-plugin-/)
+})
+
+test('redact blanks the free-uses count of the slash menu and the agents count of the footer', () => {
+  const cast = redact({
+    header: { version: 2, width: 80, height: 24 },
+    events: [[0, 'o', '/ultrareview  3 free left ($5-$25 USD)\r\nesc · ← 3 agents\r\n']],
+  })
+  const text = (cast.events[0]?.[2] ?? '') as string
+  assert.doesNotMatch(text, /free left|agents/)
+  assert.equal(text.length, '/ultrareview  3 free left ($5-$25 USD)\r\nesc · ← 3 agents\r\n'.length)
+  assert.equal(leakError(cast), undefined)
+})
+
+test('redact blanks the hook-skipped notice of a host plugin, also split over two events', () => {
+  const notice =
+    'artifact-tracking: its session.append hook was skipped. "cc-plugin-sec-default" runs first and sent the event on'
+  const cast = redact({
+    header: { version: 2, width: 120, height: 24 },
+    events: [
+      [0, 'o', `ok\r\n${notice}\r\nnext line\r\n`],
+      [1, 'o', 'artifact-tracking: its prompt.comp'],
+      [1.1, 'o', 'ose hook was skipped. "cc-plugin-sec-default" runs first\u001b[K\r\n'],
+    ],
+  })
+  const text = cast.events.map(e => e[2]).join('')
+  assert.doesNotMatch(text, /hook was skipped|cc-plugin|runs first/)
+  assert.equal(cast.events[0]?.[2], `ok\r\n${' '.repeat(notice.length)}\r\nnext line\r\n`)
+  assert.equal(leakError(cast), undefined)
+})
+
+test('redact blanks the wrapped lines of the hook-skipped notice, which the engine draws as separate runs', () => {
+  const grey = '\u001b[38;5;246m'
+  const off = '\u001b[39m'
+  const wide = `⏺${off} ${grey}artifact-tracking: its session.append hook was skipped.${off}         \u001b[B│\r\n  ${grey}"cc-plugin-sec-default" runs first and sent the event on${off}        │\r\n  ${grey}past it.${off}\u001b[56X`
+  const narrow = `${grey}artifact-tracking: its prompt.compose hook was skipped. "cc-plugin-sec-default" runs first and sent the event${off}  \u001b[14;1H  ${grey}on past it.${off}\u001b[K`
+  const cast = redact({
+    header: { version: 2, width: 120, height: 36 },
+    events: [
+      [0, 'o', wide],
+      [1, 'o', narrow],
+    ],
+  })
+  assert.equal(leakError(cast), undefined)
+  assert.equal(cast.events[0]?.[2].startsWith(`⏺${off} ${grey}`), true, 'the escape codes stay whole')
+  const plain = cast.events
+    .map(e => e[2])
+    .join('')
+    .replace(/\u001b\[[\d;]*[A-Za-z]/g, '')
+  assert.doesNotMatch(plain, /artifact-tracking|skipped|cc-plugin|runs first|past it/)
+})
+
 test('redact catches a notice that asciinema split over two output events', () => {
   const cast = redact({
     header: { version: 2, width: 80, height: 24 },
