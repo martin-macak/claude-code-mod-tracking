@@ -109,6 +109,31 @@ test('the h scenario of issue #140 runs docked at 120x36 and inline at 100x40, a
   assert.ok(inline.steps.includes('the pane is inline'))
 })
 
+// Issue #355. At 100x40 the inline window shows 5 rows of a group, so after Enter on the N more row the window hint
+// `▼ 2 more below` still holds "2 more" and hides g.example. The scenario checks what holds at both sizes.
+test('the N more row scenario of issue #355 runs docked at 120x36 and inline at 100x40, with checks that hold at both', () => {
+  const examples = select('--tags', '@n-more-row')
+  assert.equal(examples.length, 2)
+  const docked = examples.find(s => s.name.endsWith('at 120x36'))
+  const inline = examples.find(s => s.name.endsWith('at 100x40'))
+  assert.ok(docked !== undefined && inline !== undefined, 'one example for each size')
+  assert.ok(docked.steps.includes('a terminal of 120 columns by 36 rows'))
+  assert.ok(docked.steps.includes('the pane is docked'))
+  assert.ok(inline.steps.includes('a terminal of 100 columns by 40 rows'))
+  assert.ok(inline.steps.includes('the pane is inline'))
+  for (const scenario of examples) {
+    assert.ok(!scenario.steps.includes('the screen stops showing "2 more"'), 'the window hint holds "2 more" inline')
+    const { steps } = scenario
+    const enter = steps.indexOf('I press "Enter"')
+    const ring = steps.indexOf('the focus ring is on the row showing "e.example"')
+    const g = steps.indexOf('the selected row shows "g.example"')
+    assert.ok(steps.includes('the selected row shows "a.example"'), 'the first row is selected before the Tabs')
+    assert.ok(steps.includes('the focus ring is on "2 more"'), 'the fifth Tab puts the ring on the N more row')
+    assert.ok(enter >= 0 && ring > enter, 'Enter puts the ring back on the selected row (issue #109, finding m2)')
+    assert.ok(g > ring, 'Tab reaches a row that Enter added, after the ring check')
+  }
+})
+
 test('the tag @help-view-keys selects the scenario of issue #200 docked at 120x36 and inline at 100x40, each checking its placement', () => {
   const selected = select('--tags', '@help-view-keys')
   assert.equal(selected.length, 2)
