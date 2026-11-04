@@ -1,7 +1,7 @@
 // trackWorktrees: proven children under a pinned root (spec A4, 8.1). Pure and synchronous.
 // Git has no parent link, so a child needs a proof from this run. Nothing is guessed from ancestry.
 
-import { agentWorktreePath, basename, findByPath, locate, normPath } from '../../core/lib/porcelain'
+import { agentWorktreePath, basename, findByPath, locate, normPath, type Real } from '../../core/lib/porcelain'
 import { AUTO_DEFAULTS, type AutoConfig } from './config'
 import { worktreeId } from './ids'
 import type { AutoState, GitWorktree, WorktreeProof, WorktreeRow } from './types'
@@ -16,6 +16,7 @@ function newProofs(
   known: Set<string>,
   at: number,
   room: number,
+  real: Real,
 ) {
   const byAgentPath = new Map(s.agents.map(a => [agentWorktreePath(main, a.id), a.id]))
   const runIds = [...new Set(s.agents.flatMap(a => (a.workflow ? [a.workflow.runId] : [])))]
@@ -24,7 +25,7 @@ function newProofs(
   for (const r of list.slice(1)) {
     if (added.length >= room) break
     const path = normPath(r.path)
-    if (known.has(path)) continue
+    if (known.has(real(path))) continue
     let p: WorktreeProof | undefined
     const owner = byAgentPath.get(path)
     if (owner !== undefined) {
@@ -37,7 +38,7 @@ function newProofs(
     if (!p) continue
     if (r.branch !== undefined) p.branch = r.branch
     added.push(p)
-    known.add(path)
+    known.add(real(path))
   }
   return added
 }
@@ -67,12 +68,13 @@ export function matchProofs(
   proofs: readonly WorktreeProof[],
   list: readonly GitWorktree[],
   top: string,
+  real: Real = normPath,
 ): Map<string, GitWorktree> {
-  const rootRec = locate(list, top)
+  const rootRec = locate(list, top, real)
   const taken = new Set<GitWorktree>([...(list[0] ? [list[0]] : []), ...(rootRec ? [rootRec] : [])])
   const matched = new Map<string, GitWorktree>()
   for (const p of proofs) {
-    const r = findByPath(list, p.path, taken)
+    const r = findByPath(list, p.path, taken, real)
     if (r) {
       matched.set(p.path, r)
       taken.add(r)
@@ -95,22 +97,23 @@ export function trackWorktrees(
   list: readonly GitWorktree[],
   at: number,
   caps: Pick<AutoConfig, 'maxProofs' | 'maxBranches'> = AUTO_DEFAULTS,
+  real: Real = normPath,
 ): WorktreeView {
   const top = s.root?.top
   if (typeof top !== 'string' || list.length === 0) return { state: s, rows: [], branches: [], overflow: 0 }
   const mainRec = list[0]!
   const main = normPath(mainRec.path)
-  const rootRec = locate(list, top)
+  const rootRec = locate(list, top, real)
   const dismissed = new Set(s.dismissed)
 
   // 1. New proofs from the convention paths, only while there is room. A full list takes no new proof: a path that
   //    the cap evicted would be proved again every round, and each round would write `auto` (A22).
   const room = Math.max(0, caps.maxProofs - s.worktrees.length)
-  const added = newProofs(s, list, main, new Set(s.worktrees.map(p => p.path)), at, room)
+  const added = newProofs(s, list, main, new Set(s.worktrees.map(p => real(p.path))), at, room, real)
   const all = added.length > 0 ? [...s.worktrees, ...added] : s.worktrees
 
   // 2. Match each proof to a record: by path, then by branch for a symlinked path. Never the root or the main tree.
-  const matched = matchProofs(all, list, top)
+  const matched = matchProofs(all, list, top, real)
 
   // 3. Update the proofs: the branch of a matched record, `seenAt` on a first or renewed match, and `removedAt` the
   //    first time the child is removed (issue #49). A proof with no record is removed too. A live child drops it.

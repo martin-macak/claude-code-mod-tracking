@@ -52,7 +52,7 @@ export function parsePorcelain(text: string): GitWorktree[] {
 
 /**
  * The canonical spelling of a path (a symlink alias resolved), or the path without trailing slashes when none is known. Sync
- * and pure: whoever builds it did the I/O before (`trackers/auto/real.ts`, issue #255).
+ * and pure: whoever builds it did the I/O before (`core/lib/real.ts`, issue #255).
  */
 export type Real = (path: string) => string
 

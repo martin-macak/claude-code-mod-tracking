@@ -3,7 +3,7 @@ import type { Breaker } from '../../core/interfaces/tracker'
 import { CircuitBreaker } from '../../core/lib/circuit-breaker'
 import { parseRemote } from '../../core/lib/git'
 import { GLOBAL_DEFAULTS } from '../../core/lib/global-config'
-import { type GitWorktree, normPath, parsePorcelain } from '../../core/lib/porcelain'
+import { type GitWorktree, normPath, parsePorcelain, type Real } from '../../core/lib/porcelain'
 import { resolvePath } from '../../core/lib/shell'
 import { REPOS_DEFAULTS } from './config'
 import type { RepoMode } from './hints'
@@ -31,6 +31,11 @@ type TrackerDeps = {
   limits?: () => { gitTimeoutMs: number; tickMs: number }
   /** `global.tools.breaker`, read once per load: the tracker builds its breaker from it. Absent: the default numbers. */
   breakerLimits?: { threshold: number; openMs: number }
+  /**
+   * The canonical paths of these paths (#344): the shield of the own repo joins `/var` and `/private/var`. Absent: the plain
+   * spelling decides.
+   */
+  real?: (paths: readonly string[]) => Promise<Real>
 }
 
 export type RepoVisit = Omit<ResolvedRepo, 'common'> & { branch?: string; touchedBy: string; mode: RepoMode }
@@ -174,9 +179,7 @@ export class RepoTracker {
     const rootNorm = normPath(this.d.rootPath!)
     // Only a root that is a repo shields what is nested in it. A non-git root lets the walk find nested repos.
     // null is "git said: no repo here". A fault that stops git from running is 'retry' and returned above.
-    if (own !== null && (within(here, rootNorm) || (own.root !== undefined && within(here, own.root)))) {
-      return null
-    }
+    if (own !== null && (await this.shielded(here, rootNorm, own))) return null
     // A file (README, Makefile) or a path not created yet is not a directory. Walk up to the nearest one that is.
     let dir = maybeDir(abs)
     for (let up = 0; up <= MAX_WALK; up++) {
@@ -195,6 +198,15 @@ export class RepoTracker {
       dir = dir.slice(0, dir.lastIndexOf('/')) || '/'
     }
     return null
+  }
+
+  /** Whether `here` is inside the root or the toplevel of the own repo, also when a symlink names the same folder (#344). */
+  private async shielded(here: string, rootNorm: string, own: ResolvedRepo): Promise<boolean> {
+    const bases = [rootNorm, ...(own.root === undefined ? [] : [own.root])]
+    if (bases.some(b => within(here, b))) return true
+    if (!this.d.real) return false
+    const real = await this.d.real([here, ...bases])
+    return bases.some(b => within(real(here), real(b)))
   }
 
   /**

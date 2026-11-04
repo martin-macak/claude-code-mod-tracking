@@ -7,10 +7,10 @@
 
 import type { Now, RunResult } from '../../core/interfaces/ports'
 import { normPath, parsePorcelain, type Real } from '../../core/lib/porcelain'
+import { makeRealResolver } from '../../core/lib/real'
 import { agentPaths, trackAgents } from './agents'
 import type { AutoConfig } from './config'
 import { setRootTop } from './ledger'
-import { makeRealResolver } from './real'
 import type { AutoSnapshot, AutoState, GitWorktree, Health, LiveAgent } from './types'
 import { trackWorktrees } from './worktrees'
 
@@ -141,6 +141,7 @@ export class AutoRound {
     const fresh = this.resolver ? await this.d.load().catch(() => s) : s
     const real = this.resolver
       ? await this.resolver.resolve([
+          ...[fresh.root?.top, s.root?.top].filter((p): p is string => typeof p === 'string'),
           ...agentPaths(fresh.agents, fresh.worktrees, list, masterCwd),
           ...agentPaths(s.agents, s.worktrees, list, masterCwd),
         ])
@@ -161,7 +162,7 @@ export class AutoRound {
     caps: RoundCaps | undefined,
     real: Real,
   ): AutoState {
-    const wv = trackWorktrees(cur, list, at, caps)
+    const wv = trackWorktrees(cur, list, at, caps, real)
     const av = trackAgents(wv.state, live, list, masterCwd, at, caps?.workflowIdleMs, real)
     const prev = cur.snapshot
     const next: AutoSnapshot = {
