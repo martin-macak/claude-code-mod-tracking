@@ -2412,6 +2412,13 @@ test('an external time (quoted, or behind a wrapper) gives the row the name of t
   expect(names('time -x sleep 10 &')).toEqual(['-x sleep 10'])
 })
 
+// The row names the command, not the value of an option of `/usr/bin/time` (issue #336).
+test('/usr/bin/time gives the row the name of the command behind its options', () => {
+  expect(names('/usr/bin/time -o out.txt make build &')).toEqual(['make build'])
+  expect(names("/usr/bin/time -f '%e' make build &")).toEqual(['make build'])
+  expect(names('/usr/bin/time --output=x make build &')).toEqual(['make build'])
+})
+
 // An `echo $!` that prints to the tool result gives the pid line. One whose output goes to a file, to a pipe or into a
 // substitution prints none, so a line of stdout is another command's and no row takes it (issue #231, the rule `keepsStdout`).
 // With `echo $! > pid.txt; echo 4242` the line 4242 is the later echo's, not the pid of `sleep 90`.

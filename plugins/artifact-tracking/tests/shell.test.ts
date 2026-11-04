@@ -2030,3 +2030,49 @@ test('splitShell drops the and-or marker when a list ends with no segment after 
     false,
   )
 })
+
+// The external time (`/usr/bin/time`, or a quoted `time`) takes options with a value: GNU `-f FMT` and `-o FILE`
+// (issue #336). The reader skips them together with their values and sees the command behind.
+test('stripWrappers skips the options of /usr/bin/time with their values (issue #336)', () => {
+  const cmd = ['make', 'build']
+  expect(stripWrappers(['/usr/bin/time', '-o', 'out.txt', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['/usr/bin/time', '-f', '%e', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['/usr/bin/time', '--output=x', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['/usr/bin/time', '--format', '%e', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['/usr/bin/time', '-ofile', '-f%e', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['/usr/bin/time', '-a', '-v', '-q', '-p', '-l', '-h', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['/usr/bin/time', '-ap', '--', ...cmd]).words).toEqual(cmd)
+  expect(stripWrappers(['/usr/bin/time', '--append', '--verbose', '--quiet', '--portability', ...cmd]).words).toEqual(
+    cmd,
+  )
+  expect(stripWrappers(['time', '-o', 'out.txt', ...cmd], [false, true, true, true, true]).words).toEqual(cmd)
+  expect(stripWrappers(['sudo', 'time', '-f', '%e', ...cmd]).words).toEqual(cmd)
+})
+
+test('stripWrappers keeps the text when the external time has an unknown option (issue #336)', () => {
+  const text = ['/usr/bin/time', '-x', 'make', 'build']
+  expect(stripWrappers(text).words).toEqual(text)
+  const long = ['/usr/bin/time', '--bogus', 'make']
+  expect(stripWrappers(long).words).toEqual(long)
+  const quoted = ['time', '-z', 'make']
+  expect(stripWrappers(quoted, [false, true, true]).words).toEqual(quoted)
+  // Behind a wrapper the unknown option keeps the text too. A real `time` exits with a usage error there.
+  expect(stripWrappers(['sudo', 'time', '-x', 'make']).words).toEqual(['time', '-x', 'make'])
+  expect(stripWrappers(['sudo', '/usr/bin/time', '-x', 'make']).words).toEqual(['/usr/bin/time', '-x', 'make'])
+  // A known letter before an unknown one in one cluster.
+  expect(stripWrappers(['/usr/bin/time', '-ax', 'make']).words).toEqual(['/usr/bin/time', '-ax', 'make'])
+  // Known flags and `--` behind a wrapper still go.
+  expect(stripWrappers(['sudo', 'time', '-p', '--', 'make']).words).toEqual(['make'])
+})
+
+// The other install paths of the external time read like `/usr/bin/time` (review of the PR for issue #336).
+test('stripWrappers skips the options of the other install paths of the external time (issue #336)', () => {
+  for (const path of ['/bin/time', '/usr/local/bin/time', '/opt/homebrew/bin/gtime', 'gtime']) {
+    expect(stripWrappers([path, '-o', 'out.txt', 'make']).words).toEqual(['make'])
+  }
+})
+
+test('stripWrappers still gives the reserved word time only -p and -- (guard for issue #336)', () => {
+  expect(stripWrappers(['time', '-o', 'out.txt', 'make']).words).toEqual(['-o', 'out.txt', 'make'])
+  expect(stripWrappers(['time', '-f', '%e', 'make']).words).toEqual(['-f', '%e', 'make'])
+})

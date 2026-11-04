@@ -154,6 +154,11 @@ type WrapperSpec = {
   positional?: number
   fork?: { short: string; long: string }
   needsCommand?: boolean
+  /**
+   * Letters and long names of the options that take no value. They count together with `short` and `long`. When set,
+   * any other option is unknown and the wrapper stays (issue #336).
+   */
+  known?: { short: string; long: readonly string[] }
 }
 
 /**
@@ -176,12 +181,33 @@ const WRAPPER_SPECS: Readonly<Record<string, WrapperSpec>> = {
   doas: { short: 'uC', inert: 'C' },
 }
 
-/** The options of the external `time` (`/usr/bin/time`) that take a value: `-f FMT`, `-o FILE`. */
-const EXTERNAL_TIME: WrapperSpec = { short: 'fo', long: ['--format', '--output'] }
+/**
+ * The words that name the external `time`: the usual install paths and Homebrew's `gtime`. Another path (a build in
+ * `/opt/x/bin/time`) is not guessed, so the reader keeps it as the command (issue #336).
+ */
+const EXTERNAL_TIME_NAMES: ReadonlySet<string> = new Set([
+  '/usr/bin/time',
+  '/bin/time',
+  '/usr/local/bin/time',
+  '/opt/homebrew/bin/gtime',
+  'gtime',
+])
+
+/**
+ * The options of the external `time` (`/usr/bin/time`), the union of GNU and BSD. With a value: `-f FMT`, `-o FILE`.
+ * Without: GNU `-a -v -q -p`, BSD `-l -h -p`. An unknown option keeps the text as it is, so the reader does not guess
+ * (issue #336).
+ */
+const EXTERNAL_TIME: WrapperSpec = {
+  short: 'fo',
+  long: ['--format', '--output'],
+  known: { short: 'avqplh', long: ['--append', '--verbose', '--quiet', '--portability'] },
+}
 
 /**
  * Where the command starts behind the wrapper `spec` whose words begin at `from` (the word after the name), and whether
- * it forks on its own. `at` is -1 when the wrapper runs no command (`ionice -p 1`). Options come first, `--` ends them,
+ * it forks on its own. `at` is -1 when the wrapper runs no command (`ionice -p 1`) or, for a spec with `known`, when it has an option the spec
+ * does not list: the caller then keeps the text. Options come first, `--` ends them,
  * then come the positional words. A short option may be glued to the next ones (`-dimsu`) or to its value (`-sKILL`).
  * The wrapper is an external program, so quotes and redirections do not matter: the shell removes them before it starts
  * the program (`ionice "-c3" cmd` passes `-c3`). Only the reserved word `time` reads typed flags (`skipTimeOptions`).
@@ -197,15 +223,18 @@ function skipWrapperOptions(spec: WrapperSpec, words: readonly string[], from: n
       break
     }
     if (w.startsWith('--')) {
+      const name = w.split('=', 1)[0]!
+      if (spec.known && !spec.known.long.includes(name) && !spec.long?.includes(name)) return { at: -1, fork }
       if (w === spec.fork?.long) fork = true
       // `--pid=123` is inert too: the name is the part before the `=`.
-      if (spec.inertLong?.includes(w.split('=', 1)[0]!)) inert = true
+      if (spec.inertLong?.includes(name)) inert = true
       if (spec.long?.includes(w)) i++
       continue
     }
     if (!w.startsWith('-') || w === '-') break
     for (let k = 1; k < w.length; k++) {
       const c = w[k]!
+      if (spec.known && !spec.known.short.includes(c) && !spec.short.includes(c)) return { at: -1, fork }
       if (c === spec.fork?.short) fork = true
       if (spec.short.includes(c)) {
         if (spec.inert?.includes(c)) inert = true
@@ -1187,7 +1216,8 @@ export function stripReserved(
  * `time` takes its options with it (`time -p`, `time --`), but only the ones that were typed whole and have no
  * redirection right before them: `time "-p" git` and `time >/dev/null -p git` run a command named `-p`. A `time` that
  * runs behind a program wrapper (`sudo time -v make`) or that was quoted (`'time' -f %e git`) is the external
- * `/usr/bin/time`: it also takes `-f FMT` and `-o FILE`, and any other flag, quoted or not. `command`, `exec` and `builtin` leave their
+ * `/usr/bin/time`: it also takes `-f FMT`, `-o FILE` and the flags of GNU and BSD `time`.
+ * An unknown flag keeps the text (issue #336). `command`, `exec` and `builtin` leave their
  * options in place.
  *
  * `timeout` and the like take their options and positional words (`timeout -s KILL 5`) with them (issue #242). They
@@ -1231,11 +1261,13 @@ export function stripWrappers(
       continue
     }
     // `time` has options of its own: `-p` and `--` belong to it, as `compoundLead` reads them too (issue #227).
-    if (w === 'time') {
+    if (w === 'time' || EXTERNAL_TIME_NAMES.has(w)) {
       const plain = (k: number) => whole?.[k] !== false && redir?.[k] !== true
-      if (whole?.[i] === false || program) {
+      if (w !== 'time' || whole?.[i] === false || program) {
+        const got = skipWrapperOptions(EXTERNAL_TIME, words, i + 1)
+        if (got.at === -1) break
         program = true
-        i = skipWrapperOptions(EXTERNAL_TIME, words, i + 1).at
+        i = got.at
       } else i = skipTimeOptions(words, i + 1, plain)
       continue
     }
