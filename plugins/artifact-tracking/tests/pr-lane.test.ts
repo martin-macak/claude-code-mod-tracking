@@ -16,7 +16,7 @@ import { dropAuto } from '../trackers/github/discovered'
 import { branchesOf, createdOf } from '../trackers/github/facts'
 import { EMPTY_LANE, type LaneDeps, PrLane, wantsStep } from '../trackers/github/lane'
 import { isLanePr } from '../trackers/github/lane-pr'
-import type { BranchesFact, LaneState, PrRef } from '../trackers/github/types'
+import type { BranchesFact, ForeignRepo, LaneState, PrRef } from '../trackers/github/types'
 import { type FakeConfig, fakeConfig } from './fixtures/config-fs'
 import type {
   AutoReason,
@@ -1381,8 +1381,128 @@ test('lane: a repo of a created PR that never answers keeps that PR, and the pru
   }
 })
 
+/**
+ * A rig where the repo of the created PRs `numbers` is deleted or unreadable: it answers `repository: null`. `more` adds
+ * created PRs, a foreign repo with proven branches (no created PR) and stored items; `unreadableOwners` names the owners
+ * whose repos answer `null`.
+ */
+function unreadableIam(
+  numbers: number[],
+  dismissed: string[],
+  more: {
+    created?: PrRef[]
+    foreign?: ForeignRepo[]
+    items?: StoredItem[]
+    unreadableOwners?: string[]
+  } = {},
+) {
+  const t = laneRig({
+    created: [...numbers.map(number => ({ ...IAM, number })), ...(more.created ?? [])],
+    dismissed,
+    ...(more.items ? { items: more.items } : {}),
+  })
+  if (more.foreign) Object.assign(t.deps, { foreign: () => more.foreign })
+  const owners = more.unreadableOwners ?? ['VerticeOne']
+  const real = t.deps.gh.graphql.bind(t.deps.gh)
+  Object.assign(t.deps.gh, {
+    graphql: async (host: string, q: string): Promise<GraphqlOutcome> =>
+      owners.some(o => q.includes(`owner: "${o}"`))
+        ? { ok: true, reply: { data: { repository: null }, errors: [{ type: 'NOT_FOUND', path: ['repository'] }] } }
+        : real(host, q),
+  })
+  return t
+}
+const K658 = 'gh:github.com/verticeone/vertice-iam#658'
+const IAM_FOREIGN: ForeignRepo = { ...IAM, branches: ['feat/brown-2901'] }
+const iamLaneRecord = () =>
+  ({
+    key: KIAM,
+    category: 'github',
+    lane: true,
+    ...IAM,
+    number: 657,
+    reasons: { first: 'discovered', all: ['discovered'], strongest: 'discovered' },
+  }) as unknown as StoredItem
+
+test('lane: the unreadable clause of a repo stays while one of its held PRs is not dismissed (issue #326)', async () => {
+  const t = unreadableIam([657, 658], [KIAM])
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.state().prs).toMatchObject({
+    ok: true,
+    partial: { failed: [{ host: 'github.com', why: 'unreadable', repo: 'verticeone/vertice-iam' }] },
+  })
+})
+
+test('lane: the unreadable clause of a repo goes when every held PR of it is dismissed (issue #326)', async () => {
+  const t = unreadableIam([657, 658], [KIAM, K658])
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.state().prs.ok).toBe(true)
+  expect(t.state().prs.partial).toBeUndefined()
+})
+
+test('lane: the unreadable clause goes when every held lane PR of a repo is dismissed (issue #326)', async () => {
+  // No created PR: the repo is asked for a proven branch only, so it is in `heldRepos` and not in `held`.
+  const t = unreadableIam([], [KIAM], { foreign: [IAM_FOREIGN] })
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.state().prs.ok).toBe(true)
+  expect(t.state().prs.partial).toBeUndefined()
+})
+
+test('lane: the unreadable clause stays for a repo with no held PR, dismissed or not (issue #326)', async () => {
+  const clause = { failed: [{ host: 'github.com', why: 'unreadable', repo: 'verticeone/vertice-iam' }] }
+  const none = unreadableIam([], [], { foreign: [IAM_FOREIGN] })
+  none.lane.request()
+  await none.lane.idle()
+  expect(none.state().prs).toMatchObject({ ok: true, partial: clause })
+  // A PR of another repo that the person dismissed says nothing about this repo.
+  const other = unreadableIam([], ['gh:github.com/acme/web#9'], { foreign: [IAM_FOREIGN] })
+  other.lane.request()
+  await other.lane.idle()
+  expect(other.state().prs).toMatchObject({ ok: true, partial: clause })
+})
+
+test('lane: the unreadable clause stays while a held lane PR of the repo is not dismissed (issue #326)', async () => {
+  const t = unreadableIam([], [K658], { foreign: [IAM_FOREIGN], items: [iamLaneRecord()] })
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.state().prs).toMatchObject({
+    ok: true,
+    partial: { failed: [{ host: 'github.com', why: 'unreadable', repo: 'verticeone/vertice-iam' }] },
+  })
+  expect(t.items().map(i => i.key)).toEqual([KIAM]) // still held
+})
+
+test('lane: only the clause of the fully dismissed repo goes, the other failures stay (issue #326)', async () => {
+  const web = { host: 'github.com', owner: 'Acme', repo: 'web2' }
+  const t = unreadableIam([657], [KIAM], { created: [{ ...web, number: 5 }], unreadableOwners: ['VerticeOne', 'Acme'] })
+  t.lane.request()
+  await t.lane.idle()
+  expect(t.state().prs).toMatchObject({
+    ok: true,
+    partial: { failed: [{ host: 'github.com', why: 'unreadable', repo: 'acme/web2' }] },
+  })
+  expect((t.state().prs.partial as { failed: unknown[] }).failed).toHaveLength(1)
+})
+
+test('lane: a failure cut off by the cap keeps the note when the listed clauses are dismissed (issue #326)', async () => {
+  const repo = (owner: string, n: number) => ({ host: 'github.com', owner, repo: 'r', number: n })
+  const dismissedOnes = ['A1', 'A2', 'A3'].map((o, i) => repo(o, i + 1))
+  const last = repo('Z9', 9)
+  const t = unreadableIam(
+    [657],
+    [KIAM, ...dismissedOnes.map(r => `gh:github.com/${r.owner.toLowerCase()}/r#${r.number}`)],
+    { created: [...dismissedOnes, last], unreadableOwners: ['VerticeOne', 'A1', 'A2', 'A3', 'Z9'] },
+  )
+  t.lane.request()
+  await t.lane.idle()
+  // Five repos are unreadable and the note lists four: the fifth is only counted, so the note must stay.
+  expect(t.state().prs.partial).toBeDefined()
+})
+
 test('lane: one unsure created PR of a repo does not keep the stale refs of its sure sibling', async () => {
-  const K658 = 'gh:github.com/verticeone/vertice-iam#658'
   const REF1 = 'gh:github.com/verticeone/vertice-iam#901'
   const REF2 = 'gh:github.com/verticeone/vertice-iam#902'
   const iam658 = (body: string) => ({

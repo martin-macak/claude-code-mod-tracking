@@ -16,7 +16,7 @@ import { fileKey, fileKind, fileReason } from '../trackers/file/kind'
 import type { FileActivity, FileRecord } from '../trackers/file/types'
 import { GITHUB_DEFAULTS } from '../trackers/github/config'
 import { githubKind } from '../trackers/github/kind'
-import { githubKey, githubKeyOf, githubUrl, prKey } from '../trackers/github/urls'
+import { githubKey, githubKeyOf, githubUrl, prKey, repoKey, repoKeyPrefix } from '../trackers/github/urls'
 import { JIRA_DEFAULTS } from '../trackers/jira/config'
 import { jiraKeyOf, jiraKind } from '../trackers/jira/kind'
 import { carryPriorities, childId, mergeNodePriorities } from '../trackers/jira/nodes'
@@ -195,6 +195,12 @@ test('file: counters add up, created and bySubagent never go back, the first lab
     reasons: { first: 'updated', all: ['created', 'updated'], strongest: 'created' },
   })
   expect(fileKey('/work/a.md')).toBe('file:/work/a.md')
+})
+
+test('keys: the prefix of a repo starts every item key of it (issue #326)', () => {
+  const r = { host: 'GH.example', owner: 'O', repo: 'R' }
+  expect(githubKey(r.host, r.owner, r.repo, 2).startsWith(repoKeyPrefix(repoKey(r)))).toBe(true)
+  expect(githubKey('gh.example', 'o', 'r2', 2).startsWith(repoKeyPrefix(repoKey(r)))).toBe(false)
 })
 
 test('keys: each kind builds its key', () => {
