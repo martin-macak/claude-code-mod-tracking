@@ -158,8 +158,14 @@ Feature: Drive the /track pane with the keys
     And the screen shows "localhost"
     And the screen shows "v: view"
 
-  Scenario: A long section ends in an N more row
-    Given the tracker config file:
+  # Issue #355. The cap of 5 rows comes from the config, so five Tabs reach the N more row at any size. Enter on it adds
+  # the next rows and puts the ring back on the selected row (issue #109, review finding m2). The checks after Enter
+  # must hold at both sizes: inline at 100x40 the window shows 5 rows, so its hint `▼ 2 more below` holds "2 more"
+  # and hides g.example. Tab to the new rows proves that Enter added them.
+  @n-more-row
+  Scenario Outline: A long section ends in an N more row at <cols>x<rows>
+    Given a terminal of <cols> columns by <rows> rows
+    And the tracker config file:
       """
       { "version": 1, "global": { "ui": { "sectionRows": 5 } } }
       """
@@ -169,6 +175,7 @@ Feature: Drive the /track pane with the keys
     And I type "/track"
     Then the screen shows "2 more"
     And the selected row shows "a.example"
+    And the pane is <placement>
     # Tab walks the four rows below the selected one, then the fifth Tab reaches the N more Button. Every key waits for
     # the focus that the key before it moved. A slow redraw must not swallow a key (issue #104). The selection follows the
     # focus over the rows. The N more Button holds no selection, so its reverse video shows the focus.
@@ -183,8 +190,16 @@ Feature: Drive the /track pane with the keys
     When I press "Tab"
     Then the focus ring is on "2 more"
     When I press "Enter"
-    Then the screen stops showing "2 more"
-    And the screen matches /│ +› +g\.example\/7/
+    Then the focus ring is on the row showing "e.example"
+    When I press "Tab"
+    Then the selected row shows "f.example"
+    When I press "Tab"
+    Then the selected row shows "g.example"
+
+    Examples:
+      | cols | rows | placement |
+      | 120  | 36   | docked    |
+      | 100  | 40   | inline    |
 
   # Issue #108. A letter that is no key goes to the prompt box and the pane loses the keyboard. The pane says so. ctrl+x Tab
   # gives the keyboard back, and the ring starts on the selected row, so Up goes to the row above it.
