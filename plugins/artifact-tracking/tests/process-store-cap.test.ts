@@ -201,3 +201,28 @@ test('expired: a live row and an ended row with no end time never are, and a fai
   expect(expired(row('e', 'failed', { endedAt: LATE - 30 * MIN }), c, LATE)).toBe(false)
   expect(expired(row('f', 'killed', { endedAt: LATE - 60 * MIN }), c, LATE)).toBe(true)
 })
+
+// Issue #331: a docker row that the probe cannot match reads `unknown`, but nothing proved its container ended.
+test('expired: an unmatched docker row (no id, no --name) stays listed, a matched ended one still hides', () => {
+  const c = ttlCap(20)
+  const docker = (id: string, f: Partial<ProcessRecord>) =>
+    row(id, 'unknown', { kind: 'docker-container', endedAt: LATE - 60 * MIN, ...f })
+  expect(expired(docker('a', { name: 'nginx -p 80:80' }), c, LATE)).toBe(false)
+  expect(expired(docker('b', { name: 'web' }), c, LATE)).toBe(true)
+  expect(expired(docker('c', { name: 'nginx -p 80:80', containerId: 'abc123' }), c, LATE)).toBe(true)
+  expect(expired(docker('d', { name: 'web', state: 'exited' }), c, LATE)).toBe(true)
+  expect(expired(row('e', 'unknown', { endedAt: LATE - 60 * MIN }), c, LATE)).toBe(true) // a non-docker unknown
+})
+
+// Review of PR #369: the merge and the cap treat the unmatched row as an ended row that is not expired. It is no
+// exception to `maxRows`: the cap is its only limit, and it ranks by `endedAt` after the expired rows.
+test('merge: an unmatched docker row survives while the rows fit, and the cap drops it by end time only', () => {
+  const unseen = row('u', 'unknown', { kind: 'docker-container', name: 'nginx -p 80:80', endedAt: LATE - 60 * MIN })
+  expect(idsOf(mergeProcessRows([unseen], [], LATE, ttlCap(20)))).toEqual(['u'])
+  // Another ended row, past its TTL, goes first although the unmatched row is older.
+  const stale = row('s', 'completed', { endedAt: LATE - 40 * MIN })
+  expect(idsOf(mergeProcessRows([unseen, stale], [], LATE, { ...ttlCap(20), maxRows: 1 }))).toEqual(['u'])
+  // Among rows not expired, the oldest end goes first: the unmatched row is the oldest here.
+  const fresh = row('f', 'completed', { endedAt: LATE - 5 * MIN })
+  expect(idsOf(mergeProcessRows([unseen, fresh], [], LATE, { ...ttlCap(20), maxRows: 1 }))).toEqual(['f'])
+})
