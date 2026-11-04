@@ -569,7 +569,7 @@ test('submitPrompt presses Enter at most once per retry window', async () => {
         intervalMs: 1,
         retryMs: 30,
       }),
-      /the prompt to leave the box/,
+      /prompt not sent/,
     )
   } finally {
     clock.restore()
@@ -578,7 +578,7 @@ test('submitPrompt presses Enter at most once per retry window', async () => {
 })
 
 // A `Tmux` instance reads `this` in `capture`: the timeout error must call it as a method, not detached.
-test('submitPrompt keeps the screen in the timeout error when capture is a method that reads this', async () => {
+test('submitPrompt keeps the screen in the error when capture is a method that reads this', async () => {
   class Pane {
     screen = STUCK_SCREEN
     capture(): string {
@@ -588,7 +588,7 @@ test('submitPrompt keeps the screen in the timeout error when capture is a metho
   }
   await assert.rejects(
     submitPrompt(new Pane(), 'Note https://a.example/1 for later.', { timeoutMs: 30, intervalMs: 1, retryMs: 5 }),
-    /timed out after 30 ms waiting for the prompt to leave the box[\s\S]*last screen[\s\S]*Claude Code/,
+    /prompt not sent[\s\S]*Claude Code/,
   )
 })
 
@@ -599,6 +599,94 @@ test('submitPrompt fails with the screen when the text never leaves the box', as
       intervalMs: 1,
       retryMs: 5,
     }),
-    /timed out after 30 ms waiting for the prompt to leave the box[\s\S]*last screen/,
+    /prompt not sent[\s\S]*Claude Code/,
   )
+})
+
+// Issue #379. A long prompt (the 40 links of pane.feature:403) wraps over several lines, or the composer collapses it into a
+// placeholder. Both forms are an unsent prompt, so the harness must see the text in the box and press Enter again.
+const LONG_PROMPT = `Note ${Array.from({ length: 40 }, (_, n) => `https://a${n + 1}.io/x`).join(', ')} for later. Reply ok.`
+const WRAPPED_SCREEN = `────\n❯ ${LONG_PROMPT.slice(0, 90)}\n  ${LONG_PROMPT.slice(90, 180)}\n  ${LONG_PROMPT.slice(180, 270)}\n────\n  ⏵⏵ auto mode on`
+const PLACEHOLDER_SCREEN = '────\n❯ [Pasted text #1 +1 lines]\n────\n  ⏵⏵ auto mode on'
+const PLACEHOLDER_SENT_SCREEN = '❯ [Pasted text #1 +1 lines]\n⏺ ok\n' + BOX + '\n────'
+
+// Keys lost on the way: the first characters never reached the box, so the start of the text is not there.
+const DROPPED_SCREEN = `────\n❯ ${LONG_PROMPT.slice(2, 92)}\n  ${LONG_PROMPT.slice(92, 182)}\n  ${LONG_PROMPT.slice(182, 272)}\n────\n  ⏵⏵ auto mode on`
+
+test('promptInBox sees an unsent long prompt: wrapped (regression guard), collapsed into a placeholder, or with lost keys', () => {
+  assert.equal(promptInBox(WRAPPED_SCREEN, LONG_PROMPT), true)
+  assert.equal(promptInBox(DROPPED_SCREEN, LONG_PROMPT), true)
+  assert.equal(promptInBox('────\n❯ ote https://a1.io/\n────', LONG_PROMPT), true)
+  // The grey hint of an empty box is not the prompt.
+  assert.equal(promptInBox('────\n❯ Try "fix lint errors"\n────\n  ⏵⏵ auto mode on', LONG_PROMPT), false)
+  assert.equal(promptInBox(PLACEHOLDER_SCREEN, LONG_PROMPT), true)
+  assert.equal(promptInBox('────\n❯ [Pasted text #12 +40 lines]\n────', LONG_PROMPT), true)
+  // Once sent, the placeholder is only in the history above the empty box.
+  assert.equal(promptInBox(PLACEHOLDER_SENT_SCREEN, LONG_PROMPT), false)
+  // An empty box is not an unsent prompt.
+  assert.equal(promptInBox('────\n❯ \n────', LONG_PROMPT), false)
+})
+
+test('submitPrompt presses Enter again while a long prompt sits in the box as a placeholder', async () => {
+  let enters = 0
+  await submitPrompt(
+    { capture: () => (enters >= 3 ? PLACEHOLDER_SENT_SCREEN : PLACEHOLDER_SCREEN), key: () => void enters++ },
+    LONG_PROMPT,
+    { timeoutMs: 1000, intervalMs: 1, retryMs: 2 },
+  )
+  assert.equal(enters, 3)
+})
+
+test('submitPrompt presses Enter until a wrapped prompt, or one with lost keys, is sent', async () => {
+  for (const unsent of [WRAPPED_SCREEN, DROPPED_SCREEN]) {
+    let enters = 0
+    await submitPrompt(
+      { capture: () => (enters >= 3 ? PLACEHOLDER_SENT_SCREEN : unsent), key: () => void enters++ },
+      LONG_PROMPT,
+      { timeoutMs: 1000, intervalMs: 1, retryMs: 2 },
+    )
+    assert.equal(enters, 3)
+  }
+})
+
+// The issue names "Claude finishes", which is waitForTurnEnd: the resend and the fail-fast must work on that path too.
+test('waitForTurnEnd fails fast with "prompt not sent" when a long prompt stays in the box', async () => {
+  const signal = join(tempDir('wfte-'), 'signal')
+  for (const stuck of [PLACEHOLDER_SCREEN, DROPPED_SCREEN]) {
+    let enters = 0
+    await assert.rejects(
+      waitForTurnEnd(signal, 0, 5000, undefined, {
+        prompt: LONG_PROMPT,
+        io: { capture: () => stuck, key: () => void enters++ },
+        retryMs: 2,
+        intervalMs: 1,
+      }),
+      /prompt not sent/,
+    )
+    assert.equal(enters, 8)
+  }
+})
+
+test('submitPrompt gives "prompt not sent", not the generic timeout, when the timeout is near the resend budget', async () => {
+  await assert.rejects(
+    submitPrompt({ capture: () => PLACEHOLDER_SCREEN, key: () => {} }, LONG_PROMPT, {
+      timeoutMs: 40,
+      intervalMs: 1,
+      retryMs: 5,
+    }),
+    /prompt not sent/,
+  )
+})
+
+test('submitPrompt fails fast with "prompt not sent" when Enter never sends the prompt', async () => {
+  let enters = 0
+  await assert.rejects(
+    submitPrompt({ capture: () => PLACEHOLDER_SCREEN, key: () => void enters++ }, LONG_PROMPT, {
+      timeoutMs: 5000,
+      intervalMs: 1,
+      retryMs: 2,
+    }),
+    /prompt not sent/,
+  )
+  assert.equal(enters, 1 + 8, `Enter keys: ${enters}`)
 })
