@@ -8,7 +8,7 @@
 // Run: node --experimental-transform-types --no-warnings --import ./scripts/coverage/loader.mjs --test scripts/contracts/pid-bash-differential.test.mjs
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -101,15 +101,42 @@ const READS = [
   '{ true | { echo $!; }; }',
 ]
 
-/** Each form: a job before, the job in its place, then a read. Some forms read after each job, and after one more job. */
-const FORMS = [
-  ...PLACES.flatMap(place => READS.map(read => `${BEFORE} & ${place} ${read}`)),
-  ...PLACES.flatMap(place =>
-    ['echo $!', 'true | { echo $!; }', '( echo $! )'].map(
-      read => `${BEFORE} & echo $!; ${place} ${read}; ${OTHER} & ${read}`,
+/** Where the external `time` lives. A Linux image may lack it: its forms would background a failed command, not the sleep. */
+const EXTERNAL_TIME = '/usr/bin/time'
+const hasExternalTime = () => {
+  try {
+    return statSync(EXTERNAL_TIME).isFile()
+  } catch {
+    return false
+  }
+}
+
+/** Each form: a job before, the job in its place, then a read. Some forms read after each job, and after one more job.
+ * With `externalTime` false, the places that run /usr/bin/time are left out. All other forms stay. */
+const buildForms = externalTime => {
+  const places = externalTime ? PLACES : PLACES.filter(place => !place.includes(EXTERNAL_TIME))
+  return [
+    ...places.flatMap(place => READS.map(read => `${BEFORE} & ${place} ${read}`)),
+    ...places.flatMap(place =>
+      ['echo $!', 'true | { echo $!; }', '( echo $! )'].map(
+        read => `${BEFORE} & echo $!; ${place} ${read}; ${OTHER} & ${read}`,
+      ),
     ),
-  ),
-]
+  ]
+}
+const FORMS = buildForms(hasExternalTime())
+
+test('forms that run /usr/bin/time drop out only when it is missing', () => {
+  const withTime = buildForms(true)
+  const without = buildForms(false)
+  assert.ok(withTime.some(form => form.includes(EXTERNAL_TIME)))
+  assert.ok(!without.some(form => form.includes(EXTERNAL_TIME)))
+  assert.deepEqual(
+    without,
+    withTime.filter(form => !form.includes(EXTERNAL_TIME)),
+  )
+  assert.ok(without.length > 0)
+})
 
 const pause = ms => new Promise(done => setTimeout(done, ms))
 
