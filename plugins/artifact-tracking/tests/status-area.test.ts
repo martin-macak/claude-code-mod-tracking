@@ -36,6 +36,7 @@ import {
 } from './fixtures/drawn'
 import { EL } from './fixtures/elements'
 import { heightOf } from './fixtures/height'
+import { HANG_GUARD_MS } from './fixtures/kit'
 import { group, row, webRows } from './fixtures/sections'
 
 const SELECTED: StatusLine = {
@@ -620,10 +621,17 @@ test('a compact body at the edge of the window: the quick view after e costs one
   expect(over(9, { quick: 3 }, asking)).toBe(1)
 })
 
-test('the cap and the floor hold for every length of the quick view: the tree is the body and the selected row always shows', () => {
-  for (const body of [INLINE_11, INLINE_17, INLINE_18, DOCK_30, DOCK_31]) {
-    for (let lines = 0; lines <= 12; lines++) {
-      for (const selected of ['s0-w0', MIDDLE, 's2-w9']) {
+// The two property tests below run one test per body and selection, not one loop over all of them. Each case renders the pane,
+// so one loop could pass the 5 s limit of the kit on a loaded machine although no assertion failed (issue #334). Keep each test
+// small. Each also names the kit hang guard, so the limit catches only a hang, as for the wiring tests (issue #104).
+const SELECTIONS = ['s0-w0', MIDDLE, 's2-w9']
+
+for (const body of [INLINE_11, INLINE_17, INLINE_18, DOCK_30, DOCK_31]) {
+  for (const selected of SELECTIONS) {
+    test(`the cap and the floor hold for every length of the quick view: the tree is the body and the selected row always shows (${body.columns}x${body.rows}, ${selected})`, {
+      timeoutMs: HANG_GUARD_MS,
+    }, () => {
+      for (let lines = 0; lines <= 12; lines++) {
         const q = pane({ ...body, quick: lines }, { selected })
         const at = `${body.columns}x${body.rows} ${lines} lines ${selected}`
         expect(q.height, at).toBe(body.rows)
@@ -636,9 +644,9 @@ test('the cap and the floor hold for every length of the quick view: the tree is
         // The list keeps its floor of data rows in the middle of a list (both hints show) when the lines are cut to it.
         if (selected === MIDDLE) expect(q.rows, at).toBeGreaterThanOrEqual(q.full ? Math.min(5, pane(body).rows) : 2)
       }
-    }
+    })
   }
-})
+}
 
 // ---- an open selected row (review of PR #284, Codex P2; issue #278) ---------------------------------------------------------
 // A row draws no detail line under it any more (issue #278), so no row takes room from the list besides its own line: the quick view
@@ -679,10 +687,13 @@ test('an old leaf id in expanded changes nothing: the list and the quick view ar
   }
 })
 
-test('the quick view never makes the tree taller than the Selected: line alone does, for every length of detail at every body', () => {
-  for (const body of [INLINE_11, INLINE_18, DOCK_30, DOCK_31]) {
-    for (let n = 0; n <= 12; n++) {
-      for (const at of [0, CENTRE, ROWS - 1]) {
+// One test per body and row, for the same time-budget reason as above (issue #334).
+for (const body of [INLINE_11, INLINE_18, DOCK_30, DOCK_31]) {
+  for (const at of [0, CENTRE, ROWS - 1]) {
+    test(`the quick view never makes the tree taller than the Selected: line alone does, for every length of detail at every body (${body.columns}x${body.rows}, row ${at})`, {
+      timeoutMs: HANG_GUARD_MS,
+    }, () => {
+      for (let n = 0; n <= 12; n++) {
         const { groups, over } = opened(at, n)
         const alone = pane({ ...body, quick: 0 }, over, groups).height
         const q = pane({ ...body, quick: 8 }, over, groups)
@@ -693,9 +704,9 @@ test('the quick view never makes the tree taller than the Selected: line alone d
           name,
         ).toBe(true) // the selected row shows
       }
-    }
+    })
   }
-})
+}
 
 test('the quick view comes off the window budget with the footer: a body with it draws what a body without it and as many rows less draws', () => {
   resetWidths()
