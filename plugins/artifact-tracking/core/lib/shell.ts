@@ -309,6 +309,23 @@ function closesAt(words: readonly string[], typed: readonly Typed[], k: number):
   return typed[k]?.whole === true && COMPOUND_CLOSE.has(words[k] ?? '')
 }
 
+/**
+ * A subshell scope of `splitShell` while it reads (issue #380). `n`: its number, the last part of its id. `up`: the scope it
+ * sits in, `undefined` for the top level. `from`: the count of segments when it opened. `kids`: the scopes right under it, and
+ * `direct`: the index of each segment that runs in it, both in segment order. The kids hold ranges of segments that do not
+ * overlap. A move to a child scope changes `up` of the scopes right under it and leaves the deeper ones alone, so the id of a
+ * segment (`Segment.scope`) is written only at the end.
+ */
+type ScopeNode = {
+  n: number
+  up: ScopeNode | undefined
+  from: number
+  /** The count of segments when it closed, or when a move made it. `Infinity` while it is open. */
+  end: number
+  kids: ScopeNode[]
+  direct: number[]
+}
+
 // `;;`, `;&` and `;;&` end an arm of a `case`. Outside a `case` they read like `;`.
 const OPS = ['&&', '||', '|&', ';;&', ';;', ';&', ';', '|', '&', '\n', '(', ')', '`', '$(', '{', '}'] as const
 
@@ -374,7 +391,7 @@ export function splitShell(command: string): Segment[] {
   // `cmdOut` of the simple command around it, back at the close (`a $(b) c`).
   // `bgFlagPending`: the `bgFlag` of the shell around it, back at the close. `from`: the index of the first segment in it.
   const stack: {
-    id: string
+    node: ScopeNode
     tick: boolean
     saved: Place
     andOr: number
@@ -394,9 +411,12 @@ export function splitShell(command: string): Segment[] {
     anc: number
   }[] = []
   let scopes = 0
+  // The scope of each segment, as a node of the tree (`ScopeNode`). `Segment.scope` is its path, written once at the end.
+  const root: ScopeNode = { n: 0, up: undefined, from: 0, end: Infinity, kids: [], direct: [] }
+  const scopeOfSegment: ScopeNode[] = []
+  const scopeNode = () => stack.at(-1)?.node ?? root
   // The numbers of the pipeline parts (`partShell`) count down from -1, so they never meet the number of a scope.
   let partShells = 0
-  const scope = () => stack.at(-1)?.id ?? ''
   // The first segment of the and-or list that the next `&`, `;` or newline ends. `&&` and `||` keep it, and a newline
   // right after `&&`, `||` or `|` keeps it too (`wantsMore`). A group saves the list it sits in and opens one of its own:
   // `}` gives the outer list back, so `{ a; } && b &` stays one list. A `for`, `while`, `until`, `if`, `case` or `select`
@@ -511,8 +531,11 @@ export function splitShell(command: string): Segment[] {
   // `moved`: the output of the command around it is redirected before it, and it is a `>(`. A scope inside one keeps it.
   const openScope = (tick: boolean, arith: boolean, sub: boolean, moved = false, proc = false) => {
     const parent = stack.at(-1)
+    const up = scopeNode()
+    const node: ScopeNode = { n: ++scopes, up, from: out.length, end: Infinity, kids: [], direct: [] }
+    up.kids.push(node)
     stack.push({
-      id: `${scope()}.${++scopes}`,
+      node,
       n: scopes,
       proc,
       tick,
@@ -632,6 +655,7 @@ export function splitShell(command: string): Segment[] {
   const closeScope = () => {
     const top = stack.pop()
     if (top) {
+      top.node.end = out.length
       back(top.saved)
       andOrAt = top.andOr
       closedFrom = top.from
@@ -663,18 +687,41 @@ export function splitShell(command: string): Segment[] {
     const lead = compoundLead(words, heads)
     return lead.opens.at(-1) === 'case' && words.length === lead.at + 3
   }
+  // Moves the segments of `from` and the scopes that hold only segments from `from` on, right under `node`, to `to`.
+  const takeFrom = (node: ScopeNode, to: ScopeNode, from: number) => {
+    let d = node.direct.length
+    while (d > 0 && node.direct[d - 1]! >= from) d--
+    to.direct = node.direct.splice(d)
+    for (const j of to.direct) scopeOfSegment[j] = to
+    let k = node.kids.length
+    while (k > 0 && node.kids[k - 1]!.from >= from) k--
+    to.kids = node.kids.splice(k)
+    for (const kid of to.kids) kid.up = to
+  }
   // The segments from `from` run in a subshell of their own: a background list or a pipeline part. They move to a child
   // of the current scope. Every segment of them sits in that scope or in a scope under it. A part that holds only
   // subshells has scopes of its own already, and a wrapper scope with no segment changes nothing. So it moves nothing:
-  // else each `)` of a deep `( a | ( b | ... ) )` would relabel every inner segment again.
+  // else each `)` of a deep `( a | ( b | ... ) )` would relabel every inner segment again. The move takes the segments and
+  // the scopes right under the current one (issue #380): a scope deeper in the part goes with its parent, and its id is
+  // written only at the end. Both lists are sorted, and the moved ones are at their end, so a move costs what it takes.
   const moveToChild = (from: number) => {
-    const parent = scope()
-    const moving = out.slice(from)
-    if (!moving.some(seg => seg.scope === parent)) return
-    const child = `${parent}.${++scopes}`
-    for (const seg of moving) {
-      if (seg.scope === parent || seg.scope.startsWith(`${parent}.`)) seg.scope = child + seg.scope.slice(parent.length)
+    const parent = scopeNode()
+    const direct = parent.direct
+    if (direct.length === 0 || direct[direct.length - 1]! < from) return
+    const child: ScopeNode = { n: ++scopes, up: parent, from, end: out.length, kids: [], direct: [] }
+    takeFrom(parent, child, from)
+    // A scope that opened before `from` and holds segments from it on goes in two: its segments from `from` on move with the
+    // part, under the same number. Only text that is no valid shell does that (a `)` that closes a `<(` while a loop in it is
+    // still open), and it is how the ids were cut before. The kids do not overlap, so only the last one can hold `from`.
+    for (let into = child, outer = parent.kids.at(-1); outer && outer.end > from; ) {
+      const part: ScopeNode = { n: outer.n, up: into, from, end: outer.end, kids: [], direct: [] }
+      outer.end = from
+      takeFrom(outer, part, from)
+      into.kids.unshift(part)
+      into = part
+      outer = outer.kids.at(-1)
     }
+    parent.kids.push(child)
   }
   // The segments from `from` are a part of a pipeline: a shell of its own for `$!` (issue #353). The segments that the shell `n`
   // around it reads, or whose `&` it reads, move to a new number `p`. A segment in a shell inside the part whose `shellUp` is `n`
@@ -818,12 +865,15 @@ export function splitShell(command: string): Segment[] {
         bgPart: false,
         inPipe: false,
         cmdTail: cmdHead >= 0 && cmdWord,
-        scope: scope(),
+        scope: '',
         stdoutRedirected: stdout || (stack.at(-1)?.moved ?? false),
         stdoutPiped: false,
         substituted: stack.at(-1)?.sub ?? false,
       })
       const at = out.length - 1
+      const node = scopeNode()
+      scopeOfSegment[at] = node
+      node.direct.push(at)
       push(writers, shellNow, at)
       push(ups, upNow, at)
       if (bgFlag) {
@@ -1123,23 +1173,42 @@ export function splitShell(command: string): Segment[] {
   }
   endSegment(false)
   endPipe()
+  // The id of each scope: the path of numbers from the top, `''` for the top level. Each node writes its own once, behind the
+  // one of its parent, so a deep nest costs one step per scope (issue #380).
+  const ids = new Map<ScopeNode, string>([[root, '']])
+  const idOf = (node: ScopeNode): string => {
+    const chain: ScopeNode[] = []
+    let cur = node
+    while (!ids.has(cur)) {
+      chain.push(cur)
+      cur = cur.up!
+    }
+    let id = ids.get(cur)!
+    for (let n = chain.length - 1; n >= 0; n--) {
+      id = `${id}.${chain[n]!.n}`
+      ids.set(chain[n]!, id)
+    }
+    return id
+  }
+  out.forEach((seg, k) => {
+    seg.scope = idOf(scopeOfSegment[k]!)
+  })
   // The first bare `exec` that redirects the output, per scope. A scope sees the earliest one of its own and of its parents
   // (`( exec > f; a )` marks `a`, and `( exec > f ); a` does not). The answer is kept per scope, so a long list of segments
   // in one scope costs one walk. Scopes are final here: a pipeline part or a background list has moved to a child of its own.
-  const execIn = new Map<string, number>()
-  for (const k of execs) if (!execIn.has(out[k]!.scope)) execIn.set(out[k]!.scope, k)
-  const execSeen = new Map<string, number>()
-  const execFrom = (sc: string): number => {
-    const chain: string[] = []
+  const execIn = new Map<ScopeNode, number>()
+  for (const k of execs) if (!execIn.has(scopeOfSegment[k]!)) execIn.set(scopeOfSegment[k]!, k)
+  const execSeen = new Map<ScopeNode, number>()
+  const execFrom = (node: ScopeNode): number => {
+    const chain: ScopeNode[] = []
     let first = Infinity
-    for (let cur = sc; ; cur = cur.slice(0, cur.lastIndexOf('.'))) {
+    for (let cur: ScopeNode | undefined = node; cur; cur = cur.up) {
       const seen = execSeen.get(cur)
       if (seen !== undefined) {
         first = seen
         break
       }
       chain.push(cur)
-      if (cur === '') break
     }
     for (let n = chain.length - 1; n >= 0; n--) {
       first = Math.min(first, execIn.get(chain[n]!) ?? Infinity)
@@ -1157,33 +1226,101 @@ export function splitShell(command: string): Segment[] {
     inPipe += pipeAll[k] ?? 0
     seg.stdoutPiped = piping > 0
     seg.inPipe = inPipe > 0
-    if (redirecting > 0 || (execIn.size > 0 && execFrom(seg.scope) < k)) seg.stdoutRedirected = true
+    if (redirecting > 0 || (execIn.size > 0 && execFrom(scopeOfSegment[k]!) < k)) seg.stdoutRedirected = true
   })
   return out
 }
 
 /**
- * A working directory per subshell scope. `get` walks up to the nearest scope that set one, else `start`.
+ * Values per subshell scope (issue #380): a value set in a scope is seen in it and in the scopes under it, up to one that sets
+ * its own. The scope `a.b.c` sits in `a.b`, and `''` is the top level. Each scope is a node with a link to its parent, made
+ * once from its id. A lookup walks the links up to the nearest scope that set the name and remembers the answer in each
+ * scope on the way. A scope that sets a name for the first time drops what was remembered for it (`vers`), unless no scope
+ * under it was looked up yet: then no answer went through it. A name that no scope set costs nothing. So a deep nest of
+ * subshells costs one step per scope, where a walk that cut the id at each level cost O(depth^2) per lookup. A scope id is a
+ * string, so the first lookup of a new scope still reads its id once: O(depth) in the id length, the size of the output.
+ */
+function scopeTable(): {
+  find: (scope: string, name: string) => { value: string | undefined } | undefined
+  set: (scope: string, name: string, value: string | undefined) => void
+} {
+  type TableNode = {
+    up: TableNode | undefined
+    /** A scope under it was made: an answer remembered there can go through this scope. */
+    kids: boolean
+    values: Map<string, string | undefined>
+    memo: Map<string, { ver: number; at: TableNode | undefined }>
+  }
+  const nodes = new Map<string, TableNode>()
+  // For each name, how many scopes set it so far. A remembered answer of an older count may miss a scope in between.
+  const vers = new Map<string, number>()
+  const nodeFor = (scope: string): TableNode => {
+    const chain: string[] = []
+    let s = scope
+    let found = nodes.get(s)
+    while (!found) {
+      chain.push(s)
+      if (s === '') break
+      s = s.slice(0, s.lastIndexOf('.'))
+      found = nodes.get(s)
+    }
+    for (let k = chain.length - 1; k >= 0; k--) {
+      const made: TableNode = { up: found, kids: false, values: new Map(), memo: new Map() }
+      if (found) found.kids = true
+      nodes.set(chain[k]!, made)
+      found = made
+    }
+    return found!
+  }
+  return {
+    find(scope, name) {
+      const ver = vers.get(name)
+      if (ver === undefined) return undefined
+      const chain: TableNode[] = []
+      let at: TableNode | undefined
+      for (let cur: TableNode | undefined = nodeFor(scope); cur; cur = cur.up) {
+        if (cur.values.has(name)) {
+          at = cur
+          break
+        }
+        const memo = cur.memo.get(name)
+        if (memo?.ver === ver) {
+          at = memo.at
+          break
+        }
+        chain.push(cur)
+      }
+      for (const node of chain) node.memo.set(name, { ver, at })
+      return at && { value: at.values.get(name) }
+    },
+    set(scope, name, value) {
+      const node = nodeFor(scope)
+      if (!node.values.has(name) && (node.kids || !vers.has(name))) vers.set(name, (vers.get(name) ?? 0) + 1)
+      node.values.set(name, value)
+    },
+  }
+}
+
+/**
+ * A working directory per subshell scope. `get` finds the nearest scope that set one, else `start` (`scopeTable`).
  * `set(scope, undefined)` records an unknown directory, which hides the parent's.
  */
 export function scopedDir(start: string | undefined): {
   get: (scope: string) => string | undefined
   set: (scope: string, dir: string | undefined) => void
 } {
-  const dirs = new Map<string, string | undefined>()
+  const table = scopeTable()
   return {
-    get(scope) {
-      for (let s = scope; ; s = s.slice(0, s.lastIndexOf('.'))) {
-        if (dirs.has(s)) return dirs.get(s)
-        if (s === '') return start
-      }
+    get: scope => {
+      const found = table.find(scope, '')
+      return found ? found.value : start
     },
-    set: (scope, dir) => void dirs.set(scope, dir),
+    set: (scope, dir) => table.set(scope, '', dir),
   }
 }
 
 /**
- * Shell variables per subshell scope, the same walk as `scopedDir`. `get` finds the value in the nearest scope that set
+ * Shell variables per subshell scope, the same lookup as `scopedDir`. `get` finds the value in the nearest scope that set
  * the name: a variable set in a subshell does not reach its parent, and a child reads its parent's. `set(scope, name,
  * undefined)` records an unknown value, which hides the parent's.
  */
@@ -1191,16 +1328,10 @@ export function scopedVars(): {
   get: (scope: string, name: string) => string | undefined
   set: (scope: string, name: string, value: string | undefined) => void
 } {
-  const vars = new Map<string, string | undefined>()
-  const key = (scope: string, name: string): string => `${scope}\0${name}`
+  const table = scopeTable()
   return {
-    get(scope, name) {
-      for (let s = scope; ; s = s.slice(0, s.lastIndexOf('.'))) {
-        if (vars.has(key(s, name))) return vars.get(key(s, name))
-        if (s === '') return undefined
-      }
-    },
-    set: (scope, name, value) => void vars.set(key(scope, name), value),
+    get: (scope, name) => table.find(scope, name)?.value,
+    set: (scope, name, value) => table.set(scope, name, value),
   }
 }
 

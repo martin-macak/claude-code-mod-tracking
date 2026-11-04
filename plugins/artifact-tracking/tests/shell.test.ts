@@ -1,5 +1,13 @@
 import { expect, test } from 'claude-code/testing'
-import { keepsStdout, splitShell, stripLead, stripReserved, stripWrappers } from '../core/lib/shell'
+import {
+  keepsStdout,
+  scopedDir,
+  scopedVars,
+  splitShell,
+  stripLead,
+  stripReserved,
+  stripWrappers,
+} from '../core/lib/shell'
 import { expectLinear } from './fixtures/scaling'
 
 /**
@@ -1814,6 +1822,75 @@ for (const [family, make] of Object.entries(MARK_FAMILIES)) {
     await expectLinear({ label: family, make, run: text => splitShell(text) })
   })
 }
+
+// A background list and a pipeline part move to a scope of their own (`moveToChild`). The scopes form a tree, and a move
+// takes the segments and the scopes right under the current one, so the scopes deeper in the part keep their place (issue
+// #380). A move that scanned the part and rewrote the id of every segment in it cost O(n) per level and O(depth) per id, so a
+// nest of n subshells cost up to O(n^3).
+const NEST_FAMILIES: Record<string, (k: number) => string> = {
+  'nested subshells that each hold a job and a pipe': k =>
+    '( a & a | '.repeat(4_000 * k) + 'a' + ' )'.repeat(4_000 * k),
+  'nested groups that each are a pipeline part in a subshell': k =>
+    '( { a; '.repeat(200 * k) + 'a' + ' ; } | b )'.repeat(200 * k),
+  'nested groups that each run in the background in a subshell': k =>
+    '( { a; '.repeat(200 * k) + 'a' + ' ; } & )'.repeat(200 * k),
+  'a deep nest with a sibling subshell before each job': k =>
+    '( '.repeat(200 * k) + 'a' + ' ) ( cd x ) a &'.repeat(200 * k),
+}
+// The first family is 20 times larger than the others: each of its levels is cheap.
+for (const [family, make] of Object.entries(NEST_FAMILIES)) {
+  test(`splitShell stays near linear on ${family}`, async () => {
+    await expectLinear({ label: family, make, run: text => splitShell(text) })
+  })
+}
+
+// A `)` that closes a `<(` while a loop in it is still open leaves a scope that opened before the part and holds segments
+// from it on. `moveToChild` cuts that scope in two under one number (issue #380). The ids below are what main gave.
+test('splitShell keeps the scope ids when a ) closes a <( while a loop in it is open (issue #380)', () => {
+  const scopes = (cmd: string) => splitShell(cmd).map(s => s.scope)
+  expect(scopes('x <( z; for i in 1; do b; ( q ) ) ; c & done | d & echo $!')).toEqual([
+    '',
+    '.1',
+    '.4.1',
+    '.4.1',
+    '.4.1.2',
+    '.4.3',
+    '.4',
+    '.5',
+    '',
+  ])
+  expect(scopes('( a; for i in 1; do b ) c; done | d')).toEqual(['.1', '.2.1', '.2.1', '.2', '.2', '.3'])
+})
+
+// A lookup remembers its answer in each scope on the way (issue #380). A later set in a scope that the lookup passed must
+// drop that answer, and a scope off the path must keep its own.
+test('scopedVars sees a set in an outer scope that comes after a lookup in a deep scope (issue #380)', () => {
+  const v = scopedVars()
+  v.set('', 'X', 'p')
+  expect(v.get('.1.2', 'X')).toBe('p')
+  v.set('.1', 'X', 'q')
+  expect(v.get('.1.2', 'X')).toBe('q')
+  expect(v.get('.3', 'X')).toBe('p')
+  v.set('', 'X', 'r')
+  expect(v.get('.3', 'X')).toBe('r')
+  expect(v.get('.1.2', 'X')).toBe('q')
+  v.set('.1.2', 'X', undefined)
+  expect(v.get('.1.2.3', 'X')).toBeUndefined()
+  expect(v.get('.1', 'X')).toBe('q')
+})
+
+test('scopedDir falls back to the start dir, and an undefined set hides the parent (issue #380)', () => {
+  const d = scopedDir('/w')
+  expect(d.get('.1.2')).toBe('/w')
+  d.set('.1', undefined)
+  expect(d.get('.1.2')).toBeUndefined()
+  d.set('', '/x')
+  expect(d.get('.3')).toBe('/x')
+  expect(d.get('.1.2')).toBeUndefined()
+  d.set('.1', '/y')
+  expect(d.get('.1.2')).toBe('/y')
+  expect(d.get('.3')).toBe('/x')
+})
 
 // A wrapper that runs the next command is stripped with its own options and positional words, so a reader sees the real
 // command (issue #242). `timeout DURATION` takes one positional word; `ionice -c N` and `stdbuf -o MODE` take values.
