@@ -317,6 +317,21 @@ test('an unfindable docker row in state unknown says why in the Description cell
   expect(s.band?.failing).toBe(0)
 })
 
+// Issue #331: the TTL must not hide a docker row whose container nobody proved gone.
+test('past endedTtlMs the pane keeps an unmatched docker row and hides a matched ended one', async () => {
+  const t = await paneWorld()
+  const docker = WORLD_PROCESSES[1]!
+  const old = { state: 'unknown', endedAt: NOW - 24 * 60 * 60_000 }
+  t.w.state.set('processes', [
+    { ...docker, id: 'docker:ctr:docker run -d nginx', name: 'docker run -d nginx', ...old },
+    { ...docker, id: 'docker:ctr:with-id', name: 'docker run -d redis', containerId: 'a1b2c3d4e5f6', ...old },
+    { ...docker, id: 'docker:gone', name: 'gone', state: 'exited', endedAt: old.endedAt },
+  ] as unknown as Json)
+  const s = section(await t.m.paneData(t.w.ports, NO_VIEW), 'processes')
+  expect(s.rows.map(r => r.id)).toEqual(['docker:ctr:docker run -d nginx'])
+  expect(s.note?.text).toContain('(2 hidden)')
+})
+
 test('the processes note is the docker issue when there is one, else the count', async () => {
   const t = await paneWorld()
   const note = async () => section(await t.m.paneData(t.w.ports, NO_VIEW), 'processes').note?.text

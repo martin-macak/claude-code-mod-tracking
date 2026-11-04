@@ -45,6 +45,13 @@ export function dockerRowIsFindable(row: { name: string; containerId?: string })
   return row.containerId !== undefined || /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(row.name)
 }
 
+/**
+ * True for a docker row that reads `unknown` because the probe cannot find its container (no id, no usable name). It
+ * claims no state, so the pane says why (`UNSEEN_REASON`) and the TTL never hides it (issues #241 and #331).
+ */
+export const isUnseenDocker = (r: { kind: string; state: string; name: string; containerId?: string }): boolean =>
+  r.kind === 'docker-container' && r.state === 'unknown' && !dockerRowIsFindable(r)
+
 /** One compose project from the `{{.Status}}` lines of its containers: any unhealthy, else any up, else exited. */
 export function composeState(stdout: string): DockerProbeState {
   const states = stdout

@@ -10,7 +10,7 @@ import { sweptAway } from '../../core/lib/hidden'
 import { textCells } from '../../core/lib/rows'
 import type { ProcessesConfig } from './config'
 import { displayName } from './names'
-import { dockerRowIsFindable, UNSEEN_REASON } from './probe'
+import { isUnseenDocker, UNSEEN_REASON } from './probe'
 import { processReasons } from './reasons'
 import { asRows, expired, overCap } from './rows'
 import { ENDED_STATES, STATE_TOKEN } from './states'
@@ -35,7 +35,7 @@ function processRow(r: ProcessRecord, root: string | undefined, home: string | u
     cells: textCells({
       key: displayName(r.name, root, home),
       keyClip: 'middle',
-      title: r.kind === 'docker-container' && r.state === 'unknown' && !dockerRowIsFindable(r) ? UNSEEN_REASON : '',
+      title: isUnseenDocker(r) ? UNSEEN_REASON : '',
       type: r.kind.replace('-', ' '),
       status,
     }),

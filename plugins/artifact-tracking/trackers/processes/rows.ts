@@ -7,6 +7,7 @@ import type { TrackerContext } from '../../core/interfaces/tracker'
 import type { TurnPort } from '../../core/interfaces/turns'
 import { stampedTurn, withSpan } from '../../core/lib/turn-span'
 import type { ProcessesConfig } from './config'
+import { isUnseenDocker } from './probe'
 import { ENDED_STATES, FAILED_STATES } from './states'
 import { processSightings } from './turns'
 import type { ProcessRecord, ProcessState } from './types'
@@ -68,10 +69,13 @@ export type ProcessCap = Pick<ProcessesConfig, 'maxRows' | 'endedTtlMs' | 'faile
 
 /**
  * True for a row that is over and ended longer ago than its TTL: `failedTtlMs` for a failure, else `endedTtlMs`. A row
- * with no `endedAt` is never expired: the mod cannot date it. Rule: issue #49. `ENDED_STATES` names the end states.
+ * with no `endedAt` is never expired: the mod cannot date it. A docker row that reads `unknown` because the probe cannot match
+ * it (no id, no usable name) is never expired either: nothing proved its container ended (issue #331). So only the `maxRows` cut removes it. Rule: issue #49.
+ * `ENDED_STATES` names the end states.
  */
 export function expired(r: ProcessRecord, cap: ProcessCap, now: number): boolean {
   if (!ENDED_STATES.has(r.state) || r.endedAt === undefined) return false
+  if (isUnseenDocker(r)) return false
   return now - r.endedAt >= (FAILED_STATES.has(r.state) ? cap.failedTtlMs : cap.endedTtlMs)
 }
 
