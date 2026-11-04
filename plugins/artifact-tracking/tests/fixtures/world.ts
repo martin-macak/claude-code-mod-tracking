@@ -205,6 +205,12 @@ export function world(on: On, opts: Opts = {}) {
     authHold: undefined as Promise<void> | undefined,
     /** When set, every `gh api graphql` call waits for it. Same use as `authHold`. */
     ghHold: undefined as Promise<void> | undefined,
+    /** When set, every `store.get` waits for it. The start sequence reads the store, so a test holds the start open. */
+    storeHold: undefined as Promise<void> | undefined,
+    /** How many `store.get` calls reached `storeHold`. A test waits on it, so it needs no clock. */
+    storeHoldHits: 0,
+    /** The calls a causal test orders, as they come: `session.id` reads, `store.delete` calls and the test's marks. */
+    order: [] as string[],
     storeSets: 0,
     /** `$.state` writes by member: an atom's key, a family member's id. Counted when `isolateState` is on. */
     stateSets: {} as Record<string, number>,
@@ -216,20 +222,30 @@ export function world(on: On, opts: Opts = {}) {
   /** One entry per `ui.panes` read. */
   const paneReads: true[] = []
 
-  on('store.get', (_$, e) => ({ value: store.get(e.key) }))
+  on('store.get', async (_$, e) => {
+    if (fake.storeHold) {
+      fake.storeHoldHits++
+      await fake.storeHold
+    }
+    return { value: store.get(e.key) }
+  })
   on('store.set', (_$, e) => {
     fake.storeSets++
     store.set(e.key, JSON.parse(JSON.stringify(e.value)))
     return { value: undefined }
   })
   on('store.delete', (_$, e) => {
+    fake.order.push('store.delete')
     store.delete(e.key)
     return { value: undefined }
   })
   current.id = SESSION
   current.failItemsRead = false
   current.failSlot = undefined
-  on('session.id', () => ({ value: current.id }))
+  on('session.id', () => {
+    fake.order.push('session.id')
+    return { value: current.id }
+  })
   on('session.messages', () => ({ value: (opts.messages ?? []) as never }))
   on('session.surfaces', () => ({ value: (opts.surfaces ?? []) as never }))
   on('session.repo', () => ({
@@ -422,6 +438,12 @@ export async function quiet(calls: unknown[]): Promise<void> {
   }
 }
 
+/** Yields to the event loop until `done()` holds, at most 500 turns. It waits for a condition, not for a time. */
+export async function spin(done: () => boolean): Promise<boolean> {
+  for (let i = 0; i < 500 && !done(); i++) await sleep(0)
+  return done()
+}
+
 export const track = ($: Engine, args = '') =>
   $.command.run({
     command: 'track',
@@ -470,6 +492,15 @@ export const toolResult = (content: unknown): SessionAppendInput => ({
 })
 
 export const START = { cwd: '/work', surface: null, isInteractive: false } as const
+
+/**
+ * `session.start`, then the end of the start sequence. The hook returns before the sequence settles (issue #360), and
+ * `/track` waits for it, as every entry does. Use it where a test reads what the sequence wrote.
+ */
+export async function startSettled($: Engine): Promise<void> {
+  await $.session.start(START)
+  await track($)
+}
 
 // ---------------------------------------------------------------- /clear and /resume
 

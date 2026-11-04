@@ -8,7 +8,7 @@ import { expect } from 'claude-code/testing'
 import { test } from './fixtures/kit'
 import { LIMITS } from './fixtures/limits'
 import { mountPane } from './fixtures/pane'
-import { MANIFEST_TAIL, quiet, response, START, track, world } from './fixtures/world'
+import { MANIFEST_TAIL, quiet, response, START, startSettled, track, world } from './fixtures/world'
 
 const MANIFEST = JSON.stringify({ name: 'artifact-tracking', version: '1.2.3', description: 'x' })
 const text = async ($: Engine, args: string) => (await track($, args)).text ?? ''
@@ -76,7 +76,7 @@ test('the help view of the pane (key h) draws the version, and h again returns t
 
 test('session.start writes one debug log line that names the version, and no other line comes before it', async ($, on) => {
   const w = world(on, { manifest: MANIFEST })
-  await $.session.start(START)
+  await startSettled($)
   expect(w.fake.logs[0]).toEqual({ text: 'version: 1.2.3', to: 'debug' })
   expect(versionLogs(w)).toHaveLength(1)
 })

@@ -395,7 +395,7 @@ stateDiagram-v2
   Active --> Loaded: hot reload (new module copy)
 ```
 
-**Start sequence** (`session.start`, on load and on each hot reload):
+**Start sequence** (`session.start`, on load and on each hot reload). The `session.start` hook calls `next(e)` first and does not wait for the sequence (issue #360). The manager keeps the sequence as the single flight, and every other entry waits for it through `ensureStarted()`. A later `session.start` after a lazy start replaces the flight, so entries wait for it too.
 
 1. ConfigManager checks the file and reads it again when its signature moved (§5.7). A failing read is logged, and the defaults stand. TrackerHost then reads the toggles, once per load (`enabled: false` turns a tracker off).
 2. Persistence loads `v2:run` (the `pendingEnd` and the run-scoped slots, §5.13). Once per load it deletes the keys of the old layout (`s:*`, `index`).
