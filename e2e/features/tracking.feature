@@ -31,6 +31,27 @@ Feature: Track the work a session mentions
     Then the screen matches /│Pinned 1[^\n]*\n[^\n]*│> ▲ +› #16\s[^\n]*\n(?:[^\n]*\n)*[^\n]*│GitHub \d+ (?:\(\d+ failed\) )?gh[^\n]*\n[^\n]*│ +› #15\s/
     And I pause for 3 seconds
 
+    Given the caption "Enter opens the detail view of the row, Esc goes back"
+    When I press "Enter"
+    Then the screen matches /│#16 · Pinned · merged · detail/
+    And the screen shows "↩ back"
+    And I pause for 3 seconds
+    When I press "Escape"
+    Then the screen stops showing "· detail"
+    And I pause for 1 seconds
+
+    Given the caption "g switches the view: here the tree view, with a group row for each source"
+    # g cycles list, status, flat, tree. The third press reaches the tree view.
+    When I press "g"
+    And I press "g"
+    And I press "g"
+    Then the screen shows "View: tree"
+    And the screen matches /│ +▾ GitHub/
+    And I pause for 3 seconds
+    When I press "g"
+    Then the screen shows "View: list"
+    And I pause for 1.5 seconds
+
     Given the caption "r refreshes every item, Esc closes the pane"
     When I press "r"
     Then the screen matches /│GitHub \d+ (?:\(\d+ failed\) )?gh · refreshed just now/
