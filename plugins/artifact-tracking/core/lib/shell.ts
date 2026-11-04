@@ -64,13 +64,36 @@ export type Segment = {
   bgList: boolean
   /**
    * The shell that reads the segment, for the `$!` of the parser (issue #263): the number of the innermost open `(`, `$(`,
-   * backtick or process substitution scope, and `0` at the top level. A `&` list and a pipeline part run in a subshell, but
-   * they set `$!` in the shell that reads them, so `scope` is no help here. `shellUp` is the number of the nearest shell around
-   * it that holds a segment by then (`0` if none), as a shell with no segment of its own changes no `$!`.
-   * A number is a key that stays O(1) in a deep nest, where the text of `scope` grows.
+   * backtick or process substitution scope, or of the pipeline part that holds it (issue #353), and `0` at the top level. A `&`
+   * list runs in a subshell, but it sets `$!` in the shell that reads it, so `scope` is no help here. `shellUp` is the number of
+   * the nearest shell around it that holds a segment by then (`0` if none), as a shell with no segment of its own changes no
+   * `$!`. A number is a key that stays O(1) in a deep nest, where the text of `scope` grows.
    */
   shell: number
   shellUp: number
+  /**
+   * The shell whose `$!` the `&` that ends the segment sets (issue #353). It is `shell`, but for the last segment of a pipeline
+   * that `&` ends (`true | sleep 3 &`): its part runs in a shell of its own, and the shell around the pipeline reads the `&`.
+   */
+  bgShell: number
+  /**
+   * The shell whose `$!` the `&` behind `afterBgShell` sets: the shell that read that `&` (issue #353). The segment that carries
+   * the flag can run in another one: in `( a ) & true | echo $!` the `&` is read by the shell around the pipeline, and `true`
+   * runs in a part of it. Without the flag it is `shell`.
+   */
+  flagShell: number
+  /**
+   * The segment is a whole part of a pipeline that `&` ends, and not its last part (`sleep 3 | true &`, issue #353). It runs in
+   * the background too, but `$!` names the last part, so its row gets no pid. A part of more than one segment has none.
+   */
+  bgPart: boolean
+  /** The segment runs in a part of a pipeline, the last part too (issue #353). */
+  inPipe: boolean
+  /**
+   * The segment goes on a simple command that a substitution cut (`sleep $(a) 101`: the tail `101`, issue #353). It is no command
+   * of its own: `$!` names the whole command, so the tail gets no row.
+   */
+  cmdTail: boolean
   /**
    * The subshell the segment runs in. `''` is the top level. `(`, `$(` and a backtick pair open a child scope
    * `${parent}.${n}`. `{ }` is the same shell, so it keeps the scope. A list that ends with `&` runs in a subshell
@@ -297,6 +320,8 @@ type Place = {
   part: number
   /** A `|` or `|&` came, so the part from `part` on belongs to a pipeline. */
   piped: boolean
+  /** The parts of the pipeline so far that are one segment each: the index of that segment (`Segment.bgPart`). */
+  solo: number[]
 }
 
 /**
@@ -345,9 +370,9 @@ export function splitShell(command: string): Segment[] {
   // in it is an arithmetic expression (`$(( ))`, `(( ))`), where `<<` is a shift (issue #194). `sub`: the shell takes the
   // output of the commands in it: a `$(`, a backtick or a `<(` opened it, or one of its parents did (`Segment.substituted`).
   // `moved`: the output of the command around a `>(` went away before the substitution (`a >f > >(b)`), so the commands in it
-  // write there too, and so do the scopes in it (`Segment.stdoutRedirected`). `outerHead`, `outerOut`: the `cmdHead` and the
+  // write there too, and so do the scopes in it (`Segment.stdoutRedirected`). `outerHead`, `outerWord`, `outerOut`: the `cmdHead`, `cmdWord` and the
   // `cmdOut` of the simple command around it, back at the close (`a $(b) c`).
-  // `bgPending`: the `bgShellEnded` of the shell around it, back at the close. `from`: the index of the first segment in it.
+  // `bgFlagPending`: the `bgFlag` of the shell around it, back at the close. `from`: the index of the first segment in it.
   const stack: {
     id: string
     tick: boolean
@@ -358,17 +383,19 @@ export function splitShell(command: string): Segment[] {
     sub: boolean
     moved: boolean
     outerHead: number
+    outerWord: boolean
     outerOut: boolean
-    bgPending: boolean
+    bgFlagPending: { shell: number; at: number } | undefined
     from: number
     n: number
     /** A process substitution (`<(`, `>(`): the shell that holds it gets a `$!` from it, whatever it holds. */
     proc: boolean
-    /** A segment sat in this shell. `anc`: the number of the nearest shell around it that held one by the time it opened, else `0`. */
-    seen: boolean
+    /** The number of the nearest shell around it that held a segment by the time it opened (`holds`), else `0`. */
     anc: number
   }[] = []
   let scopes = 0
+  // The numbers of the pipeline parts (`partShell`) count down from -1, so they never meet the number of a scope.
+  let partShells = 0
   const scope = () => stack.at(-1)?.id ?? ''
   // The first segment of the and-or list that the next `&`, `;` or newline ends. `&&` and `||` keep it, and a newline
   // right after `&&`, `||` or `|` keeps it too (`wantsMore`). A group saves the list it sits in and opens one of its own:
@@ -384,6 +411,7 @@ export function splitShell(command: string): Segment[] {
   // opener of a compound is the first segment of the part that its head (`if cd x | cat; then`) opens.
   let partFrom = 0
   let piped = false
+  let solo: number[] = []
   // `from`: the index of the first segment in the group.
   const groups: (Place & { from: number; andOr: number })[] = []
   // `isCase`: the compound is a `case`. Its `arm` says where the reader is in it: `head` is the subject (`case $(x)`, before
@@ -404,6 +432,18 @@ export function splitShell(command: string): Segment[] {
   // say which segments are covered. Marking each segment of the range would cost O(n) for each of a nest of n groups.
   const pipeRuns: number[] = []
   const redirRuns: number[] = []
+  // The parts of pipelines, the last ones too (`Segment.inPipe`): the same ranges.
+  const pipeAll: number[] = []
+  // For each shell number, the segments that write its `$!` (their `shell` or `bgShell` is it), and the segments whose `shellUp`
+  // is it, in segment order. `partShell` takes them from the end. A shell holds a segment while its list is not empty.
+  const writers = new Map<number, number[]>()
+  const ups = new Map<number, number[]>()
+  const push = (lists: Map<number, number[]>, key: number, at: number) => {
+    const list = lists.get(key)
+    if (list) list.push(at)
+    else lists.set(key, [at])
+  }
+  const holds = (n: number) => (writers.get(n)?.length ?? 0) > 0
   // The index of each segment that is a bare `exec` with a redirection of the output (`exec > f`), in segment order. It moves
   // the output of its shell, so the segments after it in that shell, and in the subshells under it, are marked at the end.
   const execs: number[] = []
@@ -428,13 +468,20 @@ export function splitShell(command: string): Segment[] {
   // backtick pair, a subshell and a part of a pipeline run in a shell of their own, and a `&` inside them leaves the `$!` of the
   // parent alone (`x=$({ :; } &); echo $!` prints the job before). So the flag that is still waiting for a segment when such a
   // shell ends dies with it: a scope gives back the flag that its parent had (`closeScope`), and a pipeline part drops it
-  // (`endPipe`, the `|` branch). A group is the shell of its parent, and keeps it.
-  let bgShellEnded = false
+  // (`endPipe`, the `|` branch). A group is the shell of its parent, and keeps it. `shell`: the shell that read the `&`, whose
+  // `$!` it sets (`Segment.flagShell`). `at`: the count of segments then, so `partShell` can tell a `&` before a part of a
+  // pipeline from one inside it.
+  let bgFlag: { shell: number; at: number } | undefined
+  // `flagAt[k]`: the `at` of the flag of segment `k`.
+  const flagAt: number[] = []
   // A substitution splits a simple command into segments: `docker run -d $(a) nginx > f` has the segments `docker run -d`,
   // `a` (inside) and `nginx > f`, and the redirection belongs to all of the command. `cmdHead` is the index of the first
   // segment of the simple command that a substitution has split, in the scope that is open now. -1: none. An operator that
   // ends the command resets it. A substitution gives back the one of the scope around it at its close.
   let cmdHead = -1
+  // A word of the command itself (no assignment `A=`) stood in the simple command so far. `FOO=$(a) sleep 101`: the segment
+  // after the substitution is the command, no tail. Resets and returns with `cmdHead`.
+  let cmdWord = false
   // A typed redirection of fd 1 stood in the simple command so far, in one of its segments (`a >f $(b) >(c)`). It follows
   // `cmdHead`: an operator that ends the command resets it, and a substitution gives back the one of the command around it.
   // `>(c)` reads it for the commands in it (`openScope`, `moved`), as bash applies the redirections in front of it first.
@@ -444,11 +491,12 @@ export function splitShell(command: string): Segment[] {
   // as its target, so the commands in it must not read it as a redirection that came before them.
   let segOut = false
   let segPlaced = false
-  const here = (): Place => ({ list: listFrom, part: partFrom, piped })
+  const here = (): Place => ({ list: listFrom, part: partFrom, piped, solo })
   const back = (p: Place) => {
     listFrom = p.list
     partFrom = p.part
     piped = p.piped
+    solo = p.solo
   }
   // The last operator was `&&`, `||`, `|` or `|&` and no word has come after it: the list goes on after a newline.
   let wantsMore = false
@@ -475,16 +523,18 @@ export function splitShell(command: string): Segment[] {
       sub: sub || (parent?.sub ?? false),
       moved: moved || (parent?.moved ?? false),
       outerHead: cmdHead,
+      outerWord: cmdWord,
       outerOut: cmdOut,
-      bgPending: bgShellEnded,
+      bgFlagPending: bgFlag,
       from: out.length,
-      seen: false,
-      anc: parent ? (parent.seen ? parent.n : parent.anc) : 0,
+      anc: parent ? (holds(parent.n) ? parent.n : parent.anc) : 0,
     })
     listFrom = partFrom = out.length
     andOrAt = -1 // an `&&` outside is not in the list of the scope
     piped = false
+    solo = []
     cmdHead = -1
+    cmdWord = false
     cmdOut = false
   }
   // The innermost scope holds arithmetic text. A `(` in it is a grouping parenthesis, so it holds arithmetic text too; a
@@ -586,8 +636,9 @@ export function splitShell(command: string): Segment[] {
       andOrAt = top.andOr
       closedFrom = top.from
       cmdHead = top.outerHead
+      cmdWord = top.outerWord
       cmdOut = top.outerOut
-      bgShellEnded = top.bgPending || top.proc
+      bgFlag = top.bgFlagPending ?? (top.proc ? { shell: stack.at(-1)?.n ?? 0, at: out.length } : undefined)
     }
   }
   // The `case` that the reader is in right now: the innermost open compound, when it is a `case` that opened inside the
@@ -625,15 +676,74 @@ export function splitShell(command: string): Segment[] {
       if (seg.scope === parent || seg.scope.startsWith(`${parent}.`)) seg.scope = child + seg.scope.slice(parent.length)
     }
   }
+  // The segments from `from` are a part of a pipeline: a shell of its own for `$!` (issue #353). The segments that the shell `n`
+  // around it reads, or whose `&` it reads, move to a new number `p`. A segment in a shell inside the part whose `shellUp` is `n`
+  // now reads `p`, when a segment of `p` came before it. The `&` that ends the pipeline (`bgEnd`) is read by `n`, so the last
+  // segment keeps `bgShell` `n`. The lists in `writers` and `ups` are sorted, and only their end is in the part, so each segment
+  // leaves a list once: O(n) in all, also for a deep nest of pipelines.
+  const partShell = (from: number, bgEnd: boolean) => {
+    cover(pipeAll, from, out.length)
+    const n = stack.at(-1)?.n ?? 0
+    const list = writers.get(n)
+    if (!list) return
+    let k = list.length
+    while (k > 0 && list[k - 1]! >= from) k--
+    if (k === list.length) return
+    const moved = list.splice(k)
+    const p = --partShells // a negative number: no scope has it
+    const anc = stack.at(-1)?.anc ?? 0
+    // A flag whose `&` came before the part (`( a ) & true | b`) stays with `n`. Its segment is the first one of the part.
+    const flagBefore = (j: number) => out[j]!.afterBgShell && out[j]!.flagShell === n && flagAt[j]! <= from
+    // `n` held a segment before the part, or a flag of `n` comes first in it: the part starts with the `$!` of `n`. Else it
+    // starts with the one of the shell around `n`. The segment of that flag keeps the old rule: its flag makes the state of `n`.
+    const before = k > 0 ? n : anc
+    const up = k > 0 || flagBefore(moved[0]!) ? n : anc
+    const last = out.length - 1
+    // The segments in the part that read `n` so far: shells inside the part, and the parts of a pipeline inside it.
+    const upList = ups.get(n) ?? []
+    let u = upList.length
+    while (u > 0 && upList[u - 1]! >= from) u--
+    const tail = upList.splice(u)
+    const movedUps: number[] = []
+    let firstP = -1
+    for (const j of moved) {
+      const seg = out[j]!
+      if (seg.shell === n) {
+        seg.shell = p
+        seg.shellUp = j === from && flagBefore(j) ? before : up
+        if (seg.shellUp === n) movedUps.push(j)
+      }
+      if (seg.bgShell === n) seg.bgShell = bgEnd && j === last && seg.bg ? n : p
+      if (seg.flagShell === n && !flagBefore(j)) seg.flagShell = p
+      if (seg.bgShell === n || (seg.afterBgShell && seg.flagShell === n)) list.push(j)
+      if (firstP < 0 && (seg.shell === p || seg.bgShell === p || seg.flagShell === p)) firstP = j
+    }
+    // A shell inside the part that reads `n` reads `p` now, once `p` holds a state: after its first segment. The rest still
+    // reads `n`, and stays in the list, in order.
+    const kept: number[] = []
+    for (const j of tail) {
+      if (out[j]!.shellUp !== n) continue
+      if (firstP >= 0 && j > firstP) out[j]!.shellUp = p
+      else kept.push(j)
+    }
+    let a = 0
+    let b = 0
+    while (a < kept.length || b < movedUps.length)
+      upList.push(b >= movedUps.length || (a < kept.length && kept[a]! < movedUps[b]!) ? kept[a++]! : movedUps[b++]!)
+    if (!ups.has(n)) ups.set(n, upList)
+  }
   // The pipeline ends: its last part runs in a subshell too, and the next part starts after the segments so far. A flag that
   // waits in that part (`cat | { { :; } & }`) ends with it. A `&` that ends the pipeline keeps its own flag (`cat | { :; } &`).
   const endPipe = (keepBg = false) => {
     if (piped) {
       moveToChild(partFrom)
-      if (!keepBg) bgShellEnded = false
+      partShell(partFrom, keepBg)
+      if (!keepBg) bgFlag = undefined
+      else for (const k of solo) out[k]!.bgPart = true // a `&` ends the pipeline: its parts before the last run in the background
     }
     piped = false
     partFrom = out.length
+    solo = []
   }
 
   const endWord = () => {
@@ -688,26 +798,39 @@ export function splitShell(command: string): Segment[] {
     if (clean.length === 0 && stdout && closedFrom >= 0) redirected(closedFrom)
     // A `&` behind the close, with no word of its own (`{ a; } &`, `( a ) 2>&1 &`, `x=$(a) &`), sends that shell to the background.
     // A bare redirection (`> f &`) runs as a shell of its own, and so sets `$!` (issue #263).
-    if (bg && clean.length === 0 && (closedFrom >= 0 || words.length > 0)) bgShellEnded = true
+    if (bg && clean.length === 0 && (closedFrom >= 0 || words.length > 0))
+      bgFlag = { shell: stack.at(-1)?.n ?? 0, at: out.length }
     if (clean.length > 0) {
+      const shellNow = stack.at(-1)?.n ?? 0
+      const upNow = stack.at(-1)?.anc ?? 0
       out.push({
         words: clean.map(unmarkDollars),
         marked: clean,
         whole: cleanHeads.map(h => h.whole),
         redir: cleanHeads.map(h => h.redir),
         bg,
-        afterBgShell: bgShellEnded,
+        afterBgShell: bgFlag !== undefined,
         bgList: bg && andOrAt >= listFrom,
-        shell: stack.at(-1)?.n ?? 0,
-        shellUp: stack.at(-1)?.anc ?? 0,
+        shell: shellNow,
+        shellUp: upNow,
+        bgShell: shellNow,
+        flagShell: bgFlag?.shell ?? shellNow,
+        bgPart: false,
+        inPipe: false,
+        cmdTail: cmdHead >= 0 && cmdWord,
         scope: scope(),
         stdoutRedirected: stdout || (stack.at(-1)?.moved ?? false),
         stdoutPiped: false,
         substituted: stack.at(-1)?.sub ?? false,
       })
-      bgShellEnded = false
-      const holder = stack.at(-1)
-      if (holder) holder.seen = true
+      const at = out.length - 1
+      push(writers, shellNow, at)
+      push(ups, upNow, at)
+      if (bgFlag) {
+        flagAt[at] = bgFlag.at
+        if (bgFlag.shell !== shellNow) push(writers, bgFlag.shell, at)
+      }
+      bgFlag = undefined
       if (stdout && bareExec(clean, cleanHeads)) execs.push(out.length - 1)
       const lead = compoundLead(clean, cleanHeads)
       if (lead.opens.length > 0) {
@@ -723,6 +846,7 @@ export function splitShell(command: string): Segment[] {
           })
           partFrom = out.length - 1
           piped = false
+          solo = []
         }
         const top = compounds.at(-1)!
         if (top.isCase && clean[lead.at + 2] === 'in') startPattern(top)
@@ -913,8 +1037,12 @@ export function splitShell(command: string): Segment[] {
       cmdOut ||= segOut
       if (!goesOn) {
         cmdHead = -1
+        cmdWord = false
         cmdOut = false
-      } else if (cmdHead < 0 && out.length > before) cmdHead = out.length - 1
+      } else if (out.length > before) {
+        if (cmdHead < 0) cmdHead = out.length - 1
+        if (!cmdWord) cmdWord = (out.at(-1)?.words ?? []).some(w => !ASSIGN.test(w))
+      }
       if (op === '(') {
         // A `(` in front of the first word of a pattern list is part of the pattern, no subshell. The segment above can have
         // ended the header just now (`case x in(x)`), so the case is read again.
@@ -947,6 +1075,7 @@ export function splitShell(command: string): Segment[] {
         andOrAt = -1
         listFrom = partFrom = out.length // the group opens a list and a part of its own; `}` gives back the outer ones
         piped = false
+        solo = []
       } else if (op === '}') {
         endPipe()
         const outer = groups.pop()
@@ -957,7 +1086,9 @@ export function splitShell(command: string): Segment[] {
         }
       } else if (op === '|' || op === '|&') {
         moveToChild(partFrom) // the part before the `|` runs in a subshell
-        bgShellEnded = false // and a flag that waits in it ends with it (`{ { :; } & } | cat`)
+        partShell(partFrom, false) // and in a shell of its own for `$!`
+        if (out.length - partFrom === 1) solo.push(partFrom)
+        bgFlag = undefined // and a flag that waits in it ends with it (`{ { :; } & } | cat`)
         cover(pipeRuns, partFrom, out.length) // and its output feeds the next part
         partFrom = out.length
         piped = true
@@ -1019,10 +1150,13 @@ export function splitShell(command: string): Segment[] {
   // Read the ranges of the pipes and of the redirected groups: a segment is marked when some range covers it.
   let piping = 0
   let redirecting = 0
+  let inPipe = 0
   out.forEach((seg, k) => {
     piping += pipeRuns[k] ?? 0
     redirecting += redirRuns[k] ?? 0
+    inPipe += pipeAll[k] ?? 0
     seg.stdoutPiped = piping > 0
+    seg.inPipe = inPipe > 0
     if (redirecting > 0 || (execIn.size > 0 && execFrom(seg.scope) < k)) seg.stdoutRedirected = true
   })
   return out

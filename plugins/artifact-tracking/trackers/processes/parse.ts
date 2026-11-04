@@ -380,6 +380,19 @@ function substitutedNames(command: string): ReadonlySet<string> {
   return new Set([...command.matchAll(assigned)].map(m => m[1] as string))
 }
 
+/**
+ * The names of the functions that the command defines: `f() {`, `f () (`, `function f {` and `function f() {`. `f &` runs a
+ * function in a subshell, and `$!` names that shell, or the last command of the function that bash 5.3 runs in place: no process
+ * named `f` (issue #353). A function that an earlier call or the shell profile defined is not known here: its name may be a
+ * command, so it keeps its row (a limit). A name that the regex takes by mistake loses a row, and gives no wrong pid.
+ */
+function definedFunctions(command: string): ReadonlySet<string> {
+  const names = new Set<string>()
+  for (const m of command.matchAll(/(?:^|[\s;&|(){}`])function\s+([^\s;&|(){}<>`'"$=]+)/g)) names.add(m[1] as string)
+  for (const m of command.matchAll(/(?:^|[\s;&|(){}`])([A-Za-z_][\w.:-]*)[ \t]*\([ \t]*\)/g)) names.add(m[1] as string)
+  return names
+}
+
 /** The values of an env record as the shell passes them. */
 const plainEnv = (env: Record<string, string>): Record<string, string> =>
   Object.fromEntries(Object.entries(env).map(([k, v]) => [k, unmarkDollars(v)]))
@@ -493,16 +506,24 @@ export function parseBashProcesses(
   // #263). `Segment.shell` names the shell that reads the segment, and `Segment.shellUp` the one around it. The top level is `0`.
   type BgState = { lastBg: Detached | undefined; sawBg: boolean }
   const bgStates = new Map<number, BgState>([[0, { lastBg: undefined, sawBg: false }]])
-  const bgOf = (seg: Segment): BgState => {
-    let st = bgStates.get(seg.shell)
+  const stateOf = (shell: number, upShell: number): BgState => {
+    let st = bgStates.get(shell)
     if (!st) {
-      // The first segment of a shell: its `$!` is the one of the shell around it at that moment (its parent ran before).
-      const up = bgStates.get(seg.shellUp) ?? bgStates.get(0)!
+      // The first use of a shell: its `$!` is the one of the shell around it at that moment (its parent ran before).
+      const up = bgStates.get(upShell) ?? bgStates.get(0)!
       st = { lastBg: up.lastBg, sawBg: up.sawBg }
-      bgStates.set(seg.shell, st)
+      bgStates.set(shell, st)
     }
     return st
   }
+  // A segment whose flag belongs to another shell (`Segment.flagShell`, `( a ) & true | b`) starts right after that `&`: its shell
+  // starts with the `$!` of the shell that read it.
+  const bgOf = (seg: Segment): BgState =>
+    stateOf(seg.shell, seg.afterBgShell && seg.flagShell !== seg.shell ? seg.flagShell : seg.shellUp)
+  // The shell whose `$!` the `&` of the segment sets (`Segment.bgShell`): the shell around a pipeline for the `&` that ends it
+  // (issue #353). It has no state yet only when nothing read it so far, so it starts with the one of `shellUp`.
+  const ampOf = (seg: Segment): BgState => (seg.bgShell === seg.shell ? bgOf(seg) : stateOf(seg.bgShell, seg.shellUp))
+  const functions = definedFunctions(command)
   // `export` stays global on purpose: a subshell scope is not tracked for env, only for the directory. The shell variables
   // below follow the scope of the directory, so a variable set in a background list (`D=/x & srv $D/a.js &`) does not
   // reach the commands after the `&`, as in bash.
@@ -521,17 +542,19 @@ export function parseBashProcesses(
 
   const segments = splitShell(command)
   for (const seg of segments) {
-    const bg = bgOf(seg)
     // A `&` ended a group, subshell or substitution right before this segment (`{ a; } & echo $!`). Like `done &`, that sends a
     // shell to the background: `$!` names it, and no row has its pid, so no job before it may take the next pid line. For
     // `sleep $(a) &`, `( sleep 3 ) &` and `( true; sleep 3 ) &` `$!` names the command itself, which has no row either (a limit):
-    // the earlier job must still not take it.
+    // the earlier job must still not take it. The `&` sets `$!` in the shell that read it (`flagShell`), before this segment runs.
     if (seg.afterBgShell) {
-      bg.lastBg = NO_ROW
-      bg.sawBg = true
+      const flagged = seg.flagShell === seg.shell ? bgOf(seg) : stateOf(seg.flagShell, seg.shellUp)
+      flagged.lastBg = NO_ROW
+      flagged.sawBg = true
     }
+    const bg = bgOf(seg)
+    const amp = ampOf(seg)
     const jobBefore = bg.sawBg
-    if (seg.bg) bg.sawBg = true
+    if (seg.bg) amp.sawBg = true
     // The marked words tell `'$F'` and `\$F` (as typed) from `$F` and `"$F"` (expanded). Only the variables read them.
     const pre = stripLead({ words: seg.marked, whole: seg.whole, redir: seg.redir })
     const marked = pre.words
@@ -541,19 +564,26 @@ export function parseBashProcesses(
       // A line of assignments only (`L=/x`) sets shell variables. `L=/x cmd` sets them for `cmd` alone.
       if (pre.words.length === 0) for (const [k, v] of Object.entries(pre.env)) setVar(k, v, seg.scope)
       // `done &` backgrounds the whole loop: `$!` is then the pid of the loop shell, not of an earlier background command.
-      if (seg.bg) bg.lastBg = NO_ROW
+      if (seg.bg) amp.lastBg = NO_ROW
       continue
     }
     const head = words[0]!
     // `echo $! &` prints the pid of the job before it, so it keeps that job. Any other `&` job is a row (the detached
     // branch below replaces this) or no row: either way `$!` is no longer the job before it. An `echo $! > f &` is one of
     // them: it prints no line, and the `$!` after it is the pid of its own shell.
-    if (seg.bg && !echoesPid(seg, words)) bg.lastBg = NO_ROW
+    if (seg.bg && !echoesPid(seg, words)) amp.lastBg = NO_ROW
     // `coproc` runs its command as a job of its own and sets `$!`. The parser makes no row for it, so the pid line that an
     // `echo $!` after it prints is no earlier job's.
     if (head === 'coproc') {
       bg.lastBg = NO_ROW
       bg.sawBg = true
+      // In a part of a pipeline bash 5.3.20 sets `$!` in the shell around the pipeline as well (`coproc a | true; echo $!` names
+      // the coproc), and bash 3.2.57 has no `coproc`. So every shell drops its job: a safe miss (issue #353).
+      if (seg.inPipe)
+        for (const st of bgStates.values()) {
+          st.lastBg = NO_ROW
+          st.sawBg = true
+        }
     }
     // `eval "a &"` sets `$!` in the shell that runs it, to a job that the parser cannot name (issue #263). Any `&` that is not
     // part of `&&`, `>&`, `<&` or `&>` can be a job, so it counts: a miss loses a pid, and gives no wrong one.
@@ -629,7 +659,9 @@ export function parseBashProcesses(
       continue
     }
 
-    if ((seg.bg || pre.fork) && !BUILTINS.has(head)) {
+    // A part before the last one of a backgrounded pipeline runs in the background as well (`sleep 3 | true &`), but `$!` names
+    // the last part: a row with no pid (issue #353). A function that the call defines is no process of its name.
+    if ((seg.bg || pre.fork || seg.bgPart) && !seg.cmdTail && !BUILTINS.has(head) && !functions.has(head)) {
       // The shell expands the variables before it runs the command, and `ps` shows the result.
       const pwd = dirs.get(seg.scope)
       const typed = marked.map(w => unmarkDollars(expandVars(w, n => vars.get(seg.scope, n), pwd))).join(' ')
@@ -642,7 +674,8 @@ export function parseBashProcesses(
         viaShell: (pre.fork && !seg.bg) || (seg.bg && (seg.bgList || timed)),
       }
       detached.push(d)
-      bg.lastBg = d
+      if (seg.bg) amp.lastBg = d
+      else if (pre.fork) bg.lastBg = d
     }
   }
 

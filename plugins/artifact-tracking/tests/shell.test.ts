@@ -1803,6 +1803,10 @@ const MARK_FAMILIES: Record<string, (k: number) => string> = {
   'a list of redirected groups that each hold an exec': k => '{ exec > f; } > g; a; '.repeat(3_000 * k) + 'b',
   // An output substitution reads the redirection before it and gives it back at its close: a nest, and a list in one command.
   'nested output substitutions after a redirection': k => 'a >f > >('.repeat(3_000 * k) + 'a' + ')'.repeat(3_000 * k),
+  // Each part is a shell of its own: its bookkeeping rewrites the segments of the part (issue #353).
+  'nested pipeline parts with jobs': k => '{ a & '.repeat(1_000 * k) + 'a' + ' } | b'.repeat(1_000 * k),
+  'pipelines with a subshell chain': k => '( a & '.repeat(1_000 * k) + 'a | b' + ' )'.repeat(1_000 * k),
+  'a long list of pipelines with jobs': k => 'a & b | c; '.repeat(3_000 * k),
   'a list of output substitutions in one command': k => 'a >f ' + '>(a) '.repeat(5_000 * k) + 'b',
 }
 for (const [family, make] of Object.entries(MARK_FAMILIES)) {
@@ -1960,14 +1964,14 @@ test('stripLead keeps a reserved word that stands behind a redirection as the co
   expect(words('time ! git push')).toEqual(['git', 'push'])
 })
 
-// `Segment.shell` is the innermost `(`, `$(`, backtick or process substitution that holds the segment, `shellUp` the one around it
-// (issue #263). A `&` list and a pipeline part move `scope`, not `shell`.
+// `Segment.shell` is the innermost `(`, `$(`, backtick, process substitution or pipeline part that holds the segment, `shellUp`
+// the one around it (issues #263 and #353). A `&` list moves `scope`, not `shell`.
 test('splitShell numbers the shell that reads each segment', () => {
   const shells = (cmd: string) => splitShell(cmd).map(s => [s.words.join(' '), s.shell === 0 ? 0 : 1, s.shellUp === 0])
   expect(shells('a & b | c')).toEqual([
     ['a', 0, true],
-    ['b', 0, true],
-    ['c', 0, true],
+    ['b', 1, true],
+    ['c', 1, true],
   ])
   const segs = splitShell('a; ( b; ( c ) ); x=$(d)')
   const by = Object.fromEntries(segs.map(s => [s.words.join(' '), s]))
@@ -1985,6 +1989,72 @@ test('splitShell numbers the shell that reads each segment', () => {
   expect(nums.every(n => n !== 0)).toBe(true)
   for (const key of ['b', 'c', 'd', 'e', 'g']) expect(mix[key]!.shellUp).toBe(0)
   expect(mix.h!.shellUp).toBe(mix.g!.shell)
+})
+
+// Each part of a pipeline is a shell of its own (issue #353): a `&` job in it sets `$!` there only. The `&` that ends the
+// pipeline is read by the shell around it, so `bgShell` names that shell for the last segment. Every segment of a part has
+// `inPipe`. A part before the last one of a pipeline that `&` ends, when it is one segment, has `bgPart`.
+test('splitShell numbers each part of a pipeline as a shell of its own', () => {
+  const by = (cmd: string) => Object.fromEntries(splitShell(cmd).map(seg => [seg.words.join(' '), seg]))
+  const a = by('sleep 100 & { sleep 101 & } | cat; echo $!')
+  expect(a['sleep 100']!.shell).toBe(0)
+  expect(a['echo $!']!.shell).toBe(0)
+  expect(a['sleep 101']!.shell).not.toBe(0)
+  expect(a.cat!.shell).not.toBe(0)
+  expect(a.cat!.shell).not.toBe(a['sleep 101']!.shell)
+  expect(a['sleep 101']!.shellUp).toBe(0)
+  expect(a['sleep 101']!.bgShell).toBe(a['sleep 101']!.shell)
+  expect([a['sleep 100']!.inPipe, a['sleep 101']!.inPipe, a.cat!.inPipe, a['echo $!']!.inPipe]).toEqual([
+    false,
+    true,
+    true,
+    false,
+  ])
+  // The `&` that ends a pipeline sets `$!` in the shell that reads the pipeline.
+  const b = by('true | sleep 101 & echo $!')
+  expect(b['sleep 101']!.shell).not.toBe(0)
+  expect(b['sleep 101']!.bgShell).toBe(0)
+  expect(b['echo $!']!.bgShell).toBe(0)
+  // The part of a pipeline in a part of a pipeline: the `&` is read by the outer part, and a shell in it reads that part.
+  const c = by('cat | { true | sleep 101 & ( echo $! ); }')
+  expect(c['sleep 101']!.bgShell).not.toBe(0)
+  expect(c['echo $!']!.shellUp).toBe(c['sleep 101']!.bgShell)
+  const d = by('( cat | { sleep 101 & ( echo $! ); } )')
+  expect(d['echo $!']!.shellUp).toBe(d['sleep 101']!.shell)
+  // The shell around keeps its number for the segments outside the pipeline.
+  const e = by('( a; b | c; d )')
+  expect(e.d!.shell).toBe(e.a!.shell)
+  expect(e.b!.shellUp).toBe(e.a!.shell)
+  // A part before the last of a backgrounded pipeline runs in the background too.
+  const parts = (cmd: string) => splitShell(cmd).map(seg => [seg.words.join(' '), seg.bgPart])
+  expect(parts('sleep 101 | sleep 102 &')).toEqual([
+    ['sleep 101', true],
+    ['sleep 102', false],
+  ])
+  expect(parts('a | b; c | d &')).toEqual([
+    ['a', false],
+    ['b', false],
+    ['c', true],
+    ['d', false],
+  ])
+  // A part of more than one segment is no simple command.
+  expect(parts('a $(b) | c &')).toEqual([
+    ['a', false],
+    ['b', false],
+    ['c', false],
+  ])
+})
+
+// The `&` flag of a segment can belong to another shell than the segment (issue #353).
+test('splitShell rewires flagShell and shellUp across a pipeline', () => {
+  const by = (cmd: string) => Object.fromEntries(splitShell(cmd).map(seg => [seg.words.join(' '), seg]))
+  const a = by('( x ) & true | b')
+  expect(a.true!.afterBgShell).toBe(true)
+  expect(a.true!.flagShell).toBe(0)
+  expect(a.true!.shell).not.toBe(0)
+  const b = by('sleep 100 & ( x ) & true | { y; ( echo $! ); }')
+  expect(b['echo $!']!.shellUp).toBe(b.y!.shell)
+  expect(b.y!.shell).not.toBe(0)
 })
 
 // A shell with no segment of its own changes no `$!`, so shellUp skips it (a reader walks no chain).

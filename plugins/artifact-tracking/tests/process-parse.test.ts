@@ -1915,7 +1915,7 @@ test('parseBashProcesses reads >| as a redirection, not a pipe', () => {
 test('parseBashProcesses keeps the scope of $PWD and a shell variable after a pipeline part', () => {
   expect(detachedOf('cd /x | cat; srv $PWD/app.js &', '/w')[0]?.fingerprint).toBe('srv /w/app.js')
   expect(detachedOf('D=/x | cat; srv $D/a.js &', '/w')[0]?.fingerprint).toBe('srv $D/a.js')
-  expect(detachedOf('D=/x; cat | srv $D/a.js &', '/w')[0]?.fingerprint).toBe('srv /x/a.js')
+  expect(detachedOf('D=/x; cat | srv $D/a.js &', '/w').at(-1)?.fingerprint).toBe('srv /x/a.js')
 })
 
 // The `)` that ends a `case` pattern is no end of a subshell (issue #148). A `cd` in the arm of a case in a subshell stays
@@ -2233,15 +2233,111 @@ test('list and time: a job whose $! names a shell gets no pid', () => {
   expect(rows('a && b; sleep 101 &').at(-1)?.[1]).toBe(4242)
 })
 
-// Limits, pinned: the parser lets a `&` job in a pipeline part take the line of the reader (bash names the job before), and
-// `f &` keeps the pid of the shell that runs it. A fix changes these rows.
-test('limits: a job in a pipeline part and a function call are not fixed', () => {
+// A part of a pipeline is a shell of its own (issue #353). A `&` job in it sets `$!` in that part only, so the echo after the
+// pipeline names the job before it. bash 5.3.20 and 3.2.57: `sleep 100 & { sleep 101 & } | true; echo $!` prints the pid of
+// `sleep 100`. An echo in the part reads the job of the part, and a later part starts with the `$!` of the shell around it.
+test('pipeline part: a & job in a part sets $! in that part only', () => {
   const rows = (cmd: string) => detachedOf(cmd, undefined, '4242\n').map(r => [r.name, r.pid])
-  expect(rows('sleep 100 & { sleep 101 & } | cat; echo $!')).toEqual([
+  const before = [
+    ['sleep 100', 4242],
+    ['sleep 101', undefined],
+  ]
+  const inner = [
     ['sleep 100', undefined],
     ['sleep 101', 4242],
+  ]
+  const table: [string, unknown[][]][] = [
+    ['sleep 100 & { sleep 101 & } | cat; echo $!', before],
+    ['sleep 100 & cat | { sleep 101 & }; echo $!', before],
+    ['sleep 100 & { sleep 101 & } | { echo $!; }', before],
+    ['sleep 100 & ( { sleep 101 & } | cat; echo $! )', before],
+    ['sleep 100 & { true | sleep 101 & } | cat; echo $!', before],
+    ['sleep 100 & { sleep 101 & } | cat; ( echo $! )', before],
+    ['sleep 100 & cat | { sleep 101 & echo $!; }', inner],
+    ['sleep 100 & cat | { sleep 101 & ( echo $! ); }', inner],
+    ['sleep 100 & cat | { true | sleep 101 & ( echo $! ); }', inner],
+    ['sleep 100 & true | { sleep 101 & true | echo $!; }', inner],
+    ['sleep 100 & ( cat | { sleep 101 & ( echo $! ); } )', inner],
+  ]
+  for (const [cmd, want] of table) expect({ cmd, rows: rows(cmd) }).toEqual({ cmd, rows: want })
+  expect(rows('sleep 100 & true | { echo $!; }')).toEqual([['sleep 100', 4242]])
+  expect(rows('sleep 100 & ( true | { echo $!; } )')).toEqual([['sleep 100', 4242]])
+})
+
+// A `&` behind a group or subshell right before a pipeline sets `$!` in the shell around the pipeline, not in the part that holds
+// the next segment. So the echo in a later part names that shell, and the job before it gets no pid (bash 5.3.20:
+// `sleep 100 & ( sleep 101 ) & ( true ) | { echo $!; }` prints the pid of `sleep 101`).
+test('pipeline part: a & right before a pipeline sets $! in the shell around it', () => {
+  for (const cmd of [
+    'sleep 100 & ( x ) & true | { echo $!; }',
+    'sleep 100 & ( x ) & ( true ) | { echo $!; }',
+    'sleep 100 & { x; } & x=$(true) | { echo $!; }',
+    '( sleep 100 & ( x ) & true | { echo $!; } )',
+    'sleep 100 & ( ( x ) & true | { echo $!; } )',
+    'sleep 100 & ( ( x ) & true | true; echo $! )',
+  ]) {
+    const got = detachedOf(cmd, undefined, '4242\n').map(r => r.pid)
+    expect({ cmd, got }).toEqual({ cmd, got: [undefined] })
+  }
+  // A `&` inside a part leaves the shell around it alone.
+  expect(detachedOf('sleep 100 & cat | { ( x ) & true; }; echo $!', undefined, '4242\n').map(r => r.pid)).toEqual([
+    4242,
   ])
+})
+
+// A `coproc` in a part of a pipeline sets `$!` in the shell around the pipeline in bash 5.3.20 (`sleep 100 & coproc sleep 101 |
+// true; echo $!` names `sleep 101`), and is no command in bash 3.2.57. So no job of the call gets a pid: a safe miss.
+test('pipeline part: a coproc in a part gives no job a pid', () => {
+  for (const cmd of ['sleep 100 & coproc sleep 101 | true; echo $!', 'sleep 100 & true | coproc sleep 101; echo $!']) {
+    const got = detachedOf(cmd, undefined, '4242\n').map(r => r.pid)
+    expect({ cmd, got }).toEqual({ cmd, got: [undefined] })
+  }
+})
+
+// `f &` runs a function in a subshell, and `$!` names that shell (bash 3.2.57) or the last command of the function, which bash
+// 5.3.20 runs in place. Neither is a process named `f`. A function that the call defines makes no row for `f &`. A name that the
+// call does not define may be a command, so it keeps its row and pid (a limit: the probe checks the command of the pid).
+test('function: a function the call defines makes no row when it runs in the background', () => {
+  const rows = (cmd: string) => detachedOf(cmd, undefined, '4242\n').map(r => [r.name, r.pid])
+  expect(rows('f() { sleep 101; }; sleep 100 & f & echo $!')).toEqual([['sleep 100', undefined]])
+  expect(rows('function g { sleep 101; }; g & echo $!')).toEqual([])
+  expect(rows('function g() { sleep 101; }; g | true & echo $!')).toEqual([])
+  expect(rows('h () { :; }; sleep 100 & h & echo $!')).toEqual([['sleep 100', undefined]])
   expect(rows('f & echo $!')).toEqual([['f', 4242]])
+})
+
+// `sleep $(a) &` is a process, and `$!` names it, but the parser cannot know the words of the substitution: no row, and no
+// earlier job takes its line (a safe miss).
+test('substitution: a job that ends in a substitution takes no pid and gives none away', () => {
+  const rows = detachedOf('sleep 100 & sleep $(echo 101) & echo $!', undefined, '4242\n')
+  expect(rows.map(r => [r.name, r.pid])).toEqual([['sleep 100', undefined]])
+})
+
+// A substitution in the middle of a command cuts it in two segments. The tail is no command of its own: `$!` names the whole
+// command (or the `time` subshell), so the tail gets no row and takes no pid (issue #353).
+test('substitution: the tail of a command that a substitution cut gets no row and no pid', () => {
+  const rows = (cmd: string) => detachedOf(cmd, undefined, '4242\n').map(r => [r.name, r.pid])
+  for (const sub of ['$(echo 1)', '`echo 1`', '<(echo 1)'])
+    expect(rows(`sleep 100 & sleep ${sub} 101 & echo $!`)).toEqual([['sleep 100', undefined]])
+  expect(rows('sleep 100 & time sleep $(echo 1) 101 & echo $!')).toEqual([['sleep 100', undefined]])
+  expect(rows('f() { :; }; f $(echo 1) y & echo $!')).toEqual([])
+})
+
+// An assignment prefix with a substitution is no cut command: the command stands after it, so it keeps its row (a regression of
+// the tail rule).
+test('substitution: a command after an assignment with a substitution keeps its row', () => {
+  const rows = (cmd: string) => detachedOf(cmd, undefined, '4242\n').map(r => [r.name, r.pid])
+  for (const pre of ['FOO=$(echo 1)', 'x=`echo 1`', 'A=1 B=$(echo 1)'])
+    expect(rows(`${pre} sleep 101 & echo $!`)).toEqual([['sleep 101', 4242]])
+})
+
+// The function definitions come from the text of the call (a limit: quoting is not read), but they are read in more forms.
+test('function: definitions in more forms make no row', () => {
+  const rows = (cmd: string) => detachedOf(cmd, undefined, '4242\n').map(r => [r.name, r.pid])
+  expect(rows('f () ( sleep 101 ); f & echo $!')).toEqual([])
+  expect(rows('my-fn() { :; }; my-fn & echo $!')).toEqual([])
+  // The regex reads no quoting, and `"` is no boundary: a name in a quoted text keeps its row (a limit, pinned here).
+  expect(rows('echo "x() "; x & echo $!')).toEqual([['x', 4242]])
 })
 
 test('group: the job after a backgrounded group or subshell gets its own pid line', () => {
@@ -2289,9 +2385,9 @@ test('group: a backgrounded group inside a substitution, subshell or pipeline pa
     '{ { :; } & } &',
     '( { :; } & ) &',
     'x=$({ :; } &) &',
-    'cat | { { :; } & } &',
-    'cat | { :; } &',
-    '{ b | { :; } & };',
+    'true | { { :; } & } &',
+    'true | { :; } &',
+    '{ true | { :; } & };',
   ])
     expect({ bgShell, rows: pid(bgShell) }).toEqual({ bgShell, rows: [['sleep 100', undefined]] })
   // The job after the scope still gets its own line.
@@ -2331,9 +2427,33 @@ test('pipeline: echo $! after a backgrounded pipeline gives the pid to the row o
     ['sleep 100', undefined],
     ['cat', 4242],
   ])
-  expect(pids('sleep 101 | true &')).toEqual([['sleep 100', undefined]])
-  expect(pids('cat | { :; } &')).toEqual([['sleep 100', undefined]])
-  expect(pids('cat | ( : ) &')).toEqual([['sleep 100', undefined]])
+  // A part before the last one runs in the background too. `$!` never names it, so it has a row with no pid (issue #353).
+  expect(pids('sleep 101 | true &')).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', undefined],
+  ])
+  expect(pids('sleep 101 | sleep 102 &')).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', undefined],
+    ['sleep 102', 4242],
+  ])
+  expect(pids('true && sleep 101 | sleep 102 &')).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', undefined],
+    ['sleep 102', undefined],
+  ])
+  expect(pids('sleep 101 | echo x &')).toEqual([
+    ['sleep 100', undefined],
+    ['sleep 101', undefined],
+  ])
+  expect(pids('cat | { :; } &')).toEqual([
+    ['sleep 100', undefined],
+    ['cat', undefined],
+  ])
+  expect(pids('cat | ( : ) &')).toEqual([
+    ['sleep 100', undefined],
+    ['cat', undefined],
+  ])
 })
 
 // `coproc` starts a job that sets `$!` (and `COPROC_PID`) in bash 5.3.20. `$!` names a shell for `coproc NAME { ...; }`, and
