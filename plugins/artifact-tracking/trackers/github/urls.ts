@@ -20,6 +20,9 @@ export const githubUrl = (host: string, owner: string, repo: string, type: strin
 /** The key of a repo in the lane state and in the held list: `host/owner/repo` in lower case (issue #195). */
 export const repoKey = (r: RepoRef): string => `${r.host}/${r.owner}/${r.repo}`.toLowerCase()
 
+/** The start of every item key of a repo, from its `repoKey`: `gh:<host>/<owner>/<repo>#`. `githubKey` builds the rest. */
+export const repoKeyPrefix = (key: string): string => `gh:${key}#`
+
 /** The item key of the PR, `gh:<host>/<owner>/<repo>#<n>`. */
 export function prKey(pr: Pick<DiscoveredPr, 'host' | 'owner' | 'repo' | 'number'>): string {
   return githubKey(pr.host, pr.owner, pr.repo, pr.number)

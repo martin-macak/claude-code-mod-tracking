@@ -23,15 +23,56 @@ import type {
   ForeignRepo,
   LaneState,
   MergeNote,
+  PartialFailures,
   PrRef,
 } from './types'
-import { prKey } from './urls'
+import { prKey, repoKeyPrefix } from './urls'
 
 /** The state of a lane that has not run: a good outcome, which draws nothing. */
 export const EMPTY_LANE: LaneState = { prs: { ok: true } }
 
 /** The reasons that start a PR step. Another reason starts one only when the tracked branches changed. */
 export const PR_REASONS: ReadonlySet<string> = new Set(['start', 'tick', 'manual', 'pr-event'])
+
+/** What `withoutDismissedRepos` reads, named so that the key lists cannot be swapped. */
+interface DismissedRepoInput {
+  /** The failures of the step. */
+  partial: PartialFailures | undefined
+  /** The keys of the created PRs the step asked for and got no sure answer. */
+  askedHeld: readonly string[]
+  /** The repos (by `repoKey`) whose proven branches got no sure answer, with or without a created PR. */
+  heldRepos: ReadonlySet<string>
+  /** The keys the person dismissed. */
+  dismissed: ReadonlySet<string>
+  /** The keys of the held PRs that are not dismissed. */
+  keptHeld: readonly string[]
+}
+
+/**
+ * The failures of a step without the `unreadable` clause of a repo whose held PRs are all dismissed (issue #326): it would warn
+ * about PRs the person no longer tracks. Only `unreadable` goes: the other reasons name a host or a call, not PRs. The clause
+ * goes when no held PR of the repo is left (`keptHeld`) and the person dismissed a PR of it that was held: a created PR the step
+ * asked for (`askedHeld`), or a lane PR of a repo in `heldRepos`. A tombstone has no `lane` flag, so in the second case a PR
+ * that was only tracked by hand counts too. A repo with no dismissed PR keeps its clause: the note is its only sign.
+ */
+function withoutDismissedRepos(input: DismissedRepoInput): PartialFailures | undefined {
+  const { partial, askedHeld, heldRepos, dismissed, keptHeld } = input
+  if (!partial) return partial
+  const failed = partial.failed.filter(f => {
+    if (f.why !== 'unreadable' || !f.repo) return true
+    const repo = `${f.host}/${f.repo}`.toLowerCase()
+    const prefix = repoKeyPrefix(repo)
+    const mine = (k: string) => k.startsWith(prefix)
+    const allDismissed =
+      !keptHeld.some(mine) &&
+      (askedHeld.some(k => mine(k) && dismissed.has(k)) || (heldRepos.has(repo) && [...dismissed].some(mine)))
+    return !allDismissed
+  })
+  if (failed.length === partial.failed.length) return partial
+  // The list is capped: `more` counts failures that were cut off and cannot be judged, so with no clause left the note stays whole.
+  if (failed.length === 0) return partial.more ? partial : undefined
+  return { ...partial, failed }
+}
 
 const sameList = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((x, i) => x === b[i])
@@ -248,6 +289,13 @@ export class PrLane {
     const seen = await this.seen(out.prs, hidden)
     // `r.held` has no PR that the person dismissed: it is no PR of the lane and keeps no note (a retry would run on it).
     const kept = new Set(r.held)
+    const partial = withoutDismissedRepos({
+      partial: out.partial,
+      askedHeld: out.held ?? [],
+      heldRepos: new Set(out.heldRepos),
+      dismissed: hidden,
+      keptHeld: r.held,
+    })
     const saved = await d.save(cur =>
       withPrs(
         cur,
@@ -255,7 +303,7 @@ export class PrLane {
           at,
           ok: true,
           ...(r.untracked > 0 ? { untracked: r.untracked } : {}),
-          ...(out.partial ? { partial: out.partial } : {}),
+          ...(partial ? { partial } : {}),
         },
         {
           ...(out.defaultBranch !== undefined ? { defaultBranch: out.defaultBranch } : {}),
