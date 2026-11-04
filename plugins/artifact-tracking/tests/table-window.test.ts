@@ -218,6 +218,27 @@ test('a stale onMore, with its Button gone, lets the window follow the selected 
   expect(rowTexts(drawn.tree).at(-1)).toContain('s11.example')
 })
 
+test('reveal: the row after the last row a group had shows with the selected row; a reveal with no new row after it moves nothing (issue #374)', () => {
+  // Enter on "N more" left the selected row w5 at the end of the window. reveal names w5, the last row before the press: w6 shows.
+  const at = { ...INLINE, selected: 'w5', top: 0 }
+  const before = rowTexts(draw(web(12), at).drawn.tree)
+  expect(before.at(-1)).toContain('s5.example')
+  const after = rowTexts(draw(web(12), { ...at, reveal: 'w5' }).drawn.tree)
+  expect(after.some(r => r.includes('s5.example'))).toBe(true)
+  expect(after.at(-1)).toContain('s6.example')
+  // The last row of the list and a row the drawing lacks add no row.
+  expect(rowTexts(draw(web(12), { ...at, reveal: 'w11' }).drawn.tree)).toEqual(before)
+  expect(rowTexts(draw(web(12), { ...at, reveal: 'gone' }).drawn.tree)).toEqual(before)
+  // The row after the last row of a group is the first row of the next group: no row of the group came in, so nothing moves.
+  const two = many(2, 3)
+  const tight = { ...INLINE, bodyRows: 8, selected: 's0-w2', top: 0 }
+  const plainTree = draw(two, tight).drawn.tree
+  const plain = rowTexts(plainTree)
+  expect(plain.at(-1)).toContain('s2.example')
+  expect(hints(plainTree)).toEqual(['▼ 3 more below']) // the group s1 is out of the window
+  expect(rowTexts(draw(two, { ...tight, reveal: 's0-w2' }).drawn.tree)).toEqual(plain)
+})
+
 test('a footer of two rows leaves the table one row less', () => {
   const columns = 40
   const footer = footerRows(NO_ROW_FOOTER, columns, false)

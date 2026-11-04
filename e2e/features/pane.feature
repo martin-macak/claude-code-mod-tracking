@@ -159,9 +159,9 @@ Feature: Drive the /track pane with the keys
     And the screen shows "v: view"
 
   # Issue #355. The cap of 5 rows comes from the config, so five Tabs reach the N more row at any size. Enter on it adds
-  # the next rows and puts the ring back on the selected row (issue #109, review finding m2). The checks after Enter
-  # must hold at both sizes: inline at 100x40 the window shows 5 rows, so its hint `▼ 2 more below` holds "2 more"
-  # and hides g.example. Tab to the new rows proves that Enter added them.
+  # the next rows and puts the ring back on the selected row (issue #109, review finding m2). Issue #374: the window
+  # shows the first new row too, f.example, docked and inline. Inline at 100x40 the window shows 5 rows, so it moves
+  # down by the least that shows f.example. Tab to the new rows proves that Enter added them.
   @n-more-row
   Scenario Outline: A long section ends in an N more row at <cols>x<rows>
     Given a terminal of <cols> columns by <rows> rows
@@ -191,6 +191,7 @@ Feature: Drive the /track pane with the keys
     Then the focus ring is on "2 more"
     When I press "Enter"
     Then the focus ring is on the row showing "e.example"
+    And the screen shows "f.example"
     When I press "Tab"
     Then the selected row shows "f.example"
     When I press "Tab"
@@ -398,6 +399,7 @@ Feature: Drive the /track pane with the keys
   # Issue #109, review finding m2. The ring sits on a position among the Buttons. Enter on an N more row puts the new rows in
   # before it, so its position holds the stop of a row that the window hides, and no row would show the ring. The pane asks for
   # the ring on the selected row again. The e2e terminal is 120 columns wide, so the pane is docked with a window of 26 rows.
+  # Issue #374: the window shows the first new row, a31.io/x, under the selected row, so 9 rows stay below.
   Scenario: Enter on an N more row of a windowed pane puts the ring back on the selected row
     Given the tracker config file:
       """
@@ -417,7 +419,8 @@ Feature: Drive the /track pane with the keys
     When I press "Enter"
     Then the focus ring is on the row showing "a30.io/x"
     And the selected row shows "a30.io/x"
-    And the screen shows "▼ 10 more below"
+    And the screen shows "a31.io/x"
+    And the screen shows "▼ 9 more below"
 
   # Issue #115. A click on a Button runs its press and leaves the keys where they were. With the keys in the prompt (the
   # composer is empty: ctrl+x Tab hands them over), the click must also give them to the pane, so Down moves the

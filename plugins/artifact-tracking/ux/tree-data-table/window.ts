@@ -39,6 +39,8 @@ export interface WindowInput {
   readonly anchor: number
   /** The unit that must show: the selected row. */
   readonly focus: number | undefined
+  /** A unit that shows too when it fits with the focus: the first row that Enter on an "N more" row added (issue #374). It names an existing unit; one already in the window changes nothing. */
+  readonly also?: number | undefined
 }
 
 /**
@@ -88,6 +90,16 @@ export function listFloor(rows: number): number {
  * starts at the top again whenever the focus still shows. At least one unit shows, whatever its height.
  */
 export function planWindow(input: WindowInput): Plan | undefined {
+  const plan = planFocus(input)
+  const { also, focus } = input
+  if (plan === undefined || also === undefined || also < plan.to) return plan
+  // The unit below the window comes into view: push the window down by the least that shows it, as a focus there would. The
+  // focus must still show, else the window keeps the focus alone.
+  const pushed = planFocus({ ...input, anchor: plan.from, focus: also })
+  return pushed === undefined || focus === undefined || (focus >= pushed.from && focus < pushed.to) ? pushed : plan
+}
+
+function planFocus(input: WindowInput): Plan | undefined {
   const { units, chrome, budget, anchor, focus } = input
   const n = units.length
   if (n === 0 || linesOf(units, chrome, 0, n) <= budget) return undefined
