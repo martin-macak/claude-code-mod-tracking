@@ -11,11 +11,13 @@ import {
   parsePorcelain,
   workflowWorktreePath,
 } from '../core/lib/porcelain'
+import { makeRealResolver, REAL_CAP, REAL_TTL_MS, type RealCache, realOf, resolveReal } from '../core/lib/real'
 import { agentPaths, agentWorksIn, trackAgents } from '../trackers/auto/agents'
 import { emptyAuto, pinRoot, recordSpawn } from '../trackers/auto/ledger'
-import { makeRealResolver, REAL_CAP, REAL_TTL_MS, type RealCache, realOf, resolveReal } from '../trackers/auto/real'
 import { AutoRound, type RoundDeps } from '../trackers/auto/round'
-import type { AgentProof, AutoState, GitWorktree, LiveAgent } from './fixtures/contracts'
+import { matchProofs, trackWorktrees } from '../trackers/auto/worktrees'
+import { type PollGit, pollForeign, provenBranches } from '../trackers/repos/foreign'
+import type { AgentProof, AutoState, GitWorktree, LiveAgent, RepoRecord, WorktreeProof } from './fixtures/contracts'
 import { porcelain as gitPorcelain } from './fixtures/git'
 
 const CANON = '/private/var/f/repo'
@@ -220,8 +222,14 @@ test('every path that the rules ask the resolver about is one that the round res
   expect(known.has(normPath(conv))).toBe(true)
 })
 
-function rig(realPath: RoundDeps['realPath'], spawnCwd = `${ALIAS}/.claude/worktrees/wt/src`, lateSpawn = false) {
-  const base = pinRoot(emptyAuto(), CANON, 1)
+function rig(
+  realPath: RoundDeps['realPath'],
+  spawnCwd = `${ALIAS}/.claude/worktrees/wt/src`,
+  lateSpawn = false,
+  proofs: WorktreeProof[] = [],
+  top = CANON,
+) {
+  const base: AutoState = { ...pinRoot(emptyAuto(), CANON, 1), worktrees: proofs }
   let auto: AutoState = base
   const spawned = (): AutoState =>
     recordSpawn(auto, { agentId: 'a', description: 'd', subagentType: 'general-purpose' }, 2, spawnCwd)
@@ -241,7 +249,7 @@ function rig(realPath: RoundDeps['realPath'], spawnCwd = `${ALIAS}/.claude/workt
     },
     git: async argv =>
       argv[0] === 'rev-parse'
-        ? { exitCode: 0, stdout: `${CANON}\n`, stderr: '' }
+        ? { exitCode: 0, stdout: `${top}\n`, stderr: '' }
         : { exitCode: 0, stdout: gitPorcelain(CANON, ['wt', 'wt-b']), stderr: '' },
     listAgents: async () => [{ id: 'a', status: 'running' }] as LiveAgent[],
     sessionCwd: async () => CANON,
@@ -303,4 +311,126 @@ test('resolveReal gives every requested path and keeps at most the cap between c
   const round = await resolveReal(async p => `/r${p}`, cache, paths, 0)
   expect(round.size).toBe(paths.length)
   expect(cache.size).toBeLessThanOrEqual(REAL_CAP)
+})
+
+// Issue #344: the proofs of a worktree and of a foreign repo join the same two spellings.
+const ALIAS_WT = `${ALIAS}/.claude/worktrees/wt`
+const CANON_WT = `${CANON}/.claude/worktrees/wt`
+const proofOf = (path: string): WorktreeProof => ({ path, origin: 'enter', provenAt: 1 })
+
+test('matchProofs joins a proof named by an alias to the canonical record, and a different path still misses', () => {
+  const list = [rec(CANON, 'main'), rec(CANON_WT, 'wt-b')]
+  const proofs = [proofOf(ALIAS_WT)]
+  expect(matchProofs(proofs, list, CANON).size).toBe(0) // no function: the strings differ and the proof has no branch
+  expect(matchProofs(proofs, list, CANON, aliasOf).get(ALIAS_WT)?.branch).toBe('wt-b')
+  expect(matchProofs([proofOf(`${ALIAS}/.claude/worktrees/other`)], list, CANON, aliasOf).size).toBe(0)
+  // The main tree and the record of the root stay out, also when the proof or the root is named by the alias.
+  expect(matchProofs([proofOf(ALIAS)], list, CANON, aliasOf).size).toBe(0)
+  expect(matchProofs(proofs, list, ALIAS_WT, aliasOf).size).toBe(0)
+})
+
+test('provenBranches joins a root named by an alias to the record that git lists, and a different path still misses', () => {
+  const list = [rec(CANON, 'main'), rec(CANON_WT, 'wt-b')]
+  expect(provenBranches([{ path: ALIAS_WT, branch: 'old' }], list)).toEqual(['old']) // no function: the root is gone
+  expect(provenBranches([{ path: ALIAS_WT, branch: 'old' }], list, aliasOf)).toEqual(['wt-b'])
+  expect(provenBranches([{ path: `${ALIAS}/other`, branch: 'old' }], list, aliasOf)).toEqual(['old'])
+})
+
+test('pollForeign resolves the roots and the listed paths once per repo and joins the spellings', async () => {
+  const asked: string[][] = []
+  const git: PollGit = {
+    commonDir: async () => `${CANON}/.git`,
+    worktreeList: async () => [rec(CANON, 'main'), rec(CANON_WT, 'wt-b')],
+  }
+  const row: RepoRecord = {
+    key: 'remote:github.com/o/r',
+    name: 'o/r',
+    mode: 'edit',
+    touchedBy: ['main'],
+    firstSeen: 1,
+    lastSeen: 1,
+    root: ALIAS_WT,
+    branch: 'old',
+  }
+  const out = await pollForeign(git, [row], 3, [], async paths => {
+    asked.push([...paths])
+    return aliasOf
+  })
+  expect(out.repos[0]?.branches).toEqual(['wt-b'])
+  expect(asked.length).toBe(1)
+  expect(asked[0]).toContain(ALIAS_WT)
+  expect(asked[0]).toContain(CANON_WT)
+})
+
+test('a round marks a proof named by an alias live, and a different path removed', async () => {
+  const proofs = [proofOf(ALIAS_WT), proofOf(`${ALIAS}/.claude/worktrees/stray`)]
+  const t = rig(async p => aliasOf(p), undefined, false, proofs)
+  await t.round.run()
+  const rows = t.auto().snapshot!.worktrees
+  expect(rows.find(r => r.id === `wt:${ALIAS_WT}`)?.state).toBe('live')
+  expect(rows.find(r => r.id.endsWith('/stray'))?.state).toBe('removed')
+})
+
+// Issue #344 (R2): an alias proof at a path that the convention also proves is the same worktree, so no second proof is added.
+test('a round adds no convention proof for a worktree that a proof already names by an alias', () => {
+  const aliasPath = `${ALIAS}/.claude/worktrees/agent-a`
+  const canonPath = agentWorktreePath(CANON, 'a')
+  const list = [rec(CANON, 'main'), rec(canonPath, 'b')]
+  const seeded: AutoState = { ...state([agent('a')]), worktrees: [proofOf(aliasPath)] }
+  const joined = trackWorktrees(seeded, list, 5, undefined, aliasOf)
+  expect(joined.state.worktrees.length).toBe(1)
+  expect(joined.rows.filter(r => r.depth === 1 && r.state === 'live').length).toBe(1)
+  expect(joined.rows.filter(r => r.state === 'removed').length).toBe(0)
+  // No function: the spellings differ, so the convention proves the canonical path again (the duplicate of the bug).
+  expect(trackWorktrees(seeded, list, 5).state.worktrees.length).toBe(2)
+  // A proof of another path does not hold this worktree, so the convention still proves it.
+  const other = trackWorktrees(
+    { ...state([agent('a')]), worktrees: [proofOf(`${ALIAS}/.claude/worktrees/agent-z`)] },
+    list,
+    5,
+    undefined,
+    aliasOf,
+  )
+  expect(other.state.worktrees.length).toBe(2)
+})
+
+test('a round adds no workflow proof for a worktree that a proof already names by an alias', () => {
+  const name = workflowWorktreePath(CANON, 'wf_x', 1)
+  const aliasPath = `${ALIAS}${name.slice(CANON.length)}`
+  const list = [rec(CANON, 'main'), rec(name, 'b')]
+  const wf = agent('w', { kind: 'workflow', workflow: { runId: 'wf_x', agentIndex: 1 }, cwd: undefined })
+  const seeded: AutoState = { ...state([wf]), worktrees: [proofOf(aliasPath)] }
+  expect(trackWorktrees(seeded, list, 5, undefined, aliasOf).state.worktrees.length).toBe(1)
+  expect(trackWorktrees(seeded, list, 5).state.worktrees.length).toBe(2)
+})
+
+// git can list a record by the alias spelling too. The known proof is then in the other spelling.
+test('a round adds no convention proof for a record that git lists by an alias when a proof names the canonical path', () => {
+  const list = [rec(ALIAS, 'main'), rec(`${ALIAS}/.claude/worktrees/agent-a`, 'b')]
+  const seeded: AutoState = { ...state([agent('a')]), worktrees: [proofOf(agentWorktreePath(CANON, 'a'))] }
+  expect(trackWorktrees(seeded, list, 5, undefined, aliasOf).state.worktrees.length).toBe(1)
+  expect(trackWorktrees(seeded, list, 5).state.worktrees.length).toBe(2)
+})
+
+// Issue #344: the toplevel of the session can be pinned by an alias. The round resolves it, so the record of the root is
+// found and no proof takes it.
+test('a round joins a root pinned by an alias to its record, so a proof that names it canonical is not a live child', async () => {
+  const proofs = [proofOf(CANON_WT)]
+  const asked: string[] = []
+  const t = rig(
+    async p => {
+      asked.push(p)
+      return aliasOf(p)
+    },
+    undefined,
+    false,
+    proofs,
+    ALIAS_WT,
+  )
+  await t.round.run()
+  expect(asked).toContain(ALIAS_WT)
+  expect(t.auto().snapshot!.worktrees.find(r => r.id === `wt:${CANON_WT}` && r.depth === 1)?.state).not.toBe('live')
+  const plain = rig(async p => p, undefined, false, [proofOf(CANON_WT)], ALIAS_WT) // no join: the root record is not found
+  await plain.round.run()
+  expect(plain.auto().snapshot!.worktrees.find(r => r.id === `wt:${CANON_WT}` && r.depth === 1)?.state).toBe('live')
 })

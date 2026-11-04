@@ -42,11 +42,11 @@ import {
   type Real,
   workflowWorktreeName,
 } from '../../core/lib/porcelain'
+import { makeRealResolver } from '../../core/lib/real'
 import { firstLine, message } from '../../core/lib/text'
 import { agentPaths, agentWorksIn } from './agents'
 import type { AutoConfig } from './config'
 import { worktreeId } from './ids'
-import { makeRealResolver } from './real'
 import type { AgentProof, AutoState, WorktreeProof, WorktreeRow } from './types'
 import { matchProofs } from './worktrees'
 
@@ -454,6 +454,7 @@ export const autoCleanup: Cleanup<AutoConfig, AutoState> = {
     // One list for the whole apply, read when the first step needs it, so a run with nothing to remove runs no git.
     let listed: Awaited<ReturnType<typeof listOf>> | undefined
     let matched: ReturnType<typeof matchProofs> | undefined
+    let joined: Real | undefined
     // The base refs: read when the first live tree needs them, once. The `HEAD` sha of a tree, the cwd of the session and the
     // agent ledger are not: each is read at the check of its tree (M1).
     let bases: Promise<string[]> | undefined
@@ -488,12 +489,15 @@ export const autoCleanup: Cleanup<AutoConfig, AutoState> = {
       const list = listed.list
       // The same lookup as the round (`trackWorktrees`): by path, then by branch when the recorded path is a symlink alias
       // and git lists the canonical one. Else the recheck would miss the record that the round marked prunable.
-      matched ??= matchProofs(auto?.worktrees ?? [], list, top)
+      // The path join is the one of the round: a path named by a symlink alias (issue #344).
+      joined ??= await realFor([top, ...(auto?.worktrees ?? []).map(p => p.path), ...list.map(w => w.path)])
+      const real = joined
+      matched ??= matchProofs(auto?.worktrees ?? [], list, top, real)
       const rec = matched.get(proof.path)
       // The lookup never takes the main tree or the record of the session root. A proof that names one by path is skipped.
-      const held = rec === undefined ? findByPath(list, proof.path) : undefined
+      const held = rec === undefined ? findByPath(list, proof.path, undefined, real) : undefined
       if (held !== undefined && held === list[0]) return { outcome: 'skipped: the main worktree' }
-      if (held !== undefined && held === locate(list, top)) return { outcome: `skipped: ${ROOT}` }
+      if (held !== undefined && held === locate(list, top, real)) return { outcome: `skipped: ${ROOT}` }
       if (rec === undefined) return { outcome: NO_RECORD, gone: true }
       return { proof, rec, list }
     }

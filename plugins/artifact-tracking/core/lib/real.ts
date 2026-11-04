@@ -1,8 +1,8 @@
-// Canonical paths for the auto tracker (issue #255). On macOS `/tmp` is `/private/tmp` and `/var` is `/private/var`. Git lists
+// Canonical paths for the trackers (issues #255, #344). On macOS `/tmp` is `/private/tmp` and `/var` is `/private/var`. Git lists
 // the canonical path of a worktree, and an agent can name the same folder by an alias. The match rules are pure and sync, so
 // the round resolves each path once, with an async call, into a cache. The draw path only reads the cache.
 
-import { normPath, type Real } from '../../core/lib/porcelain'
+import { normPath, type Real } from './porcelain'
 
 /** Path (no trailing slash) to its canonical path and the time it was read. A path that could not be resolved has no entry. */
 export type RealCache = Map<string, { real: string; at: number }>
@@ -65,10 +65,12 @@ export async function resolveReal(
 }
 
 /** One cache with its resolver: `resolve(paths)` reads what is new or old, then gives the sync lookup. Never rejects. */
+export type RealResolver = { resolve: (paths: Iterable<string>) => Promise<Real> }
+
 export function makeRealResolver(
   stat: (path: string) => Promise<string | undefined>,
   now: () => number = Date.now,
-): { resolve: (paths: Iterable<string>) => Promise<Real> } {
+): RealResolver {
   const cache: RealCache = new Map()
   return {
     resolve: async paths => {

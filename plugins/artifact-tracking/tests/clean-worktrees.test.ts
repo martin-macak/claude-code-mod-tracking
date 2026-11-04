@@ -297,6 +297,24 @@ test('a proof matched by branch (its recorded path is a symlink alias) is remove
   expect(t.log()).toHaveLength(1)
 })
 
+// Issue #344: a proof with no branch, named by an alias, is found by the path join alone. The recheck resolves the alias.
+test('a proof with no branch, named by a symlink alias, is removed at the path git lists', async () => {
+  const alias = '/alias/old-wt'
+  const t = await treeWorld({ proofs: [proofOf(alias)], rows: [removedRow(alias)], list: porcelain([OLD, PRUNABLE]) })
+  t.w.realPaths[alias] = OLD
+  const text = (await t.run('clean --yes worktrees')).text
+  expect(t.removes()).toEqual([['git', 'worktree', 'remove', OLD]])
+  expect(text).toContain(`  ${alias}: done`)
+})
+
+test('a proof with no branch, named by a different path, finds no record', async () => {
+  const other = '/alias/other-wt'
+  const t = await treeWorld({ proofs: [proofOf(other)], rows: [removedRow(other)], list: porcelain([OLD, PRUNABLE]) })
+  t.w.realPaths[other] = '/work/not-listed'
+  await t.run('clean --yes worktrees')
+  expect(t.removes()).toEqual([])
+})
+
 test('a proof matched by branch keeps every guard: a live or locked record is never removed', async () => {
   const live = await treeWorld({
     proofs: [proofOf(ALIAS, { branch: 'b' })],

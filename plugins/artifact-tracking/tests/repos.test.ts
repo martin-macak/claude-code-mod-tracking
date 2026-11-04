@@ -1801,3 +1801,17 @@ test('parseRepoHintsFromBash reads a reserved word behind a redirection as the c
   expect(ghRepos('time >/dev/null ! gh pr create -R acme/sdk')).toHaveLength(0)
   expect(ghRepos('time ! >/dev/null gh pr create -R acme/sdk')).toHaveLength(1)
 })
+
+test('own repo: a path named by a symlink alias of the root is shielded, one that no link joins is not (#344)', async () => {
+  const repos: FakeRepo[] = [
+    { top: '/x/repo', common: '/x/repo/.git' },
+    { top: '/private/x/repo/sdk', common: '/private/x/repo/sdk/.git', origin: 'git@github.com:acme/sdk.git' },
+  ]
+  const real = async () => (p: string) => p.replace(/^\/x\/repo/, '/private/x/repo')
+  const joined = new RepoTracker({ run: identityRunner(repos), now: () => 1, rootPath: '/x/repo', real })
+  expect(await joined.resolvePath('/private/x/repo/sdk/a.ts', 'main')).toBeNull()
+  const plain = new RepoTracker({ run: identityRunner(repos), now: () => 1, rootPath: '/x/repo' })
+  expect(await plain.resolvePath('/private/x/repo/sdk/a.ts', 'main')).toMatchObject({
+    key: 'remote:github.com/acme/sdk',
+  })
+})

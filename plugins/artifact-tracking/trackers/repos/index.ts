@@ -17,6 +17,7 @@ import type { Traceable } from '../../core/interfaces/reasons'
 import type { Handler, Tracker, TrackerContext } from '../../core/interfaces/tracker'
 import { isRecord } from '../../core/lib/json'
 import { LoadState } from '../../core/lib/load-state'
+import { makeRealResolver, type RealResolver } from '../../core/lib/real'
 import { type ReposConfig, reposConfig } from './config'
 import { type BranchesOfRepos, FACT_REPO_BRANCHES, pollForeign, pollKey, reposOfFact, storedFact } from './foreign'
 import { extractRepoPathsFromTool, PATH_TOOLS, parseRepoHintsFromBash, type RepoHit, repoBaseDir } from './hints'
@@ -83,7 +84,7 @@ function rootPath(ctx: Pick<Ctx, 'facts'>): string | undefined {
  * The lookup caches and the queue live as long as the load (plan decision D16), so they are kept per load: the tracker is
  * a module constant (`TRACKERS`).
  */
-type Services = { tracker: RepoTracker; queue: RepoQueue }
+type Services = { tracker: RepoTracker; queue: RepoQueue; real: RealResolver }
 const loads = new LoadState<Services>()
 
 const publishFact = (ctx: Pick<Ctx, 'facts'>, fact: BranchesOfRepos): void =>
@@ -106,7 +107,7 @@ function requestPoll(ctx: Ctx): void {
     const gen = ctx.generation
     const rows = asRepoRows(await ctx.data.get())
     const previous = reposOfFact(ctx.facts.read(FACT_REPO_BRANCHES))
-    const fact = await pollForeign(live.tracker, rows, ctx.config.slice().pollRepos, previous)
+    const fact = await pollForeign(live.tracker, rows, ctx.config.slice().pollRepos, previous, live.real.resolve)
     if (ctx.generation === gen) publishFact(ctx, fact)
   })
 }
@@ -246,21 +247,33 @@ export function reposTracker(): Tracker<ReposConfig, RepoRecord[]> & Traceable<R
       // The queue size and the breaker are read once per load: they size an object at construction (C5). The git
       // timeout and the cache age are read at each use.
       const b = ctx.config.global().tools.breaker
-      loads.of(ctx, () => ({
-        tracker: new RepoTracker({
-          run: (argv, o) => ctx.tools.run('git', argv, o ?? {}),
-          now: () => ctx.clock.wall(),
-          limits: () => ({ gitTimeoutMs: ctx.config.slice().gitTimeoutMs, tickMs: ctx.config.global().refresh.tickMs }),
-          breakerLimits: b,
-          get rootPath() {
-            return rootPath(ctx)
-          },
-          get rootRepo() {
-            return (ctx.facts.read('session.repo') as unknown as RepoRef | undefined) ?? null
-          },
-        }),
-        queue: new RepoQueue(ctx.config.slice().maxRepoQueue),
-      }))
+      loads.of(ctx, () => {
+        // One resolver per load: the shield of the own repo and the poll share its cache (#344).
+        const real = makeRealResolver(
+          async p => (await ctx.fs.stat(p, { resolve: true }))?.realPath,
+          () => ctx.clock.wall(),
+        )
+        return {
+          tracker: new RepoTracker({
+            run: (argv, o) => ctx.tools.run('git', argv, o ?? {}),
+            now: () => ctx.clock.wall(),
+            limits: () => ({
+              gitTimeoutMs: ctx.config.slice().gitTimeoutMs,
+              tickMs: ctx.config.global().refresh.tickMs,
+            }),
+            breakerLimits: b,
+            real: real.resolve,
+            get rootPath() {
+              return rootPath(ctx)
+            },
+            get rootRepo() {
+              return (ctx.facts.read('session.repo') as unknown as RepoRef | undefined) ?? null
+            },
+          }),
+          queue: new RepoQueue(ctx.config.slice().maxRepoQueue),
+          real,
+        }
+      })
       // A hot reload keeps the slot and loses the facts: publish what the slot holds. No git: the first poll adds it.
       try {
         await publishStored(ctx)

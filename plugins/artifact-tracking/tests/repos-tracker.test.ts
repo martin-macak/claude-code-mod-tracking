@@ -468,6 +468,34 @@ test('a repo that git cannot read keeps the branch of the last good poll beside 
   expect(t.m.facts.read(FACT)).toEqual({ repos: [{ ...SDK_REF, branches: ['feat'] }], overflow: 0 }) // git reads it again
 })
 
+// Issue #344: git lists the canonical path of the repo root (`/private/x/sdk`), the visit stored the alias (`/x/sdk`). The
+// tracker resolves both with the file system of the plugin, so the poll joins them and reads the branch that git lists.
+async function aliasPoll(mapped: boolean): Promise<unknown> {
+  const t = setup()
+  const seen = gitAt(t.w, { '/x/sdk': SDK_REMOTE })
+  await t.call('Read', { file_path: '/x/sdk/a.ts' }) // the visit stores main at /x/sdk
+  await drain(t.w)
+  const list = t.w.run!
+  t.w.run = async argv => {
+    const r = await list(argv)
+    return argv[3] === 'worktree' && r
+      ? { ...r, stdout: r.stdout.replace('worktree /x/sdk\n', 'worktree /private/x/sdk\n') }
+      : r
+  }
+  if (mapped) t.w.realPaths['/x/sdk'] = '/private/x/sdk'
+  seen.branch = 'feat' // a checkout outside the session: only the poll sees it
+  await t.m.command(t.w.ports, { sub: 'refresh', args: '', wait: true })
+  return t.m.facts.read(FACT)
+}
+
+test('a poll joins a root named by an alias to the record that git lists, through the real path of the plugin fs', async () => {
+  expect(await aliasPoll(true)).toEqual({ repos: [{ ...SDK_REF, branches: ['feat'] }], overflow: 0 })
+})
+
+test('a poll of a root that no link joins to the listed record keeps the stored branch', async () => {
+  expect(await aliasPoll(false)).toEqual({ repos: [{ ...SDK_REF, branches: ['main'] }], overflow: 0 })
+})
+
 test('a worktree of the repo that the session never visited is no proof', async () => {
   const t = setup()
   const seen = gitAt(t.w, { '/x/sdk': SDK_REMOTE })
@@ -1029,4 +1057,23 @@ test('normalise keeps a valid slice, clamps numbers, falls back per field and na
   const bad = reposConfig.normalise({ enabled: 'yes' }, reposConfig.defaults, warn)
   expect(bad.enabled).toBe(true)
   expect(warns).toHaveLength(5)
+})
+
+// Issue #344: the shield of the own repo joins the spellings too. Without it, a nested repo named by a symlink alias of the
+// root (`/private/work/sdk` for `/work/sdk`) would be cached as foreign.
+async function shieldVisit(mapped: boolean): Promise<string[]> {
+  const t = setup()
+  gitAt(t.w, { '/private/work/sdk': SDK_REMOTE, '/work': 'git@github.com:acme/web.git' })
+  if (mapped) t.w.realPaths['/work'] = '/private/work'
+  await t.call('Read', { file_path: '/private/work/sdk/a.ts' })
+  await drain(t.w)
+  return t.keys()
+}
+
+test('a path under the root named by a symlink alias is shielded as the own repo', async () => {
+  expect(await shieldVisit(true)).toEqual([])
+})
+
+test('a path that no link joins to the root is a foreign repo', async () => {
+  expect(await shieldVisit(false)).toEqual(['remote:github.com/acme/sdk'])
 })

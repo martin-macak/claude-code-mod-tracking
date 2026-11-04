@@ -6,7 +6,8 @@
 
 import type { RepoRef } from '../../core/interfaces/ports'
 import { isRecord } from '../../core/lib/json'
-import { findByPath, type GitWorktree } from '../../core/lib/porcelain'
+import { findByPath, type GitWorktree, normPath, type Real } from '../../core/lib/porcelain'
+import type { RealResolver } from '../../core/lib/real'
 import { rootsOf } from './rows'
 import type { RepoRecord, RepoRoot } from './types'
 
@@ -65,11 +66,15 @@ export function pollTargets(rows: readonly RepoRecord[], cap: number): { targets
  * null: git could not say, so every toplevel counts as gone. Not every worktree of the repo: the worktree of another
  * session proves nothing.
  */
-export function provenBranches(roots: readonly RepoRoot[], list: readonly GitWorktree[] | null): string[] {
+export function provenBranches(
+  roots: readonly RepoRoot[],
+  list: readonly GitWorktree[] | null,
+  real: Real = normPath,
+): string[] {
   const live: string[] = []
   const gone: string[] = []
   for (const root of roots) {
-    const rec = list ? findByPath(list, root.path) : undefined
+    const rec = list ? findByPath(list, root.path, undefined, real) : undefined
     if (rec && rec.prunable === undefined) {
       if (rec.branch !== undefined && !rec.bare) live.push(rec.branch)
     } else if (root.branch !== undefined) gone.push(root.branch)
@@ -141,13 +146,16 @@ export interface PollGit {
  * call. A repo that git cannot read has no list this round and fails nothing: the poll keeps the branch each toplevel had
  * at the last visit, and what the last good poll (`previous`, the fact as published) proved in that repo. Else a checkout
  * that the person made outside the session would drop its PR from the lane for a round, and bring it back at the next. A repo
- * that git reads takes nothing from `previous`: its list is the proof.
+ * that git reads takes nothing from `previous`: its list is the proof. `resolve` gives the canonical-path lookup for the roots
+ * and the listed paths, so a root named by a symlink alias (`/var/...`) finds the record that git lists (`/private/var/...`,
+ * issue #344).
  */
 export async function pollForeign(
   git: PollGit,
   rows: readonly RepoRecord[],
   cap: number,
   previous: readonly ForeignBranches[] = [],
+  resolve?: RealResolver['resolve'],
 ): Promise<BranchesOfRepos> {
   const { targets, overflow } = pollTargets(rows, cap)
   const found: ForeignBranches[] = []
@@ -159,10 +167,13 @@ export async function pollForeign(
     } catch {
       // git could not run: this repo has no list this round, the others go on
     }
+    let real: Real = normPath
+    // The resolver never rejects: a path that cannot be resolved matches as spelled.
+    if (list !== null && resolve) real = await resolve([...t.roots.map(r => r.path), ...list.map(w => w.path)])
     const branches =
       list === null
         ? [...provenBranches(t.roots, null), ...(previous.find(p => repoOrder(p) === repoOrder(t.ref))?.branches ?? [])]
-        : provenBranches(t.roots, list)
+        : provenBranches(t.roots, list, real)
     found.push({ ...t.ref, branches })
   }
   return factOf(found, overflow)
