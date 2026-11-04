@@ -46,9 +46,9 @@ The first mod is [`artifact-tracking`](plugins/artifact-tracking/README.md). A s
 
 ## Demo
 
-![artifact-tracking in a Claude Code session: a prompt mentions GitHub items and a link, the band counts them, /track shows their live state, Tab moves the selection, the 1 key moves the selected row to the top, and r refreshes](docs/assets/demo.gif)
+![artifact-tracking in a Claude Code session: a prompt mentions GitHub items and a link, the band counts them, /track shows their live state, Tab moves the selection, the 1 key moves the selected row to the top, Enter opens the detail view of the row, g switches to the tree view, and r refreshes](docs/assets/demo.gif)
 
-You mention two PRs, an issue and a docs link in a normal prompt. The mod finds them, and the band above the prompt counts them, with `(1 ✗)` for the PR with failing checks. `/track` opens a pane with the live title, state and checks of each item from `gh`, and a section for web links. Tab moves the selection (a `>` and a highlight), and `1` marks the selected row high: the row moves to the top with `▲` and stays selected. Press `r` to refresh every item and `Esc` to close the pane.
+You mention two PRs, an issue and a docs link in a normal prompt. The mod finds them, and the band above the prompt counts them, with `(1 ✗)` for the PR with failing checks. `/track` opens a pane with the live title, state and checks of each item from `gh`, and a section for web links. Tab moves the selection (a `>` and a highlight), and `1` marks the selected row high: the row moves to the top with `▲` and stays selected. `Enter` opens the detail view of the row: every field, whole. `Esc` goes back to the list. `g` takes the next view, and three presses reach the tree view, where each source is a group row that folds. One more `g` goes back to the list. Press `r` to refresh every item and `Esc` to close the pane.
 
 The GIF comes from a Gherkin scenario, [`e2e/features/tracking.feature`](e2e/features/tracking.feature), that `make demo` records. The same scenario runs as a test under `make e2e-safe`.
 
