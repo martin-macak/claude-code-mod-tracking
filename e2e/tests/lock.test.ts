@@ -8,6 +8,7 @@ import { after, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { acquireLock, claimRun, describeHolder, LockBusyError, makeClaimer } from '../support/lock.ts'
 import type { FaultPlan } from './fixtures/lock-faults.ts'
+import { parkableSleep } from './fixtures/parkable-sleep.ts'
 
 // Every folder that a test made. They go when the file is done, so a run leaves nothing behind.
 const made: string[] = []
@@ -617,18 +618,23 @@ test('a second run waits for a live first run and takes the lock when that run h
     })
     const notes: string[] = []
     // The poll is a few ms of real time. The test counts the polls, and never reads a clock.
+    // The claim parks in its first sleep until the test lets it go on. A claim that is in the middle of a try when the first run
+    // lets go of the lock (the try fails on the lock, the lock goes, the next link succeeds) takes the lock in that instant, and
+    // then it never polls again: the wait for the polls below hangs. Parked, the claim is in no try, so the release cannot meet it.
     let polls = 0
     let pollsWanted = Number.POSITIVE_INFINITY
     let enough!: () => void
     const polled = new Promise<void>(resolve => {
       enough = resolve
     })
+    const parker = parkableSleep()
+    parker.hold()
     const claim = claimRun(lockDir, runDir, {
       waitMs: 60_000,
       pollMs: 5,
       sleep: async ms => {
         if (++polls >= pollsWanted) enough()
-        await new Promise(resolve => setTimeout(resolve, ms))
+        await parker.sleep(ms)
       },
       onWait: note => {
         notes.push(note)
@@ -645,8 +651,10 @@ test('a second run waits for a live first run and takes the lock when that run h
     assert.match(notes[0]!, new RegExp(`pid ${firstPid}\\b`))
     // The first run lets go of the lock and lives on: the instant between two scenarios of a run. The claim
     // polls on and takes nothing, because that run still lives.
+    await parker.whenParked
     await first.release()
     pollsWanted = polls + 3
+    parker.resume()
     await polled
     assert.equal(settled, false)
     assert.equal(existsSync(join(lockDir, '.lock')), false)
