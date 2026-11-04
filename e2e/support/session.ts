@@ -102,17 +102,42 @@ export function countLines(file: string): number {
 /** Default gap between two Enter retries (issue #269). */
 const RETRY_MS = 2000
 
+/** Issue #379. Enter keys after the first one, while the text stays in the box, before the harness gives up with "prompt not sent". */
+const MAX_RESENDS = 8
+
+/** Issue #379. A paste placeholder at the start of the box: "[Pasted text #1 +3 lines]". */
+const PASTE_PLACEHOLDER = /^\[Pasted text #\d+/
+
+/** Issue #379. Length of the prompt slice that must survive intact in the box for a fuzzy match. */
+const WINDOW = 16
+
 type PromptIo = { capture: () => string; key: (name: string) => void }
 
 /**
  * Issue #269. Gives a `tick()` for one typed prompt. While `text` sits in the box, `tick` presses Enter again, at most once per
- * `retryMs`, and gives true. Once the box is empty, it gives false and presses no key.
+ * `retryMs`, and gives true. Once the box is empty, it gives false and presses no key. After `maxResends` extra Enter keys with the
+ * text still in the box, it throws "prompt not sent" (issue #379).
  */
-function makeResender(io: PromptIo, text: string, retryMs: number = RETRY_MS): () => boolean {
+function makeResender(
+  io: PromptIo,
+  text: string,
+  retryMs: number = RETRY_MS,
+  maxResends: number = MAX_RESENDS,
+): () => boolean {
   let pressedAt = Date.now()
+  let resends = 0
   return () => {
-    if (!promptInBox(io.capture(), text)) return false
+    const screen = io.capture()
+    if (!promptInBox(screen, text)) {
+      // On purpose (issue #379): an empty box starts a new send. `waitForTurnEnd` has its own turn timeout.
+      resends = 0
+      return false
+    }
     if (Date.now() - pressedAt >= retryMs) {
+      // Issue #379: fail fast and clearly, not after the 120 s turn timeout.
+      if (resends >= maxResends)
+        throw new Error(`prompt not sent: the text still sits in the box after ${resends} more Enter keys\n${screen}`)
+      resends++
       io.key('Enter')
       pressedAt = Date.now()
     }
@@ -291,12 +316,44 @@ export async function launchClaude(ctx: LaunchContext, prompt?: string): Promise
 }
 
 /**
- * True while `text` sits in the prompt box: the last line that starts with the prompt marker holds the start of it. After a
- * send, that line is the empty box, and the text is only in the history above it.
+ * The text of the prompt box: the last line that starts with the prompt marker, and its continuation lines (two leading
+ * spaces) up to the next rule. After a send, that is the empty box, and the text is only in the history above it.
+ */
+function boxText(screen: string): string | undefined {
+  const lines = screen.split('\n')
+  const start = lines.findLastIndex(line => /^❯\s/.test(line))
+  if (start < 0) return undefined
+  const rest: string[] = []
+  for (const line of lines.slice(start + 1)) {
+    if (!line.startsWith('  ')) break
+    rest.push(line)
+  }
+  return [(lines[start] ?? '').replace(/^❯\s/, ''), ...rest].join('\n')
+}
+
+function isSubsequence(small: string, big: string): boolean {
+  let at = 0
+  for (const ch of big) if (ch === small[at]) at++
+  return at === small.length
+}
+
+/**
+ * True while `text` sits in the prompt box (see `boxText`). Issue #379. An unsent prompt of any length shows as one of: its
+ * start; a paste placeholder; wrapped lines; or text with a key lost on the way ("ote https://..."). An empty box has none of
+ * these. A match ignores white space, so a wrap cannot break it.
  */
 export function promptInBox(screen: string, text: string): boolean {
-  const last = screen.split('\n').findLast(line => /^❯\s/.test(line))
-  return text.trim() !== '' && last?.replace(/^❯\s/, '').startsWith(text.slice(0, 24)) === true
+  if (text.trim() === '') return false
+  const box = boxText(screen)
+  if (box === undefined) return false
+  if (PASTE_PLACEHOLDER.test(box)) return true
+  if (box.startsWith(text.slice(0, 24))) return true
+  const inBox = box.replace(/\s+/g, '')
+  const want = text.replace(/\s+/g, '')
+  if (inBox === '') return false
+  const size = Math.min(WINDOW, want.length)
+  for (let at = 0; at + size <= want.length; at++) if (inBox.includes(want.slice(at, at + size))) return true
+  return want.length >= WINDOW && inBox.length * 2 >= want.length && isSubsequence(inBox, want)
 }
 
 /**
@@ -309,7 +366,10 @@ export async function submitPrompt(
   text: string,
   opts: { timeoutMs: number; intervalMs?: number; retryMs?: number },
 ): Promise<void> {
-  const tick = makeResender(io, text, opts.retryMs)
+  const retryMs = opts.retryMs ?? RETRY_MS
+  // Issue #379. The give-up must come before the wait times out, so the clear "prompt not sent" error wins.
+  const maxResends = Math.max(1, Math.min(MAX_RESENDS, Math.floor(opts.timeoutMs / retryMs) - 2))
+  const tick = makeResender(io, text, retryMs, maxResends)
   io.key('Enter')
   await waitUntil(() => (tick() ? undefined : true), {
     timeoutMs: opts.timeoutMs,
