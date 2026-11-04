@@ -13,6 +13,7 @@ import {
   MONITOR_EXPIRY_NOTICE,
   MONITOR_STREAM_ENDED_NOTICE,
 } from './fixtures/notices'
+import { expectLinear } from './fixtures/scaling'
 
 test('parseBashProcesses tracks background Bash and Monitor-style task ids', () => {
   const rows = parseBashProcesses(
@@ -2994,4 +2995,26 @@ test('parseBashProcesses reads a reserved word behind a redirection as the comma
   expect(composeProject('time >/dev/null ! docker compose up -d')).toBeUndefined()
   expect(detachedOf('time ! >/dev/null sleep 10 &').map(r => r.name)).toEqual(['sleep 10'])
   expect(composeProject('time ! >/dev/null docker compose up -d')).toBe('app')
+})
+
+// Each job of a deep nest looks up the folder and the variables of its subshell (issue #380). A walk from the scope up to the
+// top, which cut the id at each level, cost O(depth^2) per job, so a nest of n subshells cost O(n^3): 4 times the input took
+// 63 times as long. The scopes form a tree now, and a lookup remembers its answer, so the parse grows with the input. A
+// command that sets a folder or a variable in such a nest still reads each scope id once, and the ids grow with the depth
+// (`Segment.scope`): that part is the size of the output. The next test covers the folder and variable case.
+test('parseBashProcesses stays near linear on nested subshells that each hold a job and a pipe', async () => {
+  await expectLinear({
+    make: k => '( a & a | '.repeat(250 * k) + 'a' + ' )'.repeat(250 * k),
+    run: text => parseBashProcesses(text, {}, { at: 0 }),
+    label: 'nested subshells that each hold a job and a pipe',
+  })
+})
+
+// The same nest after a `cd` and an assignment at the top: each job reads its folder and variable through the memo.
+test('parseBashProcesses stays near linear when each nested job reads a folder and a variable', async () => {
+  await expectLinear({
+    make: k => 'cd /x; D=/y; ' + '( sleep $D/a & a | '.repeat(250 * k) + 'a' + ' )'.repeat(250 * k),
+    run: text => parseBashProcesses(text, {}, { at: 0 }),
+    label: 'nested subshells that read a folder and a variable',
+  })
 })
