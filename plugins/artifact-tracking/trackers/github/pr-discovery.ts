@@ -310,6 +310,13 @@ const whyOf = (f: Failed): PartialWhy =>
       ? 'paused'
       : 'error'
 
+/** The outcome of a host whose breaker is open: nothing ran. A foreign host names itself, the home breaker shows in the tool status. */
+const pausedOf = (host: string, homeHost: string): Failed => ({
+  ok: false,
+  skipped: 'paused',
+  ...(lower(host) !== homeHost ? { host } : {}),
+})
+
 /** A failed `graphql` outcome of `host` as a skip or an error. An `auth` skip names the host that refused, a `paused` one a foreign host. */
 function failedOutcome(
   gh: DiscoveryTool,
@@ -320,7 +327,7 @@ function failedOutcome(
   switch (out.kind) {
     case 'blocked':
       // The home breaker shows in the tool status. A foreign host has its own, so the note names it (issue #222).
-      return { ok: false, skipped: 'paused', ...(lower(host) !== homeHost ? { host } : {}) }
+      return pausedOf(host, homeHost)
     case 'auth':
       return { ok: false, skipped: 'not-logged-in', host }
     case 'no-gh':
@@ -470,11 +477,21 @@ export async function discoverPrs(
       if (g.session) defaultName = defaultBranch // every branch is the known default branch: nothing to ask
       continue
     }
+    // A foreign host at rest (its breaker is open) is not called: nothing ran, so it reads `paused`, not `failed` (issue #325).
+    // A denial stays "not logged in" (the login is known), and the home host is gated by `canCall` above.
+    if (
+      lower(g.repo.host) !== homeHost &&
+      gh.isHostAuthed(g.repo.host) !== false &&
+      !gh.canCallHost(g.repo.host, now)
+    ) {
+      holdGroup(g, pausedOf(g.repo.host, homeHost))
+      continue
+    }
     // A host that only a created PR names has not passed the repo lookup: ask once (cached), do not take "not asked" for "no".
     // Only the home host goes unchecked: github.com when the session repo is there, or none is known. A refused query of
     // any other host would be the end of its own PRs, never of the others (see `GhTool.setHome`).
     if ((lower(g.repo.host) !== 'github.com' || homeHost !== 'github.com') && !(await gh.checkHost(g.repo.host))) {
-      // Only a denial is "not logged in". A check that could not run (a timeout, a network error, a host at rest) leaves
+      // Only a denial is "not logged in". A check that could not run (a timeout or a network error) leaves
       // the login unknown: the step reports that, and the pane does not tell the person to log in.
       const skip: Failed =
         gh.isHostAuthed(g.repo.host) === false

@@ -88,6 +88,7 @@ function fakeGh(o: {
   return {
     isAvailable: true,
     canCall: () => true,
+    canCallHost: () => true,
     status: () => ({ name: 'gh', available: true, loggedIn: true, breaker: 'closed', lastError: 'timeout' }),
     checkHost: async () => true,
     isHostAuthed: () => true,
