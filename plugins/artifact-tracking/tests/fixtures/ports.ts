@@ -23,6 +23,7 @@ import type { PreviewState } from '../../core/interfaces/preview'
 import type { FilterState, HiddenState, QuickState } from '../../core/interfaces/view'
 import { emptyLedger } from '../../core/lib/turns'
 import type { ToolStatus, TurnLedger } from '../../types'
+import { NOT_A_REPO_STDERR } from './git'
 
 /**
  * The start logs one line that names the version: `version: <v>`, then ` (<why>)` when it is `unknown`. The fake keeps
@@ -206,7 +207,12 @@ export function fakePorts(o: FakeOpts = {}): FakeWorld {
       world.calls.push([...argv])
       world.callOpts.push(opts)
       const custom = await world.run?.([...argv])
-      return custom ?? { exitCode: 1, stdout: '', stderr: `unexpected call: ${argv.join(' ')}` }
+      if (custom) return custom
+      // An unscripted `git rev-parse` reads as git's own verdict for a folder in no repo. Any other non-zero exit is a fault (#327).
+      if (argv[0] === 'git' && argv[1] === '-C' && argv[3] === 'rev-parse') {
+        return { exitCode: 128, stdout: '', stderr: NOT_A_REPO_STDERR }
+      }
+      return { exitCode: 1, stdout: '', stderr: `unexpected call: ${argv.join(' ')}` }
     },
     fs: {
       async read(path) {

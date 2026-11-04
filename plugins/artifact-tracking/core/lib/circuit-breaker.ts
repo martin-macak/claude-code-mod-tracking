@@ -52,6 +52,11 @@ export class CircuitBreaker implements Breaker {
     this.probing = false
   }
 
+  /** The call ended with no verdict on git's health: free a half-open probe and change nothing else. */
+  release(): void {
+    this.probing = false
+  }
+
   failure(now: number): void {
     this.probing = false
     if (this.st === 'half-open') {

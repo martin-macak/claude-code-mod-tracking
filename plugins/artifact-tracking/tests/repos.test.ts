@@ -1655,6 +1655,134 @@ test('a root that git could not probe keeps the shield: a nested repo adds no vi
   expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toBeNull()
 })
 
+const LOCKED: RunResult = { exitCode: 128, stdout: '', stderr: 'fatal: Unable to create index.lock: File exists' }
+
+test('a git fault on the root (lock, permission) is no answer: a nested repo adds no visit (#327)', async () => {
+  const t = new RepoTracker({ run: nestedRunner([], LOCKED), now: () => 1, rootPath: '/work' })
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toBeNull()
+})
+
+test('a git fault on the root is asked again, not cached as "not a repo" (#327)', async () => {
+  let rootAnswer: RunResult = LOCKED
+  const run = async (argv: readonly string[]): Promise<RunResult> =>
+    argv[3] === 'rev-parse' && argv[2] === '/work' ? rootAnswer : nestedRunner([], NOT_ROOT)(argv)
+  const t = new RepoTracker({ run, now: () => 1, rootPath: '/work' })
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toBeNull()
+  rootAnswer = NOT_ROOT
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toMatchObject({ key: 'remote:github.com/acme/sdk' })
+})
+
+test('a lock first and a repo later: the root identity is learned and a nested repo stays own (#327)', async () => {
+  let rootAnswer: RunResult = LOCKED
+  const run = async (argv: readonly string[]): Promise<RunResult> =>
+    argv[3] === 'rev-parse' && argv[2] === '/work' ? rootAnswer : nestedRunner([], NOT_ROOT)(argv)
+  const t = new RepoTracker({ run, now: () => 1, rootPath: '/work' })
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toBeNull()
+  rootAnswer = ok('/work\n/work/.git\n')
+  // The root is a repo now, so a nested path is under it. The old code cached the lock as "no repo" and made a visit.
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toBeNull()
+})
+
+test('a lock on a visited folder gives no visit, is not cached and the breaker stays closed (#327)', async () => {
+  let sdk: RunResult = LOCKED
+  let calls = 0
+  const run = async (argv: readonly string[]): Promise<RunResult> => {
+    if (argv[3] === 'rev-parse' && argv[2] === '/work/sdk') {
+      calls++
+      return sdk
+    }
+    return nestedRunner([], NOT_ROOT)(argv)
+  }
+  const t = new RepoTracker({ run, now: () => 1, rootPath: '/work', breakerLimits: { threshold: 2, openMs: 60_000 } })
+  for (let i = 0; i < 5; i++) expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toBeNull()
+  expect(calls).toBe(5)
+  sdk = ok('/work/sdk\n/work/sdk/.git\n')
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toMatchObject({ key: 'remote:github.com/acme/sdk' })
+})
+
+test('a lock in the fallback rev-parse of an old git is a fault too (#327)', async () => {
+  let second: RunResult = LOCKED
+  const run = async (argv: readonly string[]): Promise<RunResult> => {
+    if (argv[3] === 'rev-parse' && argv[2] === '/work/sdk') {
+      // git older than 2.31 echoes --path-format, so the first answer is not absolute.
+      if (argv.includes('--path-format=absolute')) return ok('--path-format=absolute\n/work/sdk\n.git\n')
+      return second
+    }
+    return nestedRunner([], NOT_ROOT)(argv)
+  }
+  const t = new RepoTracker({ run, now: () => 1, rootPath: '/work' })
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toBeNull()
+  second = ok('/work/sdk\n/work/sdk/.git\n')
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toMatchObject({ key: 'remote:github.com/acme/sdk' })
+})
+
+test('commonDir: a lock on the toplevel does not reset the breaker failure count (#327)', async () => {
+  let mode: 'throw' | 'lock' | 'ok' = 'throw'
+  const run = async (argv: readonly string[]): Promise<RunResult> => {
+    if (argv[3] !== 'rev-parse') return ok('')
+    if (mode === 'throw') throw new Error('spawn failed')
+    return mode === 'lock' ? LOCKED : ok('/work/sdk\n/work/sdk/.git\n')
+  }
+  const t = new RepoTracker({ run, now: () => 1, rootPath: '/work', breakerLimits: { threshold: 2, openMs: 60_000 } })
+  const roots = [{ path: '/work/sdk' }] as Parameters<RepoTracker['commonDir']>[1]
+  const ask = () => t.commonDir('remote:github.com/acme/sdk', roots)
+  expect(await ask()).toBeNull() // throw: failure 1
+  mode = 'lock'
+  expect(await ask()).toBeNull() // lock: no verdict, the failure count stays
+  mode = 'throw'
+  expect(await ask()).toBeNull() // throw: failure 2 opens the breaker
+  mode = 'ok'
+  expect(await ask()).toBeNull() // open
+})
+
+test('commonDir: a lock on the half-open probe frees the probe, so a recovered git is asked (#327)', async () => {
+  let mode: 'throw' | 'lock' | 'ok' = 'throw'
+  let now = 1
+  const run = async (argv: readonly string[]): Promise<RunResult> => {
+    if (argv[3] !== 'rev-parse') return ok('')
+    if (mode === 'throw') throw new Error('spawn failed')
+    return mode === 'lock' ? LOCKED : ok('/work/sdk\n/work/sdk/.git\n')
+  }
+  const t = new RepoTracker({ run, now: () => now, rootPath: '/work', breakerLimits: { threshold: 1, openMs: 1000 } })
+  const roots = [{ path: '/work/sdk' }] as Parameters<RepoTracker['commonDir']>[1]
+  const ask = () => t.commonDir('remote:github.com/acme/sdk', roots)
+  expect(await ask()).toBeNull() // throw: the breaker opens
+  now += 1000
+  mode = 'lock'
+  expect(await ask()).toBeNull() // the half-open probe meets a lock
+  mode = 'ok'
+  expect(await ask()).toBe('/work/sdk/.git') // the probe was freed: git is asked again
+})
+
+test('a lock on the half-open probe of a visit frees the probe (#327)', async () => {
+  let mode: 'throw' | 'lock' | 'ok' = 'throw'
+  let now = 1
+  const run = async (argv: readonly string[]): Promise<RunResult> => {
+    if (argv[3] === 'rev-parse' && argv[2] === '/work/sdk') {
+      if (mode === 'throw') throw new Error('spawn failed')
+      return mode === 'lock' ? LOCKED : ok('/work/sdk\n/work/sdk/.git\n')
+    }
+    return nestedRunner([], NOT_ROOT)(argv)
+  }
+  const t = new RepoTracker({ run, now: () => now, rootPath: '/work', breakerLimits: { threshold: 1, openMs: 1000 } })
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toBeNull() // throw: the breaker opens
+  now += 1000
+  mode = 'lock'
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toBeNull()
+  mode = 'ok'
+  expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toMatchObject({ key: 'remote:github.com/acme/sdk' })
+})
+
+test('commonDir: a lock on the toplevel is asked again and not cached (#327)', async () => {
+  let top: RunResult = LOCKED
+  const run = async (argv: readonly string[]): Promise<RunResult> => (argv[3] === 'rev-parse' ? top : ok(''))
+  const t = new RepoTracker({ run, now: () => 1, rootPath: '/work' })
+  const roots = [{ path: '/work/sdk' }] as Parameters<RepoTracker['commonDir']>[1]
+  expect(await t.commonDir('remote:github.com/acme/sdk', roots)).toBeNull()
+  top = ok('/work/sdk\n/work/sdk/.git\n')
+  expect(await t.commonDir('remote:github.com/acme/sdk', roots)).toBe('/work/sdk/.git')
+})
+
 test('a non-git root: a nested repo is a visit', async () => {
   const t = new RepoTracker({ run: nestedRunner([], NOT_ROOT), now: () => 1, rootPath: '/work' })
   expect(await t.resolvePath('/work/sdk/a.ts', 'main')).toMatchObject({ key: 'remote:github.com/acme/sdk' })

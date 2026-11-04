@@ -975,6 +975,7 @@ test('graphql: the last error of another host goes with a good reply and with a 
     allows: () => allow.value,
     success: () => {},
     failure: () => {},
+    release: () => {},
     reset: () => {},
   }
   let reject = true
