@@ -72,7 +72,7 @@ function prsNote(ctx: Ctx, lane: LaneState, prs: readonly GitHubRecord[]): strin
   if (p.error) head = `gh · discovery failed: ${p.error}`
   else if (p.skipped === 'no-repo') head = 'no GitHub repo'
   else if (p.skipped === 'no-gh') head = 'gh not installed'
-  else if (p.skipped === 'not-logged-in' || p.skipped === 'host-not-authed') head = `gh not logged in to ${host}`
+  else if (p.skipped === 'not-logged-in' || p.skipped === 'host-not-authed') head = `${host} not logged in · gh`
   // a foreign host has its own breaker
   else if (p.skipped === 'paused' && p.host) head = `gh · ${p.host} paused`
   else head = `gh · ${toolNote(ctx.tools.gh ?? IDLE, ctx.now, lastRefreshOf(prs))}`

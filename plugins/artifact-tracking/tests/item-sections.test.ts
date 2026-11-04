@@ -453,8 +453,8 @@ test('the Pull requests note: the tool, a failed discovery, a skip, and the bran
   for (const [skipped, text] of [
     ['no-repo', 'no GitHub repo'],
     ['no-gh', 'gh not installed'],
-    ['not-logged-in', 'gh not logged in to github.com'],
-    ['host-not-authed', 'gh not logged in to github.com'],
+    ['not-logged-in', 'github.com not logged in · gh'],
+    ['host-not-authed', 'github.com not logged in · gh'],
     ['paused', 'gh · refreshed 2m ago'],
   ] as const) {
     t.w.state.set('github', { prs: { ok: false, skipped } })
@@ -470,11 +470,11 @@ test('the Pull requests note names the host of the session repo: a GHE host, git
   for (const skipped of ['not-logged-in', 'host-not-authed'] as const) {
     t.w.state.set('github', { prs: { ok: false, skipped } })
     t.m.facts.publish('session.repo', { host: 'ghe.corp.example', owner: 'acme', repo: 'web' })
-    expect(await note(), skipped).toBe('gh not logged in to ghe.corp.example')
+    expect(await note(), skipped).toBe('ghe.corp.example not logged in · gh')
     t.m.facts.publish('session.repo', { host: 'github.com', owner: 'acme', repo: 'web' })
-    expect(await note(), skipped).toBe('gh not logged in to github.com')
+    expect(await note(), skipped).toBe('github.com not logged in · gh')
     t.m.facts.publish('session.repo', undefined) // no session repo is known: the default host
-    expect(await note(), skipped).toBe('gh not logged in to github.com')
+    expect(await note(), skipped).toBe('github.com not logged in · gh')
   }
 })
 
@@ -487,11 +487,11 @@ test('the Pull requests note names the host the lane could not use, not the host
   t.m.facts.publish('auto.prs', [{ host: 'ghe.corp', owner: 'team', repo: 'svc', number: 3 }])
   for (const skipped of ['not-logged-in', 'host-not-authed'] as const) {
     t.w.state.set('github', { prs: { ok: false, skipped, host: 'ghe.corp' } })
-    expect(await note(), skipped).toBe('gh not logged in to ghe.corp')
+    expect(await note(), skipped).toBe('ghe.corp not logged in · gh')
   }
   // A skip with no host of its own keeps the host of the session repo.
   t.w.state.set('github', { prs: { ok: false, skipped: 'not-logged-in' } })
-  expect(await note()).toBe('gh not logged in to github.com')
+  expect(await note()).toBe('github.com not logged in · gh')
 })
 
 test('Pull requests the lane found on the same first sighting sort by number', async () => {
@@ -570,7 +570,7 @@ test('the Pull requests section: a branch proven in another repo counts like a t
   const foreign = { host: 'github.com', owner: 'Acme-Org', repo: 'Foreign-Repo', branches: ['feat/one'] }
   t.m.facts.publish('repos.branches', { repos: [foreign], overflow: 0 })
   expect(await has()).toBe(true) // the lane asked for a branch of the other repo
-  expect(await note()).toBe('gh not logged in to github.com')
+  expect(await note()).toBe('github.com not logged in · gh')
   t.w.state.set('github', { prs: { ok: false, error: 'boom' } })
   expect(await has()).toBe(true)
   t.m.facts.publish('repos.branches', { repos: [foreign], overflow: 2 })

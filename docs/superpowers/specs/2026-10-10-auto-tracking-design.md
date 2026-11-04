@@ -1022,7 +1022,7 @@ Section notes:
 | --- | --- |
 | Worktrees | `git · <n> live · <m> removed · checked <age> ago` (age from `ctx.autoCheckedAt`, else `snapshot.at`, A22), or `git failed: <first line>` |
 | Agents | `<n> running · <m> ended` (zero parts left out); when `agentList.ok` is false, add `· agent list failed` |
-| Pull requests | `gh · <toolNote>`, plus `+<k> branches not polled` on overflow and `+<k> not tracked` over `maxAutoItems`; skip reasons: `no GitHub repo`, `gh not logged in to <host>`; errors: `discovery failed: <error>` (A21) |
+| Pull requests | `gh · <toolNote>`, plus `+<k> branches not polled` on overflow and `+<k> not tracked` over `maxAutoItems`; skip reasons: `no GitHub repo`, `<host> not logged in · gh` (the host leads, so the docked clip keeps it; issue #324); errors: `discovery failed: <error>` (A21) |
 
 ### 10.4 Band
 
