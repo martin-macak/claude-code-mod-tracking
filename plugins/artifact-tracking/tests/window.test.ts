@@ -121,3 +121,34 @@ test('a leading section with no row stays out of the window while the focus need
   // Focus on the fourth row from a window at the top: the top window holds it, nothing moves.
   expect(plan(units, 9, 0, 3, [0, 2])).toEqual({ from: 0, to: 4 })
 })
+
+// Issue #374: Enter on an "N more" row puts the ring back on the selected row (issue #109, m2), and the window shows the first new
+// row with it. `also` is that row: it shows when it fits with the focus, and the focus wins when both do not fit.
+const also = (units: readonly Unit[], budget: number, anchor: number, focus: number | undefined, extra: number) =>
+  planWindow({ units, chrome: [2], budget, anchor, focus, also: extra })
+
+test('also: a unit below the window pushes it down by the least, with the focus still in view', () => {
+  // budget 9 over 12 rows: 6 rows from the top, or 5 with a hint on each side. The focus is the last row shown, the next unit
+  // is the first new row.
+  expect(plan(rows(12), 9, 0, 5)).toEqual({ from: 0, to: 6 })
+  expect(also(rows(12), 9, 0, 5, 6)).toEqual({ from: 2, to: 7 })
+  // The case of the issue: 7 rows, the window ends at the selected row 4. Row 5 comes in, and row 6 takes the place of the hint below.
+  expect(plan(rows(7), 8, 0, 4)).toEqual({ from: 0, to: 5 })
+  expect(also(rows(7), 8, 0, 4, 5)).toEqual({ from: 2, to: 7 })
+})
+
+test('also: a unit in the window, above it or past the list changes nothing', () => {
+  expect(also(rows(12), 9, 0, 1, 3)).toEqual({ from: 0, to: 6 })
+  expect(also(rows(12), 9, 6, 8, 2)).toEqual(plan(rows(12), 9, 6, 8))
+  expect(also(rows(12), 9, 0, 1, 12)).toEqual({ from: 0, to: 6 })
+  expect(also(rows(5), 7, 0, 1, 4)).toBeUndefined() // a tree that fits draws no window
+})
+
+test('also: the focus wins when the unit and the focus do not fit together', () => {
+  expect(also(rows(12), 9, 0, 0, 8)).toEqual({ from: 0, to: 6 })
+})
+
+test('also with no focus: the unit comes into view', () => {
+  const w = also(rows(12), 9, 0, undefined, 8)
+  expect(w !== undefined && w.from <= 8 && 8 < w.to).toBe(true)
+})

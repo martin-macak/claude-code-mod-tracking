@@ -93,6 +93,11 @@ export class PaneSession {
   private top = 0
   /** The "N more" Button the ring sits on, until the ring lands on a row: its row must show. */
   private onMore: string | undefined
+  /**
+   * The last row of a group before Enter on its "N more" row (issue #374): the window shows the row after it too, the first new row.
+   * It holds until the person moves the ring or the window, so a drawing that runs before the new rows land does not lose it.
+   */
+  private reveal: string | undefined
   /** The rows of the last drawing that held any. The help view and an empty pane draw none (issue #49). */
   private rows: readonly DrawnRow[] = []
   /**
@@ -262,6 +267,7 @@ export class PaneSession {
       // draw after the last close left a place behind.
       top: selected === null ? 0 : this.top,
       ...(this.onMore === undefined ? {} : { onMore: this.onMore }),
+      ...(this.reveal === undefined || selected === null ? {} : { reveal: this.reveal }),
       expanded: layoutView.expanded,
       marked: new Set(markedDrawn.map(r => r.id)),
       shown: layoutView.shown,
@@ -375,6 +381,7 @@ export class PaneSession {
     try {
       this.refocus.noted(element, origin)
       if (element === undefined) return
+      if (origin === 'person') this.reveal = undefined // the person moves the ring: the window follows it alone
       // The person's ring on a row or an "N more" row ends the question. A footer Button does not: Tab to `x` and Enter answers it.
       if (origin === 'person' && (MORE_KEY.test(element) || this.drawn?.handles.has(element) === true)) this.disarm(p)
       if (MORE_KEY.test(element)) {
@@ -412,7 +419,10 @@ export class PaneSession {
    */
   async scrolled(p: Ports, m: PaneHost, by: number): Promise<boolean> {
     const moves = Number.isFinite(by) && by !== 0
-    if (moves) this.disarm(p)
+    if (moves) {
+      this.disarm(p)
+      this.reveal = undefined
+    }
     // The preview is one tall tree that the engine scrolls: there is no row to select and no window to move (issue #57, L2).
     if ((await p.state.preview.get()) !== null) return false
     const rows = this.drawn?.rows ?? []
@@ -441,6 +451,7 @@ export class PaneSession {
     this.refocus.clear()
     this.top = 0
     this.onMore = undefined
+    this.reveal = undefined
     this.setPlan(undefined)
     this.question.clear()
     for (const write of [
@@ -586,12 +597,15 @@ export class PaneSession {
         })
       },
       // The new rows come in before the N more Button, so the position the ring sits on now holds the stop of the first new
-      // row, a row the window may hide. The ring goes back onto the selected row, as after `x`, and the window follows it.
+      // row, a row the window may hide. The ring goes back onto the selected row, as after `x`, and the window follows it and
+      // shows the first new row when both fit (issue #374).
       // The press asks for the keys too, once: `Refocus.to` asks before it asks for the ring, and with no row selected there
       // is no ring request, so the press asks alone.
       more: groupId => {
         this.disarm(p)
         const press = this.pressOf(keysInPrompt)
+        // The new rows come in after the last row the group drew, and the window shows the first of them (issue #374).
+        this.reveal = this.rows.filter(r => r.group === groupId && r.head !== true).at(-1)?.id
         this.work.detach(p, 'more', async () => {
           await p.state.shown.update(groupId, n => n + m.config.global().ui.sectionRows)
           this.onMore = undefined
@@ -631,6 +645,7 @@ export class PaneSession {
     if (!press.still()) return
     // The key of an "N more" Button is its group index, and the groups of the next view are other groups.
     this.onMore = undefined
+    this.reveal = undefined
     p.ui.invalidate()
     const expanded = new Set(await p.state.expanded.get())
     const groups = await paneGroups(p, m, { selected, expanded })

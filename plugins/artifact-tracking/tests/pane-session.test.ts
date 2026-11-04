@@ -398,6 +398,110 @@ test('Enter on an "N more" Button puts the ring on the selected row, and the win
   expect(shownIds(await t.draw(96, SHORT))).toContain('w4')
 })
 
+test('Enter on an "N more" Button brings the first new row into view with the selected row (issue #374)', async () => {
+  // The inline pane at 100x40: the window ends at the selected row, the last one before the N more Button. The ring goes back
+  // onto that row (#109 m2), and the window must still show the first row that Enter added, else the press seems to do nothing.
+  // Seven rows and a cap of 5, in the body of 11 rows of that pane, as in the scenario of pane.feature.
+  const t = setup(webs(...Array.from({ length: 7 }, (_, i) => `w${i}`)), {
+    file: { global: { ui: { sectionRows: 5 } } },
+  })
+  const INLINE_BODY = SHORT - 1
+  t.w.state.set('selected', 'w4')
+  const first = await t.draw(96, INLINE_BODY)
+  expect(shownIds(first)).toEqual(['w0', 'w1', 'w2', 'w3', 'w4'])
+  await t.session.focused(t.w.ports, 'm0')
+  press(buttonOf(await t.draw(96, INLINE_BODY), 'm0'))
+  await t.session.idle()
+  expect(t.w.ui.focused).toEqual(['r4']) // the ring goes back onto the selected row (#109 m2)
+  await t.session.focused(t.w.ports, 'r4', 'plugin') // the ring lands there, as the refocus asked
+  const shown = shownIds(await t.draw(96, INLINE_BODY))
+  expect(shown).toContain('w4')
+  expect(shown).toContain('w5')
+  // The window keeps that place on the next drawing: the ring on w4 is inside it.
+  expect(shownIds(await t.draw(96, INLINE_BODY))).toEqual(shown)
+  // The person's Tab onto the new row moves on from there as before.
+  await t.session.focused(t.w.ports, 'r5', 'person')
+  expect(t.selected()).toBe('w5')
+  expect(shownIds(await t.draw(96, INLINE_BODY))).toEqual(shown)
+})
+
+/** The pane at 100x40 after Enter on "N more": 7 rows, a cap of 5, w4 selected, the window moved to show w5 with w4 (issue #374). */
+async function afterMore() {
+  const t = setup(webs(...Array.from({ length: 7 }, (_, i) => `w${i}`)), {
+    file: { global: { ui: { sectionRows: 5 } } },
+  })
+  const body = SHORT - 1
+  t.w.state.set('selected', 'w4')
+  await t.draw(96, body)
+  await t.session.focused(t.w.ports, 'm0')
+  press(buttonOf(await t.draw(96, body), 'm0'))
+  await t.session.idle()
+  await t.session.focused(t.w.ports, 'r4', 'plugin')
+  const shown = shownIds(await t.draw(96, body))
+  expect(shown).toContain('w4')
+  expect(shown).toContain('w5')
+  return { t, body, shown }
+}
+
+/**
+ * With the window on w0..w4 and the new row w5 still revealed, a ring on w2 would push the window down to the end, w2..w6. The
+ * person moved the ring or the window, so the window stays: it must not follow the old reveal.
+ */
+async function windowStays(t: Awaited<ReturnType<typeof afterMore>>['t'], body: number, away: () => Promise<void>) {
+  await away()
+  t.w.state.set('selected', 'w0')
+  const top = shownIds(await t.draw(96, body))
+  expect(top).toContain('w0')
+  expect(top).not.toContain('w5')
+  t.w.state.set('selected', 'w2')
+  expect(shownIds(await t.draw(96, body))).toEqual(top)
+}
+
+test('the person moving the ring ends the reveal of the new row (issue #374)', async () => {
+  const { t, body } = await afterMore()
+  await windowStays(t, body, () => t.session.focused(t.w.ports, 'r0', 'person'))
+})
+
+test('a scroll ends the reveal of the new row (issue #374)', async () => {
+  const { t, body } = await afterMore()
+  await windowStays(t, body, async () => void (await t.session.scrolled(t.w.ports, t.m, -11)))
+})
+
+test('the next view ends the reveal of the new row (issue #374)', async () => {
+  const { t, body } = await afterMore()
+  await windowStays(t, body, async () => {
+    for (let i = 0; i < 4; i++) await t.pressKey('view') // the cycle of four views ends on the list again, where the group still shows 10 rows
+  })
+})
+
+// Not a check of the group filter: the drawn rows hold no row of another group after the pressed group's last row, so the
+// filter cannot be seen through the drawing. The test pins the result in a pane of two groups.
+test('Enter on the N more row of a group in a two-group pane shows w5 with w4 (issue #374)', async () => {
+  const t = setup([], { file: { global: { ui: { sectionRows: 5 } } } })
+  t.host.sections = [
+    section('web', webs(...Array.from({ length: 7 }, (_, i) => `w${i}`))),
+    section(
+      'other',
+      Array.from({ length: 6 }, (_, i) => web(`x${i}`)),
+    ),
+  ]
+  const body = 17 // the window shows both groups
+  t.w.state.set('selected', 'w4')
+  await t.draw(96, body)
+  await t.session.focused(t.w.ports, 'm0')
+  press(buttonOf(await t.draw(96, body), 'm0'))
+  await t.session.idle()
+  await t.session.focused(t.w.ports, 'r4', 'plugin')
+  const shown = shownIds(await t.draw(96, body))
+  expect(shown).toContain('w4')
+  expect(shown).toContain('w5')
+})
+
+test('closing the pane ends the reveal of the new row (issue #374)', async () => {
+  const { t, body } = await afterMore()
+  await windowStays(t, body, () => t.session.closed(t.w.ports))
+})
+
 test('Enter on an "N more" Button with no row selected asks for no ring', async () => {
   const t = setup(TWELVE, { file: { global: { ui: { sectionRows: 5 } } } })
   press(buttonOf(await t.draw(96, SHORT), 'm0'))

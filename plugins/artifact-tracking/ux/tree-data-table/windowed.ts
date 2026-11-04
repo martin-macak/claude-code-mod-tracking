@@ -132,7 +132,18 @@ export function windowOf(d: Draw, laid: readonly LaidGroup[]): Windowed | undefi
             (u.kind === 'row' && s.rows[u.at]?.row.id === view.selected) ||
             (u.kind === 'head' && hasStop(s.head) && s.head.row.id === view.selected),
         )
-  const plan = planWindow({ units, chrome, budget, anchor: view.top ?? 0, focus: focus < 0 ? undefined : focus })
+  // The first row that Enter on an "N more" row added (issue #374): the unit after the last row the group had, in the same group.
+  const last = view.reveal === undefined ? -1 : find((u, s) => u.kind === 'row' && s.rows[u.at]?.row.id === view.reveal)
+  const next = last < 0 ? undefined : units[last + 1]
+  const also = next?.kind === 'row' && next.section === units[last]?.section ? last + 1 : undefined
+  const plan = planWindow({
+    units,
+    chrome,
+    budget,
+    anchor: view.top ?? 0,
+    focus: focus < 0 ? undefined : focus,
+    ...(also === undefined ? {} : { also }),
+  })
   return plan === undefined ? undefined : { plan, units, solved }
 }
 

@@ -71,6 +71,11 @@ export interface TableView {
   readonly top?: number
   /** The key of the "N more" Button the ring sits on (`m0`, …). Its group row must show, so the window follows it. */
   readonly onMore?: string
+  /**
+   * The last row of a group before Enter on its "N more" row (issue #374). The row after it is the first row that Enter added:
+   * the window shows it too, when it fits with the selected row. The selected row wins when both do not fit.
+   */
+  readonly reveal?: string
   readonly expanded: ReadonlySet<string>
   /** The ids of the rows the person marked (`m`, issue #138). A drawn row of the set shows `*` in its control column. */
   readonly marked?: ReadonlySet<string>
