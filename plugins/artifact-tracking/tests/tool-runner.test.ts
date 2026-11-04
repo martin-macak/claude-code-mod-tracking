@@ -198,6 +198,7 @@ test('a breaker factory in the deps builds the breaker of each handle from the m
     allows: () => true,
     success: () => void seen.push('success'),
     failure: now => void seen.push(`failure@${now}`),
+    release: () => {},
     reset: () => void seen.push('reset'),
   }
   const w = fakePorts({ now: 7 })

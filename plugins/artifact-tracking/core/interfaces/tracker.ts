@@ -153,6 +153,8 @@ export interface Breaker {
   allows(now: number): boolean
   success(): void
   failure(now: number): void
+  /** The call ended with no verdict on health: free a half-open probe, leave the failure count alone. */
+  release(): void
   /** Manual refresh: an open breaker becomes half-open at once. */
   reset(): void
 }

@@ -45,6 +45,12 @@ async function call(run: Runner, argv: readonly string[], timeoutMs: number): Pr
 
 const MAX_WALK = 4
 const MISSING = /cannot change to/i
+/** git's own verdict for a folder outside every repo. Any other non-zero exit (lock, permission, timeout) is a fault. */
+const NOT_A_REPO = /not a git repository/i
+
+/** The verdict of a non-zero `rev-parse`: a missing path, git's own "no repo here" (null), or a fault (#327). */
+const verdict = (r: RunResult): 'missing' | null | 'fault' =>
+  MISSING.test(r.stderr) ? 'missing' : NOT_A_REPO.test(r.stderr) ? null : 'fault'
 
 /** A repo, null (not a repo) or 'missing' (the path does not exist or is a file). */
 type Answer = ResolvedRepo | null | 'missing'
@@ -231,9 +237,10 @@ export class RepoTracker {
   /**
    * One `rev-parse` gives the toplevel and the git common dir. git older than 2.31 does not know `--path-format`: it
    * echoes the option, so a line is not absolute. Then ask again without it and join a relative common dir onto `dir`.
-   * Throws when git cannot run.
+   * Throws when git cannot run. Returns 'fault' for a non-zero exit that is neither a missing path nor "not a git
+   * repository" (a lock, a permission error, a timeout): it is no verdict.
    */
-  private async probeDir(dir: string): Promise<{ top: string; common: string } | null | 'missing'> {
+  private async probeDir(dir: string): Promise<{ top: string; common: string } | null | 'missing' | 'fault'> {
     const base = ['git', '-C', dir, 'rev-parse']
     const lines = (r: RunResult) =>
       r.stdout
@@ -241,12 +248,12 @@ export class RepoTracker {
         .map(x => x.trim())
         .filter(x => x !== '')
     let r = await this.git([...base, '--path-format=absolute', '--show-toplevel', '--git-common-dir'])
-    if (r.exitCode !== 0) return MISSING.test(r.stderr) ? 'missing' : null
+    if (r.exitCode !== 0) return verdict(r)
     let out = lines(r)
     if (out.length === 0) return null
     if (!out.every(isAbsolute)) {
       r = await this.git([...base, '--show-toplevel', '--git-common-dir'])
-      if (r.exitCode !== 0) return MISSING.test(r.stderr) ? 'missing' : null
+      if (r.exitCode !== 0) return verdict(r)
       out = lines(r)
       if (!out[0] || !isAbsolute(out[0])) return null
     }
@@ -256,8 +263,9 @@ export class RepoTracker {
   }
 
   /**
-   * An answer, or 'retry' (no answer: the breaker is open or git could not run). Only an execution fault counts
-   * against the breaker. A non-zero exit is a normal answer. The record is raw: the caller decides what is "own".
+   * An answer, or 'retry' (no answer: the breaker is open, git could not run, or git exited non-zero with something
+   * other than "not a git repository": a lock, a permission error or a timeout). Only a throw counts against the
+   * breaker: it is global, so one locked folder must not open it for every healthy repo. The record is raw: the caller decides what is "own".
    */
   private async resolveDir(dir: string, env: Env | undefined): Promise<Answer | 'retry'> {
     const now = this.d.now()
@@ -272,6 +280,11 @@ export class RepoTracker {
     if (probe === 'missing') {
       this.breaker.success()
       return 'missing'
+    }
+    // A fault (lock, permission, timeout) is no verdict: ask again later, cache nothing, keep what is known (#327).
+    if (probe === 'fault') {
+      this.breaker.release() // a half-open probe must not stay taken
+      return 'retry'
     }
     // rev-parse gives a real path, so this also catches a symlink into a noise directory.
     if (!probe || isNoisePath(probe.top, env)) {
@@ -333,6 +346,11 @@ export class RepoTracker {
       probe = await this.probeDir(top)
     } catch {
       this.breaker.failure(now)
+      return null
+    }
+    // A fault is no verdict and no sign that git works: it must not reset the failure count (as in `resolveDir`).
+    if (probe === 'fault') {
+      this.breaker.release()
       return null
     }
     this.breaker.success()

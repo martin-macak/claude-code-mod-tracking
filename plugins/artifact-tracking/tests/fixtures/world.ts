@@ -418,6 +418,8 @@ export function world(on: On, opts: Opts = {}) {
     if (tool === 'gh' && a1 === 'repo') return { value: res(opts.repoView ?? ghFx.REPO_RESOLUTION_STDOUT) }
     if (tool === 'acli' && a2 === 'auth') return { value: res(ACLI_AUTH) }
     if (tool === 'acli' && a3 === 'view') return { value: res(withKey(acliFx.TASK_VIEW_JSON, a4!)) }
+    // An unscripted `git -C <dir> rev-parse` reads as git's own verdict for a folder in no repo (#327).
+    if (tool === 'git' && a1 === '-C' && argv[3] === 'rev-parse') return { value: res('', 128, NOT_A_REPO_STDERR) }
     return { value: res('', 1, 'unexpected call: ' + argv.join(' ')) }
   })
 
