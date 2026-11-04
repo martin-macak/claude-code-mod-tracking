@@ -356,6 +356,11 @@ export function promptInBox(screen: string, text: string): boolean {
   return want.length >= WINDOW && inBox.length * 2 >= want.length && isSubsequence(inBox, want)
 }
 
+/** Issue #379. Resends before the "prompt not sent" give-up. It leaves two retry windows of the timeout, so the give-up wins. */
+export function resendBudget(timeoutMs: number, retryMs: number): number {
+  return Math.max(1, Math.min(MAX_RESENDS, Math.floor(timeoutMs / retryMs) - 2))
+}
+
 /**
  * Presses Enter on a typed prompt, and again while the text stays in the box (issue #269). A session that shows the prompt marker
  * can still drop the first Enter, and no turn starts then. The wait ends on the event that the box empties, never on a turn.
@@ -368,7 +373,7 @@ export async function submitPrompt(
 ): Promise<void> {
   const retryMs = opts.retryMs ?? RETRY_MS
   // Issue #379. The give-up must come before the wait times out, so the clear "prompt not sent" error wins.
-  const maxResends = Math.max(1, Math.min(MAX_RESENDS, Math.floor(opts.timeoutMs / retryMs) - 2))
+  const maxResends = resendBudget(opts.timeoutMs, retryMs)
   const tick = makeResender(io, text, retryMs, maxResends)
   io.key('Enter')
   await waitUntil(() => (tick() ? undefined : true), {

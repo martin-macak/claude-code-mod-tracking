@@ -18,6 +18,7 @@ import {
   prepareClone,
   promptInBox,
   READY_MARKERS,
+  resendBudget,
   shellQuote,
   stopHookSettings,
   submitPrompt,
@@ -587,7 +588,7 @@ test('submitPrompt keeps the screen in the error when capture is a method that r
     key(): void {}
   }
   await assert.rejects(
-    submitPrompt(new Pane(), 'Note https://a.example/1 for later.', { timeoutMs: 30, intervalMs: 1, retryMs: 5 }),
+    submitPrompt(new Pane(), 'Note https://a.example/1 for later.', { timeoutMs: 5000, intervalMs: 1, retryMs: 5 }),
     /prompt not sent[\s\S]*Claude Code/,
   )
 })
@@ -595,7 +596,7 @@ test('submitPrompt keeps the screen in the error when capture is a method that r
 test('submitPrompt fails with the screen when the text never leaves the box', async () => {
   await assert.rejects(
     submitPrompt({ capture: () => STUCK_SCREEN, key: () => {} }, 'Note https://a.example/1 for later.', {
-      timeoutMs: 30,
+      timeoutMs: 5000,
       intervalMs: 1,
       retryMs: 5,
     }),
@@ -667,15 +668,15 @@ test('waitForTurnEnd fails fast with "prompt not sent" when a long prompt stays 
   }
 })
 
-test('submitPrompt gives "prompt not sent", not the generic timeout, when the timeout is near the resend budget', async () => {
-  await assert.rejects(
-    submitPrompt({ capture: () => PLACEHOLDER_SCREEN, key: () => {} }, LONG_PROMPT, {
-      timeoutMs: 40,
-      intervalMs: 1,
-      retryMs: 5,
-    }),
-    /prompt not sent/,
-  )
+// No wall-clock race: the budget leaves two retry windows before the timeout, so the give-up comes first (issue #379).
+test('resendBudget keeps the resend budget two retry windows inside the timeout', () => {
+  assert.equal(resendBudget(40, 5), 6)
+  assert.equal(resendBudget(30, 5), 4)
+  assert.equal(resendBudget(5000, 5), 8, 'a long timeout is capped at 8 resends')
+  assert.equal(resendBudget(10, 5), 1, 'a short timeout still allows one resend')
+  assert.equal(resendBudget(1000, 60000), 1)
+  // Resends plus the first Enter fit in the timeout, so the last window ends before it.
+  assert.ok((resendBudget(40, 5) + 1) * 5 <= 40)
 })
 
 test('submitPrompt fails fast with "prompt not sent" when Enter never sends the prompt', async () => {
