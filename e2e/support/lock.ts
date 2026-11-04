@@ -19,7 +19,8 @@ function isAlive(pid: number): boolean {
 // - `guard`: a live run holds the takeover guard of a stale lock, or the rounds ran out.
 // - `self`: this process holds the lock, so waiting could not end.
 // - `timeout`: the claim waited for the bound and gave up.
-export type LockBusyKind = 'lock' | 'guard' | 'self' | 'timeout'
+// - `gone`: the lock file was there, then gone while the try ran. Only a try that asks for it (`reportGone`) gets this.
+export type LockBusyKind = 'lock' | 'guard' | 'self' | 'timeout' | 'gone'
 
 // The lock is busy. A `lock` or a `guard` is the failure of `acquireLock` that waiting can cure. `pid` is the run
 // that holds it, when the file names one.
@@ -130,6 +131,16 @@ export type AcquireOptions = {
   guardWaitMs?: number
   /** Waits for the guard. The default blocks this thread. A test passes a fake, so no real time passes. */
   pause?: (ms: number) => void
+  /**
+   * A lock that went away between the refused link and the read of its pid: throw a `gone` answer, and do not link again at
+   * once. The caller then decides whether the run that let go still lives (issue #365). Default: try again.
+   */
+  reportGone?: boolean
+  /**
+   * @internal Test seam, no production caller. Called when a link was refused, before the pid is read. A test releases the
+   * lock here, to make the race happen.
+   */
+  onContended?: () => void
 }
 
 // One run at a time. The pid goes to a private file first. A hard link then publishes that file as
@@ -143,7 +154,7 @@ export type AcquireOptions = {
 // A run that finds the guard held by a live run waits for it and then reads the lock again.
 export function acquireLock(
   dir: string,
-  { guardWaitMs = GUARD_WAIT_MS, pause = sleepSync }: AcquireOptions = {},
+  { guardWaitMs = GUARD_WAIT_MS, pause = sleepSync, reportGone = false, onContended }: AcquireOptions = {},
 ): () => void {
   mkdirSync(dir, { recursive: true })
   const file = join(dir, '.lock')
@@ -162,9 +173,16 @@ export function acquireLock(
         if (code(err) !== 'EEXIST') throw err
       }
       waitedFor = undefined
+      onContended?.()
       const pid = readPid(file)
       if (live(pid)) throw new LockBusyError(`lock: another demo run (pid ${pid}) holds ${file}`, pid)
-      if (pid === undefined) continue // another run removed it first
+      if (pid === undefined) {
+        // Another run removed it first. A caller that knows the holder checks first whether that run lives on (issue #365).
+        // `waitForLock` is the only production caller, and it always passes `reportGone`; the default keeps the old retry.
+        if (reportGone)
+          throw new LockBusyError(`lock: ${file} went away while this run tried to take it`, undefined, 'gone')
+        continue
+      }
       if (!publishGuard(guard)) {
         const holders = guardHolders(guard)
         if (holders === undefined) continue // the guard went away: try again
@@ -217,6 +235,8 @@ export type ClaimOptions = {
   isLive?: (pid: number) => boolean
   /** Waits for the takeover guard of a live run, as `acquireLock` does by default. A test passes a fake. */
   guardPause?: (ms: number) => void
+  /** Called when a link of a try was refused, before the pid is read. A test releases the lock here. */
+  onContended?: () => void
   /** Gets each note about the wait. The default writes to stderr: the formatter owns stdout. */
   onWait?: (note: string) => void
   /** The place of this run in the queue of runs (lock-queue.ts). Absent: no queue, and the lock goes to whoever tries first. */
@@ -255,6 +275,8 @@ function seconds(ms: number): string {
 // scenario and takes it again a moment later. An older checkout does not wait, so a claim that took the lock
 // in that moment would fail the next scenario of that run at once (issue #143). So once a busy answer has named
 // the holder of the lock file, the claim tries again only when no such run lives or the file is there again.
+// A try that meets the release of that run in the middle (link refused, lock gone) does not link again at once: it answers `gone`,
+// and the next round applies the same rule (issue #365).
 // The claim of a run that lives on without the lock, and does not take it again, gives up after the bound.
 //
 // With a queue (issue #177) the runs get the lock in the order they came. Each try asks the queue first. A run that is not
@@ -273,6 +295,7 @@ async function waitForLock(dir: string, opts: ClaimOptions): Promise<() => void>
     describeHolder: who = describeHolder,
     isLive = isAlive,
     guardPause,
+    onContended,
     queue,
   } = opts
   const say = opts.onWait ?? ((note: string) => void process.stderr.write(`${note}\n`))
@@ -319,9 +342,18 @@ async function waitForLock(dir: string, opts: ClaimOptions): Promise<() => void>
         return acquireLock(dir, {
           guardWaitMs: Math.min(GUARD_WAIT_MS, left),
           ...(guardPause === undefined ? {} : { pause: guardPause }),
+          ...(onContended === undefined ? {} : { onContended }),
+          reportGone: true,
         })
       } catch (err) {
         if (!(err instanceof LockBusyError)) throw err
+        // The lock went while the try ran. The try says nothing about who held it, so `holder` stays as the last busy answer
+        // left it. The next round checks the gap: a live run without a ticket keeps the claim waiting, a dead one or none frees it
+        // (issue #365).
+        // The next round links again at once unless a live holder with no ticket is known (`between`). The first try has no
+        // holder, so it links again: safe, because no older holder is known. The loop ends because each round needs a real
+        // link refusal and then either wins, names a live holder, or waits.
+        if (err.kind === 'gone') continue
         // A run that waits for its own pid would wait for ever: a scenario of this process kept the lock.
         if (err.kind === 'lock' && err.pid === process.pid) throw selfHolds(file)
         if (waitMs <= 0) throw err

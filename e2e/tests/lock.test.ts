@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline'
 import { after, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { acquireLock, claimRun, describeHolder, LockBusyError, makeClaimer } from '../support/lock.ts'
+import { RunQueue } from '../support/lock-queue.ts'
 import type { FaultPlan } from './fixtures/lock-faults.ts'
 import { parkableSleep } from './fixtures/parkable-sleep.ts'
 
@@ -318,6 +319,181 @@ test('claimRun does not take the lock in the instant between two scenarios of a 
   assert.deepEqual(wait.sleeps, Array(6).fill(5000))
   assert.equal(readFileSync(lock, 'utf8'), String(process.pid))
   assert.equal(notes.length, 1, 'the same run is named once, in the gap as well')
+  release()
+})
+
+// A try can straddle the release of a run that lives on: the link fails because the lock is there, the run lets go, and the
+// next link would succeed. The claim must not take the lock then (issue #365): it waits for the process, as in the gap.
+test('claimRun does not take the lock when the run lets go in the middle of a try (issue #365)', async () => {
+  const dir = tempDir()
+  const run = fakeRun(dir)
+  const lock = join(dir, '.lock')
+  let armed = false
+  let straddled = 0
+  const wait = fakeWait(n => {
+    if (n === 1) armed = true // The next try finds the lock held. The run lets go inside that try.
+    if (n === 2 || n === 3) assert.equal(existsSync(lock), false, `the claim took the lock in the gap, at wait ${n}`)
+    if (n === 4) run.live = false
+  })
+  const release = await claimRun(dir, join(tempDir(), 'demo'), {
+    waitMs: HALF_HOUR,
+    pollMs: 5000,
+    now: wait.now,
+    sleep: wait.sleep,
+    isLive: run.isLive,
+    describeHolder: pid => `fake run ${pid}`,
+    onWait: () => {},
+    onContended: () => {
+      if (!armed) return
+      armed = false
+      straddled++
+      rmSync(lock)
+    },
+  })
+  assert.equal(straddled, 1)
+  // It waited through the gap, and took the lock only when the run had ended.
+  assert.deepEqual(wait.sleeps, Array(4).fill(5000))
+  assert.equal(readFileSync(lock, 'utf8'), String(process.pid))
+  release()
+})
+
+// Guards the fix: a dead holder must not make the claim wait.
+test('claimRun takes the lock when the run dies in the middle of a try', async () => {
+  const dir = tempDir()
+  const run = fakeRun(dir)
+  const lock = join(dir, '.lock')
+  let armed = false
+  const wait = fakeWait(n => {
+    if (n === 1) armed = true
+  })
+  const release = await claimRun(dir, join(tempDir(), 'demo'), {
+    waitMs: HALF_HOUR,
+    pollMs: 5000,
+    now: wait.now,
+    sleep: wait.sleep,
+    isLive: run.isLive,
+    describeHolder: pid => `fake run ${pid}`,
+    onWait: () => {},
+    onContended: () => {
+      if (!armed) return
+      armed = false
+      rmSync(lock)
+      run.live = false // The run released and ended: nothing is left to protect.
+    },
+  })
+  assert.deepEqual(wait.sleeps, [5000])
+  assert.equal(readFileSync(lock, 'utf8'), String(process.pid))
+  release()
+})
+
+// Guards the fix: with no named holder there is nothing to wait for, so the claim must not wait.
+test('claimRun with no named holder takes a lock that goes in the middle of a try', async () => {
+  const dir = tempDir()
+  holdLock(dir, 999999)
+  const lock = join(dir, '.lock')
+  const release = await claimRun(dir, join(tempDir(), 'demo'), {
+    waitMs: HALF_HOUR,
+    pollMs: 5000,
+    onWait: () => {},
+    onContended: () => rmSync(lock, { force: true }),
+  })
+  assert.equal(readFileSync(lock, 'utf8'), String(process.pid))
+  release()
+})
+
+// A holder with a ticket is ordered by the queue, not by its process: when it lets go in the middle of a try, the claim that
+// is first takes the free lock at once, with no wait for the process (issue #365 review, m1).
+test('claimRun takes the lock when a holder with a ticket lets go in the middle of a try', async () => {
+  const dir = tempDir()
+  const queueDir = join(dir, '.lock.queue')
+  const mine = new RunQueue(dir, { pid: 2, exitHook: false })
+  mine.join() // 00000001-2
+  mkdirSync(queueDir, { recursive: true })
+  writeFileSync(join(queueDir, `00000001-${process.ppid}`), '') // The holder has a ticket.
+  holdLock(dir, process.ppid)
+  const lock = join(dir, '.lock')
+  const isLive = (pid: number) => pid === process.ppid || pid === process.pid
+  let armed = false
+  const wait = fakeWait(n => {
+    if (n === 1) armed = true
+  })
+  const release = await claimRun(dir, join(tempDir(), 'demo'), {
+    waitMs: HALF_HOUR,
+    pollMs: 5000,
+    now: wait.now,
+    sleep: wait.sleep,
+    isLive,
+    describeHolder: pid => `fake run ${pid}`,
+    onWait: () => {},
+    queue: mine,
+    onContended: () => {
+      if (!armed) return
+      armed = false
+      rmSync(lock) // The holder lets go in the try, and its process lives on.
+    },
+  })
+  assert.deepEqual(wait.sleeps, [5000], 'no wait for the process of a holder with a ticket')
+  assert.equal(readFileSync(lock, 'utf8'), String(process.pid))
+  release()
+})
+
+// A run that is behind in the queue does not take the lock the holder frees: the run ahead does.
+test('claimRun behind another run does not take the lock when a holder with no ticket lets go', async () => {
+  const dir = tempDir()
+  const queueDir = join(dir, '.lock.queue')
+  mkdirSync(queueDir, { recursive: true })
+  const ahead = join(queueDir, '00000001-1')
+  writeFileSync(ahead, '') // A live run is first.
+  const mine = new RunQueue(dir, { pid: 2, exitHook: false })
+  mine.join() // 00000002-2
+  const run = fakeRun(dir) // The holder has no ticket.
+  const lock = join(dir, '.lock')
+  const isLive = (pid: number) => pid === 1 || pid === process.pid || run.isLive()
+  const wait = fakeWait(n => {
+    if (n === 1) rmSync(lock)
+    if (n === 2) assert.equal(existsSync(lock), false, 'the claim took the lock while a run was ahead')
+    if (n === 3) rmSync(ahead) // The run ahead ends without the lock.
+  })
+  const release = await claimRun(dir, join(tempDir(), 'demo'), {
+    waitMs: HALF_HOUR,
+    pollMs: 5000,
+    now: wait.now,
+    sleep: wait.sleep,
+    isLive,
+    describeHolder: pid => `fake run ${pid}`,
+    onWait: () => {},
+    queue: mine,
+  })
+  assert.equal(readFileSync(lock, 'utf8'), String(process.pid))
+  assert.ok(wait.sleeps.length >= 3)
+  release()
+})
+
+// The two answers of `acquireLock` for a lock that goes between the refused link and the read of its pid.
+test('acquireLock with reportGone throws a gone answer when the lock goes in the middle of a try', () => {
+  const dir = tempDir()
+  holdLock(dir, process.ppid)
+  const lock = join(dir, '.lock')
+  assert.throws(
+    () => acquireLock(dir, { reportGone: true, onContended: () => rmSync(lock) }),
+    (err: unknown) => err instanceof LockBusyError && err.kind === 'gone',
+  )
+  assert.equal(existsSync(lock), false)
+})
+
+test('acquireLock without reportGone still takes a lock that goes in the middle of a try', () => {
+  const dir = tempDir()
+  holdLock(dir, process.ppid)
+  const lock = join(dir, '.lock')
+  let armed = true
+  const release = acquireLock(dir, {
+    onContended: () => {
+      if (!armed) return
+      armed = false
+      rmSync(lock)
+    },
+  })
+  assert.equal(readFileSync(lock, 'utf8'), String(process.pid))
   release()
 })
 
