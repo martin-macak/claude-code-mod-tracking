@@ -3011,10 +3011,46 @@ test('parseBashProcesses stays near linear on nested subshells that each hold a 
 })
 
 // The same nest after a `cd` and an assignment at the top: each job reads its folder and variable through the memo.
+// The timed check cannot tell the memo from no memo here: the parse itself dominates the walk up the scopes, and the ratio
+// stays under the limit at any size the test can afford. So the next test counts the scope lookups (`Map.has` calls)
+// and checks the count, which does not depend on the machine.
 test('parseBashProcesses stays near linear when each nested job reads a folder and a variable', async () => {
   await expectLinear({
     make: k => 'cd /x; D=/y; ' + '( sleep $D/a & a | '.repeat(250 * k) + 'a' + ' )'.repeat(250 * k),
     run: text => parseBashProcesses(text, {}, { at: 0 }),
     label: 'nested subshells that read a folder and a variable',
   })
+})
+
+// The lookup memo of the scope table (issue #380): a lookup that walked up the scopes writes its answer on every scope it
+// crossed, so the next job below finds it one step up. Without the write each job walks to the top: n jobs cost n^2/2
+// `has` calls. The count is deterministic, so this proves the memo where the timed check above cannot. Linear is 4 times
+// the count for 4 times the input, quadratic 16 times.
+test('parseBashProcesses reads a folder and a variable from the memo, not by a walk to the top', () => {
+  const has = Map.prototype.has
+  // The kit freezes the built-ins, so it cannot count: it skips this test, as `expectLinear` reads no time there. The node
+  // run (`make coverage`) holds the count.
+  const countHas = (text: string): number | undefined => {
+    let n = 0
+    try {
+      Map.prototype.has = function (this: Map<unknown, unknown>, key: unknown) {
+        n++
+        return has.call(this, key)
+      }
+    } catch {
+      return undefined
+    }
+    try {
+      parseBashProcesses(text, {}, { at: 0 })
+    } finally {
+      Map.prototype.has = has
+    }
+    return n
+  }
+  const nest = (k: number) => 'cd /x; D=/y; ' + '( sleep $D/a & a | '.repeat(100 * k) + 'a' + ' )'.repeat(100 * k)
+  const small = countHas(nest(1))
+  const large = countHas(nest(4))
+  if (small === undefined || large === undefined) return
+  expect(small).toBeGreaterThan(0)
+  expect(large).toBeLessThan(6 * small)
 })
