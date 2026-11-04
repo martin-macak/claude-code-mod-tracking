@@ -1,33 +1,39 @@
-// A KB page links to a line of repo code with `#L<n>`. A PR that adds or removes lines above the linked line moves the line
+// A committed markdown doc (KB page, spec, README, plugin doc) links to a line of repo code with `#L<n>`. A PR that adds or removes lines above the linked line moves the line
 // and the link opens the wrong one (issue #250). Nothing else fails then, so this test does. Each such link carries a title
 // with a short excerpt of the line it names: `[shell.ts:199](../shell.ts#L199 "export function splitShell")`. The excerpt
 // must start the first linked line (after its indent) and must not contain `"`. It must come from the line that the
 // sentence relies on, and it must name that line alone in its file. The end line of a range is not checked, only that it
 // is inside the file. A link whose target is missing fails. A link into `plugins/example/` is a doc example and is skipped. A PR that moves the line fails here until the link is remapped. A link into
 // `sources/` points at a vendored file that does not change, so it is out of scope. A link with no `#L` is out of scope too.
-// Run: node --experimental-transform-types --no-warnings --import ./scripts/coverage/loader.mjs --test scripts/contracts/kb-code-links.test.mjs
+// Run: node --experimental-transform-types --no-warnings --import ./scripts/coverage/loader.mjs --test scripts/contracts/doc-code-links.test.mjs
 import assert from 'node:assert/strict'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
-const KB = path.join(ROOT, 'docs/knowledge-base')
+const FAKE_DOC_DIR = path.join(ROOT, 'docs/knowledge-base')
 
-/** Every `.md` file under `dir`, without the vendored `sources/` folders. */
-function pages(dir) {
-  return readdirSync(dir, { withFileTypes: true }).flatMap(e => {
-    const full = path.join(dir, e.name)
-    if (e.isDirectory()) return e.name === 'sources' || e.name === 'node_modules' ? [] : pages(full)
-    return e.name.endsWith('.md') ? [full] : []
-  })
+/** True for a doc that the hooks skip: vendored KB `sources/` folders, `.agents/`, `.claude/`. Keep in step with the `exclude` pattern in .pre-commit-config.yaml. */
+export function isExcludedDoc(rel) {
+  return /^docs\/knowledge-base\/[^/]+\/sources\//.test(rel) || rel.startsWith('.agents/') || rel.startsWith('.claude/')
+}
+
+/** Every committed (tracked or staged) `.md` file of the repo, minus the vendored ones. */
+function pages() {
+  const out = execFileSync('git', ['ls-files', '-z', '--', '*.md'], { cwd: ROOT, encoding: 'utf8' })
+  return out
+    .split('\0')
+    .filter(f => f && !isExcludedDoc(f) && existsSync(path.join(ROOT, f)))
+    .map(f => path.join(ROOT, f))
 }
 
 // `[text](relative/path#L12 "excerpt")` or `#L12-L20`. The title is optional here: a missing one is a finding.
 const LINK = /\[([^\]]*)\]\(((?:\.\.?\/)[^)\s#]*)#L(\d+)(?:-L(\d+))?(?:\s+"([^"]*)")?\)/g
 
-/** True for a file under `plugins/example/`, the placeholder plugin of the docs. The real examples under the KB are checked. */
+/** True for a file under `plugins/example/`, the placeholder plugin of the docs. Real plugins in any doc are checked. */
 function isDocExample(target) {
   return target.startsWith(`${path.join(ROOT, 'plugins/example')}${path.sep}`)
 }
@@ -85,21 +91,21 @@ export function checkLink(l, lines) {
   return found
 }
 
-const links = pages(KB).flatMap(f => codeLinks(f, readFileSync(f, 'utf8')))
+const links = pages().flatMap(f => codeLinks(f, readFileSync(f, 'utf8')))
 const linesOf = target => (existsSync(target) ? readFileSync(target, 'utf8').split('\n') : undefined)
 const PROCESS_PAGE = 'docs/knowledge-base/claude-code-mods/concepts/process-tracking-signals.md'
 
-test('the scan finds every KB link into repo code', () => {
+test('the scan finds every doc link into repo code', () => {
   assert.ok(
     links.some(l => l.at.startsWith(`${PROCESS_PAGE}:`)),
     `the scan found no link in ${PROCESS_PAGE}, which links repo code`,
   )
-  const anchors = pages(KB).reduce((n, f) => n + anchorCount(f, readFileSync(f, 'utf8')), 0)
+  const anchors = pages().reduce((n, f) => n + anchorCount(f, readFileSync(f, 'utf8')), 0)
   assert.equal(links.length, anchors, 'a link with an #L anchor is not parsed: check its title, it must not contain "')
 })
 
 test('the anchor count sees a link that the scan cannot parse', () => {
-  const file = path.join(KB, 'x.md')
+  const file = path.join(FAKE_DOC_DIR, 'x.md')
   const odd = '[a](../../plugins/artifact-tracking/shell.ts#L1 "say "hi"")'
   assert.equal(codeLinks(file, odd).length, 0)
   assert.equal(anchorCount(file, odd), 1)
@@ -109,7 +115,7 @@ test('the anchor count sees a link that the scan cannot parse', () => {
   assert.equal(anchorCount(file, ok), codeLinks(file, ok).length)
 })
 
-test('every KB link into repo code names the line it points to by an excerpt in its title', () => {
+test('every doc link into repo code names the line it points to by an excerpt in its title', () => {
   const bad = links.flatMap(l => checkLink(l, linesOf(l.target)))
   assert.deepEqual(bad, [], 'remap the link to the line that holds the excerpt')
 })
@@ -123,6 +129,26 @@ test('a line number in the link text equals the line of the anchor', () => {
       bad.push(`${l.at} [${l.text}] names L${l.from}${l.to ? `-L${l.to}` : ''}`)
   }
   assert.deepEqual(bad, [])
+})
+
+test('the doc scan covers docs outside the KB and skips vendored paths', () => {
+  const docs = pages().map(f => path.relative(ROOT, f))
+  assert.ok(docs.includes('docs/AGENTS.md'), 'a doc outside the KB is scanned')
+  assert.ok(
+    docs.some(f => !f.startsWith('docs/knowledge-base/')),
+    'a doc outside the KB is scanned',
+  )
+  assert.ok(
+    docs.some(f => f.startsWith('plugins/') && f.endsWith('.md')),
+    'plugin docs are scanned',
+  )
+  assert.ok(!docs.some(isExcludedDoc))
+  for (const rel of ['docs/knowledge-base/x/sources/a.md', '.agents/skills/a/SKILL.md', '.claude/agents/a.md'])
+    assert.ok(isExcludedDoc(rel), rel)
+  assert.ok(!isExcludedDoc('docs/superpowers/specs/a.md'))
+  // Only the KB layout has vendored sources: a `sources/` folder elsewhere is a real doc.
+  assert.ok(!isExcludedDoc('plugins/x/sources/a.md'))
+  assert.ok(!isExcludedDoc('docs/knowledge-base/sources/a.md'))
 })
 
 test('the check catches a link that moved, has no title or a generic one, or has a missing target', () => {
@@ -143,8 +169,20 @@ test('the check catches a link that moved, has no title or a generic one, or has
   assert.match(checkLink(link({}), undefined)[0], /target file is missing/)
 })
 
+test('a drifting line link in a doc outside the KB is caught', () => {
+  const file = path.join(ROOT, 'docs/AGENTS.md')
+  const [gone] = codeLinks(file, '[a](../plugins/none/gone.ts#L1 "export function")')
+  assert.equal(gone.at, 'docs/AGENTS.md:1')
+  assert.match(checkLink(gone, linesOf(gone.target))[0], /target file is missing/)
+  const [moved] = codeLinks(
+    file,
+    '[a](../scripts/contracts/doc-code-links.test.mjs#L1 "export function isExcludedDoc")',
+  )
+  assert.match(checkLink(moved, linesOf(moved.target))[0], /is now on line/)
+})
+
 test('the scan skips a link into sources/ and a doc example, and keeps a link to a missing file', () => {
-  const file = path.join(KB, 'x.md')
+  const file = path.join(FAKE_DOC_DIR, 'x.md')
   assert.deepEqual(codeLinks(file, '[a](../claude-code-mods/sources/x/y.md#L1)'), [])
   assert.deepEqual(codeLinks(file, '[a](../../plugins/example/shell.ts#L1 "export function")'), [])
   const real = '[a](../claude-code-link-capture/example/link-capture/hooks/register.ts#L1 "export function")'
