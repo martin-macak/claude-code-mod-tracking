@@ -20,6 +20,13 @@ const stamped = (body: NonNullable<ReturnType<typeof askCall>>): QuestionCall =>
 const promptLines = (calls: readonly QuestionCall[]) =>
   questionsPrompt({ data: calls as unknown as Json } as ViewContext)
 
+/** The forms of a question that a reason can come with: a single pick, a multi-select, and a text box with no options. */
+const SHAPES = {
+  single: { kind: 'choice', multiSelect: false, options: [{ label: 'Postgres' }, { label: 'SQLite' }] },
+  multi: { kind: 'choice', multiSelect: true, options: [{ label: 'Postgres' }, { label: 'SQLite' }] },
+  text: { kind: 'text', multiSelect: false, options: [] },
+} as const
+
 /**
  * The shape the output schema of 2.1.318 documents, built from its words, not from a capture: "The model does not see this field;
  * put the text it should read in `answers`." So `answers` holds the text for the model and the annotation holds the reason.
@@ -29,14 +36,9 @@ const documented = (
   unanswered: unknown,
   header = 'DB',
   question = QUESTION,
+  shape: (typeof SHAPES)[keyof typeof SHAPES] = SHAPES.single,
 ): ToolCallEvent => {
-  const asked = {
-    question,
-    header,
-    kind: 'choice',
-    options: [{ label: 'Postgres' }, { label: 'SQLite' }],
-    multiSelect: false,
-  }
+  const asked = { question, header, ...shape }
   return {
     tool: 'AskUserQuestion',
     toolUseId: 'toolu_documented',
@@ -127,21 +129,89 @@ for (const [reason, word, sentence] of [
   ['replied_in_chat', 'replied in chat', '_Not answered here: the person replied in the chat._'],
   ['dismissed', 'dismissed', '_Dismissed._'],
 ] as const) {
-  test(`the reason ${reason} shows as its own word, with a text in answers and with none`, () => {
-    for (const answer of [TEXT, undefined]) {
-      const call = askCall(documented(answer, reason))
-      if (call === undefined) throw new Error('no call')
-      expect(call.state).toBe('partial')
-      const [child] = callRow(stamped(call), masker(true)).children ?? []
-      expect(child?.facets?.status).toEqual({ label: word, token: 'none' })
-      const md = callMarkdown(stamped(call), true)
-      expect(md).toContain(sentence)
-      expect(md).not.toContain('_Left blank._')
-      expect(md.includes(`> Text: ${TEXT}`)).toBe(answer !== undefined)
-      expect(promptLines([stamped(call)]).join('\n')).toContain(`DB: ${word}`)
-    }
-  })
+  for (const [form, shape] of Object.entries(SHAPES)) {
+    test(`the reason ${reason} on a ${form} question shows as its own word, with a text in answers and with none`, () => {
+      // A text that equals a label is the sharp case: without the guard it would be a pick.
+      for (const answer of [TEXT, 'Postgres', undefined]) {
+        const call = askCall(documented(answer, reason, 'DB', QUESTION, shape))
+        if (call === undefined) throw new Error('no call')
+        expect(call.state).toBe('partial')
+        const [q] = call.items ?? []
+        if (q === undefined) throw new Error('no item')
+        expect(answerParts(q)).toEqual({ chosen: [], typed: [], notesOnly: false })
+        const [child] = callRow(stamped(call), masker(true)).children ?? []
+        expect(child?.facets?.status).toEqual({ label: word, token: 'none' })
+        const md = callMarkdown(stamped(call), true)
+        expect(md).toContain(sentence)
+        expect(md).not.toContain('_Left blank._')
+        expect(md).not.toContain('Other (typed)')
+        expect(md).not.toContain('[x]')
+        expect(md.includes(`> Text: ${answer}`)).toBe(answer !== undefined)
+        // The line holds the reason word and nothing the text says: no `typed answer`, no `blank`, no label.
+        const line = promptLines([stamped(call)]).join('\n')
+        expect(line).toContain(`DB: ${word}`)
+        expect(line).not.toContain('typed answer')
+        expect(line).not.toContain('blank')
+        expect(line).not.toContain('instead')
+        expect(line).not.toContain('Postgres')
+      }
+    })
+  }
 }
+
+test('a reason with an empty text in answers shows the reason alone: no bare Text line and no empty text row', () => {
+  for (const blank of ['', '  ']) {
+    const call = askCall(documented(blank, 'skipped'))
+    if (call === undefined) throw new Error('no call')
+    expect(call.state).toBe('partial')
+    const [q] = call.items ?? []
+    if (q === undefined) throw new Error('no item')
+    const s = shownItem(q, masker(true))
+    expect(s).toMatchObject({ blank: false, unanswered: 'skipped' })
+    expect(s).not.toHaveProperty('unansweredText')
+    expect(answerText(s)).toBe('(skipped)')
+    const md = callMarkdown(stamped(call), true)
+    expect(md).toContain('_Skipped._')
+    expect(md).not.toContain('> Text:')
+    const [child] = callRow(stamped(call), masker(true)).children ?? []
+    const detail = (child?.detail?.() ?? []).map(l => `${l.label}|${l.cell.text}`)
+    expect(detail).toContain('answer|(skipped)')
+    expect(detail.some(l => l.startsWith('text|'))).toBe(false)
+  }
+})
+
+test('a stored record with a reason the mod does not know reads as no reason, and never as the word undefined', () => {
+  // The slot holds JSON that an older or newer mod wrote, so the reader must not trust the value.
+  const stored = (answer: string | undefined): QuestionCall => {
+    const call = askCall(documented(answer, 'skipped'))
+    if (call === undefined) throw new Error('no call')
+    const [q] = call.items ?? []
+    if (q === undefined) throw new Error('no item')
+    return stamped({ ...call, state: 'partial', items: [{ ...q, unanswered: 'wandered_off' as never }] })
+  }
+  for (const answer of [TEXT, undefined]) {
+    const call = stored(answer)
+    const [q] = call.items ?? []
+    if (q === undefined) throw new Error('no item')
+    const s = shownItem(q, masker(true))
+    expect(s).not.toHaveProperty('unanswered')
+    expect(s.blank).toBe(answer === undefined)
+    const row = callRow(call, masker(true))
+    const [child] = row.children ?? []
+    const shown = [
+      answerText(s),
+      callMarkdown(call, true),
+      promptLines([call]).join('\n'),
+      JSON.stringify(row.cells),
+      JSON.stringify(child?.cells),
+      JSON.stringify(child?.facets),
+      (child?.detail?.() ?? []).map(l => `${l.label}|${l.cell.text}`).join('\n'),
+    ].join('\n')
+    expect(shown).not.toContain('undefined')
+    expect(shown).not.toContain('wandered')
+    expect(promptLines([call]).join('\n')).toContain(answer === undefined ? 'DB: blank' : 'DB: typed answer')
+  }
+})
 
 test('an unknown reason counts as absent, as the output schema says: a text is typed, and no text is blank', () => {
   const withText = askCall(documented(TEXT, 'wandered_off'))

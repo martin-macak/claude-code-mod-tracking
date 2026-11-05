@@ -1021,7 +1021,7 @@ file: "docs/plan.md" (created, edited 2, viewed 1)
 question: Q3 (answered, turn 7) "Storage: State only; Checks: Lint, E2E"
 ```
 
-The `questions` tracker lists the calls of the Questions section, newest first, so the cap drops the oldest. A line holds the number of the call, its state and turn, and the header and the chosen labels of each question. A text that you typed shows as `typed answer`, a question left blank as `blank`, and a declined call as `declined`. The question, the typed text, the notes and a plan never go in a line: you wrote them, and the model must not read a secret from them. See [Questions and answers](#questions-and-answers).
+The `questions` tracker lists the calls of the Questions section, newest first, so the cap drops the oldest. A line holds the number of the call, its state and turn, and the header and the chosen labels of each question. A text that you typed shows as `typed answer`, a question left blank as `blank`, a question with notes and no option as `notes only`, a question that went unanswered for a reason that the engine reports as `replied in chat`, `skipped` or `dismissed` (never the text beside the reason), and a declined call as `declined`. The question, the typed text, the notes and a plan never go in a line: you wrote them, and the model must not read a secret from them. See [Questions and answers](#questions-and-answers).
 
 Rules for the lines:
 

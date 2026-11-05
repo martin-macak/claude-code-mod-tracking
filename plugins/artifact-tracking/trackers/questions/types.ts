@@ -2,7 +2,11 @@
 // another plugin) with its answers, or an ExitPlanMode with its plan and the outcome. Types only.
 // The slot holds the list of calls, oldest first. Every field is JSON, so the slot stores it as it is.
 
-/** How a call ended. `answered`: every question has an answer, or the plan was approved. `partial`: a question was left blank. `declined`: Esc, a rejected plan, or a call that another hook denied. */
+/**
+ * How a call ended. `answered`: every question has an answer, or the plan was approved. `partial`: a question was left blank, has
+ * notes and no option, or went unanswered for a reason that the engine reports (`unanswered`). `declined`: Esc, a rejected
+ * plan, or a call that another hook denied.
+ */
 export type QuestionState = 'answered' | 'partial' | 'declined'
 
 /** The values of the engine's `unanswered` in 2.1.318. Any other value counts as absent. */
@@ -37,9 +41,10 @@ export type QuestionItem = {
   unit?: string
   options: QuestionOption[]
   /**
-   * The answer as the engine gave it, word for word. Absent: the question was left blank or has only a reason (`unanswered`). A multi-select answer joins the
-   * labels with a comma and a space, and quotes a label that holds a comma. `(notes only)` is the engine's word for
-   * notes with no option. `answerParts` reads it.
+   * The answer as the engine gave it, word for word. Absent: the question was left blank or has only a reason (`unanswered`).
+   * A multi-select answer joins the labels with a comma and a space, and quotes a label that holds a comma. `(notes only)` is
+   * the engine's word for notes with no option. With a reason it is the text for the model: `answerParts` reads no pick and no
+   * typed text from it.
    */
   answer?: string
   /** The preview of the option the person picked. */

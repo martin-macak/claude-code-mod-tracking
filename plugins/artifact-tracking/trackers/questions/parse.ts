@@ -31,8 +31,11 @@ const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : und
 /** A number that JSON can hold: the other things a field may be (a string, null, NaN) are left out. */
 const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 
-/** One of the engine's reasons for a question with no answer, or undefined. */
-const unansweredOf = (v: unknown): Unanswered | undefined => UNANSWERED.find(u => u === v)
+/**
+ * One of the engine's reasons for a question with no answer, or undefined. A reader of a stored record calls it too: the slot holds
+ * JSON that another version wrote, so an unknown value counts as absent there as well.
+ */
+export const unansweredOf = (v: unknown): Unanswered | undefined => UNANSWERED.find(u => u === v)
 
 function optionOf(v: unknown): QuestionOption | undefined {
   if (!isRecord(v) || typeof v.label !== 'string') return undefined
@@ -124,7 +127,7 @@ function answered(item: QuestionItem, answers: unknown, annotations: unknown): Q
  * text of a question with a reason for no answer.
  */
 function hasAnswer(item: QuestionItem): boolean {
-  return item.answer !== undefined && item.unanswered === undefined && !answerParts(item).notesOnly
+  return item.answer !== undefined && unansweredOf(item.unanswered) === undefined && !answerParts(item).notesOnly
 }
 
 /**
@@ -248,7 +251,8 @@ function pieces(answer: string): string[] {
 export function answerParts(item: QuestionItem): AnswerParts {
   const { answer } = item
   // With a reason, `answers` holds the text for the model: no pick and nothing the person typed.
-  if (answer === undefined || item.unanswered !== undefined) return { chosen: [], typed: [], notesOnly: false }
+  if (answer === undefined || unansweredOf(item.unanswered) !== undefined)
+    return { chosen: [], typed: [], notesOnly: false }
   const labels = new Set(item.options.map(o => o.label))
   if (answer === NOTES_ONLY && !labels.has(answer)) return { chosen: [], typed: [], notesOnly: true }
   if (item.options.length === 0 || (item.kind !== undefined && item.kind !== 'choice'))

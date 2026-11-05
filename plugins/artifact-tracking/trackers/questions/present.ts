@@ -4,7 +4,7 @@
 
 import type { StatusToken } from '../../core/interfaces/view'
 import { stripControl } from '../../core/lib/prompt-text'
-import { answerParts } from './parse'
+import { answerParts, unansweredOf } from './parse'
 import { MASKED, maskSecrets, wordsAskForSecret } from './secrets'
 import type { QuestionCall, QuestionItem, QuestionState, Unanswered } from './types'
 
@@ -85,6 +85,8 @@ export function shownItem(item: QuestionItem, mask: Masker): ShownItem {
   const parts = answerParts(item)
   const secret = asksForSecret(item)
   const picked = new Set(parts.chosen)
+  // A stored record may hold a reason that this version does not know: it counts as absent, as it does when a call is parsed.
+  const reason = unansweredOf(item.unanswered)
   return {
     question: mask(item.question),
     header: mask(item.header),
@@ -107,9 +109,10 @@ export function shownItem(item: QuestionItem, mask: Masker): ShownItem {
     ...(item.notes !== undefined ? { notes: mask(item.notes, secret) } : {}),
     ...(item.preview !== undefined ? { preview: mask(item.preview) } : {}),
     notesOnly: parts.notesOnly,
-    blank: item.answer === undefined && item.unanswered === undefined,
-    ...(item.unanswered !== undefined ? { unanswered: item.unanswered } : {}),
-    ...(item.unanswered !== undefined && item.answer !== undefined
+    blank: item.answer === undefined && reason === undefined,
+    ...(reason !== undefined ? { unanswered: reason } : {}),
+    // An empty text beside a reason says nothing: it gets no line, so the Markdown has no bare `> Text:`.
+    ...(reason !== undefined && item.answer !== undefined && item.answer.trim() !== ''
       ? { unansweredText: mask(item.answer, secret) }
       : {}),
   }
