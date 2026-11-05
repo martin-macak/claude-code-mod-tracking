@@ -130,12 +130,12 @@ Captured on 2026-11-05 for [issue #91](https://github.com/martin-macak/claude-co
 
 | Content | Origin |
 | --- | --- |
-| `prompt-section-live/summary.txt` | The report of the run, verbatim. |
-| `prompt-section-live/guard-check.extract.txt`, `B-compact.debug.extract.txt` | Verbatim extracts of two debug logs: the guard check and the compact run of arm B. |
-| `prompt-section-live/turns.tsv` | One row per message of the six runs, derived from the `stream-json` files. |
+| `prompt-section-live/summary.txt` | The report of the run: a verbatim copy of the already redacted artifact file. |
+| `prompt-section-live/guard-check.extract.txt`, `B-compact.debug.extract.txt`, `C-compact.debug.extract.txt` | Verbatim copies of three debug extracts of the already redacted artifact: the guard check and the compact runs of arms B and C. |
+| `prompt-section-live/turns.tsv` | One row for the guard check and one per message of the six runs, derived from the `stream-json` files. |
 | `README.md` | The run, the columns of `turns.tsv` and how to redo it. |
 
-The other 31 files of the run artifact are left out. Do not edit it. To add more evidence, make a new dated folder.
+The other 30 files of the run artifact are left out. Do not edit it. To add more evidence, make a new dated folder.
 
 ## `code-claude-com-2026-10-09/`
 

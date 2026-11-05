@@ -16,29 +16,32 @@ One run of the prompt-section runbook of issue #91 on a GitHub Actions runner. T
 | Mode | headless `claude -p` against the real API, `stream-json` input and output. No interactive session |
 | Arms | A (section off, snapshot on), B (on, on), C (on, snapshot off), D (off, off): six messages 12 s apart. B and C also ran the compact plan: 11 messages, with `/compact` as message 6 and a 60 s wait after it |
 
+The files come from the run artifact `prompt-section-live-logs`. The run's own script redacted the artifact before it was uploaded (keys, home paths, user names in paths, email addresses, the lists of tools, skills and agents in the init messages, and every debug line that does not match the mod, the engine's prompt or the compaction). The four verbatim files below are copies of files of that redacted artifact. They are not the raw logs.
+
 | File | What it is |
 | --- | --- |
 | `summary.txt` | The run's own report, verbatim: environment, managed-settings check, guard check, the token table, the per-run tables, the mod's debug lines, the `prompt.compose` runs per window and the compaction metadata. It ends with the part that did not run. |
-| `guard-check.extract.txt` | Verbatim extract of the debug log of the guard check (one request, "Reply with OK."). Line 6 of the log reads `cc-plugin-sec-default@builtin not seated: no managed settings and not a Team or Enterprise organization (none)`. |
-| `B-compact.debug.extract.txt` | Verbatim extract of the debug log of B-compact. It shows the `prompt.compose` run right before the compaction request (`source=compact`), the `section rebuilt` lines (1, 2 and 3 lines) and the 60 s gap. |
-| `turns.tsv` | Derived from the `stream-json` files of the six runs and their `marks.tsv` files: one row per message, with the requests, the input, `create` and `read` tokens, their sum, the output and thinking tokens, the cumulative `total_cost_usd`, the message and the full answer. |
+| `guard-check.extract.txt` | Verbatim copy of the debug extract of the guard check (one request, "Reply with OK."). Line 6 reads `cc-plugin-sec-default@builtin not seated: no managed settings and not a Team or Enterprise organization (none)`. |
+| `B-compact.debug.extract.txt`, `C-compact.debug.extract.txt` | Verbatim copies of the debug extracts of B-compact and C-compact. They show the `prompt.compose` run right before the compaction request (`source=compact`), the `reactive-compact ... finished` line with the usage of the compaction, the `section rebuilt` lines (1, 2 and 3 lines) and the 60 s gap. |
+| `turns.tsv` | Derived, not verbatim. One row for the guard check and one row per message of the six runs, with the requests, the input, `create`, `create_1h` (the part of `create` written as a 1-hour entry) and `read` tokens, their sum, the output and thinking tokens, the cumulative `total_cost_usd`, the message and the full answer. |
 
-`turns.tsv` is not verbatim. To redo it from the run artifact, take one `<run>.jsonl` and its `<run>.marks.tsv`:
+To redo `turns.tsv` from the run artifact, take one `<run>.jsonl` (the guard check has `guard-check.jsonl` and no `marks.tsv`):
 
 ```bash
 jq -r 'select(.type=="result") | [.result_index+1, .num_turns, .usage.input_tokens,
-  .usage.cache_creation_input_tokens, .usage.cache_read_input_tokens,
+  .usage.cache_creation_input_tokens, .usage.cache_creation.ephemeral_1h_input_tokens,
+  .usage.cache_read_input_tokens,
   (.usage.input_tokens + .usage.cache_creation_input_tokens + .usage.cache_read_input_tokens),
   .usage.output_tokens, .usage.output_tokens_details.thinking_tokens, .total_cost_usd,
   (.result | gsub("[\\s]+"; " ") | gsub("^ | $"; ""))] | @tsv' A-six.jsonl
 ```
 
-The message text is column 4 of `marks.tsv`. Message 6 of a compact run (`/compact`) has no request in the stream, so its row is zero.
+The message text is column 4 of the `marks.tsv` of the run. The `/compact` message of a compact run (message 6) has zero usage in its result, so its row is zero. The compaction is metered all the same: `total_cost_usd` steps up, and the `reactive-compact` line of the debug extract holds its usage.
 
-Left out on purpose: the other 31 files of the run artifact `prompt-section-live-logs` (the raw streams, the other debug extracts, the config files and the `marks.tsv` files). The streams hold 25 to 77 KB each, and the numbers that the pages quote are in `summary.txt` and `turns.tsv`. GitHub keeps the artifact for 30 days. The thinking text of the streams is empty (`thinking` is a zero-length string with a signature), so only the thinking token counts are kept.
+Left out on purpose: the other 30 files of the run artifact (the raw streams, the other debug extracts, the config files and the `marks.tsv` files). The streams hold 25 to 77 KB each, and the numbers that the pages quote are in `summary.txt` and `turns.tsv`. GitHub keeps the artifact for 30 days. The thinking text of the streams is empty (`thinking` is a zero-length string with a signature), so only the thinking token counts are kept.
 
 The files hold no email, no home path and no token. The runner user is `runner`. A search for `@` followed by a domain, `/Users/`, `/home/`, `sk-ant`, `ghp_`, `Bearer` and `eyJ` found nothing. Paths in the debug lines start with `~`.
 
-Not run: the `trackers.processes.endedTtlMs` addendum of the second comment on the issue. It needs the `/track` pane and a background Bash task. The pane exists only in the interactive TUI, and `claude -p` has none.
+Not run: the `trackers.processes.endedTtlMs` addendum of the second comment on the issue. It needs the `/track` pane and a background Bash task. The pane exists only in the interactive TUI, and `claude -p` has none. [Issue #389](https://github.com/martin-macak/claude-code-mod-tracking/issues/389) tracks it.
 
 Do not edit it. To add more evidence, make a new dated folder.
