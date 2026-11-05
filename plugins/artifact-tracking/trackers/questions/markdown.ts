@@ -43,7 +43,7 @@ function headingOf(call: QuestionCall): string {
   ].join(' · ')
 }
 
-/** The line of a question that a host says has no answer, and why (2.1.318). */
+/** The line of a question that went unanswered, by the reason of the engine (2.1.318). */
 const NO_ANSWER_LINE: Readonly<Record<Unanswered, string>> = {
   replied_in_chat: '_Not answered here: the person replied in the chat._',
   skipped: '_Skipped._',
@@ -70,7 +70,9 @@ function itemLines(s: ShownItem, i: number, declined: boolean): string[] {
   }
   for (const t of s.typed) out.push(...lines(t, '  ', '- [x] Other (typed): '))
   const tail: string[] = []
-  if (!declined && s.blank) tail.push(s.unanswered !== undefined ? NO_ANSWER_LINE[s.unanswered] : '_Left blank._')
+  if (!declined && s.unanswered !== undefined) tail.push(NO_ANSWER_LINE[s.unanswered])
+  if (!declined && s.unansweredText !== undefined) tail.push(...lines(s.unansweredText, '> ', '> Text: '))
+  if (!declined && s.blank) tail.push('_Left blank._')
   if (s.notesOnly) tail.push('_Notes only, no option picked._')
   if (s.notes !== undefined && s.notes !== '') tail.push(...lines(s.notes, '> ', '> Notes: '))
   if (tail.length > 0) out.push('', ...tail)

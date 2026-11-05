@@ -5,7 +5,7 @@
 /** How a call ended. `answered`: every question has an answer, or the plan was approved. `partial`: a question was left blank. `declined`: Esc, a rejected plan, or a call that another hook denied. */
 export type QuestionState = 'answered' | 'partial' | 'declined'
 
-/** The reasons a host gives for a question with no answer (the engine's list in 2.1.318). */
+/** The values of the engine's `unanswered` in 2.1.318. Any other value counts as absent. */
 export const UNANSWERED = ['skipped', 'replied_in_chat', 'dismissed'] as const
 export type Unanswered = (typeof UNANSWERED)[number]
 
@@ -37,7 +37,7 @@ export type QuestionItem = {
   unit?: string
   options: QuestionOption[]
   /**
-   * The answer as the engine gave it, word for word. Absent: the question was left blank. A multi-select answer joins the
+   * The answer as the engine gave it, word for word. Absent: the question was left blank or has only a reason (`unanswered`). A multi-select answer joins the
    * labels with a comma and a space, and quotes a label that holds a comma. `(notes only)` is the engine's word for
    * notes with no option. `answerParts` reads it.
    */
@@ -47,8 +47,9 @@ export type QuestionItem = {
   /** The notes the person added. */
   notes?: string
   /**
-   * Why a question has no answer, as a host said it (the engine's `annotations[question].unanswered`, 2.1.318):
-   * `replied_in_chat` ("Chat about this"), `skipped` or `dismissed`. Absent: the engine gave no reason.
+   * Why the question went unanswered (the engine's `annotations[question].unanswered`, in the output schema of 2.1.318): `skipped`,
+   * `replied_in_chat` or `dismissed`. `answer` may then hold the text that the host wrote for the model: no pick and no typed text.
+   * Absent: the client did not report a reason. The spike's script sent one; no real host was observed (issue #312).
    */
   unanswered?: Unanswered
   /**

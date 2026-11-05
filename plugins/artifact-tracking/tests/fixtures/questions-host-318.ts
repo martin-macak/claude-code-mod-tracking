@@ -1,6 +1,7 @@
-// Captures of Claude Code 2.1.318 (issue #312, docs/knowledge-base/claude-code-mods/sources/spikes-2026-11-05-hosts): a permission-prompt
-// host (`claude -p --permission-prompt-tool stdio`) answered AskUserQuestion, and a person edited a plan with Ctrl+G in the
-// terminal. A probe plugin wrote `e` and the answer of `next(e)`. The values are word for word, with the home path redacted.
+// Captures of Claude Code 2.1.318 (issue #312, docs/knowledge-base/claude-code-mods/sources/spikes-2026-11-05-hosts). No real host was
+// observed: the spike's own script answered AskUserQuestion through `claude -p --permission-prompt-tool stdio`, so these show what
+// that script sent, not what a host sends. A person edited a plan with Ctrl+G in the terminal. The values are word for word, with
+// the home path redacted. scripts/contracts/questions-host-fixtures.test.mjs compares each one with its capture.
 import type { ToolCallEvent } from '../../core/interfaces/events'
 
 const DB_QUESTION = {
@@ -11,11 +12,14 @@ const DB_QUESTION = {
   multiSelect: false,
 }
 
-/** The host sent `answers`, `response` and `followUp: true` (captures/host-a.jsonl, the `tool_use_result`). */
+/**
+ * The spike's host sent `answers`, `response` and `followUp: true`. The result is the `tool_use_result` and the text is the `tool_result`
+ * of captures/host-a.jsonl, the stdout of the run: its probe came later, so no hook capture holds this call.
+ */
 export const HOST_FOLLOW_UP: ToolCallEvent = {
   tool: 'AskUserQuestion',
-  toolUseId: 'toolu_013gGPRwjipFzXt44vCgwq8x',
-  input: { questions: [DB_QUESTION], tool: 'AskUserQuestion', tool_use_id: 'toolu_013gGPRwjipFzXt44vCgwq8x' },
+  toolUseId: 'toolu_01GQ7uiFj7ZDdLaVdVfZgiKj',
+  input: { questions: [DB_QUESTION], tool: 'AskUserQuestion', tool_use_id: 'toolu_01GQ7uiFj7ZDdLaVdVfZgiKj' },
   result: {
     ref: 1,
     result: {
@@ -29,10 +33,10 @@ export const HOST_FOLLOW_UP: ToolCallEvent = {
 }
 
 /**
- * "Chat about this" as a host sends it: no answer, the annotation `unanswered: 'replied_in_chat'`, a response and a follow-up
- * (captures/AskUserQuestion-host-b-hook.json).
+ * The spike's host sent the annotation `unanswered: 'replied_in_chat'`, a response and a follow-up, and no text in `answers`. The
+ * output schema asks a host to put a text there, so this is not the documented shape (captures/AskUserQuestion-host-b-hook.json).
  */
-export const HOST_REPLIED_IN_CHAT: ToolCallEvent = {
+export const HOST_NO_ANSWER_TEXT: ToolCallEvent = {
   tool: 'AskUserQuestion',
   toolUseId: 'toolu_01GLcJNx7atnoqgaJca3Fqt9',
   input: { questions: [DB_QUESTION], tool: 'AskUserQuestion', tool_use_id: 'toolu_01GLcJNx7atnoqgaJca3Fqt9' },

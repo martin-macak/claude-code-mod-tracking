@@ -107,8 +107,9 @@ function answered(item: QuestionItem, answers: unknown, annotations: unknown): Q
   const answer = isRecord(answers) ? str(answers[item.question]) : undefined
   const note = isRecord(annotations) && isRecord(annotations[item.question]) ? annotations[item.question] : undefined
   const { preview, notes, unanswered } = isRecord(note) ? note : ({} as Record<string, unknown>)
-  // A host may say why a question has no answer (2.1.318, issue #312): "Chat about this" is `replied_in_chat`.
-  const reason = answer === undefined ? unansweredOf(unanswered) : undefined
+  // Why the question went unanswered (the output schema of 2.1.318, issue #312). The schema asks a host to put the text for the
+  // model in `answers` as well, so the reason counts whatever `answers` holds. Any other value counts as absent, as the schema says.
+  const reason = unansweredOf(unanswered)
   return {
     ...item,
     ...(answer !== undefined ? { answer } : {}),
@@ -118,9 +119,12 @@ function answered(item: QuestionItem, answers: unknown, annotations: unknown): Q
   }
 }
 
-/** True when the question has an answer that picks or types something. Notes with no option are not an answer. */
+/**
+ * True when the question has an answer that picks or types something. Notes with no option are not an answer, and neither is the
+ * text of a question with a reason for no answer.
+ */
 function hasAnswer(item: QuestionItem): boolean {
-  return item.answer !== undefined && !answerParts(item).notesOnly
+  return item.answer !== undefined && item.unanswered === undefined && !answerParts(item).notesOnly
 }
 
 /**
@@ -243,7 +247,8 @@ function pieces(answer: string): string[] {
  */
 export function answerParts(item: QuestionItem): AnswerParts {
   const { answer } = item
-  if (answer === undefined) return { chosen: [], typed: [], notesOnly: false }
+  // With a reason, `answers` holds the text for the model: no pick and nothing the person typed.
+  if (answer === undefined || item.unanswered !== undefined) return { chosen: [], typed: [], notesOnly: false }
   const labels = new Set(item.options.map(o => o.label))
   if (answer === NOTES_ONLY && !labels.has(answer)) return { chosen: [], typed: [], notesOnly: true }
   if (item.options.length === 0 || (item.kind !== undefined && item.kind !== 'choice'))

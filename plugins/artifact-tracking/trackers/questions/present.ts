@@ -43,10 +43,12 @@ export type ShownItem = {
   preview?: string
   /** The answer is the engine's word for notes with no option. */
   notesOnly: boolean
-  /** The question has no answer and no notes-only mark: the person left it blank. */
+  /** The question has no answer, no reason for that and no notes-only mark: the person left it blank. */
   blank: boolean
-  /** Why a blank question has no answer, as a host said it. Absent: the engine gave no reason. */
+  /** Why the question went unanswered, as the engine reported it. Absent: no reason. */
   unanswered?: Unanswered
+  /** The text in `answers` beside a reason: what the host wrote for the model. Not an answer. */
+  unansweredText?: string
 }
 
 /** The words of a reason for no answer (`annotations[question].unanswered`, 2.1.318). */
@@ -105,14 +107,21 @@ export function shownItem(item: QuestionItem, mask: Masker): ShownItem {
     ...(item.notes !== undefined ? { notes: mask(item.notes, secret) } : {}),
     ...(item.preview !== undefined ? { preview: mask(item.preview) } : {}),
     notesOnly: parts.notesOnly,
-    blank: item.answer === undefined,
-    ...(item.answer === undefined && item.unanswered !== undefined ? { unanswered: item.unanswered } : {}),
+    blank: item.answer === undefined && item.unanswered === undefined,
+    ...(item.unanswered !== undefined ? { unanswered: item.unanswered } : {}),
+    ...(item.unanswered !== undefined && item.answer !== undefined
+      ? { unansweredText: mask(item.answer, secret) }
+      : {}),
   }
 }
 
 /** The labels the person picked, then the typed text tagged as typed: `Lint, E2E, typed: custom`. */
 export function answerText(s: ShownItem): string {
-  if (s.blank) return s.unanswered !== undefined ? `(${UNANSWERED_WORD[s.unanswered]})` : '(blank)'
+  if (s.unanswered !== undefined) {
+    const word = `(${UNANSWERED_WORD[s.unanswered]})`
+    return s.unansweredText === undefined ? word : stripControl(`${word} ${s.unansweredText}`)
+  }
+  if (s.blank) return '(blank)'
   if (s.notesOnly) return '(notes only)'
   return [...s.options.filter(o => o.chosen).map(o => o.label), ...s.typed.map(t => `typed: ${t}`)]
     .map(t => stripControl(t))

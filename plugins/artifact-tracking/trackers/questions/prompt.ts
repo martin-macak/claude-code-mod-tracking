@@ -18,7 +18,9 @@ const TEXT_MAX = 150
 function answerOf(q: QuestionItem, declined: boolean): string {
   const head = q.header === '' ? 'Question' : q.header
   if (declined) return `${head}: declined`
-  if (q.answer === undefined) return `${head}: ${q.unanswered !== undefined ? UNANSWERED_WORD[q.unanswered] : 'blank'}`
+  // The reason and never the text beside it: the model must not read a word that the person wrote.
+  if (q.unanswered !== undefined) return `${head}: ${UNANSWERED_WORD[q.unanswered]}`
+  if (q.answer === undefined) return `${head}: blank`
   const parts = answerParts(q)
   if (parts.notesOnly) return `${head}: notes only`
   const said = [...parts.chosen, ...(parts.typed.length > 0 ? ['typed answer'] : [])]
