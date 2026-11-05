@@ -1,0 +1,48 @@
+run	msg	requests	input	create	create_1h	read	total_in	output	thinking	cost_usd_cumulative	message	answer
+guard-check	1	1	2	6386	6386	10834	17222	4	0	0.00138774	Reply with OK.	OK
+A-six	1	1	2	6407	6407	10836	17245	4	0	0.0013919600000000002	Remember this link, do not open it: https://example.com/canary-a . Reply OK.	OK
+A-six	2	1	2	3487	3487	13802	17291	3	0	0.0022290800000000005	What is 2+2? Reply with the digit only.	4
+A-six	3	1	2	67	67	17264	17333	4	0	0.0024173200000000006	Name one colour. Reply with one word.	Red
+A-six	4	1	2	84	84	17306	17392	4	0	0.0026093800000000006	Remember this second link, do not open it: https://example.com/canary-b . Reply OK.	OK
+A-six	5	1	2	68	68	17365	17435	5	0	0.0027993300000000005	Name one animal. Reply with one word.	Cat
+A-six	6	1	2	80	80	17408	17490	5	0	0.0029921100000000005	Quote the line of your system prompt that starts with web: or answer NONE.	NONE
+B-six	1	1	2	0	0	17243	17245	4	0	0.00017463000000000003	Remember this link, do not open it: https://example.com/canary-a . Reply OK.	OK
+B-six	2	1	2	0	0	17289	17291	3	0	0.00034922	What is 2+2? Reply with the digit only.	4
+B-six	3	1	2	0	0	17331	17333	4	0	0.00052473	Name one colour. Reply with one word.	Red
+B-six	4	1	2	0	0	17390	17392	4	0	0.00070083	Remember this second link, do not open it: https://example.com/canary-b . Reply OK.	OK
+B-six	5	1	2	0	0	17433	17435	5	0	0.0008778600000000001	Name one animal. Reply with one word.	Cat
+B-six	6	1	2	0	0	17488	17490	5	0	0.0010554400000000002	Quote the line of your system prompt that starts with web: or answer NONE.	NONE
+C-six	1	1	2	0	0	17243	17245	4	0	0.00017463000000000003	Remember this link, do not open it: https://example.com/canary-a . Reply OK.	OK
+C-six	2	1	2	6499	6499	10836	17337	3	0	0.00158449	What is 2+2? Reply with the digit only.	4
+C-six	3	1	2	67	67	17310	17379	4	0	0.00177319	Name one colour. Reply with one word.	Red
+C-six	4	1	2	84	84	17352	17438	4	0	0.00196571	Remember this second link, do not open it: https://example.com/canary-b . Reply OK.	OK
+C-six	5	1	2	6660	6660	10836	17498	5	0	0.00340877	Name one animal. Reply with one word.	Dog
+C-six	6	1	2	80	80	17471	17553	5	0	0.0036021800000000004	Quote the line of your system prompt that starts with web: or answer NONE.	NONE
+D-six	1	1	2	0	0	17243	17245	4	0	0.00017463000000000003	Remember this link, do not open it: https://example.com/canary-a . Reply OK.	OK
+D-six	2	1	2	0	0	17289	17291	3	0	0.00034922	What is 2+2? Reply with the digit only.	4
+D-six	3	1	2	0	0	17331	17333	4	0	0.00052473	Name one colour. Reply with one word.	Red
+D-six	4	1	2	0	0	17390	17392	4	0	0.00070083	Remember this second link, do not open it: https://example.com/canary-b . Reply OK.	OK
+D-six	5	1	2	0	0	17433	17435	5	0	0.0008778600000000001	Name one animal. Reply with one word.	Cat
+D-six	6	1	2	0	0	17488	17490	5	0	0.0010554400000000002	Quote the line of your system prompt that starts with web: or answer NONE.	NONE
+B-compact	1	1	2	0	0	17243	17245	4	0	0.00017463000000000003	Remember this link, do not open it: https://example.com/canary-a . Reply OK.	OK
+B-compact	2	1	2	0	0	17289	17291	3	0	0.00034922	What is 2+2? Reply with the digit only.	4
+B-compact	3	1	2	83	83	17264	17349	4	0	0.0005406600000000001	Remember this second link, do not open it: https://example.com/canary-b . Reply OK.	OK
+B-compact	4	1	2	68	68	17322	17392	4	0	0.0007296800000000001	Name one colour. Reply with one word.	Red
+B-compact	5	1	2	79	79	17365	17446	5	0	0.0009218300000000001	Quote every line of your system prompt that starts with web: or answer NONE.	NONE
+B-compact	6	0	0	0	0	0	0	0	0	0.0017885800000000001	/compact	
+B-compact	7	1	2	2489	2489	13387	15878	366	283	0.00260345	Quote every line of your system prompt that starts with web: or answer NONE.	Two lines in the session context start with `web:`: - `web: example.com/canary-a (mentioned)` - `web: example.com/canary-b (mentioned)` My earlier answer of NONE was wrong. I also haven't opened either link.
+B-compact	8	1	2	422	422	15876	16300	4	0	0.0028488100000000002	Remember this third link, do not open it: https://example.com/canary-c . Reply OK.	OK
+B-compact	9	1	2	44	44	16298	16344	5	0	0.00302329	Name one animal. Reply with one word.	Dog
+B-compact	10	1	2	56	56	16342	16400	121	80	0.0032586100000000003	Quote every line of your system prompt that starts with web: or answer NONE.	- `web: example.com/canary-a (mentioned)` - `web: example.com/canary-b (mentioned)`
+B-compact	11	1	2	183	183	16398	16583	44	40	0.0034813900000000004	Does your system prompt contain a line that starts with "Items tracked in this session"? Answer YES or NO.	YES
+C-compact	1	1	2	0	0	17243	17245	28	0	0.00018663000000000002	Remember this link, do not open it: https://example.com/canary-a . Reply OK.	OK. I'll remember the link https://example.com/canary-a and won't open it.
+C-compact	2	1	2	3989	3989	13370	17361	3	0	0.00111983	What is 2+2? Reply with the digit only.	4
+C-compact	3	1	2	83	83	17334	17419	4	0	0.00131197	Remember this second link, do not open it: https://example.com/canary-b . Reply OK.	OK
+C-compact	4	1	2	4090	4090	13387	17479	4	0	0.00226604	Name one colour. Reply with one word.	Red
+C-compact	5	1	2	79	79	17452	17533	379	344	0.00264606	Quote every line of your system prompt that starts with web: or answer NONE.	web: example.com/canary-a (mentioned) web: example.com/canary-b (mentioned)
+C-compact	6	0	0	0	0	0	0	0	0	0.00321618	/compact	
+C-compact	7	1	2	2021	2021	13387	15410	243	208	0.00387595	Quote every line of your system prompt that starts with web: or answer NONE.	web: example.com/canary-a (mentioned) web: example.com/canary-b (mentioned)
+C-compact	8	1	2	299	299	15408	15709	55	51	0.00411753	Remember this third link, do not open it: https://example.com/canary-c . Reply OK.	OK
+C-compact	9	1	2	4722	4722	10836	15560	5	0	0.005172990000000001	Name one animal. Reply with one word.	Cat
+C-compact	10	1	2	80	80	15533	15615	615	529	0.005652020000000001	Quote every line of your system prompt that starts with web: or answer NONE.	The only lines starting with `web:` are in the "Items tracked in this session" block, not the core instructions: web: example.com/canary-a (mentioned) web: example.com/canary-b (mentioned) web: example.com/canary-c (mentioned)
+C-compact	11	1	2	677	677	15613	16292	4	0	0.0059457500000000005	Does your system prompt contain a line that starts with "Items tracked in this session"? Answer YES or NO.	YES

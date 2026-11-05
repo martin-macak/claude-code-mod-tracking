@@ -1,0 +1,343 @@
+# prompt-section live run (issue #91)
+mode: all
+os: Linux 7.0.0-1019-azure
+mod checkout: fc8b826a1aa12c3db166212bc32d74a681cbb352 ci: Add a manual live run of the prompt-section runbook (#385)
+
+## managed settings (must not exist)
+  ls: cannot access '/Library/Managed Preferences/com.anthropic.claudecode.plist': No such file or directory
+  ls: cannot access '/Library/Managed Preferences/runner/com.anthropic.claudecode.plist': No such file or directory
+  ls: cannot access '/Library/Application Support/ClaudeCode': No such file or directory
+  ls: cannot access '/etc/claude-code/managed-settings.json': No such file or directory
+  ls: cannot access '/etc/claude-code/managed-settings.d': No such file or directory
+
+## sign-in
+CLAUDE_CODE_OAUTH_TOKEN is set
+{
+  "loggedIn": true,
+  "authMethod": "oauth_token",
+  "apiProvider": "firstParty",
+  "analyticsDisabled": false,
+  "projectsDirectory": "~/.claude/projects",
+  "configDirectory": "~/.claude"
+}
+
+## guard check (one request)
+seated lines (must be 0):   0
+bypassed lines (must be 0): 0
+sec-default lines (diagnostic): 1
+141:2026-11-05T09:03:36.815Z [DEBUG] hooks module artifact-tracking@inline loaded (worker, environment 1, tier user); ev
+plugins in init:
+  artifact-tracking@inline
+  cc-plugin-agents-md@builtin
+  cc-plugin-telemetry@builtin
+  cc-plugin-plugin-authoring@builtin
+apiKeySource: none 
+claude: 2.1.302 (Claude Code)
+guard not seated: go on.
+
+## table
+cache create/read tokens per turn
+turn  A           B        C           D
+1     6407/10836  0/17243  0/17243     0/17243
+2     3487/13802  0/17289  6499/10836  0/17289
+3     67/17264    0/17331  67/17310    0/17331
+4     84/17306    0/17390  84/17352    0/17390
+5     68/17365    0/17433  6660/10836  0/17433
+6     80/17408    0/17488  80/17471    0/17488
+
+canary answer (turn 6)
+A: NONE
+B: NONE
+C: NONE
+D: NONE
+
+== A-six: message n, text, requests, cache create, cache read, answer
+1	Remember this link, do not open it: https://example.com/ca	1	6407	10836	OK
+2	What is 2+2? Reply with the digit only.	1	3487	13802	4
+3	Name one colour. Reply with one word.	1	67	17264	Red
+4	Remember this second link, do not open it: https://example	1	84	17306	OK
+5	Name one animal. Reply with one word.	1	68	17365	Cat
+6	Quote the line of your system prompt that starts with web:	1	80	17408	NONE
+
+== guard signals (all must be 0)
+seated lines in the debug log:      0
+bypassed lines in the debug log:    0
+ui_log messages in the stream:      0
+sec-default lines (diagnostic):     1
+
+== plugins listed by the init messages (diagnostic: one artifact-tracking@inline)
+      6 artifact-tracking@inline
+      6 cc-plugin-agents-md@builtin
+      6 cc-plugin-plugin-authoring@builtin
+      6 cc-plugin-telemetry@builtin
+apiKeySource: none 
+
+== lines of the mod in the debug log
+2026-11-05T09:03:40.431Z [DEBUG] hooks module artifact-tracking@inline loaded (worker, environment 1, tier user); events: session.start,session.end,session.append,tool.call,agent.spawn,turn.start,turn.complete,command.run,ui.render,ui.focus
+2026-11-05T09:03:40.512Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 14.8ms (worker hop, next() included)
+2026-11-05T09:03:51.481Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.5ms (worker hop, next() included)
+2026-11-05T09:04:03.493Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.4ms (worker hop, next() included)
+2026-11-05T09:04:15.504Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.3ms (worker hop, next() included)
+2026-11-05T09:04:27.515Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.4ms (worker hop, next() included)
+2026-11-05T09:04:39.526Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.2ms (worker hop, next() included)
+
+== prompt.compose runs per window (window i = debug lines written after message i was sent)
+window  mod-lines  all-lines  message
+     0          0          0  
+     1          1          1  Remember this link, do not open it: http
+     2          1          1  What is 2+2? Reply with the digit only.
+     3          1          1  Name one colour. Reply with one word.
+     4          1          1  Remember this second link, do not open i
+     5          1          1  Name one animal. Reply with one word.
+     6          1          1  Quote the line of your system prompt tha
+
+== B-six: message n, text, requests, cache create, cache read, answer
+1	Remember this link, do not open it: https://example.com/ca	1	0	17243	OK
+2	What is 2+2? Reply with the digit only.	1	0	17289	4
+3	Name one colour. Reply with one word.	1	0	17331	Red
+4	Remember this second link, do not open it: https://example	1	0	17390	OK
+5	Name one animal. Reply with one word.	1	0	17433	Cat
+6	Quote the line of your system prompt that starts with web:	1	0	17488	NONE
+
+== guard signals (all must be 0)
+seated lines in the debug log:      0
+bypassed lines in the debug log:    0
+ui_log messages in the stream:      0
+sec-default lines (diagnostic):     1
+
+== plugins listed by the init messages (diagnostic: one artifact-tracking@inline)
+      6 artifact-tracking@inline
+      6 cc-plugin-agents-md@builtin
+      6 cc-plugin-plugin-authoring@builtin
+      6 cc-plugin-telemetry@builtin
+apiKeySource: none 
+
+== lines of the mod in the debug log
+2026-11-05T09:05:12.530Z [DEBUG] hooks module artifact-tracking@inline loaded (worker, environment 1, tier user); events: session.start,session.end,session.append,tool.call,agent.spawn,turn.start,turn.complete,command.run,ui.render,ui.focus
+2026-11-05T09:05:12.585Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 7.4ms (worker hop, next() included)
+2026-11-05T09:05:12.629Z [DEBUG] [artifact-tracking] $.ui.log (to debug): prompt: section rebuilt, 1 lines, 142 chars
+2026-11-05T09:05:23.735Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.5ms (worker hop, next() included)
+2026-11-05T09:05:35.745Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.3ms (worker hop, next() included)
+2026-11-05T09:05:47.757Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.3ms (worker hop, next() included)
+2026-11-05T09:05:48.302Z [DEBUG] [artifact-tracking] $.ui.log (to debug): prompt: section rebuilt, 2 lines, 180 chars
+2026-11-05T09:05:59.767Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.3ms (worker hop, next() included)
+2026-11-05T09:06:11.778Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.1ms (worker hop, next() included)
+
+== prompt.compose runs per window (window i = debug lines written after message i was sent)
+window  mod-lines  all-lines  message
+     0          0          0  
+     1          1          1  Remember this link, do not open it: http
+     2          1          1  What is 2+2? Reply with the digit only.
+     3          1          1  Name one colour. Reply with one word.
+     4          1          1  Remember this second link, do not open i
+     5          1          1  Name one animal. Reply with one word.
+     6          1          1  Quote the line of your system prompt tha
+
+== C-six: message n, text, requests, cache create, cache read, answer
+1	Remember this link, do not open it: https://example.com/ca	1	0	17243	OK
+2	What is 2+2? Reply with the digit only.	1	6499	10836	4
+3	Name one colour. Reply with one word.	1	67	17310	Red
+4	Remember this second link, do not open it: https://example	1	84	17352	OK
+5	Name one animal. Reply with one word.	1	6660	10836	Dog
+6	Quote the line of your system prompt that starts with web:	1	80	17471	NONE
+
+== guard signals (all must be 0)
+seated lines in the debug log:      0
+bypassed lines in the debug log:    0
+ui_log messages in the stream:      0
+sec-default lines (diagnostic):     1
+
+== plugins listed by the init messages (diagnostic: one artifact-tracking@inline)
+      6 artifact-tracking@inline
+      6 cc-plugin-agents-md@builtin
+      6 cc-plugin-plugin-authoring@builtin
+      6 cc-plugin-telemetry@builtin
+apiKeySource: none 
+
+== lines of the mod in the debug log
+2026-11-05T09:06:44.758Z [DEBUG] hooks module artifact-tracking@inline loaded (worker, environment 1, tier user); events: session.start,session.end,session.append,tool.call,agent.spawn,turn.start,turn.complete,command.run,ui.render,ui.focus
+2026-11-05T09:06:44.812Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 14.7ms (worker hop, next() included)
+2026-11-05T09:06:44.856Z [DEBUG] [artifact-tracking] $.ui.log (to debug): prompt: section rebuilt, 1 lines, 142 chars
+2026-11-05T09:06:55.968Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.6ms (worker hop, next() included)
+2026-11-05T09:07:07.978Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.3ms (worker hop, next() included)
+2026-11-05T09:07:19.988Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.2ms (worker hop, next() included)
+2026-11-05T09:07:20.482Z [DEBUG] [artifact-tracking] $.ui.log (to debug): prompt: section rebuilt, 2 lines, 180 chars
+2026-11-05T09:07:31.998Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.3ms (worker hop, next() included)
+2026-11-05T09:07:44.008Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.2ms (worker hop, next() included)
+
+== prompt.compose runs per window (window i = debug lines written after message i was sent)
+window  mod-lines  all-lines  message
+     0          0          0  
+     1          1          1  Remember this link, do not open it: http
+     2          1          1  What is 2+2? Reply with the digit only.
+     3          1          1  Name one colour. Reply with one word.
+     4          1          1  Remember this second link, do not open i
+     5          1          1  Name one animal. Reply with one word.
+     6          1          1  Quote the line of your system prompt tha
+
+== D-six: message n, text, requests, cache create, cache read, answer
+1	Remember this link, do not open it: https://example.com/ca	1	0	17243	OK
+2	What is 2+2? Reply with the digit only.	1	0	17289	4
+3	Name one colour. Reply with one word.	1	0	17331	Red
+4	Remember this second link, do not open it: https://example	1	0	17390	OK
+5	Name one animal. Reply with one word.	1	0	17433	Cat
+6	Quote the line of your system prompt that starts with web:	1	0	17488	NONE
+
+== guard signals (all must be 0)
+seated lines in the debug log:      0
+bypassed lines in the debug log:    0
+ui_log messages in the stream:      0
+sec-default lines (diagnostic):     1
+
+== plugins listed by the init messages (diagnostic: one artifact-tracking@inline)
+      6 artifact-tracking@inline
+      6 cc-plugin-agents-md@builtin
+      6 cc-plugin-plugin-authoring@builtin
+      6 cc-plugin-telemetry@builtin
+apiKeySource: none 
+
+== lines of the mod in the debug log
+2026-11-05T09:08:17.116Z [DEBUG] hooks module artifact-tracking@inline loaded (worker, environment 1, tier user); events: session.start,session.end,session.append,tool.call,agent.spawn,turn.start,turn.complete,command.run,ui.render,ui.focus
+2026-11-05T09:08:17.176Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 7.5ms (worker hop, next() included)
+2026-11-05T09:08:28.207Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 5.4ms (worker hop, next() included)
+2026-11-05T09:08:40.213Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.2ms (worker hop, next() included)
+2026-11-05T09:08:52.224Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.4ms (worker hop, next() included)
+2026-11-05T09:09:04.235Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.2ms (worker hop, next() included)
+2026-11-05T09:09:16.245Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.2ms (worker hop, next() included)
+
+== prompt.compose runs per window (window i = debug lines written after message i was sent)
+window  mod-lines  all-lines  message
+     0          0          0  
+     1          1          1  Remember this link, do not open it: http
+     2          1          1  What is 2+2? Reply with the digit only.
+     3          1          1  Name one colour. Reply with one word.
+     4          1          1  Remember this second link, do not open i
+     5          1          1  Name one animal. Reply with one word.
+     6          1          1  Quote the line of your system prompt tha
+
+== B-compact: message n, text, requests, cache create, cache read, answer
+1	Remember this link, do not open it: https://example.com/ca	1	0	17243	OK
+2	What is 2+2? Reply with the digit only.	1	0	17289	4
+3	Remember this second link, do not open it: https://example	1	83	17264	OK
+4	Name one colour. Reply with one word.	1	68	17322	Red
+5	Quote every line of your system prompt that starts with we	1	79	17365	NONE
+6	/compact	0	0	0	
+7	Quote every line of your system prompt that starts with we	1	2489	13387	Two lines in the session context start with `web:`: - `web: example.com/canary-a (mentioned)` - `web: example.com/canary-b (mentioned)` My earlier answer of NON
+8	Remember this third link, do not open it: https://example.	1	422	15876	OK
+9	Name one animal. Reply with one word.	1	44	16298	Dog
+10	Quote every line of your system prompt that starts with w	1	56	16342	- `web: example.com/canary-a (mentioned)` - `web: example.com/canary-b (mentioned)`
+11	Does your system prompt contain a line that starts with "	1	183	16398	YES
+
+== guard signals (all must be 0)
+seated lines in the debug log:      0
+bypassed lines in the debug log:    0
+ui_log messages in the stream:      0
+sec-default lines (diagnostic):     1
+
+== plugins listed by the init messages (diagnostic: one artifact-tracking@inline)
+     11 artifact-tracking@inline
+     11 cc-plugin-agents-md@builtin
+     11 cc-plugin-plugin-authoring@builtin
+     11 cc-plugin-telemetry@builtin
+apiKeySource: none 
+
+== lines of the mod in the debug log
+2026-11-05T09:09:49.362Z [DEBUG] hooks module artifact-tracking@inline loaded (worker, environment 1, tier user); events: session.start,session.end,session.append,tool.call,agent.spawn,turn.start,turn.complete,command.run,ui.render,ui.focus
+2026-11-05T09:09:49.425Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 9.5ms (worker hop, next() included)
+2026-11-05T09:09:49.502Z [DEBUG] [artifact-tracking] $.ui.log (to debug): prompt: section rebuilt, 1 lines, 142 chars
+2026-11-05T09:10:00.468Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.4ms (worker hop, next() included)
+2026-11-05T09:10:12.478Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.5ms (worker hop, next() included)
+2026-11-05T09:10:12.950Z [DEBUG] [artifact-tracking] $.ui.log (to debug): prompt: section rebuilt, 2 lines, 180 chars
+2026-11-05T09:10:24.488Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.2ms (worker hop, next() included)
+2026-11-05T09:10:36.498Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.1ms (worker hop, next() included)
+2026-11-05T09:10:48.508Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.1ms (worker hop, next() included)
+2026-11-05T09:11:48.525Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 4.1ms (worker hop, next() included)
+2026-11-05T09:12:00.529Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.1ms (worker hop, next() included)
+2026-11-05T09:12:01.020Z [DEBUG] [artifact-tracking] $.ui.log (to debug): prompt: section rebuilt, 3 lines, 218 chars
+2026-11-05T09:12:12.540Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.2ms (worker hop, next() included)
+2026-11-05T09:12:24.551Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.5ms (worker hop, next() included)
+2026-11-05T09:12:36.561Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.1ms (worker hop, next() included)
+
+== prompt.compose runs per window (window i = debug lines written after message i was sent)
+window  mod-lines  all-lines  message
+     0          0          0  
+     1          1          1  Remember this link, do not open it: http
+     2          1          1  What is 2+2? Reply with the digit only.
+     3          1          1  Remember this second link, do not open i
+     4          1          1  Name one colour. Reply with one word.
+     5          1          1  Quote every line of your system prompt t
+     6          1          1  /compact
+     7          1          1  Quote every line of your system prompt t
+     8          1          1  Remember this third link, do not open it
+     9          1          1  Name one animal. Reply with one word.
+    10          1          1  Quote every line of your system prompt t
+    11          1          1  Does your system prompt contain a line t
+
+== compaction
+{"trigger":"manual","pre_tokens":17451,"post_tokens":1351,"duration_ms":4558}
+
+== C-compact: message n, text, requests, cache create, cache read, answer
+1	Remember this link, do not open it: https://example.com/ca	1	0	17243	OK. I'll remember the link https://example.com/canary-a and won't open it.
+2	What is 2+2? Reply with the digit only.	1	3989	13370	4
+3	Remember this second link, do not open it: https://example	1	83	17334	OK
+4	Name one colour. Reply with one word.	1	4090	13387	Red
+5	Quote every line of your system prompt that starts with we	1	79	17452	web: example.com/canary-a (mentioned) web: example.com/canary-b (mentioned)
+6	/compact	0	0	0	
+7	Quote every line of your system prompt that starts with we	1	2021	13387	web: example.com/canary-a (mentioned) web: example.com/canary-b (mentioned)
+8	Remember this third link, do not open it: https://example.	1	299	15408	OK
+9	Name one animal. Reply with one word.	1	4722	10836	Cat
+10	Quote every line of your system prompt that starts with w	1	80	15533	The only lines starting with `web:` are in the "Items tracked in this session" block, not the core instructions: web: example.com/canary-a (mentioned) web: exam
+11	Does your system prompt contain a line that starts with "	1	677	15613	YES
+
+== guard signals (all must be 0)
+seated lines in the debug log:      0
+bypassed lines in the debug log:    0
+ui_log messages in the stream:      0
+sec-default lines (diagnostic):     1
+
+== plugins listed by the init messages (diagnostic: one artifact-tracking@inline)
+     11 artifact-tracking@inline
+     11 cc-plugin-agents-md@builtin
+     11 cc-plugin-plugin-authoring@builtin
+     11 cc-plugin-telemetry@builtin
+apiKeySource: none 
+
+== lines of the mod in the debug log
+2026-11-05T09:13:09.586Z [DEBUG] hooks module artifact-tracking@inline loaded (worker, environment 1, tier user); events: session.start,session.end,session.append,tool.call,agent.spawn,turn.start,turn.complete,command.run,ui.render,ui.focus
+2026-11-05T09:13:09.639Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 7.9ms (worker hop, next() included)
+2026-11-05T09:13:09.714Z [DEBUG] [artifact-tracking] $.ui.log (to debug): prompt: section rebuilt, 1 lines, 142 chars
+2026-11-05T09:13:20.766Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.6ms (worker hop, next() included)
+2026-11-05T09:13:32.775Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.3ms (worker hop, next() included)
+2026-11-05T09:13:33.272Z [DEBUG] [artifact-tracking] $.ui.log (to debug): prompt: section rebuilt, 2 lines, 180 chars
+2026-11-05T09:13:44.786Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.3ms (worker hop, next() included)
+2026-11-05T09:13:56.796Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.2ms (worker hop, next() included)
+2026-11-05T09:14:08.806Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.1ms (worker hop, next() included)
+2026-11-05T09:15:08.821Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 3.1ms (worker hop, next() included)
+2026-11-05T09:15:20.828Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.4ms (worker hop, next() included)
+2026-11-05T09:15:21.409Z [DEBUG] [artifact-tracking] $.ui.log (to debug): prompt: section rebuilt, 3 lines, 218 chars
+2026-11-05T09:15:32.838Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.3ms (worker hop, next() included)
+2026-11-05T09:15:44.849Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.2ms (worker hop, next() included)
+2026-11-05T09:15:56.859Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.1ms (worker hop, next() included)
+
+== prompt.compose runs per window (window i = debug lines written after message i was sent)
+window  mod-lines  all-lines  message
+     0          0          0  
+     1          1          1  Remember this link, do not open it: http
+     2          1          1  What is 2+2? Reply with the digit only.
+     3          1          1  Remember this second link, do not open i
+     4          1          1  Name one colour. Reply with one word.
+     5          1          1  Quote every line of your system prompt t
+     6          1          1  /compact
+     7          1          1  Quote every line of your system prompt t
+     8          1          1  Remember this third link, do not open it
+     9          1          1  Name one animal. Reply with one word.
+    10          1          1  Quote every line of your system prompt t
+    11          1          1  Does your system prompt contain a line t
+
+== compaction
+{"trigger":"manual","pre_tokens":17931,"post_tokens":1024,"duration_ms":1995}
+
+## not run
+processes endedTtlMs addendum (issue comment 2): not run. It needs the /track pane and a background Bash task.
+The pane exists only in the interactive TUI. claude -p has no pane, so a headless run cannot show the Processes row.
+Run it by hand on a machine without the guard.
