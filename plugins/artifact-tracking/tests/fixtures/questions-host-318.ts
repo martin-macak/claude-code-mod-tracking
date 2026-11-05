@@ -1,4 +1,4 @@
-// Captures of Claude Code 2.1.318 (issue #312, docs/knowledge-base/claude-code-mods/sources/spikes-2026-11-05): a permission-prompt
+// Captures of Claude Code 2.1.318 (issue #312, docs/knowledge-base/claude-code-mods/sources/spikes-2026-11-05-hosts): a permission-prompt
 // host (`claude -p --permission-prompt-tool stdio`) answered AskUserQuestion, and a person edited a plan with Ctrl+G in the
 // terminal. A probe plugin wrote `e` and the answer of `next(e)`. The values are word for word, with the home path redacted.
 import type { ToolCallEvent } from '../../core/interfaces/events'

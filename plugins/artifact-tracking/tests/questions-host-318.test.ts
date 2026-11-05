@@ -1,7 +1,7 @@
 // What the questions tracker reads of the captures of Claude Code 2.1.318 (issue #312, tests/fixtures/questions-host-318.ts): the
 // answer of a permission-prompt host with `response` and `followUp`, "Chat about this" as a host sends it
 // (`unanswered: 'replied_in_chat'`), and a plan edited with Ctrl+G. The captures are in
-// docs/knowledge-base/claude-code-mods/sources/spikes-2026-11-05.
+// docs/knowledge-base/claude-code-mods/sources/spikes-2026-11-05-hosts.
 import { expect, test } from 'claude-code/testing'
 import type { Json } from '../core/interfaces/items'
 import type { ViewContext } from '../core/interfaces/view'
