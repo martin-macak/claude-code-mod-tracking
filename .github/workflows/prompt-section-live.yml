@@ -1,0 +1,59 @@
+name: prompt-section-live
+
+# Manual live run of the prompt-section runbook (issue #91). Never runs on push or pull request.
+# The GitHub runner has no managed settings, so the guard cc-plugin-sec-default should not load.
+# The script stops with exit 3 if the guard is seated, for example after a Team or Enterprise sign-in.
+# It sends about 70 Haiku requests and takes about 20 minutes.
+# Script: scripts/live/prompt-section-run.sh. Runbook: https://github.com/martin-macak/claude-code-mod-tracking/issues/91
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prompt-section-live
+  cancel-in-progress: false
+
+env:
+  # Same version as test.yml. Bump both by hand.
+  CLAUDE_CODE_VERSION: 2.1.302
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install Claude Code
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Show versions
+        run: |
+          claude --version
+          jq --version
+
+      # The script writes the redacted summary to the job summary and the redacted files to $W/paste.
+      # It deletes $W/paste if a key or an email is left in it, so the upload step finds nothing then.
+      - name: Run the runbook
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          W: ${{ runner.temp }}/l91
+        run: bash scripts/live/prompt-section-run.sh all
+
+      - name: Upload the redacted logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prompt-section-live-logs
+          path: ${{ runner.temp }}/l91/paste
+          if-no-files-found: warn
+          retention-days: 30
