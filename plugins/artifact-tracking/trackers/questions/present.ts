@@ -6,7 +6,7 @@ import type { StatusToken } from '../../core/interfaces/view'
 import { stripControl } from '../../core/lib/prompt-text'
 import { answerParts } from './parse'
 import { MASKED, maskSecrets, wordsAskForSecret } from './secrets'
-import type { QuestionCall, QuestionItem, QuestionState } from './types'
+import type { QuestionCall, QuestionItem, QuestionState, Unanswered } from './types'
 
 export type ShownOption = {
   label: string
@@ -45,6 +45,15 @@ export type ShownItem = {
   notesOnly: boolean
   /** The question has no answer and no notes-only mark: the person left it blank. */
   blank: boolean
+  /** Why a blank question has no answer, as a host said it. Absent: the engine gave no reason. */
+  unanswered?: Unanswered
+}
+
+/** The words of a reason for no answer (`annotations[question].unanswered`, 2.1.318). */
+export const UNANSWERED_WORD: Readonly<Record<Unanswered, string>> = {
+  replied_in_chat: 'replied in chat',
+  skipped: 'skipped',
+  dismissed: 'dismissed',
 }
 
 /** A text through the mask. `whole` hides all of it: the answer of a question that asks for a secret. */
@@ -97,12 +106,13 @@ export function shownItem(item: QuestionItem, mask: Masker): ShownItem {
     ...(item.preview !== undefined ? { preview: mask(item.preview) } : {}),
     notesOnly: parts.notesOnly,
     blank: item.answer === undefined,
+    ...(item.answer === undefined && item.unanswered !== undefined ? { unanswered: item.unanswered } : {}),
   }
 }
 
 /** The labels the person picked, then the typed text tagged as typed: `Lint, E2E, typed: custom`. */
 export function answerText(s: ShownItem): string {
-  if (s.blank) return '(blank)'
+  if (s.blank) return s.unanswered !== undefined ? `(${UNANSWERED_WORD[s.unanswered]})` : '(blank)'
   if (s.notesOnly) return '(notes only)'
   return [...s.options.filter(o => o.chosen).map(o => o.label), ...s.typed.map(t => `typed: ${t}`)]
     .map(t => stripControl(t))

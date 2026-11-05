@@ -5,6 +5,10 @@
 /** How a call ended. `answered`: every question has an answer, or the plan was approved. `partial`: a question was left blank. `declined`: Esc, a rejected plan, or a call that another hook denied. */
 export type QuestionState = 'answered' | 'partial' | 'declined'
 
+/** The reasons a host gives for a question with no answer (the engine's list in 2.1.318). */
+export const UNANSWERED = ['skipped', 'replied_in_chat', 'dismissed'] as const
+export type Unanswered = (typeof UNANSWERED)[number]
+
 /** What the call was. `ask`: the dialog of AskUserQuestion. `plan`: the approval dialog of ExitPlanMode. */
 export type CallKind = 'ask' | 'plan'
 
@@ -42,6 +46,11 @@ export type QuestionItem = {
   preview?: string
   /** The notes the person added. */
   notes?: string
+  /**
+   * Why a question has no answer, as a host said it (the engine's `annotations[question].unanswered`, 2.1.318):
+   * `replied_in_chat` ("Chat about this"), `skipped` or `dismissed`. Absent: the engine gave no reason.
+   */
+  unanswered?: Unanswered
   /**
    * True when the question or its header asked for a secret (`isSensitive`) and the byte cap then cut their texts. The cut may
    * take the words that asked, so the cut keeps the sign: the typed text and the notes stay masked whole. Absent on a record

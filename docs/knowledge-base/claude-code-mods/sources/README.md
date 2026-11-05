@@ -124,6 +124,19 @@ Captured on 2026-11-01 for [issue #208](https://github.com/martin-macak/claude-c
 
 Do not edit it. To add more evidence, make a new dated folder.
 
+## `spikes-2026-11-05/`
+
+Captured on 2026-11-05 for [issue #312](https://github.com/martin-macak/claude-code-mod-tracking/issues/312), Claude Code 2.1.318 (macOS), with a real model (haiku) and the real mod. Not a primary source: it is the evidence behind the section "Through a permission-prompt host and Ctrl+G" of `concepts/questions-and-plans.md`. Home paths are redacted.
+
+| Content | Origin |
+| --- | --- |
+| `host.mjs`, `run-host.sh` | A stdio permission-prompt host that answers `AskUserQuestion`, and its launcher. |
+| `plan-probe/`, `editor.sh`, `launch-plan.sh` | A probe plugin that writes the `tool.call` of `ExitPlanMode` and `AskUserQuestion`, the editor of the `Ctrl+G` run, and the tmux launcher. |
+| `captures/` | The control requests, the host answers, the tool results, the hook's files and the `/track qa` output. |
+| `README.md` | The runs and the keys. |
+
+Do not edit it. To add more evidence, make a new dated folder.
+
 ## `code-claude-com-2026-10-09/`
 
 Raw Markdown of the public docs, fetched on 2026-10-09 from `https://code.claude.com/docs/en/<page>.md` (page list from `https://code.claude.com/docs/llms.txt`).

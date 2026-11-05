@@ -9,7 +9,7 @@ import type { ViewContext } from '../../core/interfaces/view'
 import { promptLine } from '../../core/lib/prompt-text'
 import { asCalls } from './log'
 import { answerParts } from './parse'
-import { stateWord } from './present'
+import { stateWord, UNANSWERED_WORD } from './present'
 import type { QuestionCall, QuestionItem } from './types'
 
 const TEXT_MAX = 150
@@ -18,7 +18,7 @@ const TEXT_MAX = 150
 function answerOf(q: QuestionItem, declined: boolean): string {
   const head = q.header === '' ? 'Question' : q.header
   if (declined) return `${head}: declined`
-  if (q.answer === undefined) return `${head}: blank`
+  if (q.answer === undefined) return `${head}: ${q.unanswered !== undefined ? UNANSWERED_WORD[q.unanswered] : 'blank'}`
   const parts = answerParts(q)
   if (parts.notesOnly) return `${head}: notes only`
   const said = [...parts.chosen, ...(parts.typed.length > 0 ? ['typed answer'] : [])]

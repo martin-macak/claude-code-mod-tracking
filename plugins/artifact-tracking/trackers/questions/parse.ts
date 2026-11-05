@@ -8,7 +8,14 @@
 
 import type { ToolCallEvent } from '../../core/interfaces/events'
 import { isRecord } from '../../core/lib/json'
-import type { QuestionCall, QuestionItem, QuestionOption, QuestionState } from './types'
+import {
+  type QuestionCall,
+  type QuestionItem,
+  type QuestionOption,
+  type QuestionState,
+  UNANSWERED,
+  type Unanswered,
+} from './types'
 
 /** What a parse gives. The tracker adds the number, the time, the turn and the replay mark. */
 export type CallBody = Omit<QuestionCall, 'n' | 'at' | 'turn' | 'replayed'>
@@ -23,6 +30,9 @@ const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : und
 
 /** A number that JSON can hold: the other things a field may be (a string, null, NaN) are left out. */
 const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+
+/** One of the engine's reasons for a question with no answer, or undefined. */
+const unansweredOf = (v: unknown): Unanswered | undefined => UNANSWERED.find(u => u === v)
 
 function optionOf(v: unknown): QuestionOption | undefined {
   if (!isRecord(v) || typeof v.label !== 'string') return undefined
@@ -92,16 +102,19 @@ function headOf(ev: ToolCallEvent): Pick<QuestionCall, 'id' | 'plugin' | 'agentI
   }
 }
 
-/** The answer, the picked preview and the notes of one question, by question text. */
+/** The answer, the picked preview, the notes and the reason for no answer of one question, by question text. */
 function answered(item: QuestionItem, answers: unknown, annotations: unknown): QuestionItem {
   const answer = isRecord(answers) ? str(answers[item.question]) : undefined
   const note = isRecord(annotations) && isRecord(annotations[item.question]) ? annotations[item.question] : undefined
-  const { preview, notes } = isRecord(note) ? note : ({} as Record<string, unknown>)
+  const { preview, notes, unanswered } = isRecord(note) ? note : ({} as Record<string, unknown>)
+  // A host may say why a question has no answer (2.1.318, issue #312): "Chat about this" is `replied_in_chat`.
+  const reason = answer === undefined ? unansweredOf(unanswered) : undefined
   return {
     ...item,
     ...(answer !== undefined ? { answer } : {}),
     ...(typeof preview === 'string' ? { preview } : {}),
     ...(typeof notes === 'string' ? { notes } : {}),
+    ...(reason !== undefined ? { unanswered: reason } : {}),
   }
 }
 

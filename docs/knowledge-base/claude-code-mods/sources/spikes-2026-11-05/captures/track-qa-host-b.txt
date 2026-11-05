@@ -1,0 +1,17 @@
+artifact-tracking: 
+# Questions and answers
+
+## Q1 · turn 1 · partial · 2026-11-05 06:44 UTC
+
+### DB
+
+Which database should we use?
+
+- [ ] **Postgres**
+- [ ] **SQLite**
+
+_Left blank._
+
+_The person asked for another round._
+
+> Response: Let us talk about this first.

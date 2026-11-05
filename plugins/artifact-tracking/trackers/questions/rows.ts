@@ -15,6 +15,7 @@ import {
   shownItem,
   shownResponse,
   stateWord,
+  UNANSWERED_WORD,
 } from './present'
 import { itemRowId, questionReasons } from './reasons'
 import type { QuestionCall } from './types'
@@ -46,7 +47,7 @@ const time = (at: number): string => `${new Date(at).toISOString().slice(0, 16).
 function itemStatus(call: QuestionCall, s: ShownItem): RowStatus {
   if (call.state === 'declined') return { label: 'declined', token: 'gone' }
   // A blank question or notes with no option waits for nothing: the dialog is closed. The label shows the gap, the token says no state.
-  if (s.blank) return { label: 'blank', token: 'none' }
+  if (s.blank) return { label: s.unanswered !== undefined ? UNANSWERED_WORD[s.unanswered] : 'blank', token: 'none' }
   return s.notesOnly ? { label: 'notes only', token: 'none' } : { label: 'answered', token: 'done' }
 }
 
@@ -70,7 +71,10 @@ function itemDetail(s: ShownItem): DetailLine[] {
   if (s.preview !== undefined && !s.options.some(o => o.preview === s.preview))
     out.push(...textLines('selected', s.preview))
   if (s.notes !== undefined && s.notes !== '') out.push(...textLines('notes', s.notes))
-  if (s.blank) out.push({ label: 'answer', cell: { text: '(left blank)', dim: true } })
+  if (s.blank) {
+    const text = s.unanswered !== undefined ? `(${UNANSWERED_WORD[s.unanswered]})` : '(left blank)'
+    out.push({ label: 'answer', cell: { text, dim: true } })
+  }
   return out
 }
 
