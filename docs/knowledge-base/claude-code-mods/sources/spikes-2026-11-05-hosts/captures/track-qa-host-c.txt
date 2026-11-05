@@ -1,0 +1,13 @@
+artifact-tracking: 
+# Questions and answers
+
+## Q1 · turn 1 · answered · 2026-11-05 06:45 UTC
+
+### DB
+
+Which database should we use?
+
+- [x] **Postgres**: Full server database with strong concurrency and rich SQL features.
+- [ ] **SQLite**: Embedded file database with no server to run.
+
+_The person asked for another round._

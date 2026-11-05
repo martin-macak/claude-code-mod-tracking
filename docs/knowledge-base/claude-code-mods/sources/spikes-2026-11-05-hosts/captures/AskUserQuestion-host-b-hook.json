@@ -1,0 +1,54 @@
+{
+  "tool": "AskUserQuestion",
+  "input": {
+    "questions": [
+      {
+        "question": "Which database should we use?",
+        "header": "DB",
+        "kind": "choice",
+        "options": [
+          {
+            "label": "Postgres"
+          },
+          {
+            "label": "SQLite"
+          }
+        ],
+        "multiSelect": false
+      }
+    ],
+    "tool": "AskUserQuestion",
+    "tool_use_id": "toolu_01GLcJNx7atnoqgaJca3Fqt9"
+  },
+  "ran": {
+    "ref": 1,
+    "result": {
+      "questions": [
+        {
+          "question": "Which database should we use?",
+          "header": "DB",
+          "kind": "choice",
+          "options": [
+            {
+              "label": "Postgres"
+            },
+            {
+              "label": "SQLite"
+            }
+          ],
+          "multiSelect": false
+        }
+      ],
+      "answers": {},
+      "response": "Let us talk about this first.",
+      "annotations": {
+        "Which database should we use?": {
+          "unanswered": "replied_in_chat"
+        }
+      },
+      "followUp": true
+    },
+    "text": "The user asked for more questions before answering. They also wrote: \"Let us talk about this first.\". Call AskUserQuestion again now with further questions about this decision (do not repeat these); do not proceed with the task yet.",
+    "isReadOnly": true
+  }
+}

@@ -1,0 +1,33 @@
+❯ Plan a hello.txt file that contains the word hello. Write a three-line plan to the plan file, then call ExitPlanMode right away. Do not ask questions.
+⏺ artifact-tracking: its prompt.compose hook was skipped. "cc-plugin-sec-default" runs first and sent the event on past it.
+⏺ Updated plan
+  ⎿  /plan to preview
+⏺ User approved Claude's plan
+  ⎿  Plan saved to: <CONFIG>/plans/plan-a-hello-txt-file-cosmic-puppy.md · /plan to edit
+     1. Create hello.txt in the working directory.
+     2. Put the single word hello in it.
+     3. Verify with cat hello.txt.
+     EDITED-BY-SPIKE-312 marker line
+⏺ Write(hello.txt)
+  ⎿  Wrote 1 line to hello.txt
+      1 hello
+  Read 1 file
+⏺ I created hello.txt in the working directory and checked it. It contains the single word hello.
+  Path: <SCRATCH>/plan/work/hello.txt
+  The plan file on disk also has an extra line, EDITED-BY-SPIKE-312 marker line. It does not change the steps, so I ignored it.
+✻ Brewed for 18s · done 7:48 AM
+❯ /track qa
+  ⎿  Questions and answers
+     Q1 · turn 1 · plan approved · 2026-11-05 06:48 UTC
+     1. Create `hello.txt` in the working directory.
+     2. Put the single word `hello` in it.
+     3. Verify with `cat hello.txt`.
+     EDITED-BY-SPIKE-312 marker line
+     File: <CONFIG>/plans/plan-a-hello-txt-file-cosmic-puppy.md
+tracking Files 2 turn 1 +3 new 9: open /track                                                                                                                                                       [-]
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── create-hello-txt-file ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 5.5 📂 work  HEAD | ?1
+  ctx [----------] 6% 55k · 7d [##--------] 28% Sun 11:00 · $0.13 1m 47s
+  -- INSERT -- ⏸ manual mode on · ← 3 agents
