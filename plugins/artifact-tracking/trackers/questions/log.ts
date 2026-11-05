@@ -124,10 +124,13 @@ function clipClear(v: string, limit: number): string {
 const splitBy = (spans: readonly [number, number][], keep: number): [number, number] | undefined =>
   spans.find(([start, end]) => start < keep && end > keep)
 
-/** The keys whose text is an id, so a cut never shortens it: a shorter id names no call. */
-const WHOLE = new Set(['id', 'watermark'])
+/**
+ * The keys whose text is an id or a word of the engine, so a cut never shortens it: a shorter id names no call, and a cut reason
+ * (`unanswered`) is no reason.
+ */
+const WHOLE = new Set(['id', 'watermark', 'unanswered'])
 
-/** The strings of a value, each cut to `limit` characters. A new value; the id of a call and its watermark stay whole. */
+/** The strings of a value, each cut to `limit` characters. A new value; the id of a call, its watermark and the reason of a question stay whole. */
 function cutStrings(v: unknown, limit: number, key?: string): unknown {
   if (typeof v === 'string') return (key !== undefined && WHOLE.has(key)) || v.length <= limit ? v : clipClear(v, limit)
   if (Array.isArray(v)) return v.map(x => cutStrings(x, limit))

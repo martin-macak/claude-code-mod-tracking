@@ -8,8 +8,8 @@ import type { Json } from '../../core/interfaces/items'
 import type { ViewContext } from '../../core/interfaces/view'
 import { promptLine } from '../../core/lib/prompt-text'
 import { asCalls } from './log'
-import { answerParts } from './parse'
-import { stateWord } from './present'
+import { answerParts, unansweredOf } from './parse'
+import { stateWord, UNANSWERED_WORD } from './present'
 import type { QuestionCall, QuestionItem } from './types'
 
 const TEXT_MAX = 150
@@ -18,6 +18,9 @@ const TEXT_MAX = 150
 function answerOf(q: QuestionItem, declined: boolean): string {
   const head = q.header === '' ? 'Question' : q.header
   if (declined) return `${head}: declined`
+  // The reason and never the text beside it: the model must not read a word that the person wrote.
+  const reason = unansweredOf(q.unanswered)
+  if (reason !== undefined) return `${head}: ${UNANSWERED_WORD[reason]}`
   if (q.answer === undefined) return `${head}: blank`
   const parts = answerParts(q)
   if (parts.notesOnly) return `${head}: notes only`

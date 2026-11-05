@@ -353,6 +353,27 @@ test('a call that is cut to fit keeps its watermark whole', () => {
   expect(sizeOf(kept!)).toBeLessThanOrEqual(20_000)
 })
 
+test('a call that is cut to fit keeps the reason of a question whole: it is a word of the engine, and a cut word is no reason', () => {
+  const huge = call('huge', 1, {
+    state: 'partial',
+    items: [
+      {
+        question: 'Q?',
+        header: 'H',
+        multiSelect: false,
+        options: [{ label: 'A', preview: 'p'.repeat(100_000) }],
+        answer: 'a text for the model '.repeat(200),
+        unanswered: 'replied_in_chat',
+      },
+    ],
+  })
+  // So tight that the keys alone pass it: the texts shrink to the smallest cut, and the answer is cut but the reason is not.
+  const [kept] = capCalls([huge], { maxCalls: 1, maxBytes: 150 })
+  expect(kept?.cut).toBe(true)
+  expect(kept?.items?.[0]?.answer?.length).toBeLessThan(100)
+  expect(kept?.items?.[0]?.unanswered).toBe('replied_in_chat')
+})
+
 test('two copies of one call join with the watermark that either has, and a new call keeps the one it carries', () => {
   expect(joinCall(call('a', 1), call('a', 1, { watermark: 'w' })).watermark).toBe('w')
   expect(joinCall(call('a', 1, { watermark: 'k' }), call('a', 1, { watermark: 'w' })).watermark).toBe('k')

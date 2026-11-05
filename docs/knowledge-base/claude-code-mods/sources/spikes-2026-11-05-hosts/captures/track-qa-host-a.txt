@@ -1,0 +1,15 @@
+artifact-tracking: 
+# Questions and answers
+
+## Q1 · turn 1 · answered · 2026-11-05 06:44 UTC
+
+### DB
+
+Which database should we use?
+
+- [x] **Postgres**
+- [ ] **SQLite**
+
+_The person asked for another round._
+
+> Response: Host response: please also consider caching.

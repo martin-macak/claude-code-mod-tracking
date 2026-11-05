@@ -1,0 +1,19 @@
+{
+  "tool": "ExitPlanMode",
+  "input": {
+    "plan": "1. Create `hello.txt` in the working directory.\n2. Put the single word `hello` in it.\n3. Verify with `cat hello.txt`.\n",
+    "planFilePath": "<CONFIG>/plans/plan-a-hello-txt-file-cosmic-puppy.md",
+    "tool": "ExitPlanMode",
+    "tool_use_id": "toolu_01RPu1ZrXKbPybqhsZaNBcxD"
+  },
+  "ran": {
+    "ref": 1,
+    "result": {
+      "plan": "1. Create `hello.txt` in the working directory.\n2. Put the single word `hello` in it.\n3. Verify with `cat hello.txt`.\n\nEDITED-BY-SPIKE-312 marker line\n",
+      "isAgent": false,
+      "filePath": "<CONFIG>/plans/plan-a-hello-txt-file-cosmic-puppy.md",
+      "planWasEdited": true
+    },
+    "text": "User has approved your plan. You can now start coding. Start with updating your todo list if applicable\n\nYour plan has been saved to: <CONFIG>/plans/plan-a-hello-txt-file-cosmic-puppy.md\nYou can refer back to it if needed during implementation.\n\n## Approved Plan (edited by user):\n1. Create `hello.txt` in the working directory.\n2. Put the single word `hello` in it.\n3. Verify with `cat hello.txt`.\n\nEDITED-BY-SPIKE-312 marker line\n"
+  }
+}
