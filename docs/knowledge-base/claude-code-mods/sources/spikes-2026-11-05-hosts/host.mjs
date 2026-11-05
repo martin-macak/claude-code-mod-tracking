@@ -1,7 +1,7 @@
 // A permission-prompt host for `claude -p --permission-prompt-tool stdio` (issue #312).
 // It answers the can_use_tool request of AskUserQuestion with an allow whose updatedInput carries
 // answers, annotations, response and followUp (VARIANT), logs every line, then sends `/track qa` as a second turn.
-// Usage: VARIANT=<a|b|c> OUT=<dir> PROMPT=<text> node host.mjs <claude args...>
+// Usage: VARIANT=<a|b|c|d> OUT=<dir> PROMPT=<text> node host.mjs <claude args...>
 import { spawn } from 'node:child_process'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { createInterface } from 'node:readline'

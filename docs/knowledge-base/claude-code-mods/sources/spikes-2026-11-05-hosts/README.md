@@ -4,6 +4,8 @@ Probes and captures for [issue #312](https://github.com/martin-macak/claude-code
 
 This folder is evidence, not product. It is a snapshot: do not edit it. `<MOD>` stands for `plugins/artifact-tracking`. In the captures `<HOME>` is the home folder, `<CONFIG>` the Claude config folder, `<REPO>` the checkout and `<SCRATCH>` the scratch folder of the run.
 
+The host of these runs is this spike's own script. No real host was observed, so the runs show what the script sent and what the engine did with it.
+
 ## What is here
 
 | Path | What it is |
@@ -25,4 +27,4 @@ This folder is evidence, not product. It is a snapshot: do not edit it. `<MOD>` 
 | H-d | `run-host.sh d <repo> <out> 1` | `answers`, `afkTimeoutMs: 5000` | `host-d.jsonl`, `track-qa-host-d.txt` |
 | G | `launch-plan.sh <work> <out>` in tmux; trust the folder (Down, Enter); prompt for a three-line plan and `ExitPlanMode`; on the plan dialog press Ctrl+G; then Down, Enter (`Yes, manually approve edits`); allow the write; `/track qa` | the editor appended a marker line | `ExitPlanMode-ctrl-g.json`, `editor.log`, `track-qa-ctrl-g.txt` |
 
-Each `host-*.jsonl` starts with one plain line, the two variables the host set. Then come the `can_use_tool` request, the answer of the host, and the `tool_result` that the model read with the structured `tool_use_result` of the same stdout line. `guard-skips.txt` holds the two `ui_log` lines of the guard in every run: it skipped the `session.append` and `prompt.compose` hooks of the mod. The `tool.call` and `command.run` hooks ran. The terminal run G showed the same two skips on the screen.
+Each `host-*.jsonl` starts with one plain line, the two variables the host set. Then come the `can_use_tool` request, the answer of the host, and the `tool_result` that the model read with the structured `tool_use_result` of the same stdout line. `init-capabilities-host-b.json` holds the `capabilities` of the `init` message of run H-b. `guard-skips.txt` holds the two `ui_log` lines of the guard in every run: it skipped the `session.append` and `prompt.compose` hooks of the mod. The `tool.call` and `command.run` hooks ran. The terminal run G showed the same two skips on the screen.
