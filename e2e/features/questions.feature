@@ -13,7 +13,7 @@ Feature: The questions that Claude asks are listed with their answers
     And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
     When I type "Ask me where"
     Then the screen shows "Where should the records live?"
-    When I press "Enter"
+    When I press "Enter" until the screen stops showing "Enter to select"
     And Claude finishes
     Then the fake model was told "State only"
     When I type "/track qa"
@@ -39,7 +39,7 @@ Feature: The questions that Claude asks are listed with their answers
     And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
     When I type "Ask me where"
     Then the screen shows "Where should the records live?"
-    When I press "Enter"
+    When I press "Enter" until the screen stops showing "Enter to select"
     And Claude finishes
     And I type "/track qa --send"
     Then the screen shows "Q1 · turn 1 · answered"
@@ -56,7 +56,7 @@ Feature: The questions that Claude asks are listed with their answers
     And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
     When I type "Ask me where"
     Then the screen shows "Where should the records live?"
-    When I press "Enter"
+    When I press "Enter" until the screen stops showing "Enter to select"
     And Claude finishes
     And I type "/track"
     # The reply of /track is a transcript line and the model reads it: it names the group and holds no question or answer.
@@ -72,7 +72,7 @@ Feature: The questions that Claude asks are listed with their answers
     And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
     When I type "Ask me where"
     Then the screen shows "Where should the records live?"
-    When I press "Enter"
+    When I press "Enter" until the screen stops showing "Enter to select"
     And Claude finishes
     And I type "/track turn 1"
     Then the screen matches /Turn 1 · answer · \d\d:\d\d · "Ask me where" · 1 new/
@@ -88,7 +88,7 @@ Feature: The questions that Claude asks are listed with their answers
     And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
     When I type "Ask me where"
     Then the screen shows "Where should the records live?"
-    When I press "Enter"
+    When I press "Enter" until the screen stops showing "Enter to select"
     And Claude finishes
     And I type "/track"
     Then the selected row shows "Q1"
@@ -105,7 +105,7 @@ Feature: The questions that Claude asks are listed with their answers
     And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
     When I type "Ask me where"
     Then the screen shows "Where should the records live?"
-    When I press "Enter"
+    When I press "Enter" until the screen stops showing "Enter to select"
     And Claude finishes
     And I type "/track"
     Then the selected row shows "Q1"
@@ -123,7 +123,7 @@ Feature: The questions that Claude asks are listed with their answers
     And a Claude Code session with the artifact-tracking mod and the tools "AskUserQuestion"
     When I type "Ask me where"
     Then the screen shows "Where should the records live?"
-    When I press "Escape"
+    When I press "Escape" until the screen stops showing "Enter to select"
     # An Esc aborts the turn, and the Stop hook does not run for an aborted turn, so the step "Claude finishes" would wait for ever.
     Then the screen shows "User declined to answer questions"
     And the screen matches /for \d+s · done/
