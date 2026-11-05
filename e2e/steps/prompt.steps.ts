@@ -82,6 +82,30 @@ When(
   },
 )
 
+// A key for a dialog that closes on the key, pressed again every second until the screen no longer shows the text of the
+// dialog (its footer). Claude Code 2.1.318 drops Enter and Esc on the dialog when it opens less than about 0.7 s after the
+// prompt was submitted, as it does with a fake model, and a second press works (issue #395). A second press is safe: once
+// the dialog is closed the loop stops, and the loop reads the screen before each press.
+When(
+  'I press {string} until the screen stops showing {string}',
+  async function (this: DemoWorld, key: string, text: string) {
+    this.tl.phase('normal')
+    await waitUntil(
+      () => {
+        if (!this.tmux.capture().includes(text)) return true
+        this.tmux.key(key)
+        return undefined
+      },
+      {
+        timeoutMs: this.config.screenTimeoutMs,
+        intervalMs: 1000,
+        what: `the screen to stop showing "${text}" while "${key}" is pressed`,
+        last: () => this.tmux.capture(),
+      },
+    )
+  },
+)
+
 When('I wait for {int} seconds', async function (this: DemoWorld, seconds: number) {
   this.tl.phase('fast')
   await sleep(seconds * 1000)
