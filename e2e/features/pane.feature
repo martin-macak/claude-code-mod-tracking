@@ -571,6 +571,7 @@ Feature: Drive the /track pane with the keys
   # the calls of the mod: nothing here can reach GitHub. Issue #155: it runs twice. At 120x36 the pane is docked beside the
   # transcript, at 100x40 it is inline under it, with a space between the border and the ">" gutter of the selected row.
   # The step `the pane is <placement>` says which one each example expects: a size that did not take effect fails there.
+  # Issue #287: the help footer of the docked pane is narrow, so its dim keys draw as `x: ·`. The inline pane keeps the word.
   Scenario Outline: h moves the ring from a tracker key to h: back, and the second h gives it back to the selected row at <cols>x<rows>
     Given a terminal of <cols> columns by <rows> rows
     And a fake GitHub repo "e2e-owner/e2e-repo" with the clone on the branch "feat/fake-conflict"
@@ -594,13 +595,13 @@ Feature: Drive the /track pane with the keys
     When I press "h"
     Then the focus ring is on "h: back"
     When I press "Tab"
-    Then the focus ring is on "x: dismiss"
+    Then the focus ring is on "<dismiss>"
     And the fake gh answered no unsupported call
 
     Examples:
-      | cols | rows | placement |
-      | 120  | 36   | docked    |
-      | 100  | 40   | inline    |
+      | cols | rows | placement | dismiss    |
+      | 120  | 36   | docked    | x: ·       |
+      | 100  | 40   | inline    | x: dismiss |
 
   # Issue #105 (PR #137). At 100x40 the pane is inline and its body holds 11 rows. The help view with 3 config problems, the
   # path of the config file on two rows and the footer fill them, so the compact form lists no problem and counts them:
