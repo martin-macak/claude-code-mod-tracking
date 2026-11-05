@@ -11,7 +11,7 @@
 #   CLONE  the checkout that holds plugins/artifact-tracking (default: this repo).
 # Sign-in: ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN or a stored login. The script never prints a token.
 # Exit codes: 0 done, 2 bad setup, 3 the guard cc-plugin-sec-default is seated (precondition failed), 4 claude failed,
-#             5 redaction left a secret in the upload folder (the folder is deleted).
+#             5 redaction left a secret in the upload folder (the folder is deleted), 6 an arm failed.
 # Output: $W/out (raw, may hold paths), $W/paste (redacted, safe to upload), $W/out/summary.txt.
 # The processes endedTtlMs addendum (issue comment) needs the /track pane. It cannot run headless, so the
 # summary lists it as not run.
@@ -26,6 +26,7 @@ esac
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CLONE=${CLONE:-$(cd "$HERE/../.." && pwd)}
+FAILED_ARMS=()
 W=${W:-$(mktemp -d "${TMPDIR:-/tmp}/l91.XXXXXX")}
 PLUGIN="$CLONE/plugins/artifact-tracking"
 OUT="$W/out"
@@ -55,7 +56,7 @@ say() { printf '%s\n' "$*" | tee -a "$SUMMARY"; }
 
 # --- redaction -------------------------------------------------------------------------------------------------
 scrub() {
-	sed -E "s/sk-ant-[A-Za-z0-9_-]+/sk-ant-REDACTED/g; s#${HOME}#~#g; s#/Users/[^/\" ]+#/Users/USER#g; s#/home/[^/\" ]+#/home/USER#g; s#-(Users|home)-[A-Za-z0-9._]+#-\1-USER#g; s/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}/EMAIL/g"
+	sed -E "s/sk-ant-[A-Za-z0-9_-]+/[REDACTED-KEY]/g; s#${HOME}#~#g; s#/Users/[^/\" ]+#/Users/USER#g; s#/home/[^/\" ]+#/home/USER#g; s#-(Users|home)-[A-Za-z0-9._]+#-\1-USER#g; s/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}/EMAIL/g"
 }
 
 redact() {
@@ -257,14 +258,18 @@ run_arm() {
 
 	echo "arm $ARM, plan $PLAN, snapshot $SNAP"
 	cd "$W/proj"
-	send | CLAUDE_TRACKER_CONFIG_DIR="$W/cfg/$ARM" claude -p \
+	# A failed arm keeps its files for the report, but the script exits nonzero at the end (exit 6).
+	if ! send | CLAUDE_TRACKER_CONFIG_DIR="$W/cfg/$ARM" claude -p \
 		--input-format stream-json --output-format stream-json --verbose \
 		--model haiku \
 		--plugin-dir "$PLUGIN" \
 		--setting-sources project \
 		--system-prompt-snapshot "$SNAP" \
 		--debug-file "$DBG" \
-		>"$OUT/$RUN.jsonl" 2>"$OUT/$RUN.stderr" || echo "arm $RUN: claude exited non-zero (see $RUN.stderr)"
+		>"$OUT/$RUN.jsonl" 2>"$OUT/$RUN.stderr"; then
+		echo "arm $RUN: claude failed (see $RUN.stderr)"
+		FAILED_ARMS+=("$RUN")
+	fi
 	cd "$W"
 	cp "$W/cfg/$ARM/config.json" "$OUT/$RUN.config-after.json" 2>/dev/null || true
 }
@@ -364,6 +369,7 @@ guard_check
 if [ "$MODE" = guard-only ]; then exit 0; fi
 
 write_configs
+set +e # keep collecting diagnostics when one arm failed; the exit status below carries the failure
 for a in A B C D; do run_arm "$a" six; done
 run_arm B compact
 run_arm C compact
@@ -381,5 +387,14 @@ run_arm C compact
 	echo "processes endedTtlMs addendum (issue comment 2): not run. It needs the /track pane and a background Bash task."
 	echo "The pane exists only in the interactive TUI. claude -p has no pane, so a headless run cannot show the Processes row."
 	echo "Run it by hand on a machine without the guard."
+	if [ "${#FAILED_ARMS[@]}" -gt 0 ]; then
+		echo
+		echo "## FAILED ARMS"
+		printf 'arm failed: %s\n' "${FAILED_ARMS[@]}"
+	fi
 } >>"$SUMMARY" 2>&1
 sed -n '/^## table/,$p' "$SUMMARY"
+if [ "${#FAILED_ARMS[@]}" -gt 0 ]; then
+	echo "FAILED: ${#FAILED_ARMS[@]} arm run(s) failed: ${FAILED_ARMS[*]}" >&2
+	exit 6
+fi
