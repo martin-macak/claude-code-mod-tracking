@@ -124,6 +124,19 @@ Captured on 2026-11-01 for [issue #208](https://github.com/martin-macak/claude-c
 
 Do not edit it. To add more evidence, make a new dated folder.
 
+## `spikes-2026-11-05/`
+
+Captured on 2026-11-05 for [issue #91](https://github.com/martin-macak/claude-code-mod-tracking/issues/91): one run of the prompt-section runbook on a GitHub Actions runner ([run 41999247206](https://github.com/martin-macak/claude-code-mod-tracking/actions/runs/41999247206)), Claude Code 2.1.302, Haiku 5.5, headless `claude -p` against the real API, with no managed settings, so the guard `cc-plugin-sec-default` did not load. Not a primary source: it is the evidence behind the section "Live run without the guard" of [lifecycle-manager §5.7](../../claude-code-mod-architecture/lifecycle-manager.md#57-context-injection) and [open-questions Q33](../../claude-code-mod-architecture/open-questions.md).
+
+| Content | Origin |
+| --- | --- |
+| `prompt-section-live/summary.txt` | The report of the run, verbatim. |
+| `prompt-section-live/guard-check.extract.txt`, `B-compact.debug.extract.txt` | Verbatim extracts of two debug logs: the guard check and the compact run of arm B. |
+| `prompt-section-live/turns.tsv` | One row per message of the six runs, derived from the `stream-json` files. |
+| `README.md` | The run, the columns of `turns.tsv` and how to redo it. |
+
+The other 31 files of the run artifact are left out. Do not edit it. To add more evidence, make a new dated folder.
+
 ## `code-claude-com-2026-10-09/`
 
 Raw Markdown of the public docs, fetched on 2026-10-09 from `https://code.claude.com/docs/en/<page>.md` (page list from `https://code.claude.com/docs/llms.txt`).

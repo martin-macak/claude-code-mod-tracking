@@ -1,0 +1,162 @@
+2026-11-05T09:09:48.532Z [DEBUG] MDM settings load completed in 0ms
+2026-11-05T09:09:48.573Z [DEBUG] --plugin-dir ~/work/claude-code-mod-tracking/claude-code-mod-tracking/plugins/artifact-tracking is one plugin: .claude-plugin at its top marks it
+2026-11-05T09:09:48.585Z [DEBUG] Read hooks.json for plugin artifact-tracking (enabled=true): ~/work/claude-code-mod-tracking/claude-code-mod-tracking/plugins/artifact-tracking/hooks/hooks.json
+2026-11-05T09:09:48.587Z [DEBUG] Loaded inline plugin from path: artifact-tracking
+2026-11-05T09:09:48.692Z [DEBUG] Checking plugin artifact-tracking: skillsPath=none, skillsPaths=0 paths
+2026-11-05T09:09:48.711Z [DEBUG] cc-plugin-sec-default@builtin not seated: no managed settings and not a Team or Enterprise organization (none)
+2026-11-05T09:09:49.362Z [DEBUG] hooks module artifact-tracking@inline loaded (worker, environment 1, tier user); events: session.start,session.end,session.append,tool.call,agent.spawn,turn.start,turn.complete,command.run,ui.render,ui.focus,ui.scroll,ui.close,prompt.compose
+2026-11-05T09:09:49.363Z [DEBUG] hooks module cc-plugin-agents-md@builtin loaded (native, environment 2, tier builtin); events: session.start,prompt.context,command.run,session.compact,prompt.submit,turn.start,turn.complete,agent.spawn,tool.call,prompt.mention
+2026-11-05T09:09:49.366Z [DEBUG] engine.create: no plugin-provided interfaces; $ built for artifact-tracking,cc-plugin-agents-md,cc-plugin-telemetry,cc-plugin-plugin-authoring
+2026-11-05T09:09:49.367Z [DEBUG] plugin.register: artifact-tracking (user, artifact-tracking@inline), judged by core alone: admitted
+2026-11-05T09:09:49.394Z [DEBUG] $.command.register (artifact-tracking): /track listed
+2026-11-05T09:09:49.395Z [DEBUG] Checking plugin artifact-tracking: skillsPath=none, skillsPaths=0 paths
+2026-11-05T09:09:49.401Z [DEBUG] hooks module artifact-tracking@inline session.start settled in 19.8ms (worker hop, next() included)
+2026-11-05T09:09:49.422Z [DEBUG] [artifact-tracking] $.ui.log (to debug): version: 0.1.0
+2026-11-05T09:09:49.425Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 9.5ms (worker hop, next() included)
+2026-11-05T09:09:49.453Z [DEBUG] $.process.run (artifact-tracking): gh with 1 args in ~/work/_temp/l91/proj (pid 3128)
+2026-11-05T09:09:49.456Z [DEBUG] $.process.run (artifact-tracking): acli with 1 args in ~/work/_temp/l91/proj (pid ?)
+2026-11-05T09:09:49.456Z [WARN] $.process.run (artifact-tracking): acli failed to start: ENOENT: Executable not found in $PATH: "acli"
+2026-11-05T09:09:49.460Z [DEBUG] $.process.run (artifact-tracking): file with 1 args in ~/work/_temp/l91/proj (pid 3134)
+2026-11-05T09:09:49.460Z [DEBUG] $.process.run (artifact-tracking): file exited 0 in 3ms, 59 + 0 chars
+2026-11-05T09:09:49.495Z [DEBUG] $.process.run (artifact-tracking): gh exited 0 in 43ms, 81 + 0 chars
+2026-11-05T09:09:49.497Z [DEBUG] $.process.run (artifact-tracking): gh with 4 args in ~/work/_temp/l91/proj (pid 3136)
+2026-11-05T09:09:49.502Z [DEBUG] [artifact-tracking] $.ui.log (to debug): prompt: section rebuilt, 1 lines, 142 chars
+2026-11-05T09:09:49.523Z [DEBUG] $.process.run (artifact-tracking): gh exited 4 in 27ms, 0 + 141 chars
+2026-11-05T09:09:49.528Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 79.7ms (worker hop, next() included)
+2026-11-05T09:09:49.531Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.9ms (worker hop, next() included)
+2026-11-05T09:09:49.532Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.3ms (worker hop, next() included)
+2026-11-05T09:09:49.534Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.1ms (worker hop, next() included)
+2026-11-05T09:09:49.535Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.3ms (worker hop, next() included)
+2026-11-05T09:09:49.537Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.1ms (worker hop, next() included)
+2026-11-05T09:09:49.538Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.1ms (worker hop, next() included)
+2026-11-05T09:09:49.551Z [DEBUG] autocompact: tokens=[REDACTED] level=ok effectiveWindow=980000
+2026-11-05T09:09:49.572Z [DEBUG] hooks module artifact-tracking@inline turn.start settled in 25.0ms (worker hop, next() included)
+2026-11-05T09:09:49.572Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 17.1ms (worker hop, next() included)
+2026-11-05T09:09:49.577Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 4.4ms (worker hop, next() included)
+2026-11-05T09:09:49.580Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.4ms (worker hop, next() included)
+2026-11-05T09:09:49.589Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 6.7ms (worker hop, next() included)
+2026-11-05T09:09:50.052Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.2ms (worker hop, next() included)
+2026-11-05T09:09:50.063Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.8ms (worker hop, next() included)
+2026-11-05T09:09:50.071Z [DEBUG] hooks module artifact-tracking@inline turn.complete settled in 3.5ms (worker hop, next() included)
+2026-11-05T09:09:50.240Z [DEBUG] $.process.run (artifact-tracking): git with 2 args in ~/work/_temp/l91/proj (pid 3145)
+2026-11-05T09:09:50.241Z [DEBUG] $.process.run (artifact-tracking): git exited 0 in 2ms, 33 + 0 chars
+2026-11-05T09:09:50.243Z [DEBUG] $.process.run (artifact-tracking): git with 3 args in ~/work/_temp/l91/proj (pid 3146)
+2026-11-05T09:09:50.245Z [DEBUG] $.process.run (artifact-tracking): git exited 0 in 3ms, 114 + 0 chars
+2026-11-05T09:09:51.000Z [DEBUG] $.store.set (artifact-tracking@inline): v2:s:fe720a89-80cd-4cdf-b76a-75111b8348da
+2026-11-05T09:09:51.001Z [DEBUG] $.store.set (artifact-tracking@inline): v2:index
+2026-11-05T09:10:00.468Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.4ms (worker hop, next() included)
+2026-11-05T09:10:00.475Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.4ms (worker hop, next() included)
+2026-11-05T09:10:00.476Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.2ms (worker hop, next() included)
+2026-11-05T09:10:00.480Z [DEBUG] autocompact: tokens=[REDACTED] level=ok effectiveWindow=980000
+2026-11-05T09:10:00.489Z [DEBUG] hooks module artifact-tracking@inline turn.start settled in 10.0ms (worker hop, next() included)
+2026-11-05T09:10:01.041Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.1ms (worker hop, next() included)
+2026-11-05T09:10:01.053Z [DEBUG] hooks module artifact-tracking@inline turn.complete settled in 2.4ms (worker hop, next() included)
+2026-11-05T09:10:01.993Z [DEBUG] $.store.set (artifact-tracking@inline): v2:s:fe720a89-80cd-4cdf-b76a-75111b8348da
+2026-11-05T09:10:12.478Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.5ms (worker hop, next() included)
+2026-11-05T09:10:12.485Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 3.7ms (worker hop, next() included)
+2026-11-05T09:10:12.486Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.9ms (worker hop, next() included)
+2026-11-05T09:10:12.489Z [DEBUG] autocompact: tokens=[REDACTED] level=ok effectiveWindow=980000
+2026-11-05T09:10:12.497Z [DEBUG] hooks module artifact-tracking@inline turn.start settled in 8.0ms (worker hop, next() included)
+2026-11-05T09:10:12.941Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.8ms (worker hop, next() included)
+2026-11-05T09:10:12.950Z [DEBUG] [artifact-tracking] $.ui.log (to debug): prompt: section rebuilt, 2 lines, 180 chars
+2026-11-05T09:10:12.950Z [DEBUG] hooks module artifact-tracking@inline turn.complete settled in 2.1ms (worker hop, next() included)
+2026-11-05T09:10:13.988Z [DEBUG] $.store.set (artifact-tracking@inline): v2:s:fe720a89-80cd-4cdf-b76a-75111b8348da
+2026-11-05T09:10:19.507Z [DEBUG] $.process.run (artifact-tracking): git with 3 args in ~/work/_temp/l91/proj (pid 3170)
+2026-11-05T09:10:19.508Z [DEBUG] $.process.run (artifact-tracking): git exited 0 in 3ms, 114 + 0 chars
+2026-11-05T09:10:24.488Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.2ms (worker hop, next() included)
+2026-11-05T09:10:24.493Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.0ms (worker hop, next() included)
+2026-11-05T09:10:24.494Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.9ms (worker hop, next() included)
+2026-11-05T09:10:24.497Z [DEBUG] autocompact: tokens=[REDACTED] level=ok effectiveWindow=980000
+2026-11-05T09:10:24.504Z [DEBUG] hooks module artifact-tracking@inline turn.start settled in 7.5ms (worker hop, next() included)
+2026-11-05T09:10:25.091Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.9ms (worker hop, next() included)
+2026-11-05T09:10:25.107Z [DEBUG] hooks module artifact-tracking@inline turn.complete settled in 1.8ms (worker hop, next() included)
+2026-11-05T09:10:26.007Z [DEBUG] $.store.set (artifact-tracking@inline): v2:s:fe720a89-80cd-4cdf-b76a-75111b8348da
+2026-11-05T09:10:36.498Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.1ms (worker hop, next() included)
+2026-11-05T09:10:36.504Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.1ms (worker hop, next() included)
+2026-11-05T09:10:36.505Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.9ms (worker hop, next() included)
+2026-11-05T09:10:36.507Z [DEBUG] autocompact: tokens=[REDACTED] level=ok effectiveWindow=980000
+2026-11-05T09:10:36.514Z [DEBUG] hooks module artifact-tracking@inline turn.start settled in 7.7ms (worker hop, next() included)
+2026-11-05T09:10:36.940Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.9ms (worker hop, next() included)
+2026-11-05T09:10:36.950Z [DEBUG] hooks module artifact-tracking@inline turn.complete settled in 1.8ms (worker hop, next() included)
+2026-11-05T09:10:38.018Z [DEBUG] $.store.set (artifact-tracking@inline): v2:s:fe720a89-80cd-4cdf-b76a-75111b8348da
+2026-11-05T09:10:48.508Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.1ms (worker hop, next() included)
+2026-11-05T09:10:48.519Z [DEBUG] [API REQUEST] /v1/messages x-client-request-id=ed079b89-8681-4071-bc8a-cea4e719f009 source=compact
+2026-11-05T09:10:49.506Z [DEBUG] $.process.run (artifact-tracking): git with 3 args in ~/work/_temp/l91/proj (pid 3193)
+2026-11-05T09:10:49.507Z [DEBUG] $.process.run (artifact-tracking): git exited 0 in 3ms, 114 + 0 chars
+2026-11-05T09:10:50.977Z [DEBUG] Forked agent [reactive-compact] received message: type=assistant
+2026-11-05T09:10:53.060Z [DEBUG] Forked agent [reactive-compact] received message: type=assistant
+2026-11-05T09:10:53.068Z [DEBUG] Forked agent [reactive-compact] finished: 2 messages, types=[assistant, assistant], totalUsage: input=2046 output=970 cacheRead=17365 cacheCreate=28
+2026-11-05T09:10:53.072Z [DEBUG] hooks module cc-plugin-agents-md@builtin session.compact settled in 4560.9ms (native link, next() included)
+2026-11-05T09:10:53.076Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.6ms (worker hop, next() included)
+2026-11-05T09:10:53.077Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.8ms (worker hop, next() included)
+2026-11-05T09:10:53.078Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.9ms (worker hop, next() included)
+2026-11-05T09:10:53.079Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.8ms (worker hop, next() included)
+2026-11-05T09:10:53.080Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.7ms (worker hop, next() included)
+2026-11-05T09:10:53.080Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.7ms (worker hop, next() included)
+2026-11-05T09:10:53.081Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.8ms (worker hop, next() included)
+2026-11-05T09:10:53.082Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.7ms (worker hop, next() included)
+2026-11-05T09:10:53.083Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.8ms (worker hop, next() included)
+2026-11-05T09:10:53.084Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.6ms (worker hop, next() included)
+2026-11-05T09:11:19.507Z [DEBUG] $.process.run (artifact-tracking): git with 3 args in ~/work/_temp/l91/proj (pid 3206)
+2026-11-05T09:11:19.508Z [DEBUG] $.process.run (artifact-tracking): git exited 0 in 3ms, 114 + 0 chars
+2026-11-05T09:11:48.525Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 4.1ms (worker hop, next() included)
+2026-11-05T09:11:48.533Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.1ms (worker hop, next() included)
+2026-11-05T09:11:48.534Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.9ms (worker hop, next() included)
+2026-11-05T09:11:48.539Z [DEBUG] autocompact: tokens=[REDACTED] level=ok effectiveWindow=980000
+2026-11-05T09:11:48.545Z [DEBUG] hooks module artifact-tracking@inline turn.start settled in 7.8ms (worker hop, next() included)
+2026-11-05T09:11:48.545Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.3ms (worker hop, next() included)
+2026-11-05T09:11:48.552Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 6.9ms (worker hop, next() included)
+2026-11-05T09:11:48.554Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.1ms (worker hop, next() included)
+2026-11-05T09:11:48.557Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.9ms (worker hop, next() included)
+2026-11-05T09:11:49.507Z [DEBUG] $.process.run (artifact-tracking): git with 3 args in ~/work/_temp/l91/proj (pid 3233)
+2026-11-05T09:11:49.508Z [DEBUG] $.process.run (artifact-tracking): git exited 0 in 2ms, 114 + 0 chars
+2026-11-05T09:11:50.051Z [DEBUG] $.store.set (artifact-tracking@inline): v2:s:fe720a89-80cd-4cdf-b76a-75111b8348da
+2026-11-05T09:11:50.199Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.4ms (worker hop, next() included)
+2026-11-05T09:11:50.484Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.0ms (worker hop, next() included)
+2026-11-05T09:11:50.497Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.8ms (worker hop, next() included)
+2026-11-05T09:11:50.501Z [DEBUG] hooks module artifact-tracking@inline turn.complete settled in 1.9ms (worker hop, next() included)
+2026-11-05T09:11:52.004Z [DEBUG] $.store.set (artifact-tracking@inline): v2:s:fe720a89-80cd-4cdf-b76a-75111b8348da
+2026-11-05T09:12:00.529Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.1ms (worker hop, next() included)
+2026-11-05T09:12:00.535Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.8ms (worker hop, next() included)
+2026-11-05T09:12:00.536Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.9ms (worker hop, next() included)
+2026-11-05T09:12:00.540Z [DEBUG] autocompact: tokens=[REDACTED] level=ok effectiveWindow=980000
+2026-11-05T09:12:00.548Z [DEBUG] hooks module artifact-tracking@inline turn.start settled in 9.4ms (worker hop, next() included)
+2026-11-05T09:12:01.005Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.8ms (worker hop, next() included)
+2026-11-05T09:12:01.020Z [DEBUG] [artifact-tracking] $.ui.log (to debug): prompt: section rebuilt, 3 lines, 218 chars
+2026-11-05T09:12:01.020Z [DEBUG] hooks module artifact-tracking@inline turn.complete settled in 2.2ms (worker hop, next() included)
+2026-11-05T09:12:02.038Z [DEBUG] $.store.set (artifact-tracking@inline): v2:s:fe720a89-80cd-4cdf-b76a-75111b8348da
+2026-11-05T09:12:12.540Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.2ms (worker hop, next() included)
+2026-11-05T09:12:12.545Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.0ms (worker hop, next() included)
+2026-11-05T09:12:12.546Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.8ms (worker hop, next() included)
+2026-11-05T09:12:12.550Z [DEBUG] autocompact: tokens=[REDACTED] level=ok effectiveWindow=980000
+2026-11-05T09:12:12.567Z [DEBUG] hooks module artifact-tracking@inline turn.start settled in 17.8ms (worker hop, next() included)
+2026-11-05T09:12:13.008Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.8ms (worker hop, next() included)
+2026-11-05T09:12:13.018Z [DEBUG] hooks module artifact-tracking@inline turn.complete settled in 1.7ms (worker hop, next() included)
+2026-11-05T09:12:14.069Z [DEBUG] $.store.set (artifact-tracking@inline): v2:s:fe720a89-80cd-4cdf-b76a-75111b8348da
+2026-11-05T09:12:19.508Z [DEBUG] $.process.run (artifact-tracking): git with 3 args in ~/work/_temp/l91/proj (pid 3261)
+2026-11-05T09:12:19.509Z [DEBUG] $.process.run (artifact-tracking): git exited 0 in 3ms, 114 + 0 chars
+2026-11-05T09:12:24.551Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.5ms (worker hop, next() included)
+2026-11-05T09:12:24.557Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.2ms (worker hop, next() included)
+2026-11-05T09:12:24.558Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.9ms (worker hop, next() included)
+2026-11-05T09:12:24.561Z [DEBUG] autocompact: tokens=[REDACTED] level=ok effectiveWindow=980000
+2026-11-05T09:12:24.568Z [DEBUG] hooks module artifact-tracking@inline turn.start settled in 8.4ms (worker hop, next() included)
+2026-11-05T09:12:25.378Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.9ms (worker hop, next() included)
+2026-11-05T09:12:25.488Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.2ms (worker hop, next() included)
+2026-11-05T09:12:25.501Z [DEBUG] hooks module artifact-tracking@inline turn.complete settled in 1.7ms (worker hop, next() included)
+2026-11-05T09:12:26.071Z [DEBUG] $.store.set (artifact-tracking@inline): v2:s:fe720a89-80cd-4cdf-b76a-75111b8348da
+2026-11-05T09:12:36.561Z [DEBUG] hooks module artifact-tracking@inline prompt.compose settled in 1.1ms (worker hop, next() included)
+2026-11-05T09:12:36.566Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 2.0ms (worker hop, next() included)
+2026-11-05T09:12:36.567Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.9ms (worker hop, next() included)
+2026-11-05T09:12:36.570Z [DEBUG] autocompact: tokens=[REDACTED] level=ok effectiveWindow=980000
+2026-11-05T09:12:36.577Z [DEBUG] hooks module artifact-tracking@inline turn.start settled in 7.6ms (worker hop, next() included)
+2026-11-05T09:12:37.199Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 1.6ms (worker hop, next() included)
+2026-11-05T09:12:37.201Z [DEBUG] hooks module artifact-tracking@inline session.append settled in 0.9ms (worker hop, next() included)
+2026-11-05T09:12:37.210Z [DEBUG] hooks module artifact-tracking@inline turn.complete settled in 1.8ms (worker hop, next() included)
+2026-11-05T09:12:38.079Z [DEBUG] $.store.set (artifact-tracking@inline): v2:s:fe720a89-80cd-4cdf-b76a-75111b8348da
+2026-11-05T09:12:49.508Z [DEBUG] $.process.run (artifact-tracking): git with 3 args in ~/work/_temp/l91/proj (pid 3284)
+2026-11-05T09:12:49.510Z [DEBUG] $.process.run (artifact-tracking): git exited 0 in 3ms, 114 + 0 chars
+2026-11-05T09:13:08.570Z [DEBUG] $.session (artifact-tracking): no session bound; id, cwd and model answered from the process
+2026-11-05T09:13:08.570Z [DEBUG] $.session (artifact-tracking): no session bound; id, cwd and model answered from the process
+2026-11-05T09:13:08.575Z [DEBUG] $.store.set (artifact-tracking@inline): v2:s:fe720a89-80cd-4cdf-b76a-75111b8348da
+2026-11-05T09:13:08.576Z [DEBUG] $.store.set (artifact-tracking@inline): v2:run
+2026-11-05T09:13:08.577Z [DEBUG] hooks module artifact-tracking@inline session.end settled in 8.5ms (worker hop, next() included)
